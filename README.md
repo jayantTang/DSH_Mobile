@@ -248,7 +248,11 @@ DSH 的客户端协议是 schema 驱动的 RPC 加一条多路复用 WebSocket�
 - 文件发送只在经中转时可用；直连测试通道会返回 404
 - 后台通知靠无声音频保活，只在「有会话在跑或有待回答的提问」时生效
 - 手机处于后台时，电脑端**新开始**的会话叫不醒 App——那需要 APNs，尚未实现
-- OTA 安装依赖描述文件有效期，到期前需重新构建续期；长期分发应改用 TestFlight
+- **iOS 安装走 TestFlight**（现在还没有公开测试链接；有了会开一个 issue 并在
+  [`docs/notes/ENABLE-TRIAL.md`](docs/notes/ENABLE-TRIAL.md) 里记明）：需要先装 Apple 的
+  TestFlight App，而且**测试构建 90 天后过期**，到期要装新构建。
+- 仓库里那条 OTA（`https://<站点>/ios/`）用的是 Ad Hoc 描述文件，**只覆盖已登记 UDID 的设备**，
+  适合自用，不能作为公开下载入口。
 
 ## 许可
 
