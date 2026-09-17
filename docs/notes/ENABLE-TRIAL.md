@@ -39,8 +39,36 @@ dsh-mobile-link enroll --invite <码> --relay wss://<你的站点>/dsh-link
 | 单帧上限 | 32 MB | DSH 的图片附件上限对齐，一张图不会撑爆 |
 | 设备背压 | 每设备 512 帧队列，溢出即断该设备（4008） | 慢设备只影响自己，不会把中转内存吃穿 |
 | 连接器背压 | 4096 帧 | 连接器掉线时给设备留了缓冲 |
+| **单设备出口限速** | **2 Mbps**（2026-09-17 上线） | 十张截图 ≈ 27 MB，不限速会在 5 Mbps 的管子上独占 43 秒、拖慢所有人；限速后只影响这个设备自己的观感，**不掉帧** |
+| **单设备每日额度** | **500 MB / UTC 天** | 超额先收到 `quota/device-daily` 的 error 帧，再以 4011 断开，次日 UTC 零点恢复 |
+| **每 agent 设备数** | **8 台** | 挡住泄漏的 deviceToken 或配对脚本把中转塞满；同一设备重连不占第二个名额 |
 | 配对防爆破 | 失败计数 + 429 | 短码不会被离线穷举 |
 | 中转能看到什么 | agentId / deviceId / 帧类型；**不解析会话内容** | 但**流量是明文 TLS 终止在中转上**——邀请别人之前这句话要讲清楚 |
+
+> 三个限额的取值口径写在 `relay/deploy/dsh-relay.service` 的注释里。
+> **确认这台实例的真实带宽（Mbps）后应当复核**：限速按「管子 ÷ 预期同时传大文件的设备数」
+> 取，不是「管子 ÷ 设备数」。改完在服务器上
+> `systemctl daemon-reload && systemctl restart dsh-relay`。
+
+### 看实时流量（在你自己的电脑上跑，不用登服务器）
+
+```bash
+HOST=${DSH_OTA_HOST#*@}; HOST=${HOST%%/*}
+ssh "root@$HOST" 'curl -s http://127.0.0.1:8787/stats' | python3 -c "
+import json,sys
+d = json.load(sys.stdin)
+print('agent', d['load']['agents'], '| 设备', d['load']['devices'],
+      '| 本次启动累计出口 %.2f MB' % (d['traffic']['totalEgressBytes']/1048576))
+for x in d['traffic']['devices']:
+    print('  %-10s %-24s %8.2f MB  限速等待 %5.1fs  今日剩余 %s' % (
+        x['name'] or '—', x['deviceId'], x['egressBytes']/1048576, x['pacedSeconds'],
+        '不限' if x['quotaRemainingBytes'] < 0 else '%.0f MB' % (x['quotaRemainingBytes']/1048576)))
+"
+```
+
+`/stats` 只监听回环，所以必须走 SSH（也可以把 8787 转发出来用浏览器打开，会渲染成每 5 秒
+自刷新的页面）。它回答的是「哪台设备在用带宽」——主机的网卡计数器回答不了这个问题，
+因为那里混着 SSH 与 OTA 下载。
 
 ### 你要先做的两个决定
 
