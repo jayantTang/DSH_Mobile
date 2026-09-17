@@ -17,7 +17,10 @@
 #      exportArchive 报 `No Accounts`，随后报 `No profiles for '<bundle id>' were found`
 #      —— 分发证书是**联网生成**的，本地 keychain 里没有就是没有。
 #   2. App Store Connect 里已建同名 App 记录（套装 ID 必须与 BUNDLE_ID 一致）。
-#   3. 上传凭据：Xcode 的会话（默认），或 ASC API Key
+#   3. 上传凭据：ASC API Key（ASC_KEY_ID / ASC_ISSUER_ID）或 Apple ID + App 专用密码。
+     **Xcode 的会话不够**——exportArchive 能用它，命令行 altool 不能；另外
+     exportArchive 的 destination=upload 只找得到已存在的 App 记录，所以第一次上传
+     必须先把 App Store Connect 里的 App 建好。
 #      （~/.appstoreconnect/private_keys/AuthKey_*.p8 + ASC_KEY_ID/ASC_ISSUER_ID）。
 #
 set -euo pipefail
@@ -96,9 +99,17 @@ say "导出完成：${IPA}（$(du -h "$IPA" | cut -f1)）"
 
 say "上传到 App Store Connect"
 if [ -n "${ASC_KEY_ID:-}" ] && [ -n "${ASC_ISSUER_ID:-}" ]; then
-  # CI 路径：API Key，不进钥匙串。
-  xcrun altool --upload-app -f "$IPA" -t ios \
-    --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID"
+  # API Key 路径（推荐）：Key ID 就是 .p8 文件名里的那串，Issuer ID 在
+  # App Store Connect → 用户和访问 → 集成 → App Store Connect API 页面顶部。
+  # 两个都给了就显式传；只给 Key ID 时，altool 会自己去
+  # ~/.appstoreconnect/private_keys/ 找 AuthKey_<KEY_ID>.p8（缺 Issuer 会报
+  # "Either JWT (--api-issuer and --api-key) ... is required"）。
+  if [ -n "${ASC_ISSUER_ID:-}" ]; then
+    xcrun altool --upload-app -f "$IPA" -t ios \
+      --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID"
+  else
+    xcrun altool --upload-app -f "$IPA" -t ios --apiKey "$ASC_KEY_ID"
+  fi
 else
   # 本机路径：用 Xcode 已有的会话（就是上面登录的那个账号）。
   if ! xcrun altool --upload-app -f "$IPA" -t ios 2>&1 | tee "$BUILD_DIR/upload.log" | tail -8; then
