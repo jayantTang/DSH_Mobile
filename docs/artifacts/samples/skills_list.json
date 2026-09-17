@@ -1,0 +1,10 @@
+{
+  "type": "server-response",
+  "rpcId": "probe-1789278471477-3",
+  "result": {
+    "ok": true,
+    "value": {
+      "skills": []
+    }
+  }
+}

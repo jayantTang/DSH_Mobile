@@ -1,0 +1,29 @@
+{
+  "name": "dsh-plugin-doubao-image",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Registers the generate_image tool: drives the locally installed Doubao desktop app over the Chrome DevTools Protocol to generate an image, saves the original bytes, and puts them into the conversation.",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./doubao": "./lib/doubao.mjs",
+    "./cdp": "./lib/cdp.mjs",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml"
+  ],
+  "license": "MIT",
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "generate": "node lib/generate.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

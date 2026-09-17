@@ -1,0 +1,6 @@
+# 图标是 Assets 里的资源，界面这一侧能核对的只有「App 起得来、标志在位」。
+# 桌面图标由 simctl 在启动前拍，见用例文件的「说明」。
+1  do: 连接本机 DSH  | want: id:session.list | shot: sessions check=texts
+2  do: 什么都不做  | want: label:连接管理, label:设置
+3  do: 打开页面 connections  | shot: connections check=texts
+4  do: 什么都不做  | want: text:DSH Mobile, text:配对码

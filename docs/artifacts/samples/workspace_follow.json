@@ -1,0 +1,88 @@
+{
+  "_capture": {
+    "method": "workspace/follow",
+    "args": {},
+    "rawWebSocketBytes": 1949,
+    "framesReceived": 1,
+    "truncated": false,
+    "capturedAt": "2026-09-13T05:54:02.794Z"
+  },
+  "frames": [
+    {
+      "type": "item",
+      "streamId": "s1",
+      "value": {
+        "type": "baseline",
+        "value": {
+          "items": [
+            {
+              "workspaceId": "id-00000000-0000-4000-8000-000000000038",
+              "path": "/Users/example/Projects/example-app",
+              "title": "19_dsh_iosapp",
+              "sessionIds": [
+                "session-15f4c2d6-c2d6-4000-8000-15f4c2d63cc5"
+              ],
+              "createdAt": "2026-09-13T05:24:09.412Z",
+              "updatedAt": "2026-09-13T05:24:09.467Z"
+            },
+            {
+              "workspaceId": "id-00000000-0000-4000-8000-000000000039",
+              "path": "/Users/example/Projects/example-app",
+              "title": "5_stroy",
+              "sessionIds": [
+                "session-d746b658-b658-4000-8000-d746b658594a"
+              ],
+              "createdAt": "2026-09-12T14:53:48.906Z",
+              "updatedAt": "2026-09-12T14:53:48.979Z"
+            },
+            {
+              "workspaceId": "id-00000000-0000-4000-8000-000000000040",
+              "path": "/Users/example/Projects/example-app",
+              "title": "17_esp32",
+              "sessionIds": [
+                "session-a8e22092-2092-4000-8000-a8e220920698"
+              ],
+              "createdAt": "2026-09-12T10:11:44.300Z",
+              "updatedAt": "2026-09-12T10:11:44.357Z"
+            },
+            {
+              "workspaceId": "id-00000000-0000-4000-8000-000000000041",
+              "path": "/Users/example/Projects/example-app",
+              "title": "12_stock",
+              "sessionIds": [
+                "session-6a6b288c-288c-4000-8000-6a6b288cd180",
+                "session-0071197f-197f-4000-8000-0071197f2d31",
+                "session-4ce2ddcc-ddcc-4000-8000-4ce2ddcc8fee"
+              ],
+              "createdAt": "2026-09-03T13:37:22.204Z",
+              "updatedAt": "2026-09-10T16:10:41.906Z"
+            },
+            {
+              "workspaceId": "id-00000000-0000-4000-8000-000000000042",
+              "path": "/Users/example/Projects/example-app",
+              "title": "1_demo",
+              "sessionIds": [
+                "session-f7d9dee0-dee0-4000-8000-f7d9dee0397a",
+                "session-020093bd-93bd-4000-8000-020093bdf594",
+                "session-2a4f6ff0-6ff0-4000-8000-2a4f6ff0b798",
+                "session-f248f782-f782-4000-8000-f248f7826f63",
+                "session-9131ba3d-ba3d-4000-8000-9131ba3d7b04",
+                "session-052b06e3-06e3-4000-8000-052b06e3990e",
+                "session-12974a13-4a13-4000-8000-12974a132d00",
+                "session-d21e0843-0843-4000-8000-d21e08431985",
+                "session-f51ded1d-ed1d-4000-8000-f51ded1dd336",
+                "session-18ddeb57-eb57-4000-8000-18ddeb57d0b8"
+              ],
+              "createdAt": "2026-08-20T15:26:17.731Z",
+              "updatedAt": "2026-09-12T02:59:54.421Z"
+            }
+          ],
+          "archivedSessionIds": []
+        }
+      }
+    }
+  ],
+  "errors": [],
+  "opened": true,
+  "rawBytes": 1949
+}

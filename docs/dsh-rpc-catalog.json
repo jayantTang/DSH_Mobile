@@ -1,0 +1,1510 @@
+{
+  "generatedAt": "2026-09-13T05:51:44.713Z",
+  "dshVersion": "0.1.5-rc.1",
+  "server": {
+    "port": 54499,
+    "pid": 43814,
+    "desktopShell": true,
+    "endpointJsonUpdatedAt": "2026-09-12T09:06:58.959Z"
+  },
+  "endpointCount": 47,
+  "kindCounts": {
+    "unary": 42,
+    "stream": 5
+  },
+  "note": "Generated from the installed Host FaceModel (typert.host.js TYPERT.invocations), cross-checked against every live endpoint with the descriptor-validation probe. `args` lists the exact wire field names accepted in payload.args (an OBJECT of named fields, never a positional array). A field absent from `requiredArgs` is optional: the validator does not report it when missing.",
+  "endpoints": [
+    {
+      "method": "$events",
+      "kind": "stream",
+      "args": [],
+      "requestType": null,
+      "responseType": "RemoteEventDownlinkFrame",
+      "notes": "Gateway-internal forwarded-event stream. First item is always {\"type\":\"ready\",\"clientId\",\"host\"}; then emit and waterfall frames. The payload must be exactly {\"args\":{}}.",
+      "definedIn": "@deepseek-ai/dsh-api-gateway (stream-protocol)",
+      "cancellation": "signal",
+      "requiredArgs": [],
+      "optionalArgs": [],
+      "declaredArgs": [],
+      "descriptorValidation": {
+        "probedHttpStatus": 404,
+        "message": "POST /api/$events returns 404 (streams are only reachable on the WS mux). Opening it over WS with a non-empty args object fails with gateway/arguments-invalid."
+      }
+    },
+    {
+      "method": "$events/result",
+      "kind": "unary",
+      "args": [
+        "clientId",
+        "eventId",
+        "outcome"
+      ],
+      "requestType": "RemoteEventResult",
+      "responseType": "void (result.value is undefined, so the wire envelope is {\"result\":{\"ok\":true}} with no value key)",
+      "notes": "Answer one delivered waterfall event. outcome is {kind:\"next\"} | {kind:\"result\",value?} | {kind:\"rejected\",error:RemoteEventRejection}.",
+      "definedIn": "@deepseek-ai/dsh-api-gateway (stream-protocol)",
+      "cancellation": null,
+      "requiredArgs": [
+        "clientId",
+        "eventId",
+        "outcome"
+      ],
+      "optionalArgs": [],
+      "declaredArgs": [
+        {
+          "name": "clientId",
+          "wire": "clientId",
+          "source": "json",
+          "lookup": null,
+          "type": "RemoteEventClientId",
+          "optional": false
+        },
+        {
+          "name": "eventId",
+          "wire": "eventId",
+          "source": "json",
+          "lookup": null,
+          "type": "RemoteEventId",
+          "optional": false
+        },
+        {
+          "name": "outcome",
+          "wire": "outcome",
+          "source": "json",
+          "lookup": null,
+          "type": "RemoteEventOutcome",
+          "optional": false
+        }
+      ],
+      "descriptorValidation": {
+        "probedHttpStatus": 200,
+        "message": "args are NOT descriptor-validated: a malformed payload returns gateway/internal \"api gateway: invalid Remote event result\"; a well-formed payload naming no active stream returns \"typert gateway: Remote event result identifies no active event stream\"; a well-formed payload for an active generation returns {\"ok\":true}."
+      }
+    },
+    {
+      "method": "credentials/describe",
+      "kind": "unary",
+      "args": [
+        "refs"
+      ],
+      "requestType": null,
+      "responseType": "Record<string, CredentialInfo>",
+      "notes": "Describe several credential references (configured/source/writable) without revealing values.",
+      "definedIn": "@deepseek-ai/dsh-api-settings-controller",
+      "cancellation": null,
+      "requiredArgs": [
+        "refs"
+      ],
+      "optionalArgs": [],
+      "declaredArgs": [
+        {
+          "name": "refs",
+          "wire": "refs",
+          "source": "json",
+          "lookup": null,
+          "type": "@deepseek-ai/dsh-api-settings-controller#credentials/describe:refs",
+          "optional": false
+        }
+      ],
+      "descriptorValidation": {
+        "probedHttpStatus": 200,
+        "message": "typert gateway: credentials/describe: args fields do not match the descriptor: missing \"refs\"; unexpected \"__probe__\""
+      }
+    },
+    {
+      "method": "credentials/set",
+      "kind": "unary",
+      "args": [
+        "ref",
+        "value"
+      ],
+      "requestType": null,
+      "responseType": "void",
+      "notes": "Store one credential value under a reference (write-only; no read path returns it).",
+      "definedIn": "@deepseek-ai/dsh-api-settings-controller",
+      "cancellation": null,
+      "requiredArgs": [
+        "ref",
+        "value"
+      ],
+      "optionalArgs": [],
+      "declaredArgs": [
+        {
+          "name": "ref",
+          "wire": "ref",
+          "source": "json",
+          "lookup": null,
+          "type": "@deepseek-ai/dsh-api-settings-controller#credentials/set:ref",
+          "optional": false
+        },
+        {
+          "name": "value",
+          "wire": "value",
+          "source": "json",
+          "lookup": null,
+          "type": "@deepseek-ai/dsh-api-settings-controller#credentials/set:value",
+          "optional": false
+        }
+      ],
+      "descriptorValidation": {
+        "probedHttpStatus": 200,
+        "message": "typert gateway: credentials/set: args fields do not match the descriptor: missing \"ref\", \"value\"; unexpected \"__probe__\""
+      }
+    },
+    {
+      "method": "credentials/unset",
+      "kind": "unary",
+      "args": [
+        "ref"
+      ],
+      "requestType": null,
+      "responseType": "void",
+      "notes": "Remove one credential reference.",
+      "definedIn": "@deepseek-ai/dsh-api-settings-controller",
+      "cancellation": null,
+      "requiredArgs": [
+        "ref"
+      ],
+      "optionalArgs": [],
+      "declaredArgs": [
+        {
+          "name": "ref",
+          "wire": "ref",
+          "source": "json",
+          "lookup": null,
+          "type": "@deepseek-ai/dsh-api-settings-controller#credentials/unset:ref",
+          "optional": false
+        }
+      ],
+      "descriptorValidation": {
+        "probedHttpStatus": 200,
+        "message": "typert gateway: credentials/unset: args fields do not match the descriptor: missing \"ref\"; unexpected \"__probe__\""
+      }
+    },
+    {
+      "method": "directoryPicker/createDirectory",
+      "kind": "unary",
+      "args": [
+        "path",
+        "name"
+      ],
+      "requestType": null,
+      "responseType": "string",
+      "notes": "Create one child directory from an in-app browser.",
+      "definedIn": "@deepseek-ai/dsh-api-workspace-controller",
+      "cancellation": null,
+      "requiredArgs": [
+        "path",
+        "name"
+      ],
+      "optionalArgs": [],
+      "declaredArgs": [
+        {
+          "name": "path",
+          "wire": "path",
+          "source": "json",
+          "lookup": null,
+          "type": "@deepseek-ai/dsh-api-workspace-controller#directoryPicker/createDirectory:path",
+          "optional": false
+        },
+        {
+          "name": "name",
+          "wire": "name",
+          "source": "json",
+          "lookup": null,
+          "type": "@deepseek-ai/dsh-api-workspace-controller#directoryPicker/createDirectory:name",
+          "optional": false
+        }
+      ],
+      "descriptorValidation": {
+        "probedHttpStatus": 200,
+        "message": "typert gateway: directoryPicker/createDirectory: args fields do not match the descriptor: missing \"path\", \"name\"; unexpected \"__probe__\""
+      }
+    },
+    {
+      "method": "directoryPicker/list",
+      "kind": "unary",
+      "args": [
+        "path"
+      ],
+      "requestType": null,
+      "responseType": "DirectoryListing",
+      "notes": "List one directory level plus ancestry for an in-app browser (needs the browse backend; unavailable in this deployment).",
+      "definedIn": "@deepseek-ai/dsh-api-workspace-controller",
+      "cancellation": "signal",
+      "requiredArgs": [],
+      "optionalArgs": [
+        "path"
+      ],
+      "declaredArgs": [
+        {
+          "name": "path",
+          "wire": "path",
+          "source": "json",
+          "lookup": null,
+          "type": "@deepseek-ai/dsh-api-workspace-controller#directoryPicker/list:path",
+          "optional": true
+        }
+      ],
+      "descriptorValidation": {
+        "probedHttpStatus": 200,
+        "message": "typert gateway: directoryPicker/list: args fields do not match the descriptor: unexpected \"__probe__\""
+      }
+    },
+    {
+      "method": "directoryPicker/pick",
+      "kind": "unary",
+      "args": [],
+      "requestType": null,
+      "responseType": "string | null",
+      "notes": "Open the Host OS directory chooser and return the chosen absolute path (or null when cancelled).",
+      "definedIn": "@deepseek-ai/dsh-api-workspace-controller",
+      "cancellation": "signal",
+      "requiredArgs": [],
+      "optionalArgs": [],
+      "declaredArgs": [],
+      "descriptorValidation": {
+        "probedHttpStatus": 200,
+        "message": "typert gateway: directoryPicker/pick: args fields do not match the descriptor: unexpected \"__probe__\""
+      }
+    },
+    {
+      "method": "fileReferences/list",
+      "kind": "unary",
+      "args": [
+        "agentId",
+        "query"
+      ],
+      "requestType": null,
+      "responseType": "FileReferenceCandidate[]",
+      "notes": "Complete path-only file reference candidates inside an Agent/session cwd for a query prefix.",
+      "definedIn": "@deepseek-ai/dsh-api-session-controller",
+      "cancellation": "signal",
+      "requiredArgs": [
+        "agentId",
+        "query"
+      ],
+      "optionalArgs": [],
+      "declaredArgs": [
+        {
+          "name": "agent",
+          "wire": "agentId",
+          "source": "lookup",
+          "lookup": "agent",
+          "type": "@deepseek-ai/dsh-session/types#SessionId",
+          "optional": false
+        },
+        {
+          "name": "query",
+          "wire": "query",
+          "source": "json",
+          "lookup": null,
+          "type": "@deepseek-ai/dsh-api-session-controller#fileReferences/list:query",
+          "optional": false
+        }
+      ],
+      "descriptorValidation": {
+        "probedHttpStatus": 200,
+        "message": "typert gateway: fileReferences/list: args fields do not match the descriptor: missing \"agentId\", \"query\"; unexpected \"__probe__\""
+      }
+    },
+    {
+      "method": "session/attachment",
+      "kind": "unary",
+      "args": [
+        "request"
+      ],
+      "requestType": "SessionAttachmentRequest",
+      "responseType": "SessionAttachmentValue",
+      "notes": "Read one durable image attachment's metadata and base64 bytes.",
+      "definedIn": "@deepseek-ai/dsh-api-session-controller",
+      "cancellation": null,
+      "requiredArgs": [
+        "request"
+      ],
+      "optionalArgs": [],
+      "declaredArgs": [
+        {
+          "name": "request",
+          "wire": "request",
+          "source": "json",
+          "lookup": null,
+          "type": "@deepseek-ai/dsh-api-session-controller/types#SessionAttachmentRequest",
+          "optional": false
+        }
+      ],
+      "descriptorValidation": {
+        "probedHttpStatus": 200,
+        "message": "typert gateway: session/attachment: args fields do not match the descriptor: missing \"request\"; unexpected \"__probe__\""
+      }
+    },
+    {
+      "method": "session/cancel",
+      "kind": "unary",
+      "args": [
+        "request"
+      ],
+      "requestType": "SessionCancelRequest",
+      "responseType": "SessionCancelValue",
+      "notes": "Request cancellation of the addressed Session's active turn.",
+      "definedIn": "@deepseek-ai/dsh-api-session-controller",
+      "cancellation": null,
+      "requiredArgs": [
+        "request"
+      ],
+      "optionalArgs": [],
+      "declaredArgs": [
+        {
+          "name": "request",
+          "wire": "request",
+          "source": "json",
+          "lookup": null,
+          "type": "@deepseek-ai/dsh-api-session-controller/types#SessionCancelRequest",
+          "optional": false
+        }
+      ],
+      "descriptorValidation": {
+        "probedHttpStatus": 200,
+        "message": "typert gateway: session/cancel: args fields do not match the descriptor: missing \"request\"; unexpected \"__probe__\""
+      }
+    },
+    {
+      "method": "session/canOpenWorkspacePath",
+      "kind": "unary",
+      "args": [],
+      "requestType": null,
+      "responseType": "boolean",
+      "notes": "Whether the Host can hand a workspace path to a native opener.",
+      "definedIn": "@deepseek-ai/dsh-api-session-controller",
+      "cancellation": null,
+      "requiredArgs": [],
+      "optionalArgs": [],
+      "declaredArgs": [],
+      "descriptorValidation": {
+        "probedHttpStatus": 200,
+        "message": "typert gateway: session/canOpenWorkspacePath: args fields do not match the descriptor: unexpected \"__probe__\""
+      }
+    },
+    {
+      "method": "session/control",
+      "kind": "stream",
+      "args": [],
+      "requestType": null,
+      "responseType": "SessionControlFrame",
+      "notes": "Stream Host-wide live state: one baseline of queues/jobs/projections, then queue, jobs, and projection updates.",
+      "definedIn": "@deepseek-ai/dsh-api-session-controller",
+      "cancellation": "signal",
+      "requiredArgs": null,
+      "optionalArgs": null,
+      "declaredArgs": [],
+      "descriptorValidation": {
+        "probedHttpStatus": 200,
+        "message": ""
+      }
+    },
+    {
+      "method": "session/create",
+      "kind": "unary",
+      "args": [
+        "request"
+      ],
+      "requestType": "SessionCreateRequest",
+      "responseType": "SessionCreateValue",
+      "notes": "Create a Session (optionally with an explicit id, cwd, workspace, and agent preset).",
+      "definedIn": "@deepseek-ai/dsh-api-session-controller",
+      "cancellation": null,
+      "requiredArgs": [
+        "request"
+      ],
+      "optionalArgs": [],
+      "declaredArgs": [
+        {
+          "name": "request",
+          "wire": "request",
+          "source": "json",
+          "lookup": null,
+          "type": "@deepseek-ai/dsh-api-session-controller/types#SessionCreateRequest",
+          "optional": false
+        }
+      ],
+      "descriptorValidation": {
+        "probedHttpStatus": 200,
+        "message": "typert gateway: session/create: args fields do not match the descriptor: missing \"request\"; unexpected \"__probe__\""
+      }
+    },
+    {
+      "method": "session/follow",
+      "kind": "stream",
+      "args": [
+        "request"
+      ],
+      "requestType": "SessionFollowRequest",
+      "responseType": "SessionFollowFrame",
+      "notes": "Stream one Session generation: opening snapshot, then ordered durable events and (if opted in) live assistant stream frames.",
+      "definedIn": "@deepseek-ai/dsh-api-session-controller",
+      "cancellation": "signal",
+      "requiredArgs": null,
+      "optionalArgs": null,
+      "declaredArgs": [
+        {
+          "name": "request",
+          "wire": "request",
+          "source": "json",
+          "lookup": null,
+          "type": "@deepseek-ai/dsh-api-session-controller/types#SessionFollowRequest",
+          "optional": null
+        }
+      ],
+      "descriptorValidation": {
+        "probedHttpStatus": 200,
+        "message": ""
+      }
+    },
+    {
+      "method": "session/fork",
+      "kind": "unary",
+      "args": [
+        "request"
+      ],
+      "requestType": "SessionForkRequest",
+      "responseType": "SessionForkValue",
+      "notes": "Fork a Session at an optional seq, returning the new Session id.",
+      "definedIn": "@deepseek-ai/dsh-api-session-controller",
+      "cancellation": null,
+      "requiredArgs": [
+        "request"
+      ],
+      "optionalArgs": [],
+      "declaredArgs": [
+        {
+          "name": "request",
+          "wire": "request",
+          "source": "json",
+          "lookup": null,
+          "type": "@deepseek-ai/dsh-api-session-controller/types#SessionForkRequest",
+          "optional": false
+        }
+      ],
+      "descriptorValidation": {
+        "probedHttpStatus": 200,
+        "message": "typert gateway: session/fork: args fields do not match the descriptor: missing \"request\"; unexpected \"__probe__\""
+      }
+    },
+    {
+      "method": "session/list",
+      "kind": "unary",
+      "args": [
+        "_request"
+      ],
+      "requestType": "SessionListRequest",
+      "responseType": "SessionListValue",
+      "notes": "List Sessions known to the Host, newest-activity first, each with cached projections (title, goal, todos, ...).",
+      "definedIn": "@deepseek-ai/dsh-api-session-controller",
+      "cancellation": "signal",
+      "requiredArgs": [
+        "_request"
+      ],
+      "optionalArgs": [],
+      "declaredArgs": [
+        {
+          "name": "_request",
+          "wire": "_request",
+          "source": "json",
+          "lookup": null,
+          "type": "@deepseek-ai/dsh-api-session-controller/types#SessionListRequest",
+          "optional": false
+        }
+      ],
+      "descriptorValidation": {
+        "probedHttpStatus": 200,
+        "message": "typert gateway: session/list: args fields do not match the descriptor: missing \"_request\"; unexpected \"__probe__\""
+      }
+    },
+    {
+      "method": "session/modelCatalog",
+      "kind": "unary",
+      "args": [],
+      "requestType": null,
+      "responseType": "ModelCatalog",
+      "notes": "Return the Host model catalog: default selection, routable providers, provider groups, and failures.",
+      "definedIn": "@deepseek-ai/dsh-api-session-controller",
+      "cancellation": null,
+      "requiredArgs": [],
+      "optionalArgs": [],
+      "declaredArgs": [],
+      "descriptorValidation": {
+        "probedHttpStatus": 200,
+        "message": "typert gateway: session/modelCatalog: args fields do not match the descriptor: unexpected \"__probe__\""
+      }
+    },
+    {
+      "method": "session/openWorkspacePath",
+      "kind": "unary",
+      "args": [
+        "request"
+      ],
+      "requestType": "SessionOpenWorkspacePathRequest",
+      "responseType": "SessionOpenWorkspacePathValue",
+      "notes": "Ask the Host desktop to open or reveal one workspace path.",
+      "definedIn": "@deepseek-ai/dsh-api-session-controller",
+      "cancellation": "signal",
+      "requiredArgs": [
+        "request"
+      ],
+      "optionalArgs": [],
+      "declaredArgs": [
+        {
+          "name": "request",
+          "wire": "request",
+          "source": "json",
+          "lookup": null,
+          "type": "@deepseek-ai/dsh-api-session-controller/types#SessionOpenWorkspacePathRequest",
+          "optional": false
+        }
+      ],
+      "descriptorValidation": {
+        "probedHttpStatus": 200,
+        "message": "typert gateway: session/openWorkspacePath: args fields do not match the descriptor: missing \"request\"; unexpected \"__probe__\""
+      }
+    },
+    {
+      "method": "session/page",
+      "kind": "unary",
+      "args": [
+        "request"
+      ],
+      "requestType": "SessionPageRequest",
+      "responseType": "SessionPage",
+      "notes": "Read one message-aligned backwards page of a Session log at or below an inclusive seq cut.",
+      "definedIn": "@deepseek-ai/dsh-api-session-controller",
+      "cancellation": "signal",
+      "requiredArgs": [
+        "request"
+      ],
+      "optionalArgs": [],
+      "declaredArgs": [
+        {
+          "name": "request",
+          "wire": "request",
+          "source": "json",
+          "lookup": null,
+          "type": "@deepseek-ai/dsh-api-session-controller/types#SessionPageRequest",
+          "optional": false
+        }
+      ],
+      "descriptorValidation": {
+        "probedHttpStatus": 200,
+        "message": "typert gateway: session/page: args fields do not match the descriptor: missing \"request\"; unexpected \"__probe__\""
+      }
+    },
+    {
+      "method": "session/prompt",
+      "kind": "unary",
+      "args": [
+        "request"
+      ],
+      "requestType": "SessionPromptRequest",
+      "responseType": "SessionPromptValue",
+      "notes": "Submit user content into a Session inbox, either queued for the next turn or as a steering message.",
+      "definedIn": "@deepseek-ai/dsh-api-session-controller",
+      "cancellation": "signal",
+      "requiredArgs": [
+        "request"
+      ],
+      "optionalArgs": [],
+      "declaredArgs": [
+        {
+          "name": "request",
+          "wire": "request",
+          "source": "json",
+          "lookup": null,
+          "type": "@deepseek-ai/dsh-api-session-controller/types#SessionPromptRequest",
+          "optional": false
+        }
+      ],
+      "descriptorValidation": {
+        "probedHttpStatus": 200,
+        "message": "typert gateway: session/prompt: args fields do not match the descriptor: missing \"request\"; unexpected \"__probe__\""
+      }
+    },
+    {
+      "method": "session/rename",
+      "kind": "unary",
+      "args": [
+        "request"
+      ],
+      "requestType": "SessionRenameRequest",
+      "responseType": "SessionRenameValue",
+      "notes": "Set a Session title; returns the normalized title and the committing seq.",
+      "definedIn": "@deepseek-ai/dsh-api-session-controller",
+      "cancellation": null,
+      "requiredArgs": [
+        "request"
+      ],
+      "optionalArgs": [],
+      "declaredArgs": [
+        {
+          "name": "request",
+          "wire": "request",
+          "source": "json",
+          "lookup": null,
+          "type": "@deepseek-ai/dsh-api-session-controller/types#SessionRenameRequest",
+          "optional": false
+        }
+      ],
+      "descriptorValidation": {
+        "probedHttpStatus": 200,
+        "message": "typert gateway: session/rename: args fields do not match the descriptor: missing \"request\"; unexpected \"__probe__\""
+      }
+    },
+    {
+      "method": "session/search",
+      "kind": "unary",
+      "args": [
+        "request"
+      ],
+      "requestType": "SessionSearchRequest",
+      "responseType": "SessionSearchValue",
+      "notes": "Full-text search across session content (needs the session-query index; disabled in this deployment).",
+      "definedIn": "@deepseek-ai/dsh-api-session-controller",
+      "cancellation": "signal",
+      "requiredArgs": [
+        "request"
+      ],
+      "optionalArgs": [],
+      "declaredArgs": [
+        {
+          "name": "request",
+          "wire": "request",
+          "source": "json",
+          "lookup": null,
+          "type": "@deepseek-ai/dsh-api-session-controller/types#SessionSearchRequest",
+          "optional": false
+        }
+      ],
+      "descriptorValidation": {
+        "probedHttpStatus": 200,
+        "message": "typert gateway: session/search: args fields do not match the descriptor: missing \"request\"; unexpected \"__probe__\""
+      }
+    },
+    {
+      "method": "session/selectModel",
+      "kind": "unary",
+      "args": [
+        "request"
+      ],
+      "requestType": "SessionSelectModelRequest",
+      "responseType": "SessionSelectModelValue",
+      "notes": "Persist the model selection (provider/model/reasoningEffort) for subsequent requests.",
+      "definedIn": "@deepseek-ai/dsh-api-session-controller",
+      "cancellation": null,
+      "requiredArgs": [
+        "request"
+      ],
+      "optionalArgs": [],
+      "declaredArgs": [
+        {
+          "name": "request",
+          "wire": "request",
+          "source": "json",
+          "lookup": null,
+          "type": "@deepseek-ai/dsh-api-session-controller/types#SessionSelectModelRequest",
+          "optional": false
+        }
+      ],
+      "descriptorValidation": {
+        "probedHttpStatus": 200,
+        "message": "typert gateway: session/selectModel: args fields do not match the descriptor: missing \"request\"; unexpected \"__probe__\""
+      }
+    },
+    {
+      "method": "session/updateQueue",
+      "kind": "unary",
+      "args": [
+        "request"
+      ],
+      "requestType": "SessionUpdateQueueRequest",
+      "responseType": "SessionUpdateQueueValue",
+      "notes": "Edit, remove, or steer one still-pending queue item.",
+      "definedIn": "@deepseek-ai/dsh-api-session-controller",
+      "cancellation": null,
+      "requiredArgs": [
+        "request"
+      ],
+      "optionalArgs": [],
+      "declaredArgs": [
+        {
+          "name": "request",
+          "wire": "request",
+          "source": "json",
+          "lookup": null,
+          "type": "@deepseek-ai/dsh-api-session-controller/types#SessionUpdateQueueRequest",
+          "optional": false
+        }
+      ],
+      "descriptorValidation": {
+        "probedHttpStatus": 200,
+        "message": "typert gateway: session/updateQueue: args fields do not match the descriptor: missing \"request\"; unexpected \"__probe__\""
+      }
+    },
+    {
+      "method": "settings/canOpenAgentPresetDirectory",
+      "kind": "unary",
+      "args": [],
+      "requestType": null,
+      "responseType": "boolean",
+      "notes": "Whether the Host can open a local Agent preset directory.",
+      "definedIn": "@deepseek-ai/dsh-api-settings-controller",
+      "cancellation": null,
+      "requiredArgs": [],
+      "optionalArgs": [],
+      "declaredArgs": [],
+      "descriptorValidation": {
+        "probedHttpStatus": 200,
+        "message": "typert gateway: settings/canOpenAgentPresetDirectory: args fields do not match the descriptor: unexpected \"__probe__\""
+      }
+    },
+    {
+      "method": "settings/describe",
+      "kind": "unary",
+      "args": [],
+      "requestType": null,
+      "responseType": "SettingsDescribeValue",
+      "notes": "Read every registered settings namespace as a redacted view with its revision.",
+      "definedIn": "@deepseek-ai/dsh-api-settings-controller",
+      "cancellation": null,
+      "requiredArgs": [],
+      "optionalArgs": [],
+      "declaredArgs": [],
+      "descriptorValidation": {
+        "probedHttpStatus": 200,
+        "message": "typert gateway: settings/describe: args fields do not match the descriptor: unexpected \"__probe__\""
+      }
+    },
+    {
+      "method": "settings/mutate",
+      "kind": "unary",
+      "args": [
+        "ns",
+        "ops",
+        "expectedRevision"
+      ],
+      "requestType": null,
+      "responseType": "SettingsNamespaceView",
+      "notes": "Apply path-addressed set/unset operations to one settings namespace, guarded by expectedRevision.",
+      "definedIn": "@deepseek-ai/dsh-api-settings-controller",
+      "cancellation": null,
+      "requiredArgs": [
+        "ns",
+        "ops"
+      ],
+      "optionalArgs": [
+        "expectedRevision"
+      ],
+      "declaredArgs": [
+        {
+          "name": "ns",
+          "wire": "ns",
+          "source": "json",
+          "lookup": null,
+          "type": "@deepseek-ai/dsh-api-settings-controller#settings/mutate:ns",
+          "optional": false
+        },
+        {
+          "name": "ops",
+          "wire": "ops",
+          "source": "json",
+          "lookup": null,
+          "type": "@deepseek-ai/dsh-api-settings-controller#settings/mutate:ops",
+          "optional": false
+        },
+        {
+          "name": "expectedRevision",
+          "wire": "expectedRevision",
+          "source": "json",
+          "lookup": null,
+          "type": "@deepseek-ai/dsh-api-settings-controller#settings/mutate:expectedRevision",
+          "optional": true
+        }
+      ],
+      "descriptorValidation": {
+        "probedHttpStatus": 200,
+        "message": "typert gateway: settings/mutate: args fields do not match the descriptor: missing \"ns\", \"ops\"; unexpected \"__probe__\""
+      }
+    },
+    {
+      "method": "settings/openAgentPresetDirectory",
+      "kind": "unary",
+      "args": [
+        "agentPreset"
+      ],
+      "requestType": null,
+      "responseType": "AgentPresetDirectoryOpenValue",
+      "notes": "Open or reveal a locally authored Agent preset directory.",
+      "definedIn": "@deepseek-ai/dsh-api-settings-controller",
+      "cancellation": "signal",
+      "requiredArgs": [
+        "agentPreset"
+      ],
+      "optionalArgs": [],
+      "declaredArgs": [
+        {
+          "name": "agentPreset",
+          "wire": "agentPreset",
+          "source": "json",
+          "lookup": null,
+          "type": "@deepseek-ai/dsh-api-settings-controller#settings/openAgentPresetDirectory:agentPreset",
+          "optional": false
+        }
+      ],
+      "descriptorValidation": {
+        "probedHttpStatus": 200,
+        "message": "typert gateway: settings/openAgentPresetDirectory: args fields do not match the descriptor: missing \"agentPreset\"; unexpected \"__probe__\""
+      }
+    },
+    {
+      "method": "settings/openSettingsDocument",
+      "kind": "unary",
+      "args": [],
+      "requestType": null,
+      "responseType": "SettingsDocumentOpenValue",
+      "notes": "Hand the settings document to the Host's native editor.",
+      "definedIn": "@deepseek-ai/dsh-api-settings-controller",
+      "cancellation": "signal",
+      "requiredArgs": [],
+      "optionalArgs": [],
+      "declaredArgs": [],
+      "descriptorValidation": {
+        "probedHttpStatus": 200,
+        "message": "typert gateway: settings/openSettingsDocument: args fields do not match the descriptor: unexpected \"__probe__\""
+      }
+    },
+    {
+      "method": "settings/replace",
+      "kind": "unary",
+      "args": [
+        "ns",
+        "section",
+        "expectedRevision"
+      ],
+      "requestType": null,
+      "responseType": "SettingsNamespaceView",
+      "notes": "Replace one settings namespace section wholesale, guarded by expectedRevision.",
+      "definedIn": "@deepseek-ai/dsh-api-settings-controller",
+      "cancellation": null,
+      "requiredArgs": [
+        "ns",
+        "section"
+      ],
+      "optionalArgs": [
+        "expectedRevision"
+      ],
+      "declaredArgs": [
+        {
+          "name": "ns",
+          "wire": "ns",
+          "source": "json",
+          "lookup": null,
+          "type": "@deepseek-ai/dsh-api-settings-controller#settings/replace:ns",
+          "optional": false
+        },
+        {
+          "name": "section",
+          "wire": "section",
+          "source": "json",
+          "lookup": null,
+          "type": "@deepseek-ai/dsh-api-settings-controller#settings/replace:section",
+          "optional": false
+        },
+        {
+          "name": "expectedRevision",
+          "wire": "expectedRevision",
+          "source": "json",
+          "lookup": null,
+          "type": "@deepseek-ai/dsh-api-settings-controller#settings/replace:expectedRevision",
+          "optional": true
+        }
+      ],
+      "descriptorValidation": {
+        "probedHttpStatus": 200,
+        "message": "typert gateway: settings/replace: args fields do not match the descriptor: missing \"ns\", \"section\"; unexpected \"__probe__\""
+      }
+    },
+    {
+      "method": "settings/update",
+      "kind": "unary",
+      "args": [
+        "ns",
+        "patch",
+        "expectedRevision"
+      ],
+      "requestType": null,
+      "responseType": "SettingsNamespaceView",
+      "notes": "Merge a shallow patch into one settings namespace section, guarded by expectedRevision.",
+      "definedIn": "@deepseek-ai/dsh-api-settings-controller",
+      "cancellation": null,
+      "requiredArgs": [
+        "ns",
+        "patch"
+      ],
+      "optionalArgs": [
+        "expectedRevision"
+      ],
+      "declaredArgs": [
+        {
+          "name": "ns",
+          "wire": "ns",
+          "source": "json",
+          "lookup": null,
+          "type": "@deepseek-ai/dsh-api-settings-controller#settings/update:ns",
+          "optional": false
+        },
+        {
+          "name": "patch",
+          "wire": "patch",
+          "source": "json",
+          "lookup": null,
+          "type": "@deepseek-ai/dsh-api-settings-controller#settings/update:patch",
+          "optional": false
+        },
+        {
+          "name": "expectedRevision",
+          "wire": "expectedRevision",
+          "source": "json",
+          "lookup": null,
+          "type": "@deepseek-ai/dsh-api-settings-controller#settings/update:expectedRevision",
+          "optional": true
+        }
+      ],
+      "descriptorValidation": {
+        "probedHttpStatus": 200,
+        "message": "typert gateway: settings/update: args fields do not match the descriptor: missing \"ns\", \"patch\"; unexpected \"__probe__\""
+      }
+    },
+    {
+      "method": "skills/list",
+      "kind": "unary",
+      "args": [
+        "request"
+      ],
+      "requestType": "SkillListRequest",
+      "responseType": "SkillListValue",
+      "notes": "List human-invocable skills available to one Session.",
+      "definedIn": "@deepseek-ai/dsh-api-session-controller",
+      "cancellation": "signal",
+      "requiredArgs": [
+        "request"
+      ],
+      "optionalArgs": [],
+      "declaredArgs": [
+        {
+          "name": "request",
+          "wire": "request",
+          "source": "json",
+          "lookup": null,
+          "type": "@deepseek-ai/dsh-api-session-controller/types#SkillListRequest",
+          "optional": false
+        }
+      ],
+      "descriptorValidation": {
+        "probedHttpStatus": 200,
+        "message": "typert gateway: skills/list: args fields do not match the descriptor: missing \"request\"; unexpected \"__probe__\""
+      }
+    },
+    {
+      "method": "workspace/archiveSession",
+      "kind": "unary",
+      "args": [
+        "request"
+      ],
+      "requestType": "WorkspaceArchiveSessionRequest",
+      "responseType": "WorkspaceArchiveValue",
+      "notes": "Archive a Session out of Workspace grouping surfaces.",
+      "definedIn": "@deepseek-ai/dsh-api-workspace-controller",
+      "cancellation": null,
+      "requiredArgs": [
+        "request"
+      ],
+      "optionalArgs": [],
+      "declaredArgs": [
+        {
+          "name": "request",
+          "wire": "request",
+          "source": "json",
+          "lookup": null,
+          "type": "@deepseek-ai/dsh-api-workspace-controller/types#WorkspaceArchiveSessionRequest",
+          "optional": false
+        }
+      ],
+      "descriptorValidation": {
+        "probedHttpStatus": 200,
+        "message": "typert gateway: workspace/archiveSession: args fields do not match the descriptor: missing \"request\"; unexpected \"__probe__\""
+      }
+    },
+    {
+      "method": "workspace/create",
+      "kind": "unary",
+      "args": [
+        "request"
+      ],
+      "requestType": "WorkspaceCreateRequest",
+      "responseType": "WorkspaceCreateValue",
+      "notes": "Register an existing directory as a Workspace.",
+      "definedIn": "@deepseek-ai/dsh-api-workspace-controller",
+      "cancellation": null,
+      "requiredArgs": [
+        "request"
+      ],
+      "optionalArgs": [],
+      "declaredArgs": [
+        {
+          "name": "request",
+          "wire": "request",
+          "source": "json",
+          "lookup": null,
+          "type": "@deepseek-ai/dsh-api-workspace-controller/types#WorkspaceCreateRequest",
+          "optional": false
+        }
+      ],
+      "descriptorValidation": {
+        "probedHttpStatus": 200,
+        "message": "typert gateway: workspace/create: args fields do not match the descriptor: missing \"request\"; unexpected \"__probe__\""
+      }
+    },
+    {
+      "method": "workspace/delete",
+      "kind": "unary",
+      "args": [
+        "request"
+      ],
+      "requestType": "WorkspaceDeleteRequest",
+      "responseType": "WorkspaceDeleteValue",
+      "notes": "Delete a Workspace registration.",
+      "definedIn": "@deepseek-ai/dsh-api-workspace-controller",
+      "cancellation": null,
+      "requiredArgs": [
+        "request"
+      ],
+      "optionalArgs": [],
+      "declaredArgs": [
+        {
+          "name": "request",
+          "wire": "request",
+          "source": "json",
+          "lookup": null,
+          "type": "@deepseek-ai/dsh-api-workspace-controller/types#WorkspaceDeleteRequest",
+          "optional": false
+        }
+      ],
+      "descriptorValidation": {
+        "probedHttpStatus": 200,
+        "message": "typert gateway: workspace/delete: args fields do not match the descriptor: missing \"request\"; unexpected \"__probe__\""
+      }
+    },
+    {
+      "method": "workspace/follow",
+      "kind": "stream",
+      "args": [],
+      "requestType": null,
+      "responseType": "WorkspaceFollowFrame",
+      "notes": "Stream Workspace state: one baseline, then upsert/remove/order/archived increments.",
+      "definedIn": "@deepseek-ai/dsh-api-workspace-controller",
+      "cancellation": "signal",
+      "requiredArgs": null,
+      "optionalArgs": null,
+      "declaredArgs": [],
+      "descriptorValidation": {
+        "probedHttpStatus": 200,
+        "message": ""
+      }
+    },
+    {
+      "method": "workspace/insertBefore",
+      "kind": "unary",
+      "args": [
+        "request"
+      ],
+      "requestType": "WorkspaceInsertBeforeRequest",
+      "responseType": "WorkspaceOrderValue",
+      "notes": "Reorder the Workspace registry (DOM insertBefore semantics).",
+      "definedIn": "@deepseek-ai/dsh-api-workspace-controller",
+      "cancellation": null,
+      "requiredArgs": [
+        "request"
+      ],
+      "optionalArgs": [],
+      "declaredArgs": [
+        {
+          "name": "request",
+          "wire": "request",
+          "source": "json",
+          "lookup": null,
+          "type": "@deepseek-ai/dsh-api-workspace-controller/types#WorkspaceInsertBeforeRequest",
+          "optional": false
+        }
+      ],
+      "descriptorValidation": {
+        "probedHttpStatus": 200,
+        "message": "typert gateway: workspace/insertBefore: args fields do not match the descriptor: missing \"request\"; unexpected \"__probe__\""
+      }
+    },
+    {
+      "method": "workspace/insertSessionBefore",
+      "kind": "unary",
+      "args": [
+        "request"
+      ],
+      "requestType": "WorkspaceInsertSessionBeforeRequest",
+      "responseType": "WorkspaceValue",
+      "notes": "Reorder a Session inside a Workspace's manual order.",
+      "definedIn": "@deepseek-ai/dsh-api-workspace-controller",
+      "cancellation": null,
+      "requiredArgs": [
+        "request"
+      ],
+      "optionalArgs": [],
+      "declaredArgs": [
+        {
+          "name": "request",
+          "wire": "request",
+          "source": "json",
+          "lookup": null,
+          "type": "@deepseek-ai/dsh-api-workspace-controller/types#WorkspaceInsertSessionBeforeRequest",
+          "optional": false
+        }
+      ],
+      "descriptorValidation": {
+        "probedHttpStatus": 200,
+        "message": "typert gateway: workspace/insertSessionBefore: args fields do not match the descriptor: missing \"request\"; unexpected \"__probe__\""
+      }
+    },
+    {
+      "method": "workspace/rename",
+      "kind": "unary",
+      "args": [
+        "request"
+      ],
+      "requestType": "WorkspaceRenameRequest",
+      "responseType": "WorkspaceValue",
+      "notes": "Rename a Workspace title.",
+      "definedIn": "@deepseek-ai/dsh-api-workspace-controller",
+      "cancellation": null,
+      "requiredArgs": [
+        "request"
+      ],
+      "optionalArgs": [],
+      "declaredArgs": [
+        {
+          "name": "request",
+          "wire": "request",
+          "source": "json",
+          "lookup": null,
+          "type": "@deepseek-ai/dsh-api-workspace-controller/types#WorkspaceRenameRequest",
+          "optional": false
+        }
+      ],
+      "descriptorValidation": {
+        "probedHttpStatus": 200,
+        "message": "typert gateway: workspace/rename: args fields do not match the descriptor: missing \"request\"; unexpected \"__probe__\""
+      }
+    },
+    {
+      "method": "workspaceFiles/changes",
+      "kind": "stream",
+      "args": [
+        "workspaceFileScopeId"
+      ],
+      "requestType": null,
+      "responseType": "WorkspaceFileWatchFrame",
+      "notes": "Stream filesystem observations inside a Session workspace root: ready, then change frames.",
+      "definedIn": "@deepseek-ai/dsh-api-workspace-files",
+      "cancellation": "signal",
+      "requiredArgs": null,
+      "optionalArgs": null,
+      "declaredArgs": [
+        {
+          "name": "workspaceFileScope",
+          "wire": "workspaceFileScopeId",
+          "source": "lookup",
+          "lookup": "workspaceFileScope",
+          "type": "@deepseek-ai/dsh-session/types#SessionId",
+          "optional": null
+        }
+      ],
+      "descriptorValidation": {
+        "probedHttpStatus": 200,
+        "message": ""
+      }
+    },
+    {
+      "method": "workspaceFiles/list",
+      "kind": "unary",
+      "args": [
+        "workspaceFileScopeId",
+        "path"
+      ],
+      "requestType": null,
+      "responseType": "WorkspaceDirectoryListing",
+      "notes": "List direct children of one workspace-relative directory.",
+      "definedIn": "@deepseek-ai/dsh-api-workspace-files",
+      "cancellation": "signal",
+      "requiredArgs": [
+        "workspaceFileScopeId",
+        "path"
+      ],
+      "optionalArgs": [],
+      "declaredArgs": [
+        {
+          "name": "workspaceFileScope",
+          "wire": "workspaceFileScopeId",
+          "source": "lookup",
+          "lookup": "workspaceFileScope",
+          "type": "@deepseek-ai/dsh-session/types#SessionId",
+          "optional": false
+        },
+        {
+          "name": "path",
+          "wire": "path",
+          "source": "json",
+          "lookup": null,
+          "type": "@deepseek-ai/dsh-api-workspace-files#workspaceFiles/list:path",
+          "optional": false
+        }
+      ],
+      "descriptorValidation": {
+        "probedHttpStatus": 200,
+        "message": "typert gateway: workspaceFiles/list: args fields do not match the descriptor: missing \"workspaceFileScopeId\", \"path\"; unexpected \"__probe__\""
+      }
+    },
+    {
+      "method": "workspaceFiles/read",
+      "kind": "unary",
+      "args": [
+        "workspaceFileScopeId",
+        "path",
+        "range"
+      ],
+      "requestType": null,
+      "responseType": "WorkspaceFileText",
+      "notes": "Read a line window of a text file by absolute path.",
+      "definedIn": "@deepseek-ai/dsh-api-workspace-files",
+      "cancellation": "signal",
+      "requiredArgs": [
+        "workspaceFileScopeId",
+        "path",
+        "range"
+      ],
+      "optionalArgs": [],
+      "declaredArgs": [
+        {
+          "name": "workspaceFileScope",
+          "wire": "workspaceFileScopeId",
+          "source": "lookup",
+          "lookup": "workspaceFileScope",
+          "type": "@deepseek-ai/dsh-session/types#SessionId",
+          "optional": false
+        },
+        {
+          "name": "path",
+          "wire": "path",
+          "source": "json",
+          "lookup": null,
+          "type": "@deepseek-ai/dsh-api-workspace-files#workspaceFiles/read:path",
+          "optional": false
+        },
+        {
+          "name": "range",
+          "wire": "range",
+          "source": "json",
+          "lookup": null,
+          "type": "@deepseek-ai/dsh-api-workspace-files/types#WorkspaceFileRange",
+          "optional": false
+        }
+      ],
+      "descriptorValidation": {
+        "probedHttpStatus": 200,
+        "message": "typert gateway: workspaceFiles/read: args fields do not match the descriptor: missing \"workspaceFileScopeId\", \"path\", \"range\"; unexpected \"__probe__\""
+      }
+    },
+    {
+      "method": "workspaceFiles/readAll",
+      "kind": "unary",
+      "args": [
+        "workspaceFileScopeId",
+        "path"
+      ],
+      "requestType": null,
+      "responseType": "WorkspaceFileBytes",
+      "notes": "Read an entire file's bytes (base64) by absolute path.",
+      "definedIn": "@deepseek-ai/dsh-api-workspace-files",
+      "cancellation": "signal",
+      "requiredArgs": [
+        "workspaceFileScopeId",
+        "path"
+      ],
+      "optionalArgs": [],
+      "declaredArgs": [
+        {
+          "name": "workspaceFileScope",
+          "wire": "workspaceFileScopeId",
+          "source": "lookup",
+          "lookup": "workspaceFileScope",
+          "type": "@deepseek-ai/dsh-session/types#SessionId",
+          "optional": false
+        },
+        {
+          "name": "path",
+          "wire": "path",
+          "source": "json",
+          "lookup": null,
+          "type": "@deepseek-ai/dsh-api-workspace-files#workspaceFiles/readAll:path",
+          "optional": false
+        }
+      ],
+      "descriptorValidation": {
+        "probedHttpStatus": 200,
+        "message": "typert gateway: workspaceFiles/readAll: args fields do not match the descriptor: missing \"workspaceFileScopeId\", \"path\"; unexpected \"__probe__\""
+      }
+    },
+    {
+      "method": "workspaceFiles/readBytes",
+      "kind": "unary",
+      "args": [
+        "workspaceFileScopeId",
+        "path",
+        "range"
+      ],
+      "requestType": null,
+      "responseType": "WorkspaceFileBytes",
+      "notes": "Read a byte window of a file by absolute path.",
+      "definedIn": "@deepseek-ai/dsh-api-workspace-files",
+      "cancellation": "signal",
+      "requiredArgs": [
+        "workspaceFileScopeId",
+        "path",
+        "range"
+      ],
+      "optionalArgs": [],
+      "declaredArgs": [
+        {
+          "name": "workspaceFileScope",
+          "wire": "workspaceFileScopeId",
+          "source": "lookup",
+          "lookup": "workspaceFileScope",
+          "type": "@deepseek-ai/dsh-session/types#SessionId",
+          "optional": false
+        },
+        {
+          "name": "path",
+          "wire": "path",
+          "source": "json",
+          "lookup": null,
+          "type": "@deepseek-ai/dsh-api-workspace-files#workspaceFiles/readBytes:path",
+          "optional": false
+        },
+        {
+          "name": "range",
+          "wire": "range",
+          "source": "json",
+          "lookup": null,
+          "type": "@deepseek-ai/dsh-api-workspace-files/types#WorkspaceByteRange",
+          "optional": false
+        }
+      ],
+      "descriptorValidation": {
+        "probedHttpStatus": 200,
+        "message": "typert gateway: workspaceFiles/readBytes: args fields do not match the descriptor: missing \"workspaceFileScopeId\", \"path\", \"range\"; unexpected \"__probe__\""
+      }
+    },
+    {
+      "method": "workspaceFiles/readRelated",
+      "kind": "unary",
+      "args": [
+        "workspaceFileScopeId",
+        "path",
+        "relativePath"
+      ],
+      "requestType": null,
+      "responseType": "WorkspaceFileBytes",
+      "notes": "Read a path resolved relative to another file's directory.",
+      "definedIn": "@deepseek-ai/dsh-api-workspace-files",
+      "cancellation": "signal",
+      "requiredArgs": [
+        "workspaceFileScopeId",
+        "path",
+        "relativePath"
+      ],
+      "optionalArgs": [],
+      "declaredArgs": [
+        {
+          "name": "workspaceFileScope",
+          "wire": "workspaceFileScopeId",
+          "source": "lookup",
+          "lookup": "workspaceFileScope",
+          "type": "@deepseek-ai/dsh-session/types#SessionId",
+          "optional": false
+        },
+        {
+          "name": "path",
+          "wire": "path",
+          "source": "json",
+          "lookup": null,
+          "type": "@deepseek-ai/dsh-api-workspace-files#workspaceFiles/readRelated:path",
+          "optional": false
+        },
+        {
+          "name": "relativePath",
+          "wire": "relativePath",
+          "source": "json",
+          "lookup": null,
+          "type": "@deepseek-ai/dsh-api-workspace-files#workspaceFiles/readRelated:relativePath",
+          "optional": false
+        }
+      ],
+      "descriptorValidation": {
+        "probedHttpStatus": 200,
+        "message": "typert gateway: workspaceFiles/readRelated: args fields do not match the descriptor: missing \"workspaceFileScopeId\", \"path\", \"relativePath\"; unexpected \"__probe__\""
+      }
+    },
+    {
+      "method": "workspaceFiles/stat",
+      "kind": "unary",
+      "args": [
+        "workspaceFileScopeId",
+        "path"
+      ],
+      "requestType": null,
+      "responseType": "WorkspaceFileStat",
+      "notes": "Stat one file by absolute path (absolutePath, version, bytes).",
+      "definedIn": "@deepseek-ai/dsh-api-workspace-files",
+      "cancellation": "signal",
+      "requiredArgs": [
+        "workspaceFileScopeId",
+        "path"
+      ],
+      "optionalArgs": [],
+      "declaredArgs": [
+        {
+          "name": "workspaceFileScope",
+          "wire": "workspaceFileScopeId",
+          "source": "lookup",
+          "lookup": "workspaceFileScope",
+          "type": "@deepseek-ai/dsh-session/types#SessionId",
+          "optional": false
+        },
+        {
+          "name": "path",
+          "wire": "path",
+          "source": "json",
+          "lookup": null,
+          "type": "@deepseek-ai/dsh-api-workspace-files#workspaceFiles/stat:path",
+          "optional": false
+        }
+      ],
+      "descriptorValidation": {
+        "probedHttpStatus": 200,
+        "message": "typert gateway: workspaceFiles/stat: args fields do not match the descriptor: missing \"workspaceFileScopeId\", \"path\"; unexpected \"__probe__\""
+      }
+    }
+  ]
+}

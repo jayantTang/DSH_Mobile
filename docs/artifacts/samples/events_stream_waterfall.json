@@ -1,0 +1,74 @@
+{
+  "_capture": {
+    "method": "$events",
+    "args": {},
+    "rawWebSocketBytes": 2376,
+    "framesReceived": 2,
+    "truncated": false,
+    "capturedAt": "2026-09-13T13:56:23.568304+08:00",
+    "note": "<中文文本已脱敏>"
+  },
+  "frames": [
+    {
+      "type": "item",
+      "streamId": "s1",
+      "value": {
+        "type": "ready",
+        "clientId": "id-00000000-0000-4000-8000-000000000002",
+        "host": {
+          "home": "/Users/example"
+        }
+      }
+    },
+    {
+      "type": "item",
+      "streamId": "s1",
+      "value": {
+        "type": "waterfall",
+        "event": "user-questions/request",
+        "eventId": "id-00000000-0000-4000-8000-000000000003",
+        "agentId": "session-0ca68654-8654-4000-8000-0ca686540a76",
+        "request": {
+          "questions": [
+            {
+              "id": "dns",
+              "question": "<中文文本已脱敏>",
+              "header": "<中文文本已脱敏>",
+              "options": [
+                {
+                  "description": "<中文文本已脱敏>",
+                  "label": "<中文文本已脱敏>"
+                },
+                {
+                  "description": "<中文文本已脱敏>",
+                  "label": "<中文文本已脱敏>"
+                },
+                {
+                  "description": "<中文文本已脱敏>",
+                  "label": "<中文文本已脱敏>"
+                }
+              ]
+            },
+            {
+              "id": "deploy",
+              "question": "<中文文本已脱敏>",
+              "header": "<中文文本已脱敏>",
+              "options": [
+                {
+                  "description": "<中文文本已脱敏>",
+                  "label": "<中文文本已脱敏>"
+                },
+                {
+                  "description": "<中文文本已脱敏>",
+                  "label": "<中文文本已脱敏>"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "errors": [],
+  "opened": true
+}

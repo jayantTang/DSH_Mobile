@@ -1,0 +1,10 @@
+# 临时会话由运行器创建并预置为归档（见 front matter）；{{session}} 就是它。
+# 归档区在列表最底部，先滚到它——断言看不到屏幕外的东西。
+1  do: 连接本机 DSH  | want: id:session.list
+2  do: 什么都不做  | want: id:session.row.{{session}} ; absent
+3  do: 滚动到 text:已归档  | want: text:已归档 | shot: archived-collapsed check=texts after
+4  do: 点击 text:已归档  | want: id:session.archived.row.{{session}}
+5  do: 什么都不做  | want: id:session.archived.row.{{session}} | shot: archived-expanded check=texts after
+6  do: 点击 id:session.archived.row.{{session}}
+7  do: 等待 id:composer.field  | want: id:composer.field
+8  do: 什么都不做  | shot: archived-opened

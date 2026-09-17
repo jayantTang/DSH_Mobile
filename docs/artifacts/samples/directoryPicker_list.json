@@ -1,0 +1,14 @@
+{
+  "type": "server-response",
+  "rpcId": "probe-1789278463320-7",
+  "result": {
+    "ok": false,
+    "error": {
+      "code": "directory-picker/unavailable",
+      "message": "<中文文本已脱敏>",
+      "details": {
+        "capability": "native"
+      }
+    }
+  }
+}

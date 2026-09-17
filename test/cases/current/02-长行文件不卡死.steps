@@ -1,0 +1,5 @@
+# 锚点由用例自己给：这份文件没有报告标题可等。
+1  do: 打开报告 test/fixtures/long-line.txt（这是正常内容） | want: text:这是正常内容
+2  do: 什么都不做                          | shot: long-line check=texts
+3  do: 什么都不做                          | want: text:本行还有
+4  do: 什么都不做                          | want: text:读到这里说明没卡死

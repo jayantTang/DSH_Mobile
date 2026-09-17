@@ -1,0 +1,12 @@
+// 部署地址的默认值：仓库里只留占位符，真值写在 Config.local.xcconfig（已 gitignore）。
+//
+// 用法：cp Config.xcconfig Config.local.xcconfig，再把下面两行改成自己的地址。
+// 工程用 #include? 可选包含本机那份：文件不存在时自动跳过，不会构建失败。
+//
+// 注意：xcconfig 把 "//" 当作注释起始，所以 URL 必须写成 https:/$()/host 这种
+// 形式（$() 展开为空串），否则斜杠后面的内容会被当成注释吃掉。
+
+DSH_RELAY_URL = https:/$()/relay.example.com/dsh-link
+DSH_UPDATE_FEED = https:/$()/relay.example.com/ios/version.json
+
+#include? "Config.local.xcconfig"

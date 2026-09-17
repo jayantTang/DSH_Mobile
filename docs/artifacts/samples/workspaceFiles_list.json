@@ -1,0 +1,95 @@
+{
+  "type": "server-response",
+  "rpcId": "probe-1789278471497-5",
+  "result": {
+    "ok": true,
+    "value": {
+      "path": "",
+      "entries": [
+        {
+          "name": ".git",
+          "type": "directory"
+        },
+        {
+          "name": ".gitignore",
+          "type": "file",
+          "size": 808
+        },
+        {
+          "name": "build",
+          "type": "directory"
+        },
+        {
+          "name": "CMakeLists.txt",
+          "type": "file",
+          "size": 817
+        },
+        {
+          "name": "components",
+          "type": "directory"
+        },
+        {
+          "name": "dependencies.lock",
+          "type": "file",
+          "size": 944
+        },
+        {
+          "name": "docs",
+          "type": "directory"
+        },
+        {
+          "name": "host-mac",
+          "type": "directory"
+        },
+        {
+          "name": "main",
+          "type": "directory"
+        },
+        {
+          "name": "managed_components",
+          "type": "directory"
+        },
+        {
+          "name": "partitions.csv",
+          "type": "file",
+          "size": 660
+        },
+        {
+          "name": "README.md",
+          "type": "file",
+          "size": 20245
+        },
+        {
+          "name": "sdkconfig",
+          "type": "file",
+          "size": 91570
+        },
+        {
+          "name": "sdkconfig.defaults",
+          "type": "file",
+          "size": 7193
+        },
+        {
+          "name": "sdkconfig.defaults.local",
+          "type": "file",
+          "size": 194
+        },
+        {
+          "name": "sdkconfig.defaults.local.example",
+          "type": "file",
+          "size": 263
+        },
+        {
+          "name": "tools",
+          "type": "directory"
+        },
+        {
+          "name": "version.txt",
+          "type": "file",
+          "size": 6
+        }
+      ],
+      "truncated": false
+    }
+  }
+}

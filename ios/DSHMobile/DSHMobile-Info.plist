@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- 声明支持中文，而不只是界面文字用中文。
+	     iOS 按 App 声明的本地化装配字体回退链：只声明英文时，系统字体在
+	     Web 视图里画不出汉字（整个页面变成方框），因为回退链里没有 CJK
+	     字体。真机上界面文字偶好看不出问题，网页渲染会直接暴露。 -->
+	<key>CFBundleLocalizations</key>
+	<array>
+		<string>en</string>
+		<string>zh-Hans</string>
+	</array>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>zh-Hans</string>
+	<!-- 后台保活：有会话在跑、或有待回答的提问时，App 播放无声音频换取继续被
+	     调度，事件流才不会断，跑完/提问的通知才发得出来。空闲不播，见
+	     Support/RunKeepAlive.swift。缺这一段时进程进后台几十秒即被挂起。 -->
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>audio</string>
+	</array>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>com.jayanttang.dsh.connect</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>dsh</string>
+			</array>
+		</dict>
+	</array>
+	<!-- 局域网直连走明文 http://<内网 IP>:<port>。App Transport Security
+	     默认禁止明文，只有豁免"本地网络"才能连上；中转路径是 https/wss，
+	     不受影响。没有这一段，真机上局域网直连会直接失败。 -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<!-- iOS 14 起访问本地网络需要用户授权，缺少该说明会导致连接被静默拒绝。 -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>用于在同一 Wi-Fi 下直连你电脑上的 DSH，速度和延迟都优于经公网中转。</string>
+	<!-- 「扫码配对」需要相机：扫描电脑上显示的配对二维码。没有这段说明，
+	     iOS 会直接终止 App，而不是弹出授权框。 -->
+	<key>NSCameraUsageDescription</key>
+	<string>用于扫描电脑上显示的配对二维码，快速完成连接，无需手动输入。</string>
+	<!-- 部署地址不写进源码：值由 Config.xcconfig 提供，本机可用 Config.local.xcconfig
+	     （已 gitignore）覆盖成自己的中转与更新源。仓库里提交的是 relay.example.com
+	     占位符，读取处见 Support/AppConfig.swift。 -->
+	<key>DSHRelayURL</key>
+	<string>$(DSH_RELAY_URL)</string>
+	<key>DSHUpdateFeed</key>
+	<string>$(DSH_UPDATE_FEED)</string>
+</dict>
+</plist>

@@ -1,0 +1,8 @@
+# 临时会话由运行器的「临时目录」创建，它一条消息都没有，正是「灰色空会话」本身；
+# 它不属于任何工作区，所以落在「未分组」折叠区里——要滚到并展开才渲染得出来，
+# 断言才看得见（断言看不到屏幕外的东西）。
+# 一个 want 里的多项用逗号分隔，`; absent` 表示「不该出现」。
+1  do: 连接本机 DSH  | want: id:session.list | shot: sessions check=texts
+2  do: 滚动到 id:session.ungrouped  | want: id:session.ungrouped
+3  do: 点击 id:session.ungrouped  | want: id:session.ungrouped
+4  do: 什么都不做  | want: id:session.row.{{session}} ; absent | shot: ungrouped check=texts after

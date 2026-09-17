@@ -1,0 +1,566 @@
+import DSHKit
+import SwiftUI
+
+/// Renders one transcript row.
+///
+/// The visual language mirrors the desktop client: the human's messages are
+/// tinted bubbles, assistant prose is plain and full-width, thinking is
+/// collapsed, and tool calls are bordered cards that expand into their
+/// arguments and output.
+struct TimelineRowView: View {
+    let item: TimelineItem
+
+    var body: some View {
+        row
+            // `contain` makes the row itself an element that is queryable and
+            // annotatable while leaving its children reachable. Without it a
+            // plain container is not an accessibility element at all, so the
+            // identifier was invisible to both UI tests and VoiceOver.
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier(identifier)
+    }
+
+    /// Stable identifier so UI tests can address a row without depending on
+    /// its rendered text.
+    private var identifier: String {
+        switch item.kind {
+        case .userMessage: return "row.user"
+        case .assistantText: return "row.assistant"
+        case .reasoning: return "row.reasoning"
+        case .toolCall: return "row.tool"
+        case .notice: return "row.notice"
+        case .turnDivider: return "row.turnEnd"
+        case .unknown: return "row.unknown"
+        }
+    }
+
+    @ViewBuilder
+    private var row: some View {
+        switch item.kind {
+        case .userMessage(let text, let images, let isSteering, let isPending, let isAgentSent):
+            UserMessageRow(
+                text: text,
+                images: images,
+                isSteering: isSteering,
+                isPending: isPending,
+                isAgentSent: isAgentSent
+            )
+
+        case .assistantText(let text):
+            MarkdownText(text: text)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+        case .reasoning(let text):
+            ReasoningRow(text: text)
+
+        case .toolCall(let invocation):
+            ToolCallRow(invocation: invocation)
+
+        case .notice(let text, let isError):
+            NoticeRow(text: text, isError: isError)
+
+        case .turnDivider(let turn, let reason, let duration):
+            TurnDividerRow(turn: turn, reason: reason, duration: duration)
+
+        case .unknown:
+            EmptyView()
+        }
+    }
+}
+
+// MARK: - User message
+
+private struct UserMessageRow: View {
+    let text: String
+    let images: [ContentBlock.ImageAttachment]
+    let isSteering: Bool
+    /// True until the host promotes a queued message into the transcript.
+    let isPending: Bool
+    /// True when the agent sent this, not the person holding the phone.
+    let isAgentSent: Bool
+
+    /// The agent's own messages sit on the agent's side, like every other thing
+    /// it says. They arrive as prompts — the protocol's only door for a picture
+    /// — so without this they would be drawn as if the user had sent them.
+    private var alignment: HorizontalAlignment { isAgentSent ? .leading : .trailing }
+
+    var body: some View {
+        HStack {
+            if !isAgentSent { Spacer(minLength: 40) }
+            VStack(alignment: alignment, spacing: DSHTheme.Spacing.hairline) {
+                if isSteering {
+                    Text("插入当前轮次")
+                        .font(DSHTheme.Typography.micro)
+                        .foregroundStyle(DSHTheme.brand)
+                } else if isPending {
+                    // Immediate acknowledgement that the message was accepted,
+                    // before the host has had time to start its turn.
+                    HStack(spacing: 3) {
+                        Image(systemName: "clock")
+                            .font(.system(size: 9))
+                        Text("已发送，等待开始")
+                            .font(DSHTheme.Typography.micro)
+                    }
+                    .foregroundStyle(DSHTheme.labelTertiary)
+                }
+                VStack(alignment: .leading, spacing: DSHTheme.Spacing.tight) {
+                    if !images.isEmpty {
+                        VStack(alignment: .leading, spacing: DSHTheme.Spacing.tight) {
+                            ForEach(images, id: \.attachmentId) { image in
+                                AttachmentThumbnail(attachment: image, maxHeight: 220)
+                            }
+                        }
+                    }
+                    if !text.isEmpty {
+                        Text(text)
+                            .font(DSHTheme.Typography.body)
+                            .foregroundStyle(DSHTheme.labelPrimary)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .padding(.horizontal, DSHTheme.Spacing.standard)
+                .padding(.vertical, DSHTheme.Spacing.tight)
+                .background(
+                    RoundedRectangle(cornerRadius: DSHTheme.Radius.large, style: .continuous)
+                        .fill(isAgentSent ? DSHTheme.layer1 : DSHTheme.brandSubtle)
+                )
+                .opacity(isPending ? 0.66 : 1)
+            }
+            if isAgentSent { Spacer(minLength: 40) }
+        }
+    }
+}
+
+/// The end of one turn.
+///
+/// Always drawn, including for ordinary completions: without a visible end, a
+/// finished run and a stalled one look identical from the transcript.
+struct TurnDividerRow: View {
+    let turn: Int
+    let reason: String
+    let duration: TimeInterval?
+
+    private var isNormal: Bool {
+        reason == "completed" || reason == "unknown"
+    }
+
+    private var text: String {
+        var parts: [String] = []
+        parts.append(isNormal ? "已完成" : Self.describe(reason))
+        if let duration {
+            parts.append(String(format: "%.1fs", duration))
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    var body: some View {
+        HStack(spacing: DSHTheme.Spacing.hairline) {
+            Rectangle()
+                .fill(DSHTheme.border1)
+                .frame(height: 1)
+            HStack(spacing: 3) {
+                Image(systemName: isNormal ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                    .font(.system(size: 10))
+                Text(text)
+                    .font(DSHTheme.Typography.micro)
+                    .fixedSize()
+            }
+            .foregroundStyle(isNormal ? DSHTheme.success : DSHTheme.danger)
+            Rectangle()
+                .fill(DSHTheme.border1)
+                .frame(height: 1)
+        }
+        .padding(.vertical, 2)
+        .accessibilityLabel("第 \(turn) 轮\(text)")
+    }
+
+    static func describe(_ reason: String) -> String {
+        switch reason {
+        case "cancelled", "canceled": return "已取消"
+        case "interrupted": return "被中断"
+        case "error", "failed": return "出错结束"
+        case "max-steps": return "达步数上限"
+        default: return "结束：\(reason)"
+        }
+    }
+}
+
+// MARK: - Reasoning
+
+/// Collapsed chain-of-thought, matching the desktop client's disclosure.
+private struct ReasoningRow: View {
+    let text: String
+    @State private var isExpanded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                withAnimation(.snappy(duration: 0.18)) { isExpanded.toggle() }
+            } label: {
+                HStack(spacing: DSHTheme.Spacing.hairline) {
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                    Image(systemName: "brain")
+                        .font(.system(size: 11))
+                    Text("思考过程")
+                        .font(DSHTheme.Typography.micro)
+                    Spacer(minLength: 0)
+                    Text("\(text.count) 字")
+                        .font(DSHTheme.Typography.micro)
+                        .foregroundStyle(DSHTheme.labelDimmed)
+                }
+                .foregroundStyle(DSHTheme.labelTertiary)
+                .padding(.vertical, 4)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if isExpanded {
+                Text(text)
+                    .font(DSHTheme.Typography.caption)
+                    .foregroundStyle(DSHTheme.labelSecondary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, DSHTheme.Spacing.loose)
+                    .padding(.bottom, DSHTheme.Spacing.hairline)
+            }
+        }
+        .padding(.horizontal, DSHTheme.Spacing.tight)
+        .background(
+            RoundedRectangle(cornerRadius: DSHTheme.Radius.medium, style: .continuous)
+                .fill(DSHTheme.layer1)
+        )
+    }
+}
+
+// MARK: - Tool call
+
+/// One tool invocation: header, expandable arguments, and its output.
+struct ToolCallRow: View {
+    let invocation: ToolInvocation
+    /// `nil` follows the default for this result; a tap pins it either way.
+    @State private var expansionOverride: Bool?
+
+    private var hasOutput: Bool { !invocation.resultBlocks.isEmpty }
+
+    /// True when this result carries a picture.
+    ///
+    /// Such a card opens by itself. A screenshot the agent took is the point of
+    /// the message that contains it, and leaving it behind a collapsed
+    /// disclosure means the picture is never seen without hunting for it.
+    private var hasImage: Bool {
+        invocation.resultBlocks.contains { block in
+            if case .image = block { return true }
+            return false
+        }
+    }
+
+    private var isExpanded: Bool { expansionOverride ?? hasImage }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            header
+            if isExpanded {
+                Hairline()
+                details
+            }
+        }
+        .background(DSHTheme.layer1)
+        .clipShape(RoundedRectangle(cornerRadius: DSHTheme.Radius.large, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: DSHTheme.Radius.large, style: .continuous)
+                .stroke(invocation.isError ? DSHTheme.danger.opacity(0.4) : DSHTheme.border1, lineWidth: 1)
+        )
+    }
+
+    private var header: some View {
+        Button {
+            withAnimation(.snappy(duration: 0.18)) { expansionOverride = !isExpanded }
+        } label: {
+            HStack(spacing: DSHTheme.Spacing.tight) {
+                Image(systemName: Self.icon(for: invocation.name))
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(invocation.isError ? DSHTheme.danger : DSHTheme.brand)
+                    .frame(width: 16)
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(invocation.name)
+                        .font(DSHTheme.Typography.micro)
+                        .foregroundStyle(DSHTheme.labelSecondary)
+                    if !invocation.summary.isEmpty {
+                        Text(invocation.summary)
+                            .font(DSHTheme.Typography.code)
+                            .foregroundStyle(DSHTheme.labelPrimary)
+                            .lineLimit(isExpanded ? 4 : 2)
+                            .multilineTextAlignment(.leading)
+                    }
+                }
+
+                Spacer(minLength: 0)
+
+                if invocation.isRunning {
+                    ProgressView()
+                        .controlSize(.mini)
+                } else if invocation.isError {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 12))
+                        .foregroundStyle(DSHTheme.danger)
+                } else if hasOutput {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 12))
+                        .foregroundStyle(DSHTheme.success)
+                }
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(DSHTheme.labelDimmed)
+                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
+            }
+            .padding(.horizontal, DSHTheme.Spacing.standard)
+            .padding(.vertical, DSHTheme.Spacing.tight)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var details: some View {
+        VStack(alignment: .leading, spacing: DSHTheme.Spacing.tight) {
+            if !invocation.arguments.isEmpty, invocation.arguments != "{}" {
+                Text("参数")
+                    .font(DSHTheme.Typography.micro)
+                    .foregroundStyle(DSHTheme.labelTertiary)
+                Text(Self.prettyPrinted(invocation.arguments))
+                    .font(DSHTheme.Typography.code)
+                    .foregroundStyle(DSHTheme.labelSecondary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(DSHTheme.Spacing.tight)
+                    .background(DSHTheme.codeBackground)
+                    .clipShape(RoundedRectangle(cornerRadius: DSHTheme.Radius.medium, style: .continuous))
+            }
+
+            if hasOutput {
+                Text(invocation.isError ? "错误输出" : "输出")
+                    .font(DSHTheme.Typography.micro)
+                    .foregroundStyle(DSHTheme.labelTertiary)
+                ToolOutputView(blocks: invocation.resultBlocks)
+            } else if invocation.isRunning {
+                Text("执行中…")
+                    .font(DSHTheme.Typography.micro)
+                    .foregroundStyle(DSHTheme.labelTertiary)
+            }
+        }
+        .padding(DSHTheme.Spacing.tight)
+    }
+
+    /// Maps a tool name to an icon, echoing the desktop client's set.
+    static func icon(for name: String) -> String {
+        switch name {
+        case "bash", "shell", "pwsh": return "terminal"
+        case "read", "read_file": return "doc.text"
+        case "write", "create": return "square.and.pencil"
+        case "edit", "str_replace", "str_replace_editor", "apply_patch": return "pencil.line"
+        case "glob": return "folder.badge.questionmark"
+        case "grep", "search": return "magnifyingglass"
+        case "web_search": return "globe"
+        case "web_fetch": return "arrow.down.doc"
+        case "subagent", "task": return "person.2"
+        case "workflow": return "point.3.connected.trianglepath.dotted"
+        case "present": return "shippingbox"
+        case "todo_write", "todo": return "checklist"
+        case "job_list", "jobs": return "list.bullet.rectangle"
+        case "goal": return "target"
+        case "skill": return "wand.and.stars"
+        default: return "wrench.and.screwdriver"
+        }
+    }
+
+    /// Re-indents a JSON argument string so it reads in a narrow column.
+    static func prettyPrinted(_ json: String) -> String {
+        guard let data = json.data(using: .utf8),
+              let value = try? JSONSerialization.jsonObject(with: data),
+              let pretty = try? JSONSerialization.data(withJSONObject: value, options: [.prettyPrinted, .withoutEscapingSlashes]),
+              let text = String(data: pretty, encoding: .utf8)
+        else { return json }
+        return text
+    }
+}
+
+/// Renders tool output, tinting unified diffs the way the desktop client does.
+private struct ToolOutputView: View {
+    let blocks: [ContentBlock]
+    /// How much output is rendered before the reader asks for more.
+    ///
+    /// Every line is a real view; a few thousand of them is not something a
+    /// phone should lay out just because a command was verbose.
+    private let collapsedLineLimit = 120
+    @State private var isShowingAllOutput = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DSHTheme.Spacing.hairline) {
+            ForEach(Array(Self.flatten(blocks).enumerated()), id: \.offset) { _, block in
+                content(for: block)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(DSHTheme.Spacing.tight)
+        .background(DSHTheme.codeBackground)
+        .clipShape(RoundedRectangle(cornerRadius: DSHTheme.Radius.medium, style: .continuous))
+        .textSelection(.enabled)
+    }
+
+    /// Unwraps nested tool-result envelopes into a flat block list.
+    ///
+    /// The host nests a tool's own content one level inside a result envelope,
+    /// and deeper in principle. Flattening here keeps the view non-recursive,
+    /// which both avoids an opaque-type cycle and renders in one pass.
+    static func flatten(_ blocks: [ContentBlock]) -> [ContentBlock] {
+        var output: [ContentBlock] = []
+        var pending = Array(blocks.reversed())
+
+        while let block = pending.popLast() {
+            if case .toolResult(_, let inner, _) = block {
+                // The envelope carries no text of its own: splice its children
+                // in place, or drop it when it is empty.
+                pending.append(contentsOf: inner.reversed())
+                continue
+            }
+            output.append(block)
+        }
+        return output
+    }
+
+    /// Whether output is a unified diff rather than ordinary text.
+    static func looksLikeDiff(_ lines: [String]) -> Bool {
+        let markerCount = lines.filter { line in
+            line.hasPrefix("@@") || line.hasPrefix("+++") || line.hasPrefix("---")
+        }.count
+        guard markerCount > 0 else { return false }
+        // Require a real hunk header so a stray `---` rule in prose output does
+        // not flip the block into a horizontally scrolling diff.
+        return lines.contains { $0.hasPrefix("@@") }
+    }
+
+    @ViewBuilder
+    private func content(for block: ContentBlock) -> some View {
+        switch block {
+        case .text(let text):
+            let lines = text.components(separatedBy: .newlines)
+            let limit = isShowingAllOutput ? lines.count : collapsedLineLimit
+            let visible = Array(lines.prefix(limit))
+            // A unified diff only reads correctly when its lines stay on one
+            // line: wrapping breaks the +/- alignment that carries the meaning.
+            // Ordinary output wraps normally, which is friendlier on a phone.
+            if Self.looksLikeDiff(visible) {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(Array(visible.enumerated()), id: \.offset) { _, line in
+                            DiffLine(line: line)
+                                .fixedSize(horizontal: true, vertical: false)
+                        }
+                    }
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(visible.enumerated()), id: \.offset) { _, line in
+                        DiffLine(line: line)
+                    }
+                }
+            }
+            if lines.count > limit {
+                Button {
+                    isShowingAllOutput = true
+                } label: {
+                    Text("显示其余 \(lines.count - limit) 行")
+                        .font(DSHTheme.Typography.micro)
+                        .foregroundStyle(DSHTheme.brand)
+                        .padding(.top, DSHTheme.Spacing.hairline)
+                }
+                .buttonStyle(.plain)
+            }
+
+        case .image(let attachment):
+            // The actual picture, not a filename: the bytes are fetched from
+            // the attachment service and shown inline.
+            AttachmentThumbnail(attachment: attachment)
+
+        case .file(let attachment):
+            Label(attachment.name, systemImage: "doc")
+                .font(DSHTheme.Typography.micro)
+                .foregroundStyle(DSHTheme.labelSecondary)
+
+        case .reasoning(let text):
+            Text(text)
+                .font(DSHTheme.Typography.micro)
+                .foregroundStyle(DSHTheme.labelTertiary)
+
+        case .toolCall(let id, let name, _):
+            Label("\(name) · \(id)", systemImage: "arrow.turn.down.right")
+                .font(DSHTheme.Typography.micro)
+                .foregroundStyle(DSHTheme.labelTertiary)
+
+        case .toolResult:
+            // Unreachable: `flatten` splices every result envelope away before
+            // rendering. Rendering nothing here is what keeps this view
+            // non-recursive, which SwiftUI's opaque return types require.
+            EmptyView()
+
+        case .unknown(_, let raw):
+            Text(raw.compactDescription)
+                .font(DSHTheme.Typography.micro)
+                .foregroundStyle(DSHTheme.labelTertiary)
+        }
+    }
+}
+
+/// One line of tool output, tinted when it is part of a unified diff.
+private struct DiffLine: View {
+    let line: String
+
+    private var tone: Color? {
+        if line.hasPrefix("+++") || line.hasPrefix("---") { return nil }
+        if line.hasPrefix("+") { return DSHTheme.diffAdded }
+        if line.hasPrefix("-") { return DSHTheme.diffRemoved }
+        if line.hasPrefix("@@") { return DSHTheme.brandSubtle }
+        return nil
+    }
+
+    var body: some View {
+        Text(line.isEmpty ? " " : line)
+            .font(DSHTheme.Typography.code)
+            .foregroundStyle(DSHTheme.labelPrimary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, tone == nil ? 0 : 4)
+            .background(tone ?? .clear)
+        // No per-line `textSelection` here. A tool result can be hundreds of
+        // lines, and a selectable `Text` per line is enough layout work to
+        // stall the main thread while scrolling. Selection is enabled once on
+        // the surrounding block instead.
+    }
+}
+
+// MARK: - Notice
+
+private struct NoticeRow: View {
+    let text: String
+    let isError: Bool
+
+    var body: some View {
+        HStack(spacing: DSHTheme.Spacing.hairline) {
+            Image(systemName: isError ? "exclamationmark.triangle" : "info.circle")
+                .font(.system(size: 11))
+            Text(text)
+                .font(DSHTheme.Typography.micro)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .foregroundStyle(isError ? DSHTheme.danger : DSHTheme.labelTertiary)
+        .padding(.horizontal, DSHTheme.Spacing.tight)
+        .padding(.vertical, 5)
+        .background(
+            RoundedRectangle(cornerRadius: DSHTheme.Radius.medium, style: .continuous)
+                .fill(DSHTheme.layer1)
+        )
+    }
+}

@@ -1,0 +1,31 @@
+{
+  "name": "dsh-plugin-mobile-link",
+  "version": "0.2.0",
+  "private": true,
+  "description": "DSH mobile link: the PC half of the DSH Link Protocol (DLP) v1. Dials the public relay over WSS and serves the iOS client's session/event traffic from the local DSH instance.",
+  "type": "module",
+  "main": "lib/index.js",
+  "bin": {
+    "dsh-mobile-link": "lib/cli.js"
+  },
+  "exports": {
+    ".": "./lib/index.js",
+    "./dlp": "./lib/dlp.js",
+    "./link": "./lib/link.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "license": "MIT",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

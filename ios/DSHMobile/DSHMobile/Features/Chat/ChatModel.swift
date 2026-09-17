@@ -1,0 +1,654 @@
+import DSHKit
+import Foundation
+import Observation
+import UIKit
+
+/// Drives one session transcript: history, the live stream, and outbound input.
+@MainActor
+@Observable
+final class ChatModel {
+
+    enum Phase: Equatable {
+        case idle
+        case loading
+        case ready
+        case failed(String)
+    }
+
+    /// The transcript, folded from the journal and the live assistant stream.
+    private(set) var timeline = ChatTimeline()
+    private(set) var phase: Phase = .idle
+    private(set) var session: SessionSummary?
+    /// What the agent is doing right now.
+    ///
+    /// This has to come from the turn events on the session's own follow
+    /// stream. An earlier version listened for them on the forwarded host event
+    /// feed, which never carries them — so the state latched on at send time and
+    /// the stop button stayed on screen forever, even after the run finished.
+    enum Activity: Equatable {
+        case idle
+        /// A prompt this phone sent has been accepted, but no turn has started.
+        case submitting
+        /// The host reported a turn in progress.
+        case running
+    }
+
+    var activity: Activity {
+        if timeline.isTurnOpen { return .running }
+        if isAwaitingTurnStart { return .submitting }
+        return .idle
+    }
+
+    /// True only while a turn is genuinely in flight.
+    var isRunning: Bool { activity == .running }
+
+    /// Whether a stop control should be offered at all.
+    var isBusy: Bool { activity != .idle }
+
+    /// The most recent completed turn, used to announce the end of a run.
+    private(set) var completion: ChatTimeline.Completion?
+
+    /// Bumped whenever a run finishes, so the view can flash a confirmation.
+    private(set) var completionSignal: Int = 0
+
+    /// Streaming chunks waiting to be folded into the transcript.
+    private var pendingStreamFrames: [AssistantStreamFrame] = []
+    private var streamFlushTask: Task<Void, Never>?
+
+    /// How often coalesced stream frames are folded in.
+    ///
+    /// Eight times a second is smoother than the tokens arriving and roughly an
+    /// order of magnitude cheaper than folding each one.
+    private static let streamFlushInterval = Duration.milliseconds(120)
+
+    /// A picture chosen for the next prompt, held until it is sent.
+    ///
+    /// The bytes are carried as base64 because that is the only door a picture
+    /// has into a session: the Host promotes inline prompt images to durable
+    /// attachments, and the attachment service itself is read-only.
+    struct DraftImage: Identifiable {
+        let id = UUID()
+        let mediaType: String
+        let base64: String
+        let name: String
+        let preview: UIImage
+    }
+
+    /// Pictures queued in the composer, sent with the next prompt.
+    private(set) var draftImages: [DraftImage] = []
+
+    /// Name of the file being uploaded, for the composer to show.
+    private(set) var isUploadingFile: String?
+
+    /// Set between submitting a prompt and the host starting its turn.
+    private var isAwaitingTurnStart = false
+    /// The host's own view of whether it is running, from the session summary.
+    private var hostReportsRunning = false
+    private var awaitingTimeout: Task<Void, Never>?
+    private var lastSeenCompletionAt: Date?
+    /// True while older history is being fetched.
+    private(set) var isLoadingOlder = false
+    private(set) var hasOlder = false
+    private(set) var lastError: String?
+
+    /// Model routes the host can serve, loaded once per session.
+    private(set) var catalog: ModelCatalog?
+    private(set) var currentSelection: ModelSelection?
+    private(set) var permissionOptions: [PermissionsProjection.Option] = []
+    private(set) var currentPermission: String?
+
+    /// Composer state.
+    var draft: String = ""
+    /// Whether the next submission queues behind the turn or steers into it.
+    var steerNext: Bool = false
+
+    /// Bumped whenever the transcript grows, so the view can autoscroll.
+    private(set) var scrollSignal: Int = 0
+    /// Bumped when the user themselves adds something, which is the one case
+    /// where the view should jump back to the bottom even if they had scrolled
+    /// away: they are waiting to see their own message land.
+    private(set) var sendSignal: Int = 0
+
+    private var store: ConnectionStore?
+    private var hub: HostEventHub?
+    /// Warm transcripts, most recently used last.
+    private var cache: [String: CachedSession] = [:]
+    private var cacheOrder: [String] = []
+    private static let cacheLimit = 6
+    private var followTask: Task<Void, Never>?
+    private var eventTask: Task<Void, Never>?
+    private var oldestSeq: Int?
+    /// The cut the follow stream opened at; older pages must stay below it.
+    private var throughSeq: Int = 0
+
+    var address: SessionAddress? { session?.address }
+
+    /// Host prompts waiting for the human on this session.
+    var pendingPrompts: [HostEventHub.Pending] {
+        guard let session, let hub else { return [] }
+        return hub.pending(for: session.sessionId)
+    }
+
+    // MARK: - Lifecycle
+
+    func attach(store: ConnectionStore, hub: HostEventHub) {
+        self.store = store
+        self.hub = hub
+    }
+
+    /// Opens a session: cached transcript first, then the live stream.
+    ///
+    /// A session the user has already looked at renders instantly from cache and
+    /// refreshes underneath; only a first visit shows a spinner. Re-entering a
+    /// conversation is the single most common navigation in this app, so it must
+    /// not feel like a page load.
+    func open(_ summary: SessionSummary) async {
+        guard let client = store?.client else {
+            phase = .failed("尚未连接")
+            return
+        }
+        // Persist whatever the previous session had before switching away.
+        close()
+
+        let key = summary.sessionId
+        let cached = cache[key]
+        session = summary
+        lastError = nil
+        hostReportsRunning = summary.running
+        isAwaitingTurnStart = false
+        currentSelection = summary.projections?.values?.modelSelection?.next
+            ?? summary.projections?.values?.modelSelection?.lastUsed
+        permissionOptions = summary.projections?.values?.permissions?.options ?? []
+        currentPermission = summary.projections?.values?.permissions?.currentValue
+
+        if let cached {
+            // Restore immediately: same rows, same scroll position, no spinner.
+            timeline = cached.timeline
+            timeline.clearStreaming()
+            timeline.record(usage: summary.projections?.values?.tokenUsage)
+            hasOlder = cached.hasOlder
+            oldestSeq = cached.oldestSeq
+            throughSeq = max(cached.throughSeq, summary.asOfSeq)
+            phase = .ready
+            scrollSignal += 1
+        } else {
+            timeline = ChatTimeline()
+            timeline.record(usage: summary.projections?.values?.tokenUsage)
+            hasOlder = false
+            oldestSeq = nil
+            throughSeq = summary.asOfSeq
+            phase = .loading
+        }
+
+        startFollowing(client: client, summary: summary)
+        await loadCatalog(client: client)
+        subscribeToPrompts()
+    }
+
+    /// Stops the live streams and keeps the transcript warm for a revisit.
+    func close() {
+        saveToCache()
+        followTask?.cancel()
+        followTask = nil
+        eventTask?.cancel()
+        eventTask = nil
+        awaitingTimeout?.cancel()
+        awaitingTimeout = nil
+        streamFlushTask?.cancel()
+        streamFlushTask = nil
+        pendingStreamFrames.removeAll(keepingCapacity: false)
+        isAwaitingTurnStart = false
+    }
+
+    /// Re-opens the session on screen after the link came back.
+    ///
+    /// The follow stream dies with the socket, and a transcript that stopped
+    /// updating looks exactly like one where nothing is happening — the worst
+    /// possible failure for a client whose job is "is it still working?".
+    /// Re-opening reuses the warm cache, so the rows and the reading position
+    /// stay where the user left them.
+    func reopenAfterReconnect() async {
+        guard let current = session, store?.client != nil else { return }
+        await open(current)
+    }
+
+    // MARK: - Warm cache
+
+    /// A transcript kept in memory so returning to a session is instant.
+    private struct CachedSession {
+        var timeline: ChatTimeline
+        var hasOlder: Bool
+        var oldestSeq: Int?
+        var throughSeq: Int
+    }
+
+    private func saveToCache() {
+        guard let key = session?.sessionId, !timeline.items.isEmpty else { return }
+        cache[key] = CachedSession(
+            timeline: timeline,
+            hasOlder: hasOlder,
+            oldestSeq: oldestSeq,
+            throughSeq: throughSeq
+        )
+        cacheOrder.removeAll { $0 == key }
+        cacheOrder.append(key)
+        // Bounded so a long session-hopping run cannot grow without limit.
+        while cacheOrder.count > Self.cacheLimit {
+            cache.removeValue(forKey: cacheOrder.removeFirst())
+        }
+    }
+
+    /// Drops one session's cached transcript, e.g. after it is deleted.
+    func forget(_ sessionId: String) {
+        cache.removeValue(forKey: sessionId)
+        cacheOrder.removeAll { $0 == sessionId }
+    }
+
+    private func startFollowing(client: DSHClient, summary: SessionSummary) {
+        followTask = Task { [weak self] in
+            guard let self else { return }
+            let stream = await client.follow(
+                SessionFollowRequest(address: summary.address, maxMessages: 60, assistantStream: true)
+            )
+            do {
+                for try await frame in stream {
+                    if Task.isCancelled { return }
+                    self.apply(frame)
+                }
+                // The host ended the stream; the session may have been disposed.
+                if self.phase == .loading { self.phase = .ready }
+            } catch {
+                guard !Task.isCancelled else { return }
+                if self.phase == .loading {
+                    self.phase = .failed(ConnectionStore.describe(error))
+                } else {
+                    self.lastError = ConnectionStore.describe(error)
+                }
+            }
+        }
+    }
+
+    private func apply(_ frame: SessionFollowFrame) {
+        switch frame {
+        case .snapshot(let snapshot):
+            if timeline.items.isEmpty {
+                timeline.reset(with: snapshot.records)
+            } else {
+                // Warm cache: update in place so the reader keeps any older
+                // history they had already paged in.
+                timeline.merge(snapshot: snapshot.records)
+            }
+            throughSeq = max(throughSeq, snapshot.cursor)
+            oldestSeq = snapshot.records.first?.event.seq
+            hasOlder = snapshot.hasMore
+            phase = .ready
+            scrollSignal += 1
+
+        case .event(let event):
+            flushStreamFrames()
+            let change = timeline.apply(event)
+            if case .none = change {} else { scrollSignal += 1 }
+            // A live event proves the stream is healthy even if the summary
+            // was stale when the list was fetched.
+            if phase != .ready { phase = .ready }
+            reactToTurnLifecycle(event)
+
+        case .assistantStream(let streamFrame):
+            // Coalesced rather than applied per token. A model emits many
+            // chunks a second, and each one otherwise re-renders the whole
+            // transcript; on a phone that is enough to make the UI stop
+            // responding while a session is streaming.
+            enqueueStreamFrame(streamFrame)
+
+        case .unknown:
+            break
+        }
+    }
+
+    /// Queues one streaming frame and schedules a coalesced fold.
+    private func enqueueStreamFrame(_ frame: AssistantStreamFrame) {
+        pendingStreamFrames.append(frame)
+        guard streamFlushTask == nil else { return }
+        streamFlushTask = Task { [weak self] in
+            try? await Task.sleep(for: Self.streamFlushInterval)
+            guard !Task.isCancelled else { return }
+            self?.flushStreamFrames()
+        }
+    }
+
+    /// Folds every queued streaming frame in one go.
+    ///
+    /// Ordering is preserved: committed events flush first, so a message can
+    /// never be folded before the deltas that preceded it.
+    private func flushStreamFrames() {
+        streamFlushTask?.cancel()
+        streamFlushTask = nil
+        guard !pendingStreamFrames.isEmpty else { return }
+        let frames = pendingStreamFrames
+        pendingStreamFrames.removeAll(keepingCapacity: true)
+
+        var changed = false
+        for frame in frames {
+            if case .none = timeline.apply(frame) {} else { changed = true }
+        }
+        if changed { scrollSignal += 1 }
+    }
+
+    /// Turns the two lifecycle events into run state and a completion signal.
+    ///
+    /// Everything else in the journal is content; these two are state.
+    private func reactToTurnLifecycle(_ event: SessionEvent) {
+        switch event.type {
+        case "turn/start":
+            isAwaitingTurnStart = false
+            hostReportsRunning = true
+            awaitingTimeout?.cancel()
+            awaitingTimeout = nil
+
+        case "turn/end":
+            isAwaitingTurnStart = false
+            hostReportsRunning = false
+            awaitingTimeout?.cancel()
+            awaitingTimeout = nil
+            if let finished = timeline.lastCompletion,
+               finished.at != lastSeenCompletionAt {
+                lastSeenCompletionAt = finished.at
+                completion = finished
+                completionSignal += 1
+            }
+            // Token usage and the running flag both move at turn boundaries.
+            Task { await self.refreshSummary() }
+
+        default:
+            break
+        }
+    }
+
+    /// Watches the forwarded host feed for changes worth re-reading.
+    private func subscribeToPrompts() {
+        eventTask?.cancel()
+        guard let hub, let session else { return }
+        let target = session.sessionId
+        eventTask = Task { [weak self] in
+            for await event in hub.events() {
+                guard let self else { return }
+                switch event {
+                case .emit(let name, _) where name == "session/title":
+                    await self.refreshSummary()
+                case .ready:
+                    await self.refreshSummary()
+                default:
+                    break
+                }
+                _ = target
+            }
+        }
+    }
+
+    private func refreshSummary() async {
+        guard let client = store?.client, let current = session else { return }
+        guard let value = try? await client.sessions(),
+              let updated = value.items.first(where: { $0.sessionId == current.sessionId })
+        else { return }
+        session = updated
+        hostReportsRunning = updated.running
+        currentPermission = updated.projections?.values?.permissions?.currentValue
+        timeline.record(usage: updated.projections?.values?.tokenUsage)
+    }
+
+    private func loadCatalog(client: DSHClient) async {
+        guard catalog == nil else { return }
+        catalog = try? await client.modelCatalog()
+    }
+
+    // MARK: - History pagination
+
+    /// Loads one older page and prepends it.
+    func loadOlder() async {
+        guard let client = store?.client, let address, let oldest = oldestSeq, oldest > 1 else {
+            hasOlder = false
+            return
+        }
+        guard !isLoadingOlder else { return }
+        isLoadingOlder = true
+        defer { isLoadingOlder = false }
+
+        do {
+            let page = try await client.sessionPage(
+                SessionPageRequest(
+                    address: address,
+                    throughSeq: throughSeq,
+                    beforeSeq: oldest,
+                    maxMessages: 60
+                )
+            )
+            _ = timeline.prepend(older: page.records)
+            hasOlder = page.hasMore && !page.records.isEmpty
+            if let first = page.records.first?.event.seq { oldestSeq = first }
+        } catch {
+            // Paging past the cursor is the common failure after the host has
+            // trimmed a session; stop offering more rather than surfacing it.
+            hasOlder = false
+        }
+    }
+
+    // MARK: - Outbound actions
+
+    /// Adds pictures to the next prompt.
+    ///
+    /// Downscaled first: a phone photo is many megabytes, and the Host will
+    /// shrink it anyway — sending the original just makes the upload slow.
+    func addDraftImages(_ images: [UIImage], names: [String] = []) {
+        for (index, image) in images.enumerated() {
+            let resized = Self.downscaled(image, maximumEdge: 2048)
+            guard let data = resized.jpegData(compressionQuality: 0.85) else { continue }
+            let name = index < names.count ? names[index] : "photo-\(draftImages.count + 1).jpg"
+            draftImages.append(
+                DraftImage(
+                    mediaType: "image/jpeg",
+                    base64: data.base64EncodedString(),
+                    name: name,
+                    preview: resized
+                )
+            )
+        }
+    }
+
+    func removeDraftImage(id: UUID) {
+        draftImages.removeAll { $0.id == id }
+    }
+
+    func clearDraftImages() {
+        draftImages.removeAll()
+    }
+
+    /// Scales an image down so its longest edge fits `maximumEdge`.
+    private static func downscaled(_ image: UIImage, maximumEdge: CGFloat) -> UIImage {
+        let longest = max(image.size.width, image.size.height)
+        guard longest > maximumEdge else { return image }
+        let scale = maximumEdge / longest
+        let target = CGSize(width: image.size.width * scale, height: image.size.height * scale)
+        return UIGraphicsImageRenderer(size: target).image { _ in
+            image.draw(in: CGRect(origin: .zero, size: target))
+        }
+    }
+
+    /// Submits the composer's text.
+    ///
+    /// Steer mode interrupts the running turn instead of queueing behind it,
+    /// which is how the desktop client's "steer" affordance behaves.
+    func send() async {
+        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let images = draftImages
+        guard !text.isEmpty || !images.isEmpty, let client = store?.client, let session else { return }
+
+        let mode: SessionPromptRequest.Mode = (steerNext && isRunning) ? .steer : .queue
+        // Cleared optimistically so the field empties the instant you send, but
+        // restored if the host refuses — losing typed text to a transient
+        // failure is worse than seeing it come back.
+        draft = ""
+
+        // The request id is minted here because the host stores it on the
+        // durable message's source; that is what lets the transcript replace
+        // this optimistic row instead of showing the message twice.
+        let requestId = UUID().uuidString
+        timeline.echoUserPrompt(requestId: requestId, text: text)
+        scrollSignal += 1
+        sendSignal += 1
+        isAwaitingTurnStart = true
+        // If the host is already mid-turn the message sits in its queue, and
+        // `timeline.isTurnOpen` already reports running; otherwise a turn
+        // starts within a second. Either way this must not latch forever.
+        awaitingTimeout?.cancel()
+        awaitingTimeout = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(20))
+            guard !Task.isCancelled else { return }
+            self?.isAwaitingTurnStart = false
+        }
+
+        // Cleared only once the bytes are on their way; a failed send puts the
+        // pictures back alongside the text.
+        draftImages.removeAll()
+
+        do {
+            try await client.prompt(
+                SessionPromptRequest(
+                    requestId: requestId,
+                    sessionId: session.sessionId,
+                    mode: mode,
+                    content: Self.promptContent(text: text, images: images)
+                )
+            )
+        } catch {
+            isAwaitingTurnStart = false
+            if draft.isEmpty { draft = text }
+            if draftImages.isEmpty { draftImages = images }
+            lastError = ConnectionStore.describe(error)
+        }
+    }
+
+    /// Uploads one file and tells the agent where it landed.
+    ///
+    /// The Host cannot receive file bytes — `workspaceFiles/*` is read-only and
+    /// `uploadFile` is not served — so the link stages the file on the computer
+    /// and the prompt names the path. The agent then reads it with the ordinary
+    /// tools it already has.
+    func sendFile(named name: String, data: Data) async {
+        guard let session, let store else { return }
+        isUploadingFile = name
+        defer { isUploadingFile = nil }
+
+        do {
+            let staged = try await store.uploadFile(
+                data: data,
+                name: name,
+                sessionId: session.sessionId
+            )
+            // The path is what makes this useful: without it the agent knows a
+            // file exists but not where.
+            draft = "我发送了一个文件，已保存到：\(staged.path)（\(staged.bytes) 字节）"
+            await send()
+        } catch {
+            lastError = ConnectionStore.describe(error)
+        }
+    }
+
+    /// The prompt body: the words, then one part per picture.
+    private static func promptContent(text: String, images: [DraftImage]) -> [PromptContentPart] {
+        var content: [PromptContentPart] = []
+        if !text.isEmpty { content.append(.text(text)) }
+        for image in images {
+            content.append(.image(mediaType: image.mediaType, data: image.base64, name: image.name))
+        }
+        return content
+    }
+
+    /// Cancels the running turn.
+    func cancel() async {
+        guard let client = store?.client, let session else { return }
+        do {
+            try await client.cancel(sessionId: session.sessionId)
+            isAwaitingTurnStart = false
+        } catch {
+            lastError = ConnectionStore.describe(error)
+        }
+    }
+
+    func rename(to title: String) async {
+        guard let client = store?.client, let session else { return }
+        do {
+            try await client.rename(sessionId: session.sessionId, title: title)
+            await refreshSummary()
+        } catch {
+            lastError = ConnectionStore.describe(error)
+        }
+    }
+
+    /// Forks the session, returning the new session's id when the host reports it.
+    func fork() async -> String? {
+        guard let client = store?.client, let session else { return nil }
+        do {
+            let value = try await client.forkSession(sessionId: session.sessionId)
+            return value["sessionId"]?.stringValue ?? value["id"]?.stringValue
+        } catch {
+            lastError = ConnectionStore.describe(error)
+            return nil
+        }
+    }
+
+    func selectModel(_ selection: ModelSelection) async {
+        guard let client = store?.client, let session else { return }
+        let previous = currentSelection
+        currentSelection = selection
+        do {
+            try await client.selectModel(sessionId: session.sessionId, selection: selection)
+        } catch {
+            currentSelection = previous
+            lastError = ConnectionStore.describe(error)
+        }
+    }
+
+    /// Updates the displayed permission preset.
+    ///
+    /// The preset is owned by the host's session, not by an RPC, so this only
+    /// reflects a choice locally; the authoritative value arrives with the next
+    /// session projection. It exists so the picker can show intent immediately.
+    func setPermissionLocally(_ value: String) {
+        currentPermission = value
+    }
+
+    /// Answers a pending host prompt.
+    ///
+    /// The sheet hands over the wire answer it built (`UserQuestionsAnswer`),
+    /// because the encoding has rules the caller should not have to know: free
+    /// text is its own field, and a single-select answer typed in words carries
+    /// no selected labels.
+    func answer(_ item: HostEventHub.Pending, answers: UserQuestionsAnswer) async {
+        guard let hub else { return }
+        do {
+            try await hub.answer(item, with: .result(try JSONValue(from: answers)))
+        } catch {
+            lastError = ConnectionStore.describe(error)
+        }
+    }
+
+    /// Declines a prompt so the desktop client can handle it.
+    func pass(_ item: HostEventHub.Pending) async {
+        await hub?.pass(item)
+    }
+
+    /// Autocomplete candidates for `@` file references.
+    func fileReferences(query: String) async -> [FileReferenceCandidate] {
+        guard let client = store?.client, let session else { return [] }
+        return (try? await client.fileReferences(agentId: session.sessionId, query: query)) ?? []
+    }
+}
+
+extension JSONValue {
+    /// Re-encodes a value into a JSON value, used to hand typed models to the
+    /// dynamic event-result channel.
+    init(from model: some Encodable) throws {
+        let data = try JSONEncoder().encode(model)
+        self = try JSONDecoder().decode(JSONValue.self, from: data)
+    }
+}

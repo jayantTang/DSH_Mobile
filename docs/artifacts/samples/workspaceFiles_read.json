@@ -1,0 +1,16 @@
+{
+  "type": "server-response",
+  "rpcId": "probe-1789278646105-2",
+  "result": {
+    "ok": true,
+    "value": {
+      "absolutePath": "/Users/example/Projects/example-app/README.md",
+      "version": "<中文文本已脱敏>",
+      "bytes": 20464,
+      "offset": 1,
+      "text": "<中文文本已脱敏>",
+      "lines": 5,
+      "eof": false
+    }
+  }
+}

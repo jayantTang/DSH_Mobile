@@ -1,0 +1,7 @@
+# 用「任意一行会话」而不是某个具体会话：这条用例验证的是界面还在，不是某条数据。
+1  do: 连接本机 DSH                       | want: id:session.list
+2  do: 滚动到 id~:session.row.             | want: id~:session.row., text:连接你电脑上的 DSH ; absent
+3  do: 切到后台 5 秒
+4  do: 切回前台                            | shot: after-background check=texts after
+5  do: 什么都不做                          | want: id:session.list
+6  do: 滚动到 id~:session.row.             | want: id~:session.row., text:连接你电脑上的 DSH ; absent

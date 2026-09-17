@@ -1,0 +1,64 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# DSH Link Protocol (DLP) relay route fragment.
+#
+# This is NOT a site block. relay/deploy/deploy.sh inserts it *inside* the
+# existing site block that serves the configured site address (default
+# relay.example.com), immediately before the first handle / handle_path /
+# route / reverse_proxy directive — so /dsh-link/* is matched before any
+# catch-all handle block, and nothing that is already there changes.
+#
+#   sudo relay/deploy/deploy.sh              enable / update
+#   sudo relay/deploy/deploy.sh --uninstall  revert (removes the marked block)
+#
+# You can also just delete the two marker comment lines it is wrapped in.
+#
+# Why it is written this way:
+#   * handle_path strips the /dsh-link prefix before proxying, so the relay
+#     itself keeps serving root-relative routes (/link/device, /healthz, ...).
+#     The relay also accepts the un-stripped form, so a plain `handle` or
+#     `reverse_proxy` in front of it works too.
+#   * Caddy performs the WebSocket upgrade automatically.
+#   * read_timeout/write_timeout are pinned to 0 (no timeout) so an idle
+#     /link/agent or /link/device socket is never cut; the relay also sends a
+#     DLP ping every 20s.
+#   * flush_interval -1 streams every logical-stream frame immediately instead
+#     of buffering it, which the phone would otherwise see as a stalled stream.
+#   * No `encode`: buffering/compressing an upgraded connection buys nothing
+#     here and is a risk not worth taking.
+# ─────────────────────────────────────────────────────────────────────────────
+redir /dsh-link /dsh-link/ 308
+
+# Over-the-air iOS installs: the exported .ipa, its manifest, and a tiny install
+# page. Serving them from the already-certified site means the phone can install
+# an update from anywhere without a cable or a Mac on the same network, and the
+# files stay inside this reversible block.
+redir /ios /ios/ 308
+
+# `handle`, not `handle_path`: the prefix is NOT stripped, so /ios/x.ipa maps
+# onto <root>/ios/x.ipa and the whole install bundle stays in its own folder.
+handle /ios/* {
+	root * /opt/dsh-relay/public
+	header Cache-Control "no-store"
+	# Caddy has no MIME entry for these two, and without a Content-Type the OTA
+	# manifest is whatever the client decides to make of it. `caddy validate`
+	# refuses a bad matcher, so a typo here cannot take the site down.
+	@plist path *.plist
+	header @plist Content-Type "application/x-plist"
+	@ipa path *.ipa
+	header @ipa Content-Type "application/octet-stream"
+	file_server
+}
+
+handle_path /dsh-link/* {
+	reverse_proxy 127.0.0.1:8787 {
+		transport http {
+			dial_timeout 5s
+			read_timeout 0
+			write_timeout 0
+			keepalive 60s
+			keepalive_idle_conns 4
+		}
+		flush_interval -1
+		header_up X-Real-IP {remote_host}
+	}
+}

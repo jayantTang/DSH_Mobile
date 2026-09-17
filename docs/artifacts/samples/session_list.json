@@ -1,0 +1,2685 @@
+{
+  "type": "server-response",
+  "rpcId": "probe-1789278443894-1",
+  "result": {
+    "ok": true,
+    "value": {
+      "items": [
+        {
+          "sessionId": "session-7262fe5b-fe5b-4000-8000-7262fe5b204d",
+          "updatedAt": 1789278448862,
+          "running": true,
+          "blank": false,
+          "cwd": "/Users/example/Projects/example-app",
+          "projections": {
+            "asOfSeq": 3905,
+            "values": {
+              "title": "<中文文本已脱敏>",
+              "goal": {
+                "goal": {
+                  "id": "goal-cbfa58e3-654c-46d5-bf37-d81505717003",
+                  "revision": 2,
+                  "objective": "<中文文本已脱敏>",
+                  "phase": "complete",
+                  "maxGoalRounds": 40
+                },
+                "roundsStarted": 1,
+                "createdAt": 1789208547704,
+                "updatedAt": 1789215817694
+              },
+              "tokenUsage": {
+                "uncachedInputTokens": 1281627,
+                "outputTokens": 807587,
+                "cacheReadTokens": 291482368,
+                "cacheWriteTokens": 0
+              },
+              "contextPressure": {
+                "pressureTokens": 440013,
+                "projectedTokens": 440604,
+                "contextWindow": 1000000
+              },
+              "contextBreakdown": {
+                "systemTokens": 1723,
+                "toolsTokens": 6833,
+                "messageTokens": 323991
+              },
+              "sessionStats": {
+                "turns": 19,
+                "steps": 753,
+                "llmMs": 4648870,
+                "toolMs": 17751911,
+                "ttftMs": 1599426,
+                "ttftSteps": 753,
+                "decodeMs": 3049444,
+                "decodeTokens": 807587
+              },
+              "turnOutline": [
+                {
+                  "turn": 1,
+                  "seq": 4,
+                  "prompt": "<中文文本已脱敏>",
+                  "response": "<中文文本已脱敏>"
+                },
+                {
+                  "turn": 2,
+                  "seq": 64,
+                  "prompt": "<中文文本已脱敏>",
+                  "response": "<中文文本已脱敏>"
+                },
+                {
+                  "turn": 3,
+                  "seq": 1546,
+                  "prompt": "",
+                  "response": "<中文文本已脱敏>"
+                },
+                {
+                  "turn": 4,
+                  "seq": 1722,
+                  "prompt": "<中文文本已脱敏>",
+                  "response": "<中文文本已脱敏>"
+                },
+                {
+                  "turn": 5,
+                  "seq": 1795,
+                  "prompt": "<中文文本已脱敏>",
+                  "response": "<中文文本已脱敏>"
+                },
+                {
+                  "turn": 6,
+                  "seq": 1878,
+                  "prompt": "",
+                  "response": "<中文文本已脱敏>"
+                },
+                {
+                  "turn": 7,
+                  "seq": 1931,
+                  "prompt": "<中文文本已脱敏>",
+                  "response": "<中文文本已脱敏>"
+                },
+                {
+                  "turn": 8,
+                  "seq": 2044,
+                  "prompt": "<中文文本已脱敏>",
+                  "response": "<中文文本已脱敏>"
+                },
+                {
+                  "turn": 9,
+                  "seq": 2260,
+                  "prompt": "<中文文本已脱敏>",
+                  "response": "<中文文本已脱敏>"
+                },
+                {
+                  "turn": 10,
+                  "seq": 2523,
+                  "prompt": "<中文文本已脱敏>",
+                  "response": "<中文文本已脱敏>"
+                },
+                {
+                  "turn": 11,
+                  "seq": 2590,
+                  "prompt": "<中文文本已脱敏>",
+                  "response": "<中文文本已脱敏>"
+                },
+                {
+                  "turn": 12,
+                  "seq": 2869,
+                  "prompt": "<中文文本已脱敏>",
+                  "response": "<中文文本已脱敏>"
+                },
+                {
+                  "turn": 13,
+                  "seq": 3381,
+                  "prompt": "<中文文本已脱敏>",
+                  "response": "<中文文本已脱敏>"
+                },
+                {
+                  "turn": 14,
+                  "seq": 3434,
+                  "prompt": "<中文文本已脱敏>",
+                  "response": "<中文文本已脱敏>"
+                },
+                {
+                  "turn": 15,
+                  "seq": 3477,
+                  "prompt": "<中文文本已脱敏>",
+                  "response": "<中文文本已脱敏>"
+                },
+                {
+                  "turn": 16,
+                  "seq": 3741,
+                  "prompt": "<中文文本已脱敏>",
+                  "response": "<中文文本已脱敏>"
+                },
+                {
+                  "turn": 17,
+                  "seq": 3779,
+                  "prompt": "<中文文本已脱敏>",
+                  "response": "<中文文本已脱敏>"
+                },
+                {
+                  "turn": 18,
+                  "seq": 3807,
+                  "prompt": "<中文文本已脱敏>",
+                  "response": "<中文文本已脱敏>"
+                },
+                {
+                  "turn": 19,
+                  "seq": 3845,
+                  "prompt": "<中文文本已脱敏>",
+                  "response": "<中文文本已脱敏>"
+                },
+                {
+                  "turn": 20,
+                  "seq": 3902,
+                  "prompt": "<中文文本已脱敏>",
+                  "response": ""
+                }
+              ],
+              "agentPreset": "standard",
+              "subagentCatalog": [],
+              "subagentTiming": {
+                "settledMs": 0
+              },
+              "subagent": null,
+              "permissions": {
+                "options": [
+                  {
+                    "value": "read-only",
+                    "name": "read-only"
+                  },
+                  {
+                    "value": "workspace-write",
+                    "name": "workspace-write"
+                  },
+                  {
+                    "value": "danger-full-access",
+                    "name": "danger-full-access"
+                  }
+                ],
+                "currentValue": "danger-full-access"
+              },
+              "modelSelection": {
+                "lastUsed": {
+                  "provider": "deepseek-official",
+                  "model": "deepseek-flash",
+                  "reasoningEffort": "high"
+                },
+                "next": {
+                  "provider": "deepseek-official",
+                  "model": "deepseek-flash",
+                  "reasoningEffort": "high"
+                }
+              },
+              "sessionListMetadata": {
+                "blank": false,
+                "lastPromptAt": 1789278448862
+              },
+              "imageLimits": {
+                "maxImageBytes": 20971520,
+                "maxImagesPerMessage": 20,
+                "maxMessageImageBytes": 209715200,
+                "maxImagePixels": 64000000,
+                "maxImageDimension": 8192,
+                "mediaTypes": [
+                  "image/png",
+                  "image/jpeg",
+                  "image/webp",
+                  "image/gif"
+                ]
+              },
+              "todos": null,
+              "plan": {
+                "active": false,
+                "pending": false
+              },
+              "inbox": {
+                "next-turn": [],
+                "next-step": []
+              }
+            }
+          }
+        },
+        {
+          "sessionId": "id-00000000-0000-4000-8000-000000000009",
+          "updatedAt": 1789277956627,
+          "running": true,
+          "blank": false,
+          "parentSessionId": "session-0ca68654-8654-4000-8000-0ca686540a76",
+          "origin": "subagent",
+          "cwd": "/Users/example/Projects/example-app",
+          "projections": {
+            "asOfSeq": 135,
+            "values": {
+              "title": "You are working on macOS.",
+              "goal": null,
+              "tokenUsage": {
+                "uncachedInputTokens": 32670,
+                "outputTokens": 13842,
+                "cacheReadTokens": 697984,
+                "cacheWriteTokens": 0
+              },
+              "contextPressure": {
+                "pressureTokens": 51083,
+                "projectedTokens": 52561,
+                "contextWindow": 1000000
+              },
+              "contextBreakdown": {
+                "systemTokens": 1724,
+                "toolsTokens": 6833,
+                "messageTokens": 41792
+              },
+              "sessionStats": {
+                "turns": 1,
+                "steps": 21,
+                "llmMs": 70641,
+                "toolMs": 406715,
+                "ttftMs": 20807,
+                "ttftSteps": 22,
+                "decodeMs": 49834,
+                "decodeTokens": 13842
+              },
+              "turnOutline": [
+                {
+                  "turn": 1,
+                  "seq": 5,
+                  "prompt": "You are working on macOS. Your job is to produce…",
+                  "response": ""
+                }
+              ],
+              "agentPreset": "standard",
+              "subagentCatalog": [],
+              "subagentTiming": {
+                "settledMs": 0,
+                "active": {
+                  "since": 1789277956603,
+                  "through": 1789278434402
+                }
+              },
+              "subagent": {
+                "mode": "continuable",
+                "label": "Extract DSH protocol reference",
+                "seq": 0
+              },
+              "permissions": {
+                "options": [
+                  {
+                    "value": "read-only",
+                    "name": "read-only"
+                  },
+                  {
+                    "value": "workspace-write",
+                    "name": "workspace-write"
+                  },
+                  {
+                    "value": "danger-full-access",
+                    "name": "danger-full-access"
+                  }
+                ],
+                "currentValue": "danger-full-access"
+              },
+              "modelSelection": {
+                "lastUsed": {
+                  "provider": "deepseek-official",
+                  "model": "deepseek-flash",
+                  "reasoningEffort": "high"
+                },
+                "next": {
+                  "provider": "deepseek-official",
+                  "model": "deepseek-flash",
+                  "reasoningEffort": "high"
+                }
+              },
+              "sessionListMetadata": {
+                "blank": false,
+                "lastPromptAt": 1789277956627
+              },
+              "imageLimits": {
+                "maxImageBytes": 20971520,
+                "maxImagesPerMessage": 20,
+                "maxMessageImageBytes": 209715200,
+                "maxImagePixels": 64000000,
+                "maxImageDimension": 8192,
+                "mediaTypes": [
+                  "image/png",
+                  "image/jpeg",
+                  "image/webp",
+                  "image/gif"
+                ]
+              },
+              "todos": [
+                {
+                  "content": "Recon: packages, types, endpoint token, auth flow",
+                  "status": "completed"
+                },
+                {
+                  "content": "<中文文本已脱敏>",
+                  "status": "in_progress"
+                },
+                {
+                  "content": "<中文文本已脱敏>",
+                  "status": "pending"
+                },
+                {
+                  "content": "Capture live read-only endpoint responses into docs/samples/",
+                  "status": "pending"
+                },
+                {
+                  "content": "Capture $events stream + session/follow stream frame shapes",
+                  "status": "pending"
+                },
+                {
+                  "content": "<中文文本已脱敏>",
+                  "status": "pending"
+                },
+                {
+                  "content": "Write docs/dsh-rpc-catalog.json",
+                  "status": "pending"
+                },
+                {
+                  "content": "Write docs/DSH-PROTOCOL.md (verbatim types, events, gotchas)",
+                  "status": "pending"
+                },
+                {
+                  "content": "Write docs/samples/README.md",
+                  "status": "pending"
+                },
+                {
+                  "content": "Report to parent agent",
+                  "status": "pending"
+                }
+              ],
+              "plan": {
+                "active": false,
+                "pending": false
+              },
+              "inbox": {
+                "next-turn": [],
+                "next-step": []
+              }
+            }
+          }
+        },
+        {
+          "sessionId": "id-00000000-0000-4000-8000-000000000010",
+          "updatedAt": 1789277956623,
+          "running": true,
+          "blank": false,
+          "parentSessionId": "session-0ca68654-8654-4000-8000-0ca686540a76",
+          "origin": "subagent",
+          "cwd": "/Users/example/Projects/example-app",
+          "projections": {
+            "asOfSeq": 376,
+            "values": {
+              "title": "You are working on macOS.",
+              "goal": null,
+              "tokenUsage": {
+                "uncachedInputTokens": 48296,
+                "outputTokens": 100088,
+                "cacheReadTokens": 5286144,
+                "cacheWriteTokens": 0
+              },
+              "contextPressure": {
+                "pressureTokens": 149368,
+                "projectedTokens": 149431,
+                "contextWindow": 1000000
+              },
+              "contextBreakdown": {
+                "systemTokens": 1724,
+                "toolsTokens": 6833,
+                "messageTokens": 127358
+              },
+              "sessionStats": {
+                "turns": 1,
+                "steps": 63,
+                "llmMs": 412395,
+                "toolMs": 55015,
+                "ttftMs": 70384,
+                "ttftSteps": 64,
+                "decodeMs": 342011,
+                "decodeTokens": 100088
+              },
+              "turnOutline": [
+                {
+                  "turn": 1,
+                  "seq": 5,
+                  "prompt": "You are working on macOS. Build the **network mid…",
+                  "response": ""
+                }
+              ],
+              "agentPreset": "standard",
+              "subagentCatalog": [],
+              "subagentTiming": {
+                "settledMs": 0,
+                "active": {
+                  "since": 1789277956608,
+                  "through": 1789278427296
+                }
+              },
+              "subagent": {
+                "mode": "continuable",
+                "label": "Build relay and PC connector",
+                "seq": 0
+              },
+              "permissions": {
+                "options": [
+                  {
+                    "value": "read-only",
+                    "name": "read-only"
+                  },
+                  {
+                    "value": "workspace-write",
+                    "name": "workspace-write"
+                  },
+                  {
+                    "value": "danger-full-access",
+                    "name": "danger-full-access"
+                  }
+                ],
+                "currentValue": "danger-full-access"
+              },
+              "modelSelection": {
+                "lastUsed": {
+                  "provider": "deepseek-official",
+                  "model": "deepseek-flash",
+                  "reasoningEffort": "high"
+                },
+                "next": {
+                  "provider": "deepseek-official",
+                  "model": "deepseek-flash",
+                  "reasoningEffort": "high"
+                }
+              },
+              "sessionListMetadata": {
+                "blank": false,
+                "lastPromptAt": 1789277956623
+              },
+              "imageLimits": {
+                "maxImageBytes": 20971520,
+                "maxImagesPerMessage": 20,
+                "maxMessageImageBytes": 209715200,
+                "maxImagePixels": 64000000,
+                "maxImageDimension": 8192,
+                "mediaTypes": [
+                  "image/png",
+                  "image/jpeg",
+                  "image/webp",
+                  "image/gif"
+                ]
+              },
+              "todos": [
+                {
+                  "content": "Recon: spec, DSH internals, cordis plugin API, local env",
+                  "status": "in_progress"
+                },
+                {
+                  "content": "<中文文本已脱敏>",
+                  "status": "pending"
+                },
+                {
+                  "content": "Build relay deploy artifacts + README/NOTES",
+                  "status": "pending"
+                },
+                {
+                  "content": "<中文文本已脱敏>",
+                  "status": "pending"
+                },
+                {
+                  "content": "Write relay unit tests (pytest + aiohttp test client)",
+                  "status": "pending"
+                },
+                {
+                  "content": "<中文文本已脱敏>",
+                  "status": "pending"
+                },
+                {
+                  "content": "Report results to parent agent",
+                  "status": "pending"
+                }
+              ],
+              "plan": {
+                "active": false,
+                "pending": false
+              },
+              "inbox": {
+                "next-turn": [],
+                "next-step": []
+              }
+            }
+          }
+        },
+        {
+          "sessionId": "session-0ca68654-8654-4000-8000-0ca686540a76",
+          "updatedAt": 1789277375127,
+          "running": true,
+          "blank": false,
+          "cwd": "/Users/example/Projects/example-app",
+          "projections": {
+            "asOfSeq": 666,
+            "values": {
+              "title": "<中文文本已脱敏>",
+              "goal": {
+                "goal": {
+                  "id": "goal-cc8ec55f-6d33-4df8-b18d-3846b115733f",
+                  "revision": 1,
+                  "objective": "<中文文本已脱敏>",
+                  "phase": "active",
+                  "maxGoalRounds": 256
+                },
+                "roundsStarted": 0,
+                "createdAt": 1789277831687,
+                "updatedAt": 1789277831687
+              },
+              "tokenUsage": {
+                "uncachedInputTokens": 95885,
+                "outputTokens": 124222,
+                "cacheReadTokens": 11553024,
+                "cacheWriteTokens": 0
+              },
+              "contextPressure": {
+                "pressureTokens": 211740,
+                "projectedTokens": 211916,
+                "contextWindow": 1000000
+              },
+              "contextBreakdown": {
+                "systemTokens": 1724,
+                "toolsTokens": 6833,
+                "messageTokens": 175723
+              },
+              "sessionStats": {
+                "turns": 1,
+                "steps": 113,
+                "llmMs": 573487,
+                "toolMs": 434131,
+                "ttftMs": 124113,
+                "ttftSteps": 114,
+                "decodeMs": 449374,
+                "decodeTokens": 124222
+              },
+              "turnOutline": [
+                {
+                  "turn": 1,
+                  "seq": 4,
+                  "prompt": "<中文文本已脱敏>",
+                  "response": ""
+                }
+              ],
+              "agentPreset": "standard",
+              "subagentCatalog": [
+                {
+                  "mode": "continuable",
+                  "label": "Extract DSH protocol reference",
+                  "id": "id-00000000-0000-4000-8000-000000000009",
+                  "createdAt": 1789277956573
+                },
+                {
+                  "mode": "continuable",
+                  "label": "Build relay and PC connector",
+                  "id": "id-00000000-0000-4000-8000-000000000010",
+                  "createdAt": 1789277956573
+                }
+              ],
+              "subagentTiming": {
+                "settledMs": 0
+              },
+              "subagent": null,
+              "permissions": {
+                "options": [
+                  {
+                    "value": "read-only",
+                    "name": "read-only"
+                  },
+                  {
+                    "value": "workspace-write",
+                    "name": "workspace-write"
+                  },
+                  {
+                    "value": "danger-full-access",
+                    "name": "danger-full-access"
+                  }
+                ],
+                "currentValue": "danger-full-access"
+              },
+              "modelSelection": {
+                "lastUsed": {
+                  "provider": "deepseek-official",
+                  "model": "deepseek-flash",
+                  "reasoningEffort": "high"
+                },
+                "next": {
+                  "provider": "deepseek-official",
+                  "model": "deepseek-flash",
+                  "reasoningEffort": "high"
+                }
+              },
+              "sessionListMetadata": {
+                "blank": false,
+                "lastPromptAt": 1789277375127
+              },
+              "imageLimits": {
+                "maxImageBytes": 20971520,
+                "maxImagesPerMessage": 20,
+                "maxMessageImageBytes": 209715200,
+                "maxImagePixels": 64000000,
+                "maxImageDimension": 8192,
+                "mediaTypes": [
+                  "image/png",
+                  "image/jpeg",
+                  "image/webp",
+                  "image/gif"
+                ]
+              },
+              "todos": [
+                {
+                  "content": "<中文文本已脱敏>",
+                  "status": "completed"
+                },
+                {
+                  "content": "<中文文本已脱敏>",
+                  "status": "completed"
+                },
+                {
+                  "content": "<中文文本已脱敏>",
+                  "status": "in_progress"
+                },
+                {
+                  "content": "<中文文本已脱敏>",
+                  "status": "in_progress"
+                },
+                {
+                  "content": "<中文文本已脱敏>",
+                  "status": "completed"
+                },
+                {
+                  "content": "<中文文本已脱敏>",
+                  "status": "completed"
+                },
+                {
+                  "content": "<中文文本已脱敏>",
+                  "status": "completed"
+                },
+                {
+                  "content": "<中文文本已脱敏>",
+                  "status": "pending"
+                },
+                {
+                  "content": "<中文文本已脱敏>",
+                  "status": "in_progress"
+                },
+                {
+                  "content": "<中文文本已脱敏>",
+                  "status": "pending"
+                },
+                {
+                  "content": "<中文文本已脱敏>",
+                  "status": "pending"
+                },
+                {
+                  "content": "<中文文本已脱敏>",
+                  "status": "pending"
+                },
+                {
+                  "content": "<中文文本已脱敏>",
+                  "status": "pending"
+                },
+                {
+                  "content": "<中文文本已脱敏>",
+                  "status": "pending"
+                },
+                {
+                  "content": "<中文文本已脱敏>",
+                  "status": "pending"
+                },
+                {
+                  "content": "<中文文本已脱敏>",
+                  "status": "pending"
+                }
+              ],
+              "plan": {
+                "active": false,
+                "pending": false
+              },
+              "inbox": {
+                "next-turn": [],
+                "next-step": []
+              }
+            }
+          }
+        },
+        {
+          "sessionId": "session-39c70658-0658-4000-8000-39c7065892ba",
+          "updatedAt": 1789268792675,
+          "running": false,
+          "blank": false,
+          "cwd": "/Users/example/Projects/example-app",
+          "projections": {
+            "asOfSeq": 3190,
+            "values": {
+              "title": "<中文文本已脱敏>",
+              "goal": {
+                "goal": {
+                  "id": "goal-6235d3f7-b59d-4430-a5d9-be580527a050",
+                  "revision": 2,
+                  "objective": "<中文文本已脱敏>",
+                  "phase": "complete",
+                  "maxGoalRounds": 40
+                },
+                "roundsStarted": 0,
+                "createdAt": 1789228123363,
+                "updatedAt": 1789230439377
+              },
+              "tokenUsage": {
+                "uncachedInputTokens": 365813,
+                "outputTokens": 455272,
+                "cacheReadTokens": 240308480,
+                "cacheWriteTokens": 0
+              },
+              "contextPressure": {
+                "pressureTokens": 757171,
+                "projectedTokens": 758686,
+                "contextWindow": 1000000
+              },
+              "contextBreakdown": {
+                "systemTokens": 1723,
+                "toolsTokens": 6833,
+                "messageTokens": 581322
+              },
+              "sessionStats": {
+                "turns": 8,
+                "steps": 590,
+                "llmMs": 3020793,
+                "toolMs": 1752819,
+                "ttftMs": 1431049,
+                "ttftSteps": 590,
+                "decodeMs": 1589744,
+                "decodeTokens": 455272
+              },
+              "turnOutline": [
+                {
+                  "turn": 1,
+                  "seq": 4,
+                  "prompt": "<中文文本已脱敏>",
+                  "response": "<中文文本已脱敏>"
+                },
+                {
+                  "turn": 2,
+                  "seq": 184,
+                  "prompt": "<中文文本已脱敏>",
+                  "response": "<中文文本已脱敏>"
+                },
+                {
+                  "turn": 3,
+                  "seq": 213,
+                  "prompt": "<中文文本已脱敏>",
+                  "response": "<中文文本已脱敏>"
+                },
+                {
+                  "turn": 4,
+                  "seq": 767,
+                  "prompt": "<中文文本已脱敏>",
+                  "response": "<中文文本已脱敏>"
+                },
+                {
+                  "turn": 5,
+                  "seq": 2354,
+                  "prompt": "<中文文本已脱敏>",
+                  "response": "<中文文本已脱敏>"
+                },
+                {
+                  "turn": 6,
+                  "seq": 2435,
+                  "prompt": "<中文文本已脱敏>",
+                  "response": "<中文文本已脱敏>"
+                },
+                {
+                  "turn": 7,
+                  "seq": 2783,
+                  "prompt": "<中文文本已脱敏>",
+                  "response": "<中文文本已脱敏>"
+                },
+                {
+                  "turn": 8,
+                  "seq": 3142,
+                  "prompt": "<中文文本已脱敏>",
+                  "response": "<中文文本已脱敏>"
+                }
+              ],
+              "agentPreset": "standard",
+              "subagentCatalog": [
+                {
+                  "mode": "continuable",
+                  "label": "Extract secondary screen UI specs",
+                  "id": "id-00000000-0000-4000-8000-000000000008",
+                  "createdAt": 1789228880869
+                }
+              ],
+              "subagentTiming": {
+                "settledMs": 0
+              },
+              "subagent": null,
+              "permissions": {
+                "options": [
+                  {
+                    "value": "read-only",
+                    "name": "read-only"
+                  },
+                  {
+                    "value": "workspace-write",
+                    "name": "workspace-write"
+                  },
+                  {
+                    "value": "danger-full-access",
+                    "name": "danger-full-access"
+                  }
+                ],
+                "currentValue": "danger-full-access"
+              },
+              "modelSelection": {
+                "lastUsed": {
+                  "provider": "deepseek-official",
+                  "model": "deepseek-flash",
+                  "reasoningEffort": "high"
+                },
+                "next": {
+                  "provider": "deepseek-official",
+                  "model": "deepseek-flash",
+                  "reasoningEffort": "high"
+                }
+              },
+              "sessionListMetadata": {
+                "blank": false,
+                "lastPromptAt": 1789268792675
+              },
+              "imageLimits": {
+                "maxImageBytes": 20971520,
+                "maxImagesPerMessage": 20,
+                "maxMessageImageBytes": 209715200,
+                "maxImagePixels": 64000000,
+                "maxImageDimension": 8192,
+                "mediaTypes": [
+                  "image/png",
+                  "image/jpeg",
+                  "image/webp",
+                  "image/gif"
+                ]
+              },
+              "todos": null,
+              "plan": {
+                "active": false,
+                "pending": false
+              },
+              "inbox": {
+                "next-turn": [],
+                "next-step": []
+              }
+            }
+          }
+        },
+        {
+          "sessionId": "id-00000000-0000-4000-8000-000000000008",
+          "updatedAt": 1789228880909,
+          "running": false,
+          "blank": false,
+          "parentSessionId": "session-39c70658-0658-4000-8000-39c7065892ba",
+          "origin": "subagent",
+          "cwd": "/Users/example/Projects/example-app",
+          "projections": {
+            "asOfSeq": 132,
+            "values": {
+              "title": "<中文文本已脱敏>",
+              "goal": null,
+              "tokenUsage": {
+                "uncachedInputTokens": 68510,
+                "outputTokens": 46553,
+                "cacheReadTokens": 823680,
+                "cacheWriteTokens": 0
+              },
+              "contextPressure": {
+                "pressureTokens": 95976,
+                "projectedTokens": 96415,
+                "contextWindow": 1000000
+              },
+              "contextBreakdown": {
+                "systemTokens": 1723,
+                "toolsTokens": 6833,
+                "messageTokens": 71301
+              },
+              "sessionStats": {
+                "turns": 1,
+                "steps": 19,
+                "llmMs": 172071,
+                "toolMs": 906,
+                "ttftMs": 18419,
+                "ttftSteps": 19,
+                "decodeMs": 153652,
+                "decodeTokens": 46553
+              },
+              "turnOutline": [
+                {
+                  "turn": 1,
+                  "seq": 5,
+                  "prompt": "<中文文本已脱敏>",
+                  "response": "<中文文本已脱敏>"
+                }
+              ],
+              "agentPreset": "standard",
+              "subagentCatalog": [],
+              "subagentTiming": {
+                "settledMs": 173068
+              },
+              "subagent": {
+                "mode": "continuable",
+                "label": "Extract secondary screen UI specs",
+                "seq": 0
+              },
+              "permissions": {
+                "options": [
+                  {
+                    "value": "read-only",
+                    "name": "read-only"
+                  },
+                  {
+                    "value": "workspace-write",
+                    "name": "workspace-write"
+                  },
+                  {
+                    "value": "danger-full-access",
+                    "name": "danger-full-access"
+                  }
+                ],
+                "currentValue": "danger-full-access"
+              },
+              "modelSelection": {
+                "lastUsed": {
+                  "provider": "deepseek-official",
+                  "model": "deepseek-flash",
+                  "reasoningEffort": "high"
+                },
+                "next": {
+                  "provider": "deepseek-official",
+                  "model": "deepseek-flash",
+                  "reasoningEffort": "high"
+                }
+              },
+              "sessionListMetadata": {
+                "blank": false,
+                "lastPromptAt": 1789228880909
+              },
+              "imageLimits": {
+                "maxImageBytes": 20971520,
+                "maxImagesPerMessage": 20,
+                "maxMessageImageBytes": 209715200,
+                "maxImagePixels": 64000000,
+                "maxImageDimension": 8192,
+                "mediaTypes": [
+                  "image/png",
+                  "image/jpeg",
+                  "image/webp",
+                  "image/gif"
+                ]
+              },
+              "todos": null,
+              "plan": {
+                "active": false,
+                "pending": false
+              },
+              "inbox": {
+                "next-turn": [],
+                "next-step": []
+              }
+            }
+          }
+        },
+        {
+          "sessionId": "session-8b9f369c-369c-4000-8000-8b9f369c1eed",
+          "updatedAt": 1789228381023,
+          "running": false,
+          "blank": false,
+          "cwd": "/Users/example/Projects/example-app",
+          "projections": {
+            "asOfSeq": 453,
+            "values": {
+              "title": "<中文文本已脱敏>",
+              "goal": null,
+              "tokenUsage": {
+                "uncachedInputTokens": 35009,
+                "outputTokens": 95891,
+                "cacheReadTokens": 4008960,
+                "cacheWriteTokens": 0
+              },
+              "contextPressure": {
+                "pressureTokens": 122831,
+                "projectedTokens": 123678,
+                "contextWindow": 1000000
+              },
+              "contextBreakdown": {
+                "systemTokens": 1723,
+                "toolsTokens": 6833,
+                "messageTokens": 85536
+              },
+              "sessionStats": {
+                "turns": 5,
+                "steps": 69,
+                "llmMs": 463287,
+                "toolMs": 491718,
+                "ttftMs": 81239,
+                "ttftSteps": 68,
+                "decodeMs": 382048,
+                "decodeTokens": 95891
+              },
+              "turnOutline": [
+                {
+                  "turn": 1,
+                  "seq": 5,
+                  "prompt": "<中文文本已脱敏>",
+                  "response": "<中文文本已脱敏>"
+                },
+                {
+                  "turn": 2,
+                  "seq": 37,
+                  "prompt": "<中文文本已脱敏>",
+                  "response": "<中文文本已脱敏>"
+                },
+                {
+                  "turn": 3,
+                  "seq": 142,
+                  "prompt": "<中文文本已脱敏>",
+                  "response": "<中文文本已脱敏>"
+                },
+                {
+                  "turn": 4,
+                  "seq": 362,
+                  "prompt": "<中文文本已脱敏>",
+                  "response": "<中文文本已脱敏>"
+                },
+                {
+                  "turn": 5,
+                  "seq": 447,
+                  "prompt": "<中文文本已脱敏>",
+                  "response": "<中文文本已脱敏>"
+                }
+              ],
+              "agentPreset": "standard",
+              "subagentCatalog": [],
+              "subagentTiming": {
+                "settledMs": 0
+              },
+              "subagent": null,
+              "permissions": {
+                "options": [
+                  {
+                    "value": "read-only",
+                    "name": "read-only"
+                  },
+                  {
+                    "value": "workspace-write",
+                    "name": "workspace-write"
+                  },
+                  {
+                    "value": "danger-full-access",
+                    "name": "danger-full-access"
+                  }
+                ],
+                "currentValue": "danger-full-access"
+              },
+              "modelSelection": {
+                "lastUsed": {
+                  "provider": "deepseek-official",
+                  "model": "deepseek-flash",
+                  "reasoningEffort": "high"
+                },
+                "next": {
+                  "provider": "deepseek-official",
+                  "model": "deepseek-flash",
+                  "reasoningEffort": "high"
+                }
+              },
+              "sessionListMetadata": {
+                "blank": false,
+                "lastPromptAt": 1789228381023
+              },
+              "imageLimits": {
+                "maxImageBytes": 20971520,
+                "maxImagesPerMessage": 20,
+                "maxMessageImageBytes": 209715200,
+                "maxImagePixels": 64000000,
+                "maxImageDimension": 8192,
+                "mediaTypes": [
+                  "image/png",
+                  "image/jpeg",
+                  "image/webp",
+                  "image/gif"
+                ]
+              },
+              "todos": null,
+              "plan": {
+                "active": false,
+                "pending": false
+              },
+              "inbox": {
+                "next-turn": [],
+                "next-step": []
+              }
+            }
+          }
+        },
+        {
+          "sessionId": "session-c26cc5d3-c5d3-4000-8000-c26cc5d34474",
+          "updatedAt": 1789224577927,
+          "running": false,
+          "blank": false,
+          "cwd": "/Users/example/Projects/example-app",
+          "projections": {
+            "asOfSeq": 2163,
+            "values": {
+              "title": "<中文文本已脱敏>",
+              "goal": {
+                "goal": {
+                  "id": "goal-fc4dd882-2729-47f4-b318-ed00bee5f4f0",
+                  "revision": 2,
+                  "objective": "<中文文本已脱敏>",
+                  "phase": "complete",
+                  "maxGoalRounds": 40
+                },
+                "roundsStarted": 0,
+                "createdAt": 1789208725190,
+                "updatedAt": 1789210098657
+              },
+              "tokenUsage": {
+                "uncachedInputTokens": 263730,
+                "outputTokens": 236977,
+                "cacheReadTokens": 91189504,
+                "cacheWriteTokens": 0
+              },
+              "contextPressure": {
+                "pressureTokens": 458524,
+                "projectedTokens": 458976,
+                "contextWindow": 1000000
+              },
+              "contextBreakdown": {
+                "systemTokens": 1724,
+                "toolsTokens": 6833,
+                "messageTokens": 343471
+              },
+              "sessionStats": {
+                "turns": 6,
+                "steps": 399,
+                "llmMs": 1439008,
+                "toolMs": 1327521,
+                "ttftMs": 587865,
+                "ttftSteps": 399,
+                "decodeMs": 850183,
+                "decodeTokens": 236977
+              },
+              "turnOutline": [
+                {
+                  "turn": 1,
+                  "seq": 4,
+                  "prompt": "<中文文本已脱敏>",
+                  "response": "<中文文本已脱敏>"
+                },
+                {
+                  "turn": 2,
+                  "seq": 1460,
+                  "prompt": "<中文文本已脱敏>",
+                  "response": "<中文文本已脱敏>"
+                },
+                {
+                  "turn": 3,
+                  "seq": 1545,
+                  "prompt": "<中文文本已脱敏>",
+                  "response": "<中文文本已脱敏>"
+                },
+                {
+                  "turn": 4,
+                  "seq": 1580,
+                  "prompt": "<中文文本已脱敏>",
+                  "response": "<中文文本已脱敏>"
+                },
+                {
+                  "turn": 5,
+                  "seq": 1593,
+                  "prompt": "<中文文本已脱敏>",
+                  "response": "<中文文本已脱敏>"
+                },
+                {
+                  "turn": 6,
+                  "seq": 2051,
+                  "prompt": "<中文文本已脱敏>",
+                  "response": "<中文文本已脱敏>"
+                }
+              ],
+              "agentPreset": "standard",
+              "subagentCatalog": [
+                {
+                  "mode": "continuable",
+                  "label": "Find DevEco download URL",
+                  "id": "id-00000000-0000-4000-8000-000000000007",
+                  "createdAt": 1789208765016
+                }
+              ],
+              "subagentTiming": {
+                "settledMs": 0
+              },
+              "subagent": null,
+              "permissions": {
+                "options": [
+                  {
+                    "value": "read-only",
+                    "name": "read-only"
+                  },
+                  {
+                    "value": "workspace-write",
+                    "name": "workspace-write"
+                  },
+                  {
+                    "value": "danger-full-access",
+                    "name": "danger-full-access"
+                  }
+                ],
+                "currentValue": "danger-full-access"
+              },
+              "modelSelection": {
+                "lastUsed": {
+                  "provider": "deepseek-official",
+                  "model": "deepseek-flash",
+                  "reasoningEffort": "high"
+                },
+                "next": {
+                  "provider": "deepseek-official",
+                  "model": "deepseek-flash",
+                  "reasoningEffort": "high"
+                }
+              },
+              "sessionListMetadata": {
+                "blank": false,
+                "lastPromptAt": 1789224577927
+              },
+              "imageLimits": {
+                "maxImageBytes": 20971520,
+                "maxImagesPerMessage": 20,
+                "maxMessageImageBytes": 209715200,
+                "maxImagePixels": 64000000,
+                "maxImageDimension": 8192,
+                "mediaTypes": [
+                  "image/png",
+                  "image/jpeg",
+                  "image/webp",
+                  "image/gif"
+                ]
+              },
+              "todos": null,
+              "plan": {
+                "active": false,
+                "pending": false
+              },
+              "inbox": {
+                "next-turn": [],
+                "next-step": []
+              }
+            }
+          }
+        },
+        {
+          "sessionId": "id-00000000-0000-4000-8000-000000000007",
+          "updatedAt": 1789208765045,
+          "running": false,
+          "blank": false,
+          "parentSessionId": "session-c26cc5d3-c5d3-4000-8000-c26cc5d34474",
+          "origin": "subagent",
+          "cwd": "/Users/example/Projects/example-app",
+          "projections": {
+            "asOfSeq": 465,
+            "values": {
+              "title": "<中文文本已脱敏>",
+              "goal": null,
+              "tokenUsage": {
+                "uncachedInputTokens": 114264,
+                "outputTokens": 71100,
+                "cacheReadTokens": 6144000,
+                "cacheWriteTokens": 0
+              },
+              "contextPressure": {
+                "pressureTokens": 179815,
+                "projectedTokens": 180194,
+                "contextWindow": 1000000
+              },
+              "contextBreakdown": {
+                "systemTokens": 1724,
+                "toolsTokens": 6833,
+                "messageTokens": 126753
+              },
+              "sessionStats": {
+                "turns": 1,
+                "steps": 71,
+                "llmMs": 328771,
+                "toolMs": 601644,
+                "ttftMs": 64511,
+                "ttftSteps": 71,
+                "decodeMs": 264260,
+                "decodeTokens": 71100
+              },
+              "turnOutline": [
+                {
+                  "turn": 1,
+                  "seq": 5,
+                  "prompt": "<中文文本已脱敏>",
+                  "response": "<中文文本已脱敏>"
+                }
+              ],
+              "agentPreset": "standard",
+              "subagentCatalog": [],
+              "subagentTiming": {
+                "settledMs": 931097
+              },
+              "subagent": {
+                "mode": "continuable",
+                "label": "Find DevEco download URL",
+                "seq": 0
+              },
+              "permissions": {
+                "options": [
+                  {
+                    "value": "read-only",
+                    "name": "read-only"
+                  },
+                  {
+                    "value": "workspace-write",
+                    "name": "workspace-write"
+                  },
+                  {
+                    "value": "danger-full-access",
+                    "name": "danger-full-access"
+                  }
+                ],
+                "currentValue": "danger-full-access"
+              },
+              "modelSelection": {
+                "lastUsed": {
+                  "provider": "deepseek-official",
+                  "model": "deepseek-flash",
+                  "reasoningEffort": "high"
+                },
+                "next": {
+                  "provider": "deepseek-official",
+                  "model": "deepseek-flash",
+                  "reasoningEffort": "high"
+                }
+              },
+              "sessionListMetadata": {
+                "blank": false,
+                "lastPromptAt": 1789208765045
+              },
+              "imageLimits": {
+                "maxImageBytes": 20971520,
+                "maxImagesPerMessage": 20,
+                "maxMessageImageBytes": 209715200,
+                "maxImagePixels": 64000000,
+                "maxImageDimension": 8192,
+                "mediaTypes": [
+                  "image/png",
+                  "image/jpeg",
+                  "image/webp",
+                  "image/gif"
+                ]
+              },
+              "todos": null,
+              "plan": {
+                "active": false,
+                "pending": false
+              },
+              "inbox": {
+                "next-turn": [],
+                "next-step": []
+              }
+            }
+          }
+        },
+        {
+          "sessionId": "session-0826c852-c852-4000-8000-0826c85201ea",
+          "updatedAt": 1789207871370,
+          "running": false,
+          "blank": false,
+          "cwd": "/Users/example/Projects/example-app",
+          "projections": {
+            "asOfSeq": 699,
+            "values": {
+              "title": "<中文文本已脱敏>",
+              "goal": {
+                "goal": {
+                  "id": "goal-ae591a9c-74bb-4f11-a4fb-f9b0727f31d0",
+                  "revision": 2,
+                  "objective": "<中文文本已脱敏>",
+                  "phase": "complete",
+                  "maxGoalRounds": 12
+                },
+                "roundsStarted": 0,
+                "createdAt": 1789205019826,
+                "updatedAt": 1789206357685
+              },
+              "tokenUsage": {
+                "uncachedInputTokens": 89786,
+                "outputTokens": 124854,
+                "cacheReadTokens": 10369408,
+                "cacheWriteTokens": 0
+              },
+              "contextPressure": {
+                "pressureTokens": 194385,
+                "projectedTokens": 194598,
+                "contextWindow": 1000000
+              },
+              "contextBreakdown": {
+                "systemTokens": 1723,
+                "toolsTokens": 6833,
+                "messageTokens": 141986
+              },
+              "sessionStats": {
+                "turns": 5,
+                "steps": 94,
+                "llmMs": 557983,
+                "toolMs": 1110972,
+                "ttftMs": 101034,
+                "ttftSteps": 94,
+                "decodeMs": 456949,
+                "decodeTokens": 124854
+              },
+              "turnOutline": [
+                {
+                  "turn": 1,
+                  "seq": 5,
+                  "prompt": "<中文文本已脱敏>",
+                  "response": "<中文文本已脱敏>"
+                },
+                {
+                  "turn": 2,
+                  "seq": 107,
+                  "prompt": "<中文文本已脱敏>",
+                  "response": "<中文文本已脱敏>"
+                },
+                {
+                  "turn": 3,
+                  "seq": 170,
+                  "prompt": "<中文文本已脱敏>",
+                  "response": "<中文文本已脱敏>"
+                },
+                {
+                  "turn": 4,
+                  "seq": 668,
+                  "prompt": "<中文文本已脱敏>",
+                  "response": "<中文文本已脱敏>"
+                },
+                {
+                  "turn": 5,
+                  "seq": 681,
+                  "prompt": "<中文文本已脱敏>",
+                  "response": "<中文文本已脱敏>"
+                }
+              ],
+              "agentPreset": "standard",
+              "subagentCatalog": [],
+              "subagentTiming": {
+                "settledMs": 0
+              },
+              "subagent": null,
+              "permissions": {
+                "options": [
+                  {
+                    "value": "read-only",
+                    "name": "read-only"
+                  },
+                  {
+                    "value": "workspace-write",
+                    "name": "workspace-write"
+                  },
+                  {
+                    "value": "danger-full-access",
+                    "name": "danger-full-access"
+                  }
+                ],
+                "currentValue": "danger-full-access"
+              },
+              "modelSelection": {
+                "lastUsed": {
+                  "provider": "deepseek-official",
+                  "model": "deepseek-flash",
+                  "reasoningEffort": "high"
+                },
+                "next": {
+                  "provider": "deepseek-official",
+                  "model": "deepseek-flash",
+                  "reasoningEffort": "high"
+                }
+              },
+              "sessionListMetadata": {
+                "blank": false,
+                "lastPromptAt": 1789207871370
+              },
+              "imageLimits": {
+                "maxImageBytes": 20971520,
+                "maxImagesPerMessage": 20,
+                "maxMessageImageBytes": 209715200,
+                "maxImagePixels": 64000000,
+                "maxImageDimension": 8192,
+                "mediaTypes": [
+                  "image/png",
+                  "image/jpeg",
+                  "image/webp",
+                  "image/gif"
+                ]
+              },
+              "todos": null,
+              "plan": {
+                "active": false,
+                "pending": false
+              },
+              "inbox": {
+                "next-turn": [],
+                "next-step": []
+              }
+            }
+          }
+        },
+        {
+          "sessionId": "session-e9aaab6d-ab6d-4000-8000-e9aaab6db32c",
+          "updatedAt": 1789203236501,
+          "running": false,
+          "blank": false,
+          "cwd": "/Users/example/Projects/example-app",
+          "projections": {
+            "asOfSeq": 1542,
+            "values": {
+              "title": "<中文文本已脱敏>",
+              "goal": null,
+              "tokenUsage": {
+                "uncachedInputTokens": 182628,
+                "outputTokens": 238483,
+                "cacheReadTokens": 59238656,
+                "cacheWriteTokens": 0
+              },
+              "contextPressure": {
+                "pressureTokens": 404334,
+                "projectedTokens": 404846,
+                "contextWindow": 1000000
+              },
+              "contextBreakdown": {
+                "systemTokens": 1723,
+                "toolsTokens": 6833,
+                "messageTokens": 333418
+              },
+              "sessionStats": {
+                "turns": 8,
+                "steps": 252,
+                "llmMs": 1315482,
+                "toolMs": 439601,
+                "ttftMs": 404900,
+                "ttftSteps": 252,
+                "decodeMs": 910582,
+                "decodeTokens": 238483
+              },
+              "turnOutline": [
+                {
+                  "turn": 1,
+                  "seq": 4,
+                  "prompt": "<中文文本已脱敏>",
+                  "response": "<中文文本已脱敏>"
+                },
+                {
+                  "turn": 2,
+                  "seq": 186,
+                  "prompt": "<中文文本已脱敏>",
+                  "response": "<中文文本已脱敏>"
+                },
+                {
+                  "turn": 3,
+                  "seq": 704,
+                  "prompt": "<中文文本已脱敏>",
+                  "response": "<中文文本已脱敏>"
+                },
+                {
+                  "turn": 4,
+                  "seq": 771,
+                  "prompt": "<中文文本已脱敏>",
+                  "response": "<中文文本已脱敏>"
+                },
+                {
+                  "turn": 5,
+                  "seq": 932,
+                  "prompt": "<中文文本已脱敏>",
+                  "response": "<中文文本已脱敏>"
+                },
+                {
+                  "turn": 6,
+                  "seq": 1174,
+                  "prompt": "<中文文本已脱敏>",
+                  "response": "<中文文本已脱敏>"
+                },
+                {
+                  "turn": 7,
+                  "seq": 1359,
+                  "prompt": "<中文文本已脱敏>",
+                  "response": "<中文文本已脱敏>"
+                },
+                {
+                  "turn": 8,
+                  "seq": 1412,
+                  "prompt": "<中文文本已脱敏>",
+                  "response": "<中文文本已脱敏>"
+                }
+              ],
+              "agentPreset": "standard",
+              "subagentCatalog": [
+                {
+                  "mode": "continuable",
+                  "label": "Research DSH client plugin contract",
+                  "id": "id-00000000-0000-4000-8000-000000000023",
+                  "createdAt": 1789181637979
+                },
+                {
+                  "mode": "continuable",
+                  "label": "Research DSH host plugin + upgrade",
+                  "id": "id-00000000-0000-4000-8000-000000000024",
+                  "createdAt": 1789181637980
+                },
+                {
+                  "mode": "continuable",
+                  "label": "Research dsh web startup and URL",
+                  "id": "id-00000000-0000-4000-8000-000000000025",
+                  "createdAt": 1789181637981
+                }
+              ],
+              "subagentTiming": {
+                "settledMs": 0
+              },
+              "subagent": null,
+              "permissions": {
+                "options": [
+                  {
+                    "value": "read-only",
+                    "name": "read-only"
+                  },
+                  {
+                    "value": "workspace-write",
+                    "name": "workspace-write"
+                  },
+                  {
+                    "value": "danger-full-access",
+                    "name": "danger-full-access"
+                  }
+                ],
+                "currentValue": "danger-full-access"
+              },
+              "modelSelection": {
+                "lastUsed": {
+                  "provider": "deepseek-official",
+                  "model": "deepseek-flash",
+                  "reasoningEffort": "high"
+                },
+                "next": {
+                  "provider": "deepseek-official",
+                  "model": "deepseek-flash",
+                  "reasoningEffort": "high"
+                }
+              },
+              "sessionListMetadata": {
+                "blank": false,
+                "lastPromptAt": 1789203236501
+              },
+              "imageLimits": {
+                "maxImageBytes": 20971520,
+                "maxImagesPerMessage": 20,
+                "maxMessageImageBytes": 209715200,
+                "maxImagePixels": 64000000,
+                "maxImageDimension": 8192,
+                "mediaTypes": [
+                  "image/png",
+                  "image/jpeg",
+                  "image/webp",
+                  "image/gif"
+                ]
+              },
+              "todos": null,
+              "plan": {
+                "active": false,
+                "pending": false
+              },
+              "inbox": {
+                "next-turn": [],
+                "next-step": []
+              }
+            }
+          }
+        },
+        {
+          "sessionId": "id-00000000-0000-4000-8000-000000000025",
+          "updatedAt": 1789181638048,
+          "running": false,
+          "blank": false,
+          "parentSessionId": "session-e9aaab6d-ab6d-4000-8000-e9aaab6db32c",
+          "origin": "subagent",
+          "cwd": "/Users/example/Projects/example-app",
+          "projections": {
+            "asOfSeq": 172,
+            "values": {
+              "title": "You are researching an installed",
+              "goal": null,
+              "tokenUsage": {
+                "uncachedInputTokens": 111526,
+                "outputTokens": 25472,
+                "cacheReadTokens": 2126976,
+                "cacheWriteTokens": 0
+              },
+              "contextPressure": {
+                "pressureTokens": 142241,
+                "projectedTokens": 143010,
+                "contextWindow": 1000000
+              },
+              "contextBreakdown": {
+                "systemTokens": 1722,
+                "toolsTokens": 6833,
+                "messageTokens": 112269
+              },
+              "sessionStats": {
+                "turns": 1,
+                "steps": 25,
+                "llmMs": 124144,
+                "toolMs": 33150,
+                "ttftMs": 27123,
+                "ttftSteps": 25,
+                "decodeMs": 97021,
+                "decodeTokens": 25472
+              },
+              "turnOutline": [
+                {
+                  "turn": 1,
+                  "seq": 5,
+                  "prompt": "You are researching an installed Node package tre…",
+                  "response": "<中文文本已脱敏>"
+                }
+              ],
+              "agentPreset": "standard",
+              "subagentCatalog": [],
+              "subagentTiming": {
+                "settledMs": 157430
+              },
+              "subagent": {
+                "mode": "continuable",
+                "label": "Research dsh web startup and URL",
+                "seq": 0
+              },
+              "permissions": {
+                "options": [
+                  {
+                    "value": "read-only",
+                    "name": "read-only"
+                  },
+                  {
+                    "value": "workspace-write",
+                    "name": "workspace-write"
+                  },
+                  {
+                    "value": "danger-full-access",
+                    "name": "danger-full-access"
+                  }
+                ],
+                "currentValue": "danger-full-access"
+              },
+              "modelSelection": {
+                "lastUsed": {
+                  "provider": "deepseek-official",
+                  "model": "deepseek-flash",
+                  "reasoningEffort": "high"
+                },
+                "next": {
+                  "provider": "deepseek-official",
+                  "model": "deepseek-flash",
+                  "reasoningEffort": "high"
+                }
+              },
+              "sessionListMetadata": {
+                "blank": false,
+                "lastPromptAt": 1789181638048
+              },
+              "imageLimits": {
+                "maxImageBytes": 20971520,
+                "maxImagesPerMessage": 20,
+                "maxMessageImageBytes": 209715200,
+                "maxImagePixels": 64000000,
+                "maxImageDimension": 8192,
+                "mediaTypes": [
+                  "image/png",
+                  "image/jpeg",
+                  "image/webp",
+                  "image/gif"
+                ]
+              },
+              "todos": null,
+              "plan": {
+                "active": false,
+                "pending": false
+              },
+              "inbox": {
+                "next-turn": [],
+                "next-step": []
+              }
+            }
+          }
+        },
+        {
+          "sessionId": "id-00000000-0000-4000-8000-000000000024",
+          "updatedAt": 1789181638044,
+          "running": false,
+          "blank": false,
+          "parentSessionId": "session-e9aaab6d-ab6d-4000-8000-e9aaab6db32c",
+          "origin": "subagent",
+          "cwd": "/Users/example/Projects/example-app",
+          "projections": {
+            "asOfSeq": 534,
+            "values": {
+              "title": "You are researching an installed",
+              "goal": null,
+              "tokenUsage": {
+                "uncachedInputTokens": 133277,
+                "outputTokens": 49032,
+                "cacheReadTokens": 8625024,
+                "cacheWriteTokens": 0
+              },
+              "contextPressure": {
+                "pressureTokens": 177509,
+                "projectedTokens": 183380,
+                "contextWindow": 1000000
+              },
+              "contextBreakdown": {
+                "systemTokens": 1722,
+                "toolsTokens": 6833,
+                "messageTokens": 155108
+              },
+              "sessionStats": {
+                "turns": 1,
+                "steps": 82,
+                "llmMs": 265289,
+                "toolMs": 13967,
+                "ttftMs": 87336,
+                "ttftSteps": 82,
+                "decodeMs": 177953,
+                "decodeTokens": 49032
+              },
+              "turnOutline": [
+                {
+                  "turn": 1,
+                  "seq": 5,
+                  "prompt": "You are researching an installed Node package tre…",
+                  "response": "<中文文本已脱敏>"
+                }
+              ],
+              "agentPreset": "standard",
+              "subagentCatalog": [],
+              "subagentTiming": {
+                "settledMs": 280041
+              },
+              "subagent": {
+                "mode": "continuable",
+                "label": "Research DSH host plugin + upgrade",
+                "seq": 0
+              },
+              "permissions": {
+                "options": [
+                  {
+                    "value": "read-only",
+                    "name": "read-only"
+                  },
+                  {
+                    "value": "workspace-write",
+                    "name": "workspace-write"
+                  },
+                  {
+                    "value": "danger-full-access",
+                    "name": "danger-full-access"
+                  }
+                ],
+                "currentValue": "danger-full-access"
+              },
+              "modelSelection": {
+                "lastUsed": {
+                  "provider": "deepseek-official",
+                  "model": "deepseek-flash",
+                  "reasoningEffort": "high"
+                },
+                "next": {
+                  "provider": "deepseek-official",
+                  "model": "deepseek-flash",
+                  "reasoningEffort": "high"
+                }
+              },
+              "sessionListMetadata": {
+                "blank": false,
+                "lastPromptAt": 1789181638044
+              },
+              "imageLimits": {
+                "maxImageBytes": 20971520,
+                "maxImagesPerMessage": 20,
+                "maxMessageImageBytes": 209715200,
+                "maxImagePixels": 64000000,
+                "maxImageDimension": 8192,
+                "mediaTypes": [
+                  "image/png",
+                  "image/jpeg",
+                  "image/webp",
+                  "image/gif"
+                ]
+              },
+              "todos": [
+                {
+                  "content": "Recon package tree, identify relevant packages",
+                  "status": "completed"
+                },
+                {
+                  "content": "Q1: host plugin skeleton from dsh-host-open-in-app",
+                  "status": "completed"
+                },
+                {
+                  "content": "Q2: auth/trust for plugin routes",
+                  "status": "completed"
+                },
+                {
+                  "content": "Q3: identity/version/invocation services",
+                  "status": "completed"
+                },
+                {
+                  "content": "Q4: out-of-tree install & loading, cordis.patch.yml",
+                  "status": "completed"
+                },
+                {
+                  "content": "Q5: upgrade path",
+                  "status": "completed"
+                },
+                {
+                  "content": "Q6: settings/persistence pattern",
+                  "status": "completed"
+                },
+                {
+                  "content": "Send result to parent agent",
+                  "status": "completed"
+                }
+              ],
+              "plan": {
+                "active": false,
+                "pending": false
+              },
+              "inbox": {
+                "next-turn": [],
+                "next-step": []
+              }
+            }
+          }
+        },
+        {
+          "sessionId": "id-00000000-0000-4000-8000-000000000023",
+          "updatedAt": 1789181638039,
+          "running": false,
+          "blank": false,
+          "parentSessionId": "session-e9aaab6d-ab6d-4000-8000-e9aaab6db32c",
+          "origin": "subagent",
+          "cwd": "/Users/example/Projects/example-app",
+          "projections": {
+            "asOfSeq": 655,
+            "values": {
+              "title": "You are researching an installed",
+              "goal": null,
+              "tokenUsage": {
+                "uncachedInputTokens": 166380,
+                "outputTokens": 62232,
+                "cacheReadTokens": 14590464,
+                "cacheWriteTokens": 0
+              },
+              "contextPressure": {
+                "pressureTokens": 219392,
+                "projectedTokens": 226642,
+                "contextWindow": 1000000
+              },
+              "contextBreakdown": {
+                "systemTokens": 1722,
+                "toolsTokens": 6833,
+                "messageTokens": 189581
+              },
+              "sessionStats": {
+                "turns": 1,
+                "steps": 113,
+                "llmMs": 359444,
+                "toolMs": 24303,
+                "ttftMs": 131322,
+                "ttftSteps": 113,
+                "decodeMs": 228122,
+                "decodeTokens": 62232
+              },
+              "turnOutline": [
+                {
+                  "turn": 1,
+                  "seq": 5,
+                  "prompt": "You are researching an installed Node package tre…",
+                  "response": "<中文文本已脱敏>"
+                }
+              ],
+              "agentPreset": "standard",
+              "subagentCatalog": [],
+              "subagentTiming": {
+                "settledMs": 384837
+              },
+              "subagent": {
+                "mode": "continuable",
+                "label": "Research DSH client plugin contract",
+                "seq": 0
+              },
+              "permissions": {
+                "options": [
+                  {
+                    "value": "read-only",
+                    "name": "read-only"
+                  },
+                  {
+                    "value": "workspace-write",
+                    "name": "workspace-write"
+                  },
+                  {
+                    "value": "danger-full-access",
+                    "name": "danger-full-access"
+                  }
+                ],
+                "currentValue": "danger-full-access"
+              },
+              "modelSelection": {
+                "lastUsed": {
+                  "provider": "deepseek-official",
+                  "model": "deepseek-flash",
+                  "reasoningEffort": "high"
+                },
+                "next": {
+                  "provider": "deepseek-official",
+                  "model": "deepseek-flash",
+                  "reasoningEffort": "high"
+                }
+              },
+              "sessionListMetadata": {
+                "blank": false,
+                "lastPromptAt": 1789181638039
+              },
+              "imageLimits": {
+                "maxImageBytes": 20971520,
+                "maxImagesPerMessage": 20,
+                "maxMessageImageBytes": 209715200,
+                "maxImagePixels": 64000000,
+                "maxImageDimension": 8192,
+                "mediaTypes": [
+                  "image/png",
+                  "image/jpeg",
+                  "image/webp",
+                  "image/gif"
+                ]
+              },
+              "todos": [
+                {
+                  "content": "<中文文本已脱敏>",
+                  "status": "completed"
+                },
+                {
+                  "content": "Analyze client bundle format and import specifier resolution",
+                  "status": "completed"
+                },
+                {
+                  "content": "<中文文本已脱敏>",
+                  "status": "completed"
+                },
+                {
+                  "content": "<中文文本已脱敏>",
+                  "status": "completed"
+                },
+                {
+                  "content": "Document styling primitives/tokens",
+                  "status": "completed"
+                },
+                {
+                  "content": "Document lifecycle/HMR",
+                  "status": "completed"
+                },
+                {
+                  "content": "<中文文本已脱敏>",
+                  "status": "completed"
+                },
+                {
+                  "content": "Send self-contained result to parent agent",
+                  "status": "completed"
+                }
+              ],
+              "plan": {
+                "active": false,
+                "pending": false
+              },
+              "inbox": {
+                "next-turn": [],
+                "next-step": []
+              }
+            }
+          }
+        },
+        {
+          "sessionId": "session-ee1939e5-39e5-4000-8000-ee1939e5cb37",
+          "updatedAt": 1789057803658,
+          "running": false,
+          "blank": false,
+          "cwd": "/Users/example/Projects/example-app",
+          "projections": {
+            "asOfSeq": 526,
+            "values": {
+              "title": "<中文文本已脱敏>",
+              "goal": null,
+              "tokenUsage": {
+                "uncachedInputTokens": 68325,
+                "outputTokens": 102473,
+                "cacheReadTokens": 7657984,
+                "cacheWriteTokens": 0
+              },
+              "contextPressure": {
+                "pressureTokens": 169546,
+                "projectedTokens": 170117,
+                "contextWindow": 1000000
+              },
+              "contextBreakdown": {
+                "systemTokens": 1722,
+                "toolsTokens": 6833,
+                "messageTokens": 124717
+              },
+              "sessionStats": {
+                "turns": 2,
+                "steps": 77,
+                "llmMs": 482167,
+                "toolMs": 635857,
+                "ttftMs": 76694,
+                "ttftSteps": 77,
+                "decodeMs": 405473,
+                "decodeTokens": 102473
+              },
+              "turnOutline": [
+                {
+                  "turn": 1,
+                  "seq": 4,
+                  "prompt": "<中文文本已脱敏>",
+                  "response": "<中文文本已脱敏>"
+                },
+                {
+                  "turn": 2,
+                  "seq": 266,
+                  "prompt": "<中文文本已脱敏>",
+                  "response": "<中文文本已脱敏>"
+                }
+              ],
+              "agentPreset": "standard",
+              "subagentCatalog": [],
+              "subagentTiming": {
+                "settledMs": 0
+              },
+              "subagent": null,
+              "permissions": {
+                "options": [
+                  {
+                    "value": "read-only",
+                    "name": "read-only"
+                  },
+                  {
+                    "value": "workspace-write",
+                    "name": "workspace-write"
+                  },
+                  {
+                    "value": "danger-full-access",
+                    "name": "danger-full-access"
+                  }
+                ],
+                "currentValue": "danger-full-access"
+              },
+              "modelSelection": {
+                "lastUsed": {
+                  "provider": "deepseek-official",
+                  "model": "deepseek-flash",
+                  "reasoningEffort": "high"
+                },
+                "next": {
+                  "provider": "deepseek-official",
+                  "model": "deepseek-flash",
+                  "reasoningEffort": "high"
+                }
+              },
+              "sessionListMetadata": {
+                "blank": false,
+                "lastPromptAt": 1789057803658
+              },
+              "imageLimits": {
+                "maxImageBytes": 20971520,
+                "maxImagesPerMessage": 20,
+                "maxMessageImageBytes": 209715200,
+                "maxImagePixels": 64000000,
+                "maxImageDimension": 8192,
+                "mediaTypes": [
+                  "image/png",
+                  "image/jpeg",
+                  "image/webp",
+                  "image/gif"
+                ]
+              },
+              "todos": [
+                {
+                  "content": "<中文文本已脱敏>",
+                  "status": "completed"
+                },
+                {
+                  "content": "<中文文本已脱敏>",
+                  "status": "completed"
+                },
+                {
+                  "content": "<中文文本已脱敏>",
+                  "status": "completed"
+                },
+                {
+                  "content": "<中文文本已脱敏>",
+                  "status": "completed"
+                },
+                {
+                  "content": "<中文文本已脱敏>",
+                  "status": "completed"
+                },
+                {
+                  "content": "<中文文本已脱敏>",
+                  "status": "completed"
+                },
+                {
+                  "content": "<中文文本已脱敏>",
+                  "status": "pending"
+                }
+              ],
+              "plan": {
+                "active": false,
+                "pending": false
+              },
+              "inbox": {
+                "next-turn": [],
+                "next-step": []
+              }
+            }
+          }
+        },
+        {
+          "sessionId": "session-653ba497-a497-4000-8000-653ba4978482",
+          "updatedAt": 1789056641817,
+          "running": false,
+          "blank": true,
+          "cwd": "/Users/example/Projects/example-app",
+          "projections": {
+            "asOfSeq": 2,
+            "values": {
+              "title": null,
+              "goal": null,
+              "tokenUsage": {
+                "uncachedInputTokens": 0,
+                "outputTokens": 0,
+                "cacheReadTokens": 0,
+                "cacheWriteTokens": 0
+              },
+              "contextPressure": {},
+              "contextBreakdown": {
+                "systemTokens": 0,
+                "toolsTokens": 0,
+                "messageTokens": 0
+              },
+              "sessionStats": {
+                "turns": 0,
+                "steps": 0,
+                "llmMs": 0,
+                "toolMs": 0,
+                "ttftMs": 0,
+                "ttftSteps": 0,
+                "decodeMs": 0,
+                "decodeTokens": 0
+              },
+              "turnOutline": [],
+              "agentPreset": "standard",
+              "subagentCatalog": [],
+              "subagentTiming": {
+                "settledMs": 0
+              },
+              "subagent": null,
+              "permissions": {
+                "options": [
+                  {
+                    "value": "read-only",
+                    "name": "read-only"
+                  },
+                  {
+                    "value": "workspace-write",
+                    "name": "workspace-write"
+                  },
+                  {
+                    "value": "danger-full-access",
+                    "name": "danger-full-access"
+                  }
+                ],
+                "currentValue": "workspace-write"
+              },
+              "modelSelection": {
+                "lastUsed": null,
+                "next": null
+              },
+              "sessionListMetadata": {
+                "blank": true,
+                "lastPromptAt": null
+              },
+              "imageLimits": {
+                "maxImageBytes": 20971520,
+                "maxImagesPerMessage": 20,
+                "maxMessageImageBytes": 209715200,
+                "maxImagePixels": 64000000,
+                "maxImageDimension": 8192,
+                "mediaTypes": [
+                  "image/png",
+                  "image/jpeg",
+                  "image/webp",
+                  "image/gif"
+                ]
+              },
+              "todos": null,
+              "plan": {
+                "active": false,
+                "pending": false
+              },
+              "inbox": {
+                "next-turn": [],
+                "next-step": []
+              }
+            }
+          }
+        },
+        {
+          "sessionId": "session-0db6d722-d722-4000-8000-0db6d7220c91",
+          "updatedAt": 1789056478364,
+          "running": false,
+          "blank": false,
+          "cwd": "/private/tmp",
+          "projections": {
+            "asOfSeq": 17,
+            "values": {
+              "title": "<中文文本已脱敏>",
+              "goal": null,
+              "tokenUsage": {
+                "uncachedInputTokens": 352,
+                "outputTokens": 1027,
+                "cacheReadTokens": 6784,
+                "cacheWriteTokens": 0
+              },
+              "contextPressure": {
+                "pressureTokens": 7136,
+                "projectedTokens": 7609,
+                "contextWindow": 1000000
+              },
+              "contextBreakdown": {
+                "systemTokens": 1128,
+                "toolsTokens": 6187,
+                "messageTokens": 610
+              },
+              "subagentCatalog": [],
+              "subagentTiming": {
+                "settledMs": 0
+              },
+              "subagent": null,
+              "permissions": {
+                "options": [
+                  {
+                    "value": "read-only",
+                    "name": "read-only"
+                  },
+                  {
+                    "value": "workspace-write",
+                    "name": "workspace-write"
+                  },
+                  {
+                    "value": "danger-full-access",
+                    "name": "danger-full-access"
+                  }
+                ],
+                "currentValue": "workspace-write"
+              },
+              "todos": null,
+              "plan": {
+                "active": false,
+                "pending": false
+              },
+              "inbox": {
+                "next-turn": [],
+                "next-step": []
+              }
+            }
+          }
+        },
+        {
+          "sessionId": "session-0f2fcd84-cd84-4000-8000-0f2fcd84660b",
+          "updatedAt": 1789046565834,
+          "running": false,
+          "blank": false,
+          "cwd": "/Users/example/Projects/example-app",
+          "projections": {
+            "asOfSeq": 257,
+            "values": {
+              "title": "<中文文本已脱敏>",
+              "goal": null,
+              "tokenUsage": {
+                "uncachedInputTokens": 30499,
+                "outputTokens": 92733,
+                "cacheReadTokens": 3108224,
+                "cacheWriteTokens": 0
+              },
+              "contextPressure": {
+                "pressureTokens": 118641,
+                "projectedTokens": 118788,
+                "contextWindow": 1000000
+              },
+              "contextBreakdown": {
+                "systemTokens": 1722,
+                "toolsTokens": 6833,
+                "messageTokens": 78954
+              },
+              "sessionStats": {
+                "turns": 3,
+                "steps": 40,
+                "llmMs": 409653,
+                "toolMs": 6382,
+                "ttftMs": 59611,
+                "ttftSteps": 40,
+                "decodeMs": 350042,
+                "decodeTokens": 92733
+              },
+              "turnOutline": [
+                {
+                  "turn": 1,
+                  "seq": 4,
+                  "prompt": "<中文文本已脱敏>",
+                  "response": "<中文文本已脱敏>"
+                },
+                {
+                  "turn": 2,
+                  "seq": 19,
+                  "prompt": "<中文文本已脱敏>",
+                  "response": "<中文文本已脱敏>"
+                },
+                {
+                  "turn": 3,
+                  "seq": 104,
+                  "prompt": "<中文文本已脱敏>",
+                  "response": "<中文文本已脱敏>"
+                }
+              ],
+              "agentPreset": "standard",
+              "subagentCatalog": [],
+              "subagentTiming": {
+                "settledMs": 0
+              },
+              "subagent": null,
+              "permissions": {
+                "options": [
+                  {
+                    "value": "read-only",
+                    "name": "read-only"
+                  },
+                  {
+                    "value": "workspace-write",
+                    "name": "workspace-write"
+                  },
+                  {
+                    "value": "danger-full-access",
+                    "name": "danger-full-access"
+                  }
+                ],
+                "currentValue": "workspace-write"
+              },
+              "modelSelection": {
+                "lastUsed": {
+                  "provider": "deepseek-official",
+                  "model": "deepseek-flash",
+                  "reasoningEffort": "high"
+                },
+                "next": {
+                  "provider": "deepseek-official",
+                  "model": "deepseek-flash",
+                  "reasoningEffort": "high"
+                }
+              },
+              "sessionListMetadata": {
+                "blank": false,
+                "lastPromptAt": 1789046565834
+              },
+              "imageLimits": {
+                "maxImageBytes": 20971520,
+                "maxImagesPerMessage": 20,
+                "maxMessageImageBytes": 209715200,
+                "maxImagePixels": 64000000,
+                "maxImageDimension": 8192,
+                "mediaTypes": [
+                  "image/png",
+                  "image/jpeg",
+                  "image/webp",
+                  "image/gif"
+                ]
+              },
+              "todos": null,
+              "plan": {
+                "active": false,
+                "pending": false
+              },
+              "inbox": {
+                "next-turn": [],
+                "next-step": []
+              }
+            }
+          }
+        },
+        {
+          "sessionId": "session-eb45d654-d654-4000-8000-eb45d6545d83",
+          "updatedAt": 1788442642241,
+          "running": false,
+          "blank": false,
+          "cwd": "/Users/example/Projects/example-app",
+          "projections": {
+            "asOfSeq": -1,
+            "values": {
+              "title": "<中文文本已脱敏>"
+            }
+          }
+        },
+        {
+          "sessionId": "session-54c2c7cf-c7cf-4000-8000-54c2c7cf543e",
+          "updatedAt": 1788442624764,
+          "running": false,
+          "blank": false,
+          "cwd": "/Users/example/Projects/example-app",
+          "projections": {
+            "asOfSeq": -1,
+            "values": {
+              "title": null
+            }
+          }
+        },
+        {
+          "sessionId": "session-2e9f8c12-8c12-4000-8000-2e9f8c1247ef",
+          "updatedAt": 1788275430270,
+          "running": false,
+          "blank": false,
+          "cwd": "/Users/example/Projects/example-app",
+          "projections": {
+            "asOfSeq": -1,
+            "values": {
+              "title": "<中文文本已脱敏>"
+            }
+          }
+        },
+        {
+          "sessionId": "session-3dd7d1dd-d1dd-4000-8000-3dd7d1dd6c3c",
+          "updatedAt": 1787499314080,
+          "running": false,
+          "blank": false,
+          "cwd": "/Users/example/Projects/example-app",
+          "projections": {
+            "asOfSeq": -1,
+            "values": {
+              "title": "<中文文本已脱敏>"
+            }
+          }
+        },
+        {
+          "sessionId": "session-0b1881f8-81f8-4000-8000-0b1881f838f8",
+          "updatedAt": 1787498031922,
+          "running": false,
+          "blank": false,
+          "cwd": "/Users/example/Projects/example-app",
+          "projections": {
+            "asOfSeq": -1,
+            "values": {
+              "title": "<中文文本已脱敏>"
+            }
+          }
+        },
+        {
+          "sessionId": "session-9f0416dd-16dd-4000-8000-9f0416dda759",
+          "updatedAt": 1787456463829,
+          "running": false,
+          "blank": false,
+          "cwd": "/Users/example/Projects/example-app",
+          "projections": {
+            "asOfSeq": -1,
+            "values": {
+              "title": "<中文文本已脱敏>"
+            }
+          }
+        },
+        {
+          "sessionId": "session-f738e909-e909-4000-8000-f738e909dcb5",
+          "updatedAt": 1787239577773,
+          "running": false,
+          "blank": false,
+          "cwd": "/Users/example/Projects/example-app",
+          "projections": {
+            "asOfSeq": -1,
+            "values": {
+              "title": "<中文文本已脱敏>"
+            }
+          }
+        },
+        {
+          "sessionId": "session-421461b4-61b4-4000-8000-421461b41cd5",
+          "updatedAt": 1787239568378,
+          "running": false,
+          "blank": false,
+          "cwd": "/Users/example/Projects",
+          "projections": {
+            "asOfSeq": -1,
+            "values": {
+              "title": null
+            }
+          }
+        }
+      ]
+    }
+  }
+}

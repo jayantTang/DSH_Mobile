@@ -1,0 +1,45 @@
+# Xcode and build products
+ios/DSHMobile/.build/
+ios/DSHMobile/DerivedData/
+*.xcarchive
+*.ipa
+
+# Swift Package Manager
+.build/
+
+# Node
+node_modules/
+*.log
+
+# macOS
+.DS_Store
+
+# Local credentials and machine state
+ios/DSHMobile/Signing.local.plist
+*.local
+.env
+
+# 本机部署地址（中转 / 更新源 / 站点）。仓库里一律是占位符，真值放这两处。
+# .env.local 由 *.local 覆盖，xcconfig 需要单独一条。
+.env.local
+ios/DSHMobile/Config.local.xcconfig
+
+# Python
+relay/.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# 测试产物与工具环境（本机数据，不入库）
+test/runs/
+test/.build/
+test/.venv/
+
+# AI 协作约定：写给自己用的操作手册，不随开源仓库发布
+AGENTS.md
+
+# 含真实设备名 / 家目录 / 会话画面的演示与证据素材。
+# 这些是从真机与真实会话截的图，只在本机保留（博客渲染、本地跑测照常可用），
+# 不进仓库。需要随仓库发布时，请用合成数据的截图替换后重新入库。
+docs/artifacts/screenshots/
+test/fixtures/media/

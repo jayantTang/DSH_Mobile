@@ -1,0 +1,62 @@
+{
+  "_capture": {
+    "method": "$events",
+    "args": {},
+    "rawWebSocketBytes": 589,
+    "framesReceived": 4,
+    "truncated": false,
+    "capturedAt": "2026-09-13T13:56:23.568304+08:00",
+    "note": "<中文文本已脱敏>"
+  },
+  "frames": [
+    {
+      "type": "item",
+      "streamId": "s1",
+      "value": {
+        "type": "ready",
+        "clientId": "id-00000000-0000-4000-8000-000000000001",
+        "host": {
+          "home": "/Users/example"
+        }
+      }
+    },
+    {
+      "type": "item",
+      "streamId": "s1",
+      "value": {
+        "type": "emit",
+        "event": "api-session/status",
+        "args": [
+          "session-a8e22092-2092-4000-8000-a8e220920698",
+          false
+        ]
+      }
+    },
+    {
+      "type": "item",
+      "streamId": "s1",
+      "value": {
+        "type": "emit",
+        "event": "api-session/status",
+        "args": [
+          "session-a8e22092-2092-4000-8000-a8e220920698",
+          true
+        ]
+      }
+    },
+    {
+      "type": "item",
+      "streamId": "s1",
+      "value": {
+        "type": "emit",
+        "event": "api-session/activity",
+        "args": [
+          "session-a8e22092-2092-4000-8000-a8e220920698",
+          1789278565895
+        ]
+      }
+    }
+  ],
+  "errors": [],
+  "opened": true
+}

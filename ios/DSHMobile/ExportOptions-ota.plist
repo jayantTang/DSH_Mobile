@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Export options for the over-the-air install bundle.
+
+  `<TEAM_ID>` is not a value in this file: the team identifier is the
+  developer's, not the repository's, so `scripts/release/deploy-ota.sh`
+  substitutes it from DSH_TEAM_ID (or ios/DSHMobile/Signing.local.plist, which
+  is gitignored) into a copy under .build/ota/ before exporting.
+
+  `debugging` is the Xcode 15+ name for what used to be called `development`:
+  the build is signed with the team's Apple Development certificate and an
+  iOS Team Provisioning Profile, which lists the registered devices. That is
+  exactly what an ad-hoc OTA install needs — the profile is valid until
+  2027-02-11, and the phone is already in it.
+-->
+<plist version="1.0">
+<dict>
+	<key>method</key>
+	<string>debugging</string>
+	<key>teamID</key>
+	<string><TEAM_ID></string>
+	<key>signingStyle</key>
+	<string>automatic</string>
+	<key>stripSwiftSymbols</key>
+	<true/>
+	<key>compileBitcode</key>
+	<false/>
+	<key>manageAppVersionAndBuildNumber</key>
+	<false/>
+</dict>
+</plist>

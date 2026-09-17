@@ -1,0 +1,32 @@
+# Bundle patch for dsh-plugin-mobile-link.
+#
+# `dsh plugin --profile web add <this directory>` installs the package into the
+# profile and appends it to dsh.profile.bundles, so the row below joins the tree
+# on every boot with no hand-edited block in the profile's own cordis.patch.yml.
+#
+# `name` is anchored relative to this file (DSH rewrites ./ paths to file URLs),
+# so the plugin keeps resolving wherever the profile lives.
+#
+# Config reference (all optional; the defaults are what a stock deployment
+# needs):
+#   enabled        false disables the outbound link without uninstalling
+#   relayUrl       DLP relay base URL. The relay is published under a path prefix
+#                  on an existing site, so the default is
+#                  wss://relay.example.com/dsh-link and the connector dials
+#                  wss://relay.example.com/dsh-link/link/agent. The configured
+#                  path is always kept, never replaced. ws:// is accepted for
+#                  local testing (e.g. ws://127.0.0.1:8787).
+#   agentId        overrides ~/.dsh/mobile-link/agent.json
+#   agentSecret    overrides ~/.dsh/mobile-link/agent.json
+#   stateFile      agent identity file (default ~/.dsh/mobile-link/agent.json)
+#   dshUrl         explicit local DSH base URL override (default: discovery)
+#   endpointFile   DSH endpoint handoff file (default $DSH_HOME/desktop-shell/endpoint.json)
+
+- insert:
+    - id: mobile-link
+      name: './lib/index.js'
+      config:
+        enabled: true
+        relayUrl: 'wss://relay.example.com/dsh-link'
+        heartbeatMs: 20000
+        reconnect: true

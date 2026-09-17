@@ -1,0 +1,68 @@
+[Unit]
+Description=DSH Link Protocol (DLP) v1 relay
+Documentation=https://github.com/deepseek-ai/dsh
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=dsh-relay
+Group=dsh-relay
+WorkingDirectory=/opt/dsh-relay
+
+# The relay listens on loopback only. Caddy terminates TLS for
+# relay.example.com and reverse-proxies /dsh-link/* here (handle_path strips
+# the prefix before proxying).
+Environment=DLP_HOST=127.0.0.1
+Environment=DLP_PORT=8787
+Environment=DLP_DB=/var/lib/dsh-relay/state.db
+# Optional mount prefix. Caddy's handle_path already strips it, so the relay
+# serves root-relative routes; setting it as well makes the relay accept the
+# un-stripped /dsh-link/... form too, which keeps the deployment working
+# whichever way the front end forwards the request.
+Environment=DLP_BASE_PATH=/dsh-link
+Environment=DLP_LOG_LEVEL=INFO
+# ProtectSystem=strict makes the filesystem read-only: never write .pyc files.
+Environment=PYTHONDONTWRITEBYTECODE=1
+
+ExecStart=/opt/dsh-relay/.venv/bin/python /opt/dsh-relay/relay.py --host 127.0.0.1 --port 8787 --db /var/lib/dsh-relay/state.db
+ExecReload=/bin/kill -HUP $MAINPID
+
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=15
+
+# ── sandboxing ──────────────────────────────────────────────────────────────
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallFilter=@system-service
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0077
+
+# The only writable location: the SQLite database directory.
+StateDirectory=dsh-relay
+StateDirectoryMode=0700
+ReadWritePaths=/var/lib/dsh-relay
+
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

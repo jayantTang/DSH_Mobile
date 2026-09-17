@@ -1,0 +1,8 @@
+{
+  "type": "server-response",
+  "rpcId": "probe-1789278463304-5",
+  "result": {
+    "ok": true,
+    "value": true
+  }
+}

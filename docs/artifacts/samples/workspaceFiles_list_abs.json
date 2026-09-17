@@ -1,0 +1,52 @@
+{
+  "type": "server-response",
+  "rpcId": "probe-1789278646114-6",
+  "result": {
+    "ok": true,
+    "value": {
+      "path": "docs",
+      "entries": [
+        {
+          "name": "architecture.md",
+          "type": "file",
+          "size": 10497
+        },
+        {
+          "name": "diagnostics-ota-commands.md",
+          "type": "file",
+          "size": 11320
+        },
+        {
+          "name": "images",
+          "type": "directory"
+        },
+        {
+          "name": "low-latency.md",
+          "type": "file",
+          "size": 14552
+        },
+        {
+          "name": "robot-bom.md",
+          "type": "file",
+          "size": 8006
+        },
+        {
+          "name": "robot-platform-plan.md",
+          "type": "file",
+          "size": 20688
+        },
+        {
+          "name": "robot-procurement.md",
+          "type": "file",
+          "size": 7198
+        },
+        {
+          "name": "wifi-troubleshooting.md",
+          "type": "file",
+          "size": 22451
+        }
+      ],
+      "truncated": false
+    }
+  }
+}

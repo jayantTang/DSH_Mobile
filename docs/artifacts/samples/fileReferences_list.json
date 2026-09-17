@@ -1,0 +1,89 @@
+{
+  "type": "server-response",
+  "rpcId": "probe-1789278471506-8",
+  "result": {
+    "ok": true,
+    "value": [
+      {
+        "path": "host-mac/Sources",
+        "kind": "directory"
+      },
+      {
+        "path": "host-mac/Sources/Esp32Link",
+        "kind": "directory"
+      },
+      {
+        "path": "host-mac/Sources/Esp32Link/Net",
+        "kind": "directory"
+      },
+      {
+        "path": "host-mac/Sources/Esp32Link/Views",
+        "kind": "directory"
+      },
+      {
+        "path": "host-mac/Sources/Esp32Link/Diagnostics",
+        "kind": "directory"
+      },
+      {
+        "path": "components/cam_service",
+        "kind": "directory"
+      },
+      {
+        "path": "components/cmd_service",
+        "kind": "directory"
+      },
+      {
+        "path": "components/ota_service",
+        "kind": "directory"
+      },
+      {
+        "path": "components/cam_service/include",
+        "kind": "directory"
+      },
+      {
+        "path": "components/cmd_service/include",
+        "kind": "directory"
+      },
+      {
+        "path": "components/ota_service/include",
+        "kind": "directory"
+      },
+      {
+        "path": "components/cam_service/include/cam_service",
+        "kind": "directory"
+      },
+      {
+        "path": "components/cmd_service/include/cmd_service",
+        "kind": "directory"
+      },
+      {
+        "path": "components/ota_service/include/ota_service",
+        "kind": "directory"
+      },
+      {
+        "path": "components/cam_stream/include",
+        "kind": "directory"
+      },
+      {
+        "path": "components/link_probe/include",
+        "kind": "directory"
+      },
+      {
+        "path": "components/cam_stream/include/cam_stream",
+        "kind": "directory"
+      },
+      {
+        "path": "components/link_probe/include/link_probe",
+        "kind": "directory"
+      },
+      {
+        "path": "components/app_version/include",
+        "kind": "directory"
+      },
+      {
+        "path": "components/app_version/include/app_version",
+        "kind": "directory"
+      }
+    ]
+  }
+}

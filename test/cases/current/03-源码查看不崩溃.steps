@@ -1,0 +1,5 @@
+# 源码模式下屏幕上是 HTML 本身，锚点取文件里第一行就有的字符串。
+# 「已到文件末尾」说明整页都排完了——这正是之前卡死的那一步。
+1  do: 打开源码 test/fixtures/test-report-fixture.html（DOCTYPE） | want: text:DOCTYPE
+2  do: 什么都不做                                       | shot: source-mode check=texts
+3  do: 什么都不做                                       | want: text:已到文件末尾

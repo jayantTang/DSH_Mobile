@@ -1,0 +1,95 @@
+import Foundation
+
+// MARK: - Model catalog
+
+/// Every route the host can currently serve.
+public struct ModelCatalog: Sendable, Decodable {
+    public let `default`: ModelSelection?
+    public let routableProviders: [String]?
+    public let groups: [ModelProviderGroup]?
+    public let failures: [ModelCatalogFailure]?
+}
+
+public struct ModelProviderGroup: Sendable, Decodable, Identifiable {
+    public let id: String
+    public let name: String?
+    public let models: [ModelDescriptor]?
+}
+
+public struct ModelDescriptor: Sendable, Decodable, Identifiable {
+    public let id: String
+    public let name: String?
+    public let reasoning: Reasoning?
+
+    /// The selectable reasoning efforts this model accepts.
+    public struct Reasoning: Sendable, Decodable {
+        public let efforts: [Effort]?
+
+        public struct Effort: Sendable, Decodable, Identifiable {
+            public let id: String
+            public let name: String?
+            public let description: String?
+        }
+    }
+
+    public var displayName: String { name ?? id }
+}
+
+public struct ModelCatalogFailure: Sendable, Decodable {
+    public let provider: String?
+    public let message: String?
+}
+
+// MARK: - Skills
+
+public struct SkillListValue: Sendable, Decodable {
+    public let skills: [SkillEntry]?
+}
+
+public struct SkillEntry: Sendable, Decodable, Identifiable {
+    public let name: String
+    public let description: String?
+
+    public var id: String { name }
+}
+
+// MARK: - File references
+
+/// One `@`-mention candidate returned while typing in the composer.
+public struct FileReferenceCandidate: Sendable, Decodable, Identifiable, Hashable {
+    public let path: String
+    public let kind: String?
+
+    public var id: String { path }
+    public var isDirectory: Bool { kind == "directory" }
+}
+
+// MARK: - Prompt content
+
+/// One part of an outbound prompt.
+public enum PromptContentPart: Encodable, Sendable {
+    case text(String)
+    case image(mediaType: String, data: String, name: String?)
+    case file(receiptId: String)
+
+    private enum CodingKeys: String, CodingKey {
+        case type, text, mediaType, data, name, receiptId
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .text(let text):
+            try container.encode("text", forKey: .type)
+            try container.encode(text, forKey: .text)
+        case .image(let mediaType, let data, let name):
+            try container.encode("image", forKey: .type)
+            try container.encode(mediaType, forKey: .mediaType)
+            try container.encode(data, forKey: .data)
+            try container.encodeIfPresent(name, forKey: .name)
+        case .file(let receiptId):
+            try container.encode("file", forKey: .type)
+            try container.encode(receiptId, forKey: .receiptId)
+        }
+    }
+}

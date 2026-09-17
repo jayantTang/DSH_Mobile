@@ -1,0 +1,8 @@
+# local development artifacts; the deploy script builds these on the server
+.venv/
+__pycache__/
+.pytest_cache/
+*.pyc
+state.db
+state.db-wal
+state.db-shm

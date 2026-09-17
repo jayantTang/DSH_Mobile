@@ -1,0 +1,35 @@
+# TC-UI-01 的执行指令（与人读的用例文件分开放）
+#
+# 一行一步，对应 01-全部独立页面逐屏核对.md 里的第 N 步。字段用 | 分隔：
+#   do   = 这一步做什么（见下方用语表）
+#   want = 这一步要满足的检查，多个用逗号分隔；空着表示只看截图
+#   shot = 截图名字，可加 check=texts,amber；末尾标 after 表示动作之后再拍
+# 目标写法：id:xxx（无障碍标识）、label:文字、text:文字；文字含空格用双引号。
+# 页面名字见 test/screens.md。
+#
+# 用语表：
+#   连接本机 DSH          启动并连上本机 DSH
+#   打开页面 <名字>        从会话列表直达某个页面（transcript/files/settings/connections/web）
+#   点击 <目标>            点按
+#   输入 <内容>            在输入框里打字
+#   滚动 up|down|left|right  滚动（不指定目标时找当前页最大的可滚动区域）
+#   等待 <目标>            等元素出现
+#   核对 <目标>            断言元素存在（写成 want 更常见）
+#   探查                   打印当前页可滚动区域与锚点，排查用
+#   什么都不做             只做检查或只截图
+
+1  do: 连接本机 DSH          | shot: sessions check=texts,amber
+2  do: 什么都不做            | want: label:连接管理, label:设置
+3  do: 什么都不做            | want: id:session.list
+4  do: 打开页面 transcript   | shot: transcript check=texts,amber
+5  do: 什么都不做            | want: id:composer.field, id:chat.info
+6  do: 打开页面 files        | shot: files check=texts,amber
+7  do: 打开页面 settings     | shot: settings check=texts,amber
+8  do: 什么都不做            | want: text:连接方式, text:已配对的设备
+#    ↑ 只断言首屏必然存在的内容。「权限」排在「已配对的设备」之后，设备行数一变就会被
+#      挤出首屏；而设置页那把 List 在刚弹出时滚动不稳（首屏手势常被吞，见 CAPABILITY-GAPS
+#      交互-2），所以权限与提醒改由第 9/10 步滚动后断言 + 截图核对，不在这里下断言。
+9  do: 滚动到 text:关于        | shot: settings-bottom check=texts after
+10 do: 什么都不做            | want: text:提醒, text:关于
+11 do: 打开页面 connections  | shot: connections check=texts,amber
+12 do: 什么都不做            | want: text:配对码, id:connection.scan

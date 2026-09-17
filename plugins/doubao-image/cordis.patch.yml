@@ -1,0 +1,18 @@
+# Bundle patch for dsh-plugin-doubao-image.
+#
+# `dsh plugin --profile web add <this directory>` installs the package into the
+# profile and appends it to dsh.profile.bundles, so the row below joins the tree
+# on every boot with no hand-edited block in the profile's own cordis.patch.yml.
+#
+# A bundle without this file (and the dsh.bundle.patch pointer to it) cannot be
+# listed in dsh.profile.bundles: boot fails loud with "declares no dsh.bundle in
+# its package.json", which takes the whole harness down — including DSH.app.
+#
+# The tool needs no configuration: the app path and the CDP port both have
+# working defaults, and `name` is anchored relative to this file (DSH rewrites
+# ./ paths to file URLs), so the plugin keeps resolving wherever the profile
+# lives.
+
+- insert:
+    - id: doubao-image
+      name: './lib/index.js'

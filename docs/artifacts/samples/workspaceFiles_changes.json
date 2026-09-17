@@ -1,0 +1,24 @@
+{
+  "_capture": {
+    "method": "workspaceFiles/changes",
+    "args": {
+      "workspaceFileScopeId": "<IDLE_SESSION_ID>"
+    },
+    "rawWebSocketBytes": 56,
+    "framesReceived": 1,
+    "truncated": false,
+    "capturedAt": "2026-09-13T05:54:02.794Z"
+  },
+  "frames": [
+    {
+      "type": "item",
+      "streamId": "s1",
+      "value": {
+        "kind": "ready"
+      }
+    }
+  ],
+  "errors": [],
+  "opened": true,
+  "rawBytes": 56
+}

@@ -1,0 +1,10 @@
+# TC-MOB-01 的执行指令
+#
+# 「没取到附件」横幅只在取图失败时出现，所以「没有该横幅」＝ 6 张图都取到了。
+1  do: 打开报告 test/fixtures/test-report-fixture.html  | want: text:TC-UI-01 全部独立页面逐屏核对 | shot: report-top check=texts
+2  do: 什么都不做                          | want: text:逐屏核对
+3  do: 什么都不做                          | want: id:files.mode.rendered, id:files.mode.source
+4  do: 什么都不做                          | want: text:通过
+5  do: 什么都不做                          | want: text:没取到附件 ; absent
+6  do: 点击屏幕 60%,4%                      | shot: report-mode-tap check=texts
+7  do: 什么都不做                          | want: text:DOCTYPE ; absent

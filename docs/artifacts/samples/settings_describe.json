@@ -1,0 +1,2284 @@
+{
+  "type": "server-response",
+  "rpcId": "probe-1789278463266-3",
+  "result": {
+    "ok": true,
+    "value": {
+      "writable": true,
+      "hasDocument": true,
+      "namespaces": [
+        {
+          "ns": "agent-default-model",
+          "schema": {
+            "uid": 45,
+            "refs": {
+              "41": {
+                "type": "string",
+                "meta": {
+                  "required": true
+                }
+              },
+              "43": {
+                "type": "string",
+                "meta": {
+                  "required": true
+                }
+              },
+              "44": {
+                "type": "string",
+                "meta": {}
+              },
+              "45": {
+                "type": "object",
+                "meta": {
+                  "default": {}
+                },
+                "dict": {
+                  "provider": 41,
+                  "model": 43,
+                  "reasoningEffort": 44
+                }
+              }
+            }
+          },
+          "value": {
+            "provider": "deepseek-official",
+            "model": "deepseek-flash",
+            "reasoningEffort": "high"
+          },
+          "base": {
+            "provider": "deepseek-official",
+            "model": "deepseek-flash"
+          },
+          "user": {
+            "provider": "deepseek-official",
+            "model": "deepseek-flash",
+            "reasoningEffort": "high"
+          },
+          "applies": "live",
+          "secrets": [],
+          "revision": 0
+        },
+        {
+          "ns": "subagent-model-selection",
+          "schema": {
+            "uid": 163,
+            "refs": {
+              "154": {
+                "type": "string",
+                "meta": {
+                  "min": 1,
+                  "required": true
+                }
+              },
+              "157": {
+                "type": "string",
+                "meta": {
+                  "min": 1,
+                  "required": true
+                }
+              },
+              "158": {
+                "type": "object",
+                "meta": {
+                  "default": {}
+                },
+                "dict": {
+                  "provider": 154,
+                  "model": 157
+                }
+              },
+              "160": {
+                "type": "boolean",
+                "meta": {
+                  "default": false
+                }
+              },
+              "162": {
+                "type": "array",
+                "meta": {
+                  "default": []
+                },
+                "inner": 158
+              },
+              "163": {
+                "type": "object",
+                "meta": {
+                  "default": {}
+                },
+                "dict": {
+                  "enabled": 160,
+                  "allowedModels": 162
+                }
+              }
+            }
+          },
+          "value": {
+            "enabled": false,
+            "allowedModels": []
+          },
+          "base": {
+            "enabled": false,
+            "allowedModels": []
+          },
+          "applies": "live",
+          "secrets": [],
+          "revision": 0
+        },
+        {
+          "ns": "ui-theme",
+          "schema": {
+            "uid": 282,
+            "refs": {
+              "271": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "light"
+              },
+              "273": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "dark"
+              },
+              "275": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "system"
+              },
+              "276": {
+                "type": "union",
+                "meta": {
+                  "default": "system"
+                },
+                "list": [
+                  271,
+                  273,
+                  275
+                ]
+              },
+              "281": {
+                "type": "number",
+                "meta": {
+                  "step": 1,
+                  "min": 12,
+                  "max": 17,
+                  "default": 14
+                }
+              },
+              "282": {
+                "type": "object",
+                "meta": {
+                  "default": {}
+                },
+                "dict": {
+                  "preference": 276,
+                  "fontSize": 281
+                }
+              }
+            }
+          },
+          "value": {
+            "preference": "system",
+            "fontSize": 14
+          },
+          "applies": "live",
+          "secrets": [],
+          "revision": 0
+        },
+        {
+          "ns": "locale",
+          "schema": {
+            "uid": 286,
+            "refs": {
+              "285": {
+                "type": "string",
+                "meta": {
+                  "pattern": {
+                    "source": "^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$",
+                    "flags": "u"
+                  },
+                  "required": false
+                }
+              },
+              "286": {
+                "type": "object",
+                "meta": {
+                  "default": {}
+                },
+                "dict": {
+                  "preference": 285
+                }
+              }
+            }
+          },
+          "value": {},
+          "applies": "live",
+          "secrets": [],
+          "revision": 0
+        },
+        {
+          "ns": "ui-onboarding",
+          "schema": {
+            "uid": 288,
+            "refs": {
+              "287": {
+                "type": "string",
+                "meta": {}
+              },
+              "288": {
+                "type": "object",
+                "meta": {
+                  "default": {}
+                },
+                "dict": {
+                  "welcomeNoticeVersion": 287
+                }
+              }
+            }
+          },
+          "value": {
+            "welcomeNoticeVersion": "2026-08-13.1"
+          },
+          "user": {
+            "welcomeNoticeVersion": "2026-08-13.1"
+          },
+          "applies": "live",
+          "secrets": [],
+          "revision": 0
+        },
+        {
+          "ns": "ui-conversation",
+          "schema": {
+            "uid": 295,
+            "refs": {
+              "291": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "queue"
+              },
+              "293": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "steer"
+              },
+              "294": {
+                "type": "union",
+                "meta": {
+                  "default": "queue"
+                },
+                "list": [
+                  291,
+                  293
+                ]
+              },
+              "295": {
+                "type": "object",
+                "meta": {
+                  "default": {}
+                },
+                "dict": {
+                  "busyEnter": 294
+                }
+              }
+            }
+          },
+          "value": {
+            "busyEnter": "queue"
+          },
+          "applies": "live",
+          "secrets": [],
+          "revision": 0
+        },
+        {
+          "ns": "ui-chat",
+          "schema": {
+            "uid": 302,
+            "refs": {
+              "298": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "normal"
+              },
+              "300": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "compact"
+              },
+              "301": {
+                "type": "union",
+                "meta": {
+                  "default": "compact"
+                },
+                "list": [
+                  298,
+                  300
+                ]
+              },
+              "302": {
+                "type": "object",
+                "meta": {
+                  "default": {}
+                },
+                "dict": {
+                  "transcriptView": 301
+                }
+              }
+            }
+          },
+          "value": {
+            "transcriptView": "compact"
+          },
+          "applies": "live",
+          "secrets": [],
+          "revision": 0
+        },
+        {
+          "ns": "web-search-deepseek",
+          "schema": {
+            "uid": 352,
+            "refs": {
+              "335": {
+                "type": "string",
+                "meta": {
+                  "role": "secret"
+                }
+              },
+              "338": {
+                "type": "string",
+                "meta": {
+                  "role": "credential-ref",
+                  "default": "DEEPSEEK_API_KEY"
+                }
+              },
+              "339": {
+                "type": "string",
+                "meta": {}
+              },
+              "341": {
+                "type": "string",
+                "meta": {
+                  "default": "deepseek-v4-flash"
+                }
+              },
+              "343": {
+                "type": "string",
+                "meta": {
+                  "default": "2023-06-01"
+                }
+              },
+              "347": {
+                "type": "number",
+                "meta": {
+                  "step": 1,
+                  "min": 1,
+                  "default": 4096
+                }
+              },
+              "351": {
+                "type": "number",
+                "meta": {
+                  "step": 1,
+                  "min": 1,
+                  "default": 5
+                }
+              },
+              "352": {
+                "type": "object",
+                "meta": {
+                  "default": {}
+                },
+                "dict": {
+                  "apiKey": 335,
+                  "apiKeyEnv": 338,
+                  "baseURL": 339,
+                  "model": 341,
+                  "apiVersion": 343,
+                  "maxTokens": 347,
+                  "maxUses": 351
+                }
+              }
+            }
+          },
+          "value": {
+            "apiKeyEnv": "DEEPSEEK_API_KEY",
+            "model": "deepseek-v4-flash",
+            "apiVersion": "2023-06-01",
+            "maxTokens": 4096,
+            "maxUses": 5
+          },
+          "base": {
+            "apiKeyEnv": "DEEPSEEK_API_KEY",
+            "model": "deepseek-v4-flash",
+            "apiVersion": "2023-06-01",
+            "maxTokens": 4096,
+            "maxUses": 5
+          },
+          "applies": "live",
+          "secrets": [
+            {
+              "path": [
+                "apiKey"
+              ],
+              "set": false
+            }
+          ],
+          "revision": 0
+        },
+        {
+          "ns": "llm-deepseek",
+          "schema": {
+            "uid": 468,
+            "refs": {
+              "2": {
+                "type": "number",
+                "meta": {
+                  "max": 2147483647,
+                  "default": 500
+                }
+              },
+              "5": {
+                "type": "number",
+                "meta": {
+                  "max": 2147483647,
+                  "default": 10000
+                }
+              },
+              "9": {
+                "type": "number",
+                "meta": {
+                  "min": 0,
+                  "max": 1,
+                  "default": 0.1
+                }
+              },
+              "10": {
+                "type": "object",
+                "meta": {
+                  "default": {}
+                },
+                "dict": {
+                  "initialDelayMs": 2,
+                  "maxDelayMs": 5,
+                  "jitterRatio": 9
+                }
+              },
+              "12": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "normal"
+              },
+              "17": {
+                "type": "number",
+                "meta": {
+                  "step": 1,
+                  "min": 0,
+                  "max": 9007199254740991,
+                  "default": 5
+                }
+              },
+              "18": {
+                "type": "string",
+                "meta": {}
+              },
+              "20": {
+                "type": "array",
+                "meta": {
+                  "default": [
+                    "EMPTY_RESPONSE",
+                    "RATE_LIMIT",
+                    "SERVER",
+                    "TIMEOUT",
+                    "TRANSPORT"
+                  ]
+                },
+                "inner": 18
+              },
+              "21": {
+                "type": "object",
+                "meta": {
+                  "default": {}
+                },
+                "dict": {
+                  "mode": 12,
+                  "maxRetries": 17,
+                  "retryableCodes": 20,
+                  "backoff": 10
+                }
+              },
+              "23": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "always"
+              },
+              "24": {
+                "type": "object",
+                "meta": {
+                  "default": {}
+                },
+                "dict": {
+                  "mode": 23,
+                  "backoff": 10
+                }
+              },
+              "25": {
+                "type": "union",
+                "meta": {},
+                "list": [
+                  21,
+                  24
+                ]
+              },
+              "365": {
+                "type": "string",
+                "meta": {
+                  "required": true
+                }
+              },
+              "366": {
+                "type": "string",
+                "meta": {}
+              },
+              "367": {
+                "type": "string",
+                "meta": {}
+              },
+              "370": {
+                "type": "number",
+                "meta": {
+                  "step": 1,
+                  "min": 1
+                }
+              },
+              "373": {
+                "type": "number",
+                "meta": {
+                  "step": 1,
+                  "min": 1
+                }
+              },
+              "374": {
+                "type": "union",
+                "meta": {},
+                "list": [
+                  376,
+                  378
+                ]
+              },
+              "376": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "text"
+              },
+              "378": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "image"
+              },
+              "381": {
+                "type": "array",
+                "meta": {
+                  "default": [
+                    "text"
+                  ],
+                  "min": 1
+                },
+                "inner": 374
+              },
+              "384": {
+                "type": "number",
+                "meta": {
+                  "step": 1,
+                  "min": 1
+                }
+              },
+              "385": {
+                "type": "union",
+                "meta": {},
+                "list": [
+                  384,
+                  387
+                ]
+              },
+              "387": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "low"
+              },
+              "390": {
+                "type": "number",
+                "meta": {
+                  "step": 1,
+                  "min": 1
+                }
+              },
+              "391": {
+                "type": "const",
+                "meta": {},
+                "value": "in-history"
+              },
+              "392": {
+                "type": "object",
+                "meta": {
+                  "default": {}
+                },
+                "dict": {
+                  "id": 365,
+                  "name": 366,
+                  "description": 367,
+                  "contextWindow": 370,
+                  "maxTokens": 373,
+                  "inputModalities": 381,
+                  "imagePixelBudget": 385,
+                  "imageMaxBytes": 390,
+                  "systemPromptUpdate": 391
+                }
+              },
+              "395": {
+                "type": "string",
+                "meta": {
+                  "role": "credential-ref",
+                  "default": "DEEPSEEK_API_KEY"
+                }
+              },
+              "396": {
+                "type": "string",
+                "meta": {}
+              },
+              "397": {
+                "type": "union",
+                "meta": {},
+                "list": [
+                  399,
+                  401
+                ]
+              },
+              "399": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "enabled"
+              },
+              "401": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "disabled"
+              },
+              "402": {
+                "type": "union",
+                "meta": {},
+                "list": [
+                  404,
+                  406,
+                  408,
+                  410
+                ]
+              },
+              "404": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "off"
+              },
+              "406": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "low"
+              },
+              "408": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "high"
+              },
+              "410": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "max"
+              },
+              "415": {
+                "type": "number",
+                "meta": {
+                  "step": 1,
+                  "min": 1,
+                  "max": 9007199254740991,
+                  "default": 256000
+                }
+              },
+              "419": {
+                "type": "number",
+                "meta": {
+                  "step": 1,
+                  "min": 1,
+                  "default": 1000000
+                }
+              },
+              "421": {
+                "type": "array",
+                "meta": {
+                  "default": [
+                    {
+                      "id": "deepseek-flash",
+                      "name": "DeepSeek-V41-Flash",
+                      "contextWindow": 1000000,
+                      "inputModalities": [
+                        "text",
+                        "image"
+                      ],
+                      "imagePixelBudget": 640000,
+                      "imageMaxBytes": 1048576,
+                      "systemPromptUpdate": "in-history"
+                    },
+                    {
+                      "id": "deepseek-v4-flash",
+                      "name": "DeepSeek-V4-Flash",
+                      "description": "<中文文本已脱敏>",
+                      "contextWindow": 1000000
+                    },
+                    {
+                      "id": "deepseek-v4-pro",
+                      "name": "DeepSeek-V4-Pro",
+                      "description": "<中文文本已脱敏>",
+                      "contextWindow": 1000000
+                    },
+                    {
+                      "id": "deepseek-v4-flash-vision-exp",
+                      "name": "DeepSeek-V4-Flash-Vision-Exp",
+                      "contextWindow": 1000000,
+                      "inputModalities": [
+                        "text",
+                        "image"
+                      ],
+                      "imagePixelBudget": 640000,
+                      "imageMaxBytes": 1048576
+                    }
+                  ]
+                },
+                "inner": 392
+              },
+              "425": {
+                "type": "number",
+                "meta": {
+                  "min": 5e-324,
+                  "max": 2147483647,
+                  "default": 300000
+                }
+              },
+              "429": {
+                "type": "number",
+                "meta": {
+                  "step": 1,
+                  "min": 1,
+                  "default": 134217728
+                }
+              },
+              "433": {
+                "type": "number",
+                "meta": {
+                  "step": 1,
+                  "min": 1,
+                  "default": 20971520
+                }
+              },
+              "437": {
+                "type": "number",
+                "meta": {
+                  "step": 1,
+                  "min": 1,
+                  "default": 600
+                }
+              },
+              "441": {
+                "type": "number",
+                "meta": {
+                  "step": 1,
+                  "min": 1,
+                  "default": 67108864
+                }
+              },
+              "445": {
+                "type": "number",
+                "meta": {
+                  "step": 1,
+                  "min": 1,
+                  "default": 10485760
+                }
+              },
+              "449": {
+                "type": "number",
+                "meta": {
+                  "step": 1,
+                  "min": 1,
+                  "default": 20
+                }
+              },
+              "453": {
+                "type": "number",
+                "meta": {
+                  "min": 5e-324,
+                  "max": 2147483647,
+                  "default": 60000
+                }
+              },
+              "458": {
+                "type": "number",
+                "meta": {
+                  "step": 1,
+                  "min": 3600,
+                  "max": 2592000,
+                  "default": 604800
+                }
+              },
+              "462": {
+                "type": "number",
+                "meta": {
+                  "step": 1,
+                  "min": 0,
+                  "default": 3600
+                }
+              },
+              "467": {
+                "type": "number",
+                "meta": {
+                  "step": 1,
+                  "min": 1,
+                  "max": 1000,
+                  "default": 100
+                }
+              },
+              "468": {
+                "type": "object",
+                "meta": {
+                  "default": {}
+                },
+                "dict": {
+                  "apiKeyEnv": 395,
+                  "baseURL": 396,
+                  "thinking": 397,
+                  "reasoningEffort": 402,
+                  "maxTokens": 415,
+                  "defaultContextWindow": 419,
+                  "models": 421,
+                  "streamIdleTimeoutMs": 425,
+                  "maxRequestFilesBytes": 429,
+                  "maxInlineRequestImageBytes": 433,
+                  "maxImagesPerRequest": 437,
+                  "imageOffloadByteQuantum": 441,
+                  "inlineImageOffloadByteQuantum": 445,
+                  "imageOffloadCountQuantum": 449,
+                  "filesApiTimeoutMs": 453,
+                  "fileExpiresAfterSeconds": 458,
+                  "fileRefreshMarginSeconds": 462,
+                  "fileQuotaCleanupBatch": 467,
+                  "retryPolicy": 25
+                }
+              }
+            }
+          },
+          "value": {
+            "apiKeyEnv": "DEEPSEEK_API_KEY",
+            "maxTokens": 256000,
+            "defaultContextWindow": 1000000,
+            "models": [
+              {
+                "id": "deepseek-flash",
+                "name": "DeepSeek-V41-Flash",
+                "contextWindow": 1000000,
+                "inputModalities": [
+                  "text",
+                  "image"
+                ],
+                "imagePixelBudget": 640000,
+                "imageMaxBytes": 1048576,
+                "systemPromptUpdate": "in-history"
+              },
+              {
+                "id": "deepseek-v4-flash",
+                "name": "DeepSeek-V4-Flash",
+                "description": "<中文文本已脱敏>",
+                "contextWindow": 1000000,
+                "inputModalities": [
+                  "text"
+                ]
+              },
+              {
+                "id": "deepseek-v4-pro",
+                "name": "DeepSeek-V4-Pro",
+                "description": "<中文文本已脱敏>",
+                "contextWindow": 1000000,
+                "inputModalities": [
+                  "text"
+                ]
+              },
+              {
+                "id": "deepseek-v4-flash-vision-exp",
+                "name": "DeepSeek-V4-Flash-Vision-Exp",
+                "contextWindow": 1000000,
+                "inputModalities": [
+                  "text",
+                  "image"
+                ],
+                "imagePixelBudget": 640000,
+                "imageMaxBytes": 1048576
+              }
+            ],
+            "streamIdleTimeoutMs": 300000,
+            "maxRequestFilesBytes": 134217728,
+            "maxInlineRequestImageBytes": 20971520,
+            "maxImagesPerRequest": 600,
+            "imageOffloadByteQuantum": 67108864,
+            "inlineImageOffloadByteQuantum": 10485760,
+            "imageOffloadCountQuantum": 20,
+            "filesApiTimeoutMs": 60000,
+            "fileExpiresAfterSeconds": 604800,
+            "fileRefreshMarginSeconds": 3600,
+            "fileQuotaCleanupBatch": 100
+          },
+          "base": {
+            "apiKeyEnv": "DEEPSEEK_API_KEY",
+            "maxTokens": 256000,
+            "defaultContextWindow": 1000000,
+            "models": [
+              {
+                "id": "deepseek-flash",
+                "name": "DeepSeek-V41-Flash",
+                "contextWindow": 1000000,
+                "inputModalities": [
+                  "text",
+                  "image"
+                ],
+                "imagePixelBudget": 640000,
+                "imageMaxBytes": 1048576,
+                "systemPromptUpdate": "in-history"
+              },
+              {
+                "id": "deepseek-v4-flash",
+                "name": "DeepSeek-V4-Flash",
+                "description": "<中文文本已脱敏>",
+                "contextWindow": 1000000,
+                "inputModalities": [
+                  "text"
+                ]
+              },
+              {
+                "id": "deepseek-v4-pro",
+                "name": "DeepSeek-V4-Pro",
+                "description": "<中文文本已脱敏>",
+                "contextWindow": 1000000,
+                "inputModalities": [
+                  "text"
+                ]
+              },
+              {
+                "id": "deepseek-v4-flash-vision-exp",
+                "name": "DeepSeek-V4-Flash-Vision-Exp",
+                "contextWindow": 1000000,
+                "inputModalities": [
+                  "text",
+                  "image"
+                ],
+                "imagePixelBudget": 640000,
+                "imageMaxBytes": 1048576
+              }
+            ],
+            "streamIdleTimeoutMs": 300000,
+            "maxRequestFilesBytes": 134217728,
+            "maxInlineRequestImageBytes": 20971520,
+            "maxImagesPerRequest": 600,
+            "imageOffloadByteQuantum": 67108864,
+            "inlineImageOffloadByteQuantum": 10485760,
+            "imageOffloadCountQuantum": 20,
+            "filesApiTimeoutMs": 60000,
+            "fileExpiresAfterSeconds": 604800,
+            "fileRefreshMarginSeconds": 3600,
+            "fileQuotaCleanupBatch": 100
+          },
+          "applies": "live",
+          "secrets": [],
+          "revision": 0
+        },
+        {
+          "ns": "agent-loop",
+          "schema": {
+            "uid": 632,
+            "refs": {
+              "631": {
+                "type": "number",
+                "meta": {
+                  "step": 1,
+                  "min": 1,
+                  "default": 10
+                }
+              },
+              "632": {
+                "type": "object",
+                "meta": {
+                  "default": {}
+                },
+                "dict": {
+                  "maxParallelToolCalls": 631
+                }
+              }
+            }
+          },
+          "value": {
+            "maxParallelToolCalls": 10
+          },
+          "base": {
+            "maxParallelToolCalls": 10
+          },
+          "applies": "live",
+          "secrets": [],
+          "revision": 0
+        },
+        {
+          "ns": "agent-presets",
+          "schema": {
+            "uid": 708,
+            "refs": {
+              "707": {
+                "type": "string",
+                "meta": {}
+              },
+              "708": {
+                "type": "object",
+                "meta": {
+                  "default": {}
+                },
+                "dict": {
+                  "default": 707
+                }
+              }
+            }
+          },
+          "value": {
+            "default": "standard"
+          },
+          "base": {
+            "default": "standard"
+          },
+          "applies": "live",
+          "secrets": [],
+          "revision": 0
+        },
+        {
+          "ns": "shell",
+          "schema": {
+            "uid": 511,
+            "refs": {
+              "500": {
+                "type": "string",
+                "meta": {}
+              },
+              "502": {
+                "type": "number",
+                "meta": {
+                  "default": 120000
+                }
+              },
+              "504": {
+                "type": "number",
+                "meta": {
+                  "default": 600000
+                }
+              },
+              "506": {
+                "type": "number",
+                "meta": {
+                  "default": 64000
+                }
+              },
+              "508": {
+                "type": "number",
+                "meta": {
+                  "default": 67108864
+                }
+              },
+              "510": {
+                "type": "number",
+                "meta": {
+                  "default": 3000
+                }
+              },
+              "511": {
+                "type": "object",
+                "meta": {
+                  "default": {}
+                },
+                "dict": {
+                  "cwd": 500,
+                  "timeoutMs": 502,
+                  "maxTimeoutMs": 504,
+                  "maxOutputBytes": 506,
+                  "maxSpillBytes": 508,
+                  "graceMs": 510
+                }
+              }
+            }
+          },
+          "value": {
+            "timeoutMs": 60000,
+            "maxTimeoutMs": 600000,
+            "maxOutputBytes": 64000,
+            "maxSpillBytes": 67108864,
+            "graceMs": 3000
+          },
+          "base": {
+            "timeoutMs": 60000,
+            "maxTimeoutMs": 600000,
+            "maxOutputBytes": 64000,
+            "maxSpillBytes": 67108864,
+            "graceMs": 3000
+          },
+          "applies": "live",
+          "secrets": [],
+          "revision": 0
+        },
+        {
+          "ns": "permission",
+          "schema": {
+            "uid": 814,
+            "refs": {
+              "809": {
+                "type": "const",
+                "meta": {},
+                "value": "read-only"
+              },
+              "810": {
+                "type": "const",
+                "meta": {},
+                "value": "workspace-write"
+              },
+              "811": {
+                "type": "const",
+                "meta": {},
+                "value": "danger-full-access"
+              },
+              "813": {
+                "type": "union",
+                "meta": {
+                  "required": true
+                },
+                "list": [
+                  809,
+                  810,
+                  811
+                ]
+              },
+              "814": {
+                "type": "object",
+                "meta": {
+                  "default": {}
+                },
+                "dict": {
+                  "defaultPreset": 813
+                }
+              }
+            }
+          },
+          "value": {
+            "defaultPreset": "danger-full-access"
+          },
+          "base": {
+            "defaultPreset": "danger-full-access"
+          },
+          "user": {
+            "defaultPreset": "danger-full-access"
+          },
+          "applies": "live",
+          "secrets": [],
+          "revision": 0
+        },
+        {
+          "ns": "llm-pi-ai",
+          "schema": {
+            "uid": 1026,
+            "refs": {
+              "2": {
+                "type": "number",
+                "meta": {
+                  "max": 2147483647,
+                  "default": 500
+                }
+              },
+              "5": {
+                "type": "number",
+                "meta": {
+                  "max": 2147483647,
+                  "default": 10000
+                }
+              },
+              "9": {
+                "type": "number",
+                "meta": {
+                  "min": 0,
+                  "max": 1,
+                  "default": 0.1
+                }
+              },
+              "10": {
+                "type": "object",
+                "meta": {
+                  "default": {}
+                },
+                "dict": {
+                  "initialDelayMs": 2,
+                  "maxDelayMs": 5,
+                  "jitterRatio": 9
+                }
+              },
+              "12": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "normal"
+              },
+              "17": {
+                "type": "number",
+                "meta": {
+                  "step": 1,
+                  "min": 0,
+                  "max": 9007199254740991,
+                  "default": 5
+                }
+              },
+              "18": {
+                "type": "string",
+                "meta": {}
+              },
+              "20": {
+                "type": "array",
+                "meta": {
+                  "default": [
+                    "EMPTY_RESPONSE",
+                    "RATE_LIMIT",
+                    "SERVER",
+                    "TIMEOUT",
+                    "TRANSPORT"
+                  ]
+                },
+                "inner": 18
+              },
+              "21": {
+                "type": "object",
+                "meta": {
+                  "default": {}
+                },
+                "dict": {
+                  "mode": 12,
+                  "maxRetries": 17,
+                  "retryableCodes": 20,
+                  "backoff": 10
+                }
+              },
+              "23": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "always"
+              },
+              "24": {
+                "type": "object",
+                "meta": {
+                  "default": {}
+                },
+                "dict": {
+                  "mode": 23,
+                  "backoff": 10
+                }
+              },
+              "25": {
+                "type": "union",
+                "meta": {},
+                "list": [
+                  21,
+                  24
+                ]
+              },
+              "815": {
+                "type": "number",
+                "meta": {}
+              },
+              "816": {
+                "type": "number",
+                "meta": {}
+              },
+              "817": {
+                "type": "number",
+                "meta": {}
+              },
+              "818": {
+                "type": "number",
+                "meta": {}
+              },
+              "819": {
+                "type": "object",
+                "meta": {
+                  "default": {}
+                },
+                "dict": {
+                  "minimal": 815,
+                  "low": 816,
+                  "medium": 817,
+                  "high": 818
+                }
+              },
+              "820": {
+                "type": "string",
+                "meta": {}
+              },
+              "821": {
+                "type": "number",
+                "meta": {}
+              },
+              "822": {
+                "type": "boolean",
+                "meta": {}
+              },
+              "823": {
+                "type": "const",
+                "meta": {},
+                "value": null
+              },
+              "826": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "thinking.enabled"
+              },
+              "828": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "thinking.effort"
+              },
+              "830": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "thinking.budget"
+              },
+              "831": {
+                "type": "union",
+                "meta": {
+                  "required": true
+                },
+                "list": [
+                  826,
+                  828,
+                  830
+                ]
+              },
+              "832": {
+                "type": "boolean",
+                "meta": {}
+              },
+              "833": {
+                "type": "object",
+                "meta": {
+                  "default": {}
+                },
+                "dict": {
+                  "$var": 831,
+                  "omitWhenOff": 832
+                }
+              },
+              "834": {
+                "type": "union",
+                "meta": {},
+                "list": [
+                  820,
+                  821,
+                  822,
+                  823,
+                  833
+                ]
+              },
+              "835": {
+                "type": "boolean",
+                "meta": {}
+              },
+              "836": {
+                "type": "boolean",
+                "meta": {}
+              },
+              "837": {
+                "type": "boolean",
+                "meta": {}
+              },
+              "838": {
+                "type": "boolean",
+                "meta": {}
+              },
+              "839": {
+                "type": "boolean",
+                "meta": {}
+              },
+              "840": {
+                "type": "union",
+                "meta": {},
+                "list": [
+                  842,
+                  844
+                ]
+              },
+              "842": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "max_completion_tokens"
+              },
+              "844": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "max_tokens"
+              },
+              "845": {
+                "type": "boolean",
+                "meta": {}
+              },
+              "846": {
+                "type": "boolean",
+                "meta": {}
+              },
+              "847": {
+                "type": "boolean",
+                "meta": {}
+              },
+              "848": {
+                "type": "boolean",
+                "meta": {}
+              },
+              "849": {
+                "type": "union",
+                "meta": {},
+                "list": [
+                  851,
+                  853,
+                  855,
+                  857,
+                  859,
+                  861,
+                  863,
+                  865,
+                  867,
+                  869,
+                  871
+                ]
+              },
+              "851": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "openai"
+              },
+              "853": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "deepseek"
+              },
+              "855": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "openrouter"
+              },
+              "857": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "together"
+              },
+              "859": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "baseten"
+              },
+              "861": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "zai"
+              },
+              "863": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "qwen"
+              },
+              "865": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "chat-template"
+              },
+              "867": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "qwen-chat-template"
+              },
+              "869": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "string-thinking"
+              },
+              "871": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "ant-ling"
+              },
+              "872": {
+                "type": "dict",
+                "meta": {
+                  "default": {}
+                },
+                "inner": 834,
+                "sKey": 873
+              },
+              "873": {
+                "type": "string",
+                "meta": {}
+              },
+              "874": {
+                "type": "dict",
+                "meta": {
+                  "default": {}
+                },
+                "inner": 834,
+                "sKey": 875
+              },
+              "875": {
+                "type": "string",
+                "meta": {}
+              },
+              "876": {
+                "type": "boolean",
+                "meta": {}
+              },
+              "877": {
+                "type": "union",
+                "meta": {},
+                "list": [
+                  879,
+                  881,
+                  883
+                ]
+              },
+              "879": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "thinking_token_budget"
+              },
+              "881": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "thinking_budget"
+              },
+              "883": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "thinking_budget_tokens"
+              },
+              "885": {
+                "type": "number",
+                "meta": {
+                  "step": 1
+                }
+              },
+              "886": {
+                "type": "boolean",
+                "meta": {}
+              },
+              "887": {
+                "type": "boolean",
+                "meta": {}
+              },
+              "888": {
+                "type": "union",
+                "meta": {},
+                "list": [
+                  890
+                ]
+              },
+              "890": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "anthropic"
+              },
+              "891": {
+                "type": "boolean",
+                "meta": {}
+              },
+              "892": {
+                "type": "boolean",
+                "meta": {}
+              },
+              "893": {
+                "type": "boolean",
+                "meta": {}
+              },
+              "894": {
+                "type": "boolean",
+                "meta": {}
+              },
+              "895": {
+                "type": "boolean",
+                "meta": {}
+              },
+              "896": {
+                "type": "boolean",
+                "meta": {}
+              },
+              "897": {
+                "type": "boolean",
+                "meta": {}
+              },
+              "898": {
+                "type": "object",
+                "meta": {
+                  "default": {}
+                },
+                "dict": {
+                  "supportsStore": 835,
+                  "supportsDeveloperRole": 836,
+                  "supportsReasoningEffort": 837,
+                  "supportsUsageInStreaming": 838,
+                  "supportsFinishReason": 839,
+                  "maxTokensField": 840,
+                  "requiresToolResultName": 845,
+                  "requiresAssistantAfterToolResult": 846,
+                  "requiresThinkingAsText": 847,
+                  "requiresReasoningContentOnAssistantMessages": 848,
+                  "thinkingFormat": 849,
+                  "chatTemplateKwargs": 872,
+                  "chatTemplateArgs": 874,
+                  "supportsThinkingTokenBudget": 876,
+                  "thinkingTokenBudgetField": 877,
+                  "vllmPriority": 885,
+                  "supportsMaxOutputTokens": 886,
+                  "supportsStrictMode": 887,
+                  "cacheControlFormat": 888,
+                  "supportsLongCacheRetention": 891,
+                  "supportsEagerToolInputStreaming": 892,
+                  "supportsCacheControlOnTools": 893,
+                  "supportsTemperature": 894,
+                  "forceAdaptiveThinking": 895,
+                  "allowEmptySignature": 896,
+                  "supportsStrictTools": 897
+                }
+              },
+              "899": {
+                "type": "string",
+                "meta": {}
+              },
+              "900": {
+                "type": "const",
+                "meta": {},
+                "value": null
+              },
+              "901": {
+                "type": "union",
+                "meta": {},
+                "list": [
+                  899,
+                  900
+                ]
+              },
+              "902": {
+                "type": "union",
+                "meta": {},
+                "list": [
+                  904,
+                  906,
+                  908,
+                  910,
+                  912,
+                  914,
+                  916
+                ]
+              },
+              "904": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "off"
+              },
+              "906": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "minimal"
+              },
+              "908": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "low"
+              },
+              "910": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "medium"
+              },
+              "912": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "high"
+              },
+              "914": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "xhigh"
+              },
+              "916": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "max"
+              },
+              "917": {
+                "type": "dict",
+                "meta": {
+                  "default": {}
+                },
+                "inner": 901,
+                "sKey": 902
+              },
+              "918": {
+                "type": "string",
+                "meta": {}
+              },
+              "921": {
+                "type": "number",
+                "meta": {
+                  "step": 1,
+                  "min": 1
+                }
+              },
+              "924": {
+                "type": "number",
+                "meta": {
+                  "step": 1,
+                  "min": 1
+                }
+              },
+              "925": {
+                "type": "union",
+                "meta": {},
+                "list": [
+                  927,
+                  929
+                ]
+              },
+              "927": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "text"
+              },
+              "929": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "image"
+              },
+              "930": {
+                "type": "array",
+                "meta": {
+                  "default": []
+                },
+                "inner": 925
+              },
+              "931": {
+                "type": "const",
+                "meta": {},
+                "value": false
+              },
+              "932": {
+                "type": "union",
+                "meta": {},
+                "list": [
+                  931,
+                  917
+                ]
+              },
+              "934": {
+                "type": "string",
+                "meta": {
+                  "required": true
+                }
+              },
+              "935": {
+                "type": "object",
+                "meta": {
+                  "default": {}
+                },
+                "dict": {
+                  "id": 934,
+                  "name": 918,
+                  "contextWindow": 921,
+                  "maxTokens": 924,
+                  "input": 930,
+                  "reasoningEfforts": 932,
+                  "compat": 898
+                }
+              },
+              "936": {
+                "type": "object",
+                "meta": {
+                  "default": {}
+                },
+                "dict": {
+                  "name": 918,
+                  "contextWindow": 921,
+                  "maxTokens": 924,
+                  "input": 930,
+                  "reasoningEfforts": 932,
+                  "compat": 898
+                }
+              },
+              "938": {
+                "type": "string",
+                "meta": {
+                  "role": "credential-ref"
+                }
+              },
+              "939": {
+                "type": "string",
+                "meta": {}
+              },
+              "940": {
+                "type": "union",
+                "meta": {},
+                "list": [
+                  942,
+                  944,
+                  946
+                ]
+              },
+              "942": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "openai-completions"
+              },
+              "944": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "openai-responses"
+              },
+              "946": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "anthropic-messages"
+              },
+              "947": {
+                "type": "string",
+                "meta": {}
+              },
+              "948": {
+                "type": "array",
+                "meta": {
+                  "default": []
+                },
+                "inner": 935
+              },
+              "949": {
+                "type": "dict",
+                "meta": {
+                  "default": {}
+                },
+                "inner": 936,
+                "sKey": 950
+              },
+              "950": {
+                "type": "string",
+                "meta": {}
+              },
+              "954": {
+                "type": "number",
+                "meta": {
+                  "step": 1,
+                  "min": 1,
+                  "default": 262144
+                }
+              },
+              "958": {
+                "type": "number",
+                "meta": {
+                  "step": 1,
+                  "min": 1,
+                  "default": 32768
+                }
+              },
+              "959": {
+                "type": "union",
+                "meta": {},
+                "list": [
+                  961,
+                  963
+                ]
+              },
+              "961": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "text"
+              },
+              "963": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "image"
+              },
+              "965": {
+                "type": "array",
+                "meta": {
+                  "default": [
+                    "text"
+                  ]
+                },
+                "inner": 959
+              },
+              "966": {
+                "type": "string",
+                "meta": {}
+              },
+              "967": {
+                "type": "dict",
+                "meta": {
+                  "default": {}
+                },
+                "inner": 966,
+                "sKey": 968
+              },
+              "968": {
+                "type": "string",
+                "meta": {}
+              },
+              "969": {
+                "type": "union",
+                "meta": {},
+                "list": [
+                  971,
+                  973,
+                  975,
+                  977,
+                  979,
+                  981,
+                  983
+                ]
+              },
+              "971": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "off"
+              },
+              "973": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "minimal"
+              },
+              "975": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "low"
+              },
+              "977": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "medium"
+              },
+              "979": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "high"
+              },
+              "981": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "xhigh"
+              },
+              "983": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "max"
+              },
+              "984": {
+                "type": "union",
+                "meta": {},
+                "list": [
+                  986,
+                  988,
+                  990
+                ]
+              },
+              "986": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "none"
+              },
+              "988": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "short"
+              },
+              "990": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "long"
+              },
+              "991": {
+                "type": "union",
+                "meta": {},
+                "list": [
+                  993,
+                  995,
+                  997,
+                  999
+                ]
+              },
+              "993": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "sse"
+              },
+              "995": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "websocket"
+              },
+              "997": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "websocket-cached"
+              },
+              "999": {
+                "type": "const",
+                "meta": {
+                  "required": true
+                },
+                "value": "auto"
+              },
+              "1002": {
+                "type": "number",
+                "meta": {
+                  "step": 1,
+                  "min": 0
+                }
+              },
+              "1005": {
+                "type": "number",
+                "meta": {
+                  "step": 1,
+                  "min": 0
+                }
+              },
+              "1009": {
+                "type": "number",
+                "meta": {
+                  "min": 5e-324,
+                  "max": 2147483647,
+                  "default": 300000
+                }
+              },
+              "1013": {
+                "type": "number",
+                "meta": {
+                  "step": 1,
+                  "min": 1,
+                  "default": 20971520
+                }
+              },
+              "1017": {
+                "type": "number",
+                "meta": {
+                  "step": 1,
+                  "min": 1,
+                  "default": 4194304
+                }
+              },
+              "1021": {
+                "type": "number",
+                "meta": {
+                  "step": 1,
+                  "min": 1,
+                  "default": 1048576
+                }
+              },
+              "1022": {
+                "type": "object",
+                "meta": {
+                  "default": {}
+                },
+                "dict": {
+                  "apiKeyEnv": 938,
+                  "displayName": 939,
+                  "api": 940,
+                  "baseURL": 947,
+                  "models": 948,
+                  "modelOverrides": 949,
+                  "compat": 898,
+                  "defaultContextWindow": 954,
+                  "defaultMaxTokens": 958,
+                  "defaultInput": 965,
+                  "headers": 967,
+                  "reasoning": 969,
+                  "thinkingBudgets": 819,
+                  "cacheRetention": 984,
+                  "transport": 991,
+                  "timeoutMs": 1002,
+                  "websocketConnectTimeoutMs": 1005,
+                  "streamIdleTimeoutMs": 1009,
+                  "maxRequestImageBytes": 1013,
+                  "requestImagePixelBudget": 1017,
+                  "requestImageMaxBytes": 1021,
+                  "retryPolicy": 25
+                }
+              },
+              "1024": {
+                "type": "string",
+                "meta": {}
+              },
+              "1025": {
+                "type": "dict",
+                "meta": {
+                  "default": {}
+                },
+                "inner": 1022,
+                "sKey": 1024
+              },
+              "1026": {
+                "type": "object",
+                "meta": {
+                  "default": {}
+                },
+                "dict": {
+                  "providers": 1025
+                }
+              }
+            }
+          },
+          "value": {
+            "providers": {}
+          },
+          "base": {
+            "providers": {}
+          },
+          "applies": "live",
+          "secrets": [],
+          "revision": 0
+        }
+      ]
+    }
+  }
+}
