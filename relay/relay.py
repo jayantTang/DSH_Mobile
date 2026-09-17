@@ -124,6 +124,24 @@ async def link_device(request: web.Request) -> web.WebSocketResponse:
     limits: Limits = request.app["limits"]
     device = await _device_identity(request)
 
+    # The budget is checked before the upgrade: a client that is refused should
+    # get a clean close, not a socket that opens and then dies.
+    #
+    # A device reconnecting is not a new device, and the relay may still be
+    # tearing its previous socket down when the new one arrives — so the budget
+    # counts *other* live devices, never the same id twice. Treating our own id
+    # as one of the slots would lock a phone out of its own relay.
+    if limits.max_devices_per_agent:
+        agent = hub.agents.get(device["agentId"])
+        if agent is not None:
+            mine = device["deviceId"]
+            attached = [link for link in agent.devices.values()
+                        if not link.closed and link.device_id != mine]
+            if len(attached) >= limits.max_devices_per_agent:
+                LOGGER.warning("relay: refusing device %s — agent %s is at its device budget (%d)",
+                               device["deviceId"], device["agentId"], limits.max_devices_per_agent)
+                raise web.HTTPForbidden(text="device limit reached for this host")
+
     ws = _make_socket(request, limits)
     await ws.prepare(request)
     link = await hub.attach_device(device, ws)
@@ -197,6 +215,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--pair-ttl-seconds", type=int, default=DEFAULT_PAIR_TTL_MS // 1000)
     parser.add_argument("--device-ttl-days", type=int, default=DEFAULT_DEVICE_TTL_MS // 86_400_000)
     parser.add_argument("--queue-depth", type=int, default=512)
+    parser.add_argument("--max-devices-per-agent", type=int,
+                        default=int(os.environ.get("DLP_MAX_DEVICES_PER_AGENT", "0")),
+                        help="how many devices one agent may keep attached (0 = unlimited)")
+    parser.add_argument("--device-rate-kbps", type=float,
+                        default=float(os.environ.get("DLP_DEVICE_RATE_KBPS", "0")),
+                        help="per-device egress pacing in kilobits per second (0 = no pacing). "
+                             "On a fixed-bandwidth host this is what keeps one device's large "
+                             "frames from occupying the whole pipe")
+    parser.add_argument("--device-daily-mb", type=float,
+                        default=float(os.environ.get("DLP_DEVICE_DAILY_MB", "0")),
+                        help="per-device egress allowance per UTC day, in megabytes (0 = unlimited)")
     parser.add_argument("--base-path", default=os.environ.get("DLP_BASE_PATH", ""),
                         help="optional mount prefix, e.g. /dsh-link; both the prefixed and the "
                              "already-stripped forms are served")
@@ -213,7 +242,12 @@ def main(argv: list[str] | None = None) -> int:
     store = Store(args.db)
     app = create_app(
         store=store,
-        limits=Limits(queue_depth=int(args.queue_depth)),
+        limits=Limits(
+            queue_depth=int(args.queue_depth),
+            max_devices_per_agent=int(args.max_devices_per_agent),
+            device_bytes_per_second=float(args.device_rate_kbps) * 1000 / 8,
+            device_daily_bytes=int(float(args.device_daily_mb) * 1024 * 1024),
+        ),
         pair_ttl_ms=int(args.pair_ttl_seconds) * 1000,
         device_ttl_ms=int(args.device_ttl_days) * 86_400_000,
         base_path=args.base_path,

@@ -85,6 +85,79 @@ async def healthz(_request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "version": dlp.PROTOCOL_VERSION})
 
 
+async def stats(_request: web.Request) -> web.Response:
+    """Live load and traffic accounting, for the operator.
+
+    Not part of the protocol: nothing in the app or the connector calls it. It
+    exists because the relay runs on a **fixed-bandwidth** host, where the
+    question that matters is "which device is using the pipe", and the host's own
+    interface counters cannot answer it (they mix in SSH, OTA downloads and
+    everything else on the machine).
+
+    Serving a page as well as JSON keeps it to one command on the server:
+    ``curl -s localhost:8787/stats | head`` for a number, or open the same URL in
+    a browser for a self-refreshing view. The relay listens on loopback only, so
+    this is never public — it names devices and their byte counts.
+    """
+    hub = _request.app["hub"]
+    limits = _request.app["limits"]
+    payload = {
+        "ok": True,
+        "version": dlp.PROTOCOL_VERSION,
+        "limits": limits.describe(),
+        "load": {
+            "agents": len(hub.agents),
+            "devices": len(hub.all_devices()),
+        },
+        "traffic": hub.traffic(),
+        "snapshot": hub.snapshot(),
+    }
+    if "text/html" in (_request.headers.get("Accept") or ""):
+        return web.Response(text=_stats_page(payload), content_type="text/html")
+    return web.json_response(payload)
+
+
+def _stats_page(payload: dict[str, Any]) -> str:
+    """The same numbers as a small self-refreshing page."""
+    limits = payload["limits"]
+    load = payload["load"]
+    rows = []
+    for device in payload["traffic"]["devices"]:
+        quota = device["quotaRemainingBytes"]
+        rows.append(
+            "<tr><td>{name}</td><td class=mono>{deviceId}</td><td class=num>{mb:.2f} MB</td>"
+            "<td class=num>{paced:.1f}s</td><td class=num>{quota}</td></tr>".format(
+                name=device["name"] or "—",
+                deviceId=device["deviceId"],
+                mb=device["egressBytes"] / 1024 / 1024,
+                paced=device["pacedSeconds"],
+                quota="不限" if quota < 0 else f"{quota / 1024 / 1024:.1f} MB",
+            ))
+    if not rows:
+        rows.append('<tr><td colspan="5" class=muted>当前没有设备连着</td></tr>')
+    return f"""<!doctype html>
+<html lang="zh"><head><meta charset="utf-8"><title>DLP relay</title>
+<meta http-equiv="refresh" content="5">
+<style>
+ body {{ font: 14px/1.6 -apple-system, "PingFang SC", sans-serif; margin: 2rem; color: #1c1c1e; }}
+ h1 {{ font-size: 1.1rem; }} table {{ border-collapse: collapse; width: 100%; }}
+ th, td {{ border-bottom: 1px solid #e5e5ea; padding: .4rem .6rem; text-align: left; }}
+ th {{ color: #6c6c70; font-weight: 600; }}
+ .num {{ text-align: right; }} .mono {{ font-family: ui-monospace, monospace; font-size: 12px; }}
+ .muted {{ color: #8e8e93; }} .big {{ font-size: 1.4rem; font-weight: 600; }}
+</style></head><body>
+<h1>DLP relay — 实时负载与流量</h1>
+<p>agent <span class=big>{load['agents']}</span> 个 · 连接设备 <span class=big>{load['devices']}</span> 台 ·
+   本次启动累计出口 <span class=big>{payload['traffic']['totalEgressBytes'] / 1024 / 1024:.2f} MB</span>
+   <span class=muted>（页面每 5 秒自刷新；数字是 relay 自己算的，不含 SSH 与 OTA 流量）</span></p>
+<p class=muted>限制：每设备 {limits['deviceBytesPerSecond'] or '不限'} B/s ·
+   每日 {limits['deviceDailyBytes'] or '不限'} B · 每 agent 设备数 {limits['maxDevicesPerAgent'] or '不限'}</p>
+<table><thead><tr><th>设备</th><th>deviceId</th><th class=num>本次出口</th>
+<th class=num>被限速时长</th><th class=num>今日剩余额度</th></tr></thead>
+<tbody>{''.join(rows)}</tbody></table>
+</body></html>"""
+
+
 @web.middleware
 async def cors_preflight(request: web.Request, handler: Any) -> web.StreamResponse:
     """Answer ``OPTIONS`` for every path (spec §2).
@@ -292,6 +365,7 @@ async def agents_enroll(request: web.Request) -> web.Response:
 def register_http_routes(app: web.Application, route: Any, base_path: str) -> None:
     """Attach the plain-HTTP routes (``route`` registers both path forms)."""
     route("GET", "/healthz", healthz)
+    route("GET", "/stats", stats)
     route("POST", "/pair/claim", pair_claim)
     route("POST", "/pair/refresh", pair_refresh)
     route("POST", "/pair/code", pair_code)

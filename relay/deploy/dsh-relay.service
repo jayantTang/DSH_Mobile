@@ -22,6 +22,29 @@ Environment=DLP_DB=/var/lib/dsh-relay/state.db
 # whichever way the front end forwards the request.
 Environment=DLP_BASE_PATH=/dsh-link
 Environment=DLP_LOG_LEVEL=INFO
+
+# ── 共享带宽的三道闸 ────────────────────────────────────────────────────────
+# 这台主机是固定带宽，且带宽由所有设备共享。下面三个值不是"防滥用"，而是
+# "别让一个人的一次正常操作拖慢所有人"：
+#
+#   DLP_MAX_DEVICES_PER_AGENT  一台电脑配几台手机。挡住泄漏的 deviceToken 或
+#                              配对脚本把中转塞满；重连不会重复计数。
+#   DLP_DEVICE_RATE_KBPS       单设备出口限速（千比特/秒）。十张截图 ≈ 27 MB，
+#                              在 5 Mbps 的管子上会独占 43 秒；限到 2 Mbps 后
+#                              其余带宽留给别人，而这个设备只是变慢，不掉帧。
+#                              取值口径约等于「管子 ÷ 预期同时传大文件的设备数」，
+#                              不是「管子 ÷ 设备数」。
+#   DLP_DEVICE_DAILY_MB        单设备每日（UTC）出口额度。用超会先收到
+#                              quota/device-daily 的 error 帧，再被断开（4011），
+#                              次日 UTC 零点恢复。按「重度一天的几倍」设。
+#
+# 三者留空或为 0 表示不限。改完：
+#   systemctl daemon-reload && systemctl restart dsh-relay
+# 生效情况与实时流量：
+#   curl -s http://127.0.0.1:8787/stats | python3 -m json.tool
+Environment=DLP_MAX_DEVICES_PER_AGENT=8
+Environment=DLP_DEVICE_RATE_KBPS=2000
+Environment=DLP_DEVICE_DAILY_MB=500
 # ProtectSystem=strict makes the filesystem read-only: never write .pyc files.
 Environment=PYTHONDONTWRITEBYTECODE=1
 

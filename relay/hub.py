@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Any, Iterable
 
 import dlp
@@ -23,16 +24,142 @@ import dlp
 #: WebSocket close codes used by the relay (application range).
 CLOSE_SUPERSEDED = 4001
 CLOSE_BACKPRESSURE = 4008
+CLOSE_RATE_LIMITED = 4009
 CLOSE_AGENT_OFFLINE = 4010
+CLOSE_QUOTA_EXCEEDED = 4011
+
+#: Longest string handed to the WebSocket in one call while a device is over its
+#: rate. ~1 MB of JSON: small enough that pacing is visible on the wire, large
+#: enough that chunking costs almost nothing on a normal frame.
+_CHUNK_CHARS = 512 * 1024
+
+
+class TokenBucket:
+    """Bytes-per-second allowance for one device.
+
+    The relay runs on a **fixed-bandwidth** host, and that bandwidth is shared by
+    every device on it. A single device uploading or downloading a few large
+    frames — ten screenshots is 27 MB — would otherwise occupy the whole pipe for
+    tens of seconds and slow down everybody else's session. That is not a
+    malicious act, it is a normal one, so the fix is a plain token bucket rather
+    than a ban.
+
+    The bucket starts **full** with at least a small burst allowance, so an
+    ordinary turn (a handful of small frames) never waits at all; only sustained
+    volume is paced. Pacing happens in the link's writer, not by dropping: the
+    frames still arrive, just spread over time, which is what a video-style
+    stream should look like to the client.
+    """
+
+    __slots__ = ("rate", "burst", "tokens", "updated")
+
+    def __init__(self, *, rate: float, burst: float | None = None, now: float | None = None):
+        #: bytes per second; ``0`` or less disables pacing entirely.
+        self.rate = max(0.0, float(rate))
+        self.burst = float(burst if burst is not None else max(self.rate, 64 * 1024))
+        self.tokens = self.burst
+        self.updated = time.monotonic() if now is None else now
+
+    @property
+    def enabled(self) -> bool:
+        return self.rate > 0
+
+    def _refill(self, now: float) -> None:
+        if now <= self.updated:
+            return
+        self.tokens = min(self.burst, self.tokens + (now - self.updated) * self.rate)
+        self.updated = now
+
+    def take(self, amount: int) -> float:
+        """Charge ``amount`` bytes; return seconds to wait *before* sending them.
+
+        A positive return means the caller is over its allowance and should sleep
+        that long first. The charge is taken immediately either way, so a burst
+        of small frames queues up in the same order it was written.
+        """
+        if not self.enabled:
+            return 0.0
+        now = time.monotonic()
+        self._refill(now)
+        self.tokens -= amount
+        if self.tokens >= 0:
+            return 0.0
+        return -self.tokens / self.rate
+
+
+class DailyQuota:
+    """A per-device byte allowance that resets at UTC midnight.
+
+    Rate pacing bounds how *fast* one device can move bytes; this bounds how many
+    in a day, which is what protects a metered or fixed-bandwidth host from one
+    device that simply runs all day. The reset is by UTC day so that every device
+    and the operator's own daily accounting agree on when "today" ends.
+    """
+
+    __slots__ = ("limit", "used", "day")
+
+    def __init__(self, *, limit: int, now: float | None = None):
+        self.limit = max(0, int(limit))
+        self.used = 0
+        self.day = self._day_of(time.time() if now is None else now)
+
+    @staticmethod
+    def _day_of(stamp: float) -> int:
+        return int(stamp // 86_400)
+
+    @property
+    def enabled(self) -> bool:
+        return self.limit > 0
+
+    def charge(self, amount: int, *, now: float | None = None) -> bool:
+        """Account ``amount`` bytes; ``False`` means the day's allowance is gone."""
+        if not self.enabled:
+            return True
+        stamp = time.time() if now is None else now
+        today = self._day_of(stamp)
+        if today != self.day:
+            self.day = today
+            self.used = 0
+        self.used += amount
+        return self.used <= self.limit
+
+    def remaining(self) -> int:
+        return max(0, self.limit - self.used) if self.enabled else -1
+
+
+#: Raised by :meth:`RelayHub.attach_device` when an agent is already at its
+#: device budget. The caller answers with a close instead of an accepted socket.
+class DeviceLimitReached(Exception):
+    pass
+
 
 class Limits:
     """Tunables for the hub; the spec's numbers are the defaults."""
 
     def __init__(self, *, max_frame_bytes: int = dlp.MAX_FRAME_BYTES, queue_depth: int = 512,
-                 agent_queue_depth: int = 4096):
+                 agent_queue_depth: int = 4096, max_devices_per_agent: int = 0,
+                 device_bytes_per_second: float = 0.0, device_daily_bytes: int = 0):
         self.max_frame_bytes = max_frame_bytes
         self.queue_depth = queue_depth
         self.agent_queue_depth = agent_queue_depth
+        #: How many devices one agent may keep attached. ``0`` means unlimited.
+        self.max_devices_per_agent = max(0, int(max_devices_per_agent))
+        #: Per-device egress pacing, in bytes per second. ``0`` disables it.
+        self.device_bytes_per_second = max(0.0, float(device_bytes_per_second))
+        #: Per-device egress allowance per UTC day, in bytes. ``0`` disables it.
+        self.device_daily_bytes = max(0, int(device_daily_bytes))
+
+    def describe(self) -> dict[str, Any]:
+        """The limits as they should appear in an operator-facing report."""
+        return {
+            "maxFrameBytes": self.max_frame_bytes,
+            "queueDepth": self.queue_depth,
+            "agentQueueDepth": self.agent_queue_depth,
+            "maxDevicesPerAgent": self.max_devices_per_agent or None,
+            "deviceBytesPerSecond": self.device_bytes_per_second or None,
+            "deviceDailyBytes": self.device_daily_bytes or None,
+        }
+
 
 class Link:
     """A WebSocket plus one bounded outbound queue and its writer task."""
@@ -57,11 +184,15 @@ class Link:
                 text = await self._queue.get()
                 if text is None:
                     return
-                await self.ws.send_str(text)
+                await self._send(text)
         except asyncio.CancelledError:
             raise
         except Exception as error:  # socket gone; the reader loop handles teardown
             self.logger.debug("relay: %s writer stopped: %s", self.label, error)
+
+    async def _send(self, text: str) -> None:
+        """Put one frame on the wire. Subclasses may pace or account for it."""
+        await self.ws.send_str(text)
 
     def enqueue_text(self, text: str) -> bool:
         """Queue one frame; ``False`` means the peer is too slow and must be dropped."""
@@ -110,11 +241,61 @@ class DeviceLink(Link):
         self.agent: AgentLink | None = None
         self._to_agent: asyncio.Queue[str | None] = asyncio.Queue(maxsize=limits.queue_depth)
         self._agent_pump: asyncio.Task[None] | None = None
+        # Egress accounting and pacing. Both are per device, so one device that
+        # moves a lot of bytes cannot slow down the others sharing the host's
+        # fixed bandwidth (see TokenBucket).
+        self.bucket = TokenBucket(rate=limits.device_bytes_per_second)
+        self.quota = DailyQuota(limit=limits.device_daily_bytes)
+        self.egress_bytes = 0
+        self.paced_seconds = 0.0
 
     def start(self) -> None:
         super().start()
         if self._agent_pump is None:
             self._agent_pump = asyncio.create_task(self._pump_to_agent())
+
+    async def _send(self, text: str) -> None:
+        """Send one frame, paced by this device's allowance.
+
+        The bucket is charged **here**, in the writer, and the sender is left
+        alone: a device that is merely over its rate still gets its frames, just
+        spread over time. Charging at enqueue instead would let pacing fill the
+        queue and turn "slow down" into "you are dropped for backpressure"
+        (``4008``), which is a different and much worse message.
+
+        A frame bigger than ``_CHUNK_CHARS`` is sent as several WebSocket
+        messages while the device is over its rate, because ``send_str`` hands
+        the whole payload to the transport in one call — a 2.7 MB screenshot
+        would otherwise be written to the socket in one burst no matter what the
+        bucket says. The channel is a stream, so the client reassembles the frame
+        with no change on its side.
+        """
+        size = len(text.encode("utf-8"))
+        wait = self.bucket.take(size)
+        if wait > 0:
+            await asyncio.sleep(wait)
+            self.paced_seconds += wait
+        if size <= _CHUNK_CHARS or self.bucket.tokens >= 0:
+            await self.ws.send_str(text)
+            self._count_egress(size)
+            return
+        for start in range(0, len(text), _CHUNK_CHARS):
+            chunk = text[start:start + _CHUNK_CHARS]
+            step = self.bucket.take(len(chunk.encode("utf-8")))
+            if step > 0:
+                await asyncio.sleep(step)
+                self.paced_seconds += step
+            await self.ws.send_str(chunk)
+            self._count_egress(len(chunk.encode("utf-8")))
+
+    def _count_egress(self, size: int) -> None:
+        self.egress_bytes += size
+        agent = self.agent
+        if agent is not None:
+            agent.egress_bytes += size
+
+    def over_daily_quota(self) -> bool:
+        return self.quota.enabled and self.quota.remaining() == 0
 
     async def _pump_to_agent(self) -> None:
         try:
@@ -164,6 +345,11 @@ class AgentLink(Link):
         self.name: str = agent["name"]
         self.superseded = False
         self.devices: dict[str, DeviceLink] = {}
+        #: Bytes this agent's devices have received since the relay started. Kept
+        #: so an operator can answer "who is using the bandwidth" without a
+        #: packet capture — the host's interface counters mix in SSH and OTA
+        #: traffic and say nothing about which computer is responsible.
+        self.egress_bytes = 0
 
     def broadcast(self, frame: dict[str, Any]) -> list[str]:
         """Send to every attached device; returns the ids that overflowed."""
@@ -226,8 +412,22 @@ class RelayHub:
     # ── device lifecycle ────────────────────────────────────────────────────
 
     async def attach_device(self, device: dict[str, Any], ws: Any) -> DeviceLink:
-        link = DeviceLink(ws, device=device, logger=self.logger, limits=self.limits)
         agent = self.agents.get(device["agentId"])
+        # One computer, one user: a device budget per agent is what keeps a
+        # single leaked device token (or a script that pairs in a loop) from
+        # filling the relay with sockets that all multiplex onto one connector.
+        # Refusing here — rather than after the socket is prepared — means the
+        # client gets a plain close instead of a half-open link.
+        if agent is not None and self.limits.max_devices_per_agent:
+            # Same rule as the route-level check: a reconnecting device does not
+            # occupy a second slot, even while its old link is still closing.
+            attached = [link for link in agent.devices.values()
+                        if not link.closed and link.device_id != device["deviceId"]]
+            if len(attached) >= self.limits.max_devices_per_agent:
+                raise DeviceLimitReached(
+                    f"agent {agent.agent_id} already has {len(attached)} devices "
+                    f"(limit {self.limits.max_devices_per_agent})")
+        link = DeviceLink(ws, device=device, logger=self.logger, limits=self.limits)
         link.agent = agent
         self._devices[device["deviceId"]] = link
         if agent is None:
@@ -302,15 +502,28 @@ class RelayHub:
             self.logger.debug("relay: agent %s sent %s for unknown device %s", link.agent_id, kind, device_id)
             return
         # The relay's own addressing key never reaches the device.
-        if not device.enqueue_text(dlp.encode_frame(dlp.strip_device_id(frame))):
+        text = dlp.encode_frame(dlp.strip_device_id(frame))
+        # The daily allowance is charged on what actually goes to the phone, and
+        # the phone is told why it stopped instead of silently going quiet: a
+        # client that keeps reconnecting into a spent quota is worse than one
+        # that shows "today's traffic allowance is used up".
+        if device.quota.enabled and not device.quota.charge(len(text.encode("utf-8"))):
+            self.logger.warning("relay: device %s exceeded its daily allowance (%d bytes)",
+                                device_id, device.quota.limit)
+            device.enqueue_frame(dlp.error_frame(
+                "quota/device-daily", "this device reached its daily traffic allowance",
+                fatal=False, details={"limitBytes": device.quota.limit}))
+            await self._drop_device(device_id, "daily quota", code=CLOSE_QUOTA_EXCEEDED)
+            return
+        if not device.enqueue_text(text):
             await self._drop_device(device_id, "backpressure")
 
-    async def _drop_device(self, device_id: str, reason: str) -> None:
+    async def _drop_device(self, device_id: str, reason: str, *,
+                           code: int = CLOSE_BACKPRESSURE) -> None:
         link = self._devices.get(device_id)
         if link is None:
             return
         self.logger.warning("relay: dropping device %s (%s)", device_id, reason)
-        code = CLOSE_BACKPRESSURE if reason == "backpressure" else 1001
         await self.detach_device(link, reason=reason, code=code)
 
     # ── introspection ───────────────────────────────────────────────────────
@@ -328,6 +541,7 @@ class RelayHub:
                     "name": link.name,
                     "devices": [device.device_id for device in link.devices.values()],
                     "pending": link.pending(),
+                    "egressBytes": link.egress_bytes,
                 }
                 for link in self.agents.values()
             ],
@@ -338,8 +552,35 @@ class RelayHub:
                     "name": link.name,
                     "pending": link.pending(),
                     "hostOnline": link.agent is not None and not link.agent.closed,
+                    "egressBytes": link.egress_bytes,
+                    "pacedSeconds": round(link.paced_seconds, 3),
+                    "quotaRemainingBytes": link.quota.remaining(),
                 }
                 for link in self._devices.values()
+            ],
+        }
+
+    def traffic(self) -> dict[str, Any]:
+        """Egress accounting, most useful first.
+
+        The host's own interface counters cannot answer "which computer is using
+        the bandwidth" — they mix in SSH, OTA downloads and everything else on
+        the machine. These numbers are the relay's own, so they are the ones to
+        look at when deciding whether a device needs a smaller allowance.
+        """
+        devices = sorted(self._devices.values(), key=lambda link: link.egress_bytes, reverse=True)
+        return {
+            "totalEgressBytes": sum(link.egress_bytes for link in self._devices.values()),
+            "devices": [
+                {
+                    "deviceId": link.device_id,
+                    "agentId": link.agent_id,
+                    "name": link.name,
+                    "egressBytes": link.egress_bytes,
+                    "pacedSeconds": round(link.paced_seconds, 3),
+                    "quotaRemainingBytes": link.quota.remaining(),
+                }
+                for link in devices
             ],
         }
 

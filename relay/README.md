@@ -32,7 +32,7 @@ front end.
 | File | Purpose |
 |---|---|
 | `relay.py` | aiohttp wiring: the two WebSocket endpoints, the app factory, base path, CLI entrypoint |
-| `api.py` | plain-HTTP surface: `/healthz`, `/pair/{claim,refresh,code}`, CORS, bearer parsing |
+| `api.py` | plain-HTTP surface: `/healthz`, `/stats`, `/pair/{claim,refresh,code}`, CORS, bearer parsing |
 | `dlp.py` | frame codec, validation, additive relay control frames |
 | `store.py` | SQLite persistence (accounts, agents, devices, pair codes), hashes only |
 | `hub.py` | agent/device registry, routing, per-device backpressure |
@@ -45,8 +45,9 @@ front end.
 | Method | Path | Auth | Notes |
 |---|---|---|---|
 | `GET` | `/healthz` | — | `{"ok":true,"version":1}` |
+| `GET` | `/stats` | — (loopback only) | operator view: live load, effective limits, egress per device. JSON, or an HTML page when the client sends `Accept: text/html` |
 | `WS` | `/link/agent?agentId=<id>` | `Bearer <agentSecret>` | one live connection per `agentId`; a new one supersedes the old (close `4001`) |
-| `WS` | `/link/device?agentId=<id>` | `Bearer <deviceToken>` | any number per agent |
+| `WS` | `/link/device?agentId=<id>` | `Bearer <deviceToken>` | up to `--max-devices-per-agent` per agent (`403` past it) |
 | `POST` | `/pair/claim` | — | `{pairCode, deviceName, deviceModel, appVersion}` → device token |
 | `POST` | `/pair/refresh` | device token | rotates the token; the old one dies immediately |
 | `POST` | `/pair/code` | agent secret | mints a one-time pairing code (see `notes/relay.md` §2) |
@@ -191,8 +192,49 @@ Overridable: `DSH_RELAY_USER`, `DSH_RELAY_DIR`, `DSH_RELAY_DATA`,
 | `--pair-ttl-seconds` | `600` | pairing-code lifetime |
 | `--device-ttl-days` | `365` | device-token lifetime |
 | `--queue-depth` | `512` | per-device backpressure bound |
+| `--max-devices-per-agent` / `DLP_MAX_DEVICES_PER_AGENT` | `0` (unlimited) | how many devices one agent may keep attached; a reconnect never counts twice |
+| `--device-rate-kbps` / `DLP_DEVICE_RATE_KBPS` | `0` (no pacing) | per-device egress pacing, in **kilobits per second** |
+| `--device-daily-mb` / `DLP_DEVICE_DAILY_MB` | `0` (unlimited) | per-device egress allowance per **UTC** day, in megabytes |
 | `--base-path` / `DLP_BASE_PATH` | *(empty)* | optional mount prefix; every route is served with and without it |
 | `--log-level` / `DLP_LOG_LEVEL` | `INFO` | log verbosity |
+
+### Why the three limits exist (and how to pick numbers)
+
+The relay is normally deployed on a **fixed-bandwidth** host, and that bandwidth is
+shared by every device on it. The limits are not about abuse — they are about one
+perfectly ordinary session not ruining everybody else's:
+
+* **`--device-rate-kbps`** — a device that downloads ten screenshots moves ~27 MB
+  of egress. On a 5 Mbps pipe that is 43 seconds of the *entire* link. Pacing one
+  device at, say, 2 Mbps leaves the rest of the pipe for everyone else, and the
+  device itself only sees a slower picture, never a dropped frame: the writer
+  sleeps and streams, it does not discard. Pick roughly *pipe ÷ expected
+  simultaneous heavy devices*, not *pipe ÷ devices*.
+* **`--device-daily-mb`** — pacing bounds how fast, this bounds how much. A device
+  that spends its allowance is closed with code **`4011`** after being told why
+  (`{"t":"error","code":"quota/device-daily"}`), and may connect again after UTC
+  midnight. Set it to a comfortable multiple of a heavy day (a few hundred MB)
+  rather than to a typical day.
+* **`--max-devices-per-agent`** — one computer, one person. This is what stops a
+  leaked device token (or a pairing script) from filling the relay with sockets
+  that all multiplex onto one connector. A device reconnecting is counted once,
+  so a phone can never lock itself out.
+
+### Watching the load
+
+`GET /stats` returns the relay's own accounting — live agents and devices, the
+effective limits, and egress bytes per device since the process started:
+
+```bash
+curl -s http://127.0.0.1:8787/stats | python3 -m json.tool | head -40
+# or open http://127.0.0.1:8787/stats in a browser (through an SSH tunnel) for a
+# self-refreshing page: agent/device counts, total egress, per-device bytes,
+# how many seconds each device spent paced, and the remaining daily allowance.
+```
+
+The host's own interface counters cannot answer "which device is using the
+bandwidth" — they mix in SSH, OTA downloads and everything else on the machine.
+These numbers are the relay's, so they can.
 
 ### Security posture
 
@@ -214,6 +256,9 @@ Overridable: `DSH_RELAY_USER`, `DSH_RELAY_DIR`, `DSH_RELAY_DATA`,
 | `401` on the device WebSocket | the device token is unknown, revoked, or expired (`admin.py device-list --all`) |
 | `pair/invalid-code` | the code is one-time only and lives 10 minutes; mint a new one |
 | device is dropped every few seconds | it is not draining frames; the relay closes on 512 queued frames (code `4008`) |
+| device stops receiving mid-session, close code `4011` | it spent its daily allowance (`--device-daily-mb`); the frame before the close is an `error` with code `quota/device-daily` |
+| a device feels slow but nothing is dropped | it is being paced (`--device-rate-kbps`); `GET /stats` shows the seconds each device spent waiting |
+| a second phone cannot connect at all (`403`) | `--max-devices-per-agent` is reached; raise it or revoke a pairing (`admin.py device-revoke`) |
 | phone shows "host offline" repeatedly | the agent is reconnecting; check its `lastError` via `GET /mobile-link/status` or `MOBILE_LINK_STATE` lines |
 | `https://relay.example.com/dsh-link/healthz` is 404 | the marked block is missing from the right site block; run `caddy_splice.py check` then `deploy.sh` |
 | WebSockets close every 30–60s through Caddy | `read_timeout`/`write_timeout` were overridden; they must stay `0` (no timeout) in the reverse_proxy transport |
