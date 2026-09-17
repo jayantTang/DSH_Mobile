@@ -81,54 +81,55 @@ for x in d['traffic']['devices']:
 
 ---
 
-## 二、TestFlight
+## 二、TestFlight（已上线，这是给别人装的正路）
 
-### 现状（I checked，不是猜的）
+进度（2026-09-17）：
 
 | 项 | 状态 |
 | --- | --- |
-| 本机代码签名身份 | 只有 `Apple Development: jingyang Tang (M6ML33FNV3)` —— **没有 Apple Distribution** |
-| 已安装的描述文件 | 0 个（`~/Library/MobileDevice/Provisioning Profiles` 是空的；OTA 用的那份是 Xcode 自动管理的） |
-| 现在的分发方式 | OTA：`ExportOptions-ota.plist` 的 `method = debugging`，即 Apple Development 证书 + 团队描述文件。只覆盖**已登记 UDID 的设备**（手机已登记，有效期到 2027-02-11） |
-| Xcode | 26.2（本机），可用 |
-| 上传通道 | 有 `altool`/`notarytool` 一类工具，但**都需要 App Store Connect 的账号与专用密码** |
+| App Store Connect 记录 | `DSH_Mobile` · `com.jayanttang.dsh` · `6813129188` |
+| 构建 | build **1** · `VALID` · 已声明出口合规 |
+| 审核联系人 / 测试说明 | 已填（反馈邮箱 `forwoshitjy@live.com`；说明用 zh-Hans 那份） |
+| 外部测试组 | **Public beta**（`publicLinkEnabled`） |
+| 公开链接 | **https://testflight.apple.com/join/tHKQsbCk** |
+| 外部测试审核 | `WAITING_FOR_REVIEW`（提交于 2026-09-17 09:06 -07:00） |
 
-### 缺的三样（都只能你来）
+**链接现在就存在，但要等审核通过陌生人才装得上。** 审核通常 1–2 天；通过后 Apple 会发邮件。
+在那之前，**你自己**可以先走内部测试（不用审核）：App Store Connect → TestFlight → 内部测试 →
+建组 → 把自己加进去 → 手机装 TestFlight App 登录同一个 Apple ID。
 
-1. **Apple Developer Program 会员**（$99/年）。个人免费账号做不了 TestFlight。
-2. **Apple Distribution 证书 + App Store 描述文件**。有了会员之后，Xcode →
-   Settings → Accounts 登录，然后在 Signing & Capabilities 勾上
-   「Automatically manage signing」，Xcode 会自己生成这两样。
-3. **App Store Connect 里的 App 记录**（bundle id `com.jayanttang.dsh`）与一次上传。
-   另外 TestFlight 的构建必须**递增 build number**，现在 `manageAppVersionAndBuildNumber`
-   是 `false`，也就是说版本号要你自己抬。
+### 为什么不是 OTA
 
-### 会员到位之后的做法（我可以代跑）
+线上那条 `https://<站点>/ios/` 用的是 **Ad Hoc** 描述文件（`iOS Team Provisioning Profile`），
+只覆盖**已登记 UDID 的 2 台设备**——陌生人装了会报"无法安装"。所以它只能给自己用。
+TestFlight 走 `app-store-connect` + **App Store 描述文件**（设备白名单 0 台），任何人点链接就能装。
+
+### 发新构建
 
 ```bash
-cd ios/DSHMobile
-xcodebuild -scheme DSHMobile -configuration Release \
-  -destination 'generic/platform=iOS' \
-  -archivePath .build/DSHMobile.xcarchive archive
-# TestFlight 用 app-store 这一档（与 OTA 的 debugging 不同）
-xcodebuild -exportArchive -archivePath .build/DSHMobile.xcarchive \
-  -exportOptionsPlist <app-store 版的 plist> \
-  -exportPath .build/testflight
-xcrun altool --upload-app -f .build/testflight/DSHMobile.ipa \
-  -t ios --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID"
+export ASC_KEY_ID=<KeyID> ASC_ISSUER_ID=<IssuerID>     # 或写进 shell profile
+scripts/release/deploy-testflight.sh                     # 归档 → 导出 → 上传
+node scripts/dev/asc-beta.mjs status                     # 看处理进度与审核状态
+node scripts/dev/asc-beta.mjs prepare                    # 新构建挂到外部测试组（审核信息已存在时只更新）
+node scripts/dev/asc-beta.mjs submit                     # 再次提交外部审核
 ```
 
-需要新增一个 `ExportOptions-appstore.plist`（`method = app-store-connect`）——**这件我可以现在
-就写好**，等证书一到就能直接跑。再配一个 `scripts/release/deploy-testflight.sh`，把上面三步
-包起来，跟 `deploy-ota.sh` 并列。
+构建号会自动取当前时间（`YYYYMMDD.HHMM`），避免 TestFlight 报"该构建已存在"。
+`.p8` 放在 `~/.appstoreconnect/private_keys/AuthKey_<KeyID>.p8`，不进仓库。
 
-### 还差一个产品决定
+### 几个踩过的坑（都已修在脚本里）
 
-TestFlight 分发的 App 默认**连的是构建时注入的中转地址**（`Config.local.xcconfig` 里那个）。
-给别人测试 = 他们连你的中转。所以第二节和第一节是同一件事：**先把中转的限额做了，
-再发 TestFlight**。
-
----
+- **exportArchive 能用 Xcode 的登录会话，命令行 altool 不能**：altool 必须显式给
+  API Key（或 Apple ID + App 专用密码）。只给 `--apiKey` 会报
+  `Either JWT (--api-issuer and --api-key) ... is required`——Issuer ID 也得给。
+- **出口合规没声明 → 构建不能分配给外部测试组**：报 `Build is not assignable`。
+  已在 `DSHMobile-Info.plist` 里写死 `ITSAppUsesNonExemptEncryption = false`；
+  已上传的构建可以用 API `PATCH /v1/builds/<id>` 补。
+- **审核状态不在 build 的 attributes 里**，在 `build → betaAppReviewSubmission`；
+  不查这个关系会以为"提交了却没状态"。
+- `betaAppReviewDetails` 要 `contactFirstName/LastName/Phone/Email` 四项齐全；
+  `feedbackEmail` 属于 `betaAppLocalizations`，写错地方会 409。
+- `PATCH betaAppLocalizations` 里**不能带 `locale`**。
 
 ## 三、别做的事
 
