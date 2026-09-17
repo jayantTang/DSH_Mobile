@@ -4,6 +4,7 @@
 #
 #   scripts/release/publish-plugins.sh                 # 只自检 + 干跑，不发布
 #   scripts/release/publish-plugins.sh --publish       # 真的发布（需要先 npm login）
+#   scripts/release/publish-plugins.sh --publish --otp 123456   # 账号开了两步验证时
 #   scripts/release/publish-plugins.sh --publish --only mobile-link
 #
 # 为什么要有这个脚本：
@@ -18,14 +19,21 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PACKAGES=(mobile-link send-image doubao-image)
+#: 发布目标。本机 registry 指向 npmmirror（只读镜像），而 `npm login` 的 token 是按 registry
+#: 存的，所以每条命令都要显式带上官方源，否则会命中镜像并报「未登录」。
+NPM_REGISTRY="https://registry.npmjs.org"
 PUBLISH=0
 ONLY=""
+OTP=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --publish) PUBLISH=1; shift ;;
     --only) ONLY="${2:-}"; shift 2 ;;
-    -h|--help) sed -n '3,16p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    # 账号开了两步验证时，npm 要求每次发布带一次性验证码。三个包要在同一个 30 秒窗口里
+    # 发完（本脚本按顺序发，通常够），所以码从命令行传进来，命令里不留痕。
+    --otp) OTP="${2:-}"; shift 2 ;;
+    -h|--help) sed -n '3,18p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) printf 'publish-plugins: 不认识的参数 %s\n' "$1" >&2; exit 2 ;;
   esac
 done
@@ -93,7 +101,7 @@ for name in "${PACKAGES[@]}"; do
   [ -n "$ONLY" ] && [ "$ONLY" != "$name" ] && continue
   pkg="$(node -p "require('$ROOT/plugins/$name/package.json').name")"
   version="$(node -p "require('$ROOT/plugins/$name/package.json').version")"
-  published="$(npm view "$pkg" version 2>/dev/null || true)"
+  published="$(npm view "$pkg" version --registry="$NPM_REGISTRY" 2>/dev/null || true)"
   if [ -z "$published" ]; then
     printf '  %s：尚未发布，可以发 %s\n' "$pkg" "$version"
   elif [ "$published" = "$version" ]; then
@@ -119,12 +127,20 @@ fi
 
 # ── 3. 发布 ────────────────────────────────────────────────────────────────
 
-npm whoami >/dev/null 2>&1 || die "还没登录 npm：先 npm login --registry=https://registry.npmjs.org"
+# The registry has to be named here too. This machine's default registry is
+# npmmirror (a read-only mirror), and `npm login --registry=…npmjs.org` stores
+# the token **scoped to that registry** — so a bare `npm whoami` asks the mirror,
+# which has no credentials for it, and reports "not logged in" while the login is
+# perfectly good. That false negative is what made the first run of this script
+# stop right after a successful login.
+npm whoami --registry="$NPM_REGISTRY" >/dev/null 2>&1 || die \
+  "还没登录 npm（或登录的不是 $NPM_REGISTRY）：先 npm login --registry=$NPM_REGISTRY"
+printf '  已登录：%s @ %s\n' "$(npm whoami --registry="$NPM_REGISTRY" 2>/dev/null)" "$NPM_REGISTRY"
 
 say "发布"
 for name in "${PACKAGES[@]}"; do
   [ -n "$ONLY" ] && [ "$ONLY" != "$name" ] && continue
-  ( cd "$ROOT/plugins/$name" && npm publish --registry=https://registry.npmjs.org --access public )
+  ( cd "$ROOT/plugins/$name" && npm publish --registry="$NPM_REGISTRY" --access public ${OTP:+--otp="$OTP"} )
 done
 
 say "完成"
