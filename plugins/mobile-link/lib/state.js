@@ -14,6 +14,8 @@ import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 
+import { isPlaceholderRelayUrl } from './dlp.js'
+
 /**
  * Raised when no identity exists yet — a *setup* state, not a failure.
  *
@@ -86,6 +88,13 @@ export async function writeState(path, state) {
  * Resolve the effective identity from (in order) explicit config, the
  * environment, then the state file. Secrets are never logged.
  *
+ * One exception to that order: the repository's placeholder relay address (see
+ * `PLACEHOLDER_RELAY_URL`) counts as *unset*, so an address already enrolled in
+ * the state file outranks it. Without this, the placeholder — which ships in the
+ * plugin config and is what an unconfigured environment falls back to — would
+ * beat the real address of a computer that is already enrolled, and the next
+ * restart would both dial the placeholder and overwrite the file with it.
+ *
  * When the identity comes from config or the environment (rather than the file)
  * and differs from what is on disk, it is persisted to `stateFile` with mode
  * 0600 — that is how a fresh install turns a pasted config into the durable
@@ -95,9 +104,10 @@ export async function writeState(path, state) {
 export async function resolveIdentity({ stateFile, agentId, agentSecret, relayUrl } = {}) {
   const path = stateFile || defaultStatePath()
   const file = await readState(path)
+  const configured = relayUrl || process.env.DSH_MOBILE_LINK_RELAY || ''
   const resolved = {
     stateFile: path,
-    relayUrl: relayUrl || process.env.DSH_MOBILE_LINK_RELAY || file?.relayUrl || '',
+    relayUrl: isPlaceholderRelayUrl(configured) ? (file?.relayUrl || configured) : (configured || file?.relayUrl || ''),
     agentId: agentId || process.env.DSH_MOBILE_LINK_AGENT_ID || file?.agentId || '',
     agentSecret: agentSecret || process.env.DSH_MOBILE_LINK_AGENT_SECRET || file?.agentSecret || '',
     agentName: file?.agentName || '',

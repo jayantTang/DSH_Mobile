@@ -102,6 +102,32 @@ export function normalizeRelayUrl(raw) {
 }
 
 /**
+ * The relay address the repository ships as a placeholder.
+ *
+ * It is a *sentinel*, not a deployment: a value equal to it means "no relay has
+ * been configured here", never "dial relay.example.com". The distinction is
+ * load-bearing — a configured placeholder used to outrank the identity already
+ * enrolled in `agent.json`, so one DSH restart pointed an enrolled computer at
+ * the placeholder *and* wrote that back over the real address, which left the
+ * phone unable to connect until somebody noticed. Anything that resolves an
+ * address has to recognise the sentinel.
+ */
+export const PLACEHOLDER_RELAY_URL = 'wss://relay.example.com/dsh-link'
+
+/**
+ * True when `raw` is, or normalises to, the repository placeholder — a trailing
+ * slash or an `https://` spelling of the same address still counts.
+ */
+export function isPlaceholderRelayUrl(raw) {
+  if (typeof raw !== 'string' || !raw.trim()) return false
+  try {
+    return normalizeRelayUrl(raw).wsBase === normalizeRelayUrl(PLACEHOLDER_RELAY_URL).wsBase
+  } catch {
+    return false
+  }
+}
+
+/**
  * Join one endpoint onto a relay base without losing the base's path prefix.
  * `('wss://host/prefix/', '/link/agent')` -> `'wss://host/prefix/link/agent'`.
  */

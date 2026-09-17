@@ -107,9 +107,13 @@ dsh://pair?relay=https://relay.example.com/dsh-link&code=ABCD-1234
 
 | 位置 | 谁在用 | 怎么给真值 |
 |---|---|---|
-| `.env.local` | 发布脚本、`scripts/dev/dsh-probe.mjs`、连接器插件的默认中转 | `cp .env.example .env.local`，填 `DSH_SITE` / `DSH_RELAY_URL` / `DSH_OTA_HOST` |
+| `.env.local` | 发布脚本、`scripts/dev/dsh-probe.mjs` | `cp .env.example .env.local`，填 `DSH_SITE` / `DSH_RELAY_URL` / `DSH_OTA_HOST` |
+| `~/.dsh/mobile-link/agent.json` | 连接器的中转地址与身份（登记后写在这里） | 跑一次 `dsh-mobile-link enroll --invite <码> --relay <地址>`；要临时覆盖再设 `DSH_RELAY_URL`（必须进 DSH 进程的环境，DSH 自己不读 `.env.local`） |
 | `ios/DSHMobile/Config.local.xcconfig` | App 内预填的中转地址与更新源（构建时注入 Info.plist） | `cp ios/DSHMobile/Config.xcconfig ios/DSHMobile/Config.local.xcconfig`，填 `DSH_RELAY_URL` / `DSH_UPDATE_FEED` |
 | 服务器环境变量 | `relay/deploy/deploy.sh` 决定插进哪个 Caddy 站点块 | 在服务器上 `export DSH_RELAY_SITE=<你的站点>` |
+
+占位符 `relay.example.com` 是「没配置」的哨兵，不是一个可以连的地址：配置里的占位符
+不会盖掉 `agent.json` 里已登记的真实地址。
 
 因此 clone 下来直接构建的 App **默认连不上任何中转**，这是有意为之。Xcode 工程用
 `#include?` 可选包含本机那份 xcconfig，文件不存在时自动跳过，不会构建失败；读取处见

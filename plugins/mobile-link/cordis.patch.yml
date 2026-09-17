@@ -11,22 +11,27 @@
 # needs):
 #   enabled        false disables the outbound link without uninstalling
 #   relayUrl       DLP relay base URL. The relay is published under a path prefix
-#                  on an existing site, so the default is
-#                  wss://relay.example.com/dsh-link and the connector dials
-#                  wss://relay.example.com/dsh-link/link/agent. The configured
-#                  path is always kept, never replaced. ws:// is accepted for
-#                  local testing (e.g. ws://127.0.0.1:8787).
+#                  on an existing site, so a bare deployment dials
+#                  <relay>/link/agent. The configured path is always kept, never
+#                  replaced. ws:// is accepted for local testing (e.g.
+#                  ws://127.0.0.1:8787). Left unset here on purpose: a value
+#                  pinned in this file outranks both DSH_RELAY_URL and the
+#                  address already enrolled in ~/.dsh/mobile-link/agent.json.
 #   agentId        overrides ~/.dsh/mobile-link/agent.json
 #   agentSecret    overrides ~/.dsh/mobile-link/agent.json
 #   stateFile      agent identity file (default ~/.dsh/mobile-link/agent.json)
 #   dshUrl         explicit local DSH base URL override (default: discovery)
 #   endpointFile   DSH endpoint handoff file (default $DSH_HOME/desktop-shell/endpoint.json)
+#
+# Address resolution order: this config block, then DSH_RELAY_URL (or
+# DSH_MOBILE_LINK_RELAY), then the enrolled identity file, then the repository
+# placeholder wss://relay.example.com/dsh-link — the placeholder being the
+# "nothing configured yet" sentinel rather than a real address.
 
 - insert:
     - id: mobile-link
       name: './lib/index.js'
       config:
         enabled: true
-        relayUrl: 'wss://relay.example.com/dsh-link'
         heartbeatMs: 20000
         reconnect: true

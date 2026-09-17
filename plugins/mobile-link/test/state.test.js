@@ -9,6 +9,7 @@ import { join } from 'node:path'
 import test from 'node:test'
 
 import { mintPairCode } from '../lib/pairing.js'
+import { PLACEHOLDER_RELAY_URL } from '../lib/dlp.js'
 import { defaultEndpointFile, defaultStatePath, readState, resolveIdentity, writeState } from '../lib/state.js'
 
 async function tempPath(name = 'agent.json') {
@@ -66,6 +67,42 @@ test('config and environment win over the file', async () => {
   }
 })
 
+test('the repository placeholder never outranks an enrolled address', async () => {
+  // The placeholder ships in the plugin config, so an unconfigured environment
+  // hands it to resolveIdentity on every boot. Treating it as a real address is
+  // what pointed an already-enrolled computer at relay.example.com — and
+  // rewrote agent.json with it — on the next restart.
+  const path = await tempPath()
+  await writeState(path, {
+    relayUrl: 'wss://real.example/dsh-link', agentId: 'agt_1', agentSecret: 'as_1',
+  })
+
+  const identity = await resolveIdentity({ stateFile: path, relayUrl: PLACEHOLDER_RELAY_URL })
+  assert.equal(identity.relayUrl, 'wss://real.example/dsh-link')
+  assert.equal(identity.persisted, undefined, 'nothing stale to write: the file already wins')
+  assert.deepEqual(await readState(path), {
+    relayUrl: 'wss://real.example/dsh-link', agentId: 'agt_1', agentSecret: 'as_1',
+  })
+
+  // Same when the placeholder arrives through the environment instead.
+  process.env.DSH_MOBILE_LINK_RELAY = `${PLACEHOLDER_RELAY_URL}/`
+  try {
+    assert.equal((await resolveIdentity({ stateFile: path })).relayUrl, 'wss://real.example/dsh-link')
+  } finally {
+    delete process.env.DSH_MOBILE_LINK_RELAY
+  }
+})
+
+test('with no identity file the placeholder is still the default', async () => {
+  // An unconfigured clone has nothing to fall back to, so it keeps the
+  // placeholder — it cannot connect, which is the intended "not deployed here".
+  const path = await tempPath()
+  const identity = await resolveIdentity({
+    stateFile: path, agentId: 'agt_1', agentSecret: 'as_1', relayUrl: PLACEHOLDER_RELAY_URL,
+  })
+  assert.equal(identity.relayUrl, PLACEHOLDER_RELAY_URL)
+})
+
 test('resolveIdentity explains how to provision a missing identity', async () => {
   const path = await tempPath()
   await assert.rejects(
@@ -73,7 +110,6 @@ test('resolveIdentity explains how to provision a missing identity', async () =>
     /not registered yet.*dsh-mobile-link enroll.*admin\.py agent-register/s,
   )
 })
-
 test('a read-only state file is reported but not fatal', async () => {
   const path = join(await mkdtemp(join(tmpdir(), 'mobile-link-ro-')), 'missing-dir', 'agent.json')
   // A path whose parent cannot be created (a file in the way) forces the write

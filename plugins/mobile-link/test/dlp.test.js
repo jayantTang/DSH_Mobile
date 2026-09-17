@@ -2,9 +2,9 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
-  MAX_FRAME_BYTES, StreamTable, WaterfallDedupe, agentEndpoint, decodeFrame, deviceFrameError,
-  deviceIdOf, encodeFrame, joinRelayPath, nextBackoff, normalizeRelayUrl, pairCodeEndpoint,
-  pongFor, qrPayload, resultFrame,
+  MAX_FRAME_BYTES, PLACEHOLDER_RELAY_URL, StreamTable, WaterfallDedupe, agentEndpoint, decodeFrame,
+  deviceFrameError, deviceIdOf, encodeFrame, isPlaceholderRelayUrl, joinRelayPath, nextBackoff,
+  normalizeRelayUrl, pairCodeEndpoint, pongFor, qrPayload, resultFrame,
 } from '../lib/dlp.js'
 
 test('decodeFrame accepts a well-formed frame', () => {
@@ -71,6 +71,30 @@ test('normalizeRelayUrl maps schemes and paths', () => {
   assert.equal(normalizeRelayUrl('relay.example.com').wsBase, 'wss://relay.example.com')
   assert.throws(() => normalizeRelayUrl(''))
   assert.throws(() => normalizeRelayUrl('ftp://host'))
+})
+
+test('isPlaceholderRelayUrl spots the sentinel in any spelling, and only it', () => {
+  // The placeholder means "not configured", so it has to be recognised however
+  // it is written down — and a real address must never be mistaken for it.
+  for (const raw of [
+    PLACEHOLDER_RELAY_URL,
+    'wss://relay.example.com/dsh-link/',
+    'https://relay.example.com/dsh-link',
+    'relay.example.com/dsh-link',
+  ]) {
+    assert.equal(isPlaceholderRelayUrl(raw), true, `${raw} is the placeholder`)
+  }
+  for (const raw of [
+    'wss://relay.example.com',
+    'wss://relay.example.com/other',
+    'wss://real.example/dsh-link',
+    'ws://127.0.0.1:8787',
+    '',
+    undefined,
+    42,
+  ]) {
+    assert.equal(isPlaceholderRelayUrl(raw), false, `${String(raw)} is a real address`)
+  }
 })
 
 test('normalizeRelayUrl keeps a path prefix and drops a trailing slash', () => {
