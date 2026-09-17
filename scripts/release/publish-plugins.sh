@@ -15,6 +15,18 @@
 #
 # 前置：`npm login`（registry 指向 npmmirror 时，发布仍需登录 npmjs，见脚本尾部说明）。
 #
+# 踩过的坑，两次都花在同一个地方，写在这里省下一次：
+#   1. `npm login --registry=…npmjs.org` 的 token 是**按 registry 存**的，所以每条命令
+#      （whoami / view / publish）都必须显式带 --registry，否则会去问 npmmirror 那个只读镜像，
+#      报「未登录」。脚本里已经统一成 $NPM_REGISTRY。
+#   2. **不要用 `NPM_CONFIG__AUTH` 环境变量传 token**：它看起来生效（whoami 通过），但发布时
+#      会被忽略，registry 回 401 `OTP required for authentication`，而 token 明明是带
+#      bypass_2fa 的（可在 https://registry.npmjs.org/-/npm/v1/tokens 用 `bypass_2fa: true` 核实）。
+#      可靠做法是把它写进 ~/.npmrc 的 `//registry.npmjs.org/:_authToken=…`。
+#   3. 账号没开 2FA 时，npm 不给生成带 bypass 的 token（创建页上那个勾选框不出现），
+#      所以先开 2FA —— 现在只提供 security key（Mac 的 Touch ID / 通行密钥即可），
+#      没有 authenticator app 选项，于是也没有 6 位码可用，--otp 那条路走不通。
+#
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
