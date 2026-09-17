@@ -29,22 +29,27 @@ Environment=DLP_LOG_LEVEL=INFO
 #
 #   DLP_MAX_DEVICES_PER_AGENT  一台电脑配几台手机。挡住泄漏的 deviceToken 或
 #                              配对脚本把中转塞满；重连不会重复计数。
-#   DLP_DEVICE_RATE_KBPS       单设备出口限速（千比特/秒）。十张截图 ≈ 27 MB，
-#                              在 5 Mbps 的管子上会独占 43 秒；限到 2 Mbps 后
-#                              其余带宽留给别人，而这个设备只是变慢，不掉帧。
-#                              取值口径约等于「管子 ÷ 预期同时传大文件的设备数」，
-#                              不是「管子 ÷ 设备数」。
+#   DLP_DEVICE_RATE_KBPS       单设备出口限速（千比特/秒）。取值口径：
+#                              「管子 ÷ 预期同时传大文件的设备数」。
+#                              实测这台实例是 200 Mbps 固定带宽（2026-09 确认），
+#                              所以定 20 Mbps：手机上感觉不到限速，而 10 台设备
+#                              同时传大图也只会刚好把管子占满、不会互相拖慢。
+#                              限速只让设备变慢，不掉帧；真正防滥用的下面那条。
+#                              若换成小管子（例如 5 Mbps），按 2–5 Mbps 调。
 #   DLP_DEVICE_DAILY_MB        单设备每日（UTC）出口额度。用超会先收到
 #                              quota/device-daily 的 error 帧，再被断开（4011），
-#                              次日 UTC 零点恢复。按「重度一天的几倍」设。
+#                              次日 UTC 零点恢复。**这才是防"把中转当代理/图床"的
+#                              那一道**：重度用户一天 100–300 MB（我们自己 16 周
+#                              累计才 22 GB），2 GB 留了约 10 倍余量，而拿它当中转
+#                              代理的话十几分钟就用完。
 #
 # 三者留空或为 0 表示不限。改完：
 #   systemctl daemon-reload && systemctl restart dsh-relay
 # 生效情况与实时流量：
 #   curl -s http://127.0.0.1:8787/stats | python3 -m json.tool
 Environment=DLP_MAX_DEVICES_PER_AGENT=8
-Environment=DLP_DEVICE_RATE_KBPS=2000
-Environment=DLP_DEVICE_DAILY_MB=500
+Environment=DLP_DEVICE_RATE_KBPS=20000
+Environment=DLP_DEVICE_DAILY_MB=2048
 # ProtectSystem=strict makes the filesystem read-only: never write .pyc files.
 Environment=PYTHONDONTWRITEBYTECODE=1
 
