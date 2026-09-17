@@ -75,7 +75,13 @@ function fields(line) {
 const ACTIONS = [
   { match: /^连接本机 DSH$/, to: () => ['launch connect=auto'] },
   { match: /^不连接 DSH$/, to: () => ['launch connect=none'] },
-  { match: /^打开页面\s+(\S+)$/, to: (page) => [`launch screen=${page}`] },
+  // `打开页面 settings args=-DSHDemoMode`: extra launch arguments for this page.
+  // A page may need one the screen table cannot know about — `-DSHDemoMode`
+  // swaps the deployment's real addresses for placeholders so the screenshot is
+  // publishable (`SettingsView.masked`). Baking it into the table instead would
+  // apply it to every case that opens the page.
+  { match: /^打开页面\s+(\S+?)(?:\s+args=(\S+))?$/, to: (page, args) =>
+      [`launch screen=${page}${args ? ` args=${args}` : ''}`] },
   // A workspace file: the report itself, opened in whichever viewer the app
   // picks for its type. The path is relative to the session's workspace.
   { match: /^打开报告\s+([^\s（(]+)(?:\s*[（(](.+)[）)])?$/, to: (file, anchor) =>
@@ -124,6 +130,12 @@ function quote(value) {
 }
 
 function directivesFor(action) {
+  // One step may name several actions, comma-separated: the prose case and the
+  // instruction file have to line up one step to one row, and reaching the
+  // state a picture needs sometimes takes two moves — open the transcript,
+  // then scroll it to where the answer is.
+  const parts = action.split(',').map((part) => part.trim()).filter(Boolean)
+  if (parts.length > 1) return parts.flatMap(directivesFor)
   const entry = ACTIONS.find((candidate) => candidate.match.test(action))
   if (!entry) throw new Error(`不认识的动作用语「${action}」——见 test/README.md 的动作表`)
   const groups = entry.match.exec(action).slice(1)
@@ -177,6 +189,30 @@ export function readStepsFile(text) {
     steps.push({ index: Number(index), action, wants, shots, rest })
   }
   return steps
+}
+
+/// One `do:` may hold several actions, separated by commas: a step of the prose
+/// case is one *state* to reach, and reaching it sometimes takes two moves —
+/// open the transcript, then scroll it to where the answer is. The two files
+/// have to line up one step to one row, so the extra moves live here rather
+/// than as rows of their own. Commas inside quotes belong to the target
+/// (`点击 "label:a, b"`), so the split skips quoted spans.
+function splitActions(text) {
+  const parts = []
+  let current = ''
+  let quote = null
+  for (const character of text) {
+    if (quote) {
+      current += character
+      if (character === quote) quote = null
+      continue
+    }
+    if (character === '"' || character === "'") { quote = character; current += character; continue }
+    if (character === ',') { parts.push(current); current = ''; continue }
+    current += character
+  }
+  parts.push(current)
+  return parts.map((part) => part.trim()).filter(Boolean)
 }
 
 export function buildPlan({ casePath, caseText, stepsText, runId, bundleId, sessionId,
@@ -234,10 +270,11 @@ export function buildPlan({ casePath, caseText, stepsText, runId, bundleId, sess
     }
     let anchor = null
 
-    for (const directive of directives) {
+    for (const directive of directivesFor(row.action)) {
+      for (const action of splitActions(directive)) {
       // Single quotes hold a value with spaces and double quotes in it — an
       // inline HTML document, for instance.
-      const [action, ...tokens] = (directive.match(/'[^']*'|"[^"]*"|\S+/g) ?? [])
+      const [verb, ...tokens] = (action.match(/'[^']*'|"[^"]*"|\S+/g) ?? [])
         .map((token) => token.replace(/^["']|["']$/g, ''))
       const values = {}
       for (const token of tokens) {
@@ -246,7 +283,7 @@ export function buildPlan({ casePath, caseText, stepsText, runId, bundleId, sess
         else values[token] = true
       }
 
-      if (action === 'launch') {
+      if (verb === 'launch') {
         const args = []
         if (values.connect !== 'none') args.push('-DSHConnectURL', connectUrl)
         if (values.root && String(values.root).trim()) {
@@ -269,6 +306,15 @@ export function buildPlan({ casePath, caseText, stepsText, runId, bundleId, sess
           if (!entry) throw new Error(`未知页面「${key}」：先在 test/screens.md 与 context.mjs 的 screens 表里登记`)
           args.push(...entry.args(sessionId))
         }
+        if (values.args) {
+          // Extra launch arguments for this page, comma-separated. A page may
+          // need one the table cannot know about — `-DSHDemoMode`, which swaps
+          // the deployment's real addresses for placeholders so a screenshot is
+          // publishable (`SettingsView.masked`). Without this the only way to
+          // use such a hook would be to bake it into the page table, where it
+          // would then apply to every case that opens that page.
+          args.push(...String(values.args).split(',').map((token) => token.trim()).filter(Boolean))
+        }
         current = { id: keys[0] ?? (values.file ? 'report' : (values.connect === 'none' ? 'onboarding' : 'sessions')),
                     note: title, launch: args, steps: [], root: pendingRoot }
         pendingRoot = null
@@ -279,7 +325,7 @@ export function buildPlan({ casePath, caseText, stepsText, runId, bundleId, sess
       if (!current) throw new Error(`${casePath} 的第 ${row.index} 步之前没有「连接本机 DSH」或「打开页面」`)
 
       const positional = tokens.filter((token) => !token.includes('='))
-      switch (action) {
+      switch (verb) {
         case 'tap':
         case 'tap_at':
         case 'tap_where':
@@ -291,28 +337,28 @@ export function buildPlan({ casePath, caseText, stepsText, runId, bundleId, sess
         case 'swipe':
         case 'wait':
         case 'probe':
-          anchor = nextStep(action)
+          anchor = nextStep(verb)
           anchor.target = positional[0]
-          if (action === 'swipe') anchor.value = values.direction ?? positional[1] ?? 'up'
-          if (action === 'wait') anchor.timeout = Number(values.timeout ?? positional[1] ?? 15)
+          if (verb === 'swipe') anchor.value = values.direction ?? positional[1] ?? 'up'
+          if (verb === 'wait') anchor.timeout = Number(values.timeout ?? positional[1] ?? 15)
           // `等待消失 x timeout=90`: a wait that outlasts a live turn needs its
           // own number, and dropping it here silently held the step to 20s.
-          if (action === 'wait_gone') anchor.timeout = Number(values.timeout ?? positional[1] ?? 20)
+          if (verb === 'wait_gone') anchor.timeout = Number(values.timeout ?? positional[1] ?? 20)
           // `输入 文字` types into whatever is focused; `type <field> text=…`
           // names the field instead.
-          if (action === 'type') {
+          if (verb === 'type') {
             anchor.target = values.text === undefined ? positional[0] : undefined
             anchor.value = values.text ?? positional[1] ?? ''
           }
-          if (action === 'tap_at') anchor.value = values.at ?? 'center'
-          if (action === 'tap_where') anchor.value = values.at ?? '0.5,0.5'
-          if (action === 'background') anchor.timeout = Number(values.seconds ?? positional[0] ?? 3)
+          if (verb === 'tap_at') anchor.value = values.at ?? 'center'
+          if (verb === 'tap_where') anchor.value = values.at ?? '0.5,0.5'
+          if (verb === 'background') anchor.timeout = Number(values.seconds ?? positional[0] ?? 3)
           break
         case 'open_url':
         case 'open_html':
           // A URL or a document is a value, not a target selector: both carry
           // `:` and `/`.
-          anchor = nextStep(action)
+          anchor = nextStep(verb)
           anchor.value = positional[0]
           break
         case 'assert':
@@ -322,7 +368,8 @@ export function buildPlan({ casePath, caseText, stepsText, runId, bundleId, sess
           anchor = nextStep('snapshot')
           break
         default:
-          throw new Error(`无法识别的动作「${action}」（${casePath}）`)
+          throw new Error(`无法识别的动作「${verb}」（${casePath}）`)
+      }
       }
     }
 

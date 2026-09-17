@@ -119,7 +119,11 @@ export const screens = {
   onboarding: { root: 'text:连接你电脑上的 DSH', args: () => [] },
   sessions: { root: 'id:session.list', args: () => [] },
   transcript: { root: 'id:chat.transcript', args: (session) => ['-DSHOpenSession', session] },
-  files: { root: 'id:files.root', args: () => ['-DSHOpenScreen', 'files'] },
+  // The file browser resolves its workspace from a session, and without one it
+  // takes the first session in the list — which is the *user's* newest session,
+  // not the one a case means to photograph. `-DSHOpenSession` makes it open the
+  // named session's workspace instead; see `openFilesWhenTheListArrives`.
+  files: { root: 'id:files.root', args: (session) => ['-DSHOpenScreen', 'files', '-DSHOpenSession', session] },
   settings: { root: 'id:settings.root', args: () => ['-DSHOpenScreen', 'settings'] },
   connections: { root: 'id:connection.scan', args: () => ['-DSHOpenScreen', 'connections'] },
   web: { root: 'text:插件界面不可用', args: () => ['-DSHOpenScreen', 'web'] },

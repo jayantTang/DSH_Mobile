@@ -1,12 +1,20 @@
 # DSH Mobile
 
-[![CI](https://github.com/jayantTang/DSH_Mobile/actions/workflows/ci.yml/badge.svg)](https://github.com/jayantTang/DSH_Mobile/actions/workflows/ci.yml)
+[![CI](https://github.com/jayantTang/DSH_Mobile/actions/workflows/ci.yml/badge.svg)](https://github.com/jayanttang/DSH_Mobile/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-把电脑上的 [DSH](https://github.com/deepseek-ai/dsh)（DeepSeek Harness）装进手机。
+**把电脑上的 [DSH](https://github.com/deepseek-ai/dsh)（DeepSeek Harness）装进手机。**
 
-原生 iOS 客户端 + 电脑侧连接器 + 公网中转：手机与电脑连同一个 DSH host，看到同一批会话、
-同一条消息流。电脑上跑着的任务，手机锁屏再打开，进度还在往前走；电脑上挂起的提问，
-手机上直接答。**手机在 4G/5G 上就能用——你的电脑不需要公网 IP。**
+原生 iOS 客户端，手机与电脑连同一个 DSH host：看到同一批会话、同一条消息流，
+电脑上跑着的任务锁屏再打开进度还在走，电脑上挂起的提问手机上直接答。
+**手机在 4G/5G 上就能用——你的电脑不需要公网 IP，也不需要装 Tailscale。**
+
+| 手机上读转写：工具调用、思考过程、最终答复 | 手机上管理连接：中转、已配对设备、权限 |
+|---|---|
+| ![会话转写](docs/artifacts/demo/02-transcript.jpg) | ![设置](docs/artifacts/demo/04-settings.jpg) |
+
+> 左图出自一个**合成会话**：内容是真的 agent 输出，项目本身是编的。生成方式见
+> [`docs/artifacts/demo/`](docs/artifacts/demo)——真实会话的截图不入库（带设备名与私有内容）。
 
 ```
 ┌──────────────┐        ┌────────────────────┐        ┌───────────────────┐
@@ -71,7 +79,8 @@ dsh web        # 连接器随 DSH 启动；插件改动需要重启 DSH 才生�
 
 ### 2. 中转服务
 
-自建中转是可选的：没有自己的中转时，用别人的中转同样能跑。
+中转是这个产品唯一的连接方式，所以跑起来之前你得有一个：自建，或者用别人的中转配合
+配对码登记（连接器可以只指向别人已部署的中转，不需要自己有一台机器）。
 
 ```bash
 cd relay
@@ -81,6 +90,9 @@ python3 admin.py --db state.db account-create --name "Example"
 python3 admin.py --db state.db agent-register --account acc_x --name "MacBook Pro" \
     --write-config ~/.dsh/mobile-link/agent.json --relay wss://<你的站点>/dsh-link
 ```
+
+> clone 下来直接构建的 App **默认连不上任何中转**——`relay.example.com` 是「未配置」的
+> 哨兵，不是一个能连的地址（原因见下面的「配置：真值不入库」）。
 
 `deploy.sh` 不新增 DNS 与证书：它把一段带标记的路由片段插进既有站点块，写入前先
 `caddy validate`，失败即回滚；`--uninstall` 会按标记原样移除。细节见
@@ -186,6 +198,7 @@ DSH 的客户端协议是 schema 驱动的 RPC 加一条多路复用 WebSocket�
 | [`docs/notes/relay.md`](docs/notes/relay.md) | 实现与规范的偏差记录（中转侧） |
 | [`docs/notes/connector.md`](docs/notes/connector.md) | 规范未覆盖处的连接器选择 |
 | [`docs/artifacts/samples/`](docs/artifacts/samples) | 从真实 DSH 抓取的响应样例（已脱敏） |
+| [`docs/artifacts/demo/`](docs/artifacts/demo) | README 配图：合成会话与截图口径 |
 
 ## 已知限制
 

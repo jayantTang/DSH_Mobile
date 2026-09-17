@@ -1,0 +1,37 @@
+# 宣传配图（合成会话）
+
+README 首屏那两张图出自这里。它们**可以入库**，因为画面里的会话是造出来的。
+
+## 为什么要另起一套图
+
+`docs/artifacts/screenshots/` 里的图是从真机与真实会话截的，带设备名、家目录与私有项目
+内容，所以那条路径被 `.gitignore` 排除。README 需要的图不能复用它们——只能在一个
+**内容全是编的**会话上重新截一遍。合成会话由脚本生成：
+
+```bash
+node scripts/dev/demo-session.mjs          # 写文件、建会话、跑一轮真实 agent，打印会话 id
+# 把打印出来的 id 填进 test/cases/current/14-宣传配图合成会话.md 的 `会话:`
+DSH_CONNECT=relay ./test/run.sh run test/cases/current/14-宣传配图合成会话.md --no-build
+node scripts/dev/demo-session.mjs --cleanup-all   # 用完清掉
+```
+
+虚构的项目是一个 `feeds` 小工具（拉 RSS、过滤已读、按时间倒序），里面故意留了一个把
+`filter` 写成 `map` 的 bug。**转写里的东西都是真的**——流式输出、工具调用卡片、思考过程、
+测试输出——只有项目内容是编的：源地址与标题都是假的。
+
+工作区刻意放在 `/tmp/dsh-mobile-demo` 而不是 `~/.dsh/` 下面：agent 会把绝对路径回显到
+转写里，而转写要进图片。放在家目录下，每张工具卡片都会印出作者的用户名
+（`/Users/<名字>/.dsh/...`）。
+
+必须走 `DSH_CONNECT=relay`：中转通道才会出现「已配对设备」那一段，而设置页那张图要的
+正是它；顺带保证配图里的连接方式和产品一致（`dsh://direct` 只是测试通道）。
+
+## 图片约定
+
+- 目前入库两张：`02-transcript.jpg`（转写）与 `04-settings.jpg`（设置），由
+  `test/cases/current/14-宣传配图合成会话.steps` 的 `shot:` 名字对应。
+- **不入图的东西**：会话列表那张不要用——列表按时间排，合成会话排在真实会话下面，
+  真截下来会把用户的真实项目名拍进去。同理，设置页那台 `DSH-Test` 是模拟器，属正常。
+- **尺寸**：原图 1206×2622；入库前用 `sips -Z 1000 -s format jpeg -s formatOptions 82`
+  缩到 460×1000（约 130 KB / 60 KB）。保持两张同尺寸，README 里并排才齐。
+- **压缩**：单张控制在 300 KB 以内；换图后看一眼 README 首屏在 GitHub 上的实际排版。

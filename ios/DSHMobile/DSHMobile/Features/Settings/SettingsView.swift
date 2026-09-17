@@ -185,6 +185,27 @@ struct SettingsView: View {
 
     // MARK: - Connection
 
+    /// Whether the deployment's own addresses are replaced by placeholders.
+    ///
+    /// Set by `-DSHDemoMode`, which only the screenshot run passes. A picture of
+    /// this screen travels: the README, a blog post, an issue. A real relay
+    /// hostname in it publishes where the relay is — and the screenshot is the
+    /// one place `relay.example.com` cannot be substituted at build time,
+    /// because it is the *host's* address, painted by the running app.
+    private var isDemoMode: Bool {
+        ProcessInfo.processInfo.arguments.contains("-DSHDemoMode")
+    }
+
+    /// The address as it should appear: the real one, or a placeholder.
+    ///
+    /// Whatever the shape of the real value, the placeholder is fixed: the point
+    /// of the picture is that this is a relay rather than a LAN address, and
+    /// that part is not secret.
+    private func masked(_ endpoint: String) -> String {
+        guard isDemoMode else { return endpoint }
+        return endpoint.contains("·") ? "relay.example.com · 中转" : "relay.example.com"
+    }
+
     private var statusSection: some View {
         Section {
             LabeledContent("状态") {
@@ -196,7 +217,7 @@ struct SettingsView: View {
             LabeledContent("连接方式", value: model.about.transport.label)
             if let endpoint = model.about.endpoint {
                 LabeledContent("主机地址") {
-                    Text(endpoint)
+                    Text(masked(endpoint))
                         .font(DSHTheme.Typography.caption)
                         .foregroundStyle(DSHTheme.labelSecondary)
                         .textSelection(.enabled)
@@ -204,7 +225,7 @@ struct SettingsView: View {
             }
             if let home = model.about.hostHome {
                 LabeledContent("主机主目录") {
-                    Text(home)
+                    Text(isDemoMode ? "/Users/you" : home)
                         .font(DSHTheme.Typography.caption)
                         .foregroundStyle(DSHTheme.labelSecondary)
                         .lineLimit(1)
