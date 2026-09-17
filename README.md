@@ -1,5 +1,7 @@
 # DSH Mobile
 
+[![CI](https://github.com/jayantTang/DSH_Mobile/actions/workflows/ci.yml/badge.svg)](https://github.com/jayantTang/DSH_Mobile/actions/workflows/ci.yml)
+
 把电脑上的 [DSH](https://github.com/deepseek-ai/dsh)（DeepSeek Harness）装进手机。
 
 原生 iOS 客户端 + 电脑侧连接器 + 公网中转：手机与电脑连同一个 DSH host，看到同一批会话、
@@ -126,11 +128,23 @@ dsh://pair?relay=https://relay.example.com/dsh-link&code=ABCD-1234
 
 ```bash
 cd ios/DSHMobile/DSHKit && swift test         # 协议层：58 项（1 skip）
-cd plugins/mobile-link && npm test            # 连接器：101 项
+cd plugins/mobile-link && npm test            # 连接器：104 项
 cd relay && .venv/bin/python -m pytest -q     # 中转：107 项（1 skip）
 ```
 
+三个插件包都零依赖，`npm test` 直接可跑；中转那份要先装依赖：
+
+```bash
+cd relay && python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
+```
+
 协议层的集成测试在本机没有运行 DSH 时会自动跳过，且只使用只读端点。
+
+上面这几套测试由 GitHub Actions 在**干净仓库**上各跑一遍（relay 那份依赖里补上了
+`pytest-aiohttp`——它此前只装在作者本机的 venv 里），外加一个「不带任何本机配置」的
+App Release 构建，也就是别人 clone 下来的样子：见
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml)。需要仿真器、真实中转、开发者
+团队 ID 或手机在环的验证**不在 CI 里**（只能在真机上按规范做）——CI 绿不等于可以发布。
 
 界面测试是一套独立的测试台，入口在 [`test/`](test)：
 

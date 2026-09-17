@@ -1,0 +1,138 @@
+# CI — 只跑「干净机器上也能跑」的那一半
+#
+# 边界是刻意的：这里覆盖协议层、连接器、插件与中转的单测，以及**不带本机配置文件**
+# 的 App 构建（也就是别人 clone 下来的样子）。它要回答的问题是「这个仓库本身能不能
+# 构建、能不能过测试」，而不是「作者的机器上能不能过」。
+#
+# 不进 CI 的（仍需在真机上按规范验）：
+#   * 仿真器逐屏核对 —— 要一台 macOS + 仿真器 + 真实中转，且判定靠看图，不是断言；
+#   * 经公网中转的手机端验证 —— 需要 `~/.dsh/mobile-link/agent.json` 里的真实身份；
+#   * 发布前归档 —— 需要开发者团队 ID（`DSH_TEAM_ID` / `Signing.local.plist`），
+#     那是开发者私有的，不进公共 runner；
+#   * 重启 DSH 后的连接验证 —— 依赖本机进程与真实会话。
+# 把这几项塞进 CI 只会得到假绿灯：DSHKit 的集成测试在公共 runner 上会整片 skip。
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # 手动触发：仓库网页 Actions → 这个工作流 → Run workflow，不必等下一次 push。
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # 本机的真值都不入库，这是这个仓库最容易犯的错，所以单独一条先跑。
+  hygiene:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 本机专用的文件没有被提交
+        run: |
+          set -e
+          status=0
+          for path in .env.local AGENTS.md \
+                      ios/DSHMobile/Config.local.xcconfig \
+                      ios/DSHMobile/Signing.local.plist; do
+            if git ls-files --error-unmatch "$path" >/dev/null 2>&1; then
+              echo "::error::$path 被跟踪了——它装的是本机真值，必须留在 .gitignore 里"
+              status=1
+            else
+              echo "ok  $path 未入库"
+            fi
+          done
+          exit $status
+      - name: 跟踪文件里没有家目录路径、也没有凭据形状的字符串
+        run: |
+          set -e
+          # 文档与样例统一写占位家目录（/Users/example、/Users/you、/Users/...）。
+          # 除此之外的 /Users/<名字> 都当成真实家目录——白名单而不是黑名单，
+          # 免得把真实名字写进这个文件，那本身就是泄漏。
+          allowed='example|you|your|yourname|user|username|me|someone|name|placeholder|x|dev|\.\.\.'
+          if git grep -n -I -o -E '/Users/[A-Za-z0-9._-]+' -- . | grep -v -E "/Users/($allowed)$"; then
+            echo "::error::上面这些行里有真实家目录路径"; exit 1
+          fi
+          # agentId / agentSecret 的真值比测试夹具长得多，夹具都是短名（agt_cfg 之类）。
+          if git grep -n -I -E '\b(agt|acc|dev)_[A-Za-z0-9_-]{16,}|\bas_[A-Za-z0-9_-]{16,}' -- .; then
+            echo "::error::上面这些行像真实凭据，检查一遍"; exit 1
+          fi
+          echo "ok  没发现家目录或凭据形状的字符串"
+
+  node:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package:
+          - plugins/mobile-link
+          - plugins/send-image
+          - plugins/doubao-image
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: ${{ matrix.package }}
+        working-directory: ${{ matrix.package }}
+        # 插件在机器上跑时会读 $DSH_HOME；CI 里没有真的 home，显式指到临时目录，
+        # 免得哪条用例哪天开始悄悄依赖公共 runner 的家目录。
+        env:
+          DSH_HOME: ${{ runner.temp }}/dsh-home
+        run: mkdir -p "$DSH_HOME" && npm test
+
+  relay:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # 装的是 requirements-dev.txt——`aiohttp_client` 这个 fixture 来自 pytest-aiohttp，
+      # 曾经只装在作者本机的 venv 里，clone 下来跑必然一片 setup error。
+      - run: pip install -r relay/requirements-dev.txt
+      - run: mkdir -p "$DSH_HOME" && python -m pytest -q
+        working-directory: relay
+        env:
+          DSH_HOME: ${{ runner.temp }}/dsh-home
+
+  dshkit:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: swift test（协议层）
+        working-directory: ios/DSHMobile/DSHKit
+        env:
+          DSH_HOME: ${{ runner.temp }}/dsh-home
+        run: mkdir -p "$DSH_HOME" && swift test
+
+  app-build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Release 构建：clone 下来的样子（没有本机 xcconfig）
+        working-directory: ios/DSHMobile
+        run: |
+          set -o pipefail
+          xcodebuild -project DSHMobile.xcodeproj -scheme DSHMobile \
+            -configuration Release \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath "$RUNNER_TEMP/dd" build | tail -5
+      - name: 构建产物必须回落到占位符地址
+        working-directory: ios/DSHMobile
+        run: |
+          set -e
+          plist="$RUNNER_TEMP/dd/Build/Products/Release-iphonesimulator/DSHMobile.app/Info.plist"
+          relay=$(plutil -extract DSHRelayURL raw -o - "$plist")
+          feed=$(plutil -extract DSHUpdateFeed raw -o - "$plist")
+          echo "relayURL   = $relay"
+          echo "updateFeed = $feed"
+          # 没有 Config.local.xcconfig 时，xcconfig 里的占位符必须原样进包：
+          # 一旦这里变成别的值，说明又有真值被写进了被跟踪的文件。
+          [ "$relay" = 'https://relay.example.com/dsh-link' ] \
+            || { echo "::error::relayURL 不是占位符，检查 Config.xcconfig 与 Info.plist"; exit 1; }
+          [ "$feed" = 'https://relay.example.com/ios/version.json' ] \
+            || { echo "::error::updateFeed 不是占位符，检查 Config.xcconfig 与 Info.plist"; exit 1; }
