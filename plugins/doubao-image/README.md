@@ -21,7 +21,10 @@ plugins/doubao-image/
 ## Install
 
 ```bash
-# from the repository root — the leading ./ matters: DSH anchors relative specs
+# from npm
+dsh plugin --profile web add dsh-plugin-doubao-image
+
+# or from the repository root — the leading ./ matters: DSH anchors relative specs
 # against your current directory, otherwise pnpm would resolve it inside the profile
 dsh plugin --profile web add ./plugins/doubao-image
 ```

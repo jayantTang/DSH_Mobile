@@ -1,0 +1,45 @@
+{
+  "name": "dsh-mobile",
+  "version": "0.1.0",
+  "private": true,
+  "description": "在 iPhone 上远程使用电脑的 DeepSeek Harness：WSS 经公网中转，4G/5G 可用，电脑不需要公网 IP。Native iOS client for remote DSH sessions.",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "ios",
+    "remote-control",
+    "relay"
+  ],
+  "topics": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "ios",
+    "iphone",
+    "ipados",
+    "swiftui",
+    "remote-control",
+    "self-hosted",
+    "agent",
+    "relay",
+    "websocket"
+  ],
+  "license": "MIT",
+  "author": "jayantTang",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jayantTang/DSH_Mobile.git"
+  },
+  "homepage": "https://github.com/jayantTang/DSH_Mobile#readme",
+  "bugs": {
+    "url": "https://github.com/jayantTang/DSH_Mobile/issues"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "npm --prefix plugins/mobile-link test && npm --prefix plugins/send-image test && npm --prefix plugins/doubao-image test",
+    "demo:session": "node scripts/dev/demo-session.mjs"
+  }
+}

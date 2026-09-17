@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Export options for a TestFlight (App Store Connect) upload.
+
+  The difference from `ExportOptions-ota.plist` is the whole point of this file:
+
+    * `debugging` (the OTA bundle) signs with the team's **Apple Development**
+      certificate and an **iOS Team Provisioning Profile**, which names the
+      registered device UDIDs. Fine for installing on your own phones over the
+      air; useless for anybody else.
+    * `app-store-connect` (this file) signs with an **Apple Distribution**
+      certificate and an **App Store** profile, and uploads to App Store Connect
+      where TestFlight picks it up for external testers.
+
+  The distribution certificate and the App Store profile do not exist on this
+  machine yet — `security find-identity -v -p codesigning` shows only the
+  development identity. Both appear once the team is enrolled in the Apple
+  Developer Program and Xcode's "Automatically manage signing" is on. Until
+  then this file is a plan, not a working path; see `docs/notes/ENABLE-TRIAL.md`.
+
+  The team identifier is substituted from DSH_TEAM_ID (or Signing.local.plist) by
+  the upload script into a copy under .build/, exactly like the OTA one: a team
+  identifier belongs to a person, not to the repository. (The value below is the
+  same place-holder token the OTA file uses — XML comments cannot carry angle
+  brackets, which is why this note says "token" instead of spelling it out.)
+-->
+<plist version="1.0">
+<dict>
+	<key>method</key>
+	<string>app-store-connect</string>
+	<key>teamID</key>
+	<string><TEAM_ID></string>
+	<key>signingStyle</key>
+	<string>automatic</string>
+	<key>stripSwiftSymbols</key>
+	<true/>
+	<key>compileBitcode</key>
+	<false/>
+	<!--
+	  Left false on purpose: TestFlight rejects a build number that was already
+	  uploaded, and letting Xcode rewrite the version silently makes the local
+	  git tag a lie. Bump CFBundleVersion in the project before archiving.
+	-->
+	<key>manageAppVersionAndBuildNumber</key>
+	<false/>
+	<key>uploadSymbols</key>
+	<true/>
+</dict>
+</plist>
