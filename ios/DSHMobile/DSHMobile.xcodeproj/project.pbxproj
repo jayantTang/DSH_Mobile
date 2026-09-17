@@ -341,7 +341,7 @@
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 6.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;              /* iPhone only：App 是手机客户端；声明支持 iPad 会强制要求 12.9" iPad 截图，而那一档截图我们并不打算提供 */
 			};
 			name = Debug;
 		};
@@ -373,7 +373,7 @@
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 6.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;              /* iPhone only：App 是手机客户端；声明支持 iPad 会强制要求 12.9" iPad 截图，而那一档截图我们并不打算提供 */
 			};
 			name = Release;
 		};
@@ -388,7 +388,7 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_VERSION = 6.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;              /* iPhone only：App 是手机客户端；声明支持 iPad 会强制要求 12.9" iPad 截图，而那一档截图我们并不打算提供 */
 				TEST_TARGET_NAME = DSHMobile;
 			};
 			name = Debug;
@@ -404,7 +404,7 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_VERSION = 6.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;              /* iPhone only：App 是手机客户端；声明支持 iPad 会强制要求 12.9" iPad 截图，而那一档截图我们并不打算提供 */
 				TEST_TARGET_NAME = DSHMobile;
 			};
 			name = Release;

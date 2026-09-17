@@ -45,10 +45,24 @@ App Store 只要求**按设备尺寸分组**，一组内部尺寸必须一致：
 在 `test/tools/context.mjs` 换一台 6.9" 的模拟器再拍；或者用 `sips` 等比放到
 1320×2868（会轻微插值，App Store 接受，但对齐像素更好）。
 
-### 2. 年龄分级与定价（网页）
+### 2. 还差两项（都只能网页做）
 
-App Store Connect → DSH_Mobile → **App 信息** → 年龄分级（本 App 无用户生成内容、
-无广告，通常是 4+）；**定价与销售范围** → 免费 + 你想发布的国家/地区。
+提交时 Apple 会一次性把所有缺项列出来（`associatedErrors` 里，逐条给详情）。
+现在只剩两条：
+
+- **隐私问卷**（App Store Connect → App 隐私 → "数据收集"）：选 **不收集数据** 即可。
+  这是 API 上唯一做不到的一步（`appDataUsages` 那些资源没有公开的写入口），网页上约一分钟。
+- **iPad 截图**：原工程声明支持 iPad（`TARGETED_DEVICE_FAMILY = "1,2"`），Apple 就要求
+  12.9" iPad 截图。**已改成 iPhone-only**（`= 1`）——这个 App 就是手机客户端，
+  声明支持 iPad 只会带来一份没人维护的截图要求。
+
+已经用 API 完成的：年龄分级（整套问卷 26 项全部答"无"）、免费定价、内容版权声明
+（不使用第三方内容）、审核联系人与备注、截图（iPhone 6.9"）、构建挂载。
+
+> 年龄分级那个 PATCH 有三个坑：**必须一次给全整套问卷**（只给一个字段会回
+> `You must provide a value for the attribute 'xxx'`）、布尔类与枚举类字段不能混
+> （`Unexpected json type`）、`ageRatingOverride` 与 `ageRatingOverrideV2`
+> 不能同时给（`AGE_RATING_OVERRIDE_V1_AND_V2_NOT_ALLOWED`）。
 
 ### 3. 审核用的演示环境（重要）
 
