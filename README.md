@@ -56,22 +56,39 @@
 
 ## 快速开始
 
+**装完之后怎么用**——三步，先看这个：
+
+```bash
+# 1. 装连接器（npm 上的包，任何一台跑着 dsh 的电脑）
+dsh plugin --profile web add dsh-plugin-mobile-link
+
+# 2. 让这台电脑在中转上登记（邀请码由中转方给；自建中转的话跳过，见下）
+dsh-mobile-link enroll --invite <邀请码> --relay wss://<中转地址>/dsh-link
+
+# 3. 重启 DSH，然后在手机 App 里扫码配对（二维码在下面的「配对」一节）
+dsh web
+```
+
+配对之后**不用再做任何事**：连接器随 `dsh web` 启动，手机断线会自动重连。
+两端能力对照（手机能做什么、电脑上要开什么权限）见
+[`docs/ONBOARDING.md`](docs/ONBOARDING.md)。
+
 ### 前置条件
 
 | 用途 | 需要 |
 |---|---|
-| 构建 App | macOS + Xcode 16（Swift 6）、iOS 17+ 设备或模拟器 |
 | 电脑侧连接器 | Node.js 22+，以及一个可用的 `dsh web` |
-| 自建中转 | Python 3.12+；要公网 HTTPS 的话再加 Caddy 与一台有公网 IP 的主机 |
+| iOS App | 现成的安装包（TestFlight / OTA），或 macOS + Xcode 16（Swift 6）自己构建 |
+| 中转 | **别人的中转 + 邀请码即可**；要自己开一台才需要 Python 3.12+ 与一台有公网 IP 的主机 |
 
 ### 1. 电脑侧连接器
 
 ```bash
-dsh plugin --profile web add /path/to/plugins/mobile-link
+dsh plugin --profile web add dsh-plugin-mobile-link   # npm
+# 或者从 clone 出来的仓库装（注意开头的 ./）：
+# dsh plugin --profile web add ./plugins/mobile-link
 dsh web        # 连接器随 DSH 启动；插件改动需要重启 DSH 才生效
 ```
-
-在 DSH 界面里打开「移动端连接」生成配对码，或直接访问 `/mobile-link/qr`。
 
 连接器不需要 `--trusted-host`：它始终以 `127.0.0.1:<port>` 访问 DSH，不改写 `Host`
 （认证 Cookie 绑定 authority，本来也不能改），信任围栏看到的是回环地址。
@@ -79,14 +96,17 @@ dsh web        # 连接器随 DSH 启动；插件改动需要重启 DSH 才生�
 
 ### 2. 中转服务
 
-中转是这个产品唯一的连接方式，所以跑起来之前你得有一个：自建，或者用别人的中转配合
-配对码登记（连接器可以只指向别人已部署的中转，不需要自己有一台机器）。
+中转是这个产品唯一的连接方式，所以跑起来之前你得有一个——**不一定是你自己的**：
+拿别人的邀请码登记即可（连接器只指向那个中转，你不需要有一台机器）。
+
+自己开一台的话：
 
 ```bash
 cd relay
 export DSH_RELAY_SITE=<你的站点>     # 仓库里只有占位符，站点地址属于部署方
 sudo -E ./deploy/deploy.sh           # 幂等：建系统用户、装 systemd 单元、插入 Caddy 路由
 python3 admin.py --db state.db account-create --name "Example"
+python3 admin.py --db state.db invite-mint --note "给某人" --count 1   # 铸邀请码给对方
 python3 admin.py --db state.db agent-register --account acc_x --name "MacBook Pro" \
     --write-config ~/.dsh/mobile-link/agent.json --relay wss://<你的站点>/dsh-link
 ```
@@ -100,12 +120,23 @@ python3 admin.py --db state.db agent-register --account acc_x --name "MacBook Pr
 
 ### 3. iOS App
 
+**正常用法是装现成的包**（TestFlight，或发布页 OTA 安装），不是自己编译。自己构建只在
+开发时用：
+
 ```bash
 cd ios/DSHMobile
 xcodebuild -scheme DSHMobile -destination 'platform=iOS Simulator,name=DSH-Test' build
 ```
 
-首次启动扫码或手输配对码，之后自动重连。配对链接的形状：
+### 4. 配对（手机 ↔ 这台电脑）
+
+首次启动扫码或手输配对码，之后自动重连。二维码有两种拿法：
+
+- 电脑上的 DSH 界面里打开「移动端连接」；
+- 或者直接访问 `http://127.0.0.1:<dsh 端口>/mobile-link/qr`（要登录态；端口见
+  `~/.dsh/desktop-shell/endpoint.json`）。
+
+配对链接的形状：
 
 ```
 dsh://pair?relay=https://relay.example.com/dsh-link&code=ABCD-1234
@@ -113,6 +144,17 @@ dsh://pair?relay=https://relay.example.com/dsh-link&code=ABCD-1234
 
 > `dsh://direct?host=…&port=…&token=…` 也能打开，但它是 **DEBUG-only 的测试通道**，
 > 只给仿真器自动化用，不出现在任何用户界面里。
+
+### 5. 确认它在工作
+
+```bash
+# 电脑侧：连接器状态（要带 DSH 的登录 cookie，浏览器里打开更省事）
+curl -s "http://127.0.0.1:<dsh 端口>/mobile-link/status"
+```
+
+`state: "connected"` + `deviceCount ≥ 1` 就说明手机已经连上了。手机上打不开会话、
+或者一直显示「电脑离线」时的排查顺序写在
+[`docs/ONBOARDING.md`](docs/ONBOARDING.md)。
 
 ## 配置：真值不入库
 
@@ -192,6 +234,7 @@ DSH 的客户端协议是 schema 驱动的 RPC 加一条多路复用 WebSocket�
 | [`docs/RELAY-PROTOCOL.md`](docs/RELAY-PROTOCOL.md) | DLP v1 中转协议规范 |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | 架构与关键决策 |
 | [`docs/PAIRING.md`](docs/PAIRING.md) | 连接方式与配对设计 |
+| [`docs/ONBOARDING.md`](docs/ONBOARDING.md) | 装完之后怎么用：五步跑通、能力对照、连不上怎么查 |
 | [`docs/IMAGES.md`](docs/IMAGES.md) | 图片能力的设计约束与实现 |
 | [`docs/VERSIONING.md`](docs/VERSIONING.md) | 三处部署的版本与发布策略 |
 | [`docs/dsh-rpc-catalog.json`](docs/dsh-rpc-catalog.json) | 机器可读的 RPC 目录 |
