@@ -192,19 +192,14 @@ struct SettingsView: View {
     /// hostname in it publishes where the relay is — and the screenshot is the
     /// one place `relay.example.com` cannot be substituted at build time,
     /// because it is the *host's* address, painted by the running app.
-    private var isDemoMode: Bool {
-        ProcessInfo.processInfo.arguments.contains("-DSHDemoMode")
-    }
+    private var isDemoMode: Bool { DemoMode.isOn }
 
     /// The address as it should appear: the real one, or a placeholder.
     ///
     /// Whatever the shape of the real value, the placeholder is fixed: the point
     /// of the picture is that this is a relay rather than a LAN address, and
     /// that part is not secret.
-    private func masked(_ endpoint: String) -> String {
-        guard isDemoMode else { return endpoint }
-        return endpoint.contains("·") ? "relay.example.com · 中转" : "relay.example.com"
-    }
+    private func masked(_ endpoint: String) -> String { DemoMode.maskedEndpoint(endpoint) }
 
     private var statusSection: some View {
         Section {
@@ -225,7 +220,7 @@ struct SettingsView: View {
             }
             if let home = model.about.hostHome {
                 LabeledContent("主机主目录") {
-                    Text(isDemoMode ? "/Users/you" : home)
+                    Text(isDemoMode ? DemoMode.homePlaceholder : home)
                         .font(DSHTheme.Typography.caption)
                         .foregroundStyle(DSHTheme.labelSecondary)
                         .lineLimit(1)

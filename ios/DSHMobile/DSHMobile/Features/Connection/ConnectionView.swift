@@ -32,7 +32,10 @@ struct ConnectionView: View {
     // path matters as much as the host. The repository ships a placeholder
     // (relay.example.com); a local Config.local.xcconfig overrides it. 见
     // Support/AppConfig.swift。
-    @State private var relayURL = AppConfig.relayURL
+    //
+    // 演示模式改用占位符：这个字段会被拍进 App Store 截图，而真值属于部署方。
+    // 生产构建永不传 -DSHDemoMode，预填行为不变（见 Support/DemoMode.swift）。
+    @State private var relayURL = DemoMode.isOn ? "https://relay.example.com/dsh-link" : AppConfig.relayURL
     @State private var pairCode = ""
 
     // Direct state
@@ -109,10 +112,12 @@ struct ConnectionView: View {
                             .foregroundStyle(profile.isDirect ? DSHTheme.success : DSHTheme.brand)
                             .frame(width: 18)
                         VStack(alignment: .leading, spacing: 1) {
-                            Text(profile.name)
+                            // 演示模式下换成占位符：这一页会被拍进 App Store 截图，
+                            // 而电脑名与中转地址都是"对外信息"，不能出现在商店页里。
+                            Text(DemoMode.maskedHostName(profile.name))
                                 .font(DSHTheme.Typography.bodyStrong)
                                 .foregroundStyle(DSHTheme.labelPrimary)
-                            Text(profile.subtitle)
+                            Text(DemoMode.maskedEndpoint(profile.subtitle))
                                 .font(DSHTheme.Typography.micro)
                                 .foregroundStyle(DSHTheme.labelTertiary)
                                 .lineLimit(1)
