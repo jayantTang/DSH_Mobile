@@ -1,3 +1,8 @@
 -r requirements.txt
 pytest>=8
 pytest-asyncio>=0.23
+# `aiohttp_client` / `aiohttp_server` come from this plugin, not from aiohttp:
+# without it every fixture-based test errors at setup ("fixture 'aiohttp_client'
+# not found"), which is what a fresh clone hit while the author's venv had it
+# installed by hand. CI installs this file, so the omission cannot come back.
+pytest-aiohttp>=1.0
