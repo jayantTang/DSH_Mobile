@@ -64,7 +64,10 @@ BUILD_NUMBER="$(date -u +%Y%m%d).$(date -u +%H%M)"
 step "构建号 $BUILD_NUMBER"
 
 if [ "$SKIP_BUILD" -eq 0 ]; then
-  step "归档（Release / 真机）"
+  # 归档这一步 xcodebuild 的输出经过 tail 折叠，所以「没有任何输出」是正常的，
+  # 不是卡住：一次 Release 归档通常 1~3 分钟。中途 Ctrl-C 会留下半成品和
+  # ibtoold 孤儿进程，看起来就像「停住了」，其实是被自己打断了。
+  step "归档（Release / 真机）—— 本步无输出属正常，通常 1~3 分钟，请不要中断"
   rm -rf "$ARCHIVE" "$EXPORT_DIR"
   xcodebuild -project "$PROJECT_DIR/DSHMobile.xcodeproj" -scheme DSHMobile \
     -configuration Release -destination 'generic/platform=iOS' \
@@ -73,7 +76,7 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
     DEVELOPMENT_TEAM="$TEAM_ID" archive \
     | tail -3
 
-  step "导出 .ipa"
+  step "导出 .ipa —— 同样需要一两分钟，无输出属正常"
   # 团队 ID 在这里落进导出选项的副本，仓库里那份留着占位符。
   sed "s/<TEAM_ID>/${TEAM_ID}/" "$PROJECT_DIR/ExportOptions-ota.plist" \
     > "$BUILD_DIR/ExportOptions-ota.local.plist"
