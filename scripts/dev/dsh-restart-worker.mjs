@@ -56,12 +56,24 @@ function save(patch) {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
-/** The port/pid the backend last handed out; `undefined` when the file is gone. */
+/**
+ * What the backend last handed out: port, pid, and the authenticated URL.
+ *
+ * The URL carries the launch token, and the token is the whole reason the
+ * endpoint file exists — a resume that keeps the port but drops the token gets
+ * `401` from the cookie exchange (the first real restart did exactly that,
+ * twenty times, and the agent was never woken).
+ */
 export function readEndpoint(path = ENDPOINT) {
   try {
     const parsed = JSON.parse(readFileSync(path, 'utf8'))
     if (!parsed?.port) return undefined
-    return { port: Number(parsed.port), pid: Number(parsed.pid) || undefined }
+    return {
+      port: Number(parsed.port),
+      pid: Number(parsed.pid) || undefined,
+      url: typeof parsed.url === 'string' ? parsed.url : undefined,
+      updatedAt: typeof parsed.updatedAt === 'string' ? parsed.updatedAt : undefined,
+    }
   } catch {
     return undefined
   }
@@ -146,7 +158,8 @@ async function authenticate(url) {
 }
 
 async function resumeSession(endpoint, sessionId, text) {
-  const origin = new URL(endpoint.url ?? `http://127.0.0.1:${endpoint.port}/`)
+  if (!endpoint.url) throw new Error('endpoint.json 里没有带 token 的 url，无法换 cookie')
+  const origin = new URL(endpoint.url)
   const cookie = await authenticate(origin.toString())
   const response = await fetch(`http://127.0.0.1:${endpoint.port}/api/session/prompt`, {
     method: 'POST',
@@ -181,7 +194,11 @@ async function main() {
   log(`backend ${state.fromPid} stopped (${stopping})`)
   save({ status: 'stopped', stoppedAt: new Date().toISOString(), stop: stopping })
 
-  let endpoint = await waitForNewBackend({ previousPid: state.fromPid, timeoutMs: 12_000 })
+  // DSH.app is the parent of the backend it supervises, and it needs a moment to
+  // notice the child is gone (the first real restart took ~30 s end to end). A
+  // short wait here would start a second backend next to the app's own.
+  let startedByUs
+  let endpoint = await waitForNewBackend({ previousPid: state.fromPid, timeoutMs: 25_000 })
   if (endpoint) {
     log(`DSH.app respawned the backend: pid=${endpoint.pid} port=${endpoint.port}`)
   } else {
@@ -207,6 +224,7 @@ async function main() {
       env: { ...process.env, DSH_DESKTOP_SHELL: '1' },
     })
     child.unref()
+    startedByUs = child.pid
     endpoint = await waitForNewBackend({ previousPid: state.fromPid, timeoutMs: 60_000 })
   }
 
@@ -225,15 +243,35 @@ async function main() {
   }
 
   // The endpoint file appears before the plugin tree has settled, and a prompt
-  // sent too early is refused as an unknown session.
+  // sent too early is refused as an unknown session. It is also re-read on every
+  // attempt: DSH.app may replace the backend we found, and the file is the only
+  // place that says so — with a new port and a new token.
   for (let attempt = 1; attempt <= 20; attempt += 1) {
+    const freshest = readEndpoint() ?? endpoint
+    if (freshest.pid !== endpoint.pid) {
+      log(`endpoint moved to pid=${freshest.pid} port=${freshest.port} (updatedAt=${freshest.updatedAt})`)
+      endpoint = freshest
+      // If the app brought up its own backend after our fallback, ours is now the
+      // orphan: two servers would both be listening, and only one is supervised.
+      if (startedByUs && freshest.pid !== startedByUs && alive(startedByUs)) {
+        const outcome = await stop(startedByUs)
+        log(`our fallback backend ${startedByUs} retired (${outcome}); the app's own took over`)
+        startedByUs = undefined
+      }
+    }
     try {
-      await resumeSession(endpoint, state.sessionId, state.resume)
-      log(`resumed ${state.sessionId} on attempt ${attempt}`)
-      save({ status: 'resumed', resumedAt: new Date().toISOString(), attempts: attempt })
+      await resumeSession(freshest, state.sessionId, state.resume)
+      log(`resumed ${state.sessionId} on attempt ${attempt} (pid=${freshest.pid} port=${freshest.port})`)
+      save({
+        status: 'resumed',
+        resumedAt: new Date().toISOString(),
+        attempts: attempt,
+        resumedPid: freshest.pid,
+        resumedPort: freshest.port,
+      })
       return
     } catch (error) {
-      log(`resume attempt ${attempt} failed: ${error.message}`)
+      log(`resume attempt ${attempt} failed against pid=${freshest.pid} port=${freshest.port}: ${error.message}`)
       await sleep(1500)
     }
   }

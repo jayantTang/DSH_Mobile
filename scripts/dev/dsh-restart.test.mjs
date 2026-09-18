@@ -38,9 +38,13 @@ test('reads the harness endpoint, port and supervising pid', () => {
     assert.equal(endpoint.port, 58334)
     assert.equal(endpoint.pid, 4321)
     assert.equal(endpoint.desktopShell, true)
-    // The worker reads the same file the same way: two spellings of one fact
-    // would drift the moment one of them changed.
-    assert.deepEqual(readEndpoint(join(directory, 'endpoint.json')), { port: 58334, pid: 4321 })
+    // The worker must keep the token-carrying url: dropping it turns the cookie
+    // exchange into an unauthenticated GET, which answers 401 and leaves the
+    // agent asleep after a restart that otherwise worked.
+    const workerView = readEndpoint(join(directory, 'endpoint.json'))
+    assert.equal(workerView.port, 58334)
+    assert.equal(workerView.pid, 4321)
+    assert.match(workerView.url, /token=abc/)
   })
 })
 
