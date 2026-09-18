@@ -133,6 +133,22 @@ scripts/release/publish-plugins.sh --publish
    [`ENABLE-TRIAL.md`](ENABLE-TRIAL.md)**（公共中转今天就能开；TestFlight 缺 Apple
    Distribution 证书，本机只有 Development 身份）。
 
+## 六、发帖的唯一动作：issue #1
+
+`README` 与 `docs/ONBOARDING.md` 现在把「**A 用现成中转**」与「**B 自建中转**」明确分成两条路，
+A 只需要一个邀请码。而邀请码唯一的分发处就是仓库的 **issue #1**：
+
+```
+https://github.com/jayantTang/DSH_Mobile/issues/1
+```
+
+正文（含 30 个真邀请码与真实中转地址）已生成在 `/tmp/dsh-issue.md`，**只在本地**——
+码是真凭据，仓库里只留 `OFFER-TEMPLATE.md` 那份脱敏模板。
+
+- 开这个 issue 是一步网页操作（Agent 没有 token 建不了 issue）。
+- 开完把链接发我，我把 `README.md` 与 `docs/ONBOARDING.md` 里的占位链接换成真实链接并核对。
+- 30 个码 2026-10-17 过期；用完或过期时重新 `invite-mint`，把新表格替换进 issue。
+
 ## 六、进度
 
 已做完（都在仓库里，可复跑）：

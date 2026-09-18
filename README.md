@@ -16,25 +16,48 @@
 
 > 配图出自一个合成会话（内容是真的 agent 输出，项目是编的），生成方式见 [`docs/artifacts/demo/`](docs/artifacts/demo)。
 
-## 快速开始
+## 两条路
 
-```bash
-# 1. 电脑上装连接器
-dsh plugin --profile web add dsh-plugin-mobile-link
+| | **A · 用现成中转**（推荐，5 分钟） | **B · 自己开中转** |
+|---|---|---|
+| 适合 | 只想赶紧用起来 | 想要完全自主、不依赖别人的机器 |
+| 需要 | 一个**邀请码**（在 [issue #1](https://github.com/jayantTang/DSH_Mobile/issues/1) 领取） | 一台有公网 IP 的主机 + Caddy |
+| 你要做的 | 装连接器 → 填邀请码 → 扫码 | 部署中转 → 铸码 → 装连接器 → 扫码 |
 
-# 2. 让这台电脑在中转上登记（邀请码由中转方给；自己搭中转见下）
-dsh-mobile-link enroll --invite <邀请码> --relay wss://<中转地址>/dsh-link
+两条路的第 3 步之后完全一样（手机扫码配对）。下面先走 A；B 见[自己开中转](#自己开中转)。
 
-# 3. 重启 DSH，然后用手机 App 扫配对二维码
-dsh web
+## A · 用现成中转（推荐）
+
+```
+① 手机装 App      Safari 打开 https://testflight.apple.com/join/tHKQsbCk → 接受 → 安装
+② 电脑装连接器    dsh plugin --profile web add dsh-plugin-mobile-link
+③ 登记到中转      dsh-mobile-link enroll --invite <邀请码> --relay wss://<中转地址>/dsh-link
+④ 重启 DSH        dsh web
+⑤ 扫码配对        手机 App → 底部「扫码配对」→ 扫电脑上的二维码
 ```
 
-手机上装 App（iPhone，iOS 17+）：**TestFlight 公开测试** → https://testflight.apple.com/join/tHKQsbCk
-（Safari 打开 → 接受邀请 → 安装。测试构建 90 天有效，到期装新构建。）
+**邀请码在 [issue #1](https://github.com/jayantTang/DSH_Mobile/issues/1) 里领**（一次性、绑一台电脑、用完补新的）。
+上面的 `<中转地址>` 也在那里，和邀请码写在同一行。
 
-配对二维码在电脑上打开：DSH 界面里的「移动端连接」，或 `http://127.0.0.1:<端口>/mobile-link/qr`。
+二维码在电脑上打开：DSH 界面里的「移动端连接」，或 `http://127.0.0.1:<端口>/mobile-link/qr`
+（端口见 `~/.dsh/desktop-shell/endpoint.json`）。
 
-完整步骤与排错：[`docs/ONBOARDING.md`](docs/ONBOARDING.md)。
+> 卡住了？先看 [`docs/ONBOARDING.md`](docs/ONBOARDING.md) 的排查表；还不行就在 issue 下面回，
+> 把现象与 `dsh-mobile-link --log-level debug --once` 的输出贴上。
+
+## B · 自己开中转
+
+```bash
+cd relay
+export DSH_RELAY_SITE=<你的站点>            # 仓库里只有占位符，真值属于部署方
+sudo -E ./deploy/deploy.sh                  # 幂等：建用户、装 systemd 单元、插 Caddy 路由
+python3 admin.py --db state.db account-create --name "<你>"
+python3 admin.py --db state.db invite-mint --note "给自己" --count 1 \
+    --relay wss://<你的站点>/dsh-link       # 铸一个邀请码，回到 A 的第 ③ 步用它
+```
+
+实时负载与每设备流量：`curl -s http://127.0.0.1:8787/stats`（只监听回环）。
+细节与限额说明见 [`relay/README.md`](relay/README.md)。
 
 ## 功能
 
@@ -116,7 +139,7 @@ cd ios/DSHMobile && xcodebuild -scheme DSHMobile \
 
 | 文档 | 内容 |
 |---|---|
-| [`docs/ONBOARDING.md`](docs/ONBOARDING.md) | 装完之后怎么用：五步跑通、能力对照、连不上怎么查 |
+| [`docs/ONBOARDING.md`](docs/ONBOARDING.md) | 两条路怎么选、A 路五步怎么走、连不上怎么查 |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | 架构与关键决策 |
 | [`docs/DSH-PROTOCOL.md`](docs/DSH-PROTOCOL.md) | DSH 原生协议参考（权威、实现导向） |
 | [`docs/RELAY-PROTOCOL.md`](docs/RELAY-PROTOCOL.md) | DLP v1 中转协议规范 |
