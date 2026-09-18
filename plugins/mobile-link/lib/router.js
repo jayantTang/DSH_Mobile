@@ -13,6 +13,7 @@ import {
   StreamTable, WaterfallDedupe, deviceFrameError, deviceIdOf, nonEmptyString, resultFrame,
 } from './dlp.js'
 import { FileInbox, isFileMethod } from './files.js'
+import { GitBridge, isGitMethod } from './git.js'
 import { isHelloMethod, helloPayload } from './hello.js'
 
 export const EVENTS_ENDPOINT = '$events'
@@ -46,6 +47,7 @@ export class DeviceRouter {
     this.dedupe = new WaterfallDedupe({ now })
     this.lastError = undefined
     this.fileInbox = new FileInbox(logger)
+    this.git = new GitBridge(logger)
   }
 
   #changed() {
@@ -177,6 +179,24 @@ export class DeviceRouter {
         result = { ok: true, value: this.fileInbox.handle(frame.method, frame.args ?? {}) }
       } catch (error) {
         result = { ok: false, error: errorObject('file/rejected', messageOf(error)) }
+      }
+      this.send(deviceId, resultFrame(frame.id, result, deviceId))
+      return
+    }
+
+    // Git also runs here, on the machine that holds the work tree: the Host has
+    // no endpoint that runs a command, and the review a person wants — what
+    // changed, what the diff says, what the last commits were — is all local.
+    // Read-only; see git.js for the command whitelist.
+    if (isGitMethod(frame.method)) {
+      let result
+      try {
+        result = { ok: true, value: await this.git.handle(frame.method, frame.args ?? {}) }
+      } catch (error) {
+        result = {
+          ok: false,
+          error: errorObject(error?.code ?? 'git/failed', messageOf(error), error?.details ?? {}),
+        }
       }
       this.send(deviceId, resultFrame(frame.id, result, deviceId))
       return

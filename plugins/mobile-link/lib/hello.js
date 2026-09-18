@@ -44,9 +44,11 @@ function readManifestVersion() {
  * - `qr-pairing`     this connector can render the pairing QR itself
  *                    (`GET /mobile-link/qr`), so the desktop needs no client
  * - `self-enroll`    this connector can register itself with an invite code
+ * - `git`            git status / diff / log / show can be read from the work
+ *                    tree on this computer (see git.js)
  */
 export const SERVER_CAPABILITIES = [
-  'file-transfer', 'events', 'session-streams', 'pair-code', 'qr-pairing', 'self-enroll',
+  'file-transfer', 'events', 'session-streams', 'pair-code', 'qr-pairing', 'self-enroll', 'git',
 ]
 
 export function isHelloMethod(method) {
