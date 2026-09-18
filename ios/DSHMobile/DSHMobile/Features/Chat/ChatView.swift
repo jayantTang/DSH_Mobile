@@ -27,6 +27,15 @@ struct ChatView: View {
     @State private var userScrolled = false
     /// 这个会话的"打开即到底部"是否已经排过（只排一次）。
     @State private var openPinDone = false
+    /// 转写是否已经定位好、可以显示了。
+    ///
+    /// 打开会话时先把它藏起来（opacity 0，仍参与布局），等第一次钉底完成再显示：
+    /// 从"第一次正确的位置"直接呈现，用户看不到任何中间态。这不是花招——SwiftUI 里
+    /// 首帧的滚动位置与懒加载的行布局之间存在先后，无法保证第一次绘制就是最终位置；
+    /// 与其让用户看到一次跳动，不如让他在几十毫秒里看到空白（下一帧就到位）。
+    @State private var transcriptReady = false
+    /// 显示转写的定时器（首帧之前就藏好，稍微延后一点再显示）。
+    @State private var revealTask: Task<Void, Never>?
     /// Rate limit for tail scrolling during a stream.
     @State private var lastScrollAt = Date.distantPast
     /// A transient confirmation shown when a run ends. The persistent marker
@@ -168,6 +177,8 @@ struct ChatView: View {
             .padding(.vertical, DSHTheme.Spacing.standard)
         }
         .accessibilityIdentifier("chat.transcript")
+        // 定位完成前不显示：见 transcriptReady 的说明。
+        .opacity(transcriptReady ? 1 : 0)
         // Imperative scrolling only, and only in one direction (us -> view).
         //
         // A `scrollPosition(id:)` binding was tried here and had to be removed:
@@ -254,6 +265,7 @@ struct ChatView: View {
             openedSessionId = nil
             userScrolled = false
             openPinDone = false
+            transcriptReady = false
             // Attachments are authorized per session, so the loader has to know
             // which one the rows on screen belong to.
             attachmentImages.sessionId = sessionId
@@ -330,12 +342,22 @@ struct ChatView: View {
     /// 恰好落在布局稳定的那一刻。用户一旦自己拖动过（`userScrolled`）就立即停手。
     private func scheduleOpenPin(_ proxy: ScrollViewProxy, sessionId: String) {
         settleTask?.cancel()
+        revealTask?.cancel()
         settleTask = Task { @MainActor in
-            for delay in [80, 250, 500, 900, 1400] {
+            for (index, delay) in [60, 200, 450, 900, 1400].enumerated() {
                 try? await Task.sleep(for: .milliseconds(delay))
                 if Task.isCancelled { return }
                 guard openedSessionId == sessionId, !userScrolled else { return }
                 proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)
+                if index == 0 {
+                    // 第一次钉底之后**尽快**显示：只等一帧。
+                    // 等得越久，露出的空白越明显；而第一次钉底之后视口已经在尾部，
+                    // 这一帧显示出来就是最终位置。后续几次重试在背后继续纠正。
+                    try? await Task.sleep(for: .milliseconds(16))
+                    if Task.isCancelled { return }
+                    withTransaction(Transaction(animation: nil)) { transcriptReady = true }
+                    _ = revealTask  // 保留字段，便于以后改成"等布局稳定再显示"
+                }
             }
             if openedSessionId == sessionId, !userScrolled { isFollowing = true }
         }
