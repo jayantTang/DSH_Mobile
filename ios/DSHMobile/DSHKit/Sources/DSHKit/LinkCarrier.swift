@@ -294,7 +294,17 @@ public actor LinkCarrier: DSHCarrier {
                 await self.registerPending(id: id, continuation: continuation)
                 Task { [weak self] in
                     try? await Task.sleep(for: deadline)
-                    await self?.failPending(id: id, error: DSHTransportError.timedOut(method: method))
+                    guard let self else { return }
+                    await self.failPending(id: id, error: DSHTransportError.timedOut(method: method))
+                    // A frame that was still arriving when its call gave up
+                    // cannot be un-arrived: the relay keeps writing the rest of
+                    // it, and those messages would be glued onto the next frame
+                    // — after which nothing on this socket parses. Dropping the
+                    // connection is the only way back to a known boundary, and
+                    // the caller's retry resumes from what it already saved.
+                    await self.dropIfHoldingPartialFrame(
+                        reason: "\(method) timed out while a frame was still arriving"
+                    )
                 }
                 do {
                     try await self.send(frame)
@@ -303,6 +313,12 @@ public actor LinkCarrier: DSHCarrier {
                 }
             }
         }
+    }
+
+    /// Drops a connection whose frame boundary is no longer knowable.
+    private func dropIfHoldingPartialFrame(reason: String) async {
+        guard assembler.isHoldingPartialFrame else { return }
+        await handleDisconnect(reason: reason)
     }
 
     private func registerPending(id: String, continuation: CheckedContinuation<JSONValue, any Error>) {

@@ -530,7 +530,14 @@ private struct MainView: View {
             for _ in 0..<80 where listModel.groups.isEmpty && listModel.loose.isEmpty {
                 try? await Task.sleep(for: .milliseconds(250))
             }
-            guard let session = listModel.groups.first?.sessions.first ?? listModel.loose.first else { return }
+            // A named session wins, exactly as it does for `-DSHOpenScreen files`:
+            // the file lives in *that* workspace, and taking the first row of the
+            // list pointed the browser at an unrelated directory — which is how a
+            // run that had pinned its session still got 「这个路径不在了」.
+            let session = automationSessionId.flatMap { listModel.session(withId: $0) }
+                ?? listModel.groups.first?.sessions.first
+                ?? listModel.loose.first
+            guard let session else { return }
             filesOpenPath = automationFile
             filesScope = WorkspaceFileScope(summary: session, hostHome: store.hostHome)
         }

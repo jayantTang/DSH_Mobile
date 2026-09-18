@@ -24,9 +24,49 @@ enum WorkspaceFileCache {
 
     /// Where one version of one file belongs, whether or not it is there yet.
     static func destination(scopeId: String, path: String, version: String) -> URL {
-        root
-            .appendingPathComponent("\(digest("\(scopeId)~\(path)"))-\(digest(version))", isDirectory: true)
+        directory(scopeId: scopeId, path: path, version: version)
             .appendingPathComponent(name(for: path))
+    }
+
+    /// Where a download in progress accumulates.
+    ///
+    /// A half-arrived file is not the file: it gets its own name so nothing can
+    /// open it as if it were complete, and it outlives the attempt that wrote it
+    /// — that is what makes the next attempt resumable rather than a restart.
+    static func partial(scopeId: String, path: String, version: String) -> URL {
+        let complete = destination(scopeId: scopeId, path: path, version: version)
+        return complete.appendingPathExtension("part")
+    }
+
+    /// The bytes already downloaded for this version, when there are any.
+    static func partialBytes(scopeId: String, path: String, version: String) -> Int? {
+        let url = partial(scopeId: scopeId, path: path, version: version)
+        guard let size = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? Int,
+              size > 0
+        else { return nil }
+        return size
+    }
+
+    /// Publishes a finished partial as the file itself.
+    ///
+    /// The rename is what makes "complete" atomic: a `.part` is never mistaken
+    /// for a whole document, however the process dies.
+    static func publish(scopeId: String, path: String, version: String) throws -> URL {
+        let partial = partial(scopeId: scopeId, path: path, version: version)
+        let complete = destination(scopeId: scopeId, path: path, version: version)
+        let manager = FileManager.default
+        try? manager.removeItem(at: complete)
+        try manager.moveItem(at: partial, to: complete)
+        return complete
+    }
+
+    /// Throws away a partial, for the "give up on this download" action.
+    static func discardPartial(scopeId: String, path: String, version: String) {
+        try? FileManager.default.removeItem(at: partial(scopeId: scopeId, path: path, version: version))
+    }
+
+    private static func directory(scopeId: String, path: String, version: String) -> URL {
+        root.appendingPathComponent("\(digest("\(scopeId)~\(path)"))-\(digest(version))", isDirectory: true)
     }
 
     /// The cached copy of exactly this version, when it is complete.

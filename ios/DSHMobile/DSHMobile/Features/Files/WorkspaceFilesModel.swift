@@ -57,8 +57,36 @@ final class WorkspaceFilesModel {
     enum TransferPhase: Equatable {
         case idle
         case running(received: Int, total: Int?)
+        /// Downloading stopped with bytes on disk. Not a failure: the next
+        /// attempt continues from `bytes` instead of starting again, which is
+        /// why it carries the reason rather than a verdict.
+        case paused(bytes: Int, total: Int?, reason: String?)
         case ready(bytes: Int, url: URL)
         case failed(String)
+
+        /// How much is on disk (or in flight) right now.
+        var receivedBytes: Int? {
+            switch self {
+            case .running(let received, _): return received
+            case .paused(let bytes, _, _): return bytes
+            case .ready(let bytes, _): return bytes
+            case .idle, .failed: return nil
+            }
+        }
+
+        var totalBytes: Int? {
+            switch self {
+            case .running(_, let total), .paused(_, let total, _): return total
+            case .ready(let bytes, _): return bytes
+            case .idle, .failed: return nil
+            }
+        }
+
+        /// Whether anything is on disk to continue from.
+        var resumable: Bool {
+            if case .paused = self { return true }
+            return false
+        }
     }
 
     /// Downloads by workspace path, so two sheets looking at one file agree.
@@ -90,6 +118,16 @@ final class WorkspaceFilesModel {
     init(scope: WorkspaceFileScope, initialPath: String = "") {
         self.scope = scope
         self.browsingPath = initialPath
+        #if DEBUG
+        // `-DSHForgetDownloadedFiles`: a run that means to exercise the download
+        // itself — an interrupted transfer, a resume — cannot start from the
+        // copy the previous run left in the cache. Without this the file is
+        // already here, no window is ever fetched, and the test passes while
+        // proving nothing.
+        if ProcessInfo.processInfo.arguments.contains("-DSHForgetDownloadedFiles") {
+            WorkspaceFileCache.clear()
+        }
+        #endif
     }
 
     convenience init(summary: SessionSummary, hostHome: String?) {
@@ -272,12 +310,17 @@ final class WorkspaceFilesModel {
         return nil
     }
 
-    /// Fetches the whole file, once per version.
+    /// Fetches the whole file, once per version, resuming what is already here.
     ///
     /// Returns the local copy and publishes progress in `transfers` while it
     /// runs, so the view showing the download does not have to own the task —
     /// two screens looking at the same file share one transfer instead of
-    /// pulling it twice. A cache hit costs a `stat` and nothing else.
+    /// pulling it twice. A finished cache hit costs a `stat` and nothing else.
+    ///
+    /// A link that drops mid-transfer is the normal case on a phone, not an
+    /// exception: the attempt is retried a couple of times on its own, and when
+    /// it still cannot finish the phase becomes `paused` with the bytes kept, so
+    /// the next tap continues instead of starting over.
     @discardableResult
     func download(path: String) async -> URL? {
         let key = Self.cacheKey(path, root: scope.workspaceRoot)
@@ -287,42 +330,35 @@ final class WorkspaceFilesModel {
             return nil
         }
 
-        transfers[key] = .running(received: 0, total: nil)
+        transfers[key] = .running(received: transfers[key]?.receivedBytes ?? 0, total: nil)
         let scopeId = scope.sessionId
         let downloader = WorkspaceFileDownloader(client: client)
         let task = Task<URL?, Never> { [weak self] in
-            do {
-                // `stat` first: it carries the size the progress bar needs and
-                // the version that decides whether anything has to move at all.
-                let info = try await downloader.info(scopeId: scopeId, path: path)
-                if let cached = WorkspaceFileCache.existing(
-                    scopeId: scopeId, path: key, version: info.version, bytes: info.bytes
-                ) {
-                    self?.transfers[key] = .ready(bytes: cached.bytes, url: cached.url)
-                    return cached.url
-                }
-                let destination = WorkspaceFileCache.destination(
-                    scopeId: scopeId, path: key, version: info.version
-                )
-                let fetched = try await downloader.fetch(
-                    scopeId: scopeId, path: path, to: destination
-                ) { [weak self] progress in
-                    Task { @MainActor in
-                        // Only ever updates a running transfer: a cancelled one
-                        // must not be dragged back to life by a late window.
-                        guard case .running = self?.transfers[key] else { return }
-                        self?.transfers[key] = .running(received: progress.received, total: progress.total)
+            var attempt = 0
+            while true {
+                do {
+                    return try await self?.attemptDownload(
+                        downloader: downloader, scopeId: scopeId, key: key, path: path
+                    )
+                } catch is CancellationError {
+                    self?.pause(key: key, reason: nil)
+                    return nil
+                } catch {
+                    // Two unasked-for attempts: a dropped socket reconnects in
+                    // about a second, and the resume costs one window. After
+                    // that the person decides — with the bytes still on disk.
+                    if attempt < Self.automaticResumeAttempts, Self.isWorthResuming(error) {
+                        attempt += 1
+                        try? await Task.sleep(for: .milliseconds(1500 * attempt))
+                        continue
                     }
+                    if Self.isWorthResuming(error) {
+                        self?.pause(key: key, reason: Self.describe(error))
+                    } else {
+                        self?.transfers[key] = .failed(Self.describe(error))
+                    }
+                    return nil
                 }
-                WorkspaceFileCache.trim()
-                self?.transfers[key] = .ready(bytes: fetched.bytes, url: fetched.url)
-                return fetched.url
-            } catch is CancellationError {
-                self?.transfers[key] = .idle
-                return nil
-            } catch {
-                self?.transfers[key] = .failed(Self.describe(error))
-                return nil
             }
         }
         transferTasks[key] = task
@@ -331,12 +367,142 @@ final class WorkspaceFilesModel {
         return url
     }
 
-    /// Stops a transfer in flight. The partial file is removed by the downloader.
-    func cancelDownload(path: String) {
+    /// One pass at the file, from whatever is already on disk.
+    private func attemptDownload(
+        downloader: WorkspaceFileDownloader,
+        scopeId: String,
+        key: String,
+        path: String
+    ) async throws -> URL? {
+        let info = try await downloader.info(scopeId: scopeId, path: path)
+        if let cached = WorkspaceFileCache.existing(
+            scopeId: scopeId, path: key, version: info.version, bytes: info.bytes
+        ) {
+            transfers[key] = .ready(bytes: cached.bytes, url: cached.url)
+            return cached.url
+        }
+
+        // The version is part of the directory name, so a file the agent has
+        // rewritten since the last attempt lands somewhere else entirely and
+        // yesterday's half-download can never be resumed as today's content.
+        let offset = WorkspaceFileCache.partialBytes(
+            scopeId: scopeId, path: key, version: info.version
+        ) ?? 0
+        transfers[key] = .running(received: offset, total: info.bytes)
+
+        let fetched = try await downloader.fetch(
+            scopeId: scopeId,
+            path: path,
+            to: WorkspaceFileCache.partial(scopeId: scopeId, path: key, version: info.version),
+            from: offset
+        ) { [weak self] progress in
+            Task { @MainActor in
+                guard let self else { return }
+                self.interruptForAutomationIfAsked(key: key, received: progress.received)
+                // Only ever updates a running transfer: a paused one must not be
+                // dragged back to life by a late window.
+                guard case .running = self.transfers[key] else { return }
+                self.transfers[key] = .running(received: progress.received, total: progress.total)
+            }
+        }
+
+        let complete = try WorkspaceFileCache.publish(
+            scopeId: scopeId, path: key, version: info.version
+        )
+        WorkspaceFileCache.trim()
+        transfers[key] = .ready(bytes: fetched.bytes, url: complete)
+        return complete
+    }
+
+    /// Stops a transfer in flight, keeping the bytes for the next attempt.
+    func pauseDownload(path: String) {
+        cancelTransferTask(path: path)
+        pause(key: Self.cacheKey(path, root: scope.workspaceRoot), reason: nil)
+    }
+
+    /// Throws away a partial download, for the "give up on this file" action.
+    func discardDownload(path: String) async {
+        let key = Self.cacheKey(path, root: scope.workspaceRoot)
+        cancelTransferTask(path: path)
+        if let client = store?.client {
+            let downloader = WorkspaceFileDownloader(client: client)
+            if let info = try? await downloader.info(scopeId: scope.sessionId, path: path) {
+                WorkspaceFileCache.discardPartial(
+                    scopeId: scope.sessionId, path: key, version: info.version
+                )
+            }
+        }
+        transfers[key] = .idle
+    }
+
+    private func cancelTransferTask(path: String) {
         let key = Self.cacheKey(path, root: scope.workspaceRoot)
         transferTasks[key]?.cancel()
         transferTasks[key] = nil
-        transfers[key] = .idle
+    }
+
+    /// Moves a transfer to `paused`, keeping what arrived for the next attempt.
+    ///
+    /// The byte count is the last one reported rather than a fresh `stat` of the
+    /// file: the difference is at most one window, and that window is simply
+    /// asked for again.
+    private func pause(key: String, reason: String?) {
+        let phase = transfers[key]
+        transfers[key] = .paused(
+            bytes: phase?.receivedBytes ?? 0,
+            total: phase?.totalBytes,
+            reason: reason
+        )
+    }
+
+    /// How many times a dropped transfer is resumed without asking.
+    private static let automaticResumeAttempts = 2
+
+    /// A run can ask for the first attempt to be cut short.
+    ///
+    /// Resuming is the one behaviour that cannot be tested by waiting: a real
+    /// interruption needs the relay to drop the device mid-file, which no case
+    /// can schedule. `-DSHInterruptDownload <bytes>` stops the first attempt at
+    /// that many bytes, so the next step can press 继续 and prove the bytes
+    /// already on disk were kept.
+    private static var automationInterruptBytes: Int? {
+        #if DEBUG
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let index = arguments.firstIndex(of: "-DSHInterruptDownload"),
+              index + 1 < arguments.count,
+              let bytes = Int(arguments[index + 1]), bytes > 0
+        else { return nil }
+        return bytes
+        #else
+        return nil
+        #endif
+    }
+
+    private var didInterruptForAutomation = false
+
+    private func interruptForAutomationIfAsked(key: String, received: Int) {
+        guard let limit = Self.automationInterruptBytes,
+              !didInterruptForAutomation,
+              received >= limit
+        else { return }
+        didInterruptForAutomation = true
+        transferTasks[key]?.cancel()
+    }
+
+    /// Whether the bytes on disk are worth continuing from.
+    private static func isWorthResuming(_ error: any Error) -> Bool {
+        if let failure = error as? WorkspaceFileDownloader.Failure { return failure.isResumable }
+        if let failure = error as? DSHRPCFailure {
+            switch failure.code {
+            case "workspace-file/not-found", "workspace-file/outside-workspace",
+                 "workspace-file/not-regular-file", "workspace-file/not-directory",
+                 "workspace-file/unknown-workspace", "gateway/lookup-not-found":
+                return false
+            default:
+                return true
+            }
+        }
+        return true
     }
 
     /// One key per file: the change list names a file absolutely and the browser

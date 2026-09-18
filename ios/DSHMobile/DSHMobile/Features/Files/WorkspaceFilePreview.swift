@@ -79,11 +79,15 @@ struct QuickLookSheet: UIViewControllerRepresentable {
     }
 }
 
-/// How far the file has got from the computer, and the one action that ends it.
+/// How far the file has got from the computer, and what can be done about it.
 ///
 /// Shown for every state on purpose: a download that finished is the proof the
 /// bytes are all here, and the byte count is what makes a truncated file visible
 /// rather than a picture that "just looks odd".
+///
+/// Stopping is not failing. `暂停` keeps what arrived and offers `继续`, because
+/// on a phone the link *will* drop mid-file and the only thing that must never
+/// happen is paying for the same bytes twice.
 struct WorkspaceFileTransferStatus: View {
     let model: WorkspaceFilesModel
     let path: String
@@ -103,15 +107,47 @@ struct WorkspaceFileTransferStatus: View {
                         .foregroundStyle(DSHTheme.labelSecondary)
                         .accessibilityIdentifier("files.transfer.running")
                     Spacer(minLength: 0)
-                    Button("取消") { model.cancelDownload(path: path) }
+                    Button("暂停") { model.pauseDownload(path: path) }
                         .font(DSHTheme.Typography.micro)
                         .buttonStyle(.plain)
                         .foregroundStyle(DSHTheme.brand)
-                        .accessibilityIdentifier("files.transfer.cancel")
+                        .accessibilityIdentifier("files.transfer.pause")
                 }
                 if let total, total > 0 {
                     ProgressView(value: Double(received), total: Double(total))
                         .tint(DSHTheme.brand)
+                }
+            }
+            .padding(.horizontal, DSHTheme.Spacing.standard)
+            .padding(.vertical, DSHTheme.Spacing.tight)
+
+        case .paused(let bytes, let total, let reason):
+            VStack(alignment: .leading, spacing: DSHTheme.Spacing.hairline) {
+                HStack(alignment: .firstTextBaseline, spacing: DSHTheme.Spacing.tight) {
+                    Image(systemName: "arrow.down.circle.dotted")
+                        .font(.system(size: 12))
+                        .foregroundStyle(DSHTheme.attention)
+                    Text(pausedText(bytes: bytes, total: total, reason: reason))
+                        .font(DSHTheme.Typography.micro)
+                        .foregroundStyle(DSHTheme.labelSecondary)
+                        .accessibilityIdentifier("files.transfer.paused")
+                    Spacer(minLength: 0)
+                    Button("继续") { Task { await model.download(path: path) } }
+                        .font(DSHTheme.Typography.micro)
+                        .buttonStyle(.plain)
+                        .foregroundStyle(DSHTheme.brand)
+                        .accessibilityIdentifier("files.transfer.resume")
+                    Button("放弃") { Task { await model.discardDownload(path: path) } }
+                        .font(DSHTheme.Typography.micro)
+                        .buttonStyle(.plain)
+                        .foregroundStyle(DSHTheme.labelTertiary)
+                        .accessibilityIdentifier("files.transfer.discard")
+                }
+                if let total, total > 0 {
+                    // The bar keeps its progress, so a resumed download visibly
+                    // picks up where it stopped instead of starting over.
+                    ProgressView(value: Double(bytes), total: Double(total))
+                        .tint(DSHTheme.attention)
                 }
             }
             .padding(.horizontal, DSHTheme.Spacing.standard)
@@ -157,7 +193,22 @@ struct WorkspaceFileTransferStatus: View {
 
     private func runningText(received: Int, total: Int?) -> String {
         guard let total, total > 0 else { return "正在从电脑读取…（已读取 \(ByteFormat.compact(received))）" }
-        return "正在从电脑读取… \(ByteFormat.compact(received)) / \(ByteFormat.compact(total))"
+        let percent = Int((Double(received) / Double(total) * 100).rounded(.down))
+        return "正在从电脑读取… \(ByteFormat.compact(received)) / \(ByteFormat.compact(total))（\(percent)%）"
+    }
+
+    private func pausedText(bytes: Int, total: Int?, reason: String?) -> String {
+        let saved = "\(ByteFormat.compact(bytes))（\(String(bytes)) 字节）"
+        let percent: String
+        if let total, total > 0 {
+            percent = "，已完成 \(Int((Double(bytes) / Double(total) * 100).rounded(.down)))%"
+        } else {
+            percent = ""
+        }
+        guard let reason, !reason.isEmpty else {
+            return "下载已暂停：已保存 \(saved)\(percent)，可继续"
+        }
+        return "下载中断：\(reason)（已保存 \(saved)\(percent)）"
     }
 }
 
@@ -319,7 +370,7 @@ struct WorkspaceImagePreviewView: View {
                     .foregroundStyle(.white.opacity(0.85))
                     .accessibilityIdentifier("files.preview.loading")
                 Button("取消") {
-                    model.cancelDownload(path: path)
+                    model.pauseDownload(path: path)
                     dismiss()
                 }
                 .buttonStyle(.bordered)
