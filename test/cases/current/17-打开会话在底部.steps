@@ -15,12 +15,14 @@
 # 跑法：DSH_CONNECT=relay ./test/run.sh run test/cases/current/17-打开会话在底部.md
 
 1  do: 连接本机 DSH
-# 「等待」是等元素出现，不是睡眠；这里等转写页就绪，顺便给沉降几次重试留时间
+# 2 与 3 是同一个动作的两次留证：先拍"刚打开"（判据：第一屏就在尾部，而不是先露中段），
+# 再等 3 秒拍"稳定后"。若第一张停在中间、第二张才到底部，就是"跳一下"那版行为。
 2  do: 打开页面 transcript, 等待 id:chat.transcript timeout=10 | shot: 01-opened check=texts,amber
-3  do: 什么都不做            | want: text:回到底部 ; absent
-4  do: 什么都不做            | want: text:回到最新 ; absent
-5  do: 什么都不做            | want: id:composer.field
+3  do: 什么都不做            | shot: 02-settled check=texts,amber
+4  do: 什么都不做            | want: text:回到底部 ; absent
+5  do: 什么都不做            | want: text:回到最新 ; absent
+6  do: 什么都不做            | want: id:composer.field
 # 再打开一次（同一会话第二次进入）——重进也要在底部，不能只在首次生效
-6  do: 打开页面 sessions
-7  do: 打开页面 transcript   | shot: 02-reopened check=texts,amber
-8  do: 什么都不做            | want: text:回到底部 ; absent
+7  do: 打开页面 sessions
+8  do: 打开页面 transcript   | shot: 03-reopened check=texts,amber
+9  do: 什么都不做            | want: text:回到底部 ; absent

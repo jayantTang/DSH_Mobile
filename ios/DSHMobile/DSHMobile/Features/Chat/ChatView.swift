@@ -305,13 +305,15 @@ struct ChatView: View {
     /// 只在**会话真的换了**的那一次执行：内容增长也会走到这里（items.count 一变就调），
     /// 若每次都重排，这一串重试会被流式输出无限推迟——而它本该在打开后一秒内做完。
     /// 用户拖动过（userScrolled）也不再打扰：主动滚动优先。
+    ///
+    /// **打开时保持 isFollowing = true**，这一点是"先看到中段再滑到底部"的关键：
+    /// 跟随打开时，每折入一批内容都会触发一次跟随滚动（`scrollSignal`），视口始终贴在
+    /// 尾部，看不到中间态；只有在打开那一刻是一次性跳到尾部的做法，才会先露出中段。
+    /// 读者一旦自己往上拖，`isFollowing` 变 false，之后的内容增长不再抢滚动位置。
     private func settleOnOpenIfNeeded(_ proxy: ScrollViewProxy) {
         guard let sessionId = model.session?.sessionId else { return }
         guard !openPinDone else { return }
-        if openedSessionId != sessionId {
-            openedSessionId = sessionId
-            isFollowing = false      // 打开时先不跟随，等这一步统一定位
-        }
+        openedSessionId = sessionId
         openPinDone = true
         if !userScrolled { scheduleOpenPin(proxy, sessionId: sessionId) }
     }
