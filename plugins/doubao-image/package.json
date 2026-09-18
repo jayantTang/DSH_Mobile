@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-doubao-image",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Image generation through the locally installed Doubao desktop app, driven over the Chrome DevTools Protocol — no API key, no headless browser.",
   "keywords": [
     "dsh",
