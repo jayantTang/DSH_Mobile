@@ -142,12 +142,16 @@ A 只需要一个邀请码。而邀请码唯一的分发处就是仓库的 **iss
 https://github.com/jayantTang/DSH_Mobile/issues/1
 ```
 
-正文（含 30 个真邀请码与真实中转地址）已生成在 `/tmp/dsh-issue.md`，**只在本地**——
-码是真凭据，仓库里只留 `OFFER-TEMPLATE.md` 那份脱敏模板。
+**已开**：https://github.com/jayantTang/DSH_Mobile/issues/1 （用 API 创建，正文含 30 个真邀请码与
+真实中转地址；码本身仍然不进仓库，仓库里只有 `OFFER-TEMPLATE.md` 那份脱敏模板）。
+README 与 ONBOARDING 已指向它。
 
-- 开这个 issue 是一步网页操作（Agent 没有 token 建不了 issue）。
-- 开完把链接发我，我把 `README.md` 与 `docs/ONBOARDING.md` 里的占位链接换成真实链接并核对。
-- 30 个码 2026-10-17 过期；用完或过期时重新 `invite-mint`，把新表格替换进 issue。
+后续维护：
+
+- 30 个码 **2026-10-17 过期**。用完或过期时重新铸一批，用 API 更新 issue 正文
+  （`PATCH /repos/{owner}/{repo}/issues/1`），或直接在网页上改那张表。
+- 有人滥用时：`admin.py agent-disable --agent <id>`。
+- 想开第二批时注意：issue 是公开的，等于对外发名额——先确认每日额度与限速是否合适。
 
 ## 六、进度
 

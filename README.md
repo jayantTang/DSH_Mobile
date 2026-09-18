@@ -21,7 +21,7 @@
 | | **A · 用现成中转**（推荐，5 分钟） | **B · 自己开中转** |
 |---|---|---|
 | 适合 | 只想赶紧用起来 | 想要完全自主、不依赖别人的机器 |
-| 需要 | 一个**邀请码**（在 [issue #1](https://github.com/jayantTang/DSH_Mobile/issues/1) 领取） | 一台有公网 IP 的主机 + Caddy |
+| 需要 | 一个**邀请码**（在 [issue #1 · 领邀请码](https://github.com/jayantTang/DSH_Mobile/issues/1) 领取） | 一台有公网 IP 的主机 + Caddy |
 | 你要做的 | 装连接器 → 填邀请码 → 扫码 | 部署中转 → 铸码 → 装连接器 → 扫码 |
 
 两条路的第 3 步之后完全一样（手机扫码配对）。下面先走 A；B 见[自己开中转](#自己开中转)。
@@ -36,7 +36,7 @@
 ⑤ 扫码配对        手机 App → 底部「扫码配对」→ 扫电脑上的二维码
 ```
 
-**邀请码在 [issue #1](https://github.com/jayantTang/DSH_Mobile/issues/1) 里领**（一次性、绑一台电脑、用完补新的）。
+**邀请码在 [issue #1 · 领邀请码](https://github.com/jayantTang/DSH_Mobile/issues/1) 里领**（一次性、绑一台电脑、用完补新的）。
 上面的 `<中转地址>` 也在那里，和邀请码写在同一行。
 
 二维码在电脑上打开：DSH 界面里的「移动端连接」，或 `http://127.0.0.1:<端口>/mobile-link/qr`
