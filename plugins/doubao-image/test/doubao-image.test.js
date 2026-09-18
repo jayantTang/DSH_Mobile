@@ -1,5 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { apply, buildPrompt, defaultDir, inject, name, renderResult, resolveCount } from '../lib/index.js'
 import { countOccurrences, submitPrompt } from '../lib/doubao.mjs'
 import { decodePng, encodePng } from '../lib/image.mjs'
@@ -23,7 +26,9 @@ function register() {
 
 test('exports a Cordis plugin shape', () => {
   assert.equal(name, 'tool-doubao-image')
-  assert.deepEqual(inject, ['tools'])
+  // `attachments` is how generated pictures reach the client without becoming
+  // user messages.
+  assert.deepEqual(inject, ['tools', 'attachments'])
 })
 
 test('registers the generate_image tool', () => {
@@ -47,7 +52,10 @@ test('declares an output schema, which the registry refuses to load without', ()
   const tool = register()
   assert.equal(tool.output.schema.type, 'object')
   assert.deepEqual(tool.output.schema.required, ['ok'])
-  assert.deepEqual(Object.keys(tool.output.schema.properties).sort(), ['detail', 'error', 'files', 'ok'])
+  assert.deepEqual(
+    Object.keys(tool.output.schema.properties).sort(),
+    ['attachments', 'detail', 'error', 'files', 'ok'],
+  )
   assert.equal(typeof tool.output.render, 'function')
 })
 
@@ -426,22 +434,68 @@ function imprintGlyphs(img) {
   }
 }
 
-test('the session id is resolved from the live session object', async () => {
-  // Regression: the host moved the id from `agent.sessionId` to
-  // `agent.session.id`, and the old lookup made both this plugin's auto-send and
-  // the send_image tool fail with "拿不到会话 id" on every call.
-  const { sessionIdFrom } = await import('../lib/index.js')
-  // The env var is the last-resort carrier, so clear it: otherwise these
-  // assertions silently test the ambient shell instead of the lookup order.
-  const saved = process.env.DSH_SESSION_ID
-  delete process.env.DSH_SESSION_ID
+test('generated files are published as attachments, without a session', async () => {
+  // Regression: delivery used to run send-image.mjs with a session id, which
+  // submitted each file as a `session/prompt` — the pictures arrived as user
+  // messages and every one of them started another turn, so the agent answered
+  // its own generated image. Attachments on the tool result replace all of that,
+  // and with it the whole "拿不到会话 id" failure class.
+  const { publishAll } = await import('../lib/index.js')
+  const directory = mkdtempSync(join(tmpdir(), 'dsh-doubao-'))
+  const path = join(directory, 'doubao-1.png')
+  const bytes = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+    'base64'
+  )
+  writeFileSync(path, bytes)
+  const saved = []
+  const attachments = {
+    async saveImage(input) {
+      saved.push(input)
+      return { type: 'image', attachmentId: `att_${saved.length}`, mediaType: input.mediaType, bytes: input.data.length }
+    },
+  }
   try {
-    assert.equal(sessionIdFrom({ agent: { session: { id: 'session-live' } } }), 'session-live')
-    assert.equal(sessionIdFrom({ agent: { sessionId: 'session-old' } }), 'session-old')
-    assert.equal(sessionIdFrom({ session: { id: 'session-direct' } }), 'session-direct')
-    assert.equal(sessionIdFrom({}), undefined)
-    assert.equal(sessionIdFrom(undefined), undefined)
+    const published = await publishAll(attachments, [
+      { path, bytes: bytes.length, format: 'png' },
+    ])
+    assert.equal(published.attachments.length, 1)
+    assert.match(published.note, /已把 1 张图放进当前会话/)
+    assert.equal(saved[0].mediaType, 'image/png')
+    assert.equal(saved[0].name, 'doubao-1.png')
+    assert.equal(saved[0].data.length, bytes.length)
   } finally {
-    if (saved !== undefined) process.env.DSH_SESSION_ID = saved
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('a picture that cannot be published keeps the others', async () => {
+  // Two ways to fail, and neither may take the rest of the batch with it: the
+  // Host refusing the bytes, and a file that is not readable any more.
+  const { publishAll } = await import('../lib/index.js')
+  const directory = mkdtempSync(join(tmpdir(), 'dsh-doubao-'))
+  const good = join(directory, 'good.png')
+  const rejected = join(directory, 'rejected.png')
+  writeFileSync(good, Buffer.from('89504e470d0a1a0a', 'hex'))
+  writeFileSync(rejected, Buffer.from('89504e470d0a1a0a', 'hex'))
+  const attachments = {
+    async saveImage(input) {
+      if (input.name === 'rejected.png') throw new Error('image exceeds 20971520 bytes')
+      return { type: 'image', attachmentId: 'att_1', mediaType: input.mediaType, bytes: input.data.length }
+    },
+  }
+  try {
+    const published = await publishAll(attachments, [
+      { path: good, bytes: 8, format: 'png' },
+      { path: rejected, bytes: 8, format: 'png' },
+      { path: join(directory, 'missing.png'), bytes: 8, format: 'png' },
+      { path: good, bytes: 8, format: 'png' },
+    ])
+    assert.equal(published.attachments.length, 2, 'a failed publish must not lose the others')
+    assert.match(published.note, /2 张未能放入/)
+    assert.match(published.note, /rejected\.png/)
+    assert.match(published.note, /missing\.png/)
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
   }
 })

@@ -16,13 +16,13 @@
  * the port.
  */
 
+import { readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
 import { IMAGE_PROMPT_PREFIX, generateImage } from './doubao.mjs'
 
 const name = 'tool-doubao-image'
-const inject = ['tools']
+const inject = ['tools', 'attachments']
 
 /** Where generated files land when the caller does not pick a directory. */
 export function defaultDir() {
@@ -154,6 +154,12 @@ const outputSchema = {
     },
     error: { type: 'string' },
     detail: { type: 'string' },
+    // Durable references for the pictures the client draws inside this tool's
+    // card. Permissive on purpose: the shape belongs to the attachment service.
+    attachments: {
+      type: 'array',
+      items: { type: 'object', additionalProperties: true },
+    },
   },
   required: ['ok'],
 }
@@ -178,7 +184,17 @@ function apply(ctx) {
     parameters,
     output: {
       schema: outputSchema,
-      render: (_args, value) => [{ type: 'text', text: renderResult(value) }],
+      render: (_args, value) => {
+        const parts = []
+        // Every generated picture, drawn in the tool card: the user sees the
+        // result inside this turn rather than as a message of their own. A
+        // prompt would have made it a user message and started another turn.
+        for (const attachment of Array.isArray(value?.attachments) ? value.attachments : []) {
+          if (attachment) parts.push({ type: 'image', attachment })
+        }
+        parts.push({ type: 'text', text: renderResult(value) })
+        return parts
+      },
     },
     async execute(args, exec) {
       const built = buildPrompt(args)
@@ -202,14 +218,19 @@ function apply(ctx) {
           log,
         })
 
-        // Hand the pictures to the session so the user sees them without
-        // opening a file manager. The send-image skill does the delivery; a
-        // failure there must not fail the generation that already succeeded.
+        // Hand the pictures to the client so the user sees them without opening
+        // a file manager: they become attachments referenced by this result, and
+        // every client draws them in the tool card. A failure here must not fail
+        // the generation that already succeeded — the files are on disk either
+        // way, and the message says so.
         let delivered = ''
+        let attachments = []
         try {
-          delivered = await deliverToSession(exec, result.files)
+          const published = await publishAll(ctx.attachments, result.files)
+          attachments = published.attachments
+          delivered = published.note
         } catch (error) {
-          delivered = `（自动发送到会话失败：${error.message}）`
+          delivered = `（自动放进会话失败：${error.message}；图片仍在磁盘上）`
         }
 
         return {
@@ -219,6 +240,7 @@ function apply(ctx) {
             bytes: f.bytes,
             format: f.format,
           })),
+          attachments,
           detail: [notes.join('\n'), delivered].filter(Boolean).join('\n'),
         }
       } catch (error) {
@@ -229,59 +251,51 @@ function apply(ctx) {
 }
 
 /**
- * The session id for a tool call, across the host shapes that have existed.
+ * Publish generated files as durable attachments.
  *
- * The host moved this: `exec.agent.sessionId` no longer exists and the id now
- * hangs off the live session object (`agent.session.id`). The env var is NOT a
- * substitute — the server process does not carry DSH_SESSION_ID, so it is only
- * ever set for a child DSH spawns. Object paths come first; the old spellings
- * stay so this survives another shuffle.
+ * No session id is involved any more, and that is the point: the old path
+ * pushed each file through `send-image.mjs` as a `session/prompt`, so the
+ * pictures arrived as **user messages** and each one **started another turn** —
+ * the agent answered its own generated image. A tool result carrying image
+ * blocks shows them where they belong and costs nothing else.
  *
- * Exported because getting this wrong is silent: the tool still succeeds, the
- * picture is still on disk, and only the "sent to the conversation" half fails.
+ * Exported for testing: the failure mode here is quiet (the tool still succeeds,
+ * the files are still on disk, only the pictures are missing from the chat).
  */
-export function sessionIdFrom(exec) {
-  return (
-    exec?.agent?.session?.id ??
-    exec?.agent?.sessionId ??
-    exec?.session?.id ??
-    exec?.sessionId ??
-    exec?.context?.sessionId ??
-    process.env.DSH_SESSION_ID
-  )
+export async function publishAll(attachments, files, read = readFileSync) {
+  const refs = []
+  const failures = []
+  for (const file of files) {
+    try {
+      const bytes = read(file.path)
+      refs.push(await attachments.saveImage({
+        data: bytes,
+        mediaType: mediaTypeOf(file),
+        name: file.path.split('/').pop(),
+      }))
+    } catch (error) {
+      failures.push(`${file.path}: ${error?.message ?? error}`)
+    }
+  }
+  if (refs.length === 0) {
+    throw new Error(failures.join('; ') || '没有可发布的图片')
+  }
+  const note = failures.length > 0
+    ? `已把 ${refs.length} 张图放进当前会话（${failures.length} 张未能放入：${failures.join('; ')}）`
+    : `已把 ${refs.length} 张图放进当前会话。`
+  return { attachments: refs, note }
 }
 
-/**
- * Push each generated file into the conversation via the send-image skill.
- *
- * The session id has moved around between host versions, so every plausible
- * carrier is tried — the same defensive read the send-image plugin uses.
- */
-async function deliverToSession(exec, files) {
-  const sessionId = sessionIdFrom(exec)
-  if (!sessionId) return '（拿不到会话 id，未自动发送；图片仍在磁盘上）'
-
-  const { existsSync } = await import('node:fs')
-  const { execFile } = await import('node:child_process')
-  const { promisify } = await import('node:util')
-  const run = promisify(execFile)
-
-  const home = process.env.DSH_HOME || join(homedir(), '.dsh')
-  const script = [
-    join(home, 'skills', 'send-image', 'send-image.mjs'),
-    fileURLToPath(new URL('../../../skills/send-image/send-image.mjs', import.meta.url)),
-  ].find((path) => existsSync(path))
-  if (!script) return '（未安装 send-image skill，已跳过自动发送）'
-
-  const sent = []
-  for (const file of files) {
-    await run(process.execPath, [script, '--file', file.path, '--caption', '豆包生成'], {
-      env: { ...process.env, DSH_SESSION_ID: sessionId },
-      timeout: 120_000,
-    })
-    sent.push(file.path)
-  }
-  return `已把 ${sent.length} 张图发送到当前会话。`
+/** The declared format when the generator gave one, else the file extension. */
+function mediaTypeOf(file) {
+  const format = String(file?.format ?? '').toLowerCase()
+  if (format === 'jpg') return 'image/jpeg'
+  if (format === 'png' || format === 'webp' || format === 'gif') return `image/${format}`
+  const extension = String(file?.path ?? '').toLowerCase().split('.').pop()
+  if (extension === 'jpg' || extension === 'jpeg') return 'image/jpeg'
+  if (extension === 'webp') return 'image/webp'
+  if (extension === 'gif') return 'image/gif'
+  return 'image/png'
 }
 
 export { apply, inject, name }

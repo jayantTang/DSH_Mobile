@@ -1,20 +1,28 @@
 #!/usr/bin/env node
 /**
- * Put an image into the running conversation.
+ * Prepare one image to be shown in the conversation.
  *
- * The desktop harness has no way for the model to emit a picture: the provider
- * adapters declare text-only output, and the attachment service is read-only.
- * The one door images can come through is a prompt — the Host promotes inline
- * image bytes to a durable attachment, normalizing size and format on the way.
- * So this submits exactly that, into the session the tool was invoked from.
+ * **Default mode is "prepare only"**: it captures or resolves the picture,
+ * checks what the Host would refuse anyway, and prints a JSON descriptor on
+ * stdout. The caller — the `send_image` tool in `plugins/send-image` — hands the
+ * bytes to the Host's attachment service (`ctx.attachments.saveImage`) and puts
+ * the resulting reference into its **tool result**, where every client renders
+ * it inside the agent's own turn.
+ *
+ * Why not submit it as a prompt, which is what this script used to do: a prompt
+ * is a *user message*. The picture therefore appeared as if the user had sent
+ * it, and — worse — it started a new turn, so the agent answered its own
+ * screenshot. `--via-prompt` keeps that path for a harness whose client cannot
+ * render tool-result images; it is opt-in for exactly that reason.
  *
  * Usage:
- *   send-image.mjs --file <path> [--caption "..."]
- *   send-image.mjs --screenshot [--caption "..."]
- *   send-image.mjs --clipboard  [--caption "..."]
+ *   send-image.mjs --file <path>        # print {path, mediaType, bytes, name}
+ *   send-image.mjs --screenshot
+ *   send-image.mjs --clipboard
+ *   send-image.mjs --file <path> --via-prompt [--caption "..."]
  *
- * Environment (both provided by the harness to every tool call):
- *   DSH_SESSION_ID  the session to send into
+ * Environment:
+ *   DSH_SESSION_ID  the session to send into (only needed with --via-prompt)
  *   DSH_HOME        the harness home, for the endpoint file
  */
 
@@ -62,6 +70,7 @@ function parseArgs(argv) {
       case '--caption': args.caption = argv[++i] ?? ''; break
       case '--screenshot': args.screenshot = true; args.screenshots += 1; break
       case '--clipboard': args.clipboard = true; break
+      case '--via-prompt': args.viaPrompt = true; break
       case '--help': args.help = true; break
       default:
         if (!args.file && !token.startsWith('--')) args.file = token
@@ -72,14 +81,17 @@ function parseArgs(argv) {
 }
 
 function usage() {
-  console.log(`send-image — 把一张图片送进当前会话
+  console.log(`send-image — 准备一张图片给当前会话（默认只准备，不发送）
 
-  --file <路径>      发送指定图片
-  --screenshot      截取整屏后发送（可重复，多次则连续截取）
-  --clipboard       发送剪贴板里的图片
-  --caption <文本>   随图片一起显示的说明
+  --file <路径>      使用指定图片
+  --screenshot      截取整屏（可重复，多次则连续截取）
+  --clipboard       使用剪贴板里的图片
+  --caption <文本>   仅配合 --via-prompt
+  --via-prompt      直接把图片作为 prompt 提交（旧路径：它会以「用户消息」的身份
+                    出现并触发新一轮回答，只在客户端无法渲染工具结果图片时使用）
 
-会话由 $DSH_SESSION_ID 决定；无需手动指定。`)
+默认输出一行 JSON：{path, name, mediaType, bytes, temporary}，
+调用方（send_image 工具）据此把图片存成附件、放进工具结果。`)
 }
 
 /**
@@ -214,11 +226,6 @@ async function main() {
   const args = parseArgs(process.argv.slice(2))
   if (args.help) return usage()
 
-  const sessionId = process.env.DSH_SESSION_ID
-  if (!sessionId) {
-    throw new Error('没有 $DSH_SESSION_ID：这个脚本必须由 DSH 的工具调用来运行')
-  }
-
   const { path, temporary } = loadImage(args)
   const bytes = readFileSync(path)
   if (bytes.length === 0) throw new Error(`图片是空的: ${path}`)
@@ -232,11 +239,23 @@ async function main() {
   const mediaType = MEDIA_TYPES[extname(path).toLowerCase()]
   if (!mediaType) throw new Error(`不支持的图片格式: ${extname(path) || '(无扩展名)'}`)
 
+  const name = path.split('/').pop()
+
+  // Default: hand the caller everything it needs to publish the picture itself.
+  if (!args.viaPrompt) {
+    console.log(JSON.stringify({ path, name, mediaType, bytes: bytes.length, temporary: temporary === true }))
+    return
+  }
+
+  const sessionId = process.env.DSH_SESSION_ID
+  if (!sessionId) {
+    throw new Error('没有 $DSH_SESSION_ID：--via-prompt 需要它，send_image 工具不需要')
+  }
+
   const { base, token } = endpoint()
   const client = new Client(base)
   await client.authenticate(token)
 
-  const name = path.split('/').pop()
   const caption = args.caption?.trim() || `图片 ${name}`
 
   await client.call('session/prompt', {
