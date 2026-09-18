@@ -15,9 +15,10 @@
  */
 
 import { createSign } from 'node:crypto'
+import { fileURLToPath } from 'node:url'
 import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 const API = 'https://api.appstoreconnect.apple.com'
 const BUNDLE_ID = 'com.jayanttang.dsh'
@@ -32,6 +33,20 @@ const BETA_DESCRIPTION = `DSH Mobile 是你电脑上 DeepSeek Harness 的手机�
 const FEEDBACK_EMAIL = process.env.ASC_FEEDBACK_EMAIL || 'forwoshitjy@live.com'
 /// 审核联系电话。Apple 要求填，且只在审核需要时使用；可以从环境变量覆盖。
 const CONTACT_PHONE_NOTE = 'ASC_CONTACT_PHONE 可覆盖（默认是个占位号，第一次提交后建议改成真号）'
+
+/** 本机真值（含 ASC Issuer ID）只写在 .env.local 里，不入库；这里按需读一次。 */
+function loadLocalEnv() {
+  const path = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '.env.local')
+  if (!existsSync(path)) return
+  for (const line of readFileSync(path, 'utf8').split('\n')) {
+    if (line.trimStart().startsWith('#')) continue
+    const match = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/.exec(line)
+    if (!match) continue
+    const [, key, raw] = match
+    if (process.env[key] === undefined) process.env[key] = raw.replace(/^(['"])(.*)\1$/, '$2')
+  }
+}
+loadLocalEnv()
 
 function credentials() {
   const keyId = process.env.ASC_KEY_ID

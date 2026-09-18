@@ -86,6 +86,8 @@ function localSecrets() {
     if (text.length >= 6) secrets.set(text, what)
   }
   remember(process.env.ASC_REVIEW_INVITE, '审核演示邀请码')
+  remember(process.env.ASC_ISSUER_ID, 'App Store Connect Issuer ID')
+  remember(process.env.ASC_KEY_ID, 'App Store Connect Key ID')
   remember(process.env.DSH_OTA_HOST, '中转主机')
   for (const key of ['DSH_SITE', 'DSH_RELAY_URL']) {
     const value = String(process.env[key] ?? '').trim()

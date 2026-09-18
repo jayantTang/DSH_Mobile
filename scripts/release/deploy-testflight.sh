@@ -29,6 +29,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PROJECT_DIR="$ROOT/ios/DSHMobile"
 BUILD_DIR="$PROJECT_DIR/.build/testflight"
 LOCAL_SIGNING="$PROJECT_DIR/Signing.local.plist"
+# 本机配置：仓库里只有占位符与 <IssuerID>，真值放 .env.local（不入库）。
+[ -f "$ROOT/.env.local" ] && . "$ROOT/.env.local"
 BUNDLE_ID="com.jayanttang.dsh"
 
 say() { printf '\n\033[1;36m>>>\033[0m %s\n' "$*"; }

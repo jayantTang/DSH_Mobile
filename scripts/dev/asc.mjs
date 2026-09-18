@@ -21,11 +21,26 @@
  */
 
 import { createSign } from 'node:crypto'
+import { fileURLToPath } from 'node:url'
 import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 const API = 'https://api.appstoreconnect.apple.com'
+
+/** 本机真值（含 ASC Issuer ID）只写在 .env.local 里，不入库；这里按需读一次。 */
+function loadLocalEnv() {
+  const path = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '.env.local')
+  if (!existsSync(path)) return
+  for (const line of readFileSync(path, 'utf8').split('\n')) {
+    if (line.trimStart().startsWith('#')) continue
+    const match = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/.exec(line)
+    if (!match) continue
+    const [, key, raw] = match
+    if (process.env[key] === undefined) process.env[key] = raw.replace(/^(['"])(.*)\1$/, '$2')
+  }
+}
+loadLocalEnv()
 
 function credentials() {
   const keyId = process.env.ASC_KEY_ID

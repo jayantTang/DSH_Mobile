@@ -15,14 +15,29 @@
  */
 
 import { createHash, createSign } from 'node:crypto'
+import { fileURLToPath } from 'node:url'
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { basename, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 
 const API = 'https://api.appstoreconnect.apple.com'
 const BUNDLE_ID = 'com.jayanttang.dsh'
 /// 6.9" iPhone（1320×2868）。这是目前 iPhone 最大档，App Store 只要求提供这一档。
 const DISPLAY_TYPE = process.env.ASC_DISPLAY_TYPE || 'APP_IPHONE_67'
+
+/** 本机真值（含 ASC Issuer ID）只写在 .env.local 里，不入库；这里按需读一次。 */
+function loadLocalEnv() {
+  const path = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '.env.local')
+  if (!existsSync(path)) return
+  for (const line of readFileSync(path, 'utf8').split('\n')) {
+    if (line.trimStart().startsWith('#')) continue
+    const match = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/.exec(line)
+    if (!match) continue
+    const [, key, raw] = match
+    if (process.env[key] === undefined) process.env[key] = raw.replace(/^(['"])(.*)\1$/, '$2')
+  }
+}
+loadLocalEnv()
 
 function credentials() {
   const keyId = process.env.ASC_KEY_ID
