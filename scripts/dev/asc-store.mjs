@@ -22,28 +22,43 @@ const BUNDLE_ID = 'com.jayanttang.dsh'
 const REPO = 'https://github.com/jayantTang/DSH_Mobile'
 const RAW = 'https://raw.githubusercontent.com/jayantTang/DSH_Mobile/main'
 
-const DESCRIPTION = `DSH Mobile 是你电脑上 DeepSeek Harness（DSH）的手机客户端：手机和电脑连同一个 host，看到同一批会话、同一条消息流。电脑上跑着的任务，锁屏再打开进度还在走；电脑上挂起的提问，手机上直接答。手机在 4G/5G 上就能用，你的电脑不需要公网 IP。
+const DESCRIPTION = `把电脑上的 DeepSeek Harness，装进口袋。
 
-主要能力
-• 会话：按项目目录分组，归档与找回
-• 对话：流式输出、思考过程折叠、工具调用卡片、Markdown 与表格渲染
-• 问答：电脑端 agent 的提问卡片可直接在手机上作答
-• 图片：查看与点开放大；从相册或文件 App 发图进对话
-• 文件：上传任意文件到会话工作区；代码高亮、diff、HTML 报告预览
-• 设备：已配对设备列表与自助撤销
+DSH Mobile 是你电脑上 DSH 的手机端：同一个 host、同一批会话、同一条消息流。通勤路上看一眼任务跑到哪了，躺床上把卡住的那一步答掉，电脑上的活不会因为你离开键盘而停下。
 
-它是怎么工作的
-手机经公网中转（WSS）连到你自己的电脑，电脑侧连接器以 127.0.0.1 访问本机的 DSH。中转只做鉴权与转发，不解析会话内容；会话数据只在你的手机与你的电脑之间流动。
+—— 它解决什么 ——
 
-需要什么
-• 一台跑着 DSH 的电脑（macOS / Linux / Windows）
-• 电脑上安装本项目的连接器插件（开源，见仓库）
-• 一个中转：用别人提供的中转配合邀请码，或者自己部署一台（仓库里有幂等安装脚本）
+· 任务在电脑上跑，进度在手机上跟。锁屏、切 App、换网络都不会打断。
+· agent 卡在提问上时不再干等：提问卡片直接推到手机，当场作答，任务继续。
+· 通勤、排队、睡前，不用回到电脑前也能推进手上的活。
 
-说明
-• 无内购、无广告、无账号体系，App 不收集任何数据
-• 中转与连接器都是开源的：${REPO}
-• 隐私说明：${RAW}/docs/PRIVACY.md`
+—— 能做什么 ——
+
+会话：按项目目录分组、归档与找回、新建接续会话
+对话：流式输出、思考过程折叠、工具调用卡片、Markdown 与表格渲染
+问答：电脑端 agent 的提问卡片可在手机上直接作答，也支持自由输入
+图片：查看与点开放大；从相册或文件 App 发图进对话，让 agent 直接看图
+文件：分块上传任意文件到会话工作区；代码高亮、diff、HTML 报告预览
+设备：已配对设备列表与自助撤销
+
+—— 怎么连上的 ——
+
+手机不直连你的电脑，而是各自连到一台中转（WSS）：中转只做鉴权与转发，不解析会话内容，会话数据只在你的手机与你的电脑之间流动。
+
+中转可以自建（仓库里有幂等安装脚本），也就是说这套东西没有任何一环必须依赖别人。
+
+—— 需要什么 ——
+
+· 一台跑着 DSH 的电脑（macOS / Linux / Windows）
+· 电脑上安装本项目的连接器插件（开源，见仓库）
+· 一个中转：可以自建，也可以用别人提供的中转配合邀请码
+
+—— 关于数据 ——
+
+无内购、无广告、无账号体系，App 不收集任何数据，不含第三方统计或崩溃上报 SDK。设备令牌存在系统钥匙串里；提醒用本机音频保活实现，不经 Apple 推送服务。
+
+连接器、中转、App 客户端全部开源（MIT）：https://github.com/jayantTang/DSH_Mobile
+隐私说明：https://raw.githubusercontent.com/jayantTang/DSH_Mobile/main/docs/PRIVACY.md`
 
 const KEYWORDS = 'DSH,DeepSeek,AI,agent,远程,客户端,编程,终端'
 const PROMO_TEXT = '把电脑上的 DeepSeek Harness 装进手机：任务在电脑上跑，进度在手机上跟。'
@@ -51,18 +66,30 @@ const SUPPORT_URL = `${REPO}/issues`
 const PRIVACY_URL = `${RAW}/docs/PRIVACY.md`
 const MARKETING_URL = REPO
 const CATEGORY = 'DEVELOPER_TOOLS'
-const REVIEW_NOTES = `这个 App 是"远程客户端"：手机连到用户自己电脑上的 DeepSeek Harness。
+const REVIEW_NOTES = `本 App 是「远程客户端」：手机连到用户自己电脑上的 DeepSeek Harness（DSH）。App 不连我们的服务器，
+只连用户自己配置的中转地址（WSS）。因此必须有一台电脑配合才能走完功能，我们准备了演示环境。
 
-审核时怎么测（约 3 分钟）
-1. 电脑侧：装连接器并登记到我们的中转（下面给邀请码），重启 DSH。
-   实际命令见 ${REPO}/blob/main/docs/ONBOARDING.md
-2. 手机侧：启动 App，扫电脑上 http://127.0.0.1:<端口>/mobile-link/qr 的二维码完成配对。
-3. 配对后即可看到该电脑上的会话列表、打开转写、发消息、回答提问。
+【演示环境（审核专用邀请码，60 天有效；通过后我们会撤销）】
+邀请码：ZASV-2CSX-WDD3-BK2G
+中转地址：wss://www.storyworld.site/dsh-link
 
-如果不想配电脑，也可以只验证「未连接」状态下的界面：启动后是连接页，可以查看设置与连接管理。
+【审核步骤，约 3 分钟】
+1. 在一台 macOS / Linux 电脑上装好 DSH（npm i -g @deepseek-ai/dsh），然后依次执行：
+     dsh plugin --profile web add dsh-plugin-mobile-link
+     dsh-mobile-link enroll --invite ZASV-2CSX-WDD3-BK2G --relay wss://www.storyworld.site/dsh-link
+     dsh web
+2. 电脑上打开 http://127.0.0.1:端口/mobile-link/qr（端口是上一步启动时打印的），会显示配对二维码。
+3. 手机上打开 App → 底部「扫码配对」对准该二维码；也可以把二维码里的配对码手输进「配对码」框
+   → 点「配对并连接」。
+4. 连接成功后即可看到该电脑上的会话列表：可打开转写、发消息、回答 agent 的提问。
 
-说明：中转只做鉴权与转发、不解析会话内容；App 无内购、无登录、无第三方 SDK。
-演示邀请码见审核备注下方（一次性，审核通过后我们会撤销）。`
+【若不方便配电脑】
+App 启动后是连接页：可以完整查看中转地址输入、配对表单，以及右上角设置里的各项
+（连接信息、权限说明、关于）。App 无内购、无广告、无登录、不含第三方 SDK，也不收集任何数据
+（隐私政策见 App Store 页面里的链接）。
+
+【网络】
+中转是标准 WSS。若审核网络无法访问该域名，请告知，我们可以临时切到其他地区的中转。`
 
 function credentials() {
   const keyId = process.env.ASC_KEY_ID

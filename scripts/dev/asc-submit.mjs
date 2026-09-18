@@ -224,7 +224,9 @@ async function submit() {
   }
 
   // 构建：提交时必须挂一个已处理完成的构建。
-  const { data: builds } = await get(`/v1/builds?filter[app]=${app.id}&limit=5&sort=-uploadedDate`)
+  const { data: builds } = await get(`/v1/builds?filter[app]=${app.id}&limit=10&sort=-uploadedDate`)
+  // 按上传时间倒序取第一个可用的——别只 find 第一个 VALID：列表里旧构建也在，
+  // 会把上一版重新挂上去（第一次就差点这样）。
   const build = builds.find((item) => item.attributes.processingState === 'VALID')
   if (!build) throw new Error('没有可用的构建（先跑 scripts/release/deploy-testflight.sh）')
   await call('PATCH', `/v1/appStoreVersions/${version.id}/relationships/build`, {
