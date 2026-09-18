@@ -243,6 +243,29 @@ struct ChatView: View {
         }
         .onChange(of: model.timeline.items.count) { _, _ in anchorToLastUserMessage(proxy) }
         .onChange(of: model.phase) { _, _ in anchorToLastUserMessage(proxy) }
+        // 键盘改变视口高度之后，LazyVStack 的可见区间会挪到还没渲染的空位上，
+        // 表现就是「打开键盘/打字时上方会话变白，往下拉才恢复」。等键盘动画结束
+        // 再把视口钉回底部锚点，迫使可见行按新视口重建。
+        .onKeyboardVisibilityChange { visible in
+            repinAfterViewportChange(proxy, keyboardVisible: visible)
+        }
+    }
+
+    /// 视口尺寸变化（键盘出现/消失）后把会话钉回底部。
+    ///
+    /// 只在不处于"用户正在回看历史"时执行：`isFollowing == false` 意味着读者主动
+    /// 翻到了上面，这时把他们拽回底部比一片空白更让人恼火——而空白只发生在视口底部
+    /// 指向未渲染区域时，回看历史时视口停在已渲染的旧行上，不受影响。
+    private func repinAfterViewportChange(_ proxy: ScrollViewProxy, keyboardVisible: Bool) {
+        guard isFollowing else { return }
+        proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)
+        // 第二次：第一次滚动后 LazyVStack 才会按新视口重建可见行，行高变化又会
+        // 移动内容，所以再钉一次。这与 `scrollToBottom(force:)` 的双击是同一个理由。
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(160))
+            guard isFollowing else { return }
+            proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)
+        }
     }
 
     /// The row holding the most recent message from the user.
