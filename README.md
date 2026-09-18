@@ -3,7 +3,7 @@
 [![CI](https://github.com/jayantTang/DSH_Mobile/actions/workflows/ci.yml/badge.svg)](https://github.com/jayantTang/DSH_Mobile/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-**把电脑上的 [DSH](https://github.com/deepseek-ai/dsh) 装进 iPhone。**
+**把电脑上的 [DSH](https://github.com/deepseek-ai/deepseek-harness) 装进 iPhone。**
 
 原生 iOS 客户端 + 电脑侧连接器 + 可自建的公网中转。手机与电脑连同一个 DSH host：同一批会话、
 同一条消息流，电脑上跑着的任务锁屏再打开进度还在走，电脑上挂起的提问手机上直接答。
