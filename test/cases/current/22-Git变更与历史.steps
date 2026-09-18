@@ -1,0 +1,22 @@
+# TC-MOB-22 的执行指令（git 变更 / 差异 / 历史 / 历史版本文件）
+#
+# 夹具：/tmp/dsh-git-demo（setup.sh 造的两次提交 + 四种改动）。
+# 判据落在不会被排版骗过的东西上：变更计数、工作区里那句独有的话、提交标题，
+# 以及历史版本里那句只存在于第一次提交的正文——工作区里 README.md 已经改名成 说明.md，
+# 能从历史里读出它，正是「基线」这件事的证明。
+#
+# 没有长按菜单：引擎没有长按动作，历史版本文件因此做成了补丁页上的一个按钮。
+#
+# 跑法：test/fixtures/git-demo/setup.sh && DSH_CONNECT=relay ./test/run.sh run test/cases/current/22-Git变更与历史.md
+
+1  do: 打开页面 files | want: id:files.root
+2  do: 点击 text:变更, 等待 id:git.branch timeout=30 | want: id:git.branch, text:4 处改动
+3  do: 什么都不做 | shot: 01-changes check=texts,amber
+4  do: 点击 id:git.change.notes.txt, 等待 id:git.diff timeout=30 | want: text:第四行（工作区改动）
+5  do: 什么都不做 | shot: 02-diff check=texts,amber
+6  do: 点击 text:完成, 点击 text:历史, 等待 text:初始提交：夹具仓库 timeout=30
+7  do: 点击 text:初始提交：夹具仓库, 等待 id:git.commit.body timeout=30 | want: text:README.md
+8  do: 什么都不做 | shot: 03-commit check=texts,amber
+9  do: 点击 id:git.commit.file.README.md, 等待 id:git.commit.diff timeout=30 | want: text:这是第一次提交的版本。
+10 do: 点击 id:git.commit.fileAtRev, 等待 id:git.file timeout=30 | want: text:这是第一次提交的版本。
+11 do: 什么都不做 | shot: 04-history-file check=texts,amber
