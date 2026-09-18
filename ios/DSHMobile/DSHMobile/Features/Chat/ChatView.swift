@@ -21,21 +21,6 @@ struct ChatView: View {
     /// while the reader is scrolling back is what stops a running turn from
     /// yanking them away from what they are reading.
     @State private var isFollowing = true
-    /// 已经按"打开即到底部"处理过的会话，避免重复沉降。
-    @State private var openedSessionId: String?
-    /// 读者是否自己拖动过。打开时的沉降不能覆盖用户的主动滚动。
-    @State private var userScrolled = false
-    /// 这个会话的"打开即到底部"是否已经排过（只排一次）。
-    @State private var openPinDone = false
-    /// 转写是否已经定位好、可以显示了。
-    ///
-    /// 打开会话时先把它藏起来（opacity 0，仍参与布局），等第一次钉底完成再显示：
-    /// 从"第一次正确的位置"直接呈现，用户看不到任何中间态。这不是花招——SwiftUI 里
-    /// 首帧的滚动位置与懒加载的行布局之间存在先后，无法保证第一次绘制就是最终位置；
-    /// 与其让用户看到一次跳动，不如让他在几十毫秒里看到空白（下一帧就到位）。
-    @State private var transcriptReady = false
-    /// 显示转写的定时器（首帧之前就藏好，稍微延后一点再显示）。
-    @State private var revealTask: Task<Void, Never>?
     /// Rate limit for tail scrolling during a stream.
     @State private var lastScrollAt = Date.distantPast
     /// A transient confirmation shown when a run ends. The persistent marker
@@ -45,13 +30,6 @@ struct ChatView: View {
     /// Owned here rather than in the composer so the transcript can re-pin
     /// itself when the keyboard changes the viewport.
     @FocusState private var isFocused: Bool
-    /// 结尾那一行在屏幕坐标里的位置（由行的 GeometryReader 量出来）。
-    /// 用来回答"打开会话时结尾是不是在屏幕外"，见 settleWhenContentStopsGrowing。
-    @State private var tailFrame: CGRect = .zero
-    /// 等待"内容不再增长"的那次收尾；内容一来就取消重排，所以同时只会有一个。
-    @State private var settleTask: Task<Void, Never>?
-    /// 转写视口的高度，同样由 GeometryReader 提供。
-    @State private var viewportHeight: CGFloat = 0
 
     var body: some View {
         VStack(spacing: 0) {
@@ -145,7 +123,6 @@ struct ChatView: View {
                 ForEach(model.timeline.items) { item in
                     TimelineRowView(item: item)
                         .id(item.id)
-
                 }
 
                 // Everything below is a single, permanently present tail. It
@@ -177,8 +154,6 @@ struct ChatView: View {
             .padding(.vertical, DSHTheme.Spacing.standard)
         }
         .accessibilityIdentifier("chat.transcript")
-        // 定位完成前不显示：见 transcriptReady 的说明。
-        .opacity(transcriptReady ? 1 : 0)
         // Imperative scrolling only, and only in one direction (us -> view).
         //
         // A `scrollPosition(id:)` binding was tried here and had to be removed:
@@ -202,10 +177,7 @@ struct ChatView: View {
         }
         .simultaneousGesture(
             DragGesture().onChanged { value in
-                if value.translation.height > 24 {
-                    isFollowing = false
-                    userScrolled = true
-                }
+                if value.translation.height > 24 { isFollowing = false }
             }
         )
         .overlay(alignment: .bottomTrailing) {
@@ -262,18 +234,10 @@ struct ChatView: View {
         // the tail instead — which is exactly the position that hides the
         // instruction under the answer.
         .onChange(of: model.session?.sessionId, initial: true) { _, sessionId in
-            openedSessionId = nil
-            userScrolled = false
-            openPinDone = false
-            transcriptReady = false
             // Attachments are authorized per session, so the loader has to know
             // which one the rows on screen belong to.
             attachmentImages.sessionId = sessionId
         }
-        .onChange(of: model.timeline.items.count) { _, _ in
-            settleOnOpenIfNeeded(proxy)
-        }
-        .onChange(of: model.phase) { _, _ in settleOnOpenIfNeeded(proxy) }
         // 键盘改变视口高度之后，LazyVStack 的可见区间会挪到还没渲染的空位上，
         // 表现就是「打开键盘/打字时上方会话变白，往下拉才恢复」。等键盘动画结束
         // 再把视口钉回底部锚点，迫使可见行按新视口重建。
@@ -299,69 +263,12 @@ struct ChatView: View {
         }
     }
 
-    /// The row holding the most recent message from the user.
-    ///
-    /// Opening a session anchors here rather than at the very bottom: the tail
-    /// of a finished run is the agent's output, and anchoring there leaves the
-    /// instruction that produced it scrolled off the top — which reads as "my
-    /// message is gone" even though it is in the transcript.
-    private var lastUserMessageId: String? {
-        model.timeline.items.last { item in
-            if case .userMessage = item.kind { return true }
-            return false
-        }?.id
-    }
-
-    /// 打开会话时排一次"钉到底部"。
-    ///
-    /// 只在**会话真的换了**的那一次执行：内容增长也会走到这里（items.count 一变就调），
-    /// 若每次都重排，这一串重试会被流式输出无限推迟——而它本该在打开后一秒内做完。
-    /// 用户拖动过（userScrolled）也不再打扰：主动滚动优先。
-    ///
-    /// **打开时保持 isFollowing = true**，这一点是"先看到中段再滑到底部"的关键：
-    /// 跟随打开时，每折入一批内容都会触发一次跟随滚动（`scrollSignal`），视口始终贴在
-    /// 尾部，看不到中间态；只有在打开那一刻是一次性跳到尾部的做法，才会先露出中段。
-    /// 读者一旦自己往上拖，`isFollowing` 变 false，之后的内容增长不再抢滚动位置。
-    private func settleOnOpenIfNeeded(_ proxy: ScrollViewProxy) {
-        guard let sessionId = model.session?.sessionId else { return }
-        guard !openPinDone else { return }
-        openedSessionId = sessionId
-        openPinDone = true
-        if !userScrolled { scheduleOpenPin(proxy, sessionId: sessionId) }
-    }
-
-    /// 打开会话：把视口钉在最底部。
-    ///
-    /// 之前的做法是"把最后一条用户消息放到顶部"，但那在长会话里落不准——首屏内容还在
-    /// 分批折入，锚点落在"当时的底部"，后续内容把它推到中间，用户看到的就是"打开停在
-    /// 中间，得手动往下拉"。
-    ///
-    /// 更根本的是：**一次 `scrollTo` 在懒加载布局里不可靠**。目标是 `LazyVStack` 里还没
-    /// 渲染的行时，`frame` 是零，滚动会被忽略（实测：内容完整、锚点存在，滚动就是不动）。
-    /// 所以这里用"定时重试"这个笨办法：在内容仍在折入的前一秒里多钉几次，每次都可能
-    /// 恰好落在布局稳定的那一刻。用户一旦自己拖动过（`userScrolled`）就立即停手。
-    private func scheduleOpenPin(_ proxy: ScrollViewProxy, sessionId: String) {
-        settleTask?.cancel()
-        revealTask?.cancel()
-        settleTask = Task { @MainActor in
-            for (index, delay) in [60, 200, 450, 900, 1400].enumerated() {
-                try? await Task.sleep(for: .milliseconds(delay))
-                if Task.isCancelled { return }
-                guard openedSessionId == sessionId, !userScrolled else { return }
-                proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)
-                if index == 0 {
-                    // 第一次钉底之后**尽快**显示：只等一帧。
-                    // 等得越久，露出的空白越明显；而第一次钉底之后视口已经在尾部，
-                    // 这一帧显示出来就是最终位置。后续几次重试在背后继续纠正。
-                    try? await Task.sleep(for: .milliseconds(16))
-                    if Task.isCancelled { return }
-                    withTransaction(Transaction(animation: nil)) { transcriptReady = true }
-                    _ = revealTask  // 保留字段，便于以后改成"等布局稳定再显示"
-                }
-            }
-            if openedSessionId == sessionId, !userScrolled { isFollowing = true }
-        }
-    }
+    // 打开会话时**不做任何"把某条消息锚到顶部"的动作**。
+    //
+    // 那套做法（把最后一条用户消息放到视口顶部）现在是"打开停在中间"的直接来源：
+    // 锚定发生在首屏内容还没折完的时候，落点随即被后续内容推走；而且它在二次打开
+    // （内容已缓存、折入更快）时和 `defaultScrollAnchor(.bottom)` 打架，观感是"卡在
+    // 中间不加载"。打开就交给系统锚在底部，配合 `onAppear` 的那次 scrollToBottom。
 
     /// Moves the viewport to the tail. The only place that scrolls.
     ///
