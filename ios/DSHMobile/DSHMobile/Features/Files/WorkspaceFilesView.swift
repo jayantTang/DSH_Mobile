@@ -11,6 +11,7 @@ struct WorkspaceFilesView: View {
     let store: ConnectionStore
 
     @State private var model: WorkspaceFilesModel
+    @State private var git: GitModel
     @State private var openFile: FileOpenRequest?
     /// A picture opens the way a picture opens on a phone: full screen, zoomable,
     /// with the file already on the phone behind it.
@@ -40,6 +41,7 @@ struct WorkspaceFilesView: View {
             hostHome: scope.hostHome ?? store.hostHome
         )
         _model = State(initialValue: WorkspaceFilesModel(scope: resolved, initialPath: initialPath))
+        _git = State(initialValue: GitModel(scope: resolved))
     }
 
     /// The usual entry point: the chat screen hands over its session summary.
@@ -138,15 +140,15 @@ struct WorkspaceFilesView: View {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 13))
                 .foregroundStyle(DSHTheme.labelTertiary)
-            TextField(model.mode == .browse ? "搜索当前目录" : "搜索变更路径", text: $model.searchText)
+            TextField(searchPlaceholder, text: searchBinding)
                 .font(DSHTheme.Typography.caption)
                 .foregroundStyle(DSHTheme.labelPrimary)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
                 .submitLabel(.search)
-            if !model.searchText.isEmpty {
+            if !searchBinding.wrappedValue.isEmpty {
                 Button {
-                    model.searchText = ""
+                    searchBinding.wrappedValue = ""
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 14))
@@ -167,6 +169,20 @@ struct WorkspaceFilesView: View {
         }
         .padding(.horizontal, DSHTheme.Spacing.standard)
         .padding(.bottom, DSHTheme.Spacing.hairline)
+    }
+
+    /// The search field means "filter what is on screen": the directory listing
+    /// in 浏览, the changed paths in 变更. 历史 is not filtered — it pages.
+    private var searchPlaceholder: String {
+        switch model.mode {
+        case .browse: return "搜索当前目录"
+        case .changes: return "搜索变更路径"
+        case .history: return "搜索提交"
+        }
+    }
+
+    private var searchBinding: Binding<String> {
+        model.mode == .history ? .constant("") : $model.searchText
     }
 
     private var breadcrumb: some View {
@@ -212,7 +228,9 @@ struct WorkspaceFilesView: View {
         case .browse:
             browseContent
         case .changes:
-            changesContent
+            GitChangesPane(model: git, store: store)
+        case .history:
+            GitHistoryPane(model: git, store: store)
         }
     }
 
@@ -269,141 +287,6 @@ struct WorkspaceFilesView: View {
                 .refreshable { await model.refresh() }
             }
         }
-    }
-
-    @ViewBuilder
-    private var changesContent: some View {
-        switch model.changesPhase {
-        case .idle, .loading:
-            stateContainer { loadingState("正在读取变更…") }
-
-        case .failed(let message):
-            stateContainer {
-                ErrorStateView(message: message) {
-                    Task { await model.loadChanges() }
-                }
-            }
-
-        case .loaded:
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    if !model.changeSet.entries.isEmpty {
-                        Text("主机的变更集")
-                            .font(DSHTheme.Typography.micro)
-                            .foregroundStyle(DSHTheme.labelTertiary)
-                            .padding(.horizontal, DSHTheme.Spacing.standard)
-                            .padding(.top, DSHTheme.Spacing.tight)
-                        ForEach(model.changeSet.entries) { entry in
-                            changeSetRow(entry)
-                        }
-                        ForEach(Array(model.changeSet.diffs.enumerated()), id: \.offset) { _, diff in
-                            UnifiedDiffView(diff: diff, onOpenFile: openDiffPath)
-                        }
-                    }
-
-                    if !model.changes.isEmpty {
-                        HStack(spacing: DSHTheme.Spacing.tight) {
-                            Text("观测到的文件")
-                                .font(DSHTheme.Typography.micro)
-                                .foregroundStyle(DSHTheme.labelTertiary)
-                            Badge(text: "\(model.visibleChanges.count) 个文件", tone: .neutral)
-                            Spacer(minLength: 0)
-                        }
-                        .padding(.horizontal, DSHTheme.Spacing.standard)
-                        .padding(.top, DSHTheme.Spacing.standard)
-
-                        if model.visibleChanges.isEmpty {
-                            Text("没有路径包含「\(model.searchText)」的变更。")
-                                .font(DSHTheme.Typography.caption)
-                                .foregroundStyle(DSHTheme.labelSecondary)
-                                .padding(DSHTheme.Spacing.standard)
-                        }
-
-                        ForEach(model.visibleChanges) { change in
-                            changeRow(change)
-                        }
-                    }
-
-                    if model.changes.isEmpty, model.changeSet.entries.isEmpty {
-                        VStack(spacing: DSHTheme.Spacing.standard) {
-                            EmptyStateView(
-                                icon: "arrow.triangle.2.circlepath",
-                                title: "还没有观测到变更",
-                                message: "DSH 只上报被它观测到的文件系统活动。运行一次修改文件的任务后，这里会列出相关路径。",
-                                action: ("重新读取", { Task { await model.loadChanges() } })
-                            )
-                        }
-                        .frame(minHeight: 420)
-                    }
-
-                    changeFootnotes
-                }
-                .padding(.bottom, DSHTheme.Spacing.loose)
-            }
-            .refreshable { await model.refresh() }
-        }
-    }
-
-    private var changeFootnotes: some View {
-        VStack(alignment: .leading, spacing: DSHTheme.Spacing.hairline) {
-            Text("主机上报的是文件系统观测结果（路径与版本号），不包含改动前的基线内容，因此没有基线就无法生成逐行差异。")
-            Text("若主机在变更集中附带补丁文本，上面的「差异」会按新增 / 删除行着色显示。")
-        }
-        .font(DSHTheme.Typography.micro)
-        .foregroundStyle(DSHTheme.labelTertiary)
-        .padding(.horizontal, DSHTheme.Spacing.standard)
-        .padding(.top, DSHTheme.Spacing.standard)
-    }
-
-    private func changeSetRow(_ entry: WorkspaceChangeSet.Entry) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: DSHTheme.Spacing.tight) {
-            Text(model.scope.displayPath(entry.path))
-                .font(DSHTheme.Typography.code)
-                .foregroundStyle(DSHTheme.labelPrimary)
-                .lineLimit(2)
-            Spacer(minLength: DSHTheme.Spacing.tight)
-            if let additions = entry.additions, let deletions = entry.deletions {
-                Text("+\(additions)")
-                    .font(DSHTheme.Typography.micro)
-                    .foregroundStyle(DSHTheme.success)
-                Text("−\(deletions)")
-                    .font(DSHTheme.Typography.micro)
-                    .foregroundStyle(DSHTheme.danger)
-            }
-            Badge(text: entry.statusLabel, tone: entry.statusLabel == "已删除" ? .danger : .brand)
-        }
-        .padding(.horizontal, DSHTheme.Spacing.standard)
-        .frame(minHeight: 44)
-    }
-
-    private func changeRow(_ change: WorkspaceChange) -> some View {
-        Button {
-            if !change.absent { openPath(change.absolutePath) }
-        } label: {
-            HStack(alignment: .firstTextBaseline, spacing: DSHTheme.Spacing.tight) {
-                Image(systemName: change.absent ? "minus.circle" : "pencil.circle")
-                    .font(.system(size: 13))
-                    .foregroundStyle(change.absent ? DSHTheme.danger : DSHTheme.brand)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(model.scope.displayPath(change.absolutePath))
-                        .font(DSHTheme.Typography.code)
-                        .foregroundStyle(change.absent ? DSHTheme.labelTertiary : DSHTheme.labelPrimary)
-                        .lineLimit(2)
-                    if let version = change.version, !version.isEmpty {
-                        Text("版本 \(version)")
-                            .font(DSHTheme.Typography.micro)
-                            .foregroundStyle(DSHTheme.labelTertiary)
-                            .lineLimit(1)
-                    }
-                }
-                Spacer(minLength: DSHTheme.Spacing.tight)
-                Badge(text: change.statusLabel, tone: change.absent ? .danger : .neutral)
-            }
-            .frame(minHeight: 44)
-        }
-        .buttonStyle(.plain)
-        .disabled(change.absent)
-        .padding(.horizontal, DSHTheme.Spacing.standard)
     }
 
     private func stateContainer<Content: View>(@ViewBuilder content: () -> Content) -> some View {

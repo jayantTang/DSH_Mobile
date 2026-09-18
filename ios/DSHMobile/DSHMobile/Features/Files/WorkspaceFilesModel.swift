@@ -20,7 +20,10 @@ final class WorkspaceFilesModel {
 
     enum Mode: String, CaseIterable, Identifiable {
         case browse
+        /// The working tree against HEAD (git).
         case changes
+        /// The commits on the current branch (git).
+        case history
 
         var id: String { rawValue }
 
@@ -28,6 +31,7 @@ final class WorkspaceFilesModel {
             switch self {
             case .browse: return "浏览"
             case .changes: return "变更"
+            case .history: return "历史"
             }
         }
     }
@@ -101,16 +105,7 @@ final class WorkspaceFilesModel {
     private var transferStarted: [String: Date] = [:]
     private var lastSample: [String: (at: Date, bytes: Int)] = [:]
 
-    private(set) var changesPhase: Phase = .idle
-    private(set) var changes: [WorkspaceChange] = []
-    private(set) var changeSet = WorkspaceChangeSet()
-
-    var mode: Mode = .browse {
-        didSet {
-            guard mode != oldValue else { return }
-            if mode == .changes { Task { await loadChanges() } }
-        }
-    }
+    var mode: Mode = .browse
 
     var searchText: String = ""
 
@@ -120,8 +115,6 @@ final class WorkspaceFilesModel {
     /// preview pulls a page and its pictures, and has no business knowing how
     /// the connection is stored.
     var client: DSHClient? { store?.client }
-    private var feedTask: Task<Void, Never>?
-    private var feedOpen = false
 
     init(scope: WorkspaceFileScope, initialPath: String = "") {
         self.scope = scope
@@ -152,22 +145,10 @@ final class WorkspaceFilesModel {
         await loadDirectory(browsingPath)
     }
 
-    func stop() {
-        feedTask?.cancel()
-        feedTask = nil
-        feedOpen = false
-    }
+    func stop() {}
 
     func refresh() async {
-        switch mode {
-        case .browse:
-            await loadDirectory(browsingPath)
-        case .changes:
-            feedTask?.cancel()
-            feedTask = nil
-            feedOpen = false
-            await loadChanges()
-        }
+        await loadDirectory(browsingPath)
     }
 
     // MARK: - Browsing
@@ -564,101 +545,6 @@ final class WorkspaceFilesModel {
             return String(file.absolutePath.dropFirst(root.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         }
         return (file.absolutePath as NSString).lastPathComponent
-    }
-
-    // MARK: - Change feed
-
-    /// The observed change set, filtered by the search field.
-    var visibleChanges: [WorkspaceChange] {
-        let query = searchText.trimmingCharacters(in: .whitespaces).lowercased()
-        guard !query.isEmpty else { return changes }
-        return changes.filter { scope.displayPath($0.absolutePath).lowercased().contains(query) }
-    }
-
-    /// Loads the change set.
-    ///
-    /// `workspaceFiles/changes` is declared as a **stream** Remote, so the host
-    /// serves it on the mux carrier and refuses a unary call with
-    /// `gateway/signature-invalid`. The kit models it as a stream for exactly
-    /// that reason; this opens it and feeds the tolerant ingest.
-    func loadChanges() async {
-        guard let client = store?.client else {
-            changesPhase = .failed("尚未连接")
-            return
-        }
-        if changes.isEmpty { changesPhase = .loading }
-        openFeed(client: client)
-    }
-
-    private func openFeed(client: DSHClient) {
-        guard !feedOpen else {
-            if changesPhase == .loading { changesPhase = .loaded }
-            return
-        }
-        feedOpen = true
-        feedTask?.cancel()
-        feedTask = Task { [weak self] in
-            guard let self else { return }
-            let stream = await client.workspaceChanges(scopeId: self.scope.sessionId)
-            do {
-                for try await value in stream {
-                    guard !Task.isCancelled else { return }
-                    self.ingestFrame(value)
-                    if self.changesPhase == .loading { self.changesPhase = .loaded }
-                }
-                if self.changesPhase == .loading { self.changesPhase = .loaded }
-            } catch {
-                if self.changes.isEmpty {
-                    self.changesPhase = .failed(Self.describe(error))
-                }
-            }
-        }
-    }
-
-    /// Ingests one unary answer. Returns whether it carried usable content.
-    @discardableResult
-    private func ingest(_ raw: JSONValue) -> Bool {
-        var consumed = false
-        // A stream capture shape: {"frames":[…],"errors":[],"opened":true}
-        if let frames = raw["frames"]?.arrayValue {
-            for frame in frames {
-                ingestFrame(frame["value"] ?? frame)
-                consumed = true
-            }
-        }
-        if let entries = WorkspaceChangeSet(json: raw), !entries.entries.isEmpty {
-            changeSet = entries
-            consumed = true
-        }
-        if raw["kind"] != nil {
-            ingestFrame(raw)
-            consumed = true
-        }
-        return consumed
-    }
-
-    private func ingestFrame(_ json: JSONValue) {
-        switch WorkspaceChangeFrame(json: json) {
-        case .ready:
-            if changesPhase == .loading { changesPhase = .loaded }
-        case .change(let change):
-            merge(change)
-            changesPhase = .loaded
-        case .other:
-            // A frame this build does not model: keep the feed alive.
-            if changesPhase == .loading { changesPhase = .loaded }
-        }
-    }
-
-    /// The feed reports observations, not deltas, so the latest observation of a
-    /// path wins.
-    private func merge(_ change: WorkspaceChange) {
-        if let index = changes.firstIndex(where: { $0.absolutePath == change.absolutePath }) {
-            changes[index] = change
-        } else {
-            changes.append(change)
-        }
-        changes.sort { $0.absolutePath.localizedStandardCompare($1.absolutePath) == .orderedAscending }
     }
 
     // MARK: - Failure copy

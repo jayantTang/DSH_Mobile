@@ -1,3 +1,4 @@
+import DSHKit
 import SwiftUI
 
 /// A unified diff, rendered the way the desktop client renders one: a file
