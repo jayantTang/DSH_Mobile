@@ -449,6 +449,42 @@ class Store:
         rows = self._rows(f"SELECT * FROM invites{where} ORDER BY createdAt")
         return [dict(row) for row in rows]
 
+    def revoke_invite(self, code: str, at: int | None = None) -> dict[str, Any]:
+        """Retire an invite that should no longer be redeemable.
+
+        Needed because an invite can leak — a code pasted into review notes, a
+        screenshot, a chat — and the only other ways to neutralise it were to
+        wait out its TTL or to hand-edit the database. The code is hashed for
+        lookup like everywhere else, and only the hash is ever reported back.
+
+        Revoking sets the expiry to now rather than deleting the row: the
+        failure an invitee sees stays "expired", and the note stays visible in
+        `invite-list --all` as the record of what happened.
+        """
+        stamp = at or now_ms()
+        normalized = normalize_invite_code(code)
+        if not normalized:
+            return {"revoked": False, "reason": "malformed"}
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM invites WHERE codeHash=?", (hash_invite_code(normalized),)
+            ).fetchone()
+            if row is None:
+                return {"revoked": False, "reason": "unknown"}
+            if row["usedAt"] is not None:
+                return {"revoked": False, "reason": "used", "usedAt": row["usedAt"],
+                        "usedByAgentId": row["usedByAgentId"]}
+            if int(row["expiresAt"]) <= stamp:
+                return {"revoked": False, "reason": "already-expired",
+                        "expiresAt": row["expiresAt"]}
+            self._conn.execute(
+                "UPDATE invites SET expiresAt=? WHERE codeHash=?",
+                (stamp, hash_invite_code(normalized)),
+            )
+            self._conn.commit()
+        return {"revoked": True, "codeHash": hash_invite_code(normalized)[:12],
+                "note": row["note"], "expiresAt": stamp}
+
     def purge_invites(self, at: int | None = None) -> int:
         stamp = at or now_ms()
         with self._lock:

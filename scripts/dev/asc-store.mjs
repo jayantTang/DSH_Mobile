@@ -15,7 +15,8 @@
 import { createSign } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 const API = 'https://api.appstoreconnect.apple.com'
 const BUNDLE_ID = 'com.jayanttang.dsh'
@@ -66,30 +67,70 @@ const SUPPORT_URL = `${REPO}/issues`
 const PRIVACY_URL = `${RAW}/docs/PRIVACY.md`
 const MARKETING_URL = REPO
 const CATEGORY = 'DEVELOPER_TOOLS'
-const REVIEW_NOTES = `本 App 是「远程客户端」：手机连到用户自己电脑上的 DeepSeek Harness（DSH）。App 不连我们的服务器，
-只连用户自己配置的中转地址（WSS）。因此必须有一台电脑配合才能走完功能，我们准备了演示环境。
+// 审核备注。**演示环境另给**：邀请码是一次性凭据，中转地址也属于本机真值，
+// 两者都只存在于 .env.local（不入库）——这个文件里出现过的后果是：公开仓库里
+// 躺着一个能用的邀请码，谁先看到谁就能用掉，审核员反而兑换不了。
+const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 
-【演示环境（审核专用邀请码，60 天有效；通过后我们会撤销）】
-邀请码：ZASV-2CSX-WDD3-BK2G
-中转地址：wss://www.storyworld.site/dsh-link
+/** 最小 .env.local 读取：只填没设过的变量，不覆盖调用方显式传入的值。 */
+function loadLocalEnv() {
+  const path = join(REPO_ROOT, '.env.local')
+  if (!existsSync(path)) return
+  for (const line of readFileSync(path, 'utf8').split('\n')) {
+    if (line.trimStart().startsWith('#')) continue
+    const match = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/.exec(line)
+    if (!match) continue
+    const [, key, raw] = match
+    if (process.env[key] === undefined) process.env[key] = raw.replace(/^(['"])(.*)\1$/, '$2')
+  }
+}
 
-【审核步骤，约 3 分钟】
+loadLocalEnv()
+
+const REVIEW_INVITE = (process.env.ASC_REVIEW_INVITE ?? '').trim()
+const REVIEW_RELAY = (process.env.DSH_RELAY_URL ?? '').trim()
+
+const REVIEW_NOTES_HEAD = `本 App 是「远程客户端」：手机连到用户自己电脑上的 DeepSeek Harness（DSH）。App 不连我们的服务器，
+只连用户自己配置的中转地址（WSS）。因此必须有一台电脑配合才能走完功能，我们准备了演示环境。`
+
+const REVIEW_NOTES_STEPS = `【审核步骤，约 3 分钟】
 1. 在一台 macOS / Linux 电脑上装好 DSH（npm i -g @deepseek-ai/dsh），然后依次执行：
      dsh plugin --profile web add dsh-plugin-mobile-link
-     dsh-mobile-link enroll --invite ZASV-2CSX-WDD3-BK2G --relay wss://www.storyworld.site/dsh-link
+     dsh-mobile-link enroll --invite <邀请码> --relay <中转地址>
      dsh web
 2. 电脑上打开 http://127.0.0.1:端口/mobile-link/qr（端口是上一步启动时打印的），会显示配对二维码。
 3. 手机上打开 App → 底部「扫码配对」对准该二维码；也可以把二维码里的配对码手输进「配对码」框
    → 点「配对并连接」。
-4. 连接成功后即可看到该电脑上的会话列表：可打开转写、发消息、回答 agent 的提问。
+4. 连接成功后即可看到该电脑上的会话列表：可打开转写、发消息、回答 agent 的提问。`
 
-【若不方便配电脑】
+const REVIEW_NOTES_TAIL = `【若不方便配电脑】
 App 启动后是连接页：可以完整查看中转地址输入、配对表单，以及右上角设置里的各项
 （连接信息、权限说明、关于）。App 无内购、无广告、无登录、不含第三方 SDK，也不收集任何数据
 （隐私政策见 App Store 页面里的链接）。
 
 【网络】
 中转是标准 WSS。若审核网络无法访问该域名，请告知，我们可以临时切到其他地区的中转。`
+
+/** 演示环境那一段，只在真的配了邀请码时才有内容。 */
+function demoBlock() {
+  const missing = [!REVIEW_INVITE && 'ASC_REVIEW_INVITE', !REVIEW_RELAY && 'DSH_RELAY_URL'].filter(Boolean)
+  if (missing.length) return { text: '', missing }
+  return {
+    text: `【演示环境（审核专用邀请码，60 天有效；通过后我们会撤销）】
+邀请码：${REVIEW_INVITE}
+中转地址：${REVIEW_RELAY}
+
+${REVIEW_NOTES_STEPS.replace('<邀请码>', REVIEW_INVITE).replace('<中转地址>', REVIEW_RELAY)}`,
+    missing: [],
+  }
+}
+
+function reviewNotes() {
+  const demo = demoBlock()
+  const extra = process.env.ASC_REVIEW_NOTES_EXTRA
+  const body = [REVIEW_NOTES_HEAD, demo.text, REVIEW_NOTES_TAIL].filter(Boolean).join('\n\n')
+  return extra ? `${body}\n\n${extra}` : body
+}
 
 function credentials() {
   const keyId = process.env.ASC_KEY_ID
@@ -110,6 +151,18 @@ function token({ keyId, issuerId, privateKey }) {
     key: privateKey, dsaEncoding: 'ieee-p1363',
   })
   return `${header}.${payload}.${signature.toString('base64url')}`
+}
+
+// `status` is the read-only half: it can be run without the demo code configured,
+// but it must say so — a missing demo block is invisible in App Store Connect
+// until a reviewer cannot connect. Checked before the API credentials so the
+// warning still shows when those are absent too.
+if (process.argv[2] !== 'fill') {
+  const demo = demoBlock()
+  if (demo.missing.length) {
+    console.warn(`提示：审核备注的演示环境未配置（缺 ${demo.missing.join(' / ')}），` +
+                 'fill 会因此拒绝执行。')
+  }
 }
 
 const jwt = token(credentials())
@@ -218,10 +271,18 @@ async function fill() {
     },
   })
 
+  // 演示环境没配就不写：一份没有可用邀请码的备注会让审核员卡在连接页，
+  // 而那是「通过」与「被拒」之间最贵的差别。宁可这里失败，也不写半份。
+  const demo = demoBlock()
+  if (demo.missing.length) {
+    throw new Error(
+      `审核备注缺少演示环境：请在 .env.local 里设 ${demo.missing.join(' / ')}` +
+      '（邀请码用 relay/admin.py invite-mint 铸一个，一次性的，别写进仓库）'
+    )
+  }
+
   console.log('写入审核备注（appStoreReviewDetails）……')
-  const notes = process.env.ASC_REVIEW_NOTES_EXTRA
-    ? `${REVIEW_NOTES}\n\n${process.env.ASC_REVIEW_NOTES_EXTRA}`
-    : REVIEW_NOTES
+  const notes = reviewNotes()
   const existingDetail = await get(`/v1/appStoreVersions/${version.id}/appStoreReviewDetail`)
     .catch((error) => (error.status === 404 ? null : Promise.reject(error)))
   if (existingDetail?.data) {

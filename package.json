@@ -40,6 +40,7 @@
   },
   "scripts": {
     "test": "npm --prefix plugins/mobile-link test && npm --prefix plugins/send-image test && npm --prefix plugins/doubao-image test",
-    "demo:session": "node scripts/dev/demo-session.mjs"
+    "demo:session": "node scripts/dev/demo-session.mjs",
+    "check:secrets": "node scripts/dev/check-secrets.mjs"
   }
 }

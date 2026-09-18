@@ -134,6 +134,12 @@ def build_parser() -> argparse.ArgumentParser:
     invite_list = subs.add_parser("invite-list", help="list invites (hashes only, never codes)")
     invite_list.add_argument("--all", action="store_true", help="include used invites")
 
+    invite_revoke = subs.add_parser(
+        "invite-revoke",
+        help="retire an invite that leaked or is no longer needed (never a used one)",
+    )
+    invite_revoke.add_argument("--code", required=True, help="the code to retire")
+
     device_list = subs.add_parser("device-list", help="list devices")
     device_list.add_argument("--agent")
     device_list.add_argument("--all", action="store_true", help="include revoked devices")
@@ -207,6 +213,13 @@ def run(args: argparse.Namespace, store: Store) -> int:
             invite["enrollCommand"] = enroll_command(args.relay, invite["code"])
         _emit(minted[0] if count == 1 else minted)
         return 0
+
+    if command == "invite-revoke":
+        result = store.revoke_invite(args.code)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        if not result.get("revoked"):
+            raise SystemExit(1)
+        return
 
     if command == "invite-list":
         rows = store.list_invites(include_used=bool(args.all))

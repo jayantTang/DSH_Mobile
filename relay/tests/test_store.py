@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import json
+import time
+
 import pytest
 
-from store import Conflict, NotFound, Store, normalize_pair_code
+from store import Conflict, InviteRejected, NotFound, Store, normalize_pair_code
 
 
 def test_pair_codes_are_stored_hashed(store: Store):
@@ -107,3 +110,47 @@ def test_purge_expired_removes_only_stale_codes(store: Store):
     live = store.mint_pair_code(agent["agentId"], ttl_ms=60_000)
     assert store.purge_expired() == 1
     assert store.claim_pair_code(live["code"], device_name="iPhone")["ok"] is True
+
+def test_a_leaked_invite_can_be_revoked_before_it_is_used():
+    """The one path that neutralises a code that got out in public.
+
+    A leaked invite (review notes, a screenshot, a chat) used to be stuck until
+    its TTL ran out; revoking expires it now, and the state it leaves behind is
+    indistinguishable from an expired code — which is what an invitee should
+    see.
+    """
+    store = Store(":memory:")
+    minted = store.mint_invite(note="审核用", code="AAAA-BBBB-CCCC-DDDD")
+
+    assert store.invite_status("AAAA-BBBB-CCCC-DDDD")["state"] == "unused"
+
+    result = store.revoke_invite("AAAA-BBBB-CCCC-DDDD")
+
+    assert result["revoked"] is True
+    assert result["note"] == "审核用"
+    assert "AAAA-BBBB-CCCC-DDDD" not in json.dumps(result), "只在库里存哈希，回执里也不能有明文"
+    assert store.invite_status("AAAA-BBBB-CCCC-DDDD")["state"] == "expired"
+    # And redeeming it now fails the way an expired code does.
+    with pytest.raises(InviteRejected) as rejected:
+        store.claim_invite("AAAA-BBBB-CCCC-DDDD", "有人")
+    assert rejected.value.reason == "expired"
+    store.close()
+
+
+def test_revoking_reports_why_it_could_not():
+    store = Store(":memory:")
+    assert store.revoke_invite("NOPE-NOPE-NOPE-NOPE") == {"revoked": False, "reason": "unknown"}
+    # Normalising strips separators and case, so only an input with no
+    # alphanumerics at all is malformed; anything else is simply unknown.
+    assert store.revoke_invite("!!!")["reason"] == "malformed"
+    assert store.revoke_invite("not-a-real-code")["reason"] == "unknown"
+
+    store.mint_invite(note="兑换过的", code="EEEE-FFFF-GGGG-HHHH")
+    store.claim_invite("EEEE-FFFF-GGGG-HHHH", "有人")
+    used = store.revoke_invite("EEEE-FFFF-GGGG-HHHH")
+    assert used["revoked"] is False and used["reason"] == "used"
+
+    store.mint_invite(note="短的", ttl_ms=1, code="IIII-JJJJ-KKKK-LLLL")
+    time.sleep(0.01)
+    assert store.revoke_invite("IIII-JJJJ-KKKK-LLLL")["reason"] == "already-expired"
+    store.close()

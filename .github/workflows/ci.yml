@@ -61,6 +61,14 @@ jobs:
             echo "::error::上面这些行像真实凭据，检查一遍"; exit 1
           fi
           echo "ok  没发现家目录或凭据形状的字符串"
+      - name: 真值检查（邀请码形状、真实中转地址、本机凭据）
+        # 同一个脚本也能在本机跑（`npm run check:secrets`）：有 .env.local 时连真实值
+        # 一起比对，公共 runner 上没有它，就只跑不依赖真值的形状检查。
+        # 想在 CI 里也比对真实主机，就在仓库 secrets 里配 DSH_SITE / DSH_RELAY_URL。
+        env:
+          DSH_SITE: ${{ secrets.DSH_SITE }}
+          DSH_RELAY_URL: ${{ secrets.DSH_RELAY_URL }}
+        run: node scripts/dev/check-secrets.mjs
 
   node:
     runs-on: ubuntu-latest
