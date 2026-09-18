@@ -161,7 +161,7 @@ struct WorkspaceFileTransferStatus: View {
                 // `String(bytes)`: plain digits on purpose. SwiftUI would group
                 // them ("3,211,264"), which reads fine but stops the number being
                 // the one the host reported.
-                Text("已下载 \(ByteFormat.compact(bytes))（\(String(bytes)) 字节），已可分享")
+                Text(readyText(bytes: bytes))
                     .font(DSHTheme.Typography.micro)
                     .foregroundStyle(DSHTheme.labelSecondary)
                     .accessibilityIdentifier("files.transfer.ready")
@@ -192,9 +192,21 @@ struct WorkspaceFileTransferStatus: View {
     }
 
     private func runningText(received: Int, total: Int?) -> String {
-        guard let total, total > 0 else { return "正在从电脑读取…（已读取 \(ByteFormat.compact(received))）" }
+        let speed = model.transferSpeed(for: path).map { " · \(String(format: "%.1f", $0)) MB/s" } ?? ""
+        guard let total, total > 0 else {
+            return "正在从电脑读取…（已读取 \(ByteFormat.compact(received))\(speed)）"
+        }
         let percent = Int((Double(received) / Double(total) * 100).rounded(.down))
-        return "正在从电脑读取… \(ByteFormat.compact(received)) / \(ByteFormat.compact(total))（\(percent)%）"
+        return "正在从电脑读取… \(ByteFormat.compact(received)) / \(ByteFormat.compact(total))（\(percent)%）\(speed)"
+    }
+
+    /// What a finished download cost, so "slow" has a number attached.
+    private func readyText(bytes: Int) -> String {
+        let base = "已下载 \(ByteFormat.compact(bytes))（\(String(bytes)) 字节）"
+        guard let seconds = model.transferSeconds(for: path), seconds >= 1,
+              let speed = model.transferSpeed(for: path)
+        else { return "\(base)，已可分享" }
+        return "\(base)，用时 \(String(format: "%.1f", seconds)) 秒（平均 \(String(format: "%.1f", speed)) MB/s），已可分享"
     }
 
     private func pausedText(bytes: Int, total: Int?, reason: String?) -> String {

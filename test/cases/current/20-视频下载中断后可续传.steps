@@ -11,7 +11,7 @@
 #
 # 跑法：DSH_CONNECT=relay ./test/run.sh run test/cases/current/20-视频下载中断后可续传.md
 
-1  do: 打开报告 story-promo/out/video/story-promo-vertical_1080x1920.mp4（story-promo-vertical_1080x1920.mp4） args="-DSHForgetDownloadedFiles,-DSHInterruptDownload,1500000" | want: text:story-promo-vertical_1080x1920.mp4
+1  do: 打开报告 story-promo/方案A-黑金居中/out/video/story-promo-A_1080x1920.mp4（story-promo-A_1080x1920.mp4） args="-DSHForgetDownloadedFiles,-DSHInterruptDownload,1500000" | want: text:story-promo-A_1080x1920.mp4
 2  do: 等待 text:2097152 timeout=120 | want: text:2097152
 # 中断态画面本来就大部分是空的（视频还没下下来），所以只核错误色，文字核对靠上面的断言与目视。
 3  do: 什么都不做 | shot: 01-interrupted check=amber

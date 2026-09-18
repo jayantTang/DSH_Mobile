@@ -9,7 +9,7 @@
 #
 # 跑法：DSH_CONNECT=relay ./test/run.sh run test/cases/current/19-工作区视频下载并播放.md
 
-1  do: 打开报告 story-promo/out/video/story-promo-vertical_1080x1920.mp4（story-promo-vertical_1080x1920.mp4） | want: text:story-promo-vertical_1080x1920.mp4
+1  do: 打开报告 story-promo/方案A-黑金居中/out/video/story-promo-A_1080x1920.mp4（story-promo-A_1080x1920.mp4） | want: text:story-promo-A_1080x1920.mp4
 2  do: 等待 text:已可分享 timeout=240 | want: text:已可分享
 3  do: 什么都不做 | shot: 01-video-ready check=texts,amber
 4  do: 点击 id:files.action.share, 等待 3 秒

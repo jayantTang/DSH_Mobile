@@ -92,6 +92,14 @@ final class WorkspaceFilesModel {
     /// Downloads by workspace path, so two sheets looking at one file agree.
     private(set) var transfers: [String: TransferPhase] = [:]
     private var transferTasks: [String: Task<URL?, Never>] = [:]
+    /// Throughput per transfer, in MB/s, smoothed over the last few windows.
+    ///
+    /// Shown because "slow" is otherwise unfalsifiable: the number says whether
+    /// the link is the limit or the app is, and it is what makes a change to the
+    /// relay's pacing measurable from the phone.
+    private var transferRates: [String: Double] = [:]
+    private var transferStarted: [String: Date] = [:]
+    private var lastSample: [String: (at: Date, bytes: Int)] = [:]
 
     private(set) var changesPhase: Phase = .idle
     private(set) var changes: [WorkspaceChange] = []
@@ -310,6 +318,34 @@ final class WorkspaceFilesModel {
         return nil
     }
 
+    /// Current throughput, in MB/s, or nil before the first window lands.
+    func transferSpeed(for path: String) -> Double? {
+        transferRates[Self.cacheKey(path, root: scope.workspaceRoot)]
+    }
+
+    /// How long this transfer has been running, or took in total.
+    func transferSeconds(for path: String) -> TimeInterval? {
+        transferStarted[Self.cacheKey(path, root: scope.workspaceRoot)].map { -$0.timeIntervalSinceNow }
+    }
+
+    /// One window's worth of progress: bytes now, and how fast they arrived.
+    private func noteProgress(key: String, received: Int, at now: Date = Date()) {
+        if transferStarted[key] == nil { transferStarted[key] = now }
+        guard let previous = lastSample[key] else {
+            lastSample[key] = (now, received)
+            return
+        }
+        let seconds = now.timeIntervalSince(previous.at)
+        let bytes = received - previous.bytes
+        // A sample shorter than a blink divides by ~0 and reports a spike.
+        guard seconds > 0.15, bytes > 0 else { return }
+        let instant = Double(bytes) / seconds / 1_048_576
+        // Smoothed, because a single window's jitter is not a speed.
+        let smoothed = transferRates[key].map { $0 * 0.6 + instant * 0.4 } ?? instant
+        transferRates[key] = smoothed
+        lastSample[key] = (now, received)
+    }
+
     /// Fetches the whole file, once per version, resuming what is already here.
     ///
     /// Returns the local copy and publishes progress in `transfers` while it
@@ -331,6 +367,10 @@ final class WorkspaceFilesModel {
         }
 
         transfers[key] = .running(received: transfers[key]?.receivedBytes ?? 0, total: nil)
+        // A resumed download starts its clock over: the average of "half of it
+        // yesterday plus the rest now" would be a lie.
+        transferStarted[key] = Date()
+        lastSample[key] = nil
         let scopeId = scope.sessionId
         let downloader = WorkspaceFileDownloader(client: client)
         let task = Task<URL?, Never> { [weak self] in
@@ -403,12 +443,18 @@ final class WorkspaceFilesModel {
                 // dragged back to life by a late window.
                 guard case .running = self.transfers[key] else { return }
                 self.transfers[key] = .running(received: progress.received, total: progress.total)
+                self.noteProgress(key: key, received: progress.received)
             }
         }
 
         let complete = try WorkspaceFileCache.publish(
             scopeId: scopeId, path: key, version: info.version
         )
+        // The average the person actually experienced, frozen for the ready line.
+        if let started = transferStarted[key], fetched.bytes > 0 {
+            let seconds = max(0.001, Date().timeIntervalSince(started))
+            transferRates[key] = Double(fetched.bytes) / seconds / 1_048_576
+        }
         WorkspaceFileCache.trim()
         transfers[key] = .ready(bytes: fetched.bytes, url: complete)
         return complete
@@ -447,6 +493,7 @@ final class WorkspaceFilesModel {
     /// file: the difference is at most one window, and that window is simply
     /// asked for again.
     private func pause(key: String, reason: String?) {
+        lastSample[key] = nil
         let phase = transfers[key]
         transfers[key] = .paused(
             bytes: phase?.receivedBytes ?? 0,
