@@ -336,6 +336,15 @@ final class Engine: XCTestCase {
                 return Outcome(ok: false, detail: "\(Int(timeout)) 秒内没有出现 \(target)")
             }
 
+        case "pause":
+            // A plain wait, for something that cannot be waited *for*: the
+            // system share sheet is hosted outside the app, so no element of
+            // its ever appears in this tree, and a picture taken during its
+            // animation shows the screen underneath it.
+            let seconds = step.timeout ?? 1
+            Thread.sleep(forTimeInterval: seconds)
+            return Outcome(ok: true, detail: "已等待 \(Int(seconds)) 秒")
+
         case "assert":
             return assertStep(step)
 

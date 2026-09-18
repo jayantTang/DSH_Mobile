@@ -109,6 +109,12 @@ const ACTIONS = [
       target ? `swipe ${quote(target.trim())} direction=${direction ?? 'up'}`
              : `swipe direction=${direction ?? 'up'}`,
     ] },
+  // A plain pause, in seconds. The system share sheet exposes nothing to the
+  // app's element tree, so "wait until X appears" cannot be used to let it
+  // animate in — and a screenshot taken mid-animation shows the screen
+  // underneath it. Declared before the generic `等待` below, which would
+  // otherwise read `3 秒` as an element to look for.
+  { match: /^等待\s+(\d+)\s*秒$/, to: (seconds) => [`pause seconds=${seconds}`] },
   // The timeout is part of the vocabulary, not part of the target: without its
   // own group the whole line — `id:x timeout=15` — becomes one quoted selector,
   // and the step fails with "缺少目标" as if no target had been written at all.
@@ -333,6 +339,7 @@ export function buildPlan({ casePath, caseText, stepsText, runId, bundleId, sess
         case 'foreground':
         case 'scroll_to':
         case 'wait_gone':
+        case 'pause':
         case 'type':
         case 'swipe':
         case 'wait':
@@ -341,6 +348,7 @@ export function buildPlan({ casePath, caseText, stepsText, runId, bundleId, sess
           anchor.target = positional[0]
           if (verb === 'swipe') anchor.value = values.direction ?? positional[1] ?? 'up'
           if (verb === 'wait') anchor.timeout = Number(values.timeout ?? positional[1] ?? 15)
+          if (verb === 'pause') anchor.timeout = Number(values.seconds ?? positional[0] ?? 1)
           // `等待消失 x timeout=90`: a wait that outlasts a live turn needs its
           // own number, and dropping it here silently held the step to 20s.
           if (verb === 'wait_gone') anchor.timeout = Number(values.timeout ?? positional[1] ?? 20)

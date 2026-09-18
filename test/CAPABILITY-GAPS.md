@@ -218,6 +218,11 @@
 - 相册 / 文件选择器 / 扫码：系统进程的 UI，XCUITest 驱不动。
 - 现状：只测 App 自己那一侧（用 `-DSHDraftImage`、`-DSHUploadFile` 注入），
   选择器本身不测。
+- 分享面板（`ShareLink` / `UIActivityViewController`）：面板由另一个进程画，
+  `app.descendants` 里既没有「保存到“文件”」这类元素，也没有能当锚点等待的元素
+  （实测 `等待 text:存储到 timeout=10` 等不到，而截图里它明明在）。
+  绕法：点完用引擎新加的 `等待 N 秒`（纯等待，`test/tools/case.mjs` 的 `pause`）
+  停一下再截图，判定靠目视；面板里的动作之后发生什么不覆盖。
 
 ---
 

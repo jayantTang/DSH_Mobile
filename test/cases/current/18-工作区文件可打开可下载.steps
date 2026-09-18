@@ -1,0 +1,28 @@
+# TC-MOB-18 的执行指令（工作区文件：打开 + 下载）
+#
+# 每一步都靠「改动后才会出现的东西」判：图片看 id:files.preview（旧版这里是错误文案），
+# pdf 看状态条的「已下载」（旧版根本没有下载这一层），zip/大文件看信息卡上的**精确字节数**，
+# 大文件的 3211264 只有两个字节窗口都拼对了才可能出现。
+#
+# 旧错误文案写进相关步骤，且用 `; absent` 断言它不在——只断言新东西在，不能排除
+# 「新旧同时出现」这种半吊子状态。
+#
+# 大文件那一步分两条：先等阅读页出现（标题），再等精确字节数。合成一条会因为
+# 中转上行慢而在启动锚点那 25 秒里超时，而那说明的是带宽，不是功能坏了。
+#
+# 分享面板是系统进程的 UI，用例只负责把它点出来并截图，不对它作断言。
+#
+# 跑法：DSH_CONNECT=relay ./test/run.sh run test/cases/current/18-工作区文件可打开可下载.md
+
+1  do: 打开报告 test/fixtures/sample-image.png（sample-image.png） | want: id:files.preview, text:不是一个 UTF-8 文本文件 ; absent | shot: 01-image-preview check=texts,amber
+2  do: 打开报告 test/fixtures/sample.pdf（已下载） | want: text:已下载, text:不是一个 UTF-8 文本文件 ; absent | shot: 02-pdf-preview check=texts,amber
+# 系统面板是另一个进程画的，元素树里既等不到它、也断言不了它：点完停 3 秒等它画出来再拍。
+3  do: 点击 id:files.action.share, 等待 3 秒 | shot: 03-share-sheet
+4  do: 打开页面 files    | want: id:files.root
+5  do: 滚动到 id:files.entry.test, 点击 id:files.entry.test, 等待 id:files.entry.fixtures timeout=30 | want: id:files.entry.fixtures
+6  do: 滚动到 id:files.entry.fixtures, 点击 id:files.entry.fixtures, 等待 id:files.entry.sample.zip timeout=30 | want: id:files.entry.sample.zip
+7  do: 滚动到 id:files.entry.sample.zip, 点击 id:files.entry.sample.zip, 等待 text:321 timeout=30 | want: id:files.preview.card | shot: 04-zip-card check=texts,amber
+8  do: 打开报告 test/runs/fixtures/paging-3mb.bin（paging-3mb.bin） | want: text:paging-3mb.bin
+9  do: 等待 text:3211264 timeout=240 | want: text:3211264 | shot: 05-large-binary check=texts,amber
+10 do: 打开报告 test/fixtures/markdown-table.md（宽表格渲染回归） | want: text:宽表格渲染回归, text:不是一个 UTF-8 文本文件 ; absent
+11 do: 点击 id:files.action.share, 等待 text:已下载 timeout=60 | shot: 06-text-downloaded check=texts,amber
