@@ -241,6 +241,10 @@ struct ToolCallRow: View {
     let invocation: ToolInvocation
     /// `nil` follows the default for this result; a tap pins it either way.
     @State private var expansionOverride: Bool?
+    /// Whether the raw arguments are on screen. Off by default for a card whose
+    /// point is the picture: `{"caption": "…", "screenshot": true}` next to a
+    /// screenshot is noise, and the picture is the whole message.
+    @State private var showsArguments = false
 
     private var hasOutput: Bool { !invocation.resultBlocks.isEmpty }
 
@@ -324,9 +328,14 @@ struct ToolCallRow: View {
         .buttonStyle(.plain)
     }
 
+    /// True when the arguments are worth a line at all.
+    private var hasArguments: Bool {
+        !invocation.arguments.isEmpty && invocation.arguments != "{}"
+    }
+
     private var details: some View {
         VStack(alignment: .leading, spacing: DSHTheme.Spacing.tight) {
-            if !invocation.arguments.isEmpty, invocation.arguments != "{}" {
+            if hasArguments, !hasImage || showsArguments {
                 Text("参数")
                     .font(DSHTheme.Typography.micro)
                     .foregroundStyle(DSHTheme.labelTertiary)
@@ -349,6 +358,23 @@ struct ToolCallRow: View {
                 Text("执行中…")
                     .font(DSHTheme.Typography.micro)
                     .foregroundStyle(DSHTheme.labelTertiary)
+            }
+
+            // Not deleted, just out of the way: a tool call one cannot inspect is
+            // worse than a slightly noisy one, and this is one small tap.
+            if hasImage, hasArguments {
+                Button {
+                    withAnimation(.snappy(duration: 0.18)) { showsArguments.toggle() }
+                } label: {
+                    Label(
+                        showsArguments ? "隐藏参数" : "显示参数",
+                        systemImage: showsArguments ? "chevron.up" : "chevron.down"
+                    )
+                    .font(DSHTheme.Typography.micro)
+                    .foregroundStyle(DSHTheme.labelTertiary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("chat.tool.arguments")
             }
         }
         .padding(DSHTheme.Spacing.tight)

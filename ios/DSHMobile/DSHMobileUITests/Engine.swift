@@ -778,11 +778,28 @@ final class Engine: XCTestCase {
         return app.descendants(matching: .any).matching(identifier: target)
     }
 
+    /// The match a gesture should use: the first one that is actually on screen.
+    ///
+    /// `boundBy: 0` is not good enough for anything the user has to touch. A list
+    /// keeps off-screen rows in the accessibility tree, so a label that exists on
+    /// a dozen cards — 「显示参数」 on every image tool card, say — resolves to the
+    /// *topmost* one, which is often scrolled far above the viewport. The run then
+    /// fails with "exists but is not hittable" while the control the case means is
+    /// sitting in plain sight at the bottom.
+    private func pick(_ query: XCUIElementQuery) -> XCUIElement? {
+        guard query.count > 0 else { return nil }
+        for index in 0..<min(query.count, 24) {
+            let candidate = query.element(boundBy: index)
+            if candidate.exists, candidate.isHittable { return candidate }
+        }
+        // Nothing is hittable (a plain label never is); the first match is still
+        // the right thing to assert about.
+        return query.element(boundBy: 0)
+    }
+
     private func element(_ target: String?) -> XCUIElement? {
         guard let target else { return nil }
-        let query = resolveQuery(target)
-        guard query.count > 0 else { return nil }
-        return query.element(boundBy: 0)
+        return pick(resolveQuery(target))
     }
 
     private func waitFor(_ target: String, timeout: Double) throws -> XCUIElement {
@@ -792,7 +809,7 @@ final class Engine: XCTestCase {
         guard XCTWaiter().wait(for: [expectation], timeout: timeout) == .completed else {
             throw EngineError.timeout(target)
         }
-        return query.element(boundBy: 0)
+        return pick(query) ?? query.element(boundBy: 0)
     }
 
     // MARK: - Evidence
