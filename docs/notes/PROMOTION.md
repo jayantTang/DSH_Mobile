@@ -17,6 +17,25 @@
 > 登记表就是它的 `PLUGINS.md`，分类共 13 类，远程客户端属 `📡 远程渠道`。
 > 雷达还有一份人工策展的精选榜，**门槛是 ≥15 star**（智力增强类豁免）——这是第一个值得追的数字。
 
+## 零、手上的凭据（Agent 用）
+
+| 能力 | 凭据 | 位置 |
+|---|---|---|
+| 推代码、推分支 | SSH key | 本机 `~/.ssh`（已可用） |
+| 建/改 issue、改仓库元数据（topics/description）、开 PR | **GitHub token** | macOS 钥匙串，服务名 `dsh-github-token` |
+| 上传 TestFlight 构建、改 App Store 元数据 | App Store Connect API Key | `~/.appstoreconnect/private_keys/AuthKey_T682LN2US5.p8`，配 `ASC_KEY_ID` / `ASC_ISSUER_ID` |
+
+读取方式（不落盘、不进仓库、不写进 shell 历史）：
+
+```bash
+TOKEN=$(scripts/dev/gh-token.sh)          # 从钥匙串取
+scripts/dev/gh-token.sh --check           # 只确认存在
+```
+
+**约束**：token 只用于需要 API 的操作；能用 `git push`（SSH）做的就不动它。
+不要在脚本里 `echo $TOKEN`、不要 `set -x`、不要写进 `.env*` 或任何被跟踪的文件。
+`gh` CLI 未安装；本机也没有第二个 GitHub token。
+
 ## 一、仓库元数据（**要你**：GitHub 网页直接改，两分钟）
 
 **About 里的 Description**（现在是 `DSH Mobile App (iOS)`，等于没写；GitHub 搜索权重全在这）：
