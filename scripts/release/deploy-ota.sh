@@ -30,7 +30,7 @@ STAGE_DIR="$BUILD_DIR/stage"
 BUNDLE_ID="com.jayanttang.dsh"
 LOCAL_SIGNING="$PROJECT_DIR/Signing.local.plist"
 TEAM_ID="${DSH_TEAM_ID:-$(plutil -extract teamID raw -o - "$LOCAL_SIGNING" 2>/dev/null || true)}"
-[ -n "$TEAM_ID" ] || die "没有开发者团队 ID：设 DSH_TEAM_ID=<TeamID>，或写 $LOCAL_SIGNING（形如 {teamID = XXXXXXXXXX;}，不入库）"
+[ -n "$TEAM_ID" ] || die "没有开发者团队 ID：设 DSH_TEAM_ID=<TeamID>，或写 ${LOCAL_SIGNING}（形如 {teamID = XXXXXXXXXX;}，不入库）"
 # 安装页与 manifest 上显示的名字，与 App 的 CFBundleDisplayName 保持一致。
 APP_NAME="DSH Mobile"
 HOST="${DSH_OTA_HOST:-relay.example.com}"
@@ -87,7 +87,7 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
 fi
 
 IPA="$(/bin/ls -t "$EXPORT_DIR"/*.ipa 2>/dev/null | head -1 || true)"
-[ -n "$IPA" ] || die "没有找到 .ipa（$EXPORT_DIR）"
+[ -n "$IPA" ] || die "没有找到 .ipa（${EXPORT_DIR}）"
 
 step "读取版本号"
 APP_PLIST="$ARCHIVE/Products/Applications/DSHMobile.app/Info.plist"
@@ -123,7 +123,7 @@ if [ -f "$ICON_SOURCE" ]; then
   sips -z 57 57 "$ICON_SOURCE" --out "$STAGE_DIR/$ICON_SMALL" >/dev/null
   sips -z 512 512 "$ICON_SOURCE" --out "$STAGE_DIR/$ICON_LARGE" >/dev/null
 else
-  die "找不到图标源文件 $ICON_SOURCE（先跑 scripts/dev/make-app-icon.py）"
+  die "找不到图标源文件 ${ICON_SOURCE}（先跑 scripts/dev/make-app-icon.py）"
 fi
 
 cat > "$STAGE_DIR/manifest.plist" <<PLIST
@@ -283,7 +283,7 @@ for path in index.html manifest.plist "$MANIFEST_NAME" DSHMobile.ipa "$IPA_NAME"
   printf '  %-18s HTTP %s\n' "$path" "$code"
   case "$code" in
     200|206) ;;
-    *) die "${path} 不可访问（HTTP $code）" ;;
+    *) die "${path} 不可访问（HTTP ${code}）" ;;
   esac
 done
 size=$(curl -s -o /dev/null -w '%{size_download}' -m 120 "${PUBLIC_BASE}/$IPA_NAME")
@@ -301,8 +301,8 @@ PACKAGE_VERSION=$(unzip -p "$BUILD_DIR/check.ipa" Payload/DSHMobile.app/Info.pli
 MANIFEST_ID=$(plutil -extract items.0.metadata.bundle-identifier raw -o - "$BUILD_DIR/check-manifest.plist")
 printf '  manifest %s / %s\n' "$MANIFEST_ID" "$MANIFEST_VERSION"
 printf '  ipa      %s / %s\n' "$BUNDLE_ID" "$PACKAGE_VERSION"
-[ "$MANIFEST_VERSION" = "$PACKAGE_VERSION" ] || die "manifest 写的是 $MANIFEST_VERSION，包里是 $PACKAGE_VERSION——这种不一致会让 iOS 什么都不装"
-[ "$MANIFEST_ID" = "$BUNDLE_ID" ] || die "manifest 的 bundle-identifier 是 $MANIFEST_ID，应为 $BUNDLE_ID"
+[ "$MANIFEST_VERSION" = "$PACKAGE_VERSION" ] || die "manifest 写的是 ${MANIFEST_VERSION}，包里是 ${PACKAGE_VERSION}——这种不一致会让 iOS 什么都不装"
+[ "$MANIFEST_ID" = "$BUNDLE_ID" ] || die "manifest 的 bundle-identifier 是 ${MANIFEST_ID}，应为 $BUNDLE_ID"
 rm -f "$BUILD_DIR/check.ipa" "$BUILD_DIR/check-manifest.plist"
 
 cat <<EOF

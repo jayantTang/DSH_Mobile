@@ -18,7 +18,7 @@
 # 踩过的坑，两次都花在同一个地方，写在这里省下一次：
 #   1. `npm login --registry=…npmjs.org` 的 token 是**按 registry 存**的，所以每条命令
 #      （whoami / view / publish）都必须显式带 --registry，否则会去问 npmmirror 那个只读镜像，
-#      报「未登录」。脚本里已经统一成 $NPM_REGISTRY。
+#      报「未登录」。脚本里已经统一成 ${NPM_REGISTRY}。
 #   2. **不要用 `NPM_CONFIG__AUTH` 环境变量传 token**：它看起来生效（whoami 通过），但发布时
 #      会被忽略，registry 回 401 `OTP required for authentication`，而 token 明明是带
 #      bypass_2fa 的（可在 https://registry.npmjs.org/-/npm/v1/tokens 用 `bypass_2fa: true` 核实）。
@@ -145,9 +145,17 @@ fi
 # which has no credentials for it, and reports "not logged in" while the login is
 # perfectly good. That false negative is what made the first run of this script
 # stop right after a successful login.
-npm whoami --registry="$NPM_REGISTRY" >/dev/null 2>&1 || die \
-  "还没登录 npm（或登录的不是 $NPM_REGISTRY）：先 npm login --registry=$NPM_REGISTRY"
-printf '  已登录：%s @ %s\n' "$(npm whoami --registry="$NPM_REGISTRY" 2>/dev/null)" "$NPM_REGISTRY"
+# 凭据检查只做**打包**那半（`--dry-run`）：它证明包能装对，不证明能发上去。
+# 为什么不用 `npm whoami`：npm 现在限制 bypass-2FA token 访问账号类接口，whoami 回 401
+# **而发布能不能成功是另一回事**——拿它当门槛会直接劝退。反过来，dry-run 通过也不等于
+# 能发布：2026-09 起 npm 明确收紧「bypass-2FA token 直接发布」，本机那个 token 就是
+# 被这条挡下的（真发布回 404 not found / no permission）。所以真正的发布权限只能靠
+# 交互式认证拿到：`npm login --auth-type=web`（Touch ID）之后再跑本脚本。
+if ! ( cd "$ROOT/plugins/${PACKAGES[0]}" && npm publish --registry="$NPM_REGISTRY" --dry-run >/dev/null 2>&1 ); then
+  die "打不出包（$NPM_REGISTRY）：先看 npm pack 的输出"
+fi
+printf '  打包检查通过（%s 的 dry-run）\n' "${PACKAGES[0]}"
+printf '  提醒：真发布需要交互式认证——npm 已收紧 bypass-2FA token；失败时先 npm login --auth-type=web\n' 
 
 say "发布"
 for name in "${PACKAGES[@]}"; do
