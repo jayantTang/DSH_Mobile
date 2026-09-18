@@ -264,10 +264,10 @@ class DeviceLink(Link):
         (``4008``), which is a different and much worse message.
 
         A frame bigger than ``_CHUNK_CHARS`` is sent as several WebSocket
-        messages while the device is over its rate, because ``send_str`` hands
-        the whole payload to the transport in one call — a 2.7 MB screenshot
-        would otherwise be written to the socket in one burst no matter what the
-        bucket says.
+        messages so the socket is never handed megabytes in one call — a 2.7 MB
+        screenshot used to be written in one burst no matter what the bucket
+        said. The frame's bytes are charged against the allowance one chunk at a
+        time, so the pacing stays smooth and nothing is charged twice.
 
         **The client has to put those messages back together**, and that is not
         free: WebSocket messages are not a byte stream, so a client that parses
@@ -278,22 +278,29 @@ class DeviceLink(Link):
         *continuation* frames instead would remove the requirement entirely.
         """
         size = len(text.encode("utf-8"))
-        wait = self.bucket.take(size)
-        if wait > 0:
-            await asyncio.sleep(wait)
-            self.paced_seconds += wait
-        if size <= _CHUNK_CHARS or self.bucket.tokens >= 0:
+        if size <= _CHUNK_CHARS:
+            wait = self.bucket.take(size)
+            if wait > 0:
+                await asyncio.sleep(wait)
+                self.paced_seconds += wait
             await self.ws.send_str(text)
             self._count_egress(size)
             return
+
+        # A long frame goes out in pieces so the socket is never handed megabytes
+        # in one call — but every byte is charged against the allowance **once**.
+        # Charging the whole frame first and then each chunk again took the
+        # bucket negative by the frame's size twice, which is why a 20 Mbit
+        # allowance delivered about 10.
         for start in range(0, len(text), _CHUNK_CHARS):
             chunk = text[start:start + _CHUNK_CHARS]
-            step = self.bucket.take(len(chunk.encode("utf-8")))
+            chunk_bytes = len(chunk.encode("utf-8"))
+            step = self.bucket.take(chunk_bytes)
             if step > 0:
                 await asyncio.sleep(step)
                 self.paced_seconds += step
             await self.ws.send_str(chunk)
-            self._count_egress(len(chunk.encode("utf-8")))
+            self._count_egress(chunk_bytes)
 
     def _count_egress(self, size: int) -> None:
         self.egress_bytes += size

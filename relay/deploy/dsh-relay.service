@@ -31,9 +31,11 @@ Environment=DLP_LOG_LEVEL=INFO
 #                              配对脚本把中转塞满；重连不会重复计数。
 #   DLP_DEVICE_RATE_KBPS       单设备出口限速（千比特/秒）。取值口径：
 #                              「管子 ÷ 预期同时传大文件的设备数」。
-#                              实测这台实例是 200 Mbps 固定带宽（2026-09 确认），
-#                              所以定 20 Mbps：手机上感觉不到限速，而 10 台设备
-#                              同时传大图也只会刚好把管子占满、不会互相拖慢。
+#                              实测这台实例是 200 Mbps 固定带宽（2026-09 确认）。
+#                              原定 20 Mbps（10 台设备刚好占满管子）实测偏保守：
+#                              它把单设备下载压在 1.9 MB/s，而这条链路上真正的大
+#                              文件用户通常是 1–2 台自己的手机，所以按「管子 ÷ 2」
+#                              定 100 Mbps——两台同时下大文件才刚好占满 200 Mbps。
 #                              限速只让设备变慢，不掉帧；真正防滥用的下面那条。
 #                              若换成小管子（例如 5 Mbps），按 2–5 Mbps 调。
 #   DLP_DEVICE_DAILY_MB        单设备每日（UTC）出口额度。用超会先收到
@@ -48,7 +50,7 @@ Environment=DLP_LOG_LEVEL=INFO
 # 生效情况与实时流量：
 #   curl -s http://127.0.0.1:8787/stats | python3 -m json.tool
 Environment=DLP_MAX_DEVICES_PER_AGENT=8
-Environment=DLP_DEVICE_RATE_KBPS=20000
+Environment=DLP_DEVICE_RATE_KBPS=100000
 Environment=DLP_DEVICE_DAILY_MB=2048
 # ProtectSystem=strict makes the filesystem read-only: never write .pyc files.
 Environment=PYTHONDONTWRITEBYTECODE=1

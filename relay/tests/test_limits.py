@@ -134,6 +134,29 @@ async def test_a_device_over_its_rate_still_receives_every_frame():
     await hub.shutdown()
 
 
+async def test_a_long_frame_is_charged_against_the_rate_once():
+    """A frame over the chunk size used to pay for itself twice.
+
+    The paced writer charged the whole frame, then charged every chunk again, so
+    the bucket went negative by twice the frame's size and a 20 Mbit allowance
+    delivered about 10. The wait for a 700 KB frame against a 500 KB/s allowance
+    with a 500 KB burst is (700-500)/500 = 0.4 s; charging twice made it 1.8 s.
+    """
+    hub, agent, device, ws = await make_hub(device_bytes_per_second=500_000)
+    payload = "x" * 700_000                     # over _CHUNK_CHARS (512 KB)
+    await hub.route_from_agent(agent, {"t": "item", "id": "s1", "deviceId": "d1",
+                                       "value": {"type": "text-delta", "text": payload}})
+    for _ in range(80):
+        if ws.bytes >= 700_000:
+            break
+        await asyncio.sleep(0.1)
+    assert ws.bytes >= 700_000, "限速路径必须把整帧发完"
+    assert device.paced_seconds == pytest.approx(0.4, abs=0.2), (
+        f"整帧只应记一次账，实际等了 {device.paced_seconds:.2f} 秒"
+    )
+    await hub.shutdown()
+
+
 async def test_pacing_is_per_device_not_global():
     hub = RelayHub(FakeStore(), limits=Limits(device_bytes_per_second=50_000))
     agent = await hub.attach_agent({"agentId": "a1", "accountId": "ac", "name": "pc"}, FakeWS())
