@@ -297,6 +297,25 @@ commitBaseline()
 const { call } = await host()
 const created = await call('session/create', { request: { cwd: DEMO_DIR, agentPreset: 'standard' } })
 const sessionId = created.sessionId ?? created.id
+
+// 先灌几轮"填充"对话，把转写撑到远超一屏 —— 否则"打开是否停在底部"根本测不出来：
+// 内容不足一屏时，停在顶部和停在底部看到的是同一屏。
+//
+// 填充轮里**不能出现收尾标记**，否则标记会出现在转写中段，"看得见标记"就不再等价于
+// "滚到了底"。所以填充轮用一句最简单的指令，标记只留给最后那一轮。
+const fillerTurns = Number(process.env.DEMO_FILLER_TURNS ?? 3)
+for (let turn = 0; turn < fillerTurns; turn += 1) {
+  await call('session/prompt', {
+    request: {
+      requestId: `demo-filler-${turn}-${Date.now()}`,
+      sessionId,
+      mode: 'queue',
+      clientTimeZone: 'Asia/Shanghai',
+      content: [{ type: 'text', text: `第 ${turn + 1} 次填充：只回复「好」，不要调用任何工具。` }],
+    },
+  })
+}
+
 await call('session/prompt', {
   request: {
     requestId: `demo-${Date.now()}`,
@@ -310,6 +329,15 @@ await call('session/prompt', {
         '再跑一次确认。改动保持最小，不要顺手重构别的部分，也不要提交。',
         '最后用中文、三句话以内说清根因和修法。这段回答会出现在首页截图里，',
         '所以不要寒暄，也不要复述测试输出。',
+        // 末尾必须带一个独一无二的收尾标记：截图用例要判"是否停在最底部"，
+        // 而"某句话在屏幕上"这种判据只有在这句话**只可能**出现在结尾时才成立。
+        //
+        // 这里刻意把标记拆成两段（`ZQ7` 与 `X4P` 直接相连）：
+        // 提示词本身就显示在转写第一屏上，如果提示词里出现完整标记，
+        // 那么"看得见标记"在停在顶部时也会成立——判据会被自己的提示词骗过（实测踩过两次：
+        // 一次是完整标记写在提示词里，一次是"DEMO-END 与 MARKER 相连"这种说法会被模型
+        // 只当成 DEMO-END）。
+        '整段回答的最后一行只写一个标记：把 `ZQ7` 和 `X4P` 这两段直接拼起来，中间不加任何字符。',
       ].join(''),
     }],
   },

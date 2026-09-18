@@ -23,6 +23,9 @@ struct ChatView: View {
     @State private var isFollowing = true
     /// Rate limit for tail scrolling during a stream.
     @State private var lastScrollAt = Date.distantPast
+    /// 内容变化后排的那一次"确认仍在尾部"。可取消，所以流式输出时不会堆积。
+    /// 见 `repinAfterContentChange`：这是"打开会话停在半路"的修正，只做一次、延迟执行。
+    @State private var contentRepinTask: Task<Void, Never>?
     /// A transient confirmation shown when a run ends. The persistent marker
     /// lives in the transcript; this exists so the end of a long run is noticed
     /// even if the reader has scrolled away from the last message.
@@ -238,11 +241,38 @@ struct ChatView: View {
             // which one the rows on screen belong to.
             attachmentImages.sessionId = sessionId
         }
+        // 内容变了：确认一次视口还在尾部。
+        //
+        // 打开会话时，首屏内容是分几批折进来的，而 `LazyVStack` 的行高在折入过程中
+        // 会被修正——修正会让内容总高变化，系统的底部锚定因此可能停在"半路"。
+        // 这里在内容变化后延迟一次滚动（而不是反复重试）：等这一批布局落定再钉，
+        // 位置才是确定的。`isFollowing` 为 false 表示读者自己翻到了上面，不打扰。
+        .onChange(of: model.timeline.items.count) { _, _ in repinAfterContentChange(proxy) }
         // 键盘改变视口高度之后，LazyVStack 的可见区间会挪到还没渲染的空位上，
         // 表现就是「打开键盘/打字时上方会话变白，往下拉才恢复」。等键盘动画结束
         // 再把视口钉回底部锚点，迫使可见行按新视口重建。
         .onKeyboardVisibilityChange { visible in
             repinAfterViewportChange(proxy, keyboardVisible: visible)
+        }
+    }
+
+    /// 内容变化之后确认一次"还在尾部"。
+    ///
+    /// 单次、延迟、可取消：每次内容变化都把上一次排的撤掉，所以流式输出时不会堆积；
+    /// 读者自己翻上去（isFollowing == false）就完全不动。
+    private func repinAfterContentChange(_ proxy: ScrollViewProxy) {
+        guard isFollowing else { return }
+        // 先立刻钉一次：这一批内容如果已经布局好，它就直接生效，用户看不到任何中间态。
+        proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)
+        contentRepinTask?.cancel()
+        contentRepinTask = Task { @MainActor in
+            // 再延迟一次：`LazyVStack` 的行高会在折入过程中被修正，修正会让内容总高变化，
+            // 系统的底部锚定因此可能停在半路——等这批布局落定后再钉一次才是最终位置。
+            // 150ms 是"够布局完成"与"看不出延迟"之间的取值（实测 150ms 能落到底，
+            // 不排这一次则停在半路）。
+            try? await Task.sleep(for: .milliseconds(150))
+            if Task.isCancelled { return }
+            proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)
         }
     }
 
