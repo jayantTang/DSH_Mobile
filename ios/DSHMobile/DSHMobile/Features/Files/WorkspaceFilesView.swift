@@ -12,6 +12,9 @@ struct WorkspaceFilesView: View {
 
     @State private var model: WorkspaceFilesModel
     @State private var openFile: FileOpenRequest?
+    /// A picture opens the way a picture opens on a phone: full screen, zoomable,
+    /// with the file already on the phone behind it.
+    @State private var openImage: FileOpenRequest?
     /// A file to open as soon as the browser is up. The unattended run uses it
     /// to land on a report without walking the tree first; a person never sets
     /// it.
@@ -96,6 +99,9 @@ struct WorkspaceFilesView: View {
         .sheet(item: $openFile) { request in
             WorkspaceFileReaderView(model: model, path: request.path, title: request.title)
         }
+        .fullScreenCover(item: $openImage) { request in
+            WorkspaceImagePreviewView(model: model, path: request.path, title: request.title)
+        }
         .task {
             model.attach(to: store)
             await model.start()
@@ -108,8 +114,7 @@ struct WorkspaceFilesView: View {
                 try? await Task.sleep(for: .milliseconds(250))
             }
             openPath = nil
-            openFile = FileOpenRequest(path: wanted,
-                                       title: (wanted as NSString).lastPathComponent)
+            openPath(wanted)
         }
         .onDisappear { model.stop() }
     }
@@ -253,6 +258,7 @@ struct WorkspaceFilesView: View {
                         }
                         .buttonStyle(.plain)
                         .disabled(!entry.isDirectory && !entry.isFile)
+                        .accessibilityIdentifier("files.entry.\(entry.name)")
                         .listRowInsets(EdgeInsets(top: 0, leading: DSHTheme.Spacing.loose, bottom: 0, trailing: DSHTheme.Spacing.loose))
                         .listRowBackground(DSHTheme.layer1)
                     }
@@ -430,7 +436,14 @@ struct WorkspaceFilesView: View {
     }
 
     private func openPath(_ path: String) {
-        openFile = FileOpenRequest(path: path, title: (path as NSString).lastPathComponent)
+        let request = FileOpenRequest(path: path, title: (path as NSString).lastPathComponent)
+        // A picture is not read as a document: it is fetched and shown, zoomable,
+        // on its own screen.
+        if WorkspaceFilesModel.kind(for: path) == .image {
+            openImage = request
+        } else {
+            openFile = request
+        }
     }
 
     private func openDiffPath(_ path: String) {
@@ -452,21 +465,42 @@ private struct DirectoryEntryRow: View {
     private var glyph: String {
         switch entry.kind {
         case .directory: return "folder"
-        case .file: return "doc.text"
+        case .file: return "fileGlyph"
         case .other: return "questionmark.square.dashed"
+        }
+    }
+
+    /// The glyph a file row leads with, guessed the same way opening it is.
+    private var fileGlyph: String {
+        switch WorkspaceFileKind.of(path: entry.name) {
+        case .image: return "photo"
+        case .web: return "safari"
+        case .preview: return "doc.richtext"
+        case .binary: return "archivebox"
+        case .text: return "doc.text"
         }
     }
 
     var body: some View {
         HStack(spacing: DSHTheme.Spacing.tight) {
-            Image(systemName: glyph)
+            Image(systemName: entry.kind == .file ? fileGlyph : glyph)
                 .font(.system(size: 14))
                 .foregroundStyle(entry.isDirectory ? DSHTheme.brand : DSHTheme.labelTertiary)
                 .frame(width: 18)
-            Text(displayName)
-                .font(DSHTheme.Typography.body)
-                .foregroundStyle(entry.kind == .other ? DSHTheme.labelTertiary : DSHTheme.labelPrimary)
-                .lineLimit(1)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(displayName)
+                    .font(DSHTheme.Typography.body)
+                    .foregroundStyle(entry.kind == .other ? DSHTheme.labelTertiary : DSHTheme.labelPrimary)
+                    .lineLimit(1)
+                if entry.kind == .other {
+                    // A disabled row with no reason reads as a broken app; the
+                    // host refuses symlinks and sockets, so say so.
+                    Text("特殊文件（符号链接等），主机不读取它的内容。")
+                        .font(DSHTheme.Typography.micro)
+                        .foregroundStyle(DSHTheme.labelTertiary)
+                        .lineLimit(1)
+                }
+            }
             Spacer(minLength: DSHTheme.Spacing.tight)
             if let size = entry.sizeText {
                 Text(size)

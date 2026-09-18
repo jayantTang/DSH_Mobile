@@ -106,6 +106,15 @@ struct AttachmentThumbnail: View {
 struct ImagePreview: View {
     let image: UIImage
     let label: String
+    /// The file behind the picture, when there is one on this phone.
+    ///
+    /// A workspace picture arrives as a file the browser downloaded, and the
+    /// share sheet is how it leaves the phone again — the same viewer serving the
+    /// transcript (which has bytes and no file) and the browser (which has both).
+    var shareURL: URL?
+    /// Prefix for the automation identifiers, so a run can tell the workspace
+    /// viewer and the transcript viewer apart.
+    var identifierPrefix: String = "attachment.preview"
 
     @Environment(\.dismiss) private var dismiss
     @State private var scale: CGFloat = 1
@@ -127,7 +136,7 @@ struct ImagePreview: View {
                 .gesture(magnification.simultaneously(with: pan))
                 .onTapGesture(count: 2) { toggleZoom() }
                 .onTapGesture { dismiss() }
-                .accessibilityIdentifier("attachment.preview")
+                .accessibilityIdentifier(identifierPrefix)
                 .accessibilityLabel(label)
         }
         .overlay(alignment: .top) {
@@ -139,19 +148,26 @@ struct ImagePreview: View {
     private var toolbar: some View {
         HStack {
             Button("完成") { dismiss() }
-                .accessibilityIdentifier("attachment.preview.done")
+                .accessibilityIdentifier("\(identifierPrefix).done")
             Spacer()
             Text(label)
                 .font(DSHTheme.Typography.caption)
                 .foregroundStyle(.white.opacity(0.8))
                 .lineLimit(1)
             Spacer()
+            if let shareURL {
+                ShareLink(item: shareURL) {
+                    Image(systemName: "square.and.arrow.up")
+                }
+                .accessibilityIdentifier("\(identifierPrefix).share")
+                .accessibilityLabel(shareURL.lastPathComponent)
+            }
             Button {
                 saveToPhotos()
             } label: {
                 Image(systemName: "square.and.arrow.down")
             }
-            .accessibilityIdentifier("attachment.preview.save")
+            .accessibilityIdentifier("\(identifierPrefix).save")
         }
         .padding(.horizontal, DSHTheme.Spacing.loose)
         .padding(.vertical, DSHTheme.Spacing.tight)

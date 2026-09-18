@@ -31,7 +31,7 @@ final class WorkspaceWebPage {
     private(set) var phase: Phase = .idle
     private var loaded: Loaded?
 
-    private let client: DSHClient
+    private let downloader: WorkspaceFileDownloader
     private let scopeId: String
     private let path: String
     /// 8 MB: past this the phone should say "look at it on the computer" rather
@@ -39,7 +39,10 @@ final class WorkspaceWebPage {
     private let sizeLimit = 8 * 1024 * 1024
 
     init(client: DSHClient, scopeId: String, path: String) {
-        self.client = client
+        // Zero pacing: these are the handful of files a page needs before it can
+        // be drawn, and making the reader wait 50 ms between every window would
+        // be paid on every open.
+        self.downloader = WorkspaceFileDownloader(client: client, pacing: .zero)
         self.scopeId = scopeId
         self.path = path
     }
@@ -66,11 +69,13 @@ final class WorkspaceWebPage {
     }
 
     private func fetchPage() async throws -> Loaded {
-        let raw = try await client.workspaceFileReadAll(scopeId: scopeId, path: path)
-        guard let data = Data(base64Encoded: raw["data"]?.stringValue ?? "") else {
-            throw PageError.notText(raw["bytes"]?.intValue ?? 0)
+        let data: Data
+        do {
+            data = try await downloader.data(scopeId: scopeId, path: path, cap: sizeLimit)
+        } catch let failure as WorkspaceFileDownloader.Failure {
+            if case .overCap(_, let bytes) = failure { throw PageError.tooLarge(bytes ?? 0) }
+            throw failure
         }
-        guard data.count <= sizeLimit else { throw PageError.tooLarge(data.count) }
         guard let html = String(data: data, encoding: .utf8) else {
             throw PageError.notText(data.count)
         }
@@ -87,10 +92,10 @@ final class WorkspaceWebPage {
         // round trips in series.
         await withTaskGroup(of: String?.self) { group in
             for resource in resources {
-                group.addTask { [client, scopeId, base, directory] in
+                group.addTask { [downloader, scopeId, base, directory] in
                     let remote = base.isEmpty ? resource : "\(base)/\(resource)"
-                    guard let bytes = try? await Self.fetchBytes(
-                        client: client, scopeId: scopeId, path: remote, limit: 8 * 1024 * 1024
+                    guard let bytes = try? await downloader.data(
+                        scopeId: scopeId, path: remote, cap: 8 * 1024 * 1024
                     ) else { return resource }
                     let target = directory.appendingPathComponent(resource)
                     try? FileManager.default.createDirectory(
@@ -107,25 +112,6 @@ final class WorkspaceWebPage {
         let page = directory.appendingPathComponent((path as NSString).lastPathComponent)
         try data.write(to: page)
         return Loaded(url: page, html: html, missing: missing.sorted())
-    }
-
-    /// Reads a whole binary file, paging because the host asks for an explicit
-    /// range.
-    private static func fetchBytes(
-        client: DSHClient, scopeId: String, path: String, limit: Int
-    ) async throws -> Data {
-        var collected = Data()
-        var offset = 0
-        while true {
-            let chunk = try await client.workspaceFileReadBytes(
-                scopeId: scopeId, path: path, offset: offset, limit: limit)
-            guard let piece = Data(base64Encoded: chunk["data"]?.stringValue ?? "") else { break }
-            if piece.isEmpty { break }
-            collected.append(piece)
-            offset += piece.count
-            if chunk["eof"]?.boolValue == true || collected.count > limit { break }
-        }
-        return collected
     }
 
     /// Relative resources a static page refers to: `<link href>` and `<img src>`.

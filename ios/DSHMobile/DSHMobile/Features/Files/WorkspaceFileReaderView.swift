@@ -3,10 +3,19 @@ import SwiftUI
 
 /// A read-only reader for one workspace file.
 ///
-/// Pages arrive 300 lines at a time and render through a `LazyVStack`, so a
-/// 100k-line file costs one page of memory and only pays for the rows on screen.
-/// The gutter carries real line numbers, and the code is coloured by a
-/// line-oriented lexer whose block-comment state is threaded through the page.
+/// Three presentations share this screen, and which one is used is a *guess from
+/// the name* that the host gets to overrule:
+///
+/// - text pages arrive 300 lines at a time and render through a `LazyVStack`, so
+///   a 100k-line file costs one page of memory;
+/// - markup a browser would render (html, svg) opens rendered, because that is
+///   how it was written to be read;
+/// - everything else — a pdf, a deck, a zip, a picture with a name that said
+///   nothing — is fetched whole and handed to the system preview.
+///
+/// The guess matters because the wire carries no media type: a file named
+/// `data.0~abc` is tried as text, and `workspace-file/not-text` is what moves it
+/// to the system preview. Nothing dead-ends on a wrong guess.
 struct WorkspaceFileReaderView: View {
     let model: WorkspaceFilesModel
     let path: String
@@ -15,6 +24,7 @@ struct WorkspaceFileReaderView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var rendered: [AttributedString] = []
     @State private var renderedKey: String = ""
+
 
     /// A file a browser would render — a report with its pictures — opens
     /// rendered, because that is how it was written to be read. The source is
@@ -27,10 +37,24 @@ struct WorkspaceFileReaderView: View {
         var label: String { self == .rendered ? "预览" : "源码" }
     }
 
-    private static let renderable: Set<String> = ["html", "htm", "xhtml", "svg"]
+    /// What this screen is actually showing.
+    private enum Presentation {
+        case text
+        case web
+        case systemPreview
+    }
 
-    private var isRenderable: Bool {
-        Self.renderable.contains((path as NSString).pathExtension.lowercased())
+    private var kind: WorkspaceFileKind { WorkspaceFilesModel.kind(for: path) }
+
+    /// An image reaching this screen is one the browser did not route to the
+    /// photo viewer (a change-list row, or a run that opened it by name); the
+    /// system preview draws it perfectly well, so it is not a special case.
+    private var presentation: Presentation {
+        switch kind {
+        case .web: return .web
+        case .image, .preview, .binary: return .systemPreview
+        case .text: return model.fileRefusedAsText ? .systemPreview : .text
+        }
     }
 
     @State private var mode: Mode = Self.automationMode() ?? .source
@@ -54,20 +78,31 @@ struct WorkspaceFileReaderView: View {
 
     var body: some View {
         NavigationStack {
-            Group {
-                if isRenderable, mode == .rendered {
-                    // Content, not a screen: this view already owns the bar and
-                    // the mode switch.
-                    WorkspaceHTMLPreviewView(model: model, path: path, title: title)
-                } else {
-                    content
+            VStack(spacing: 0) {
+                // Shown for every presentation, and absent until there is
+                // something to say: a file pulled off the network should report
+                // how many bytes arrived, whatever is drawn underneath it.
+                if model.transferPhase(for: path) != .idle {
+                    WorkspaceFileTransferStatus(model: model, path: path)
+                    Hairline()
+                }
+                Group {
+                    if presentation == .web, mode == .rendered {
+                        // Content, not a screen: this view already owns the bar
+                        // and the mode switch.
+                        WorkspaceHTMLPreviewView(model: model, path: path, title: title)
+                    } else if presentation == .systemPreview {
+                        WorkspaceFilePreviewContent(model: model, path: path, title: title)
+                    } else {
+                        content
+                    }
                 }
             }
             .background(DSHTheme.background)
             .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                if isRenderable {
+                if presentation == .web {
                     // Two explicit buttons rather than a segmented picker: a
                     // picker renders its segments as elements that carry no
                     // stable identifier, which makes "switch to the source"
@@ -98,6 +133,9 @@ struct WorkspaceFileReaderView: View {
                         )
                     }
                 }
+                ToolbarItem(placement: .topBarTrailing) {
+                    shareButton
+                }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("完成") { dismiss() }
                 }
@@ -105,20 +143,48 @@ struct WorkspaceFileReaderView: View {
         }
         .onAppear {
             // Only when the run did not ask for a specific mode.
-            if isRenderable, Self.automationMode() == nil { mode = .rendered }
+            if kind == .web, Self.automationMode() == nil { mode = .rendered }
         }
         // Reading the text is needed whenever the reader is showing it, and not
-        // needed at all while the web preview is up. Checking that inside the
-        // task rather than in a guard before it matters: the guards used to run
-        // before the mode had been decided, so a file opened straight into
-        // source mode was never read and the screen sat on "正在读取…" forever.
-        .task { await readIfShowingText() }
+        // needed at all while the web preview or the system preview is up.
+        .task(id: presentation) { await readIfShowingText() }
         .onAppear { readIfShowingTextInBackground() }
         .onChange(of: mode) { _, _ in readIfShowingTextInBackground() }
         .onChange(of: model.file?.text) { _, _ in rebuild() }
     }
 
-    /// Reads the file unless the web preview is what is on screen.
+    // MARK: - Getting the file out
+
+    /// One control for both halves of "get this file onto my phone": the first
+    /// tap fetches it and says how many bytes arrived, every tap after that hands
+    /// it to the share sheet.
+    ///
+    /// Deliberately two taps. Opening the share sheet the moment a download
+    /// finishes would decide for the person where the file goes, and a transfer
+    /// that is only meant to be looked at does not need a sheet in the way.
+    @ViewBuilder
+    private var shareButton: some View {
+        switch model.transferPhase(for: path) {
+        case .running:
+            ProgressView()
+                .controlSize(.small)
+                .accessibilityIdentifier("files.action.running")
+        case .ready(_, let url):
+            ShareLink(item: url) {
+                Label("分享", systemImage: "square.and.arrow.up")
+            }
+            .accessibilityIdentifier("files.action.share")
+        default:
+            Button {
+                Task { await model.download(path: path) }
+            } label: {
+                Label("下载", systemImage: "arrow.down.circle")
+            }
+            .accessibilityIdentifier("files.action.share")
+        }
+    }
+
+    /// Reads the file unless a rendered view is what is on screen.
     ///
     /// Only ever once. `onAppear` and the mode change both ask for this, and a
     /// second read that starts while the first is still in flight resets the
@@ -127,7 +193,7 @@ struct WorkspaceFileReaderView: View {
     /// small file finished between triggers, so the problem only showed up on
     /// the real report.
     private func readIfShowingText() async {
-        guard !(isRenderable && mode == .rendered) else { return }
+        guard presentation == .text else { return }
         guard !readRequested else {
             if model.file != nil { rebuild() }
             return

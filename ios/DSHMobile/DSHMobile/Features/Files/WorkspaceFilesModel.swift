@@ -46,6 +46,24 @@ final class WorkspaceFilesModel {
 
     private(set) var filePhase: Phase = .idle
     private(set) var file: WorkspaceFileText?
+    /// True when the host refused the open file as non-text.
+    ///
+    /// The browser guesses an extension; the host is the one that knows. This is
+    /// the signal the reader reroutes on, which is why a file whose name says
+    /// nothing is still tried as text first.
+    private(set) var fileRefusedAsText = false
+
+    /// One file's trip from the computer to the phone.
+    enum TransferPhase: Equatable {
+        case idle
+        case running(received: Int, total: Int?)
+        case ready(bytes: Int, url: URL)
+        case failed(String)
+    }
+
+    /// Downloads by workspace path, so two sheets looking at one file agree.
+    private(set) var transfers: [String: TransferPhase] = [:]
+    private var transferTasks: [String: Task<URL?, Never>] = [:]
 
     private(set) var changesPhase: Phase = .idle
     private(set) var changes: [WorkspaceChange] = []
@@ -193,6 +211,7 @@ final class WorkspaceFilesModel {
     func openFile(path: String) async {
         filePhase = .loading
         file = nil
+        fileRefusedAsText = false
         await loadFilePage(path: path, offset: 1)
     }
 
@@ -231,8 +250,99 @@ final class WorkspaceFilesModel {
             }
             filePhase = .loaded
         } catch {
+            if (error as? DSHRPCFailure)?.code == "workspace-file/not-text" {
+                fileRefusedAsText = true
+            }
             filePhase = .failed(Self.describe(error))
         }
+    }
+
+    // MARK: - Getting a file onto the phone
+
+    /// What the browser opens a path with.
+    static func kind(for path: String) -> WorkspaceFileKind { WorkspaceFileKind.of(path: path) }
+
+    func transferPhase(for path: String) -> TransferPhase {
+        transfers[Self.cacheKey(path, root: scope.workspaceRoot)] ?? .idle
+    }
+
+    /// The local copy, once the whole file is on the phone.
+    func localCopy(for path: String) -> URL? {
+        if case .ready(_, let url) = transferPhase(for: path) { return url }
+        return nil
+    }
+
+    /// Fetches the whole file, once per version.
+    ///
+    /// Returns the local copy and publishes progress in `transfers` while it
+    /// runs, so the view showing the download does not have to own the task —
+    /// two screens looking at the same file share one transfer instead of
+    /// pulling it twice. A cache hit costs a `stat` and nothing else.
+    @discardableResult
+    func download(path: String) async -> URL? {
+        let key = Self.cacheKey(path, root: scope.workspaceRoot)
+        if let running = transferTasks[key] { return await running.value }
+        guard let client = store?.client else {
+            transfers[key] = .failed("尚未连接")
+            return nil
+        }
+
+        transfers[key] = .running(received: 0, total: nil)
+        let scopeId = scope.sessionId
+        let downloader = WorkspaceFileDownloader(client: client)
+        let task = Task<URL?, Never> { [weak self] in
+            do {
+                // `stat` first: it carries the size the progress bar needs and
+                // the version that decides whether anything has to move at all.
+                let info = try await downloader.info(scopeId: scopeId, path: path)
+                if let cached = WorkspaceFileCache.existing(
+                    scopeId: scopeId, path: key, version: info.version, bytes: info.bytes
+                ) {
+                    self?.transfers[key] = .ready(bytes: cached.bytes, url: cached.url)
+                    return cached.url
+                }
+                let destination = WorkspaceFileCache.destination(
+                    scopeId: scopeId, path: key, version: info.version
+                )
+                let fetched = try await downloader.fetch(
+                    scopeId: scopeId, path: path, to: destination
+                ) { [weak self] progress in
+                    Task { @MainActor in
+                        // Only ever updates a running transfer: a cancelled one
+                        // must not be dragged back to life by a late window.
+                        guard case .running = self?.transfers[key] else { return }
+                        self?.transfers[key] = .running(received: progress.received, total: progress.total)
+                    }
+                }
+                WorkspaceFileCache.trim()
+                self?.transfers[key] = .ready(bytes: fetched.bytes, url: fetched.url)
+                return fetched.url
+            } catch is CancellationError {
+                self?.transfers[key] = .idle
+                return nil
+            } catch {
+                self?.transfers[key] = .failed(Self.describe(error))
+                return nil
+            }
+        }
+        transferTasks[key] = task
+        let url = await task.value
+        transferTasks[key] = nil
+        return url
+    }
+
+    /// Stops a transfer in flight. The partial file is removed by the downloader.
+    func cancelDownload(path: String) {
+        let key = Self.cacheKey(path, root: scope.workspaceRoot)
+        transferTasks[key]?.cancel()
+        transferTasks[key] = nil
+        transfers[key] = .idle
+    }
+
+    /// One key per file: the change list names a file absolutely and the browser
+    /// names it relative to the same root, and both are the same document.
+    private static func cacheKey(_ path: String, root: String?) -> String {
+        relative(path, root: root)
     }
 
     var fileTitle: String {

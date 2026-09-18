@@ -289,15 +289,26 @@ public struct DSHClient: Sendable {
 
     /// A byte range of a binary file, base64 in `data`.
     ///
-    /// The host wants an explicit range, so a caller that wants "the whole
-    /// picture" has to ask for a window and page until `eof`.
-    public func workspaceFileReadBytes(scopeId: String, path: String, offset: Int, limit: Int) async throws -> JSONValue {
+    /// The host wants an explicit range and names its two fields `offset` and
+    /// `length` — **not** the `limit` that `workspaceFiles/read` uses for lines.
+    /// The names are not interchangeable: an unknown field is ignored, so sending
+    /// `limit` here silently gets the deployment's default window instead of the
+    /// one asked for. A window larger than the host's `maxBytes` (2 MiB by
+    /// default) is refused with `workspace-file/too-large` rather than shortened,
+    /// so a caller wanting a whole file pages until `eof` and shrinks its window
+    /// if a deployment has a smaller cap.
+    public func workspaceFileReadBytes(
+        scopeId: String,
+        path: String,
+        offset: Int,
+        length: Int
+    ) async throws -> JSONValue {
         try await carrier.unary(
             method: "workspaceFiles/readBytes",
             args: WorkspaceFileRangeArgs(
                 workspaceFileScopeId: scopeId,
                 path: path,
-                range: .object(["offset": .int(offset), "limit": .int(limit)])
+                range: .object(["offset": .int(offset), "length": .int(length)])
             ),
             as: JSONValue.self
         )
