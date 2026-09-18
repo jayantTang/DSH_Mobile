@@ -1,0 +1,23 @@
+# TC-MOB-24 的执行指令（图片类工具卡片只显示图片）
+#
+# 判据：带图片的卡片默认**只有图片**——参数 JSON 与那行机器文本都不渲染；底下留一个
+# 「显示详情」小控件，点开后两者都回来，再点又收起。
+#
+# 反向核对用的词：`caption`（send_image 的参数名）与 `<path>`（read_image 输出里的句柄），
+# 它们只可能来自被折叠起来的那两部分。
+#
+# 为什么能点到控件却不先滚动：转写打开时落在最底部，最近的图片卡片就在那里；点击能否
+# 成功本身就是「控件可见」的证据（`滚动到` 只要元素进了树就算过，证明不了看得见）。
+#
+# 跑法：DSH_CONNECT=relay ./test/run.sh run test/cases/current/24-图片工具卡片不显示参数.md
+
+1  do: 打开页面 transcript | want: id:chat.transcript
+2  do: 什么都不做 | want: 不存在 text:caption ; absent
+3  do: 什么都不做 | want: 不存在 text:<path> ; absent
+4  do: 什么都不做 | shot: 01-picture-only check=texts,amber
+5  do: 点击 text:显示详情, 等待 text:隐藏详情 timeout=20 | want: text:隐藏详情
+6  do: 什么都不做 | want: text:caption, text:<path>
+7  do: 什么都不做 | shot: 02-details-shown check=texts,amber
+8  do: 点击 text:隐藏详情, 等待 text:显示详情 timeout=20 | want: text:显示详情
+9  do: 什么都不做 | want: 不存在 text:<path> ; absent
+10 do: 什么都不做 | shot: 03-picture-only-again check=texts,amber

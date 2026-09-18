@@ -241,10 +241,11 @@ struct ToolCallRow: View {
     let invocation: ToolInvocation
     /// `nil` follows the default for this result; a tap pins it either way.
     @State private var expansionOverride: Bool?
-    /// Whether the raw arguments are on screen. Off by default for a card whose
-    /// point is the picture: `{"caption": "…", "screenshot": true}` next to a
-    /// screenshot is noise, and the picture is the whole message.
-    @State private var showsArguments = false
+    /// Whether the raw arguments and the machine text are on screen. Off by
+    /// default for a card whose point is the picture: `{"caption": "…",
+    /// "screenshot": true}` and a `<path>…</path>` handle next to a screenshot
+    /// are noise — the picture is the whole message.
+    @State private var showsDetails = false
 
     private var hasOutput: Bool { !invocation.resultBlocks.isEmpty }
 
@@ -333,9 +334,31 @@ struct ToolCallRow: View {
         !invocation.arguments.isEmpty && invocation.arguments != "{}"
     }
 
+    /// The picture-only view of a result that carries one.
+    ///
+    /// A tool that returns an image also returns the text it needed for the
+    /// model — a `<path>`/`<type>` handle for `read_image`, a file name and size
+    /// for `send_image`. None of that is what the person is looking at, and it
+    /// pushes the picture down the card. Errors are the exception: when a call
+    /// fails there is no picture to look at, so its text is the content.
+    private var pictureOnly: Bool { hasImage && !invocation.isError }
+
+    private var detailBlocks: [ContentBlock] {
+        // 「显示详情」 has to bring the text back with the parameters: the whole
+        // point of the disclosure is that nothing became unreachable. (It did
+        // exactly that on the first run of TC-MOB-24 — the parameters appeared
+        // and the machine text stayed hidden.)
+        guard pictureOnly, !showsDetails else { return invocation.resultBlocks }
+        let images = invocation.resultBlocks.filter { block in
+            if case .image = block { return true }
+            return false
+        }
+        return images.isEmpty ? invocation.resultBlocks : images
+    }
+
     private var details: some View {
         VStack(alignment: .leading, spacing: DSHTheme.Spacing.tight) {
-            if hasArguments, !hasImage || showsArguments {
+            if hasArguments, !pictureOnly || showsDetails {
                 Text("参数")
                     .font(DSHTheme.Typography.micro)
                     .foregroundStyle(DSHTheme.labelTertiary)
@@ -350,10 +373,12 @@ struct ToolCallRow: View {
             }
 
             if hasOutput {
-                Text(invocation.isError ? "错误输出" : "输出")
-                    .font(DSHTheme.Typography.micro)
-                    .foregroundStyle(DSHTheme.labelTertiary)
-                ToolOutputView(blocks: invocation.resultBlocks)
+                if !pictureOnly {
+                    Text(invocation.isError ? "错误输出" : "输出")
+                        .font(DSHTheme.Typography.micro)
+                        .foregroundStyle(DSHTheme.labelTertiary)
+                }
+                ToolOutputView(blocks: detailBlocks)
             } else if invocation.isRunning {
                 Text("执行中…")
                     .font(DSHTheme.Typography.micro)
@@ -362,13 +387,13 @@ struct ToolCallRow: View {
 
             // Not deleted, just out of the way: a tool call one cannot inspect is
             // worse than a slightly noisy one, and this is one small tap.
-            if hasImage, hasArguments {
+            if pictureOnly {
                 Button {
-                    withAnimation(.snappy(duration: 0.18)) { showsArguments.toggle() }
+                    withAnimation(.snappy(duration: 0.18)) { showsDetails.toggle() }
                 } label: {
                     Label(
-                        showsArguments ? "隐藏参数" : "显示参数",
-                        systemImage: showsArguments ? "chevron.up" : "chevron.down"
+                        showsDetails ? "隐藏详情" : "显示详情",
+                        systemImage: showsDetails ? "chevron.up" : "chevron.down"
                     )
                     .font(DSHTheme.Typography.micro)
                     .foregroundStyle(DSHTheme.labelTertiary)
