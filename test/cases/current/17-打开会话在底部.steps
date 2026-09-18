@@ -1,0 +1,26 @@
+# TC-CHAT-02 的执行指令（打开长会话落在最底部）
+#
+# 用户报的现象：首次打开会话时停在"底部再上一段的中间"，要手动往下拉才到最后。
+#
+# 成因：以前打开时锚在"最后一条用户消息的顶部"，而长会话首屏是分批折入的，锚点落在
+# "当时的底部"，后续内容把它推到中间；而且一次 scrollTo 在懒加载布局里不可靠——目标是
+# 还没渲染的行时 frame 是零，滚动会被忽略。修复见 ChatView.scheduleOpenPin：
+# 打开后在一秒内多次把视口钉到底部锚点，用户一旦自己拖动就停手。
+#
+# 判据分两层：
+#   * 断言层：打开后「回到最新 / 回到底部」浮层按钮**不在**——它只在"不在底部"时出现，
+#     所以它不出现就是"已经在底部"的机器可判据（`; absent`）；
+#   * 视觉层：截图里能看到会话结尾（演示会话的最后一句中文结论 + 输入框贴在一起）。
+#
+# 跑法：DSH_CONNECT=relay ./test/run.sh run test/cases/current/17-打开会话在底部.md
+
+1  do: 连接本机 DSH
+# 「等待」是等元素出现，不是睡眠；这里等转写页就绪，顺便给沉降几次重试留时间
+2  do: 打开页面 transcript, 等待 id:chat.transcript timeout=10 | shot: 01-opened check=texts,amber
+3  do: 什么都不做            | want: text:回到底部 ; absent
+4  do: 什么都不做            | want: text:回到最新 ; absent
+5  do: 什么都不做            | want: id:composer.field
+# 再打开一次（同一会话第二次进入）——重进也要在底部，不能只在首次生效
+6  do: 打开页面 sessions
+7  do: 打开页面 transcript   | shot: 02-reopened check=texts,amber
+8  do: 什么都不做            | want: text:回到底部 ; absent
