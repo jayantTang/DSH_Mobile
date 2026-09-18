@@ -208,13 +208,6 @@ struct GitHistoryPane: View {
     let store: ConnectionStore
 
     @State private var openCommit: GitCommit?
-    @State private var openFile: FileAtRevision?
-
-    private struct FileAtRevision: Identifiable {
-        let rev: String
-        let path: String
-        var id: String { "\(rev)-\(path)" }
-    }
 
     var body: some View {
         historyList
@@ -463,14 +456,8 @@ struct GitCommitView: View {
     @State private var phase: Phase = .loading
     @State private var detail: GitCommitDetail?
     @State private var openDiff: DiffRequest?
-    @State private var openFile: FileAtRevision?
 
     private struct DiffRequest: Identifiable {
-        let path: String
-        var id: String { path }
-    }
-
-    private struct FileAtRevision: Identifiable {
         let path: String
         var id: String { path }
     }
@@ -504,12 +491,7 @@ struct GitCommitView: View {
         }
         .task { await load() }
         .sheet(item: $openDiff) { request in
-            GitCommitFileSheet(model: model, sha: commit.sha, path: request.path) {
-                openFile = FileAtRevision(path: request.path)
-            }
-        }
-        .sheet(item: $openFile) { request in
-            GitFileReaderView(model: model, rev: commit.sha, path: request.path)
+            GitCommitFileSheet(model: model, sha: commit.sha, path: request.path)
         }
     }
 
@@ -597,10 +579,9 @@ struct GitCommitFileSheet: View {
     let model: GitModel
     let sha: String
     let path: String
-    /// Opens this file as it was at this commit, in the read-only reader.
-    var onOpenFile: (() -> Void)?
 
     @Environment(\.dismiss) private var dismiss
+    @State private var showsFileAtRevision = false
     @State private var phase: Phase = .loading
     @State private var patch: GitPatch?
     @State private var diff: UnifiedDiff?
@@ -651,11 +632,9 @@ struct GitCommitFileSheet: View {
                             .foregroundStyle(DSHTheme.labelTertiary)
                     }
                 }
-                if let onOpenFile {
-                    ToolbarItem(placement: .topBarLeading) {
-                        Button("该版本文件") { onOpenFile() }
-                            .accessibilityIdentifier("git.commit.fileAtRev")
-                    }
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("该版本文件") { showsFileAtRevision = true }
+                        .accessibilityIdentifier("git.commit.fileAtRev")
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("完成") { dismiss() }
@@ -663,6 +642,9 @@ struct GitCommitFileSheet: View {
             }
         }
         .task { await load() }
+        .sheet(isPresented: $showsFileAtRevision) {
+            GitFileReaderView(model: model, rev: sha, path: path)
+        }
     }
 
     private func note(_ text: String) -> some View {
