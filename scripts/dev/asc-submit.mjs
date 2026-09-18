@@ -6,6 +6,7 @@
  *   node scripts/dev/asc-submit.mjs screenshots <dir> # 上传截图（dir 里是 6.9" 的 PNG）
  *   node scripts/dev/asc-submit.mjs basics            # 年龄分级 + 免费价格
  *   node scripts/dev/asc-submit.mjs submit            # 提交审核
+ *   node scripts/dev/asc-submit.mjs withdraw          # 撤回审核（为了换构建重提）
  *
  * 顺序：basics → screenshots → submit。每一步都会先打印现状，所以可以重复跑。
  *
@@ -287,8 +288,36 @@ async function submit() {
   console.log('已提交审核。通常 1–3 天出结果，Apple 会发邮件到审核联系人邮箱。')
 }
 
+/**
+ * 撤回正在等待审核的提交，目的是**换一个构建再提**。
+ *
+ * 什么时候需要它：审核是排队的，先提交的那个构建会一直被挂着——今天修好的东西不会
+ * 自动进这次审核。要换构建，只能先把这次提交撤掉（版本回到可编辑状态），挂上新构建，
+ * 再提交一次。代价是重新排队。
+ *
+ * 用 classic 的 `appStoreVersionSubmissions`：这个版本的提交是 classic 通道创建的，
+ * `reviewSubmissions` 那条关系在它上面根本不存在（查了会回 404）。
+ */
+async function withdraw() {
+  const { version } = await context()
+  const submission = await get(`/v1/appStoreVersions/${version.id}/appStoreVersionSubmission`)
+    .catch(() => null)
+  if (!submission?.data) {
+    console.log('这个版本没有进行中的提交，无需撤回')
+    return
+  }
+  await call('DELETE', `/v1/appStoreVersionSubmissions/${submission.data.id}`)
+  console.log(`已撤回提交 ${submission.data.id}`)
+  const after = await get(`/v1/appStoreVersions/${version.id}`)
+  console.log(`版本状态：${after.data.attributes.appStoreState}（挂着的构建：${
+    (await get(`/v1/appStoreVersions/${version.id}/build`).catch(() => null))?.data?.attributes?.version ?? '无'
+  }）`)
+  console.log('接下来：deploy-testflight.sh 上传新构建 → 等 processingState 变 VALID → asc-submit.mjs submit')
+}
+
 const [command, argument] = process.argv.slice(2)
 if (command === 'screenshots') await screenshots(argument)
 else if (command === 'basics') await basics()
 else if (command === 'submit') await submit()
+else if (command === 'withdraw') await withdraw()
 else await status()
