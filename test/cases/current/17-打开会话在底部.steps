@@ -1,26 +1,38 @@
-# TC-CHAT-02 的执行指令（打开长会话落在最底部）
+# TC-CHAT-02 的执行指令（应用内首次打开 + 二次进入，都落在最底部）
 #
-# 现象：首次打开会话停在"底部再上一段的中间"，要手动往下拉才到最后；二次打开同样。
+# 用户的原始现象有两条，走的是**不同代码路径**，必须分开测：
+#   * 首次打开停在"底部再上一段的中间"——冷加载，内容分批折入；
+#   * **二次进入**（退回列表再点进来）从中间跳到低部——命中 `ChatModel.cache`，
+#     整份 timeline 立即恢复，内容一帧内到位、条数**不再变化**（所以"内容变化后重钉"
+#     那条修复对它无效）。
 #
-# 判据：**收尾标记 ZQ7X4P 在屏幕上**。演示会话最后一行只写这个标记，而提示词里刻意把它
-# 拆成 `ZQ7` 与 `X4P` 两段说（见 scripts/dev/demo-session.mjs），所以完整标记只可能出现在
-# 转写最末尾——"看得见它"等价于"滚到底了"。
+# 两次都必须**在同一个进程内**做：`打开页面 transcript` 是 `launch screen=transcript`，
+# 它会重启 App，等于又测一遍冷路径，永远测不到二次进入（第一版用例就是这么假通过的；
+# 而用 launch 直接进转写时栈里没有上一页，返回按钮也不存在，实测「找不到 text:返回」）。
 #
-# 前两版判据都被实测证伪，写在这里避免再犯：
-#   * 用「回到底部」浮层按钮不在 → 出现"按钮不在、画面却停在中段"的假通过；
-#   * 用「未提交」这类中文短语在不在 → 那句话在转写中段也出现，同样假通过；
-#   * 把标记直接写进提示词 → 提示词就在第一屏上，"看得见标记"在停在顶部时也成立。
+# 判据：**收尾标记 ZQ7X4P 在屏幕上**（演示会话最后一行只写它；提示词里拆成 `ZQ7` 与 `X4P`
+# 两段说，所以完整标记只可能出现在转写最末尾）。
+#
+# 时序上的坑：带 `| shot:` 的步骤会先 waitUntilStill（最多 4 秒）再截图，动画跳底会在等待
+# 期间走完，于是截图和之后的断言都看不到"中段"那一帧。`want:` 是即时断言（不等待、不重试），
+# 所以导航动作那一步**不带截图**，紧跟其后一步断言，才能抓到刚进去那一瞬间的位置。
+#
+# 前几版被判据骗过的记录：用「回到底部」浮层按钮不在、用「未提交」这类中文短语在不在、
+# 把标记直接写进提示词 —— 三种都会在"停在中段"时照样通过。
 #
 # 跑法：DSH_CONNECT=relay ./test/run.sh run test/cases/current/17-打开会话在底部.md
 
-1  do: 连接本机 DSH
-# 2 与 3 是同一个动作的两次留证：先拍"刚打开"，再拍"稳定后"。
-# 两张逐字节相同 = 打开就是最终位置，没有"先中段再跳到底部"。
-2  do: 打开页面 transcript, 等待 id:chat.transcript timeout=10 | shot: 01-opened check=texts,amber
-3  do: 什么都不做            | shot: 02-settled check=texts,amber
-4  do: 什么都不做            | want: text:ZQ7X4P
-5  do: 什么都不做            | want: id:composer.field
-# 再打开一次（同一会话第二次进入）——重进也要在底部，不能只在首次生效
-6  do: 打开页面 sessions
-7  do: 打开页面 transcript   | shot: 03-reopened check=texts,amber
-8  do: 什么都不做            | want: text:ZQ7X4P
+1  do: 连接本机 DSH  | want: id:session.list
+# 展开分组才能看到会话行（与 10- 用例同样的做法）
+2  do: 滚动到 id:session.ungrouped  | want: id:session.ungrouped
+3  do: 点击 id:session.ungrouped  | want: id:session.row.session-78f082a9-6edf-4b41-a6fd-be109287b4ae
+# 首次打开（同一个进程内点行进入）
+4  do: 点击 id:session.row.session-78f082a9-6edf-4b41-a6fd-be109287b4ae  | want: id:chat.transcript
+5  do: 什么都不做            | want: text:ZQ7X4P
+6  do: 什么都不做            | shot: 01-first-open check=texts,amber
+# 二次进入（退回列表 → 再点同一行）：命中缓存的那条路径，用户报的就是它
+7  do: 点击 text:返回        | want: id:session.list
+8  do: 滚动到 id:session.row.session-78f082a9-6edf-4b41-a6fd-be109287b4ae  | want: id:session.row.session-78f082a9-6edf-4b41-a6fd-be109287b4ae
+9  do: 点击 id:session.row.session-78f082a9-6edf-4b41-a6fd-be109287b4ae  | want: id:chat.transcript
+10 do: 什么都不做            | want: text:ZQ7X4P
+11 do: 什么都不做            | shot: 02-second-enter check=texts,amber

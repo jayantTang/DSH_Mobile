@@ -26,6 +26,16 @@ struct ChatView: View {
     /// 内容变化后排的那一次"确认仍在尾部"。可取消，所以流式输出时不会堆积。
     /// 见 `repinAfterContentChange`：这是"打开会话停在半路"的修正，只做一次、延迟执行。
     @State private var contentRepinTask: Task<Void, Never>?
+    /// 打开会话时那段"钉到底部"的序列（见 `pinOnOpen`）。
+    @State private var openPinTask: Task<Void, Never>?
+    /// 已经排过打开钉底的会话；换会话时重置。
+    @State private var openedSessionId: String?
+    /// 打开钉底进行中：这段时间里的跟随滚动**不做动画**。
+    /// 动画化的滚动正是"中段滑到底部"那种观感的来源——一帧内瞬移看不出来，200ms 的滑动
+    /// 一定看得见。
+    @State private var isPinningOnOpen = false
+    /// 读者是否自己拖动过：拖动之后，打开钉底与跟随都不再抢滚动位置。
+    @State private var userScrolled = false
     /// A transient confirmation shown when a run ends. The persistent marker
     /// lives in the transcript; this exists so the end of a long run is noticed
     /// even if the reader has scrolled away from the last message.
@@ -176,11 +186,20 @@ struct ChatView: View {
         }
         .onChange(of: model.scrollSignal) {
             guard isFollowing else { return }
-            scrollToBottom(proxy)
+            // 打开钉底期间不做动画：这段时间里的滚动是"纠正落点"，不是"跟着新内容走"，
+            // 动画化就变成用户看到的那次"从中间滑到底部"。
+            if isPinningOnOpen {
+                proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)
+            } else {
+                scrollToBottom(proxy)
+            }
         }
         .simultaneousGesture(
             DragGesture().onChanged { value in
-                if value.translation.height > 24 { isFollowing = false }
+                if value.translation.height > 24 {
+                    isFollowing = false
+                    userScrolled = true
+                }
             }
         )
         .overlay(alignment: .bottomTrailing) {
@@ -240,6 +259,11 @@ struct ChatView: View {
             // Attachments are authorized per session, so the loader has to know
             // which one the rows on screen belong to.
             attachmentImages.sessionId = sessionId
+            // 换会话 = 打开了一个会话（冷加载或命中缓存都走这里）：
+            // 重置读者意图，并排一次"钉到底部"。
+            userScrolled = false
+            openedSessionId = nil
+            if let sessionId { pinOnOpen(proxy, sessionId: sessionId) }
         }
         // 内容变了：确认一次视口还在尾部。
         //
@@ -253,6 +277,33 @@ struct ChatView: View {
         // 再把视口钉回底部锚点，迫使可见行按新视口重建。
         .onKeyboardVisibilityChange { visible in
             repinAfterViewportChange(proxy, keyboardVisible: visible)
+        }
+    }
+
+    /// 打开会话时把视口钉到底部：立即一次 + 120ms + 300ms 各一次，**都不带动画**。
+    ///
+    /// 为什么要一小串而不是一次：`LazyVStack` 的行是边生成边修正行高的，内容总高在首批
+    /// 布局之后还会变大——系统的底部锚定因此停在"当时的底部"（用户看到的中段）。
+    /// 命中 `ChatModel.cache` 的二次进入尤其明显：整份 timeline 一帧内恢复，
+    /// **条数不再变化**，所以"内容变化后重钉"那条路根本不会触发，只能靠这里。
+    ///
+    /// 三次的成本可以忽略（每次只是一次 scrollTo，不做布局、不做动画），换来的是一帧内
+    /// 就落到最终位置；读者一旦自己拖动过就立刻停手。
+    private func pinOnOpen(_ proxy: ScrollViewProxy, sessionId: String) {
+        guard openedSessionId != sessionId else { return }
+        openedSessionId = sessionId
+        openPinTask?.cancel()
+        openPinTask = Task { @MainActor in
+            isPinningOnOpen = true
+            defer { isPinningOnOpen = false }
+            for delay in [0, 120, 300] {
+                if delay > 0 { try? await Task.sleep(for: .milliseconds(delay)) }
+                if Task.isCancelled { return }
+                guard openedSessionId == sessionId, !userScrolled else { return }
+                proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)
+            }
+            // 打开阶段结束，跟随恢复常规（可动画）行为。
+            isFollowing = true
         }
     }
 
