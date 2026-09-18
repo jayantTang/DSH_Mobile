@@ -40,6 +40,11 @@ MD
 git add -A
 git commit -q -m "第二次提交：README 补一行"
 
+# A non-text attachment at the repository root: the cache/revalidation case
+# (TC-MOB-23) needs a file whose open goes through the download path, and a
+# fixed size so assertions can name an exact byte count.
+python3 -c "import random; random.seed(20260918); open('附件.bin','wb').write(random.randbytes(300000))"
+
 # Now a working tree with one of each: an unstaged edit, a staged edit, an
 # untracked file and a rename. The case asserts on these names.
 printf '第四行（工作区改动）\n' >> notes.txt

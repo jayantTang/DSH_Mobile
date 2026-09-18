@@ -60,6 +60,17 @@ enum WorkspaceFileCache {
         return complete
     }
 
+    /// Throws away one file's copy of one version, together with its partial.
+    ///
+    /// Called when the host reports a newer version: the old copy is not the
+    /// file any more, and leaving a superseded video behind costs tens of
+    /// megabytes until the cache trims itself.
+    static func discard(scopeId: String, path: String, version: String) {
+        try? FileManager.default.removeItem(
+            at: directory(scopeId: scopeId, path: path, version: version)
+        )
+    }
+
     /// Throws away a partial, for the "give up on this download" action.
     static func discardPartial(scopeId: String, path: String, version: String) {
         try? FileManager.default.removeItem(at: partial(scopeId: scopeId, path: path, version: version))

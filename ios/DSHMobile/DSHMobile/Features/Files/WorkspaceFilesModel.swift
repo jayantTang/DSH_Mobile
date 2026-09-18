@@ -65,7 +65,7 @@ final class WorkspaceFilesModel {
         /// attempt continues from `bytes` instead of starting again, which is
         /// why it carries the reason rather than a verdict.
         case paused(bytes: Int, total: Int?, reason: String?)
-        case ready(bytes: Int, url: URL)
+        case ready(bytes: Int, url: URL, version: String)
         case failed(String)
 
         /// How much is on disk (or in flight) right now.
@@ -73,7 +73,7 @@ final class WorkspaceFilesModel {
             switch self {
             case .running(let received, _): return received
             case .paused(let bytes, _, _): return bytes
-            case .ready(let bytes, _): return bytes
+            case .ready(let bytes, _, _): return bytes
             case .idle, .failed: return nil
             }
         }
@@ -81,9 +81,15 @@ final class WorkspaceFilesModel {
         var totalBytes: Int? {
             switch self {
             case .running(_, let total), .paused(_, let total, _): return total
-            case .ready(let bytes, _): return bytes
+            case .ready(let bytes, _, _): return bytes
             case .idle, .failed: return nil
             }
+        }
+
+        /// The host version this local copy was fetched at, when there is one.
+        var version: String? {
+            if case .ready(_, _, let version) = self { return version }
+            return nil
         }
 
         /// Whether anything is on disk to continue from.
@@ -294,9 +300,82 @@ final class WorkspaceFilesModel {
     }
 
     /// The local copy, once the whole file is on the phone.
+    ///
+    /// This does **not** promise the copy is still the file the computer has:
+    /// that costs a `stat`, which is what `freshCopy(for:)` is for. Views that
+    /// are about to show or share the bytes should use that one.
     func localCopy(for path: String) -> URL? {
-        if case .ready(_, let url) = transferPhase(for: path) { return url }
+        if case .ready(_, let url, _) = transferPhase(for: path) { return url }
         return nil
+    }
+
+    /// The local copy, re-fetched if the computer's file has changed since.
+    ///
+    /// The bug this exists for: a video downloaded once kept playing from the
+    /// phone's cache after the computer's copy was re-rendered, because the
+    /// ready state was keyed by path alone and nothing ever asked the host
+    /// whether the file was still the same one. A `stat` answers that — the
+    /// host's `version` token changes whenever the file does — and a mismatch
+    /// throws the old copy away rather than leaving it to be opened again.
+    @discardableResult
+    func freshCopy(for path: String) async -> URL? {
+        let key = Self.cacheKey(path, root: scope.workspaceRoot)
+        guard let client = store?.client else {
+            transfers[key] = .failed("尚未连接")
+            return nil
+        }
+        guard let held = transfers[key]?.version else {
+            // Nothing here yet (or a partial): the ordinary download path.
+            return await download(path: path)
+        }
+        let downloader = WorkspaceFileDownloader(client: client)
+        guard let info = try? await downloader.info(scopeId: scope.sessionId, path: path) else {
+            // The host is unreachable: showing the copy we have beats showing
+            // nothing, and the status bar already carries the transport's state.
+            return localCopy(for: path)
+        }
+        // `-DSHSimulateRemoteChange <path>[,<seconds>]`: a run that wants to
+        // prove the *stale* path cannot wait for the computer's file to be
+        // re-rendered mid-session, so one later open of that path is told the
+        // host reports a different version. Everything after this branch is the
+        // real code: discard the superseded copy, fetch again, say why.
+        if let change = simulatedRemoteChange(path: path) {
+            didSimulateRemoteChange = true
+            simulatedChangeNote = change
+            transfers[key] = .idle
+            transferRates[key] = nil
+            staleRefreshes.insert(key)
+            WorkspaceFileCache.discard(scopeId: scope.sessionId, path: key, version: held)
+            return await download(path: path)
+        }
+        guard info.version != held else {
+            // Same file as the copy we hold: an ordinary cache hit, and the
+            // "refreshed" note from a previous open has been read by now.
+            clearStaleMark(key: key)
+            return localCopy(for: path)
+        }
+
+        // The computer's file is a different file now. Drop the superseded copy
+        // (a re-rendered video is tens of megabytes) and fetch the new one.
+        transfers[key] = .idle
+        transferRates[key] = nil
+        staleRefreshes.insert(key)
+        WorkspaceFileCache.discard(
+            scopeId: scope.sessionId, path: key, version: held
+        )
+        return await download(path: path)
+    }
+
+    /// Paths whose current transfer started because the computer's copy changed.
+    private(set) var staleRefreshes: Set<String> = []
+
+    /// Whether the transfer for this path is a refresh of a stale copy.
+    func isRefreshingStaleCopy(for path: String) -> Bool {
+        staleRefreshes.contains(Self.cacheKey(path, root: scope.workspaceRoot))
+    }
+
+    private func clearStaleMark(key: String) {
+        staleRefreshes.remove(key)
     }
 
     /// Current throughput, in MB/s, or nil before the first window lands.
@@ -399,7 +478,8 @@ final class WorkspaceFilesModel {
         if let cached = WorkspaceFileCache.existing(
             scopeId: scopeId, path: key, version: info.version, bytes: info.bytes
         ) {
-            transfers[key] = .ready(bytes: cached.bytes, url: cached.url)
+            transfers[key] = .ready(bytes: cached.bytes, url: cached.url, version: info.version)
+            clearStaleMark(key: key)
             return cached.url
         }
 
@@ -437,7 +517,7 @@ final class WorkspaceFilesModel {
             transferRates[key] = Double(fetched.bytes) / seconds / 1_048_576
         }
         WorkspaceFileCache.trim()
-        transfers[key] = .ready(bytes: fetched.bytes, url: complete)
+        transfers[key] = .ready(bytes: fetched.bytes, url: complete, version: info.version)
         return complete
     }
 
@@ -485,6 +565,41 @@ final class WorkspaceFilesModel {
 
     /// How many times a dropped transfer is resumed without asking.
     private static let automaticResumeAttempts = 2
+
+    /// Set once the simulated change has been served.
+    private var didSimulateRemoteChange = false
+    private var simulatedChangeNote = ""
+    private let launchedAt = Date()
+
+    /// Whether this open should look like "the computer's file changed".
+    ///
+    /// Three conditions, because the naive "second open" version fired during the
+    /// *first* one — SwiftUI re-runs a view's `.task` when its branch changes, so
+    /// the download's own state change produced the second call:
+    ///
+    /// - the path is the one the run named,
+    /// - something has already been downloaded for it (a first, cold open is not
+    ///   a stale copy),
+    /// - the run's delay has elapsed, which is how a case makes the two opens
+    ///   land either side of "now the computer's file is different".
+    private func simulatedRemoteChange(path: String) -> String? {
+        #if DEBUG
+        guard !didSimulateRemoteChange else { return nil }
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let index = arguments.firstIndex(of: "-DSHSimulateRemoteChange"),
+              index + 1 < arguments.count
+        else { return nil }
+        let parts = arguments[index + 1].split(separator: ",", maxSplits: 1).map(String.init)
+        guard parts.first == path else { return nil }
+        let delay = parts.count > 1 ? (Double(parts[1]) ?? 0) : 0
+        guard Date().timeIntervalSince(launchedAt) >= delay else { return nil }
+        let key = Self.cacheKey(path, root: scope.workspaceRoot)
+        guard transfers[key]?.version != nil else { return nil }
+        return "simulated"
+        #else
+        return nil
+        #endif
+    }
 
     /// A run can ask for the first attempt to be cut short.
     ///

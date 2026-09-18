@@ -153,7 +153,7 @@ struct WorkspaceFileTransferStatus: View {
             .padding(.horizontal, DSHTheme.Spacing.standard)
             .padding(.vertical, DSHTheme.Spacing.tight)
 
-        case .ready(let bytes, _):
+        case .ready(let bytes, _, _):
             HStack(spacing: DSHTheme.Spacing.tight) {
                 Image(systemName: "checkmark.circle.fill")
                     .font(.system(size: 12))
@@ -192,6 +192,9 @@ struct WorkspaceFileTransferStatus: View {
     }
 
     private func runningText(received: Int, total: Int?) -> String {
+        if model.isRefreshingStaleCopy(for: path) {
+            return "电脑上的文件已更新，正在重新读取…\(ByteFormat.compact(received))"
+        }
         let speed = model.transferSpeed(for: path).map { " · \(String(format: "%.1f", $0)) MB/s" } ?? ""
         guard let total, total > 0 else {
             return "正在从电脑读取…（已读取 \(ByteFormat.compact(received))\(speed)）"
@@ -203,10 +206,14 @@ struct WorkspaceFileTransferStatus: View {
     /// What a finished download cost, so "slow" has a number attached.
     private func readyText(bytes: Int) -> String {
         let base = "已下载 \(ByteFormat.compact(bytes))（\(String(bytes)) 字节）"
+        // A refresh says so: "the copy you are looking at is the one on the
+        // computer" is the whole point of revalidating, and on a fast link the
+        // progress bar is gone before anyone could read it.
+        let refreshed = model.isRefreshingStaleCopy(for: path) ? "，已按电脑上的新版本重新读取" : ""
         guard let seconds = model.transferSeconds(for: path), seconds >= 1,
               let speed = model.transferSpeed(for: path)
-        else { return "\(base)，已可分享" }
-        return "\(base)，用时 \(String(format: "%.1f", seconds)) 秒（平均 \(String(format: "%.1f", speed)) MB/s），已可分享"
+        else { return "\(base)\(refreshed)，已可分享" }
+        return "\(base)，用时 \(String(format: "%.1f", seconds)) 秒（平均 \(String(format: "%.1f", speed)) MB/s）\(refreshed)，已可分享"
     }
 
     private func pausedText(bytes: Int, total: Int?, reason: String?) -> String {
@@ -274,20 +281,19 @@ struct WorkspaceFilePreviewContent: View {
 
     var body: some View {
         content
-            // Only a file nobody has started on. Without the guard this task
-            // re-runs whenever the branch below changes — and a failure changes
-            // it — so a download that cannot succeed retried itself every minute
-            // and showed "正在读取" forever instead of the reason it failed.
+            // Revalidated on every open, not only when nothing has been
+            // downloaded yet: the computer's file may have been rewritten since,
+            // and a video that plays yesterday's render is worse than a spinner.
+            // `freshCopy` costs one `stat` when nothing changed.
             .task {
-                if model.transferPhase(for: path) == .idle {
-                    await model.download(path: path)
-                }
+                if case .running = model.transferPhase(for: path) { return }
+                await model.freshCopy(for: path)
             }
     }
 
     @ViewBuilder
     private var content: some View {
-        if let url = model.localCopy(for: path), case .ready(let bytes, _) = model.transferPhase(for: path) {
+        if let url = model.localCopy(for: path), case .ready(let bytes, _, _) = model.transferPhase(for: path) {
             // Two ways to decide "the system preview has nothing for this": the
             // formats measured to draw an empty page, and anything QuickLook
             // itself declines.
@@ -404,7 +410,7 @@ struct WorkspaceImagePreviewView: View {
     private func load() async {
         failure = nil
         image = nil
-        guard let url = await model.download(path: path) else {
+        guard let url = await model.freshCopy(for: path) else {
             // A cancel is not a failure: the sheet was closed on purpose.
             if case .failed(let message) = model.transferPhase(for: path) {
                 failure = message

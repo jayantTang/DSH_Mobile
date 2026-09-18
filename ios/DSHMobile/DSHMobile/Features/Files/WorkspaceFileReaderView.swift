@@ -169,7 +169,7 @@ struct WorkspaceFileReaderView: View {
             ProgressView()
                 .controlSize(.small)
                 .accessibilityIdentifier("files.action.running")
-        case .ready(_, let url):
+        case .ready(_, let url, _):
             ShareLink(item: url) {
                 Label("分享", systemImage: "square.and.arrow.up")
             }
