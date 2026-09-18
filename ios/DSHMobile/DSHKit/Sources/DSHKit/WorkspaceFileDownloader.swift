@@ -17,20 +17,18 @@ import Foundation
 /// back-to-back is what would make a turn feel stuck.
 public struct WorkspaceFileDownloader: Sendable {
 
-    /// The window every request asks for.
+    /// The window every request asks for: the Host's own `maxBytes`.
     ///
-    /// Sized so the **response** stays inside one WebSocket message. The relay
-    /// does not split at the WebSocket level: once a device is over its rate, a
-    /// device-bound frame larger than 512 KB of JSON is written as several
-    /// WebSocket *messages*, and a client reading one message per frame never
-    /// sees the rest of it — the request simply never answers. 192 KiB of bytes
-    /// becomes about 256 KB of base64, inside that ceiling with room for the
-    /// envelope, and it is the same chunk the upload path has carried in one
-    /// message since it was written.
+    /// Asking for the cap is what keeps the round trips down — a 2 MiB window
+    /// answers with about 2.8 MB of base64, which is ten times the data per
+    /// round trip of a 192 KiB window. The relay writes a frame that large as
+    /// several WebSocket messages when the device is over its rate, which is
+    /// exactly what `FrameAssembler` on the carrier puts back together; that is
+    /// why this can be the cap rather than whatever fits in one message.
     ///
-    /// Asking for less only adds round trips. Asking for more is what made a 3 MB
-    /// download hang with its first window already in flight.
-    public static let windowBytes = 192 * 1024
+    /// Larger than the cap is refused outright (`workspace-file/too-large`), so
+    /// `WindowSizer` below still halves it for a deployment configured smaller.
+    public static let windowBytes = 2 * 1024 * 1024
 
     /// How small a window may shrink to before a `too-large` refusal is treated
     /// as something other than the window size.

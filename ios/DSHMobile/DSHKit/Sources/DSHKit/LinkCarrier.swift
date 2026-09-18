@@ -124,6 +124,8 @@ public actor LinkCarrier: DSHCarrier {
     private let reconnect: ReconnectPolicy
 
     private var socket: URLSessionWebSocketTask?
+    /// Puts back a frame the relay wrote as several WebSocket messages.
+    private var assembler = FrameAssembler()
     private var receiveLoop: Task<Void, Never>?
     private var heartbeatLoop: Task<Void, Never>?
     private var connectWaiters: [CheckedContinuation<Void, any Error>] = []
@@ -358,6 +360,7 @@ public actor LinkCarrier: DSHCarrier {
         task.maximumMessageSize = MuxConnection.maximumMessageSize
         task.resume()
         socket = task
+        assembler.reset()
         startReceiveLoop(on: task)
         startHeartbeat(on: task)
     }
@@ -371,9 +374,12 @@ public actor LinkCarrier: DSHCarrier {
                     guard let self else { return }
                     switch message {
                     case .string(let text):
-                        await self.handle(Data(text.utf8))
+                        await self.receive(Data(text.utf8))
                     case .data(let data):
-                        await self.handle(data)
+                        // The relay speaks JSON text frames and reserves binary
+                        // ones; half a reassembled frame followed by binary means
+                        // the stream cannot be trusted.
+                        await self.receiveBinary(data)
                     @unknown default:
                         break
                     }
@@ -414,6 +420,7 @@ public actor LinkCarrier: DSHCarrier {
     }
 
     private func handleDisconnect(reason: String) async {
+        assembler.reset()
         receiveLoop = nil
         heartbeatLoop?.cancel()
         heartbeatLoop = nil
@@ -455,6 +462,37 @@ public actor LinkCarrier: DSHCarrier {
         for observer in statusObservers.values {
             observer.yield(status)
         }
+    }
+
+    /// Feeds one WebSocket message to the assembler and handles what it completes.
+    ///
+    /// A message is usually a whole frame. A large one may be a fragment: the
+    /// relay writes any device-bound frame over 512 KB as several messages once
+    /// the device is over its rate, on the assumption that the client puts the
+    /// frame back together. Without this the fragment is dropped as malformed
+    /// JSON and its call hangs until its deadline with nothing to show for it.
+    ///
+    /// A stream that cannot be reassembled is a broken connection, not a reason
+    /// to keep buffering: the socket is dropped with a stated reason so every
+    /// call waiting on it fails visibly and the reconnect starts.
+    private func receive(_ message: Data) async {
+        do {
+            if let frame = try assembler.feed(message) {
+                handle(frame)
+            }
+        } catch {
+            assembler.reset()
+            await handleDisconnect(reason: "relay frame could not be reassembled")
+        }
+    }
+
+    private func receiveBinary(_ message: Data) async {
+        if assembler.isHoldingPartialFrame {
+            assembler.reset()
+            await handleDisconnect(reason: "relay sent binary inside a split frame")
+            return
+        }
+        handle(message)
     }
 
     private func handle(_ data: Data) {

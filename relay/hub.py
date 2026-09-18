@@ -267,8 +267,15 @@ class DeviceLink(Link):
         messages while the device is over its rate, because ``send_str`` hands
         the whole payload to the transport in one call — a 2.7 MB screenshot
         would otherwise be written to the socket in one burst no matter what the
-        bucket says. The channel is a stream, so the client reassembles the frame
-        with no change on its side.
+        bucket says.
+
+        **The client has to put those messages back together**, and that is not
+        free: WebSocket messages are not a byte stream, so a client that parses
+        each ``receive()`` as one frame drops the first fragment as malformed
+        JSON and the rest as garbage, and the call behind them never answers.
+        The iOS app does reassemble them (``DSHKit/FrameAssembler.swift``); a
+        connector or a future client must too. Writing the pieces as WebSocket
+        *continuation* frames instead would remove the requirement entirely.
         """
         size = len(text.encode("utf-8"))
         wait = self.bucket.take(size)
