@@ -1,0 +1,16 @@
+# TC-MOB-19 的执行指令（工作区视频：下载 + 播放）
+#
+# 判据落在两件不会随文件重渲染而过期的事上：
+#   * 「已可分享」——代码比对过主机 stat 的字节数之后才会出现的状态，等于「一字节不差」；
+#   * 截图里系统播放器画出的首帧，说明拉下来的确实是个能播的 mp4。
+# 精确字节数每轮都会和当时的 `stat -f%z` 对照一次，写在报告的逐步记录里。
+#
+# 会话在用例 front matter 里写死（1_demo 那个），文件路径相对它的工作区。
+#
+# 跑法：DSH_CONNECT=relay ./test/run.sh run test/cases/current/19-工作区视频下载并播放.md
+
+1  do: 打开报告 story-promo/out/video/story-promo-vertical_1080x1920.mp4（story-promo-vertical_1080x1920.mp4） | want: text:story-promo-vertical_1080x1920.mp4
+2  do: 等待 text:已可分享 timeout=240 | want: text:已可分享
+3  do: 什么都不做 | shot: 01-video-ready check=texts,amber
+4  do: 点击 id:files.action.share, 等待 3 秒
+5  do: 什么都不做 | want: text:已可分享 | shot: 02-share-sheet

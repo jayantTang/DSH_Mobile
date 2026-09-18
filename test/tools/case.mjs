@@ -84,8 +84,10 @@ const ACTIONS = [
       [`launch screen=${page}${args ? ` args=${args}` : ''}`] },
   // A workspace file: the report itself, opened in whichever viewer the app
   // picks for its type. The path is relative to the session's workspace.
-  { match: /^打开报告\s+([^\s（(]+)(?:\s*[（(](.+)[）)])?$/, to: (file, anchor) =>
-      [`launch file=${file} root=${quote((anchor ?? '').trim())}`] },
+  // `args=…` carries launch arguments the file needs — `-DSHInterruptDownload`,
+  // which cuts the first download short so the resume path can be driven.
+  { match: /^打开报告\s+([^\s（(]+)(?:\s*[（(](.+)[）)])?(?:\s+args=(\S+))?$/, to: (file, anchor, args) =>
+      [`launch file=${file} root=${quote((anchor ?? '').trim())}${args ? ` args=${args}` : ''}`] },
   // Same, but the viewer opens in its source mode — the path that used to hang.
   { match: /^打开源码\s+([^\s（(]+)(?:\s*[（(](.+)[）)])?$/, to: (file, anchor) =>
       [`launch file=${file} root=${quote((anchor ?? '').trim())} filemode=source`] },
@@ -140,7 +142,12 @@ function directivesFor(action) {
   // instruction file have to line up one step to one row, and reaching the
   // state a picture needs sometimes takes two moves — open the transcript,
   // then scroll it to where the answer is.
-  const parts = action.split(',').map((part) => part.trim()).filter(Boolean)
+  //
+  // Split through `splitActions`, not `String.split`: a comma inside a quoted
+  // value (`args="-DSHInterruptDownload,1500000"`) is part of the value, and
+  // splitting here first used to cut that argument in half before anything
+  // downstream could respect the quotes.
+  const parts = splitActions(action)
   if (parts.length > 1) return parts.flatMap(directivesFor)
   const entry = ACTIONS.find((candidate) => candidate.match.test(action))
   if (!entry) throw new Error(`不认识的动作用语「${action}」——见 test/README.md 的动作表`)
@@ -319,7 +326,12 @@ export function buildPlan({ casePath, caseText, stepsText, runId, bundleId, sess
           // publishable (`SettingsView.masked`). Without this the only way to
           // use such a hook would be to bake it into the page table, where it
           // would then apply to every case that opens that page.
-          args.push(...String(values.args).split(',').map((token) => token.trim()).filter(Boolean))
+          // A value with a comma in it has to be quoted for `splitActions` to
+          // keep it whole, which leaves the quotes on the token here: strip them
+          // per argument, not per field.
+          args.push(...String(values.args).split(',')
+            .map((token) => token.trim().replace(/^["']|["']$/g, ''))
+            .filter(Boolean))
         }
         current = { id: keys[0] ?? (values.file ? 'report' : (values.connect === 'none' ? 'onboarding' : 'sessions')),
                     note: title, launch: args, steps: [], root: pendingRoot }
