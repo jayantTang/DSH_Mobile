@@ -39,8 +39,10 @@
     "node": ">=22"
   },
   "scripts": {
-    "test": "npm --prefix plugins/mobile-link test && npm --prefix plugins/send-image test && npm --prefix plugins/doubao-image test",
+    "test": "npm --prefix plugins/mobile-link test && npm --prefix plugins/send-image test && npm --prefix plugins/doubao-image test && npm run test:scripts",
     "demo:session": "node scripts/dev/demo-session.mjs",
-    "check:secrets": "node scripts/dev/check-secrets.mjs"
+    "check:secrets": "node scripts/dev/check-secrets.mjs",
+    "restart": "node scripts/dev/dsh-restart.mjs",
+    "test:scripts": "node --test scripts/dev/dsh-restart.test.mjs skills/send-image/send-image.test.mjs"
   }
 }
