@@ -89,7 +89,14 @@ async function main() {
       relayUrl: settled.relayUrl,
       stateFile: settled.stateFile,
     }, null, 2)}\n`)
-    process.stdout.write('这台电脑已登记。重启 DSH 后连接器会使用新的身份。\n')
+    // 登记只是第一步：还有两步（重启、扫码）不写在输出里，新用户就会以为"登记完就好了"。
+    // 第一位试用用户正是这样——登记了电脑，却没有配对手机。
+    process.stdout.write(
+      '这台电脑已登记。接下来还有两步：\n' +
+      '  1. 重启 DSH，让连接器用上这个身份；\n' +
+      '  2. 在这台电脑的浏览器里打开 http://127.0.0.1:<DSH 端口>/mobile-link/qr，' +
+      '用手机 App 底部的「扫码配对」扫它（端口启动时会打印）。\n'
+    )
     return 0
   }
 

@@ -202,6 +202,9 @@ cat > "$STAGE_DIR/index.html" <<HTML
   ol { color: #cfd3d6; font-size: 14px; padding-left: 20px; margin: 26px 0 0; }
   li { margin-bottom: 8px; }
   code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; color: #adb2b8; }
+  h2 { font-size: 15px; font-weight: 600; margin: 34px 0 8px; color: #f9fafb; }
+  .hint { color: #81858c; font-size: 13px; margin: 0 0 12px; }
+  .hint strong { color: #cfd3d6; font-weight: 600; }
 </style>
 <div class="card">
   <h1>${APP_NAME}</h1>
@@ -212,6 +215,22 @@ cat > "$STAGE_DIR/index.html" <<HTML
     <li>点上面的按钮，系统会提示「安装」。</li>
     <li><strong>更新不用先卸载</strong>：直接点上面按钮即可覆盖安装，数据会保留；卸载再装会清掉 App 里的记录。</li>
     <li>首次安装后如提示「不受信任的开发者」，到 <code>设置 → 通用 → VPN 与设备管理</code> 信任本开发者。</li>
+  </ol>
+
+  <!-- 装完之后干什么，是这张页面上最容易缺的一句：App 装好了打开只有一个连接页，
+       而它连的是用户自己的电脑。这一步不写清楚，新用户会以为 App 坏了。（第一位
+       试用用户就是这样：登记了电脑却没有配对手机。） -->
+  <h2>装完之后（第一次用）</h2>
+  <p class="hint">这个 App 不连我们的服务器，它连的是<strong>你自己电脑上</strong>的 DSH。
+    电脑那一半没跑起来时，App 里只有一个连接页 —— 那是正常的。</p>
+  <ol>
+    <li>电脑上装连接器：<code>dsh plugin --profile web add dsh-plugin-mobile-link</code></li>
+    <li>用邀请码把这台电脑登记到中转（邀请码与中转地址是发本链接给你的人一起给的）：
+      <code>dsh-mobile-link enroll --invite &lt;邀请码&gt; --relay &lt;中转地址&gt;</code></li>
+    <li>重启 DSH，让连接器加载；然后在这台电脑的浏览器里打开二维码页：
+      <code>http://127.0.0.1:&lt;端口&gt;/mobile-link/qr</code>（端口启动时会打印，也在
+      <code>~/.dsh/desktop-shell/endpoint.json</code> 里）。</li>
+    <li>手机 App 底部 <strong>扫码配对</strong> → 扫它。连上之后就能看到电脑上的会话。</li>
   </ol>
 </div>
 <script>
