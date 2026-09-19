@@ -39,6 +39,12 @@ struct RootView: View {
             } message: {
                 Text(connectionError ?? "")
             }
+            // A reconnected link is a different world from the one that failed:
+            // pictures that lost their race with an outage get another chance
+            // without anyone tapping.
+            .onChange(of: store.state.isConnected) { _, isConnected in
+                if isConnected { attachmentImages.clearFailures() }
+            }
             .task {
                 listModel.attach(to: store, hub: hub)
                 attachmentImages.attach(store: store)

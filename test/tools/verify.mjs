@@ -11,6 +11,10 @@
 //           amber palette, and this is the check that catches it returning.
 //           It covers pure yellow (hue 60°), which the first version missed and
 //           therefore let a yellow-hairline defect ship.
+//   content something rendered at all: enough pixels differ from the dominant
+//           colour. The weaker question `texts` cannot ask on a light screen —
+//           the image-retry card is light grey on light grey by design and
+//           measures 0.00% ink while being perfectly correct.
 //
 // Deliberately missing: a geometric "these two elements overlap" rule. The
 // accessibility tree nests freely, so frame intersection reports every
@@ -124,6 +128,34 @@ function checkInk(image, region, dark, minInk = 0.002) {
   const inkRatio = samples ? hits / samples : 0
   return [{ check: 'texts', label: '有文字墨迹', ok: inkRatio >= minInk,
             detail: `墨迹占比 ${(inkRatio * 100).toFixed(2)}%（要求 ≥ ${(minInk * 100).toFixed(2)}%）` }]
+}
+
+/// Did anything render at all?
+///
+/// `texts` asks for dark ink, which a deliberately faint screen has none of. This
+/// asks the weaker question that still catches a blank or half-drawn view:
+/// enough pixels differ from the dominant colour to be a rendered interface.
+function checkContent(image, minShare = 0.01) {
+  // The whole screen, not the centre region the other checks use: "did anything
+  // render" is a question about the picture, and a screen whose only content is
+  // a card near the bottom (an image message) has an empty middle by design.
+  const region = { x: 0, y: Math.round(image.height * 0.075), w: image.width,
+                   h: Math.round(image.height * 0.85) }
+  const dominant = dominantColour(image, region)
+  if (!dominant) return [{ check: 'content', label: '画面不是空白', ok: false, detail: '取样区域为空' }]
+  let different = 0
+  let samples = 0
+  for (let y = region.y; y < region.y + region.h; y += 2) {
+    for (let x = region.x; x < region.x + region.w; x += 2) {
+      const rgb = image.at(x, y)
+      if (!rgb) continue
+      samples += 1
+      if (channelDelta(rgb, dominant.mean) > 28) different += 1
+    }
+  }
+  const share = samples ? different / samples : 0
+  return [{ check: 'content', label: '画面不是空白', ok: share >= minShare,
+            detail: `与主色不同的像素 ${(share * 100).toFixed(2)}%（要求 ≥ ${(minShare * 100).toFixed(2)}%）` }]
 }
 
 /// Looks for the app's own error colour as a *band* rather than as stray pixels.
@@ -248,6 +280,8 @@ for (const entry of manifest) {
       const found = countLines(image, region)
       add([{ check: 'lines', label: '分隔线可见', ok: found >= 2,
              detail: `识别到 ${found} 条横线（要求 ≥ 2）` }])
+    } else if (check === 'content') {
+      add(checkContent(image))
     } else if (check === 'amber') {
       add(checkAmber(image, entry.amberTolerance ?? 0.0002))
     } else if (check.startsWith('brand')) {

@@ -73,29 +73,52 @@ struct AttachmentThumbnail: View {
         return min(maxHeight, max(120, 320 / aspectRatio))
     }
 
+    /// The box the picture will occupy: a failure with a way out, or a spinner.
+    ///
+    /// Split into two top-level views rather than one container with a branch
+    /// inside: an identifier on the container swallows the identifiers of what
+    /// it contains (the retry button's id never reached the accessibility tree,
+    /// and the case could not find it).
     @ViewBuilder
     private var placeholder: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: DSHTheme.Radius.medium, style: .continuous)
-                .fill(DSHTheme.codeBackground)
-            if images.hasFailed(attachment.attachmentId) {
+        if images.hasFailed(attachment.attachmentId) {
+            Button {
+                Task { await images.retry(attachment.attachmentId) }
+            } label: {
                 VStack(spacing: DSHTheme.Spacing.hairline) {
-                    Image(systemName: "photo.badge.exclamationmark")
+                    Image(systemName: "arrow.clockwise")
                     Text("图片加载失败")
                         .font(DSHTheme.Typography.micro)
+                    Text("点按重试")
+                        .font(DSHTheme.Typography.micro)
+                        .foregroundStyle(DSHTheme.brand)
                 }
                 .foregroundStyle(DSHTheme.labelTertiary)
-            } else {
+                .frame(maxWidth: .infinity)
+                .frame(height: placeholderHeight)
+                .background(
+                    RoundedRectangle(cornerRadius: DSHTheme.Radius.medium, style: .continuous)
+                        .fill(DSHTheme.codeBackground)
+                )
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("attachment.image.retry")
+            .accessibilityLabel("图片加载失败，点按重试")
+        } else {
+            ZStack {
+                RoundedRectangle(cornerRadius: DSHTheme.Radius.medium, style: .continuous)
+                    .fill(DSHTheme.codeBackground)
                 ProgressView()
             }
+            // A concrete height, not `maxWidth: .infinity` combined with
+            // `aspectRatio`: that pair asks the layout for an infinite width and
+            // then derives the height from it, which is a feedback loop — it locked
+            // the main thread and left the transcript blank.
+            .frame(maxWidth: .infinity)
+            .frame(height: placeholderHeight)
+            .accessibilityIdentifier("attachment.image.loading")
         }
-        // A concrete height, not `maxWidth: .infinity` combined with
-        // `aspectRatio`: that pair asks the layout for an infinite width and
-        // then derives the height from it, which is a feedback loop — it locked
-        // the main thread and left the transcript blank.
-        .frame(maxWidth: .infinity)
-        .frame(height: placeholderHeight)
-        .accessibilityIdentifier("attachment.image.loading")
     }
 }
 
