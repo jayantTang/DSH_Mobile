@@ -573,4 +573,33 @@ export function qrSvg(text, { scale = 8, quietZone = 4, dark = '#111111', light 
     + '</svg>'
 }
 
+/**
+ * The same symbol for a terminal, two matrix rows per line of text.
+ *
+ * Why bother: `enroll` is the one moment a person is already sitting at the
+ * terminal with the phone in hand, and a code printed there can be scanned
+ * straight off the screen — no page to open, no port to look up. Half blocks
+ * ('▀' = top dark, '▄' = bottom dark) keep the symbol roughly square in a
+ * terminal cell, which is twice as tall as it is wide. The quiet zone is the
+ * spec's four modules, not the two this first shipped with: at two, Vision —
+ * the same decoder iOS uses — refused to find the symbol at all.
+ */
+export function qrTerminal(text, { quietZone = 4, margin = '  ' } = {}) {
+  const matrix = qrMatrix(text)
+  const size = matrix.length
+  const blank = (row) => row < 0 || row >= size
+  const dark = (row, column) => !blank(row) && column >= 0 && column < size && matrix[row][column]
+  const lines = []
+  for (let row = -quietZone; row < size + quietZone; row += 2) {
+    let line = margin
+    for (let column = -quietZone; column < size + quietZone; column += 1) {
+      const top = dark(row, column)
+      const bottom = dark(row + 1, column)
+      line += top && bottom ? '█' : top ? '▀' : bottom ? '▄' : ' '
+    }
+    lines.push(line)
+  }
+  return lines.join('\n')
+}
+
 export { TOTAL_CODEWORDS }

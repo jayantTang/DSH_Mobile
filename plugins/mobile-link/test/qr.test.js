@@ -11,7 +11,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { formatBits, qrMatrix, qrSvg, versionFor, versionInfoBits } from '../lib/qr.js'
+import { formatBits, qrMatrix, qrSvg, qrTerminal, versionFor, versionInfoBits } from '../lib/qr.js'
 
 /** `matrixHex(qrMatrix(text))` — four modules per hex digit, row-major. */
 function matrixHex(matrix) {
@@ -168,4 +168,30 @@ test('the SVG contains one path segment per dark module', () => {
   for (const row of matrix) for (const module of row) if (module) dark += 1
   const svg = qrSvg('HELLO', { mask: 0, scale: 8 })
   assert.equal((svg.match(/M\d+ \d+h8v8h-8z/g) ?? []).length, dark)
+})
+
+// ── terminal rendering ──────────────────────────────────────────────────────
+
+test('the terminal symbol has the shape a scanner expects', () => {
+  // Two matrix rows per line of text, plus the quiet zone on all four sides.
+  const text = 'dsh://pair?relay=wss%3A%2F%2Frelay.example.com%2Fdsh-link&code=ABCD-EFGH'
+  const art = qrTerminal(text)
+  const lines = art.split('\n')
+  const size = qrMatrix(text).length
+  const quiet = 4
+  assert.equal(lines.length, Math.ceil((size + quiet * 2) / 2))
+  for (const line of lines) assert.equal([...line].length, size + quiet * 2 + 2)
+  // The quiet zone really is quiet: a scanner cannot find a symbol that runs
+  // into text. Four modules, the spec's width — at two, Vision (the decoder iOS
+  // itself uses) refused to find the symbol at all.
+  for (const line of lines.slice(0, 1)) assert.equal(line.trim(), '')
+  for (const line of lines) assert.match(line.slice(0, 6), /^\s*$/)
+  // And something is actually drawn — half blocks only, no stray characters.
+  assert.match(art, /[▀▄█]/)
+  assert.doesNotMatch(art.replace(/[▀▄█ \n]/g, ''), /./)
+})
+
+test('the terminal symbol changes with the payload', () => {
+  // A renderer that ignores its argument would still look like a QR code.
+  assert.notEqual(qrTerminal('dsh://pair?code=AAAA-AAAA'), qrTerminal('dsh://pair?code=BBBB-BBBB'))
 })
