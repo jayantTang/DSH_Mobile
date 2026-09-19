@@ -12,7 +12,7 @@
  */
 
 import { existsSync } from 'node:fs'
-import { dirname } from 'node:path'
+import { dirname, join } from 'node:path'
 import { requireFromDsh } from './dsh-install.mjs'
 
 /**
