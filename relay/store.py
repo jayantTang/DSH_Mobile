@@ -546,5 +546,15 @@ class Store:
             raise NotFound(f"device {device_id} does not exist")
         self._write("UPDATE devices SET revokedAt=? WHERE deviceId=?", (now_ms(), device_id))
 
+    def set_device_app_version(self, device_id: str, version: str) -> None:
+        """Record the build a device just reported.
+
+        The row is written when the phone pairs and, until this existed, never
+        again — so an operator asking "is that phone current?" was reading a
+        version that could be days old. The device reports it on every
+        handshake; this is where that lands.
+        """
+        self._write("UPDATE devices SET appVersion=? WHERE deviceId=?", (version, device_id))
+
     def touch_device(self, device_id: str, at: int | None = None) -> None:
         self._write("UPDATE devices SET lastSeenAt=? WHERE deviceId=?", (at or now_ms(), device_id))

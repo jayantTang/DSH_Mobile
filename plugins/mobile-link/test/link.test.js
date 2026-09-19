@@ -412,3 +412,32 @@ test('_link/hello reports what this connector can do, without asking the Host', 
     'hello was forwarded to the Host',
   )
 })
+
+test('the phone naming its build is recorded, and visible in the device snapshot', async () => {
+  // The relay's device row is written at pairing and never again, so this frame
+  // is the only place the *client's* build travels after that. Recording it is
+  // what makes "did that phone update?" answerable.
+  const { agent, socket } = makeAgent()
+  await agent.handleRelayFrame(attach('dev_1'))
+  await agent.handleRelayFrame({
+    t: 'req', id: 'h1', method: '_link/hello', deviceId: 'dev_1',
+    args: { clientName: 'DSHMobile', clientVersion: '1.0', clientBuild: '20260919.0005' },
+  })
+
+  const record = agent.router.snapshot().find((entry) => entry.deviceId === 'dev_1')
+  assert.equal(record.client.name, 'DSHMobile')
+  assert.equal(record.client.build, '20260919.0005')
+  assert.equal(record.client.label, 'DSHMobile 1.0 (20260919.0005)')
+  // And the connector still answers the app's question.
+  assert.ok(socket.frames('res').find((frame) => frame.id === 'h1')?.ok)
+})
+
+test('a phone that says nothing about itself reports nothing', async () => {
+  // Older builds send `{}`. Inventing a version here would be worse than
+  // admitting we do not know one.
+  const { agent } = makeAgent()
+  await agent.handleRelayFrame(attach('dev_1'))
+  await agent.handleRelayFrame({ t: 'req', id: 'h1', method: '_link/hello', args: {}, deviceId: 'dev_1' })
+  const record = agent.router.snapshot().find((entry) => entry.deviceId === 'dev_1')
+  assert.equal(record.client, null)
+})

@@ -14,7 +14,7 @@ import {
 } from './dlp.js'
 import { FileInbox, isFileMethod } from './files.js'
 import { GitBridge, isGitMethod } from './git.js'
-import { isHelloMethod, helloPayload } from './hello.js'
+import { isHelloMethod, helloPayload, parseClientInfo } from './hello.js'
 
 export const EVENTS_ENDPOINT = '$events'
 export const EVENTS_RESULT = '$events/result'
@@ -164,6 +164,23 @@ export class DeviceRouter {
     // What this connector is and can do. Answered here for the same reason as
     // the file calls: the HTTP status route exists only on the direct path.
     if (isHelloMethod(frame.method)) {
+      // Recorded before answering: this is the only frame in which the phone
+      // says which build it is, and the relay cannot see it from the pairing
+      // row it keeps.
+      const client = parseClientInfo(frame.args)
+      if (client) {
+        const record = this.devices.get(deviceId)
+        if (record) record.client = client
+        if (record?.client?.build !== client.build || record?.clientLogged !== client.build) {
+          if (record) record.clientLogged = client.build
+          // One line per build per connection: enough to answer "did they
+          // update?" from a log, without a line per reconnect.
+          this.logger?.info?.(
+            `mobile-link: device ${deviceId} is ${client.label}` +
+            `${record?.name ? ` (${record.name})` : ''}`
+          )
+        }
+      }
       const value = helloPayload({
         protocolVersion: this.protocolVersion,
         agentId: this.identity?.agentId,
@@ -391,6 +408,8 @@ export class DeviceRouter {
       deviceId: record.deviceId,
       name: record.name,
       model: record.model,
+      // Which build that phone reported on its last handshake.
+      client: record.client ?? null,
       connectedAt: record.connectedAt,
       eventsReady: Boolean(record.clientId),
       openStreams: record.dlpIds.size,

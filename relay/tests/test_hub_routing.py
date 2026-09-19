@@ -321,3 +321,59 @@ async def test_backpressure_drops_only_the_slow_device(client, store, provisione
 
     await agent_ws.close()
     await device_ws.close()
+
+
+async def test_a_phone_reporting_its_build_refreshes_the_device_row(client, provisioned, store):
+    """The one frame in which the client's own build travels.
+
+    The device row is written when the phone pairs and, before this, never
+    again — so "did that phone update?" was answered with whatever it ran the
+    day it paired. The handshake carries it once per connection; the relay
+    records it, and the agent's view of the device gets the fresh value.
+    """
+    agent_ws = await open_agent(client, provisioned)
+    device_ws, device = await open_device(client, provisioned)
+    assert (await recv_json(agent_ws))["t"] == "deviceAttach"
+    assert (await recv_json(device_ws))["info"]["online"] is True
+
+    await device_ws.send_json({
+        "t": "req", "id": "hello-1", "method": "_link/hello",
+        "args": {"clientName": "DSHMobile", "clientVersion": "1.0",
+                 "clientBuild": "20260919.0005"},
+    })
+    forwarded = await recv_json(agent_ws)
+    assert forwarded["method"] == "_link/hello", "the frame must still reach the connector"
+
+    await asyncio.sleep(0.1)  # the row write happens off the routing path
+    row = store.device_by_id(device["deviceId"])
+    assert row["appVersion"] == "1.0 20260919.0005"
+
+    # And the second hello does not rewrite the row for the same build.
+    before = row["appVersion"]
+    await device_ws.send_json({
+        "t": "req", "id": "hello-2", "method": "_link/hello",
+        "args": {"clientName": "DSHMobile", "clientVersion": "1.0",
+                 "clientBuild": "20260919.0005"},
+    })
+    assert (await recv_json(agent_ws))["method"] == "_link/hello"
+    await asyncio.sleep(0.1)
+    assert store.device_by_id(device["deviceId"])["appVersion"] == before
+
+    await agent_ws.close()
+    await device_ws.close()
+
+
+async def test_a_client_that_reports_nothing_leaves_the_row_alone(client, provisioned, store):
+    """An older app sends an empty handshake; unknown must not overwrite known."""
+    agent_ws = await open_agent(client, provisioned)
+    device_ws, device = await open_device(client, provisioned)
+    assert (await recv_json(agent_ws))["t"] == "deviceAttach"
+    assert (await recv_json(device_ws))["info"]["online"] is True
+
+    await device_ws.send_json({"t": "req", "id": "hello-1", "method": "_link/hello", "args": {}})
+    assert (await recv_json(agent_ws))["method"] == "_link/hello"
+    await asyncio.sleep(0.1)
+    assert store.device_by_id(device["deviceId"])["appVersion"] == "1.0"
+
+    await agent_ws.close()
+    await device_ws.close()

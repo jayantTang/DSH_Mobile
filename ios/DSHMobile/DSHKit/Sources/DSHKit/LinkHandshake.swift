@@ -49,17 +49,39 @@ public struct LinkHandshake: Decodable, Sendable {
     }
 }
 
-/// Asks the connector what it is.
+/// Asks the connector what it is, and says what is asking.
+///
+/// The client half used to be empty. That left the computer — and the relay
+/// behind it — knowing only what a phone reported when it *paired*, so "is that
+/// phone on the current build?" was unanswerable: the stored version could be
+/// days old and nothing in the per-connection traffic contradicted it. These
+/// three fields ride the one call that already happens once per connection.
+///
+/// All optional: an older client sends nothing, and the connector records
+/// nothing rather than inventing a version.
 public struct LinkHandshakeRequest: Encodable, Sendable {
-    public init() {}
+    /// The app's name as the device shows it, e.g. `DSHMobile`.
+    public let clientName: String?
+    /// Marketing version, e.g. `1.0`.
+    public let clientVersion: String?
+    /// `CFBundleVersion` — the stamp that tells two builds of 1.0 apart.
+    public let clientBuild: String?
+
+    public init(clientName: String? = nil, clientVersion: String? = nil, clientBuild: String? = nil) {
+        self.clientName = clientName
+        self.clientVersion = clientVersion
+        self.clientBuild = clientBuild
+    }
 }
 
 extension DSHClient {
     /// Fetches the connector's capabilities over the link.
-    public func linkHandshake() async throws -> LinkHandshake {
+    public func linkHandshake(
+        client: LinkHandshakeRequest = LinkHandshakeRequest()
+    ) async throws -> LinkHandshake {
         try await carrier.unary(
             method: "_link/hello",
-            args: LinkHandshakeRequest(),
+            args: client,
             as: LinkHandshake.self
         )
     }

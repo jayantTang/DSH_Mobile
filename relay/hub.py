@@ -22,6 +22,11 @@ from typing import Any, Iterable
 import dlp
 
 #: WebSocket close codes used by the relay (application range).
+#: Reserved method the phone calls once per connection. The connector answers
+#: it; the relay only reads the arguments, because they carry the client's own
+#: build — the one place it travels after pairing.
+HELLO_METHOD = "_link/hello"
+
 CLOSE_SUPERSEDED = 4001
 CLOSE_BACKPRESSURE = 4008
 CLOSE_RATE_LIMITED = 4009
@@ -475,6 +480,12 @@ class RelayHub:
         if kind == "ping":
             link.enqueue_frame({"t": "pong", "ts": frame.get("ts")})
             return
+        if kind == "req" and frame.get("method") == HELLO_METHOD:
+            # The phone's own build rides this call. Recording it here is what
+            # lets `device-list` answer "did that phone update?" instead of
+            # repeating whatever it was running the day it paired.
+            await self._note_client_build(link, frame.get("args"))
+
         if kind == "hello":
             wanted = frame.get("agentId")
             if isinstance(wanted, str) and wanted and wanted != link.agent_id:
@@ -494,6 +505,22 @@ class RelayHub:
             self.logger.warning("relay: device %s exceeded %d queued frames; dropping",
                                 link.device_id, self.limits.queue_depth)
             await self.detach_device(link, reason="backpressure", code=CLOSE_BACKPRESSURE)
+
+    async def _note_client_build(self, link: DeviceLink, args: Any) -> None:
+        """Keep the device row's `appVersion` current, without a write per frame."""
+        if not isinstance(args, dict):
+            return
+        parts = [args.get("clientVersion"), args.get("clientBuild")]
+        reported = " ".join(str(part) for part in parts if isinstance(part, str) and part) or None
+        if not reported or reported == link.app_version:
+            return
+        link.app_version = reported
+        try:
+            await asyncio.to_thread(self.store.set_device_app_version, link.device_id, reported)
+        except Exception:  # noqa: BLE001 - a bookkeeping write must not drop the link
+            self.logger.warning("relay: could not record the client build for %s", link.device_id)
+            return
+        self.logger.info("relay: device %s reports build %s", link.device_id, reported)
 
     async def route_from_agent(self, link: AgentLink, frame: dict[str, Any]) -> None:
         """Handle one validated agent frame."""

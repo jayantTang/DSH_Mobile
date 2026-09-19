@@ -55,6 +55,33 @@ export function isHelloMethod(method) {
   return method === HELLO_METHOD
 }
 
+/**
+ * What the phone says it is, out of the handshake arguments.
+ *
+ * The app sends this on every connection — the only place the *client's* build
+ * travels, since the relay's device row is otherwise written once at pairing and
+ * then never again. Older clients send `{}`, which yields nulls: reporting
+ * "unknown" beats reporting a version that may be days old.
+ *
+ * Exported for testing: what it returns ends up in a log line a person will read
+ * when they ask "did that phone update?".
+ */
+export function parseClientInfo(args) {
+  const text = (value) => (typeof value === 'string' && value.trim().length > 0 ? value.trim() : null)
+  const name = text(args?.clientName)
+  const version = text(args?.clientVersion)
+  const build = text(args?.clientBuild)
+  if (!name && !version && !build) return null
+  return {
+    name,
+    version,
+    build,
+    // `DSHMobile 1.0 (20260919.0005)`, skipping whatever is missing.
+    label: [name, version ? `${version}${build ? ` (${build})` : ''}` : build].filter(Boolean).join(' '),
+    at: Date.now(),
+  }
+}
+
 /** The answer to {@link HELLO_METHOD}. */
 export function helloPayload({ protocolVersion, agentId, name } = {}) {
   return {

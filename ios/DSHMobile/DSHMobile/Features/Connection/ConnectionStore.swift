@@ -300,6 +300,16 @@ public final class ConnectionStore {
         }
     }
 
+    /// What this build is, for the per-connection handshake.
+    ///
+    /// Read here rather than inside DSHKit: the package is platform-neutral and
+    /// has no bundle of its own, so the app is the only place that knows.
+    static var clientName: String? { Bundle.main.infoDictionary?["CFBundleName"] as? String }
+    static var clientVersion: String? {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
+    }
+    static var clientBuild: String? { Bundle.main.infoDictionary?["CFBundleVersion"] as? String }
+
     private func install(carrier: any DSHCarrier, profile: ConnectionProfile, sampleCount: Int) async {
         let previous = self.carrier
         self.carrier = carrier
@@ -309,7 +319,15 @@ public final class ConnectionStore {
         self.hostHome = profile.hostHome
         // Asked once per connection. A failure is not fatal: it just means the
         // app falls back to showing nothing that depends on a capability.
-        capabilities = Set((try? await client.linkHandshake())?.capabilities ?? [])
+        // Says who is asking, once per connection: the computer records it, and
+        // the relay refreshes the device row with it, so "which build is that
+        // phone on?" stops being a question only the phone can answer.
+        let handshake = try? await client.linkHandshake(client: LinkHandshakeRequest(
+            clientName: Self.clientName,
+            clientVersion: Self.clientVersion,
+            clientBuild: Self.clientBuild
+        ))
+        capabilities = Set(handshake?.capabilities ?? [])
         state = .connected(hostHome: profile.hostHome)
         recordConnection(profile.id, hostHome: profile.hostHome)
         startWatching()
