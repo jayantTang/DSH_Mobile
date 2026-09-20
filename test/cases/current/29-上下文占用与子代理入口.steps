@@ -1,0 +1,18 @@
+# TC-MOB-29 的执行指令（上下文占用与子代理入口）
+#
+# 判据：
+#   * 列表里占用高的行右侧是 id:session.context（小字「上下文 N%」）；
+#   * 会话信息页里 id:chat.info.context 在（精确 token / 窗口 + 百分比 + 进度条）；
+#   * 有子代理的会话行右侧**没有** id:session.subagents（入口已去掉）。
+#
+# 跑法：DSH_CONNECT=relay ./test/run.sh run test/cases/current/29-上下文占用与子代理入口.md
+
+1  do: 连接本机 DSH | want: id:session.list
+2  do: 什么都不做 | want: id:session.context
+3  do: 什么都不做 | shot: 01-context-in-list check=content,amber
+4  do: 点击 id~:session.row., 等待 id:chat.transcript timeout=25 | want: id:chat.transcript
+5  do: 点击 id:chat.info, 等待 id:chat.info.context timeout=15 | want: id:chat.info.context
+6  do: 什么都不做 | want: text:上下文占用
+7  do: 什么都不做 | shot: 02-context-in-info check=content,amber
+8  do: 点击 text:完成 | want: 不存在 id:session.subagents ; absent
+9  do: 什么都不做 | shot: 03-no-subagent-chip check=content,amber

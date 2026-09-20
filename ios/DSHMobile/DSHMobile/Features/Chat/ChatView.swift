@@ -495,6 +495,31 @@ private struct SessionInfoPopover: View {
                 row("权限", permission, selectable: false)
             }
 
+            if let pressure = model.session?.projections?.values?.contextPressure,
+               let window = pressure.contextWindow, window > 0,
+               let used = pressure.pressureTokens {
+                // What the session list can only hint at with a bar: how full the
+                // context window is right now, and with how many tokens.
+                Divider()
+                HStack(alignment: .firstTextBaseline, spacing: DSHTheme.Spacing.tight) {
+                    Text("上下文占用")
+                        .font(DSHTheme.Typography.micro)
+                        .foregroundStyle(DSHTheme.labelTertiary)
+                        .frame(minWidth: 76, alignment: .leading)
+                        .fixedSize(horizontal: true, vertical: false)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("\(TokenFormat.compact(used)) / \(TokenFormat.compact(window))（\(Int((Double(used) / Double(window) * 100).rounded()))%）")
+                            .font(DSHTheme.Typography.caption)
+                            .foregroundStyle(DSHTheme.labelPrimary)
+                            .monospacedDigit()
+                        PressureBar(fraction: Double(used) / Double(window))
+                            .frame(width: 120)
+                    }
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("chat.info.context")
+            }
+
             if let usage = model.timeline.lastUsage, usage.totalTokens > 0 {
                 Divider()
                 row("Token 用量", TokenFormat.compact(usage.totalTokens), selectable: false)

@@ -17,9 +17,6 @@ struct SessionListView: View {
     /// Called with a freshly created session's id so the caller can open it.
     var onOpenSession: (String) -> Void = { _ in }
 
-    /// Parent sessions whose subagents are currently shown. Empty by default:
-    /// a session that spawned five subagents should still read as one row.
-    @State private var expandedParents: Set<String> = []
     @State private var isLooseExpanded = false
     @State private var isArchivedExpanded = false
     @State private var isCreatingSession = false
@@ -178,13 +175,10 @@ struct SessionListView: View {
             ForEach(model.groups) { group in
                 Section {
                     ForEach(group.sessions) { session in
-                        let children = group.children[session.sessionId] ?? []
-                        parentRow(session: session, children: children)
-                        if expandedParents.contains(session.sessionId) {
-                            ForEach(children) { child in
-                                childRow(child)
-                            }
-                        }
+                        // Subagent transcripts are no longer listed: the chip
+                        // ("👥 3") told nobody anything, and opening one led to
+                        // an audit trail with no action to take on it.
+                        parentRow(session: session)
                     }
                 } header: {
                     WorkspaceHeader(title: group.title, path: group.path, home: store.hostHome)
@@ -296,7 +290,7 @@ struct SessionListView: View {
     ///
     /// The disclosure is a separate tap target from the row itself, so opening
     /// the session and unfolding its subagents never fight over one gesture.
-    private func parentRow(session: SessionSummary, children: [SessionSummary]) -> some View {
+    private func parentRow(session: SessionSummary) -> some View {
         HStack(spacing: DSHTheme.Spacing.hairline) {
             NavigationLink(value: session.sessionId) {
                 SessionRow(session: session, rowState: model.state(of: session),
@@ -317,20 +311,6 @@ struct SessionListView: View {
                 .accessibilityIdentifier("session.archive.\(session.sessionId)")
             }
 
-            if !children.isEmpty {
-                SubagentDisclosure(
-                    count: children.count,
-                    isExpanded: expandedParents.contains(session.sessionId)
-                ) {
-                    withAnimation(.snappy(duration: 0.18)) {
-                        if expandedParents.contains(session.sessionId) {
-                            expandedParents.remove(session.sessionId)
-                        } else {
-                            expandedParents.insert(session.sessionId)
-                        }
-                    }
-                }
-            }
         }
         .listRowInsets(EdgeInsets(top: 2, leading: 10, bottom: 2, trailing: 10))
         .listRowBackground(Color.clear)
@@ -497,35 +477,6 @@ private struct LooseHeader: View {
     }
 }
 
-/// The subagent count chip that unfolds a session's children.
-private struct SubagentDisclosure: View {
-    let count: Int
-    let isExpanded: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 3) {
-                Image(systemName: "person.2")
-                    .font(.system(size: 9, weight: .medium))
-                Text("\(count)")
-                    .font(DSHTheme.Typography.micro)
-                    .monospacedDigit()
-                Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                    .font(.system(size: 8, weight: .semibold))
-            }
-            .foregroundStyle(DSHTheme.labelTertiary)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 3)
-            .background(DSHTheme.layer3, in: Capsule())
-            .contentShape(Capsule())
-        }
-        .buttonStyle(.borderless)
-        .accessibilityIdentifier("session.subagents")
-        .accessibilityLabel(isExpanded ? "收起 \(count) 个子代理" : "展开 \(count) 个子代理")
-    }
-}
-
 // MARK: - Session row
 
 /// Marks the session the app just created, so it can be told apart from the
@@ -623,9 +574,14 @@ struct SessionRow: View {
 
             if let fraction = projections?.contextPressure?.fraction, fraction > 0.75 {
                 // Only surfaces when context is actually getting tight, so the
-                // row stays quiet in the common case.
-                PressureBar(fraction: fraction)
-                    .frame(width: 34)
+                // row stays quiet in the common case. Small text rather than the
+                // 34pt bar this used to be: nobody could tell what a bare bar
+                // next to a session meant, and "上下文 82%" says it in one line.
+                Text("上下文 \(Int((fraction * 100).rounded()))%")
+                    .font(DSHTheme.Typography.micro)
+                    .foregroundStyle(fraction >= 0.9 ? DSHTheme.labelPrimary : DSHTheme.labelTertiary)
+                    .monospacedDigit()
+                    .accessibilityIdentifier("session.context")
             }
         }
         .padding(.horizontal, DSHTheme.Spacing.tight)
