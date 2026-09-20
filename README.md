@@ -15,15 +15,10 @@
 
 电脑不需要公网 IP，也不需要 VPN。
 
-| | |
-|---|---|
-| <img src="docs/artifacts/demo/appstore/02-tools.jpg" width="320" alt="每一步工具调用都摊开"> | <img src="docs/artifacts/demo/appstore/08-pair.jpg" width="320" alt="不用公网 IP，扫码就连上"> |
-| 每一步工具调用都摊开 | 不用公网 IP，扫码就连上 |
-| <img src="docs/artifacts/demo/appstore/06-files.jpg" width="320" alt="浏览、预览、一键下载"> | <img src="docs/artifacts/demo/appstore/01-hero.jpg" width="320" alt="让它把电脑上的文件发回手机"> |
-| 浏览、预览、一键下载 | 让它把电脑上的文件发回手机 |
+![每一步工具调用都摊开 · 不用公网 IP 扫码就连上 · 浏览预览一键下载 · 让它把电脑上的文件发回手机](docs/artifacts/demo/appstore/overview.jpg)
 
-> 配图为 App Store 宣传图（本仓库 8 张中的 4 张），内容出自同一套合成会话：输出是真实 agent 输出，
-> 项目为虚构，`relay.example.com` 是占位符。素材与生成方式见 [`docs/artifacts/demo/`](docs/artifacts/demo)。
+> 配图为 App Store 宣传图（8 张中的 4 张，横版拼合），内容出自同一套合成会话：输出是真实 agent
+> 输出，项目为虚构，`relay.example.com` 是占位符。分张素材与生成方式见 [`docs/artifacts/demo/`](docs/artifacts/demo)。
 
 ## 状态与兼容性
 
