@@ -18,9 +18,9 @@
 #      —— 分发证书是**联网生成**的，本地 keychain 里没有就是没有。
 #   2. App Store Connect 里已建同名 App 记录（套装 ID 必须与 BUNDLE_ID 一致）。
 #   3. 上传凭据：ASC API Key（ASC_KEY_ID / ASC_ISSUER_ID）或 Apple ID + App 专用密码。
-     **Xcode 的会话不够**——exportArchive 能用它，命令行 altool 不能；另外
-     exportArchive 的 destination=upload 只找得到已存在的 App 记录，所以第一次上传
-     必须先把 App Store Connect 里的 App 建好。
+#      **Xcode 的会话不够**——exportArchive 能用它，命令行 altool 不能；另外
+#      exportArchive 的 destination=upload 只找得到已存在的 App 记录，所以第一次上传
+#      必须先把 App Store Connect 里的 App 建好。
 #      （~/.appstoreconnect/private_keys/AuthKey_*.p8 + ASC_KEY_ID/ASC_ISSUER_ID）。
 #
 set -euo pipefail
