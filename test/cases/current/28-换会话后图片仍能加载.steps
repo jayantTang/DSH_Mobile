@@ -1,0 +1,25 @@
+# TC-MOB-28 的执行指令（换会话清图片缓存后的回归）
+#
+# 判据：三次进会话，每次都要看到 id:attachment.image（图片真的渲染出来，不是占位）。
+# 清缓存太狠会让第三次白屏——那正是这一条要拦的。
+#
+# 甲 = session-fa73530f-9658-4219-86bf-38684d3a9e1d（较新在上）／乙 = session-3fd704ba-3252-4f21-9607-11de116ee423（较旧在下），路线自上而下（`滚动到` 只往下滚）。
+#
+# 跑法：DSH_CONNECT=relay ./test/run.sh run test/cases/current/28-换会话后图片仍能加载.md
+
+1  do: 连接本机 DSH | want: id:session.list
+2  do: 滚动到 id:session.ungrouped | want: id:session.ungrouped
+3  do: 点击 id:session.ungrouped
+4  do: 滚动到 id:session.row.session-fa73530f-9658-4219-86bf-38684d3a9e1d | want: id:session.row.session-fa73530f-9658-4219-86bf-38684d3a9e1d
+5  do: 点击 id:session.row.session-fa73530f-9658-4219-86bf-38684d3a9e1d, 等待 id:attachment.image timeout=45 | want: id:attachment.image
+6  do: 什么都不做 | shot: 01-first-session-image check=content,amber
+7  do: 点击 text:返回, 等待 id:session.list timeout=20
+8  do: 滚动到 id:session.row.session-3fd704ba-3252-4f21-9607-11de116ee423 | want: id:session.row.session-3fd704ba-3252-4f21-9607-11de116ee423
+9  do: 点击 id:session.row.session-3fd704ba-3252-4f21-9607-11de116ee423, 等待 id:attachment.image timeout=45 | want: id:attachment.image
+10 do: 什么都不做 | shot: 02-second-session-image check=content,amber
+11 do: 点击 text:返回, 等待 id:session.list timeout=20
+# 甲在乙上面，而 `滚动到` 只往下滚：先往下拽两屏把更早的内容拉回来，再找那一行。
+12 do: 滚动 down id:session.list, 滚动 down id:session.list
+13 do: 滚动到 id:session.row.session-fa73530f-9658-4219-86bf-38684d3a9e1d | want: id:session.row.session-fa73530f-9658-4219-86bf-38684d3a9e1d
+14 do: 点击 id:session.row.session-fa73530f-9658-4219-86bf-38684d3a9e1d, 等待 id:attachment.image timeout=45 | want: id:attachment.image
+15 do: 什么都不做 | shot: 03-back-to-first check=content,amber

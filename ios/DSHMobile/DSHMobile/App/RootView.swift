@@ -335,11 +335,22 @@ struct RootView: View {
     static func automationDropLinkAfter() -> Double? { nil }
     #endif
 
+    /// What identifies "the computer we are talking to", for caches that must
+    /// not survive a switch. The agent id is the host's own name for itself;
+    /// the profile's UUID covers a profile that has not enrolled yet.
+    private var connectionScope: String? {
+        guard let profile = store.activeProfile else { return nil }
+        if case .relay(_, let agentId) = profile.transport, !agentId.isEmpty { return agentId }
+        return profile.id.uuidString
+    }
+
     private func syncConnectionState(_ isConnected: Bool) {
         guard isConnected != lastConnected else { return }
         lastConnected = isConnected
         if isConnected {
             enteredWorkspace = true
+            // "Already read" marks belong to one computer.
+            viewLog.useScope(connectionScope)
             hub.startIfNeeded(client: store.client)
             Task { await listModel.start() }
             // Whatever was on screen when the link went away is stale by the
@@ -347,10 +358,16 @@ struct RootView: View {
             // a frozen conversation that looks live.
             Task { await chatModel.reopenAfterReconnect() }
         } else if store.activeProfile == nil {
-            // A deliberate switch or disconnect: the old host's data must go.
+            // A deliberate switch or disconnect: the old host's data must go —
+            // every cache, not just the live streams. Cloning or forking a
+            // session on another computer can reuse an id, and a cached
+            // transcript (or a cached picture) would then be shown as that
+            // computer's.
             hub.stop()
-            listModel.stop()
-            chatModel.close()
+            listModel.forgetConnection()
+            chatModel.forgetConnection()
+            attachmentImages.reset()
+            viewLog.useScope(nil)
         }
         // Otherwise the link dropped under a workspace the user is still in.
         // Nothing is torn down: the feed restarts itself, the rows stay put,

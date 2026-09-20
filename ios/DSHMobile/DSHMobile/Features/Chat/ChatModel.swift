@@ -223,6 +223,33 @@ final class ChatModel {
         isAwaitingTurnStart = false
     }
 
+    /// Drops everything that belonged to the connection just left.
+    ///
+    /// Closing alone was not enough: the transcript cache is keyed by session id
+    /// and the host is happy to hand out consecutive ids, so a switch to another
+    /// computer could show that computer's conversation from the previous one's
+    /// cache before the fresh load landed. Drafts go too — a half-written
+    /// message belongs to the host it was typed for.
+    func forgetConnection() {
+        close()
+        session = nil
+        timeline = ChatTimeline()
+        cache.removeAll()
+        cacheOrder.removeAll()
+        drafts.removeAll()
+        draft = ""
+        draftImages.removeAll()
+        lastError = nil
+        currentSelection = nil
+        permissionOptions = []
+        currentPermission = nil
+        hasOlder = false
+        oldestSeq = nil
+        throughSeq = 0
+        pendingStreamFrames.removeAll()
+        phase = .idle
+    }
+
     /// Re-opens the session on screen after the link came back.
     ///
     /// The follow stream dies with the socket, and a transcript that stopped

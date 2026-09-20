@@ -16,6 +16,13 @@ import Foundation
 @Observable
 final class SessionViewLog {
 
+    /// Which computer these marks are about.
+    ///
+    /// Session ids are unique per host, not across them: two computers can both
+    /// have a session `abc`, and "you already read that" must not carry over
+    /// when the phone is pointed at the other one.
+    private var scope: String?
+
     /// Session id → when it was last opened, in milliseconds.
     private(set) var viewedAt: [String: Double]
 
@@ -29,9 +36,18 @@ final class SessionViewLog {
         self.viewedAt = stored ?? [:]
     }
 
+    /// Points the log at one computer (or at nothing, when disconnected).
+    func useScope(_ scope: String?) {
+        self.scope = scope
+    }
+
+    private func key(_ sessionId: String) -> String {
+        scope.map { "\($0)|\(sessionId)" } ?? sessionId
+    }
+
     /// When this session was last opened, or `nil` if it never was.
     func lastViewed(_ sessionId: String) -> Double? {
-        viewedAt[sessionId]
+        viewedAt[key(sessionId)]
     }
 
     /// Records that the session is on screen right now.
@@ -39,17 +55,19 @@ final class SessionViewLog {
     /// Called when the transcript opens, not when a row scrolls past: "viewed"
     /// has to mean the user looked at it, or the marker clears itself.
     func markViewed(_ sessionId: String, at stamp: Double = Date().timeIntervalSince1970 * 1000) {
+        let key = key(sessionId)
         // Monotonic per session: a clock that steps backwards must not resurrect
         // an unseen marker for something the user just read.
-        if let existing = viewedAt[sessionId], existing >= stamp { return }
-        viewedAt[sessionId] = stamp
+        if let existing = viewedAt[key], existing >= stamp { return }
+        viewedAt[key] = stamp
         trim()
         persist()
     }
 
     /// Forgets sessions the list no longer shows.
     func prune(keeping ids: Set<String>) {
-        let kept = viewedAt.filter { ids.contains($0.key) }
+        let wanted = Set(ids.map(key))
+        let kept = viewedAt.filter { wanted.contains($0.key) }
         guard kept.count != viewedAt.count else { return }
         viewedAt = kept
         persist()

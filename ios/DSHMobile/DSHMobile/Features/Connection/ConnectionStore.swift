@@ -221,6 +221,9 @@ public final class ConnectionStore {
 
     /// Connects using a saved profile, reusing its stored secret.
     public func connect(to profile: ConnectionProfile) async {
+        // Re-resolved by the handshake: leftovers from another computer would
+        // offer entries that host does not serve.
+        capabilities = []
         guard let secret = Keychain.get(profile.secretAccount) else {
             state = .failed("此连接的凭据已丢失，请重新配对。")
             return
@@ -449,6 +452,8 @@ public final class ConnectionStore {
         client = nil
         activeProfile = nil
         hostHome = nil
+        // What the previous host could do says nothing about the next one.
+        capabilities = []
         state = .disconnected
     }
 

@@ -309,6 +309,28 @@ final class SessionListModel {
         refreshDebounce = nil
     }
 
+    /// Drops what the previous host's list was made of.
+    ///
+    /// `stop()` only cancels the streams: the rows, the workspace list and the
+    /// search filter stayed on screen (and in memory) after a switch, so the new
+    /// computer's list briefly showed the old one's groups.
+    func forgetConnection() {
+        stop()
+        groups = []
+        loose = []
+        workspaces = []
+        allSessions = []
+        archivedSessionIds = []
+        lastCreatedSessionId = nil
+        currentSessionId = nil
+        searchText = ""
+        finishedSignal = 0
+        lastFinished = nil
+        previouslyRunning = []
+        phase = .idle
+        lastRefreshed = nil
+    }
+
     func refresh() async {
         guard let client = store?.client else {
             phase = .failed("尚未连接")
