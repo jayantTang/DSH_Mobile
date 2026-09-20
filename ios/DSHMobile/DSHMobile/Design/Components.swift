@@ -4,15 +4,20 @@ import SwiftUI
 struct StatusDot: View {
     enum Level {
         case ok, busy, attention, error, idle
-        /// Finished since this phone last showed it — a ring rather than a
-        /// filled dot, so "waiting for you" and "working right now" are told
-        /// apart at a glance and by shape, not only by colour.
+        /// Finished since this phone last showed it.
+        ///
+        /// Green, and the only green in the list: blue means "working right
+        /// now", green means "done, and you have not looked". It used to be a
+        /// blue ring, which differed from the running dot by shape alone —
+        /// nobody reads a ring as a different state, and the green that used to
+        /// mark *read* rows made the list a wall of green with no signal left.
         case unseen
 
         var color: Color {
             switch self {
             case .ok: return DSHTheme.success
-            case .busy, .unseen: return DSHTheme.brand
+            case .busy: return DSHTheme.brand
+            case .unseen: return DSHTheme.success
             case .attention: return DSHTheme.attention
             case .error: return DSHTheme.danger
             case .idle: return DSHTheme.labelDimmed
@@ -29,12 +34,7 @@ struct StatusDot: View {
 
     var body: some View {
         Circle()
-            .fill(level == .unseen ? .clear : level.color)
-            .overlay {
-                if level == .unseen {
-                    Circle().strokeBorder(level.color, lineWidth: 1.5)
-                }
-            }
+            .fill(level.color)
             .frame(width: size, height: size)
             .overlay {
                 if animated {

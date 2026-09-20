@@ -521,7 +521,17 @@ struct SessionRow: View {
                     .frame(width: 10)
             }
 
-            StatusDot(level: statusLevel, animated: session.running)
+            // A read session draws nothing, but still reserves the dot's width:
+            // without the spacer every title in the list shifts by 8pt when a
+            // row is read.
+            Group {
+                if rowState == .finishedSeen {
+                    Color.clear
+                } else {
+                    StatusDot(level: statusLevel, animated: session.running)
+                }
+            }
+            .frame(width: 8, height: 8)
 
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: DSHTheme.Spacing.hairline) {
@@ -549,7 +559,7 @@ struct SessionRow: View {
                     } else if rowState == .finishedUnseen {
                         Text("已完成")
                             .font(DSHTheme.Typography.micro)
-                            .foregroundStyle(DSHTheme.brand)
+                            .foregroundStyle(DSHTheme.success)
                             .accessibilityIdentifier("session.state.finishedUnseen")
                         Text("·")
                             .font(DSHTheme.Typography.micro)
@@ -579,7 +589,9 @@ struct SessionRow: View {
                 // next to a session meant, and "上下文 82%" says it in one line.
                 Text("上下文 \(Int((fraction * 100).rounded()))%")
                     .font(DSHTheme.Typography.micro)
-                    .foregroundStyle(fraction >= 0.9 ? DSHTheme.labelPrimary : DSHTheme.labelTertiary)
+                    // Always tertiary: the dot is the row's one coloured
+                    // signal, and a second one competes with it.
+                    .foregroundStyle(DSHTheme.labelTertiary)
                     .monospacedDigit()
                     .accessibilityIdentifier("session.context")
             }
