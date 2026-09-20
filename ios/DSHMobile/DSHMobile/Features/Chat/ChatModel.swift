@@ -113,6 +113,24 @@ final class ChatModel {
     private var hub: HostEventHub?
     /// Warm transcripts, most recently used last.
     private var cache: [String: CachedSession] = [:]
+
+    /// Half-written messages, one per session.
+    ///
+    /// The draft used to be a single field on this (single, app-wide) model, and
+    /// switching sessions never reset it: text typed for one conversation showed
+    /// up in the next one's composer, and pressing send there posted it — the
+    /// host stores a prompt against the session id of the moment, so from the
+    /// receiving side it looked like an instruction the user never gave.
+    private var drafts: [String: Draft] = [:]
+
+    struct Draft {
+        var text: String = ""
+        var images: [DraftImage] = []
+
+        var isEmpty: Bool {
+            text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && images.isEmpty
+        }
+    }
     private var cacheOrder: [String] = []
     private static let cacheLimit = 6
     private var followTask: Task<Void, Never>?
@@ -147,12 +165,16 @@ final class ChatModel {
             phase = .failed("尚未连接")
             return
         }
-        // Persist whatever the previous session had before switching away.
+        // Persist whatever the previous session had before switching away —
+        // transcript and draft both.
         close()
 
         let key = summary.sessionId
         let cached = cache[key]
         session = summary
+        // This session's own half-written message, not the last one's.
+        draft = drafts[key]?.text ?? ""
+        draftImages = drafts[key]?.images ?? []
         lastError = nil
         hostReportsRunning = summary.running
         isAwaitingTurnStart = false
@@ -188,6 +210,7 @@ final class ChatModel {
     /// Stops the live streams and keeps the transcript warm for a revisit.
     func close() {
         saveToCache()
+        stashDraft()
         followTask?.cancel()
         followTask = nil
         eventTask?.cancel()
@@ -220,6 +243,16 @@ final class ChatModel {
         var hasOlder: Bool
         var oldestSeq: Int?
         var throughSeq: Int
+    }
+
+    /// Keeps the composer's contents under the session it was typed for.
+    ///
+    /// Called on the way out of a session, so nothing typed is lost and nothing
+    /// leaks: the next session loads its own draft (usually empty).
+    private func stashDraft() {
+        guard let key = session?.sessionId else { return }
+        let current = Draft(text: draft, images: draftImages)
+        if current.isEmpty { drafts.removeValue(forKey: key) } else { drafts[key] = current }
     }
 
     private func saveToCache() {
@@ -481,12 +514,17 @@ final class ChatModel {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         let images = draftImages
         guard !text.isEmpty || !images.isEmpty, let client = store?.client, let session else { return }
+        let owner = session.sessionId
 
         let mode: SessionPromptRequest.Mode = (steerNext && isRunning) ? .steer : .queue
+        // Which conversation this text belongs to, fixed here: the user may
+        // switch away while the send is in flight, and neither the clear nor a
+        // failure's restore may land on whatever happens to be on screen then.
         // Cleared optimistically so the field empties the instant you send, but
         // restored if the host refuses — losing typed text to a transient
         // failure is worse than seeing it come back.
         draft = ""
+        drafts.removeValue(forKey: owner)
 
         // The request id is minted here because the host stores it on the
         // durable message's source; that is what lets the transcript replace
@@ -521,8 +559,16 @@ final class ChatModel {
             )
         } catch {
             isAwaitingTurnStart = false
-            if draft.isEmpty { draft = text }
-            if draftImages.isEmpty { draftImages = images }
+            // Back to the conversation it was typed in — visible if the user is
+            // still there, waiting quietly if they have moved on.
+            let restored = Draft(text: text, images: images)
+            drafts[owner] = restored
+            // `session` was captured by the guard at the top of this function,
+            // so it is this send's own session — not whatever is on screen now.
+            if session.sessionId == owner {
+                if draft.isEmpty { draft = text }
+                if draftImages.isEmpty { draftImages = images }
+            }
             lastError = ConnectionStore.describe(error)
         }
     }
@@ -535,6 +581,7 @@ final class ChatModel {
     /// tools it already has.
     func sendFile(named name: String, data: Data) async {
         guard let session, let store else { return }
+        let owner = session.sessionId
         isUploadingFile = name
         defer { isUploadingFile = nil }
 
@@ -545,8 +592,15 @@ final class ChatModel {
                 sessionId: session.sessionId
             )
             // The path is what makes this useful: without it the agent knows a
-            // file exists but not where.
-            draft = "我发送了一个文件，已保存到：\(staged.path)（\(staged.bytes) 字节）"
+            // file exists but not where. The prompt belongs to the session the
+            // file was staged for, which is not necessarily the one on screen
+            // by the time the upload finishes.
+            let text = "我发送了一个文件，已保存到：\(staged.path)（\(staged.bytes) 字节）"
+            guard session.sessionId == owner else {
+                drafts[owner] = Draft(text: text, images: [])
+                return
+            }
+            draft = text
             await send()
         } catch {
             lastError = ConnectionStore.describe(error)

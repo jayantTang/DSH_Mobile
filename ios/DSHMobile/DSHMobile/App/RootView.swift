@@ -596,6 +596,11 @@ private struct MainView: View {
     private func sessionDestination(_ sessionId: String) -> some View {
         if let summary = listModel.session(withId: sessionId) {
             chat(for: summary)
+                // A view per session: the composer keeps per-view state (mention
+                // suggestions, a picked photo, the unsupported-file notice), and
+                // SwiftUI reuses the same instance for a different id unless told
+                // not to — which is how those leaked across a switch too.
+                .id(sessionId)
                 .task(id: sessionId) {
                     await chatModel.open(summary)
                     // Opening is what "viewed" means: the row's marker clears

@@ -789,6 +789,14 @@ final class Engine: XCTestCase {
             return app.descendants(matching: .any)
                 .matching(NSPredicate(format: "identifier BEGINSWITH %@", prefix))
         }
+        if let value = target.dropPrefix("value~:") {
+            // What a text field *contains*. `text:` cannot see it: a field's
+            // content is its `value`, not a static text, so "the box is empty"
+            // and "the box holds yesterday's draft" were both unassertable —
+            // which is how the cross-session draft leak stayed invisible.
+            return app.descendants(matching: .any)
+                .matching(NSPredicate(format: "value CONTAINS %@", value))
+        }
         if let label = target.dropPrefix("label:") {
             return app.descendants(matching: .any)
                 .matching(NSPredicate(format: "label == %@", label))

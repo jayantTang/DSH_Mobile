@@ -1,0 +1,33 @@
+# TC-MOB-27 的执行指令（草稿按会话分开）
+#
+# 判据（三张截图逐张看）：
+#   01 在甲里打「草稿标记甲」，输入框里就是它；
+#   02 退出再进甲，草稿还在（每个会话记着自己的半句话）；
+#   03 进乙，输入框是空的、发送按钮是灰的（修之前这里是「草稿标记甲」+ 可发送）。
+#
+# 路线必须自上而下：`滚动到` 只往下滚，而两个夹具都在「未分组」里，甲较新在上、乙较旧在下。
+# 甲 = session-fa73530f-9658-4219-86bf-38684d3a9e1d（image-scratch-session.mjs --dir /tmp/dsh-uitest-draftA 建）
+# 乙 = session-3fd704ba-3252-4f21-9607-11de116ee423（--dir /tmp/dsh-uitest-image 建）
+#
+# 关于断言：`value~:` 还不靠谱（两轮里「有」和「没有」都判过绿），所以这一条的判定看截图；
+# 断言只留作辅助。
+#
+# 跑法：DSH_CONNECT=relay ./test/run.sh run test/cases/current/27-输入框按会话分开.md
+
+1  do: 连接本机 DSH | want: id:session.list
+2  do: 滚动到 id:session.ungrouped | want: id:session.ungrouped
+3  do: 点击 id:session.ungrouped
+4  do: 滚动到 id:session.row.session-fa73530f-9658-4219-86bf-38684d3a9e1d | want: id:session.row.session-fa73530f-9658-4219-86bf-38684d3a9e1d
+5  do: 点击 id:session.row.session-fa73530f-9658-4219-86bf-38684d3a9e1d, 等待 id:chat.transcript timeout=25 | want: id:chat.transcript
+6  do: 点击 id:composer.field, 等待 1 秒
+7  do: 输入 草稿标记甲 | want: id:composer.send
+8  do: 什么都不做 | shot: 01-draft-in-A check=content,amber
+9  do: 点击 text:返回, 等待 id:session.list timeout=20
+10 do: 滚动到 id:session.row.session-fa73530f-9658-4219-86bf-38684d3a9e1d | want: id:session.row.session-fa73530f-9658-4219-86bf-38684d3a9e1d
+11 do: 点击 id:session.row.session-fa73530f-9658-4219-86bf-38684d3a9e1d, 等待 id:chat.transcript timeout=25
+12 do: 什么都不做 | shot: 02-draft-kept check=content,amber
+13 do: 点击 text:返回, 等待 id:session.list timeout=20
+14 do: 滚动到 id:session.row.session-3fd704ba-3252-4f21-9607-11de116ee423 | want: id:session.row.session-3fd704ba-3252-4f21-9607-11de116ee423
+15 do: 点击 id:session.row.session-3fd704ba-3252-4f21-9607-11de116ee423, 等待 id:chat.transcript timeout=25
+16 do: 什么都不做 | want: 不存在 value~:草稿标记甲 ; absent
+17 do: 什么都不做 | shot: 03-other-session-empty check=content,amber
