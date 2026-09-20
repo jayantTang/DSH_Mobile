@@ -346,6 +346,7 @@ enum ProbeVariants {
         return Set(arguments[index + 1].split(separator: ",").map(String.init))
     }()
 
+    /// 复现用：把转写换回 `ScrollView + LazyVStack`（产品默认已经是 `List`）。
     static var lazyStack: Bool { all.contains("lazy-stack") }
     static var noRowProbe: Bool { all.contains("no-rows") }
     static var noPixelProbe: Bool { all.contains("no-pixel") }
@@ -386,6 +387,27 @@ extension View {
     /// 让这一行出现在探针的覆盖核对里。
     func probed(_ id: String) -> some View {
         modifier(ProbedRow(id: id))
+    }
+}
+
+/// 转写行在 `List` 模式下需要的装饰。
+///
+/// `List` 默认给每行内边距、分隔线和系统底色；聊天转写要的是"行就是自己画的那块"，
+/// 所以全部去掉，行距与左右留白改由行自己给（与 `LazyVStack` 那两个 padding 对齐）。
+struct TranscriptRowChrome: ViewModifier {
+    let inList: Bool
+
+    func body(content: Content) -> some View {
+        if inList {
+            content
+                .listRowInsets(EdgeInsets())
+                .listRowSeparator(.hidden)
+                .listRowBackground(Color.clear)
+                .padding(.horizontal, DSHTheme.Spacing.loose)
+                .padding(.bottom, DSHTheme.Spacing.standard)
+        } else {
+            content
+        }
     }
 }
 
@@ -444,6 +466,11 @@ enum ProbeVariants {
 }
 
 struct ScrollGeometryProbe: ViewModifier {
+    func body(content: Content) -> some View { content }
+}
+
+struct TranscriptRowChrome: ViewModifier {
+    let inList: Bool
     func body(content: Content) -> some View { content }
 }
 

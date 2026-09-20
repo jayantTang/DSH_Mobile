@@ -117,31 +117,22 @@ struct ChatView: View {
     }
 
     private func transcriptScroll(_ proxy: ScrollViewProxy) -> some View {
-        ScrollView {
-            // 转写**不用** `LazyVStack`。
-            //
-            // 2026-09-20 实测：懒加载容器在视口高度变化（键盘弹出）时会重新估算
-            // 没量到的行，估法是拿"已量到的最高一行"当模板——会话里一个 6924pt 的
-            // 长回答就能把 110 行的内容高度从实测 17 万估到 87 万。滚动几何一旦是
-            // 假的，任何"滚到底"（我们自己的跟随、系统的底部锚定）都会把视口送到
-            // 一片还没渲染的空位上：会话区整片空白，直到估算回落或用户手动一拉。
-            //
-            // 同一会话、同一操作下 A/B：懒加载 5–7 段空白/轮（累计 10 秒以上），
-            // 换成 VStack 后 0 段（2/2 轮）。代价是整份已加载的历史都参与布局，
-            // 所以窗口大小仍需控制（见 `ChatModel` 每次只取 60 条 + 分页）。
-            //
-            // 诊断变体 `lazy-stack` 保留旧写法，用来复现和对照。
-            Group {
-                if ProbeVariants.lazyStack {
-                    LazyVStack(alignment: .leading, spacing: DSHTheme.Spacing.standard) { stackContent }
-                } else {
-                    VStack(alignment: .leading, spacing: DSHTheme.Spacing.standard) { stackContent }
-                }
-            }
-            .scrollTargetLayout()
-            .padding(.horizontal, DSHTheme.Spacing.loose)
-            .padding(.vertical, DSHTheme.Spacing.standard)
-        }
+        // 转写容器用 `List`（底层是 UICollectionView 的复用）。
+        //
+        // 为什么不是 `ScrollView + LazyVStack`：懒加载在视口高度变化（键盘弹出、
+        // 输入框长高）时会重新估算还没量到的行，估算拿"已量到的最高一行"当模板——
+        // 会话里一个 6924pt 的长回答，就能把 110 行的内容高度从实测 4 万估到 87 万。
+        // 滚动几何一旦是假的，任何"滚到底"（我们的跟随、系统的底部锚定）都会把视口
+        // 送进一片没有渲染内容的空位：会话区整片空白，直到估算回落或用户手动一拉。
+        //
+        // `List` 的行同样只建可见的那些（长会话打开 6 秒级，与懒加载同量级），
+        // 但内容高度由真实 cell 高度累加而来，没有那份估算。同一会话、同一操作下
+        // 实测：懒加载每轮白 2–7 段（最长一段 14 秒），`List` 0 段（2/2 轮）；
+        // 内容高度从"中位 29 万、最大 87 万来回跳"变成稳定在 4 万。
+        //
+        // 换普通 `VStack` 也能不白，但整份已加载历史都要布局，重会话打开 25 秒
+        // 还没就绪，那条路已否掉（见用例 `32-长会话里边流式边打字不跳白.md`）。
+        stackContainer
         // Imperative scrolling only, and only in one direction (us -> view).
         //
         // A `scrollPosition(id:)` binding was tried here and had to be removed:
@@ -264,7 +255,31 @@ struct ChatView: View {
         }
     }
 
-    /// 整份转写的内容（懒加载/非懒加载两种容器共用）。
+    /// 转写容器本身。抽出来是因为把 `List`/`ScrollView` 两套容器写在同一个
+    /// 修饰符链里，编译器会报"表达式太复杂"。
+    @ViewBuilder
+    private var stackContainer: some View {
+        if ProbeVariants.lazyStack {
+            // 复现用：换回懒加载容器（`-DSHProbeVariants lazy-stack`）。
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: DSHTheme.Spacing.standard) {
+                    stackContent
+                }
+                .scrollTargetLayout()
+                .padding(.horizontal, DSHTheme.Spacing.loose)
+                .padding(.vertical, DSHTheme.Spacing.standard)
+            }
+        } else {
+            List {
+                stackContent
+            }
+            .listStyle(.plain)
+            .environment(\.defaultMinListRowHeight, 1)
+            .scrollContentBackground(.hidden)
+        }
+    }
+
+    /// 整份转写的内容（两种容器共用）。
     ///
     /// 必须**直接**吐出行，不能再套一层 `VStack`：套一层就等于让 `LazyVStack`
     /// 只有一个子视图，懒加载随之失效。
@@ -297,6 +312,7 @@ struct ChatView: View {
     /// 一行消息。抽出来是为了让"懒加载/非懒加载"两种排布共用同一份定义。
     private func row(_ item: TimelineItem) -> some View {
         TimelineRowView(item: item)
+            .modifier(TranscriptRowChrome(inList: !ProbeVariants.lazyStack))
             .id(item.id)
             .probed("row:\(item.id)")
     }
@@ -321,6 +337,7 @@ struct ChatView: View {
                 StreamingBubble(attempt: streaming)
             }
         }
+        .modifier(TranscriptRowChrome(inList: !ProbeVariants.lazyStack))
         .probed("tail")
     }
 
@@ -328,6 +345,7 @@ struct ChatView: View {
     private var bottomMarker: some View {
         Color.clear
             .frame(height: 1)
+            .modifier(TranscriptRowChrome(inList: !ProbeVariants.lazyStack))
             .id(Self.bottomAnchor)
             .probed("bottom")
     }
