@@ -1,5 +1,7 @@
 # dsh-plugin-send-image
 
+> 面向：使用者 · 状态：stable · 最近核对：2026-09-20
+
 **Lets the agent put a picture into the conversation.** A screenshot, the
 clipboard, or a file — the host normalizes and persists the bytes, every DSH
 client renders it inline, and the user can open it full screen.

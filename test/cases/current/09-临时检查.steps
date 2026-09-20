@@ -1,2 +1,0 @@
-1  do: 连接本机 DSH  | want: id:session.list
-2  do: 滚动到 text:已归档  | want: text:已归档 | shot: arch-count after

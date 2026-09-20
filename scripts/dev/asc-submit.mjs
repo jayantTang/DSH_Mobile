@@ -12,7 +12,7 @@
  *
  * 截图上传是两步：先 PUT 到预留的 uploadOperations 地址，再 PATCH 提交校验和。
  * 图由 `test/cases/current/15-上架截图` 拍、`deploy-testflight.sh` 同一套流程导出，
- * 尺寸档位见 docs/notes/APPSTORE.md。
+ * 尺寸档位见 maintainers/APPSTORE.md。
  */
 
 import { createHash, createSign } from 'node:crypto'

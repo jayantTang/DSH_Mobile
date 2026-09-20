@@ -1,13 +1,14 @@
 # DLP relay — DSH Link Protocol v1
 
-A small Python 3.12 + aiohttp relay that lets an iOS client reach a DSH instance
-running behind NAT. The PC-side connector (`../plugins/mobile-link/`) dials out to it; the
-phone dials out to it; the relay authenticates both and forwards frames by
-`agentId`. It never parses DSH semantics — it is a protocol-transparent tunnel.
+> 面向：部署与运维方 · 状态：stable · 最近核对：2026-09-20
+
+A small Python 3.12 + aiohttp relay that lets an iOS client reach a DSH instance behind NAT. Both
+the connector (`../plugins/mobile-link/`) and the phone dial out to it; it authenticates both sides
+and forwards frames by `agentId`, never parsing DSH semantics.
 
 Normative specification: [`../docs/RELAY-PROTOCOL.md`](../docs/RELAY-PROTOCOL.md).
 Where the implementation had to make a judgement call, it is written down in
-[`notes/relay.md`](../docs/notes/relay.md).
+[`RELAY-NOTES.md`](../docs/RELAY-NOTES.md).
 
 ```
   iOS app                          relay (public)                  PC

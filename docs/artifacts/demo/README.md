@@ -10,7 +10,8 @@ README 首屏那两张图出自这里。它们**可以入库**，因为画面里
 
 ```bash
 node scripts/dev/demo-session.mjs          # 写文件、建会话、跑一轮真实 agent，打印会话 id
-# 把打印出来的 id 填进 test/cases/current/14-宣传配图合成会话.md 的 `会话:`
+# 把打印出来的 id 填进本机用例 test/cases/current/14-宣传配图合成会话.md 的 `会话:`
+# （用例目录不随仓库发布，模板见 test/examples/）
 DSH_CONNECT=relay ./test/run.sh run test/cases/current/14-宣传配图合成会话.md --no-build
 node scripts/dev/demo-session.mjs --cleanup-all   # 用完清掉
 ```
@@ -29,7 +30,7 @@ node scripts/dev/demo-session.mjs --cleanup-all   # 用完清掉
 ## 图片约定
 
 - 目前入库两张：`02-transcript.jpg`（转写）与 `04-settings.jpg`（设置），由
-  `test/cases/current/14-宣传配图合成会话.steps` 的 `shot:` 名字对应。
+  本机用例 `test/cases/current/14-宣传配图合成会话.steps` 里的 `shot:` 名字对应。
 - **不入图的东西**：会话列表那张不要用——列表按时间排，合成会话排在真实会话下面，
   真截下来会把用户的真实项目名拍进去。同理，设置页那台 `DSH-Test` 是模拟器，属正常。
 - **尺寸**：原图 1206×2622；入库前用 `sips -Z 1000 -s format jpeg -s formatOptions 82`

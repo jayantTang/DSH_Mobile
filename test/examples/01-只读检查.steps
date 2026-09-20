@@ -1,0 +1,8 @@
+# 只读模板：不往任何会话里写东西，因此不需要声明会话归属。
+#
+# 跑法：DSH_CONNECT=relay ./test/run.sh run test/examples/01-只读检查.md
+
+1 do: 连接本机 DSH | want: id:session.list
+2 do: 什么都不做 | shot: 01-list check=content,amber
+3 do: 什么都不做 | want: id:session.list
+4 do: 什么都不做 | want: text:会话

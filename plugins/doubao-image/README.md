@@ -1,5 +1,7 @@
 # doubao-image — generate images with the local Doubao app
 
+> 面向：使用者 · 状态：stable · 最近核对：2026-09-20
+
 Registers one tool, `generate_image`, that drives the **locally installed and
 logged-in Doubao (豆包) desktop app** to produce a picture, saves the
 full-resolution file, and sends it into the conversation.
@@ -59,7 +61,7 @@ The findings each step depends on, all established by probing the running app:
 | Launch | Doubao holds a **singleton lock**. A normally-launched instance never opens the debug port, and launching again just forwards to it. The app must therefore be quit and restarted — the first call costs ~10–40 s. |
 | Attach | `doubao-chat` is the real 1200×800 window. `doubao-launcher` is a 400×600 **sidebar that also accepts prompts** and renders results at 90 px, and `doubao-chat` is *additionally* served as an empty `<html>hello</html>` shell. Identification uses live window size plus the presence of the editor, never the URL alone. |
 | Type | The box is `div.tiptap.ProseMirror[contenteditable=true]`. `execCommand('insertText')` goes through the same `beforeinput` path a keystroke does, so the app's own state and send button update. Assigning `innerText` would not. |
-| Detect | The status sentence 「已为你生成 N 张候选图」 is the completion signal, not the image count — the grid mounts placeholders before the renders arrive. |
+| Detect | The status sentence 「已生成 N 张候选图」 is the completion signal, not the image count — the grid mounts placeholders before the renders arrive. |
 | Harvest | The picture in the grid is a `cpreview_wm1` render behind an overlay, and its full-size sibling `<img>` is a bare `data:image/svg+xml` **placeholder with no pixels**, so the bytes cannot be read from the grid. Instead the tool clicks each thumbnail to open the image viewer and uses the app's own `[data-testid=edit_image_download_button]`, which writes the file to `~/Downloads`; the tool then moves it to `dir`. |
 
 `dsh-doctor`-style checks live in the unit tests: the output schema must stay in

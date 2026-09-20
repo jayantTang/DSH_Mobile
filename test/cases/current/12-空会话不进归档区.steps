@@ -1,7 +1,0 @@
-# 临时会话由运行器的「临时目录」创建，并被 front matter 的「预置归档」提前归档，
-# 所以它一定在「已归档」折叠区里——展开后才渲染得出来，断言才看得见。
-# 一个 want 里的多项用逗号分隔，`; absent` 表示「不该出现」。
-1  do: 连接本机 DSH  | want: id:session.list | shot: sessions check=texts
-2  do: 滚动到 text:已归档  | want: text:已归档
-3  do: 点击 text:已归档  | want: text:已归档
-4  do: 什么都不做  | want: id:session.archived.row.{{session}} ; absent | shot: archived check=texts after

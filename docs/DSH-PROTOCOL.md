@@ -1,5 +1,7 @@
 # DSH Client Protocol Reference
 
+> 面向：实现者 · 状态：stable（随 DSH 上游变动） · 最近核对：2026-09-20
+
 Authoritative, implementation-oriented reference for the **DeepSeek Harness (DSH) browser/client Remote API**, sufficient to build a native client (iOS) against a running DSH host **without access to the DSH source**.
 
 | | |

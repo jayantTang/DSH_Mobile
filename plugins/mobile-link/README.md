@@ -1,5 +1,7 @@
 # dsh-plugin-mobile-link
 
+> 面向：使用者与实现者 · 状态：stable · 最近核对：2026-09-20
+
 **The computer half of [DSH Mobile](https://github.com/jayantTang/DSH_Mobile): it
 dials a relay over WSS, so the native iOS client reaches this DSH instance even
 though the computer has no public IP.**

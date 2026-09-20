@@ -1,5 +1,7 @@
 # DSH Link Protocol (DLP) v1
 
+> 面向：实现者与自建中转的部署方 · 状态：stable（DLP v1） · 最近核对：2026-09-20
+
 规范版本：`1`
 状态：draft-1（已按本规范实现 relay / agent / iOS 客户端）
 

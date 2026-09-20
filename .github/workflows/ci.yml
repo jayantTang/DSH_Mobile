@@ -70,6 +70,17 @@ jobs:
           DSH_RELAY_URL: ${{ secrets.DSH_RELAY_URL }}
         run: node scripts/dev/check-secrets.mjs
 
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # 文档规范（结构、口吻、链接、本机路径）与真值检查同属"仓库卫生"，
+      # 但单独一条：出问题时一眼看出是文档还是凭据。
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm run check:docs
+
   node:
     runs-on: ubuntu-latest
     strategy:

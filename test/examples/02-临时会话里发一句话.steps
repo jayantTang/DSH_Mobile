@@ -1,0 +1,13 @@
+# 写入类模板：声明了 `临时目录:`，`{{session}}` 就是运行器新建的临时会话（跑完删除）。
+# 未分组默认收起，展开后再滚：`滚动到` 只往下滚。
+#
+# 跑法：DSH_CONNECT=relay ./test/run.sh run test/examples/02-临时会话里发一句话.md
+
+1 do: 连接本机 DSH | want: id:session.list
+2 do: 滚动到 id:session.ungrouped | want: id:session.ungrouped
+3 do: 点击 id:session.ungrouped
+4 do: 滚动到 id:session.row.{{session}} | want: id:session.row.{{session}}
+5 do: 点击 id:session.row.{{session}}, 等待 id:chat.transcript timeout=25 | want: id:chat.transcript
+6 do: 点击 id:composer.field, 等待 1 秒
+7 do: 输入 示例消息：只回复两个字，收到 | want: id:composer.send
+8 do: 点击 id:composer.send | shot: 01-sent check=content,amber

@@ -1,8 +1,10 @@
 # Connector NOTES — decisions the spec did not pin down
 
+> 面向：实现者 · 状态：stable · 最近核对：2026-09-20
+
 Protocol-level findings (including the stale `session/follow` example and the
 unnecessary `--trusted-host` requirement) are in
-[`relay.md`](relay.md). This file records the connector-side
+[`relay.md`](RELAY-NOTES.md). This file records the connector-side
 choices.
 
 ## 1. The plugin requires no DSH services (`inject` is empty)

@@ -1,9 +1,10 @@
 # Relay NOTES — deviations and fills for DLP v1
 
-[`../RELAY-PROTOCOL.md`](../RELAY-PROTOCOL.md) is treated as normative. Everything below is either
-(a) a place where the spec was silent and a concrete choice was required, or
-(b) a place where following the spec literally would not work. Each entry says
-what the spec says, what we do, and why.
+> 面向：实现者与部署方 · 状态：stable · 最近核对：2026-09-20
+
+[`RELAY-PROTOCOL.md`](RELAY-PROTOCOL.md) is normative. Each entry below records either a point the
+spec left open where a concrete choice was required, or a point where following it literally would
+not work: what the spec says, what the implementation does, and why.
 
 ## 1. Spec §7 (“电脑侧必须声明 `dsh web --trusted-host relay.example.com`”) is unnecessary — not implemented
 

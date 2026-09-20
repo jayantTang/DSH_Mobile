@@ -1,5 +1,7 @@
 # plugins/ — 电脑侧插件
 
+> 面向：使用者与实现者 · 状态：stable · 最近核对：2026-09-20
+
 ## mobile-link — the PC half of DLP v1
 
 A DSH host plugin that dials the DLP relay over WSS and serves the iOS client's
@@ -25,8 +27,8 @@ plugins/mobile-link/
 ```
 
 Design deviations and spec gaps are recorded in
-[`docs/notes/relay.md`](../docs/notes/relay.md); the connector-specific ones are in
-[`docs/notes/connector.md`](../docs/notes/connector.md).
+[`docs/RELAY-NOTES.md`](../docs/RELAY-NOTES.md); the connector-specific ones are in
+[`docs/notes/connector.md`](../docs/CONNECTOR-NOTES.md).
 
 ## Install
 

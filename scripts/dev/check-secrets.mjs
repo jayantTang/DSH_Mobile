@@ -87,7 +87,7 @@ function localSecrets() {
   }
   remember(process.env.ASC_REVIEW_INVITE, '审核演示邀请码')
   // Issuer ID 是本机真值；Key ID **不列入**——它出现在私钥文件名里，文档里
-  // 需要写出 `AuthKey_<KeyID>.p8` 的完整路径（docs/notes/PROMOTION.md），
+  // 需要写出 `AuthKey_<KeyID>.p8` 的完整路径（maintainers/PROMOTION.md），
   // 那既不是凭据也不能用来换 token，列进来只会每天误报一次。
   remember(process.env.ASC_ISSUER_ID, 'App Store Connect Issuer ID')
   remember(process.env.DSH_OTA_HOST, '中转主机')
