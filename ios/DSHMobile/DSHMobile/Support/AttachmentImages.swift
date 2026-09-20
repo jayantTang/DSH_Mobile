@@ -15,22 +15,46 @@ final class AttachmentImages {
 
     /// The session whose attachments are being shown.
     ///
-    /// Set when a session is opened, so any view holding this store can resolve
-    /// a block without threading a session id through every row.
-    var sessionId: String?
+    /// Assigning it switches to that session's own cache — it does not throw the
+    /// pictures away. An earlier version cleared everything here, which was safe
+    /// but made every return to a conversation re-download its images; the ids
+    /// are content hashes, so keeping them per session is both correct (a
+    /// session only ever reads its own bucket) and instant on the way back.
+    var sessionId: String? {
+        didSet {
+            guard sessionId != oldValue else { return }
+            pruneSessions()
+        }
+    }
 
-    private var images: [String: UIImage] = [:]
-    /// When each failed attachment last failed.
+    /// session → attachment id → decoded image.
+    private var images: [String: [String: UIImage]] = [:]
+    /// session → attachment id → when it last failed.
     ///
     /// A timestamp rather than a set, because "failed" must not mean "forever":
     /// a picture that lost its race with a reconnecting socket used to stay
     /// broken for the rest of the session, with no way for anyone to ask again.
-    private var failures: [String: Date] = [:]
+    private var failures: [String: [String: Date]] = [:]
+    /// "session|attachment" → the load in progress, so the same picture asked
+    /// for twice in one session coalesces while two sessions never share one.
     private var inFlight: [String: Task<UIImage?, Never>] = [:]
-    private var order: [String] = []
+    /// Every cached picture, least recently used first.
+    private var recent: [String] = []
 
     /// Enough for a session's worth of screenshots without hoarding memory.
-    private static let limit = 24
+    ///
+    /// Three bounds, because decoded images are large: per session, in total, and
+    /// in how many sessions keep a bucket at all. A bucket is dropped whole, so a
+    /// conversation never shows a picture it did not load.
+    private static let perSessionLimit = 24
+    private static let totalLimit = 48
+    private static let sessionLimit = 6
+
+    private var key: String { sessionId ?? "" }
+
+    private func bucketKey(_ session: String, _ attachmentId: String) -> String {
+        "\(session)|\(attachmentId)"
+    }
 
     private weak var store: ConnectionStore?
 
@@ -40,7 +64,7 @@ final class AttachmentImages {
 
     /// The decoded image, when it has already been loaded.
     func cached(_ attachmentId: String) -> UIImage? {
-        images[attachmentId]
+        images[key]?[attachmentId]
     }
 
     /// How long a failure keeps a re-rendering view from asking again.
@@ -51,12 +75,12 @@ final class AttachmentImages {
 
     /// True when this attachment failed and is still inside the quiet window.
     func hasFailed(_ attachmentId: String) -> Bool {
-        guard let at = failures[attachmentId] else { return false }
+        guard let at = failures[key]?[attachmentId] else { return false }
         return Date().timeIntervalSince(at) < Self.retryAfter
     }
 
     /// How many attachments are sitting in a failed state, for diagnostics.
-    var failureCount: Int { failures.count }
+    var failureCount: Int { (failures[key] ?? [:]).count }
 
     /// Forgets every failure, so the next render tries again.
     ///
@@ -65,17 +89,24 @@ final class AttachmentImages {
     /// request was wrong.
     func clearFailures() {
         guard !failures.isEmpty else { return }
+        // Every session, not just this one: what failed during the outage was
+        // failing because there was no connection.
         failures.removeAll()
     }
 
     /// Fetches the bytes once, coalescing everyone who asks for the same image.
     @discardableResult
     func load(_ attachmentId: String) async -> UIImage? {
-        if let cached = images[attachmentId] { return cached }
+        let session = key
+        let flightKey = bucketKey(session, attachmentId)
+        if let cached = images[session]?[attachmentId] {
+            touch(flightKey)
+            return cached
+        }
         if hasFailed(attachmentId) { return nil }
         // Past the quiet window the stale entry must not block the retry.
-        failures.removeValue(forKey: attachmentId)
-        if let running = inFlight[attachmentId] { return await running.value }
+        failures[session]?.removeValue(forKey: attachmentId)
+        if let running = inFlight[flightKey] { return await running.value }
         guard !attachmentId.isEmpty, let sessionId, let client = store?.client else { return nil }
 
         let task = Task<UIImage?, Never> { [weak self] in
@@ -94,15 +125,15 @@ final class AttachmentImages {
                 return nil
             }
         }
-        inFlight[attachmentId] = task
+        inFlight[flightKey] = task
 
         let image = await task.value
-        inFlight[attachmentId] = nil
+        inFlight[flightKey] = nil
         if let image {
-            store(image, for: attachmentId)
-            failures.removeValue(forKey: attachmentId)
+            store(image, for: attachmentId, in: session)
+            failures[session]?.removeValue(forKey: attachmentId)
         } else {
-            failures[attachmentId] = Date()
+            failures[session, default: [:]][attachmentId] = Date()
         }
         return image
     }
@@ -112,19 +143,20 @@ final class AttachmentImages {
     /// The one path that ignores the quiet window: a tap is not a loop.
     @discardableResult
     func retry(_ attachmentId: String) async -> UIImage? {
-        failures.removeValue(forKey: attachmentId)
+        failures[key]?.removeValue(forKey: attachmentId)
         return await load(attachmentId)
     }
 
-    /// Clears everything when the session changes.
+    /// Clears everything, for every session.
     ///
-    /// Attachment ids are content hashes, so a cache could in principle be
-    /// global — but they are authorized per session, and dropping them keeps
-    /// memory bounded when hopping between conversations.
+    /// Called when the connection itself changes: the pictures belong to the
+    /// computer that served them, and session ids are unique per host, not
+    /// across hosts. Switching *sessions* does not come here — that just changes
+    /// which bucket is read.
     func reset() {
         images.removeAll()
         failures.removeAll()
-        order.removeAll()
+        recent.removeAll()
         for task in inFlight.values { task.cancel() }
         inFlight.removeAll()
     }
@@ -154,12 +186,59 @@ final class AttachmentImages {
         return attempts <= Self.injectedFailures
     }
 
-    private func store(_ image: UIImage, for attachmentId: String) {
-        images[attachmentId] = image
-        order.removeAll { $0 == attachmentId }
-        order.append(attachmentId)
-        while order.count > Self.limit {
-            images.removeValue(forKey: order.removeFirst())
+    private func store(_ image: UIImage, for attachmentId: String, in session: String) {
+        images[session, default: [:]][attachmentId] = image
+        touch(bucketKey(session, attachmentId))
+        evict()
+    }
+
+    /// Marks a picture as just used.
+    private func touch(_ flightKey: String) {
+        recent.removeAll { $0 == flightKey }
+        recent.append(flightKey)
+    }
+
+    /// Enforces the three bounds by dropping whole pictures, oldest first.
+    private func evict() {
+        // 总量：全局 LRU 里最旧的那些
+        while recent.count > Self.totalLimit {
+            drop(recent.first)
+        }
+        // 单个会话：`recent` 是按使用顺序排的，前缀里最旧的先丢
+        for (session, bucket) in images where bucket.count > Self.perSessionLimit {
+            let sessionKeys = recent.filter { $0.hasPrefix("\(session)|") }
+            for flightKey in sessionKeys.prefix(bucket.count - Self.perSessionLimit) {
+                drop(flightKey)
+            }
+        }
+        pruneSessions()
+    }
+
+    /// Removes one cached picture (and its bucket, when it becomes empty).
+    private func drop(_ flightKey: String?) {
+        guard let flightKey else { return }
+        recent.removeAll { $0 == flightKey }
+        let parts = flightKey.split(separator: "|", maxSplits: 1).map(String.init)
+        guard parts.count == 2 else { return }
+        images[parts[0]]?.removeValue(forKey: parts[1])
+        if images[parts[0]]?.isEmpty == true { images.removeValue(forKey: parts[0]) }
+    }
+
+    /// Keeps at most `sessionLimit` sessions, oldest first.
+    private func pruneSessions() {
+        var seen: [String] = []
+        for flightKey in recent.reversed() {
+            guard let session = flightKey.split(separator: "|", maxSplits: 1).first.map(String.init) else { continue }
+            if !seen.contains(session) { seen.append(session) }
+        }
+        for session in images.keys where !seen.contains(session) {
+            images.removeValue(forKey: session)
+            failures.removeValue(forKey: session)
+        }
+        for session in seen.dropFirst(Self.sessionLimit) {
+            images.removeValue(forKey: session)
+            failures.removeValue(forKey: session)
+            recent.removeAll { $0.hasPrefix("\(session)|") }
         }
     }
 }

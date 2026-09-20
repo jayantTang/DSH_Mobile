@@ -257,11 +257,10 @@ struct ChatView: View {
         // instruction under the answer.
         .onChange(of: model.session?.sessionId, initial: true) { _, sessionId in
             // Attachments are authorized per session, so the loader has to know
-            // which one the rows on screen belong to — and has to forget the
-            // previous session's pictures: the cache is keyed by attachment id
-            // alone, so a run of the same id in another conversation (or on
-            // another computer) would render the old bytes.
-            attachmentImages.reset()
+            // which one the rows on screen belong to. Each session keeps its own
+            // cache: switching reads the other bucket instead of clearing, so
+            // coming back to a conversation shows its pictures at once, and a
+            // session still never renders a picture it did not load itself.
             attachmentImages.sessionId = sessionId
             // 换会话 = 打开了一个会话（冷加载或命中缓存都走这里）：
             // 重置读者意图，并排一次"钉到底部"。
