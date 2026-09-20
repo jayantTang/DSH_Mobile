@@ -36,7 +36,7 @@ async function stubRelay({ mintFails = false } = {}) {
       response.setHeader('content-type', 'application/json')
       if (request.url.endsWith('/agents/enroll')) {
         response.end(JSON.stringify({
-          ok: true, agentId: 'agt_stub000000000000', agentSecret: 'as_stub000000000000',
+          ok: true, agentId: 'agt_stub', agentSecret: 'as_stub',
           agentName: 'stub computer',
         }))
         return
@@ -99,7 +99,7 @@ test('enroll prints a scannable symbol and the code it encodes', async () => {
   assert.match(stdout, /一次性/)
   // The identity landed in the file we passed, not in the machine's real one.
   const state = JSON.parse(readFileSync(stateFile, 'utf8'))
-  assert.equal(state.agentId, 'agt_stub000000000000')
+  assert.equal(state.agentId, 'agt_stub')
 })
 
 test('a refused pairing code does not make a successful enroll look failed', async () => {
