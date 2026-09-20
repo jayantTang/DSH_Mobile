@@ -9,11 +9,14 @@
 
 电脑不需要公网 IP，也不需要 VPN。
 
-| 手机上看 agent 执行 | 管理连接与权限 |
+| 每一步工具调用都摊开 | 不用公网 IP，扫码就连上 |
 |---|---|
-| ![转写](docs/artifacts/demo/02-transcript.jpg) | ![设置](docs/artifacts/demo/04-settings.jpg) |
+| ![工具调用](docs/artifacts/demo/appstore/02-tools.jpg) | ![扫码配对](docs/artifacts/demo/appstore/08-pair.jpg) |
+| 浏览、预览、一键下载 | 让它把电脑上的文件发回手机 |
+| ![工作区文件](docs/artifacts/demo/appstore/06-files.jpg) | ![结果回传](docs/artifacts/demo/appstore/01-hero.jpg) |
 
-> 配图出自一个合成会话：内容为真实 agent 输出，项目为虚构。生成方式见 [`docs/artifacts/demo/`](docs/artifacts/demo)。
+> 配图为 App Store 宣传图（本仓库 8 张中的 4 张），内容出自同一套合成会话：输出是真实 agent 输出，
+> 项目为虚构，`relay.example.com` 是占位符。素材与生成方式见 [`docs/artifacts/demo/`](docs/artifacts/demo)。
 
 ## 状态与兼容性
 
