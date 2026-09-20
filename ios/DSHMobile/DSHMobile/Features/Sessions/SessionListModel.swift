@@ -77,6 +77,23 @@ final class SessionListModel {
         PathFormat.short(path, home: store?.hostHome)
     }
 
+    /// Records every session the list is seeing for the first time as viewed.
+    ///
+    /// Without this, "unseen" would mean "never opened on this phone", and the
+    /// first refresh after pairing — where every session finished days ago on
+    /// the computer — would mark the entire list. First sight means "nothing has
+    /// happened since I could have known", which is exactly the baseline the
+    /// marker needs.
+    private func seedFirstSightings() {
+        guard let viewLog else { return }
+        // Everything the host listed — grouped, loose or archived — gets a
+        // baseline, because all of it is visible somewhere in this screen.
+        for session in allSessions where viewLog.lastViewed(session.sessionId) == nil {
+            viewLog.markViewed(session.sessionId, at: session.updatedAt)
+        }
+        viewLog.prune(keeping: Set(allSessions.map(\.sessionId)))
+    }
+
     /// Raised when a session goes from running to idle.
     ///
     /// The chat stream only reports turns for the session on screen, so the way
@@ -160,9 +177,42 @@ final class SessionListModel {
 
     // MARK: - Lifecycle
 
-    func attach(to store: ConnectionStore, hub: HostEventHub) {
+    func attach(to store: ConnectionStore, hub: HostEventHub, viewLog: SessionViewLog? = nil) {
         self.store = store
         self.hub = hub
+        if let viewLog { self.viewLog = viewLog }
+    }
+
+    /// When each session was last opened on this phone.
+    ///
+    /// Injected rather than created here so the same log is shared with the
+    /// screen that opens sessions — that write is what clears an unseen row.
+    var viewLog: SessionViewLog?
+
+    /// What the leading dot should say for this row.
+    func state(of session: SessionSummary) -> SessionRowState {
+        SessionRowState.of(
+            running: session.running,
+            blank: session.blank,
+            updatedAt: session.updatedAt,
+            lastViewedAt: viewLog?.lastViewed(session.sessionId)
+        )
+    }
+
+    /// Records that this session is on screen now.
+    ///
+    /// Routed through the model because the model owns the log: the screen that
+    /// opens a session has no business knowing where "viewed" is stored.
+    func markViewed(_ sessionId: String) {
+        viewLog?.markViewed(sessionId)
+    }
+
+    /// The row's state, as the accessibility tree should name it.
+    ///
+    /// Tests assert on this rather than on a colour: a dot's hue is not
+    /// something a run can read, and "looks blue" is not a verdict.
+    func stateIdentifier(of session: SessionSummary) -> String {
+        "session.state.\(state(of: session).rawValue)"
     }
 
     /// Loads the list, then keeps it fresh from the host event stream.
@@ -278,6 +328,7 @@ final class SessionListModel {
                 isUsingFallbackGrouping = workspaces.isEmpty
             }
             regroup()
+            seedFirstSightings()
             noteFinishedRuns()
             lastRefreshed = Date()
             phase = .loaded
@@ -453,22 +504,64 @@ final class SessionListModel {
             // No workspace list was ever read: group by directory so the list
             // is still usable. The header states that this is a fallback, and
             // unfiled sessions stay folded below either way.
-            groups = Dictionary(grouping: topLevel, by: { $0.cwd ?? "" })
-                .map { path, sessions in
-                    Group(
-                        id: path.isEmpty ? "__none__" : path,
-                        path: path,
-                        title: path.isEmpty ? "未分组" : (path as NSString).lastPathComponent,
-                        sessions: sessions.sorted { $0.updatedAt > $1.updatedAt },
-                        children: byParent
-                    )
-                }
-                .sorted { ($0.sessions.first?.updatedAt ?? 0) > ($1.sessions.first?.updatedAt ?? 0) }
+            groups = orderGroups(
+                Dictionary(grouping: topLevel, by: { $0.cwd ?? "" })
+                    .map { path, sessions in
+                        Group(
+                            id: path.isEmpty ? "__none__" : path,
+                            path: path,
+                            title: path.isEmpty ? "未分组" : (path as NSString).lastPathComponent,
+                            sessions: sessions.sorted { $0.updatedAt > $1.updatedAt },
+                            children: byParent
+                        )
+                    }
+            )
             loose = (unfiled + orphans).sorted { $0.updatedAt > $1.updatedAt }
             return
         }
 
-        groups = built
+        groups = orderGroups(built)
         loose = (unfiled + orphans).sorted { $0.updatedAt > $1.updatedAt }
+    }
+
+    /// Groups with something running first, then the rest; each part by the
+    /// group's most recent activity.
+    ///
+    /// This deliberately parts ways with the desktop sidebar, which shows the
+    /// user's own workspace order: on a phone the list is opened to answer "is
+    /// anything happening?", so work in flight outranks a saved arrangement.
+    private func orderGroups(_ groups: [Group]) -> [Group] {
+        let sorted = SessionListOrder.groups(
+            groups,
+            isRunning: { $0.sessions.contains(where: \.running) },
+            activity: { $0.sessions.map(\.updatedAt).max() ?? 0 }
+        )
+        // Members are ordered after the groups, so the state lookup runs once per
+        // group rather than inside the comparison.
+        return sorted.map { group in
+            Group(
+                id: group.id,
+                path: group.path,
+                title: group.title,
+                sessions: orderSessions(group.sessions),
+                children: group.children
+            )
+        }
+    }
+
+    /// Running first, then finished-unseen, then the rest; newest first inside
+    /// each bucket.
+    ///
+    /// The state buckets are the whole point: a session that finished while the
+    /// user was away should be one glance away, not wherever the desktop's
+    /// assignment order happens to put it.
+    private func orderSessions(_ sessions: [SessionSummary]) -> [SessionSummary] {
+        SessionListOrder.members(
+            sessions,
+            state: { [weak self] session in
+                self?.state(of: session) ?? .finishedSeen
+            },
+            updatedAt: \.updatedAt
+        )
     }
 }

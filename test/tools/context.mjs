@@ -171,13 +171,17 @@ export const runnerPath = join(DERIVED, 'Build/Products/Debug-iphonesimulator/DS
 /// single Swift file — which is what makes per-case compilation of test code
 /// affordable to avoid entirely.
 ///
-/// "Incrementally" is decided by comparing the newest input against the product.
-/// The first version skipped whenever a product existed, which silently tested
-/// yesterday's binary after a source change: the run reported the old app's
-/// behaviour as the new code's result.
+/// "Incrementally" is decided by comparing the newest input against the **oldest**
+/// product. The first version skipped whenever a product existed, which silently
+/// tested yesterday's binary after a source change: the run reported the old
+/// app's behaviour as the new code's result. The second version compared against
+/// the *newest* product, which had the same failure from the other side — a
+/// plain `xcodebuild build` (run by hand, or by the simulator check) refreshes
+/// the app bundle, and that alone made a stale test engine look current. The
+/// weakest link is what decides whether a rebuild is needed.
 export function build(simId, { force = false } = {}) {
   if (!force && existsSync(appPath) && existsSync(runnerPath)) {
-    const product = newestMtime([appPath, runnerPath])
+    const product = oldestMtime([appPath, runnerPath])
     if (product >= newestMtime(sourceRoots())) return { skipped: true }
   }
   const started = Date.now()
@@ -185,6 +189,14 @@ export function build(simId, { force = false } = {}) {
     '-configuration', 'Debug', '-destination', `platform=iOS Simulator,id=${simId}`,
     '-derivedDataPath', DERIVED, 'build-for-testing'], { quiet: true })
   return { skipped: false, seconds: (Date.now() - started) / 1000 }
+}
+
+/// The oldest modification time across the products.
+///
+/// Not `newestMtime`: a bundle that was rebuilt while its sibling was not must
+/// still count as stale, or the check blesses a half-rebuilt pair.
+function oldestMtime(paths) {
+  return paths.reduce((oldest, path) => Math.min(oldest, newestMtime([path])), Number.POSITIVE_INFINITY)
 }
 
 /// Every directory whose contents the built product is made of.

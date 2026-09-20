@@ -155,6 +155,34 @@ function directivesFor(action) {
   return entry.to(...groups)
 }
 
+/// Splits one directive into words, keeping quoted values whole.
+///
+/// The first version used `action.match(/'[^']*'|"[^"]*"|\S+/g)`, which only
+/// protects a quoted run when the *whole token* starts with the quote — so
+/// `type text="先执行 sleep 8"` split at the space and typed `"先执行`, and the
+/// engine reported success. Any value with a space was silently truncated; a
+/// walk is both shorter to reason about and correct.
+function tokenize(text) {
+  const tokens = []
+  let current = ''
+  let quote = null
+  for (const character of text) {
+    if (quote) {
+      if (character === quote) quote = null
+      else current += character
+      continue
+    }
+    if (character === '"' || character === "'") { quote = character; continue }
+    if (/\s/.test(character)) {
+      if (current) { tokens.push(current); current = '' }
+      continue
+    }
+    current += character
+  }
+  if (current) tokens.push(current)
+  return tokens
+}
+
 /// A comma-separated list of checks, targets or pictures.
 function splitList(value) {
   // Comma only. A space must not split, because a shot's fields are
@@ -287,8 +315,7 @@ export function buildPlan({ casePath, caseText, stepsText, runId, bundleId, sess
       for (const action of splitActions(directive)) {
       // Single quotes hold a value with spaces and double quotes in it — an
       // inline HTML document, for instance.
-      const [verb, ...tokens] = (action.match(/'[^']*'|"[^"]*"|\S+/g) ?? [])
-        .map((token) => token.replace(/^["']|["']$/g, ''))
+      const [verb, ...tokens] = tokenize(action)
       const values = {}
       for (const token of tokens) {
         const at = token.indexOf('=')

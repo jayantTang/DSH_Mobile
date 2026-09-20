@@ -299,7 +299,8 @@ struct SessionListView: View {
     private func parentRow(session: SessionSummary, children: [SessionSummary]) -> some View {
         HStack(spacing: DSHTheme.Spacing.hairline) {
             NavigationLink(value: session.sessionId) {
-                SessionRow(session: session, home: store.hostHome,
+                SessionRow(session: session, rowState: model.state(of: session),
+                           home: store.hostHome,
                            isJustCreated: session.sessionId == model.lastCreatedSessionId)
             }
             .buttonStyle(.plain)
@@ -340,7 +341,8 @@ struct SessionListView: View {
     /// A row inside the archived section: readable, and marked as archived.
     private func archivedRow(_ session: SessionSummary) -> some View {
         NavigationLink(value: session.sessionId) {
-            SessionRow(session: session, home: store.hostHome, isChild: true)
+            SessionRow(session: session, rowState: model.state(of: session),
+                       home: store.hostHome, isChild: true)
         }
         .buttonStyle(.plain)
         .listRowInsets(EdgeInsets(top: 1, leading: 10, bottom: 1, trailing: 10))
@@ -356,7 +358,8 @@ struct SessionListView: View {
     /// and is not the user's to file away.
     private func childRow(_ session: SessionSummary, archivable: Bool = false) -> some View {
         NavigationLink(value: session.sessionId) {
-            SessionRow(session: session, home: store.hostHome, isChild: true,
+            SessionRow(session: session, rowState: model.state(of: session),
+                       home: store.hostHome, isChild: true,
                        isJustCreated: session.sessionId == model.lastCreatedSessionId)
         }
         .buttonStyle(.plain)
@@ -436,11 +439,19 @@ private struct WorkspaceHeader: View {
                 .font(DSHTheme.Typography.micro)
                 .foregroundStyle(DSHTheme.labelTertiary)
                 .lineLimit(1)
+                // The identifier rides the visible label: an identifier on the
+                // combined header container never reached the tree (the same
+                // lesson as the row's state labels).
+                .accessibilityIdentifier("session.group.\(title)")
             Spacer(minLength: 0)
         }
         .textCase(nil)
         .padding(.top, DSHTheme.Spacing.tight)
         .padding(.horizontal, DSHTheme.Spacing.loose)
+        // A plain section header is decoration to the accessibility tree, which
+        // is why the first version of TC-MOB-26 could not find a group at all.
+        // Combined into one element so a run can name it and compare positions.
+        .accessibilityElement(children: .combine)
         .accessibilityLabel("工作区 \(PathFormat.short(path, home: home))")
     }
 }
@@ -537,6 +548,10 @@ struct CreatedBadge: View {
 /// on every row is what made the list feel dense.
 struct SessionRow: View {
     let session: SessionSummary
+    /// What the leading dot says. Passed in rather than read from the model:
+    /// the row is a pure view, and the model needs the phone's own view-log to
+    /// answer it.
+    var rowState: SessionRowState = .finishedSeen
     let home: String?
     var isChild: Bool = false
     /// Whether this is the session the app just created in this run.
@@ -573,6 +588,18 @@ struct SessionRow: View {
                         Text("运行中")
                             .font(DSHTheme.Typography.micro)
                             .foregroundStyle(DSHTheme.brand)
+                            // The identifier rides the visible label, not the
+                            // dot: StatusDot is accessibility-hidden, so an id
+                            // on it never reaches the tree.
+                            .accessibilityIdentifier("session.state.running")
+                        Text("·")
+                            .font(DSHTheme.Typography.micro)
+                            .foregroundStyle(DSHTheme.labelDimmed)
+                    } else if rowState == .finishedUnseen {
+                        Text("已完成")
+                            .font(DSHTheme.Typography.micro)
+                            .foregroundStyle(DSHTheme.brand)
+                            .accessibilityIdentifier("session.state.finishedUnseen")
                         Text("·")
                             .font(DSHTheme.Typography.micro)
                             .foregroundStyle(DSHTheme.labelDimmed)
@@ -612,9 +639,12 @@ struct SessionRow: View {
     }
 
     private var statusLevel: StatusDot.Level {
-        if session.running { return .busy }
-        if session.blank { return .idle }
-        return .ok
+        switch rowState {
+        case .running: return .busy
+        case .finishedUnseen: return .unseen
+        case .finishedSeen: return .ok
+        case .blank: return .idle
+        }
     }
 }
 

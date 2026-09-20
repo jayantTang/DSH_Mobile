@@ -10,6 +10,7 @@ struct RootView: View {
     @State private var updates = UpdateChecker()
     @State private var alerts = SessionAlerts()
     @State private var attachmentImages = AttachmentImages()
+    @State private var viewLog = SessionViewLog()
     @State private var listModel = SessionListModel()
     @State private var chatModel = ChatModel()
     /// Holds the app awake in the background while there is work to report on.
@@ -46,7 +47,7 @@ struct RootView: View {
                 if isConnected { attachmentImages.clearFailures() }
             }
             .task {
-                listModel.attach(to: store, hub: hub)
+                listModel.attach(to: store, hub: hub, viewLog: viewLog)
                 attachmentImages.attach(store: store)
                 chatModel.attach(store: store, hub: hub)
                 // The feed asks for the client each time it reopens, so a repair
@@ -595,7 +596,12 @@ private struct MainView: View {
     private func sessionDestination(_ sessionId: String) -> some View {
         if let summary = listModel.session(withId: sessionId) {
             chat(for: summary)
-                .task(id: sessionId) { await chatModel.open(summary) }
+                .task(id: sessionId) {
+                    await chatModel.open(summary)
+                    // Opening is what "viewed" means: the row's marker clears
+                    // here and nowhere else, so scrolling past does not count.
+                    listModel.markViewed(sessionId)
+                }
         } else {
             SessionDetailView(model: chatModel)
         }
@@ -611,6 +617,7 @@ private struct MainView: View {
     private func openCreatedSession(_ sessionId: String) {
         guard let summary = listModel.session(withId: sessionId) else { return }
         Task { await chatModel.open(summary) }
+        listModel.markViewed(sessionId)
         paths.append(sessionId)
     }
 
