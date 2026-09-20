@@ -31,6 +31,15 @@ struct KeyboardVisibilityObserver: ViewModifier {
                 for: UIResponder.keyboardWillHideNotification)) { _ in
                 report(false)
             }
+            // 联想词栏、切换输入法、外接键盘切换都只发这一条：它不改焦点，
+            // 但改键盘高度、也就是改转写区的视口高度。
+            .onReceive(NotificationCenter.default.publisher(
+                for: UIResponder.keyboardWillChangeFrameNotification)) { note in
+                guard ViewportProbe.isOn,
+                      let frame = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect
+                else { return }
+                ViewportProbe.note("keyboard.frame", ["h": String(format: "%.0f", frame.height)])
+            }
     }
 
     private func report(_ visible: Bool) {

@@ -52,8 +52,13 @@ struct ChatView: View {
             }
             Hairline()
             Composer(model: model, isFocused: $isFocused)
+                .probed("composer")
         }
         .background(DSHTheme.background)
+        .task {
+            ViewportProbe.start()
+            await ViewportProbe.runTyping(into: model, focus: $isFocused)
+        }
         .overlay(alignment: .top) {
             if let completionBanner {
                 CompletionBanner(text: completionBanner)
@@ -113,60 +118,30 @@ struct ChatView: View {
 
     private func transcriptScroll(_ proxy: ScrollViewProxy) -> some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: DSHTheme.Spacing.standard) {
-                if model.hasOlder {
-                    Button {
-                        Task { await model.loadOlder() }
-                    } label: {
-                        HStack(spacing: DSHTheme.Spacing.hairline) {
-                            if model.isLoadingOlder {
-                                ProgressView().controlSize(.mini)
-                            }
-                            Text(model.isLoadingOlder ? "加载中…" : "加载更早的消息")
-                                .font(DSHTheme.Typography.micro)
-                        }
-                        .foregroundStyle(DSHTheme.brand)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, DSHTheme.Spacing.tight)
-                    }
-                    .buttonStyle(.plain)
-                    .id(Self.topAnchor)
+            // 转写**不用** `LazyVStack`。
+            //
+            // 2026-09-20 实测：懒加载容器在视口高度变化（键盘弹出）时会重新估算
+            // 没量到的行，估法是拿"已量到的最高一行"当模板——会话里一个 6924pt 的
+            // 长回答就能把 110 行的内容高度从实测 17 万估到 87 万。滚动几何一旦是
+            // 假的，任何"滚到底"（我们自己的跟随、系统的底部锚定）都会把视口送到
+            // 一片还没渲染的空位上：会话区整片空白，直到估算回落或用户手动一拉。
+            //
+            // 同一会话、同一操作下 A/B：懒加载 5–7 段空白/轮（累计 10 秒以上），
+            // 换成 VStack 后 0 段（2/2 轮）。代价是整份已加载的历史都参与布局，
+            // 所以窗口大小仍需控制（见 `ChatModel` 每次只取 60 条 + 分页）。
+            //
+            // 诊断变体 `lazy-stack` 保留旧写法，用来复现和对照。
+            Group {
+                if ProbeVariants.lazyStack {
+                    LazyVStack(alignment: .leading, spacing: DSHTheme.Spacing.standard) { stackContent }
+                } else {
+                    VStack(alignment: .leading, spacing: DSHTheme.Spacing.standard) { stackContent }
                 }
-
-                ForEach(model.timeline.items) { item in
-                    TimelineRowView(item: item)
-                        .id(item.id)
-                }
-
-                // Everything below is a single, permanently present tail. It
-                // must not live inside an `if`: the anchor used to be attached
-                // to whichever of three branches was active, so every state
-                // change (send → submitting → streaming → committed) destroyed
-                // and rebuilt it, and a scroll aimed at it could land on
-                // nothing — leaving the transcript blank.
-                Group {
-                    if model.activity == .submitting, model.timeline.streaming == nil {
-                        HStack(spacing: DSHTheme.Spacing.hairline) {
-                            ProgressView().controlSize(.mini)
-                            Text("已发送，等待电脑端开始…")
-                                .font(DSHTheme.Typography.micro)
-                                .foregroundStyle(DSHTheme.labelTertiary)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    } else if let streaming = model.timeline.streaming, !streaming.isEmpty {
-                        StreamingBubble(attempt: streaming)
-                    }
-                }
-
-                Color.clear
-                    .frame(height: 1)
-                    .id(Self.bottomAnchor)
             }
             .scrollTargetLayout()
             .padding(.horizontal, DSHTheme.Spacing.loose)
             .padding(.vertical, DSHTheme.Spacing.standard)
         }
-        .accessibilityIdentifier("chat.transcript")
         // Imperative scrolling only, and only in one direction (us -> view).
         //
         // A `scrollPosition(id:)` binding was tried here and had to be removed:
@@ -175,19 +150,27 @@ struct ChatView: View {
         // feedback saturated the main thread and the UI stopped rendering —
         // which is exactly what a blank conversation area is.
         .defaultScrollAnchor(.bottom)
+        // 探针：滚动几何（偏移 / 内容高 / 容器高）。"落在内容之外"这种状态
+        // 只能从这里看出来，光看"有没有已渲染的行"看不出来。
+        .modifier(ScrollGeometryProbe())
+        .accessibilityIdentifier("chat.transcript")
+        // 探针：转写区自己的矩形。它和已渲染行的矩形之差就是"没被盖住的带"。
+        .background(
+            GeometryReader { proxy in
+                let rect = proxy.frame(in: .global)
+                Color.clear
+                    .onAppear { ViewportProbe.setViewport(rect) }
+                    .onChange(of: rect) { _, next in ViewportProbe.setViewport(next) }
+            }
+        )
         .scrollDismissesKeyboard(.interactively)
         .onChange(of: model.sendSignal) {
-            // Sending always returns to the tail, and it must not be throttled:
-            // the throttled path is what left a freshly sent message appended
-            // below the viewport with nothing scrolling to it, so the reader
-            // saw the agent's output but never their own message.
             isFollowing = true
             scrollToBottom(proxy, force: true)
         }
         .onChange(of: model.scrollSignal) {
+            ViewportProbe.note("scrollSignal", ["draft": String(model.draft.count)])
             guard isFollowing else { return }
-            // 打开钉底期间不做动画：这段时间里的滚动是"纠正落点"，不是"跟着新内容走"，
-            // 动画化就变成用户看到的那次"从中间滑到底部"。
             if isPinningOnOpen {
                 proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)
             } else {
@@ -251,36 +234,102 @@ struct ChatView: View {
             isFollowing = true
             scrollToBottom(proxy, animated: false)
         }
-        // Anchoring waits for content. `onAppear` runs before the session has
-        // been folded, so scrolling there finds nothing and the view settles at
-        // the tail instead — which is exactly the position that hides the
-        // instruction under the answer.
         .onChange(of: model.session?.sessionId, initial: true) { _, sessionId in
-            // Attachments are authorized per session, so the loader has to know
-            // which one the rows on screen belong to. Each session keeps its own
-            // cache: switching reads the other bucket instead of clearing, so
-            // coming back to a conversation shows its pictures at once, and a
-            // session still never renders a picture it did not load itself.
             attachmentImages.sessionId = sessionId
-            // 换会话 = 打开了一个会话（冷加载或命中缓存都走这里）：
-            // 重置读者意图，并排一次"钉到底部"。
             userScrolled = false
             openedSessionId = nil
             if let sessionId { pinOnOpen(proxy, sessionId: sessionId) }
         }
-        // 内容变了：确认一次视口还在尾部。
-        //
-        // 打开会话时，首屏内容是分几批折进来的，而 `LazyVStack` 的行高在折入过程中
-        // 会被修正——修正会让内容总高变化，系统的底部锚定因此可能停在"半路"。
-        // 这里在内容变化后延迟一次滚动（而不是反复重试）：等这一批布局落定再钉，
-        // 位置才是确定的。`isFollowing` 为 false 表示读者自己翻到了上面，不打扰。
-        .onChange(of: model.timeline.items.count) { _, _ in repinAfterContentChange(proxy) }
-        // 键盘改变视口高度之后，LazyVStack 的可见区间会挪到还没渲染的空位上，
-        // 表现就是「打开键盘/打字时上方会话变白，往下拉才恢复」。等键盘动画结束
-        // 再把视口钉回底部锚点，迫使可见行按新视口重建。
+        .onChange(of: model.timeline.items.count) { _, count in
+            ViewportProbe.setContent(items: count, streaming: model.timeline.streaming?.text.count ?? 0)
+            repinAfterContentChange(proxy)
+        }
+        .onChange(of: model.timeline.streaming?.text.count ?? 0) { _, streamed in
+            ViewportProbe.setContent(items: model.timeline.items.count, streaming: streamed)
+        }
+        .onChange(of: model.phase) { _, phase in
+            if phase == .ready { ViewportProbe.markReady() }
+        }
         .onKeyboardVisibilityChange { visible in
+            ViewportProbe.note("keyboard", ["visible": visible ? "1" : "0",
+                                            "following": isFollowing ? "1" : "0"])
             repinAfterViewportChange(proxy, keyboardVisible: visible)
         }
+        .onChange(of: model.draft.count) { _, count in
+            ViewportProbe.note("draft", ["chars": String(count),
+                                         "following": isFollowing ? "1" : "0"])
+        }
+        .onChange(of: isFollowing) { _, following in
+            ViewportProbe.note("following", ["on": following ? "1" : "0"])
+        }
+    }
+
+    /// 整份转写的内容（懒加载/非懒加载两种容器共用）。
+    ///
+    /// 必须**直接**吐出行，不能再套一层 `VStack`：套一层就等于让 `LazyVStack`
+    /// 只有一个子视图，懒加载随之失效。
+    @ViewBuilder
+    private var stackContent: some View {
+        if model.hasOlder {
+            Button {
+                Task { await model.loadOlder() }
+            } label: {
+                HStack(spacing: DSHTheme.Spacing.hairline) {
+                    if model.isLoadingOlder {
+                        ProgressView().controlSize(.mini)
+                    }
+                    Text(model.isLoadingOlder ? "加载中…" : "加载更早的消息")
+                        .font(DSHTheme.Typography.micro)
+                }
+                .foregroundStyle(DSHTheme.brand)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, DSHTheme.Spacing.tight)
+            }
+            .buttonStyle(.plain)
+            .id(Self.topAnchor)
+        }
+
+        ForEach(model.timeline.items) { item in row(item) }
+        tail
+        bottomMarker
+    }
+
+    /// 一行消息。抽出来是为了让"懒加载/非懒加载"两种排布共用同一份定义。
+    private func row(_ item: TimelineItem) -> some View {
+        TimelineRowView(item: item)
+            .id(item.id)
+            .probed("row:\(item.id)")
+    }
+
+    /// 尾部那块（等待提示或流式气泡）。
+    ///
+    /// 它必须**永远存在**、不能住在 `if` 里：早先锚点挂在三个分支中的某一个上，
+    /// 每次状态变化（send → submitting → streaming → committed）都会把它销毁重建，
+    /// 指向它的滚动就会落空——那正是"整片空白"。
+    @ViewBuilder
+    private var tail: some View {
+        Group {
+            if model.activity == .submitting, model.timeline.streaming == nil {
+                HStack(spacing: DSHTheme.Spacing.hairline) {
+                    ProgressView().controlSize(.mini)
+                    Text("已发送，等待电脑端开始…")
+                        .font(DSHTheme.Typography.micro)
+                        .foregroundStyle(DSHTheme.labelTertiary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            } else if let streaming = model.timeline.streaming, !streaming.isEmpty {
+                StreamingBubble(attempt: streaming)
+            }
+        }
+        .probed("tail")
+    }
+
+    /// 内容末尾的 1pt 标记，滚到底的目标。
+    private var bottomMarker: some View {
+        Color.clear
+            .frame(height: 1)
+            .id(Self.bottomAnchor)
+            .probed("bottom")
     }
 
     /// 打开会话时把视口钉到底部：立即一次 + 120ms + 300ms 各一次，**都不带动画**。
