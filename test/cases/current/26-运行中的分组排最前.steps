@@ -13,11 +13,13 @@
 # 跑法：DSH_CONNECT=relay ./test/run.sh run test/cases/current/26-运行中的分组排最前.md
 
 1  do: 连接本机 DSH | want: id:session.list
-2  do: 滚动到 id:session.row.{{session}} | want: id:session.row.{{session}}
-3  do: 点击 id:session.row.{{session}}, 等待 id:chat.transcript timeout=25 | want: id:chat.transcript
-4  do: 点击 id:composer.field
-5  do: 输入 请只回复两个字：收到 | want: id:composer.send
-6  do: 点击 id:composer.send
-7  do: 点击 text:返回, 等待 id:session.list timeout=20
-8  do: 什么都不做 | want: id:session.row.{{session}}, id:session.state.running, text:运行中
-9  do: 什么都不做 | shot: 01-running check=content,amber
+2  do: 滚动到 id:session.ungrouped | want: id:session.ungrouped
+5  do: 点击 id:session.ungrouped
+6  do: 滚动到 id:session.row.{{session}} | want: id:session.row.{{session}}
+5  do: 点击 id:session.row.{{session}}, 等待 id:chat.transcript timeout=25 | want: id:chat.transcript
+6  do: 点击 id:composer.field
+7  do: 输入 请只回复两个字：收到 | want: id:composer.send
+8  do: 点击 id:composer.send
+9  do: 点击 text:返回, 等待 id:session.list timeout=20
+10  do: 什么都不做 | want: id:session.row.{{session}}, id:session.state.running, text:运行中
+11  do: 什么都不做 | shot: 01-running check=content,amber

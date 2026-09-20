@@ -183,6 +183,21 @@ function tokenize(text) {
   return tokens
 }
 
+/// Refuses a case that would type into a session it does not own.
+///
+/// 2026-09-20: two cases (16, 26) declared only `临时工作区`, so `{{session}}`
+/// fell back to the runner's "richest history" pick — a real session in the
+/// user's own project. Both typed and sent prompts into it (TC-MOB-30's first
+/// version did the same). The rule is simple: a case that writes must say which
+/// session it writes to, either by asking for a scratch one (`临时目录`) or by
+/// pinning its own fixture (`会话`).
+export function assertWritesAreScoped(frontMatter, steps) {
+  const writes = steps.some((step) => /do:\s*(输入|点击 id:composer\.send)/.test(step))
+  if (!writes) return null
+  if (/^临时目录:/m.test(frontMatter) || /^会话:/m.test(frontMatter)) return null
+  return '用例会往会话里打字/发送，但没有声明「临时目录」（用运行器新建的会话）或「会话」（钉住自己的夹具）——拒绝运行：{{session}} 会落到一台真实会话上'
+}
+
 /// A comma-separated list of checks, targets or pictures.
 function splitList(value) {
   // Comma only. A space must not split, because a shot's fields are
@@ -265,6 +280,8 @@ export function buildPlan({ casePath, caseText, stepsText, runId, bundleId, sess
   if (prose.length && prose.length !== rows.length) {
     throw new Error(`用例有 ${prose.length} 个步骤，指令文件有 ${rows.length} 条——两者必须一一对应`)
   }
+  const scopeProblem = assertWritesAreScoped(caseText, rows)
+  if (scopeProblem) throw new Error(scopeProblem)
 
   // A case refers to the session it may work on as `{{session}}`; the runner
   // decides which session that is (usually a scratch one it created and will

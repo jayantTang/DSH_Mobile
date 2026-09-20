@@ -261,7 +261,16 @@ struct ToolCallRow: View {
         }
     }
 
-    private var isExpanded: Bool { expansionOverride ?? hasImage }
+    /// Open by default only when the result is a picture **and the call worked**.
+    ///
+    /// A failed `read_image` is the case that taught this: the tool returns the
+    /// text it fetched plus a picture, the error made it "not picture-only", and
+    /// `hasImage` opened the card — so a failed fetch dumped the whole page into
+    /// the transcript as an exception message. A failure now starts folded like
+    /// any other card, with its text one tap away.
+    private var isExpanded: Bool {
+        expansionOverride ?? (hasImage && !invocation.isError)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -327,6 +336,10 @@ struct ToolCallRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        // The card's own row is a container (children: .contain), so a tap
+        // aimed at `row.tool` lands on the container and toggles nothing. Give
+        // the disclosure itself an address.
+        .accessibilityIdentifier("tool.header")
     }
 
     /// True when the arguments are worth a line at all.
@@ -338,10 +351,12 @@ struct ToolCallRow: View {
     ///
     /// A tool that returns an image also returns the text it needed for the
     /// model — a `<path>`/`<type>` handle for `read_image`, a file name and size
-    /// for `send_image`. None of that is what the person is looking at, and it
-    /// pushes the picture down the card. Errors are the exception: when a call
-    /// fails there is no picture to look at, so its text is the content.
-    private var pictureOnly: Bool { hasImage && !invocation.isError }
+    /// for `send_image`, or the whole fetched page when the fetch failed. None of
+    /// that is what the person is looking at, and it pushes the picture down the
+    /// card. Failures are included: a failed call with a picture now keeps its
+    /// text behind 「显示详情」 as well, which is what stops an exception message
+    /// from arriving as a wall of text.
+    private var pictureOnly: Bool { hasImage }
 
     private var detailBlocks: [ContentBlock] {
         // 「显示详情」 has to bring the text back with the parameters: the whole
