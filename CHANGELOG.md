@@ -4,7 +4,10 @@
 [语义化版本](https://semver.org/lang/zh-CN/)。三处部署（App / 连接器 / 中转）的组合见
 [`docs/VERSIONING.md`](docs/VERSIONING.md)。
 
-## Unreleased
+## 连接器 0.3.0 — 2026-09-20
+
+`dsh-plugin-mobile-link` 0.3.0 与两个图片插件（`dsh-plugin-send-image` 0.1.1、
+`dsh-plugin-doubao-image` 0.1.1）已发布到 npm；三个包都在一个干净目录里装过一遍确认可用。
 
 ### Added
 
