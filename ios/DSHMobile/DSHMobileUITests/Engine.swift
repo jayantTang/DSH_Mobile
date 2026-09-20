@@ -329,6 +329,26 @@ final class Engine: XCTestCase {
             element.typeText(text)
             return verifyTyped(text, into: element)
 
+        case "type_loop":
+            // 连续打字：一个 `typeText` 爆发在布局反应过来之前就结束了，而"打字时跳白"
+            // 要的正是"每次按键都让输入框重新布局一次"。这里按字符敲、每字符之间留一点
+            // 时间，敲到达成的秒数为止——模拟的是人一边看着流式输出一边打字。
+            let loop = step.value ?? ""
+            let seconds = step.timeout ?? 20
+            guard !loop.isEmpty else { return Outcome(ok: false, detail: "缺少要连续输入的文字") }
+            let deadline = Date().addingTimeInterval(seconds)
+            var rounds = 0
+            while Date() < deadline {
+                for character in loop {
+                    if Date() >= deadline { break }
+                    app.typeText(String(character))
+                    Thread.sleep(forTimeInterval: 0.06)
+                }
+                rounds += 1
+            }
+            return verifyTyped(String(loop.prefix(8)), into: nil, attempts: 2,
+                               detail: "连续打字 \(Int(seconds)) 秒（\(rounds) 轮）")
+
         case "swipe", "scroll":
             return swipe(step)
 
@@ -667,20 +687,21 @@ final class Engine: XCTestCase {
     /// after the typing finishes. A longer text is judged by its opening
     /// characters, because a field may reformat or the tail may scroll out of
     /// the reported value.
-    private func verifyTyped(_ text: String, into target: XCUIElement?) -> Outcome {
-        guard !text.isEmpty else { return Outcome(ok: true, detail: "已输入空文本") }
+    private func verifyTyped(_ text: String, into target: XCUIElement?,
+                             attempts: Int = 20, detail: String? = nil) -> Outcome {
+        guard !text.isEmpty else { return Outcome(ok: true, detail: detail ?? "已输入空文本") }
         let wanted = text.count > 8 ? String(text.prefix(8)) : text
-        let deadline = Date().addingTimeInterval(4)
+        let deadline = Date().addingTimeInterval(Double(attempts) * 0.2)
         repeat {
             if let target, let value = target.value as? String, value.contains(wanted) {
-                return Outcome(ok: true, detail: "已输入「\(text)」")
+                return Outcome(ok: true, detail: detail ?? "已输入「\(text)」")
             }
             if target == nil {
                 for query in [app.textFields, app.textViews, app.searchFields] {
                     for index in 0..<query.count {
                         let value = query.element(boundBy: index).value as? String ?? ""
                         if value.contains(wanted) {
-                            return Outcome(ok: true, detail: "已输入「\(text)」")
+                            return Outcome(ok: true, detail: detail ?? "已输入「\(text)」")
                         }
                     }
                 }

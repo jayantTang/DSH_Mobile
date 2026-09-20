@@ -101,6 +101,10 @@ const ACTIONS = [
   { match: /^点击屏幕\s+(\d+(?:\.\d+)?)%\s*,\s*(\d+(?:\.\d+)?)%$/, to: (x, y) =>
       [`tap_where at=${Number(x) / 100},${Number(y) / 100}`] },
   { match: /^输入\s+(.+)$/, to: (text) => [`type text=${quote(text)}`] },
+  // 连续打字：按字符敲、持续 N 秒。一个 `typeText` 爆发在布局反应过来之前就结束了，
+  // 而"打字时视口反复变高变矮"这条路径要的是**每一次按键都触发一次重新布局**。
+  { match: /^连续打字\s+(.+?)\s+秒=(\d+)$/, to: (text, seconds) =>
+      [`type_loop text=${quote(text)} timeout=${seconds}`] },
   // Order matters: `滚动到 X` is its own action, and the generic `滚动` below
   // would otherwise swallow it as "scroll towards an element named 到 X".
   { match: /^滚动到\s+(.+)$/, to: (target) => [`scroll_to ${quote(target)}`] },
@@ -397,6 +401,7 @@ export function buildPlan({ casePath, caseText, stepsText, runId, bundleId, sess
         case 'wait_gone':
         case 'pause':
         case 'type':
+        case 'type_loop':
         case 'swipe':
         case 'wait':
         case 'probe':
@@ -413,6 +418,10 @@ export function buildPlan({ casePath, caseText, stepsText, runId, bundleId, sess
           if (verb === 'type') {
             anchor.target = values.text === undefined ? positional[0] : undefined
             anchor.value = values.text ?? positional[1] ?? ''
+          }
+          if (verb === 'type_loop') {
+            anchor.value = values.text ?? positional[0] ?? ''
+            anchor.timeout = Number(values.timeout ?? positional[1] ?? 20)
           }
           if (verb === 'tap_at') anchor.value = values.at ?? 'center'
           if (verb === 'tap_where') anchor.value = values.at ?? '0.5,0.5'

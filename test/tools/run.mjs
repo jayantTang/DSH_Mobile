@@ -15,17 +15,97 @@
 //     does not appear on the simulator's own display.
 
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 import { buildPlan, caseMeta } from './case.mjs'
 import { claimedRelayLink, pairDevice, revokeDevice } from './relaypair.mjs'
 import {
-  BUILD, DEFAULT_CASE, DEFAULT_SIM, DERIVED, HERE, PROJECT, ROOT, TEST_DIR,
+  BUILD, BUNDLE_ID, DEFAULT_CASE, DEFAULT_SIM, DERIVED, HERE, PROJECT, ROOT, TEST_DIR,
   appBuild, appVersion, bootSimulator, build, ensureRunDir, environmentFacts, gitCommit, host,
   installRunner, log, parseArgs, pickSession, readEvents, run, screens, stagePlan, stamp, warn,
 } from './context.mjs'
+
+/// 把 App 内探针（`-DSHViewportProbe`，DEBUG-only）的日志取回来，并对
+/// "会话区有没有真的变白"下一条机器判定。
+///
+/// 为什么值得进测试台：用户报的是**概率性**的空白，一张两张截图证不了它不在，
+/// 而录像又要人一帧帧看。探针在 App 里每 0.5 秒把转写区画一遍、数墨迹占比，
+/// 于是"这一轮有没有白过"变成一个可以复核的数字。用例没带探针参数时静默跳过。
+function analyzeProbe({ simId, detailDir, verdicts, log }) {
+  try {
+    probeVerdicts({ simId, detailDir, verdicts, log })
+  } catch (error) {
+    warn(`探针分析失败（不影响本轮的其它判定）：${error.message.split('\n')[0]}`)
+  }
+}
+
+function probeVerdicts({ simId, detailDir, verdicts, log }) {
+  let container = ''
+  try {
+    container = run('xcrun', ['simctl', 'get_app_container', simId, BUNDLE_ID, 'data'],
+                     { quiet: true }).trim()
+  } catch {
+    return
+  }
+  const documents = join(container, 'Documents')
+  const source = join(documents, 'probe.log')
+  if (!existsSync(source)) return
+
+  copyFileSync(source, join(detailDir, 'probe.log'))
+  const snapshots = readdirSync(documents).filter((item) => /^probe-.*\.png$/.test(item))
+  for (const name of snapshots) {
+    copyFileSync(join(documents, name), join(detailDir, name))
+  }
+  // 取走就删：容器不一定会被下一次安装重置，留着会让下一轮把旧日志当成自己的。
+  rmSync(source, { force: true })
+  for (const name of snapshots) rmSync(join(documents, name), { force: true })
+
+  const samples = []
+  const content = []
+  // 读**取回来的副本**：容器里那份已经删掉了，留着会让下一轮把旧日志当成自己的。
+  for (const line of readFileSync(join(detailDir, 'probe.log'), 'utf8').split('\n')) {
+    const at = Number(line.split(' ')[0])
+    if (!Number.isFinite(at)) continue
+    const ink = /(?:^| )ink=([\d.]+)/.exec(line)
+    if (ink) samples.push({ at, ink: Number(ink[1]) })
+    const value = /(?:^| )content=([\d.]+)/.exec(line)
+    if (value) content.push(Number(value[1]))
+  }
+  if (!samples.length) return
+
+  // 相邻 0.7 秒内的空白算一段：偶发的一两帧抖动不算，用户看到的是"白了一片"。
+  const episodes = []
+  for (const sample of samples.filter((item) => item.ink < 0.12)) {
+    const last = episodes[episodes.length - 1]
+    if (last && sample.at - last.to <= 0.7) last.to = sample.at
+    else episodes.push({ from: sample.at, to: sample.at })
+  }
+  const describe = episodes.map((item) => `${item.from.toFixed(1)}s–${item.to.toFixed(1)}s`).join('、')
+  verdicts.push({
+    seq: -3, id: 'probe.blank', kind: 'probe',
+    status: episodes.length ? 'fail' : 'pass',
+    detail: episodes.length
+      ? `会话区白过 ${episodes.length} 段（${describe}）；现场图见 detail/probe-*-blank*.png`
+      : `探针 ${samples.length} 个采样点里会话区墨迹最低 ${Math.min(...samples.map((s) => s.ink)).toFixed(3)}，没有变白`,
+  })
+  // 启动那几拍的内容高度是 1pt（会话还没折进来），不参与统计。
+  const grown = content.filter((value) => value > 500)
+  if (grown.length) {
+    const sorted = [...grown].sort((a, b) => a - b)
+    const median = sorted[Math.floor(sorted.length / 2)]
+    const worst = sorted[sorted.length - 1]
+    verdicts.push({
+      seq: -4, id: 'probe.estimate', kind: 'probe', status: 'pass',
+      detail: `转写内容高度中位 ${median.toFixed(0)}pt、最大 ${worst.toFixed(0)}pt`
+        + (median > 0 && worst > median * 4
+            ? `（最大是中位的 ${(worst / median).toFixed(1)} 倍：滚动几何在估算与实测之间来回跳）`
+            : '（稳定）'),
+    })
+  }
+  void log
+}
 
 /// Brings the evidence out of the result bundle and files it under the names the
 /// case asked for.
@@ -424,6 +504,8 @@ async function runCase(flags, positional, pairing) {
   clearInterval(tailer)
   drain()
   writeFileSync(join(detailDir, 'events.ndjson'), readEvents(simId))
+
+  analyzeProbe({ simId, detailDir, verdicts, log })
 
   exportScreenshots({ resultBundle, shotsDir, manifest })
   for (const entry of manifest) {
