@@ -70,6 +70,10 @@ function prose(text) {
   return text.replace(/```[\s\S]*?```/g, '')
 }
 
+/// 摘要就是标题之后的第一段**散文**。
+///
+/// 徽标行、状态行与表格不算散文：徽标本质上是一串图片链接（加上 8 个徽标后，
+/// README 的"首段"曾被测成 1038 字——那是徽标，不是摘要）。
 function firstParagraph(text) {
   const body = text.split('\n').slice(1)
   const collected = []
@@ -79,9 +83,18 @@ function firstParagraph(text) {
       continue
     }
     if (line.startsWith('#') || line.startsWith('>') || line.startsWith('|')) continue
+    if (isDecoration(line)) continue
     collected.push(line.trim())
   }
   return collected.join('')
+}
+
+/// 徽标行：以图片或图片链接开头（`![alt](url)` / `[![alt](url)](url)`）。
+///
+/// 单次正则替换处理不了嵌套的图片链接——外层匹配会把内层连同一半括号吃掉，
+/// 剩下的 `](https://…)` 仍然含字母，于是被当成散文。直接看行首最省事。
+function isDecoration(line) {
+  return /^\[?!\[/.test(line.trim())
 }
 
 for (const file of DOCS) {
