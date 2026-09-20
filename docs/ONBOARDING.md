@@ -25,7 +25,7 @@
 |---|---|---|
 | 跑着 DSH 的电脑 | `npx @deepseek-ai/dsh web` | 手机连上了也没会话可看 |
 | 电脑上的连接器 | `dsh plugin --profile web add dsh-plugin-mobile-link` | 手机扫不出配对码，或连上就断 |
-| 手机上的 App | TestFlight 公开链接（见仓库 README） | — |
+| 手机上的 App | TestFlight 公开链接：<https://testflight.apple.com/join/tHKQsbCk>（先装 TestFlight） | — |
 
 中转不是第四个东西：A 用别人的，B 自己开。区别只是「谁是那台公网机器」。
 

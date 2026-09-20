@@ -24,8 +24,8 @@
 
 | 组件 | 当前版本 | 分发方式 |
 |---|---|---|
-| iOS App | 1.0 | TestFlight（[加入链接](https://testflight.apple.com/join/tHKQsbCk)）；测试构建 90 天过期 |
-| 连接器 `dsh-plugin-mobile-link` | 0.3.0 | npm |
+| iOS App | 1.0 | TestFlight 公开测试（[加入](https://testflight.apple.com/join/tHKQsbCk)）；需先安装 TestFlight，构建 90 天后过期 |
+| 连接器 `dsh-plugin-mobile-link` | 0.2.0 | npm（仓库内的版本可能领先，未发布前以 npm 上的为准） |
 | 中转（DLP v1） | 本仓库 `relay/` | 自行部署 |
 
 三者的版本组合与发布策略见 [`docs/VERSIONING.md`](docs/VERSIONING.md)。
@@ -41,7 +41,7 @@
 
 ### A. 使用公共中转
 
-1. 手机上通过上面的 TestFlight 链接安装 App。
+1. 手机上安装 App：先装 Apple 的 TestFlight，再用 <https://testflight.apple.com/join/tHKQsbCk> 加入测试。
 2. 电脑上安装连接器：`dsh plugin --profile web add dsh-plugin-mobile-link`
 3. 登记到中转：`dsh-mobile-link enroll --invite <邀请码> --relay wss://<中转地址>/dsh-link`
 4. 重启 DSH：`dsh web`
@@ -144,8 +144,9 @@ cd ios/DSHMobile && xcodebuild -scheme DSHMobile \
 
 ## 已知限制
 
-- **iOS 安装走 TestFlight**：需先安装 Apple 的 TestFlight，测试构建 90 天后过期，到期需安装新构建。
-  仓库提供的 OTA（`https://<站点>/ios/`）使用 Ad Hoc 描述文件，只覆盖已登记 UDID 的设备，适合自用。
+- **iOS 安装走 TestFlight**：需先安装 Apple 的 TestFlight；测试构建 90 天后过期，到期需安装新构建。
+  自行部署时也可以走 OTA（部署脚本会生成 `https://<站点>/ios/`）：那用 Ad Hoc 描述文件，
+  只覆盖已登记 UDID 的设备，适合自己用，不适合公开分发。
 - 手机处于后台时，电脑端**新开始**的会话无法唤起 App——需要 APNs，尚未实现。
 - 后台通知依赖无声音频保活，仅在「有会话运行或有待回答的提问」时生效。
 - 文件发送仅在经中转时可用。
