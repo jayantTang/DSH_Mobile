@@ -312,16 +312,22 @@ final class Engine: XCTestCase {
         case "type":
             // No target means "the field that is focused" — the same thing a
             // person means after tapping one.
+            let text = step.value ?? ""
             guard let target = step.target else {
-                app.typeText(step.value ?? "")
-                return Outcome(ok: true, detail: "已输入「\(step.value ?? "")」")
+                app.typeText(text)
+                // Typing that went nowhere used to report success: with no
+                // focused field (a tap that lost focus to a settling scroll, or
+                // a simulator without the software keyboard) XCUITest accepts
+                // the keystrokes and delivers them to no one. The run then
+                // "passed" a step in which nothing was typed.
+                return verifyTyped(text, into: nil)
             }
             guard let element = element(target) else {
                 return Outcome(ok: false, detail: "找不到输入框 \(target)")
             }
             element.tap()
-            element.typeText(step.value ?? "")
-            return Outcome(ok: true, detail: "已输入「\(step.value ?? "")」")
+            element.typeText(text)
+            return verifyTyped(text, into: element)
 
         case "swipe", "scroll":
             return swipe(step)
@@ -653,6 +659,39 @@ final class Engine: XCTestCase {
             }
         }
         return nil
+    }
+
+    /// Confirms the keystrokes landed in some text field.
+    ///
+    /// Polls rather than checking once: the field's value arrives a frame or two
+    /// after the typing finishes. A longer text is judged by its opening
+    /// characters, because a field may reformat or the tail may scroll out of
+    /// the reported value.
+    private func verifyTyped(_ text: String, into target: XCUIElement?) -> Outcome {
+        guard !text.isEmpty else { return Outcome(ok: true, detail: "已输入空文本") }
+        let wanted = text.count > 8 ? String(text.prefix(8)) : text
+        let deadline = Date().addingTimeInterval(4)
+        repeat {
+            if let target, let value = target.value as? String, value.contains(wanted) {
+                return Outcome(ok: true, detail: "已输入「\(text)」")
+            }
+            if target == nil {
+                for query in [app.textFields, app.textViews, app.searchFields] {
+                    for index in 0..<query.count {
+                        let value = query.element(boundBy: index).value as? String ?? ""
+                        if value.contains(wanted) {
+                            return Outcome(ok: true, detail: "已输入「\(text)」")
+                        }
+                    }
+                }
+            }
+            Thread.sleep(forTimeInterval: 0.2)
+        } while Date() < deadline
+        return Outcome(
+            ok: false,
+            detail: "输入没有落到任何输入框（\(text.count) 个字）——通常是没有获得键盘焦点，"
+                + "或仿真器没有软件键盘；文字本身没有进 App"
+        )
     }
 
     /// Prints what the current screen offers to scroll, for diagnosing a
