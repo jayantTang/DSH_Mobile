@@ -1,5 +1,11 @@
 # DSH Mobile
 
+[![DSH plugin](https://img.shields.io/badge/DSH-plugin-4D6BFE)](https://github.com/deepseek-ai/deepseek-harness)
+[![listed in awesome-deepseek-harness](https://img.shields.io/badge/listed%20in-awesome--deepseek--harness-4D6BFE?logo=awesomelists&logoColor=white)](https://github.com/Dominic789654/awesome-deepseek-harness)
+[![Awesome](https://awesome.re/badge.svg)](https://github.com/Dominic789654/awesome-deepseek-harness)
+[![iOS 17+](https://img.shields.io/badge/iOS-17%2B-000000?logo=apple&logoColor=white)](docs/VERSIONING.md)
+[![TestFlight](https://img.shields.io/badge/TestFlight-join-0D96F6?logo=apple&logoColor=white)](https://testflight.apple.com/join/tHKQsbCk)
+[![connector on npm](https://img.shields.io/npm/v/dsh-plugin-mobile-link?label=connector)](https://www.npmjs.com/package/dsh-plugin-mobile-link)
 [![CI](https://github.com/jayantTang/DSH_Mobile/actions/workflows/ci.yml/badge.svg)](https://github.com/jayantTang/DSH_Mobile/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 

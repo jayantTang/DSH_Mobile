@@ -1,5 +1,10 @@
 # dsh-plugin-mobile-link
 
+[![DSH plugin](https://img.shields.io/badge/DSH-plugin-4D6BFE)](https://github.com/deepseek-ai/deepseek-harness)
+[![listed in awesome-deepseek-harness](https://img.shields.io/badge/listed%20in-awesome--deepseek--harness-4D6BFE?logo=awesomelists&logoColor=white)](https://github.com/Dominic789654/awesome-deepseek-harness)
+[![npm](https://img.shields.io/npm/v/dsh-plugin-mobile-link)](https://www.npmjs.com/package/dsh-plugin-mobile-link)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](../../LICENSE)
+
 > 面向：使用者与实现者 · 状态：stable · 最近核对：2026-09-20
 
 **The computer half of [DSH Mobile](https://github.com/jayantTang/DSH_Mobile): it
