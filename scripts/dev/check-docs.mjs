@@ -134,6 +134,16 @@ for (const file of DOCS) {
     }
   }
 
+  // HTML `<img src="…">` 也要查：徽标可以用绝对地址，仓库内的素材必须是可达的相对路径
+  // （README 的宣传图用 HTML 是为了给图片设宽度，Markdown 语法带不了）。
+  for (const match of text.matchAll(/<img[^>]*\ssrc="([^"]+)"/g)) {
+    const target = match[1]
+    if (/^[a-z][a-z0-9+.-]*:/i.test(target)) continue
+    if (!existsSync(resolve(dirname(file), decodeURIComponent(target)))) {
+      report(file, `内嵌图片指向不存在的路径：${target}`)
+    }
+  }
+
   for (const match of text.matchAll(/\/Users\/([A-Za-z0-9._-]+)/g)) {
     const name = match[1]
     if (/^(example|you|your|yourname|user|username|me|someone|name|placeholder|dev|\.\.\.)$/.test(name)) continue
