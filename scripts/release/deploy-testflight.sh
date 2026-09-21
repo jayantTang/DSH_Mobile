@@ -6,6 +6,9 @@
 #   scripts/release/deploy-testflight.sh --archive-only     # 只编译归档
 #   scripts/release/deploy-testflight.sh --export-only      # 复用上次归档，只导出
 #   scripts/release/deploy-testflight.sh --upload-only      # 复用导出的包，只上传
+#   scripts/release/deploy-testflight.sh --beta-only        # 只做"挂组 + 提交外部测试审核"
+#   scripts/release/deploy-testflight.sh --no-submit        # 传上去但不提交审核（例外情况才用）
+#   scripts/release/deploy-testflight.sh --beta-only --build <版本>   # 指定某一版挂组+提审核
 #
 # 与 deploy-ota.sh 的区别就在「导出那一档」：OTA 用 method=debugging（Apple
 # Development 证书 + 团队描述文件，只覆盖已登记 UDID 的设备），TestFlight 用
@@ -46,18 +49,27 @@ if [ -n "${ASC_KEY_ID:-}" ] && [ -n "${ASC_ISSUER_ID:-}" ] && [ -f "$ASC_KEY_FIL
 fi
 
 say() { printf '\n\033[1;36m>>>\033[0m %s\n' "$*"; }
+warn() { printf '\033[1;33m!\033[0m %s\n' "$*"; }
 die() { printf 'deploy-testflight: %s\n' "$*" >&2; exit 1; }
 
-ARCHIVE_ONLY=0; EXPORT_ONLY=0; UPLOAD_ONLY=0
-for arg in "$@"; do
-  case "$arg" in
+ARCHIVE_ONLY=0; EXPORT_ONLY=0; UPLOAD_ONLY=0; BETA_ONLY=0; SUBMIT=1
+# `while` 而不是 `for`：`--build <version>` 要吃掉下一个参数，
+# `for arg in "$@"` 里的 shift 不会影响循环本身，版本号会被当成未知参数。
+while [ $# -gt 0 ]; do
+  case "$1" in
     --archive-only) ARCHIVE_ONLY=1 ;;
     --export-only) EXPORT_ONLY=1 ;;
     --upload-only) UPLOAD_ONLY=1 ;;
+    --beta-only) BETA_ONLY=1 ;;
+    --build) DSH_BETA_BUILD="${2:-}"; export DSH_BETA_BUILD; shift ;;
+    --no-submit) SUBMIT=0 ;;
     -h|--help) sed -n '3,25p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-    *) die "不认识的参数 $arg" ;;
+    *) die "不认识的参数 $1" ;;
   esac
+  shift
 done
+
+[ "$BETA_ONLY" = 1 ] && { EXPORT_ONLY=1; UPLOAD_ONLY=1; }
 
 TEAM_ID="${DSH_TEAM_ID:-$(plutil -extract teamID raw -o - "$LOCAL_SIGNING" 2>/dev/null || true)}"
 [ -n "$TEAM_ID" ] || die "没有开发者团队 ID：设 DSH_TEAM_ID=<TeamID>，或写 ${LOCAL_SIGNING}（形如 {teamID = XXXXXXXXXX;}，不入库）"
@@ -91,22 +103,60 @@ if [ "$UPLOAD_ONLY" = 0 ]; then
   sed "s/<TEAM_ID>/${TEAM_ID}/" "$PROJECT_DIR/ExportOptions-appstore.plist" \
     > "$BUILD_DIR/ExportOptions-appstore.plist"
   rm -rf "$BUILD_DIR/export"
-  if ! xcodebuild -exportArchive \
-      -archivePath "$BUILD_DIR/DSHMobile.xcarchive" \
-      -exportOptionsPlist "$BUILD_DIR/ExportOptions-appstore.plist" \
-      -exportPath "$BUILD_DIR/export" \
-      -allowProvisioningUpdates \
-      ${AUTH_ARGS[@]+"${AUTH_ARGS[@]}"} 2>&1 | tee "$BUILD_DIR/export.log" | tail -5
-  then
-    if grep -q "No Accounts" "$BUILD_DIR/export.log"; then
-      die "Xcode 里没有登录 Apple ID —— 导出这一步需要联网生成 Apple Distribution 证书。
-     打开 Xcode → Settings → Accounts → + → Apple ID，登录后重跑：
-       scripts/release/deploy-testflight.sh --export-only"
+
+  # 两条导出路：
+  #   * **手工签名**（首选，本团队唯一走得通的）：本机 dshbuild 钥匙串里那张
+  #     Apple Distribution + `ExportOptions-manual.plist` 指的 App Store 描述文件。
+  #     它们是 `scripts/release/asc-dist-signing.mjs cert|profile` 装出来的；
+  #   * 云签名（历史方案）：`ExportOptions-appstore.plist` + API Key，实测被 Apple
+  #     拒（Cloud signing permission error），只在手工那条路不可用时兜底。
+  MANUAL_KEYCHAIN="${DSH_BUILD_KEYCHAIN:-$HOME/Library/Keychains/dshbuild.keychain-db}"
+  MANUAL_PASSWORD="${DSH_BUILD_KEYCHAIN_PASSWORD:-dsh}"
+  exported=0
+  if [ -f "$MANUAL_KEYCHAIN" ] && [ -f "$PROJECT_DIR/ExportOptions-manual.plist" ]; then
+    say "用本机分发证书手工签名导出（${MANUAL_KEYCHAIN}）"
+    # 私钥不在 login 钥匙串里（那边的 ACL 会让 codesign 卡住等授权），所以把
+    # dshbuild 临时加进搜索列表，导出完再还原。
+    original_chains="$(security list-keychains -d user | tr -d ' "' | tr '\n' ' ')"
+    security unlock-keychain -p "$MANUAL_PASSWORD" "$MANUAL_KEYCHAIN" >/dev/null 2>&1 || true
+    security list-keychains -d user -s "$MANUAL_KEYCHAIN" "$HOME/Library/Keychains/login.keychain-db"
+    restore_chains() { security list-keychains -d user -s ${original_chains}; }
+    trap restore_chains EXIT
+
+    sed "s/<TEAM_ID>/${TEAM_ID}/" "$PROJECT_DIR/ExportOptions-manual.plist" \
+      > "$BUILD_DIR/ExportOptions-manual.local.plist"
+    if xcodebuild -exportArchive \
+        -archivePath "$BUILD_DIR/DSHMobile.xcarchive" \
+        -exportOptionsPlist "$BUILD_DIR/ExportOptions-manual.local.plist" \
+        -exportPath "$BUILD_DIR/export" 2>&1 | tee "$BUILD_DIR/export.log" | tail -5
+    then
+      exported=1
+    else
+      warn "手工签名导出失败（日志见 $BUILD_DIR/export.log），退回云签名再试一次"
+      rm -rf "$BUILD_DIR/export"
     fi
-    die "导出失败，完整日志：$BUILD_DIR/export.log"
+  fi
+
+  if [ "$exported" = 0 ]; then
+    if ! xcodebuild -exportArchive \
+        -archivePath "$BUILD_DIR/DSHMobile.xcarchive" \
+        -exportOptionsPlist "$BUILD_DIR/ExportOptions-appstore.plist" \
+        -exportPath "$BUILD_DIR/export" \
+        -allowProvisioningUpdates \
+        ${AUTH_ARGS[@]+"${AUTH_ARGS[@]}"} 2>&1 | tee "$BUILD_DIR/export.log" | tail -5
+    then
+      if grep -q "No Accounts" "$BUILD_DIR/export.log"; then
+        die "导出失败：手工签名那条路也没成（要求 $MANUAL_KEYCHAIN 里有一张 Apple Distribution），
+     而云签名需要 Xcode 里登录 Apple ID。二选一：
+       node scripts/release/asc-dist-signing.mjs cert && node scripts/release/asc-dist-signing.mjs profile <证书 id>
+       或在 Xcode → Settings → Accounts 里登录后重跑：$0 --export-only"
+      fi
+      die "导出失败，完整日志：$BUILD_DIR/export.log"
+    fi
   fi
 fi
 
+if [ "$BETA_ONLY" = 0 ] && [ "$EXPORT_ONLY" = 0 ]; then
 IPA="$BUILD_DIR/export/DSHMobile.ipa"
 [ -f "$IPA" ] || die "导出目录里没有 .ipa：$BUILD_DIR/export"
 say "导出完成：${IPA}（$(du -h "$IPA" | cut -f1)）"
@@ -122,9 +172,17 @@ if [ -n "${ASC_KEY_ID:-}" ] && [ -n "${ASC_ISSUER_ID:-}" ]; then
   # "Either JWT (--api-issuer and --api-key) ... is required"）。
   if [ -n "${ASC_ISSUER_ID:-}" ]; then
     xcrun altool --upload-app -f "$IPA" -t ios \
-      --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID"
+      --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID" 2>&1 | tee "$BUILD_DIR/upload.log" | tail -6
   else
-    xcrun altool --upload-app -f "$IPA" -t ios --apiKey "$ASC_KEY_ID"
+    xcrun altool --upload-app -f "$IPA" -t ios --apiKey "$ASC_KEY_ID" 2>&1 | tee "$BUILD_DIR/upload.log" | tail -6
+  fi
+  # 管道会把退出码吃掉，所以看日志：altool 失败时会打印 "Failed to upload"。
+  if grep -qE "Failed to upload|ERROR:.*altool" "$BUILD_DIR/upload.log"; then
+    if grep -q "must be higher than the previously uploaded version" "$BUILD_DIR/upload.log"; then
+      die "这个构建号 App Store Connect 已经收过一版了（同一个号不能传两次）。重跑不加参数即可：
+       $0            # 会按时间取一个新的构建号，重新归档、导出、上传"
+    fi
+    die "上传失败，完整日志：$BUILD_DIR/upload.log"
   fi
 else
   # 本机路径：用 Xcode 已有的会话（就是上面登录的那个账号）。
@@ -136,12 +194,59 @@ else
   fi
 fi
 
+fi  # BETA_ONLY / EXPORT_ONLY
+
+# ── 4. 挂到测试组 + 提交外部测试审核 ────────────────────────────────────────
+#
+# 这一步不是可选的收尾：**只上传不提交，外部测试者根本拿不到**——构建会一直躺在
+# "READY_FOR_BETA_SUBMISSION"，公开链接上还是上一版。2026-09-19 传的三个构建就是这么
+# 被漏掉的，测试者停在 9-18 那版两天。所以"发布 TestFlight"在这里的定义是：
+# 上传 → 挂到 Public beta 组 → 提交外部测试审核 → （通过后）测试者能下载。
+if [ "$SUBMIT" = 1 ]; then
+  # 等的是**我们这一次的构建号**，不是"最近一版"：上传到能查询有一两分钟延迟，
+  # 按"最近一版"找会把上一版挂给测试者（2026-09-21 踩过）。
+  TARGET_BUILD="${DSH_BETA_BUILD:-${BUILD_NUMBER}}"
+  if [ "$BETA_ONLY" = 1 ] && [ -z "${DSH_BETA_BUILD:-}" ]; then
+    TARGET_BUILD=""      # 只跑 beta 那一步时，没指定就用最近上传的一版
+  fi
+  say "等 App Store Connect 处理完构建 ${TARGET_BUILD:-（最近一版）}"
+  deadline=$(( $(date +%s) + 900 ))
+  ok=0
+  while :; do
+    if [ -n "$TARGET_BUILD" ]; then
+      status="$(node "$ROOT/scripts/dev/asc-beta.mjs" status --build "$TARGET_BUILD" 2>&1 || true)"
+      if ! grep -q "还没出现在 App Store Connect" <<<"$status" && grep -q "VALID" <<<"$status"; then
+        ok=1
+      fi
+    else
+      status="$(node "$ROOT/scripts/dev/asc-beta.mjs" status 2>&1 || true)"
+      grep -q "VALID" <<<"$status" && ok=1
+    fi
+    [ "$ok" = 1 ] && break
+    if [ "$(date +%s)" -gt "$deadline" ]; then
+      die "15 分钟内${TARGET_BUILD:+ 构建 $TARGET_BUILD}还没处理完。处理完之后单独跑：
+       $0 --beta-only${TARGET_BUILD:+ --build $TARGET_BUILD}"
+    fi
+    sleep 20
+  done
+
+  if grep -q "外部测试审核：APPROVED" <<<"$status"; then
+    say "这一版已经在外部测试中（APPROVED），不需要再提交"
+  else
+    say "挂到测试组并提交外部测试审核"
+    node "$ROOT/scripts/dev/asc-beta.mjs" prepare ${TARGET_BUILD:+--build "$TARGET_BUILD"}
+    node "$ROOT/scripts/dev/asc-beta.mjs" submit ${TARGET_BUILD:+--build "$TARGET_BUILD"}
+  fi
+  node "$ROOT/scripts/dev/asc-beta.mjs" status ${TARGET_BUILD:+--build "$TARGET_BUILD"} || true
+fi
+
 cat <<NOTE
 
-上传成功。接下来在 App Store Connect 里：
-  1. 我的 App → 选中 $BUNDLE_ID → TestFlight → 等构建处理完（几分钟，会收到邮件）
-  2. 构建 → 「管理」→ 测试信息（Beta App Description + 反馈邮箱）→ 提交审核
-     （外部测试的第一个构建要过一遍审核，通常 1–2 天；内部测试不用）
-  3. 审核通过后「外部测试」里会出现公开链接，那个链接才是可以贴到 README / issue 的
-     下载入口——任何人不登记 UDID 也能装，有效期 90 天。
+完成。手机上用 TestFlight 打开 DSH_Mobile（或点公开链接
+https://testflight.apple.com/join/tHKQsbCk ）就能装到这一版；
+装完在 App 里核对构建号。
+
+若这次带了 --no-submit：构建只对**内部**测试者可见，外部测试者要等有人跑
+  $0 --beta-only
+把它挂到 Public beta 组并提交外部测试审核之后才能下载。
 NOTE

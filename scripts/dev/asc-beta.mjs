@@ -102,7 +102,25 @@ async function app() {
   return data[0]
 }
 
+/// 这次要处理的构建号：`--build <version>`（发布脚本刚上传的那一版）优先，
+/// 其次 DSH_BETA_BUILD，最后才是"最近上传的一版"。
+///
+/// 为什么要能指定：上传完到出现在 API 里有一两分钟延迟，而"最近一版"在那段时间里
+/// 指的是**上一版**——2026-09-21 就这么把 2306 传上去、却把 2302 挂给了测试者。
+function wantedBuild() {
+  const at = process.argv.indexOf('--build')
+  if (at >= 0 && process.argv[at + 1]) return process.argv[at + 1]
+  return process.env.DSH_BETA_BUILD || null
+}
+
 async function latestBuild(appId) {
+  const wanted = wantedBuild()
+  if (wanted) {
+    const { data } = await get(
+      `/v1/builds?filter[app]=${appId}&filter[version]=${encodeURIComponent(wanted)}&limit=1`)
+    if (!data.length) throw new Error(`构建 ${wanted} 还没出现在 App Store Connect（上传后要等一两分钟处理）`)
+    return data[0]
+  }
   const { data } = await get(`/v1/builds?filter[app]=${appId}&limit=1&sort=-uploadedDate`)
   return data[0]
 }
