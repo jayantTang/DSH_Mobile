@@ -33,6 +33,18 @@ LOCAL_SIGNING="$PROJECT_DIR/Signing.local.plist"
 [ -f "$ROOT/.env.local" ] && . "$ROOT/.env.local"
 BUNDLE_ID="com.jayanttang.dsh"
 
+# 给 xcodebuild 一把 App Store Connect API Key：带 -allowProvisioningUpdates 时它会用这把
+# 钥匙去**联网签发** Apple Distribution 证书，于是导出 App Store 包不再需要有人在 Xcode 里
+# 登录 Apple ID（那一步是纯手工的，会卡住整条流水线）。钥匙读 .env.local 里的
+# ASC_KEY_ID / ASC_ISSUER_ID 与 ~/.appstoreconnect/private_keys/AuthKey_<KeyID>.p8。
+AUTH_ARGS=()
+ASC_KEY_FILE="${ASC_KEY_PATH:-$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID:-}.p8}"
+if [ -n "${ASC_KEY_ID:-}" ] && [ -n "${ASC_ISSUER_ID:-}" ] && [ -f "$ASC_KEY_FILE" ]; then
+  AUTH_ARGS=(-authenticationKeyPath "$ASC_KEY_FILE"
+             -authenticationKeyID "$ASC_KEY_ID"
+             -authenticationKeyIssuerID "$ASC_ISSUER_ID")
+fi
+
 say() { printf '\n\033[1;36m>>>\033[0m %s\n' "$*"; }
 die() { printf 'deploy-testflight: %s\n' "$*" >&2; exit 1; }
 
@@ -63,6 +75,7 @@ if [ "$EXPORT_ONLY" = 0 ] && [ "$UPLOAD_ONLY" = 0 ]; then
     -configuration Release -destination 'generic/platform=iOS' \
     -archivePath "$BUILD_DIR/DSHMobile.xcarchive" \
     -allowProvisioningUpdates \
+    ${AUTH_ARGS[@]+"${AUTH_ARGS[@]}"} \
     DEVELOPMENT_TEAM="$TEAM_ID" \
     CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
     archive | tail -3
@@ -82,7 +95,8 @@ if [ "$UPLOAD_ONLY" = 0 ]; then
       -archivePath "$BUILD_DIR/DSHMobile.xcarchive" \
       -exportOptionsPlist "$BUILD_DIR/ExportOptions-appstore.plist" \
       -exportPath "$BUILD_DIR/export" \
-      -allowProvisioningUpdates 2>&1 | tee "$BUILD_DIR/export.log" | tail -5
+      -allowProvisioningUpdates \
+      ${AUTH_ARGS[@]+"${AUTH_ARGS[@]}"} 2>&1 | tee "$BUILD_DIR/export.log" | tail -5
   then
     if grep -q "No Accounts" "$BUILD_DIR/export.log"; then
       die "Xcode 里没有登录 Apple ID —— 导出这一步需要联网生成 Apple Distribution 证书。
