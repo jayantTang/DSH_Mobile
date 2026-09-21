@@ -302,6 +302,14 @@ struct ChatView: View {
             }
             .buttonStyle(.plain)
             .id(Self.topAnchor)
+        } else {
+            // 同一类隐患的第二处：「加载更早的消息」翻到底之后会消失，那也是一行。
+            // 它消失的时机正是读者翻到最上面的时候，而那时 `pinOnOpen`（换会话）
+            // 或发送时的强制钉底可能刚把滚动排进队列。留一行 1pt 占位，
+            // 整份转写的行数就只增不减。
+            Color.clear
+                .frame(height: 1)
+                .modifier(TranscriptRowChrome(inList: !ProbeVariants.lazyStack))
         }
 
         ForEach(model.timeline.items) { item in row(item) }
@@ -322,6 +330,14 @@ struct ChatView: View {
     /// 它必须**永远存在**、不能住在 `if` 里：早先锚点挂在三个分支中的某一个上，
     /// 每次状态变化（send → submitting → streaming → committed）都会把它销毁重建，
     /// 指向它的滚动就会落空——那正是"整片空白"。
+    ///
+    /// 而且它必须**永远占一行**。转写容器是 `UICollectionView` 撑起来的，`scrollTo`
+    /// 先把锚点解析成一个 item 的 index path，到下一次内容更新时才真正执行；行数只要
+    /// 在这中间少一行，那条已经解析好的"最后一行"就越界。UIKit 不返回空、直接抛
+    /// `NSInternalInconsistencyException`，没人接 = 闪退。崩溃报告实例（2026-09-21）：
+    /// `Attempted to scroll the collection view to an out-of-bounds item (61) when there
+    /// are only 61 items in section 0`——发送那一刻行数是 62（钉底就是钉第 61 项），
+    /// host 一开始跑、这行等待提示消失，就只剩 61 行。空着也得留一行。
     @ViewBuilder
     private var tail: some View {
         Group {
@@ -335,6 +351,9 @@ struct ChatView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             } else if let streaming = model.timeline.streaming, !streaming.isEmpty {
                 StreamingBubble(attempt: streaming)
+            } else {
+                // 没有提示、也没有气泡时的占位：1pt、看不见，只为"这一行在"。
+                Color.clear.frame(height: 1)
             }
         }
         .modifier(TranscriptRowChrome(inList: !ProbeVariants.lazyStack))
