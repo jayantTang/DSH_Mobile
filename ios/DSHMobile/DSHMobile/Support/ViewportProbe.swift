@@ -1,4 +1,5 @@
 #if DEBUG
+import DSHKit
 import SwiftUI
 import UIKit
 
@@ -250,6 +251,51 @@ enum ViewportProbe {
         ticker = timer
     }
 
+    // MARK: - 提问夹具（"让某个会话进入待答"这件事只能由 App 自己发起）
+
+    /// `-DSHProbeAsk <sessionId>`：连上之后由**这个 App** 给指定会话发一条
+    /// "立刻调用提问工具"的提示词，让它进入待答状态。
+    ///
+    /// 为什么非要从 App 发：2026-09-22 实测，从 host 侧用 RPC（`session/prompt`）发起时，
+    /// 会话日志里 `tool/call` 有提问、turn 也没结束，但提问**不会送到手机**，
+    /// 列表里就永远看不到待答行。从 App 自己发则走产品那条路（waterfall 回到本设备），
+    /// 几秒内就能看到——这也是用户真实遇到的路径。
+    static var askProbeSession: String? {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let index = arguments.firstIndex(of: "-DSHProbeAsk"),
+              index + 1 < arguments.count
+        else { return nil }
+        return arguments[index + 1]
+    }
+
+    @MainActor
+    static func runAskProbe(provider: @MainActor () -> DSHClient?) async {
+        guard let sessionId = askProbeSession else { return }
+        note("askprobe.begin", ["session": sessionId], force: true)
+        // 冷启动时 client 还没有：等它出现（连接建立后 store 才装上）。
+        var client: DSHClient?
+        for _ in 0..<120 {
+            client = provider()
+            if client != nil { break }
+            try? await Task.sleep(for: .milliseconds(500))
+        }
+        guard let client else {
+            note("askprobe.failed", ["error": "no client after 60s"], force: true)
+            return
+        }
+        do {
+            try await client.prompt(SessionPromptRequest(
+                requestId: "probe-ask-\(UUID().uuidString)",
+                sessionId: sessionId,
+                mode: .queue,
+                content: [.text("现在立刻调用 ask_user_question 工具问我一个问题（给 2 个选项），"
+                                + "不要做任何其它事情也不要解释。")]))
+            note("askprobe.sent", ["session": sessionId], force: true)
+        } catch {
+            note("askprobe.failed", ["error": String(describing: error)], force: true)
+        }
+    }
+
     // MARK: - 打字驱动（复现"一边流式一边打字"，不经过 XCUITest）
 
     /// `-DSHTypingProbe <文字>@<秒数>[@旗标]`：按字符把文字追加进草稿，模拟人连续打字。
@@ -430,6 +476,8 @@ enum ViewportProbe {
     static let isOn = false
     static var typingProbe: (text: String, seconds: Double, oscillate: Bool, immediately: Bool,
                              keyboardCycles: Bool)? { nil }
+    static var askProbeSession: String? { nil }
+    static func runAskProbe(provider: @MainActor () -> DSHClient?) async {}
     static func note(_ kind: String, _ fields: [String: String] = [:], force: Bool = false) {}
     static func setViewport(_ rect: CGRect) {}
     static func setContent(items: Int, streaming: Int) {}

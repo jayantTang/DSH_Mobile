@@ -539,24 +539,20 @@ struct SessionRow: View {
             }
 
             // A read session draws nothing, but still reserves the dot's width:
-            // without the spacer every title in the list shifts when a row is
-            // read.
+            // without the spacer every title in the list shifts by 8pt when a
+            // row is read.
             //
-            // 待答用**形状**区分（举手图标），不是只换颜色：列表是扫着看的，
-            // 同一个蓝色圆点再加一行小字，扫过去和「运行中」没区别。
+            // 待答和运行中共用这个圆点，区分交给整行底色与左侧竖条（见行底那两处）：
+            // 圆点只负责"这一行有状态"，脉冲与否才是"它在不在动"。
             Group {
                 if rowState == .finishedSeen {
                     Color.clear
-                } else if rowState == .waitingForYou {
-                    Image(systemName: "hand.raised.fill")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(DSHTheme.brand)
                 } else {
                     // 只有真在跑的才脉冲：等用户回应的那个是不动的。
                     StatusDot(level: statusLevel, animated: session.running && rowState == .running)
                 }
             }
-            .frame(width: 11, height: 11)
+            .frame(width: 8, height: 8)
 
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: DSHTheme.Spacing.hairline) {

@@ -101,6 +101,12 @@ struct RootView: View {
                 await alerts.prepare()
             }
             .task {
+                // 夹具：`-DSHProbeAsk <sessionId>` 时由 App 自己给那个会话发一条
+                // "立刻提问"的提示词——host 侧 RPC 发起的提问送不到手机，
+                // 只有走产品这条路（本设备发起的 turn）waterfall 才会回到 App。
+                await ViewportProbe.runAskProbe(provider: { store.client })
+            }
+            .task {
                 // Injected link drop: see `automationDropLinkAfter`. Debug only,
                 // like the hook itself — the release build has none of this.
                 #if DEBUG
