@@ -10,6 +10,10 @@
 //   node scripts/dev/watch-enrolls.mjs --dry-run  # 只打印要发什么，不碰 GitHub
 //   node scripts/dev/watch-enrolls.mjs --count    # 只看现在的账（含电脑名，本地用）
 //   node scripts/dev/watch-enrolls.mjs --summary  # 重新发一条汇总（不碰"谁已报过"）
+//   node scripts/dev/watch-enrolls.mjs --table    # 只核对正文里那张邀请码表（默认也做）
+//
+// 除了评论，它还会**把 issue 正文里那张邀请码表核对一遍**：哪个码被领了、哪个过期了，
+// 直接标在表里。新人一眼能看出还剩哪些——不必翻评论猜"N 号是不是已经被人用了"。
 //   node scripts/dev/watch-enrolls.mjs --details  # 公开评论里带上电脑名与账号
 //
 // 状态写在 ~/.dsh/mobile-link/enroll-reported.json（已评论过的 agentId）。
@@ -64,6 +68,132 @@ function enrollments() {
   const raw = execFileSync('ssh', ['-q', '-o', 'BatchMode=yes', `root@${host}`, remote],
                            { encoding: 'utf8' })
   return JSON.parse(raw)
+}
+
+/// 问中转：表里这些码还能不能用（只读，明文码不出这台电脑）。
+function checkCodes(codes) {
+  const host = env.DSH_OTA_HOST
+  if (!host) throw new Error('.env.local 里没有 DSH_OTA_HOST')
+  const remote = env.DSH_INVITE_CHECK_CMD
+    || '/opt/dsh-relay/.venv/bin/python /opt/dsh-relay/admin.py '
+       + '--db /var/lib/dsh-relay/state.db invite-check --stdin'
+  const raw = execFileSync('ssh', ['-q', '-o', 'BatchMode=yes', `root@${host}`, remote],
+                           { encoding: 'utf8', input: codes.join('\n') + '\n' })
+  return JSON.parse(raw)
+}
+
+async function github(path, init = {}) {
+  const response = await fetch(`https://api.github.com/repos/${repo}/${path}`, {
+    ...init,
+    headers: {
+      authorization: `Bearer ${token()}`,
+      accept: 'application/vnd.github+json',
+      'user-agent': 'dsh-watch-enrolls',
+      ...(init.body ? { 'content-type': 'application/json' } : {}),
+    },
+  })
+  if (!response.ok) {
+    throw new Error(`${path} HTTP ${response.status}：${(await response.text()).slice(0, 200)}`)
+  }
+  return response.json()
+}
+
+/// 正文里那张码表的行：`| 1 | `XXXX-...` | ... |`
+const TABLE_ROW = /^\|\s*(\d+)\s*\|\s*`([A-Za-z0-9-]+)`\s*\|.*$/
+
+function parseTable(body) {
+  const lines = body.split('\n')
+  const header = lines.findIndex((line) => /^\|\s*#\s*\|\s*邀请码/.test(line))
+  if (header < 0) return null
+  const rows = []
+  let end = header + 2  // header + separator
+  for (let index = header + 2; index < lines.length; index += 1) {
+    const match = TABLE_ROW.exec(lines[index])
+    if (!match) break
+    rows.push({ number: Number(match[1]), code: match[2], at: index })
+    end = index + 1
+  }
+  return { header, end, rows }
+}
+
+function statusCell(row) {
+  if (!row.status || row.status.exists === false) return '⚠️ 无效（可能抄错了）'
+  if (row.status.state === 'used') {
+    const when = row.status.usedAt ? beijing(row.status.usedAt).slice(5, 10) : ''
+    return `❌ 已被领取${when ? `（${when}）` : ''}`
+  }
+  if (row.status.state === 'expired') return '⌛ 已过期'
+  return '✅ 可用'
+}
+
+function renderTable(rows) {
+  return [
+    '| # | 邀请码 | 状态 |',
+    '|---|---|---|',
+    ...rows.map((row) => `| ${row.number} | \`${row.code}\` | ${statusCell(row)} |`),
+  ].join('\n')
+}
+
+/// 把正文改写成"表里带着状态"的样子；没变化就返回 null（不白改一次 issue）。
+function renderBody(body, rows, free) {
+  const parsed = parseTable(body)
+  if (!parsed) return null
+  const lines = body.split('\n')
+  const note = `**还有 ${free} 个可用**（${beijing(Date.now()).slice(0, 10)} 自动核对；用掉一个这张表就会变）`
+  // 上一次的"还有 N 个可用"整行先删掉，免得越积越多。
+  const cleaned = lines.filter((line) => !/^\*\*还有 \d+ 个可用\*\*/.test(line))
+  const header = cleaned.findIndex((line) => /^\|\s*#\s*\|\s*邀请码/.test(line))
+  const shift = cleaned.length - lines.length
+  const start = header + (shift ? 0 : 0)
+  const tableEnd = (() => {
+    let end = start + 2
+    for (let index = start + 2; index < cleaned.length; index += 1) {
+      if (!TABLE_ROW.test(cleaned[index])) break
+      end = index + 1
+    }
+    return end
+  })()
+  const rebuilt = [
+    ...cleaned.slice(0, start),
+    note,
+    renderTable(rows),
+    ...cleaned.slice(tableEnd),
+  ]
+  // "回一句 N 号已用"的老约定不再需要：表是准的。
+  const text = rebuilt.join('\n').replace(
+    /^> 用掉一个可以在下面回一句.*$/m,
+    '> 表由脚本自动核对（用掉的会当场标出来，不必回帖抢号）。用完我会贴新的一批。')
+  return text === body ? null : text
+}
+
+async function syncTable() {
+  const issueData = await github(`issues/${number}`)
+  const parsed = parseTable(issueData.body ?? '')
+  if (!parsed || !parsed.rows.length) {
+    console.log('正文里没有邀请码表，跳过表格核对')
+    return
+  }
+  const statuses = checkCodes(parsed.rows.map((row) => row.code))
+  const byCode = new Map(statuses.map((item) => [String(item.code).toUpperCase(), item]))
+  for (const row of parsed.rows) row.status = byCode.get(row.code.toUpperCase())
+  const free = parsed.rows.filter((row) => row.status?.state === 'unused').length
+  const used = parsed.rows.filter((row) => row.status?.state === 'used').length
+  const next = renderBody(issueData.body ?? '', parsed.rows, free)
+
+  console.log(`邀请码表：${parsed.rows.length} 行 · 可用 ${free} · 已被领取 ${used}`)
+  if (!next) {
+    console.log('表格已是最新，不动正文')
+    return
+  }
+  if (has('dry-run')) {
+    const lines = next.split('\n')
+    const at = lines.findIndex((line) => /^\*\*还有 \d+ 个可用\*\*/.test(line))
+    const until = at + 2 + parsed.rows.length
+    console.log('（将改写正文的这段）\n' + lines.slice(at, until).join('\n'))
+    return
+  }
+  await github(`issues/${number}`, { method: 'PATCH', body: JSON.stringify({ body: next }) })
+  console.log('正文已更新（表里现在标着每张码的状态）')
 }
 
 function token() {
@@ -149,6 +279,14 @@ function enrollBody(row, index, trials, total, internal) {
     '<sub>由 `scripts/dev/watch-enrolls.mjs` 自动更新。</sub>',
   ].join('\n')
 }
+
+if (has('table')) {
+  await syncTable()
+  process.exit(0)
+}
+
+// 先把正文那张表核对一遍（新人看的就是它），再处理"该不该发新评论"。
+await syncTable()
 
 const data = enrollments()
 const { total, trials, internal } = tally(data)

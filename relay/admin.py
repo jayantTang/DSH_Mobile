@@ -150,6 +150,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     subs.add_parser("enrollments", help="who took an invite (joined view, read-only)")
 
+    invite_check = subs.add_parser("invite-check",
+                                   help="report whether given codes are used/expired (read-only)")
+    invite_check.add_argument("--code", action="append", default=[], help="may be repeated")
+    invite_check.add_argument("--stdin", action="store_true", help="read one code per line")
+
     usage = subs.add_parser("usage", help="daily egress per account or device")
     usage.add_argument("--days", type=int, default=7, help="how many days back to include")
     usage.add_argument("--by", choices=("account", "device"), default="account")
@@ -196,6 +201,15 @@ def run(args: argparse.Namespace, store: Store) -> int:
     if command == "agent-list":
         agents = store.list_agents(args.account)
         _emit([{**agent, "secretHash": agent["secretHash"][:12] + "…"} for agent in agents])
+        return 0
+
+    if command == "invite-check":
+        # 只回答"这张码还能不能用"。公开的邀请码列表要靠它保持准确：
+        # 用掉哪张就在表里标出来，新人不必翻评论猜。
+        codes = list(args.code)
+        if args.stdin:
+            codes += [line.strip() for line in sys.stdin if line.strip()]
+        _emit([{"code": code, **store.invite_status(code)} for code in codes])
         return 0
 
     if command == "enrollments":
