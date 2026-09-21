@@ -109,6 +109,28 @@ struct RefArgs<Ref: Encodable & Sendable>: Encodable {
     let ref: Ref
 }
 
+/// Arguments for `directoryPicker/list`.
+///
+/// The field is omitted rather than sent as null when absent: the descriptor
+/// accepts an undefined `path` ("list home") but not necessarily an explicit
+/// null, and a keyed container that never receives a key encodes as `{}`.
+struct DirectoryListArgs: Encodable, Sendable {
+    let path: String?
+
+    private enum CodingKeys: String, CodingKey { case path }
+
+    func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        if let path { try container.encode(path, forKey: .path) }
+    }
+}
+
+/// Arguments for `directoryPicker/createDirectory`: parent path plus one name.
+struct DirectoryCreateArgs: Encodable, Sendable {
+    let path: String
+    let name: String
+}
+
 /// Mints correlation ids for RPC calls and logical streams.
 ///
 /// DSH echoes `rpcId` back and the carrier asserts equality, so ids only need

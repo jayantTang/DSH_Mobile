@@ -396,8 +396,46 @@ public struct DSHClient: Sendable {
 
     // MARK: - Directory picker
 
+    /// Opens the host's own OS directory chooser, for a host whose picker is
+    /// the `native` backend.
+    ///
+    /// Useless from a phone: the dialog opens on the host's display, where
+    /// nobody is sitting. Kept because the endpoint exists and a host on the
+    /// same LAN may be attended; the phone's own browser uses
+    /// ``directoryListing(path:)`` instead.
     public func pickDirectory() async throws -> JSONValue {
         try await carrier.unary(method: "directoryPicker/pick", args: EmptyArgs(), as: JSONValue.self)
+    }
+
+    /// Lists one directory level on the host, for the in-app browser.
+    ///
+    /// Served by the host's **browse** picker backend, which is the one that
+    /// works for remote clients — nothing renders on the host's display. A host
+    /// composed with the `native` backend answers `directory-picker/unavailable`
+    /// rather than listing anything, so the phone must be able to say "this
+    /// computer cannot be browsed" instead of looking empty.
+    ///
+    /// - Parameter path: an absolute directory; `nil` lists the host account's
+    ///   home directory.
+    public func directoryListing(path: String? = nil) async throws -> HostDirectoryListing {
+        try await carrier.unary(
+            method: "directoryPicker/list",
+            args: DirectoryListArgs(path: path),
+            as: HostDirectoryListing.self
+        )
+    }
+
+    /// Creates one child directory under an existing parent and returns its
+    /// absolute path.
+    ///
+    /// Non-recursive by contract: a missing parent is a failure, not a level to
+    /// invent, and `name` must be a single path segment.
+    public func createDirectory(parent: String, name: String) async throws -> String {
+        try await carrier.unary(
+            method: "directoryPicker/createDirectory",
+            args: DirectoryCreateArgs(path: parent, name: name),
+            as: String.self
+        )
     }
 
     // MARK: - Host events

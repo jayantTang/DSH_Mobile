@@ -51,7 +51,7 @@ struct SessionListView: View {
             Text(archiveFailure ?? "")
         }
         .sheet(isPresented: $isCreatingSession) {
-            NewSessionView(model: model) { sessionId in
+            NewSessionView(model: model, store: store) { sessionId in
                 // A session is created inside a workspace, so it lands in that
                 // directory's group. This stays as the fallback for a host that
                 // hands back a session no workspace accounts for: unfolding the

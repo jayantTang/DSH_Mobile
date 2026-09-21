@@ -203,6 +203,48 @@ final class LiveIntegrationTests: XCTestCase {
         await carrier.close()
     }
 
+    /// The endpoint the new-session browser is built on.
+    ///
+    /// Two things here are only checkable against a real host: the argument is a
+    /// bare `path` field rather than a `request` object (a stub would happily
+    /// accept either), and the answer must be served by the host's **browse**
+    /// picker backend — a host composed with the `native` one answers
+    /// `directory-picker/unavailable`, which is a supported state the app turns
+    /// into an explanation rather than an empty list.
+    func testDirectoryListingWalksTheHostFilesystem() async throws {
+        let carrier = makeCarrier()
+        let client = DSHClient(carrier: carrier)
+
+        let home = try await client.directoryListing()
+        XCTAssertEqual(home.path, home.home, "no path did not list the host's home directory")
+        XCTAssertFalse(home.crumbs.isEmpty, "the listing carried no ancestry")
+        XCTAssertEqual(home.crumbs.last?.path, home.path, "the ancestry did not end at the listing")
+
+        // A jump to an ancestor is just another listing: that is what makes
+        // both "up" and the breadcrumb one code path.
+        let root = try await client.directoryListing(path: "/")
+        XCTAssertEqual(root.path, "/")
+        XCTAssertEqual(root.crumbs.map(\.path), ["/"], "the root is not its own only crumb")
+
+        // Clients never join path segments, so an entry's own path must be
+        // usable as the next call — that is the whole contract of the browser.
+        if let child = home.entries.first(where: { !$0.hidden }) {
+            let listing = try await client.directoryListing(path: child.path)
+            XCTAssertEqual(listing.path, child.path, "an entry path did not list itself")
+            XCTAssertEqual(listing.crumbs.last?.path, child.path)
+        }
+
+        // A relative path must be refused rather than resolved against the
+        // host's working directory.
+        do {
+            _ = try await client.directoryListing(path: "relative/path")
+            XCTFail("the host accepted a relative path")
+        } catch let failure as DSHRPCFailure {
+            XCTAssertEqual(failure.code, "directory-picker/unreadable")
+        }
+        await carrier.close()
+    }
+
     func testUnknownArgumentsAreRejectedByTheDescriptor() async throws {
         // Guards the assumption the whole client is built on: arguments are
         // named fields validated against a host-side descriptor, so a typo

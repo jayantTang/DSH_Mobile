@@ -29,6 +29,23 @@ final class SessionListModel {
         case failed(String)
     }
 
+    /// One workspace together with the sessions still live in it.
+    ///
+    /// The new-session sheet offers these as "start another conversation here".
+    /// It deliberately does not carry the workspace's full `sessionIds`: that
+    /// list is history — archived sessions, sessions never used, sessions from
+    /// months ago — and labelling a group with the number of conversations it
+    /// has ever held is how "48 个会话" ends up over three rows.
+    struct LiveWorkspace: Identifiable {
+        let id: String
+        let path: String
+        let title: String
+        let sessions: [SessionSummary]
+
+        var runningCount: Int { sessions.filter(\.running).count }
+        var latestActivity: Double { sessions.map(\.updatedAt).max() ?? 0 }
+    }
+
     private(set) var phase: Phase = .idle
     private(set) var groups: [Group] = []
     /// The desktop client's explicit workspace list, in its own order.
@@ -131,10 +148,52 @@ final class SessionListModel {
     /// Every session the list knows about, grouped or not. Read by the
     /// new-session sheet, which offers the directories they run in.
     private(set) var allSessions: [SessionSummary] = []
+
     private var eventTask: Task<Void, Never>?
     private var refreshDebounce: Task<Void, Never>?
     private weak var store: ConnectionStore?
     private weak var hub: HostEventHub?
+
+    /// Whether a session is still worth continuing.
+    ///
+    /// "Live" is the phone's own word, and it has to be defined from what the
+    /// host actually says, because the wire has no "this session is over" flag.
+    /// Two signals are available and both are used: the host's archived set,
+    /// and `blank` — a session with no turn in it, which the host keeps for
+    /// every "new session" that was opened and never used. Everything else is
+    /// live, whether or not it is running right now: "not running" is the state
+    /// of every session between turns, and treating that as dead would empty
+    /// this list.
+    private func isLive(_ session: SessionSummary) -> Bool {
+        !archivedSessionIds.contains(session.sessionId) && !session.blank && !session.isSubagent
+    }
+
+    /// Workspaces that still hold a live session, live ones first.
+    ///
+    /// Derived from the host's workspace list rather than from directories, so
+    /// it matches the desktop sidebar; workspaces whose sessions are all
+    /// archived or blank disappear instead of being offered as an empty room.
+    var liveWorkspaces: [LiveWorkspace] {
+        var live: [String: SessionSummary] = [:]
+        for session in allSessions where isLive(session) {
+            live[session.sessionId] = session
+        }
+        let built = workspaces.compactMap { workspace -> LiveWorkspace? in
+            let members = workspace.sessionIds.compactMap { live[$0] }
+            guard !members.isEmpty else { return nil }
+            return LiveWorkspace(
+                id: workspace.workspaceId,
+                path: workspace.path,
+                title: workspace.title,
+                sessions: orderSessions(members)
+            )
+        }
+        return SessionListOrder.groups(
+            built,
+            isRunning: { $0.runningCount > 0 },
+            activity: \.latestActivity
+        )
+    }
 
     /// Sessions currently executing a turn among the ones on screen.
     ///
