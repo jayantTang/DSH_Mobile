@@ -38,7 +38,9 @@ struct MessageTextSheet: View {
                     isMonospaced: message.isMonospaced,
                     fittedHeight: $fittedHeight
                 )
-                .frame(height: min(max(fittedHeight, 1), proxy.size.height))
+                // 量到之前先铺满（可滚动），量到之后贴住文字：短消息的文本框若铺满整屏，
+                // 手指按在"中间"会落在文字下面的空白上，长按既选不中也弹不出菜单。
+                .frame(height: fittedHeight > 0 ? min(fittedHeight, proxy.size.height) : proxy.size.height)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             }
             .background(DSHTheme.background)
@@ -68,9 +70,11 @@ private struct SelectableMessageText: UIViewRepresentable {
 
     func makeUIView(context: Context) -> UITextView {
         let view = FittingTextView()
-        context.coordinator.onFittedHeight = { height in
-            guard abs(height - fittedHeight) > 0.5 else { return }
-            fittedHeight = height
+        context.coordinator.fittedHeight = $fittedHeight
+        // 这一步是必须的：协调器只是拿着回调，真正"报高度"的是文本视图自己。
+        // 漏掉它，页面就永远停在默认高度上——第一版就是这样渲染出一页空白。
+        view.onFittedHeight = { [weak coordinator = context.coordinator] height in
+            coordinator?.report(height)
         }
         view.isEditable = false
         view.isSelectable = true
@@ -97,7 +101,10 @@ private struct SelectableMessageText: UIViewRepresentable {
     }
 
     func updateUIView(_ view: UITextView, context: Context) {
+        context.coordinator.fittedHeight = $fittedHeight
         context.coordinator.render(text: text, isMonospaced: isMonospaced, in: view)
+        // 宽度可能刚变（旋转、分屏）：让它重新量一次并回报。
+        view.setNeedsLayout()
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -126,7 +133,17 @@ private struct SelectableMessageText: UIViewRepresentable {
         private var renderedMonospaced: Bool?
         /// 手指下那个 token 的选区；长按期间系统的选词会被它按回去。
         private var pendingTokenRange: NSRange?
-        var onFittedHeight: ((CGFloat) -> Void)?
+        var fittedHeight: Binding<CGFloat>?
+        private var reportedHeight: CGFloat = 0
+
+        /// 把实测高度交回 SwiftUI（下一轮 runloop，别在布局中途改状态）。
+        func report(_ height: CGFloat) {
+            guard abs(height - reportedHeight) > 0.5 else { return }
+            reportedHeight = height
+            DispatchQueue.main.async { [weak self] in
+                self?.fittedHeight?.wrappedValue = height
+            }
+        }
 
         /// Sets the text once per content change.
         ///
