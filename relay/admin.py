@@ -148,6 +148,8 @@ def build_parser() -> argparse.ArgumentParser:
     device_revoke.add_argument("--device")
     device_revoke.add_argument("--token")
 
+    subs.add_parser("enrollments", help="who took an invite (joined view, read-only)")
+
     usage = subs.add_parser("usage", help="daily egress per account or device")
     usage.add_argument("--days", type=int, default=7, help="how many days back to include")
     usage.add_argument("--by", choices=("account", "device"), default="account")
@@ -194,6 +196,11 @@ def run(args: argparse.Namespace, store: Store) -> int:
     if command == "agent-list":
         agents = store.list_agents(args.account)
         _emit([{**agent, "secretHash": agent["secretHash"][:12] + "…"} for agent in agents])
+        return 0
+
+    if command == "enrollments":
+        # 公开试用要回答的两个问题："码用掉几张"、"谁来了"。
+        _emit({"totals": store.invite_totals(), "enrollments": store.list_enrollments()})
         return 0
 
     if command == "usage":

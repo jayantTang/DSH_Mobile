@@ -154,3 +154,19 @@ def test_revoking_reports_why_it_could_not():
     time.sleep(0.01)
     assert store.revoke_invite("IIII-JJJJ-KKKK-LLLL")["reason"] == "already-expired"
     store.close()
+
+
+def test_enrollments_join_invites_with_accounts_and_totals(store: Store):
+    """`enrollments` 要一次说清：码铸了多少/用掉几张，以及用码的人是谁。"""
+    code = store.mint_invite(note="公开试用 批次1")
+    assert store.invite_totals() == {"minted": 1, "used": 0, "remaining": 1}
+
+    claimed = store.claim_invite(code["code"], "My computer")
+    agent = {"agentId": claimed["agentId"]}
+
+    assert store.invite_totals() == {"minted": 1, "used": 1, "remaining": 0}
+    (row,) = store.list_enrollments()
+    assert row["agentId"] == agent["agentId"]
+    assert row["accountName"] == "My computer"
+    assert row["inviteNote"] == "公开试用 批次1"
+    assert row["devices"] == 0 and row["usedAt"] > 0

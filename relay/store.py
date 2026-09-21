@@ -592,6 +592,43 @@ class Store:
         """
         self._write("UPDATE devices SET appVersion=? WHERE deviceId=?", (version, device_id))
 
+    # ── enrollment (who took an invite) ─────────────────────────────────────
+
+    def list_enrollments(self) -> list[dict[str, Any]]:
+        """每一次成功的登记：邀请码被兑换 → 建账号 → 建电脑。
+
+        `invite-list` 只给得出码的哈希与状态；"谁来了"要把 invites 与 agents/accounts
+        连起来看，所以单独一条。给 `admin.py enrollments` 用（只读）。
+        """
+        return [dict(row) for row in self._rows(
+            """
+            SELECT i.usedAt        AS usedAt,
+                   i.note          AS inviteNote,
+                   a.accountId     AS accountId,
+                   acc.name        AS accountName,
+                   a.agentId       AS agentId,
+                   a.name          AS agentName,
+                   (SELECT COUNT(*) FROM devices d WHERE d.agentId = a.agentId) AS devices,
+                   (SELECT MAX(d.lastSeenAt) FROM devices d WHERE d.agentId = a.agentId)
+                     AS lastSeenAt
+            FROM invites i
+            JOIN agents a ON a.agentId = i.usedByAgentId
+            LEFT JOIN accounts acc ON acc.accountId = a.accountId
+            WHERE i.usedAt IS NOT NULL
+            ORDER BY i.usedAt DESC
+            """)]
+
+    def invite_totals(self) -> dict[str, int]:
+        """码的账：铸了多少、用掉多少、还剩多少。"""
+        row = self._row(
+            """
+            SELECT COUNT(*) AS minted,
+                   SUM(CASE WHEN usedAt IS NOT NULL THEN 1 ELSE 0 END) AS used,
+                   SUM(CASE WHEN usedAt IS NULL THEN 1 ELSE 0 END) AS remaining
+            FROM invites
+            """)
+        return {key: int(row[key] or 0) for key in ("minted", "used", "remaining")}
+
     # ── daily usage ─────────────────────────────────────────────────────────
 
     def add_usage(self, entries: Iterable[dict[str, Any]]) -> int:
