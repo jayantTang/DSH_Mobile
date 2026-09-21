@@ -12,6 +12,20 @@ struct ChatView: View {
     var onOpenFiles: ((SessionSummary) -> Void)?
     /// Opens the plugin WebView fallback for one origin.
     var onOpenWeb: ((URL) -> Void)?
+    /// 这份转写属于哪个会话（`RootView.sessionDestination` 一屏一份，用 `.id()` 区分）。
+    var sessionId: String
+
+    /// 现在屏幕上的还是不是我的会话。
+    ///
+    /// 为什么必须问这一句：换会话时被推出的那一份 `ChatView` **在转场期间还活着**，
+    /// 而它读的是同一个 `ChatModel`——模型已经把 timeline 换成新会话的（行数从 92
+    /// 掉到 3），这份"已经不在屏幕上"的视图如果这时还发 `scrollTo`，那条已经解析成
+    /// index path 的滚动就会落在新内容上。2026-09-21 18:26 的崩溃原文：
+    /// `Attempted to scroll the collection view to an out-of-bounds item (91) when
+    /// there are only 3 items in section 0`——91 是上一个会话的最后一行，3 是新会话
+    /// 空转写的两行占位 + 底部标记。UIKit 抛的异常没人接 = 闪退。
+    /// 所以：不是我的会话，就一次都不滚。
+    private var ownsTranscript: Bool { model.session?.sessionId == sessionId }
 
     @State private var isRenaming = false
     @State private var renameText = ""
@@ -161,7 +175,7 @@ struct ChatView: View {
         }
         .onChange(of: model.scrollSignal) {
             ViewportProbe.note("scrollSignal", ["draft": String(model.draft.count)])
-            guard isFollowing else { return }
+            guard isFollowing, ownsTranscript else { return }
             if isPinningOnOpen {
                 proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)
             } else {
@@ -378,9 +392,11 @@ struct ChatView: View {
     ///
     /// 三次的成本可以忽略（每次只是一次 scrollTo，不做布局、不做动画），换来的是一帧内
     /// 就落到最终位置；读者一旦自己拖动过就立刻停手。
-    private func pinOnOpen(_ proxy: ScrollViewProxy, sessionId: String) {
-        guard openedSessionId != sessionId else { return }
-        openedSessionId = sessionId
+    private func pinOnOpen(_ proxy: ScrollViewProxy, sessionId opened: String) {
+        // 不是我的会话就一次都不滚（换会话时这份视图可能还活着，见 `ownsTranscript`）。
+        guard ownsTranscript else { return }
+        guard openedSessionId != opened else { return }
+        openedSessionId = opened
         openPinTask?.cancel()
         openPinTask = Task { @MainActor in
             isPinningOnOpen = true
@@ -388,7 +404,7 @@ struct ChatView: View {
             for delay in [0, 120, 300] {
                 if delay > 0 { try? await Task.sleep(for: .milliseconds(delay)) }
                 if Task.isCancelled { return }
-                guard openedSessionId == sessionId, !userScrolled else { return }
+                guard openedSessionId == opened, !userScrolled, ownsTranscript else { return }
                 proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)
             }
             // 打开阶段结束，跟随恢复常规（可动画）行为。
@@ -401,7 +417,7 @@ struct ChatView: View {
     /// 单次、延迟、可取消：每次内容变化都把上一次排的撤掉，所以流式输出时不会堆积；
     /// 读者自己翻上去（isFollowing == false）就完全不动。
     private func repinAfterContentChange(_ proxy: ScrollViewProxy) {
-        guard isFollowing else { return }
+        guard isFollowing, ownsTranscript else { return }
         // 先立刻钉一次：这一批内容如果已经布局好，它就直接生效，用户看不到任何中间态。
         proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)
         contentRepinTask?.cancel()
@@ -412,6 +428,7 @@ struct ChatView: View {
             // 不排这一次则停在半路）。
             try? await Task.sleep(for: .milliseconds(150))
             if Task.isCancelled { return }
+            guard ownsTranscript else { return }
             proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)
         }
     }
@@ -422,13 +439,13 @@ struct ChatView: View {
     /// 翻到了上面，这时把他们拽回底部比一片空白更让人恼火——而空白只发生在视口底部
     /// 指向未渲染区域时，回看历史时视口停在已渲染的旧行上，不受影响。
     private func repinAfterViewportChange(_ proxy: ScrollViewProxy, keyboardVisible: Bool) {
-        guard isFollowing else { return }
+        guard isFollowing, ownsTranscript else { return }
         proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)
         // 第二次：第一次滚动后 LazyVStack 才会按新视口重建可见行，行高变化又会
         // 移动内容，所以再钉一次。这与 `scrollToBottom(force:)` 的双击是同一个理由。
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(160))
-            guard isFollowing else { return }
+            guard isFollowing, ownsTranscript else { return }
             proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)
         }
     }
@@ -447,6 +464,8 @@ struct ChatView: View {
     /// on every token saturates the main thread, and a blocked main thread
     /// renders nothing, which is what a blank transcript looks like.
     private func scrollToBottom(_ proxy: ScrollViewProxy, animated: Bool = true, force: Bool = false) {
+        // 唯一的滚动出口，所以"不是我的会话就别滚"也只需要在这里把一道关。
+        guard ownsTranscript else { return }
         let now = Date()
         if !force, animated, now.timeIntervalSince(lastScrollAt) < Self.scrollThrottle {
             return
@@ -458,7 +477,7 @@ struct ChatView: View {
             proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)
             Task { @MainActor in
                 try? await Task.sleep(for: .milliseconds(120))
-                if isFollowing { proxy.scrollTo(Self.bottomAnchor, anchor: .bottom) }
+                if isFollowing, ownsTranscript { proxy.scrollTo(Self.bottomAnchor, anchor: .bottom) }
             }
         } else if animated, !model.isRunning {
             withAnimation(.easeOut(duration: 0.2)) {

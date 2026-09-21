@@ -665,7 +665,8 @@ private struct MainView: View {
         ChatView(
             model: chatModel,
             onOpenFiles: { filesScope = WorkspaceFileScope(summary: $0, hostHome: store.hostHome) },
-            onOpenWeb: { _ in isShowingWebFallback = true }
+            onOpenWeb: { _ in isShowingWebFallback = true },
+            sessionId: summary.sessionId
         )
     }
 
@@ -736,8 +737,10 @@ private struct SessionDetailView: View {
 
     var body: some View {
         Group {
-            if model.session != nil {
-                ChatView(model: model)
+            // detail 列只有这一份 `ChatView`，它永远跟着模型当前的会话走，
+            // 所以 `sessionId` 每次都取模型当下的值（见 `ChatView.ownsTranscript`）。
+            if let session = model.session {
+                ChatView(model: model, sessionId: session.sessionId)
             } else {
                 EmptyStateView(
                     icon: "bubble.left.and.text.bubble.right",
