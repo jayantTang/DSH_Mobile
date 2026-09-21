@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Export options for a TestFlight (App Store Connect) upload, **signed locally**.
+
+  `ExportOptions-appstore.plist` asks for automatic signing, which on this team means
+  cloud signing — and cloud signing is refused (see maintainers/APPSTORE.md: the team
+  had no distribution certificate at all until 2026-09-21). This file signs with the
+  distribution identity that `scripts/release/asc-dist-signing.mjs cert` installs into
+  `~/Library/Keychains/dshbuild.keychain-db`, using the App Store profile that
+  `… profile <id>` installs into Xcode's Profiles directory.
+
+  The team identifier is substituted from DSH_TEAM_ID (or Signing.local.plist) into a
+  copy under .build/, exactly like the other two option files: a team identifier
+  belongs to a person, not to the repository.
+-->
+<plist version="1.0">
+<dict>
+	<key>method</key>
+	<string>app-store-connect</string>
+	<key>teamID</key>
+	<string><TEAM_ID></string>
+	<key>signingStyle</key>
+	<string>manual</string>
+	<key>signingCertificate</key>
+	<string>Apple Distribution</string>
+	<key>provisioningProfiles</key>
+	<dict>
+		<key>com.jayanttang.dsh</key>
+		<string>DSH Mobile App Store</string>
+	</dict>
+	<key>stripSwiftSymbols</key>
+	<true/>
+	<key>compileBitcode</key>
+	<false/>
+	<!-- 与 appstore 那份同理：不让 Xcode 自己改版本号，本地 git 标签才不会说谎 -->
+	<key>manageAppVersionAndBuildNumber</key>
+	<false/>
+	<key>uploadSymbols</key>
+	<true/>
+</dict>
+</plist>
