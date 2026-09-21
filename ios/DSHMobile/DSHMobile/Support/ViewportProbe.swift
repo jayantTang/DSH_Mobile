@@ -390,27 +390,6 @@ extension View {
     }
 }
 
-/// 转写行在 `List` 模式下需要的装饰。
-///
-/// `List` 默认给每行内边距、分隔线和系统底色；聊天转写要的是"行就是自己画的那块"，
-/// 所以全部去掉，行距与左右留白改由行自己给（与 `LazyVStack` 那两个 padding 对齐）。
-struct TranscriptRowChrome: ViewModifier {
-    let inList: Bool
-
-    func body(content: Content) -> some View {
-        if inList {
-            content
-                .listRowInsets(EdgeInsets())
-                .listRowSeparator(.hidden)
-                .listRowBackground(Color.clear)
-                .padding(.horizontal, DSHTheme.Spacing.loose)
-                .padding(.bottom, DSHTheme.Spacing.standard)
-        } else {
-            content
-        }
-    }
-}
-
 /// 滚动几何的记录：偏移、内容高、容器高。
 ///
 /// 只在 iOS 18 以上可用（`onScrollGeometryChange`），系统更低时什么都不做——
@@ -469,12 +448,28 @@ struct ScrollGeometryProbe: ViewModifier {
     func body(content: Content) -> some View { content }
 }
 
-struct TranscriptRowChrome: ViewModifier {
-    let inList: Bool
-    func body(content: Content) -> some View { content }
-}
-
 extension View {
     func probed(_ id: String) -> some View { self }
 }
 #endif
+
+/// 转写行在 `List` 模式下需要的装饰。
+///
+/// `List` 默认给每行内边距、分隔线和系统底色；聊天转写要的是"行就是自己画的那块"，
+/// 所以全部去掉，行距与左右留白改由行自己给（与 `LazyVStack` 那两个 padding 对齐）。
+struct TranscriptRowChrome: ViewModifier {
+    let inList: Bool
+
+    func body(content: Content) -> some View {
+        if inList {
+            content
+                .listRowInsets(EdgeInsets())
+                .listRowSeparator(.hidden)
+                .listRowBackground(Color.clear)
+                .padding(.horizontal, DSHTheme.Spacing.loose)
+                .padding(.bottom, DSHTheme.Spacing.standard)
+        } else {
+            content
+        }
+    }
+}
