@@ -111,6 +111,9 @@ async def stats(_request: web.Request) -> web.Response:
         },
         "traffic": hub.traffic(),
         "snapshot": hub.snapshot(),
+        # 今天（服务器本地日）按账号与按设备的出口字节。库里那份 + 还没冲盘的那部分
+        # 合起来才是"此刻为止"；完整历史用 `relay/admin.py usage --days 7`。
+        "today": hub.usage_today(),
     }
     if "text/html" in (_request.headers.get("Accept") or ""):
         return web.Response(text=_stats_page(payload), content_type="text/html")

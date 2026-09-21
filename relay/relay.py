@@ -199,9 +199,14 @@ def create_app(*, store: Store, limits: Limits | None = None,
     route("GET", "/link/agent", link_agent)
     route("GET", "/link/device", link_device)
 
+    async def _startup(_app: web.Application) -> None:
+        # 用量记账的周期冲盘：内存里攒、按天落库（见 RelayHub.flush_usage）。
+        _app["hub"].start_usage_flush()
+
     async def _cleanup(_app: web.Application) -> None:
         await _app["hub"].shutdown()
 
+    app.on_startup.append(_startup)
     app.on_cleanup.append(_cleanup)
     return app
 

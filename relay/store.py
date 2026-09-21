@@ -69,6 +69,26 @@ CREATE TABLE IF NOT EXISTS pairCodes (
 );
 CREATE INDEX IF NOT EXISTS pair_codes_agent ON pairCodes(agentId);
 
+-- 按天按设备的出口用量。中转只在内存里记当日额度（断开就丢），"今天谁用了多少"
+-- 这类问题以前只能靠猜；这张表就是那笔账：每台设备每天一行，UPSERT 累加。
+--
+-- `day` 是**服务器本地日**（YYYYMMDD，与操作者口里的"今天"一致）；额度检查仍按 UTC 日，
+-- 两个口径不要混。`lastBuild` 记当天最后一次上报的客户端构建号，"谁一直没升级"顺手能答。
+CREATE TABLE IF NOT EXISTS usageDaily (
+  day         INTEGER NOT NULL,
+  deviceId    TEXT NOT NULL,
+  agentId     TEXT NOT NULL,
+  accountId   TEXT NOT NULL,
+  egressBytes INTEGER NOT NULL DEFAULT 0,
+  connections INTEGER NOT NULL DEFAULT 0,
+  firstSeenAt INTEGER NOT NULL,
+  lastSeenAt  INTEGER NOT NULL,
+  lastBuild   TEXT,
+  PRIMARY KEY (day, deviceId)
+);
+
+CREATE INDEX IF NOT EXISTS usageDailyAccount ON usageDaily (day, accountId);
+
 CREATE TABLE IF NOT EXISTS invites (
   codeHash        TEXT PRIMARY KEY,
   createdAt       INTEGER NOT NULL,
@@ -108,6 +128,22 @@ class InviteRejected(StoreError):
     def __init__(self, reason: str, message: str):
         super().__init__(message)
         self.reason = reason
+
+def local_day(stamp: float | None = None) -> int:
+    """服务器本地日的序号，形如 20260921。
+
+    记账用本地日（操作者问的"今天"是本地时间）；额度的 UTC 日是另一套（见 hub.DailyQuota），
+    两者不要混用。
+    """
+    return int(time.strftime("%Y%m%d", time.localtime(time.time() if stamp is None else stamp)))
+
+
+def day_floor(days: int, stamp: float | None = None) -> int:
+    """`days` 天前那一天的序号（含今天，所以 days=1 就是今天）。"""
+    import datetime as _dt
+    today = _dt.date.fromtimestamp(time.time() if stamp is None else stamp)
+    return int((today - _dt.timedelta(days=max(1, days) - 1)).strftime("%Y%m%d"))
+
 
 def now_ms() -> int:
     return int(time.time() * 1000)
@@ -555,6 +591,69 @@ class Store:
         handshake; this is where that lands.
         """
         self._write("UPDATE devices SET appVersion=? WHERE deviceId=?", (version, device_id))
+
+    # ── daily usage ─────────────────────────────────────────────────────────
+
+    def add_usage(self, entries: Iterable[dict[str, Any]]) -> int:
+        """把一批按天按设备的出口字节累加进 `usageDaily`（UPSERT，一次事务）。
+
+        调用方是 hub 的冲盘任务：它把内存里攒的增量交过来，这里只负责"加上去"。
+        累加而不是覆盖，是因为冲盘是周期性的——一行一天会被写很多次。
+        """
+        rows = list(entries)
+        if not rows:
+            return 0
+        with self._lock:
+            self._conn.executemany(
+                """
+                INSERT INTO usageDaily(day, deviceId, agentId, accountId, egressBytes,
+                                       connections, firstSeenAt, lastSeenAt, lastBuild)
+                VALUES(:day, :deviceId, :agentId, :accountId, :egressBytes,
+                       :connections, :at, :at, :lastBuild)
+                ON CONFLICT(day, deviceId) DO UPDATE SET
+                  egressBytes = egressBytes + excluded.egressBytes,
+                  connections = connections + excluded.connections,
+                  firstSeenAt = MIN(firstSeenAt, excluded.firstSeenAt),
+                  lastSeenAt  = MAX(lastSeenAt, excluded.lastSeenAt),
+                  lastBuild   = COALESCE(excluded.lastBuild, lastBuild),
+                  agentId     = excluded.agentId,
+                  accountId   = excluded.accountId
+                """,
+                rows,
+            )
+            self._conn.commit()
+        return len(rows)
+
+    def usage_rows(self, day: int) -> list[dict[str, Any]]:
+        """一天里每台设备一行（按出口字节降序）。"""
+        return [dict(row) for row in self._rows(
+            "SELECT * FROM usageDaily WHERE day=? ORDER BY egressBytes DESC", (day,))]
+
+    def usage_totals(self, *, days: int = 7, by: str = "account") -> list[dict[str, Any]]:
+        """最近 `days` 天按账号或按设备汇总，最近的排在前面。
+
+        汇总放 SQL 里做，是因为调用它的是一次性的运维命令——
+        行数再多也不用把它全读进 Python。
+        """
+        key = "accountId" if by == "account" else "deviceId"
+        name = ("(SELECT name FROM accounts WHERE accounts.accountId = u.accountId)"
+                if by == "account" else
+                "(SELECT name FROM devices WHERE devices.deviceId = u.deviceId)")
+        return [dict(row) for row in self._rows(
+            f"""
+            SELECT u.day AS day, u.{key} AS {key},
+                   {name} AS name,
+                   SUM(u.egressBytes) AS egressBytes,
+                   SUM(u.connections) AS connections,
+                   MAX(u.lastSeenAt)  AS lastSeenAt,
+                   MAX(u.lastBuild)   AS lastBuild,
+                   COUNT(DISTINCT u.deviceId) AS devices
+            FROM usageDaily u
+            WHERE u.day >= ?
+            GROUP BY u.day, u.{key}
+            ORDER BY u.day DESC, egressBytes DESC
+            """,
+            (day_floor(days),))]
 
     def touch_device(self, device_id: str, at: int | None = None) -> None:
         self._write("UPDATE devices SET lastSeenAt=? WHERE deviceId=?", (at or now_ms(), device_id))

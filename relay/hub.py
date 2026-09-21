@@ -17,7 +17,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 import dlp
 
@@ -37,6 +37,9 @@ CLOSE_QUOTA_EXCEEDED = 4011
 #: rate. ~1 MB of JSON: small enough that pacing is visible on the wire, large
 #: enough that chunking costs almost nothing on a normal frame.
 _CHUNK_CHARS = 512 * 1024
+
+
+import store as store_module  # noqa: E402 - 与 store 同目录，relay.py 也是这样导入的
 
 
 class TokenBucket:
@@ -240,6 +243,7 @@ class DeviceLink(Link):
         super().__init__(ws, label=f"device {device['deviceId']}", queue_depth=limits.queue_depth, logger=logger)
         self.device_id: str = device["deviceId"]
         self.agent_id: str = device["agentId"]
+        self.account_id: str = device.get("accountId") or ""
         self.name: str = device["name"]
         self.model: str | None = device.get("model")
         self.app_version: str | None = device.get("appVersion")
@@ -253,6 +257,10 @@ class DeviceLink(Link):
         self.quota = DailyQuota(limit=limits.device_daily_bytes)
         self.egress_bytes = 0
         self.paced_seconds = 0.0
+        #: 记账回调（`RelayHub` 在 attach 时挂上）：每发出一段字节，hub 顺手累加进
+        #: "今天这台设备用了多少"。放回调而不是让 link 自己写库，是因为这一刻在发送
+        #: 热路径上——只做一次字典加法，写库留给周期冲盘。
+        self.on_egress: Callable[[DeviceLink, int], None] | None = None
 
     def start(self) -> None:
         super().start()
@@ -312,6 +320,8 @@ class DeviceLink(Link):
         agent = self.agent
         if agent is not None:
             agent.egress_bytes += size
+        if self.on_egress is not None:
+            self.on_egress(self, size)
 
     def over_daily_quota(self) -> bool:
         return self.quota.enabled and self.quota.remaining() == 0
@@ -387,6 +397,14 @@ class RelayHub:
         self.limits = limits or Limits()
         self.agents: dict[str, AgentLink] = {}
         self._devices: dict[str, DeviceLink] = {}
+        # 按天按设备的用量，攒在内存里、周期冲盘（见 `flush_usage`）。
+        # 键是 (本地日, deviceId)，值是这一批的增量；库里那份是"已经加上去的"。
+        self._usage: dict[tuple[int, str], dict[str, Any]] = {}
+        self._usage_day = store_module.local_day()
+        self._usage_bytes_since_flush = 0
+        self._usage_task: asyncio.Task[None] | None = None
+        self.usage_flush_interval = 30.0
+        self.usage_flush_bytes = 1 << 20
 
     # ── agent lifecycle ─────────────────────────────────────────────────────
 
@@ -448,7 +466,9 @@ class RelayHub:
                     f"(limit {self.limits.max_devices_per_agent})")
         link = DeviceLink(ws, device=device, logger=self.logger, limits=self.limits)
         link.agent = agent
+        link.on_egress = self._note_egress
         self._devices[device["deviceId"]] = link
+        self._note_usage(link, connection=True)
         if agent is None:
             link.enqueue_frame(dlp.host_status(online=False, agent_id=device["agentId"]))
         else:
@@ -471,6 +491,8 @@ class RelayHub:
             agent.enqueue_frame(dlp.device_detach_frame(link.device_id, reason=reason))
         await link.close(code, reason or "device disconnected")
         self.logger.info("relay: device %s detached (%s)", link.device_id, reason or "closed")
+        # 断开时冲一次：这一批的尾巴不留在内存里，运维命令跑完就是准的。
+        await self.flush_usage()
 
     # ── routing ─────────────────────────────────────────────────────────────
 
@@ -512,7 +534,12 @@ class RelayHub:
             return
         parts = [args.get("clientVersion"), args.get("clientBuild")]
         reported = " ".join(str(part) for part in parts if isinstance(part, str) and part) or None
-        if not reported or reported == link.app_version:
+        if not reported:
+            return
+        # 记进当天那行要在"和上次一样就跳过"之前：重连时设备行里已经是这个构建号，
+        # 早退的话当天那行的 lastBuild 永远是空的。
+        self._note_usage(link, build=reported)
+        if reported == link.app_version:
             return
         link.app_version = reported
         try:
@@ -566,6 +593,142 @@ class RelayHub:
             return
         self.logger.warning("relay: dropping device %s (%s)", device_id, reason)
         await self.detach_device(link, reason=reason, code=code)
+
+    # ── daily usage accounting ──────────────────────────────────────────────
+
+    def _note_egress(self, link: DeviceLink, size: int) -> None:
+        """发送热路径上的记账：只做一次字典加法，不碰磁盘。"""
+        self._note_usage(link, egress_bytes=size)
+
+    def _note_usage(self, link: DeviceLink, *, egress_bytes: int = 0,
+                    connection: bool = False, build: str | None = None) -> None:
+        day = self._usage_day
+        key = (day, link.device_id)
+        entry = self._usage.get(key)
+        if entry is None:
+            entry = {
+                "day": day,
+                "deviceId": link.device_id,
+                "agentId": link.agent_id,
+                "accountId": link.account_id,
+                "egressBytes": 0,
+                "connections": 0,
+                "at": store_module.now_ms(),
+                "lastBuild": None,
+            }
+            self._usage[key] = entry
+        if egress_bytes:
+            entry["egressBytes"] += egress_bytes
+            self._usage_bytes_since_flush += egress_bytes
+        if connection:
+            entry["connections"] += 1
+        if build:
+            entry["lastBuild"] = build
+        entry["at"] = store_module.now_ms()
+
+    async def flush_usage(self) -> None:
+        """把内存里攒的用量写进 `usageDaily`。
+
+        调用时机：每 `usage_flush_interval` 秒、单次运行累计超过 `usage_flush_bytes`、
+        设备断开、跨本地日、进程收尾。写失败时把这批放回内存等下次——账不能因为
+        一次写库异常就丢了。
+        """
+        self._usage_bytes_since_flush = 0
+        # 只写有内容的行：字节、连接数、构建号任一有值。构建号也算内容——它可能是在
+        # 这一天已经冲过一次盘之后才报上来的（重连），只按字节过滤会把它丢掉。
+        entries = [dict(entry) for entry in self._usage.values()
+                   if entry["egressBytes"] or entry["connections"] or entry["lastBuild"]]
+        if not entries:
+            return
+        self._usage.clear()
+        try:
+            await asyncio.to_thread(self.store.add_usage, entries)
+        except Exception:  # noqa: BLE001 - 记账失败不能影响转发
+            self.logger.warning("relay: could not write usage rows; keeping them in memory",
+                                exc_info=True)
+            for entry in entries:
+                key = (entry["day"], entry["deviceId"])
+                kept = self._usage.get(key)
+                if kept is None:
+                    self._usage[key] = entry
+                else:
+                    kept["egressBytes"] += entry["egressBytes"]
+                    kept["connections"] += entry["connections"]
+                    kept["lastBuild"] = entry["lastBuild"] or kept["lastBuild"]
+                    kept["at"] = max(kept["at"], entry["at"])
+
+    def start_usage_flush(self) -> None:
+        """起周期冲盘任务（由 app 启动钩子调用）。"""
+        if self._usage_task is None:
+            self._usage_task = asyncio.create_task(self._usage_flush_loop())
+
+    async def _usage_flush_loop(self) -> None:
+        try:
+            while True:
+                await asyncio.sleep(self.usage_flush_interval)
+                today = store_module.local_day()
+                if today != self._usage_day:
+                    # 跨日：先把上一天的尾巴写掉，再换账本。
+                    await self.flush_usage()
+                    self._usage_day = today
+                    continue
+                if self._usage_bytes_since_flush >= self.usage_flush_bytes:
+                    await self.flush_usage()
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - 冲盘任务不能把中转带下去
+            self.logger.warning("relay: usage flush loop stopped", exc_info=True)
+
+    def usage_today(self) -> dict[str, Any]:
+        """今天（本地日）的用量：库里已经冲下去的 + 还在内存里的。
+
+        放在 hub 而不是直接查库，是因为最近 30 秒的字节还在内存里；
+        两边合起来才是"此刻为止"。
+        """
+        day = store_module.local_day()
+        devices: dict[str, dict[str, Any]] = {}
+        try:
+            for row in self.store.usage_rows(day):
+                devices[row["deviceId"]] = {
+                    "deviceId": row["deviceId"],
+                    "agentId": row["agentId"],
+                    "accountId": row["accountId"],
+                    "egressBytes": row["egressBytes"],
+                    "connections": row["connections"],
+                    "lastBuild": row["lastBuild"],
+                }
+        except Exception:  # noqa: BLE001 - /stats 不该因为一次查询失败而 500
+            self.logger.warning("relay: could not read today's usage", exc_info=True)
+        for entry in self._usage.values():
+            if entry["day"] != day:
+                continue
+            row = devices.get(entry["deviceId"])
+            if row is None:
+                devices[entry["deviceId"]] = {
+                    "deviceId": entry["deviceId"],
+                    "agentId": entry["agentId"],
+                    "accountId": entry["accountId"],
+                    "egressBytes": entry["egressBytes"],
+                    "connections": entry["connections"],
+                    "lastBuild": entry["lastBuild"],
+                }
+                continue
+            row["egressBytes"] += entry["egressBytes"]
+            row["connections"] += entry["connections"]
+            row["lastBuild"] = entry["lastBuild"] or row["lastBuild"]
+        accounts: dict[str, dict[str, Any]] = {}
+        for row in devices.values():
+            bucket = accounts.setdefault(row["accountId"], {
+                "accountId": row["accountId"], "egressBytes": 0, "devices": 0,
+            })
+            bucket["egressBytes"] += row["egressBytes"]
+            bucket["devices"] += 1
+        return {
+            "day": day,
+            "totalEgressBytes": sum(row["egressBytes"] for row in devices.values()),
+            "devices": sorted(devices.values(), key=lambda row: row["egressBytes"], reverse=True),
+            "accounts": sorted(accounts.values(), key=lambda row: row["egressBytes"], reverse=True),
+        }
 
     # ── introspection ───────────────────────────────────────────────────────
 
@@ -626,6 +789,11 @@ class RelayHub:
         }
 
     async def shutdown(self, *, reason: str = "relay shutting down") -> None:
+        if self._usage_task is not None:
+            self._usage_task.cancel()
+            self._usage_task = None
+        # 先把账写掉再断开：进程收尾也是"今天"的一部分。
+        await self.flush_usage()
         for link in list(self._devices.values()):
             await link.close(1001, reason)
         self._devices.clear()

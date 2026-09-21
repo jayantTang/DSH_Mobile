@@ -148,6 +148,10 @@ def build_parser() -> argparse.ArgumentParser:
     device_revoke.add_argument("--device")
     device_revoke.add_argument("--token")
 
+    usage = subs.add_parser("usage", help="daily egress per account or device")
+    usage.add_argument("--days", type=int, default=7, help="how many days back to include")
+    usage.add_argument("--by", choices=("account", "device"), default="account")
+
     purge = subs.add_parser("purge", help="drop expired pairing codes")
     purge.add_argument("--json", action="store_true")
     return parser
@@ -190,6 +194,12 @@ def run(args: argparse.Namespace, store: Store) -> int:
     if command == "agent-list":
         agents = store.list_agents(args.account)
         _emit([{**agent, "secretHash": agent["secretHash"][:12] + "…"} for agent in agents])
+        return 0
+
+    if command == "usage":
+        # 记账只覆盖中转自己的出口字节（不含 SSH / OTA 下载）；日界是服务器本地日，
+        # 与设备每日额度的 UTC 日不同口径。
+        _emit(store.usage_totals(days=args.days, by=args.by))
         return 0
 
     if command in ("agent-disable", "agent-enable"):
