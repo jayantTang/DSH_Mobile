@@ -14,7 +14,7 @@
 //   * screenshots are taken by the engine, because an app driven by XCUITest
 //     does not appear on the simulator's own display.
 
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -282,9 +282,26 @@ function canonicalPath(path) {
 /// app claim left a `DSH-Test` row on the relay after every simulator run; the
 /// runner now pairs before the run and revokes in a `finally`, so the user's
 /// device list only ever holds their real phones.
+///
+/// The `finally` only covers *this* run. A run killed mid-flight (Ctrl-C, a
+/// crash, the machine sleeping) can still strand its own row, and a pairing made
+/// outside the runner strands its own the same way — so every relay run first
+/// sweeps what a previous one left behind (scripts/dev/relay-devices.mjs).
+/// Nobody cleans the device list by hand, and the sweep's own throwaway pairing
+/// revokes itself.
 export async function execute(flags = {}, positional = []) {
   const wantsRelay = process.env.DSH_CONNECT === 'relay'
   if (!wantsRelay) return runCase(flags, positional, null)
+
+  log('清扫上一轮遗留的调试配对设备')
+  const swept = spawnSync('node', [join(ROOT, 'scripts', 'dev', 'relay-devices.mjs'), 'sweep'], { encoding: 'utf8' })
+  if (swept.status === 0) {
+    for (const line of swept.stdout.trim().split('\n')) console.log(`    ${line}`)
+  } else {
+    // Never fatal: a sweep that cannot run must not stop the case, and its own
+    // failure mode (nothing swept) is the status quo this replaces.
+    warn(`清扫没跑成：${(swept.stderr || swept.stdout || '').trim().split('\n').slice(-1)[0]}`)
+  }
 
   log('配对仿真器设备（跑完撤销）')
   const pairing = await pairDevice()
