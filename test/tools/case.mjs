@@ -101,6 +101,12 @@ const ACTIONS = [
   { match: /^点击屏幕\s+(\d+(?:\.\d+)?)%\s*,\s*(\d+(?:\.\d+)?)%$/, to: (x, y) =>
       [`tap_where at=${Number(x) / 100},${Number(y) / 100}`] },
   { match: /^输入\s+(.+)$/, to: (text) => [`type text=${quote(text)}`] },
+  // `长按 id:row.assistant`：按住不放，用来开长按菜单。`秒=N` 可调按住时长；
+  // `的右/左/中间` 指定按在这个元素内的哪个位置（元素必须存在且可点，无坐标兜底）。
+  { match: /^长按\s+(.+?)\s+的(左|右|中间)$/, to: (target, side) =>
+      [`long_press ${quote(target)} at=${{ 左: 'left', 右: 'right', 中间: 'center' }[side]}`] },
+  { match: /^长按\s+(.+?)(?:\s+秒=([\d.]+))?$/, to: (target, seconds) =>
+      [`long_press ${quote(target)}${seconds ? ` timeout=${seconds}` : ''}`] },
   // 连续打字：按字符敲、持续 N 秒。一个 `typeText` 爆发在布局反应过来之前就结束了，
   // 而"打字时视口反复变高变矮"这条路径要的是**每一次按键都触发一次重新布局**。
   { match: /^连续打字\s+(.+?)\s+秒=(\d+)$/, to: (text, seconds) =>
@@ -405,11 +411,16 @@ export function buildPlan({ casePath, caseText, stepsText, runId, bundleId, sess
         case 'swipe':
         case 'wait':
         case 'probe':
+        case 'long_press':
           anchor = nextStep(verb)
           anchor.target = positional[0]
           if (verb === 'swipe') anchor.value = values.direction ?? positional[1] ?? 'up'
           if (verb === 'wait') anchor.timeout = Number(values.timeout ?? positional[1] ?? 15)
           if (verb === 'pause') anchor.timeout = Number(values.seconds ?? positional[0] ?? 1)
+          if (verb === 'long_press') anchor.value = values.at ?? 'center'
+          if (verb === 'long_press' && values.timeout !== undefined) {
+            anchor.timeout = Number(values.timeout)
+          }
           // `等待消失 x timeout=90`: a wait that outlasts a live turn needs its
           // own number, and dropping it here silently held the step to 20s.
           if (verb === 'wait_gone') anchor.timeout = Number(values.timeout ?? positional[1] ?? 20)

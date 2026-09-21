@@ -335,10 +335,11 @@ final class Engine: XCTestCase {
                     if candidate.isHittable { pressed = candidate; break }
                 }
                 if pressed != nil { break }
-                // 不在可视区就往上翻一点再看；长按自己不滚动，交给容器的滑动手势。
+                // 不在可视区就翻一翻：先往回翻（要找的多半是刚发出去、已被顶上去的那行），
+                // 翻几轮仍没有就往前翻。长按自己不滚动，手势交给容器。
                 if rounds % 3 == 0, let container = mainScrollableContainer() ?? identifiedContainer(),
                    container.exists {
-                    container.swipeUp()
+                    if rounds <= 9 { container.swipeDown() } else { container.swipeUp() }
                 }
                 Thread.sleep(forTimeInterval: 0.35)
             } while Date() < deadline

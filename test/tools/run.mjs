@@ -315,7 +315,14 @@ export async function execute(flags = {}, positional = []) {
     } catch (error) {
       // Loud, because the whole point is not to leave one behind: if this fails
       // the row stays visible in the user's device list until they revoke it.
-      warn(`配对设备 ${pairing.deviceId} 撤销失败：${error.message}——请在手机上撤销这一行`)
+      warn(`配对设备 ${pairing.deviceId} 撤销失败：${error.message}`)
+      // Second net, by name rather than by token: whatever made the token
+      // unusable (it has happened once, with a 401 on a token the relay itself
+      // issued ten minutes earlier), the row is addressable by its `DSH-` name.
+      const swept = spawnSync('node', [join(ROOT, 'scripts', 'dev', 'relay-devices.mjs'), 'sweep'], { encoding: 'utf8' })
+      const output = `${swept.stdout || ''}${swept.stderr || ''}`.trim().split('\n').slice(-2).join('；')
+      if (swept.status === 0) warn(`已改用按名字清扫：${output}`)
+      else warn(`按名字清扫也没跑成：${output}——请在手机上撤销这一行`)
     }
   }
 }
