@@ -42,7 +42,10 @@ final class SessionListModel {
         let title: String
         let sessions: [SessionSummary]
 
-        var runningCount: Int { sessions.filter(\.running).count }
+        /// 真在跑的：等用户回应的那些 host 也报 running，不能算进来。
+        /// 两个计数由 model 在建组时算好（只有它知道 hub 的待答集合）。
+        var runningCount: Int = 0
+        var waitingCount: Int = 0
         var latestActivity: Double { sessions.map(\.updatedAt).max() ?? 0 }
     }
 
@@ -93,6 +96,13 @@ final class SessionListModel {
     func displayPath(_ path: String) -> String {
         PathFormat.short(path, home: store?.hostHome)
     }
+
+    /// Sessions the host is blocked on: a question or an approval is waiting for
+    /// the user. Filled from `HostEventHub.pending` by the list view — the host's
+    /// session summary does **not** say this (`running` stays true while a
+    /// question waits, measured 2026-09-21), so the waterfall event is the only
+    /// source.
+    var waitingSessionIds: Set<String> = []
 
     /// Records every session the list is seeing for the first time as viewed.
     ///
@@ -185,12 +195,14 @@ final class SessionListModel {
                 id: workspace.workspaceId,
                 path: workspace.path,
                 title: workspace.title,
-                sessions: orderSessions(members)
+                sessions: orderSessions(members),
+                runningCount: members.filter { isReallyRunning($0) }.count,
+                waitingCount: members.filter { waitingSessionIds.contains($0.sessionId) }.count
             )
         }
         return SessionListOrder.groups(
             built,
-            isRunning: { $0.runningCount > 0 },
+            isRunning: { $0.runningCount > 0 || $0.waitingCount > 0 },
             activity: \.latestActivity
         )
     }
@@ -201,7 +213,21 @@ final class SessionListModel {
     /// with what the user could see: sessions in the folded ungrouped bucket
     /// were counted but not visible.
     var runningCount: Int {
-        groups.reduce(0) { $0 + $1.sessions.filter(\.running).count }
+        groups.reduce(0) { $0 + $1.sessions.filter { isReallyRunning($0) }.count }
+    }
+
+    /// Sessions blocked on the user, among the ones on screen.
+    var waitingCount: Int {
+        groups.reduce(0) { $0 + $1.sessions.filter { waitingSessionIds.contains($0.sessionId) }.count }
+    }
+
+    /// Running, and not one of the ones actually waiting for an answer.
+    ///
+    /// The host keeps `running` true while a question waits, so counting them
+    /// together made the badge claim "3 运行中" when two of the three were
+    /// sitting there waiting for the user.
+    func isReallyRunning(_ session: SessionSummary) -> Bool {
+        session.running && !waitingSessionIds.contains(session.sessionId)
     }
 
     /// Running sessions that live in the folded ungrouped bucket.
@@ -209,7 +235,11 @@ final class SessionListModel {
     /// Surfaced separately rather than silently folded away, so the badge can
     /// stay honest without making the ungrouped bucket look empty.
     var ungroupedRunningCount: Int {
-        loose.filter(\.running).count
+        loose.filter { isReallyRunning($0) }.count
+    }
+
+    var ungroupedWaitingCount: Int {
+        loose.filter { waitingSessionIds.contains($0.sessionId) }.count
     }
 
     var isEmpty: Bool {
@@ -251,6 +281,7 @@ final class SessionListModel {
     /// What the leading dot should say for this row.
     func state(of session: SessionSummary) -> SessionRowState {
         SessionRowState.of(
+            waiting: waitingSessionIds.contains(session.sessionId),
             running: session.running,
             blank: session.blank,
             updatedAt: session.updatedAt,
@@ -597,7 +628,9 @@ final class SessionListModel {
                         )
                     }
             )
-            loose = (unfiled + orphans).sorted { $0.updatedAt > $1.updatedAt }
+            // 折叠桶也按状态排序（待答 → 运行中 → 未看 → 看过），而不是只按时间：
+            // 一个在等用户回答的会话被压到 48 条折叠列表的中间，等于没做这个状态。
+            loose = orderSessions(unfiled + orphans)
             return
         }
 

@@ -9,6 +9,7 @@ import SwiftUI
 /// until asked for.
 struct SessionListView: View {
     @Environment(ConnectionStore.self) private var store
+    @Environment(HostEventHub.self) private var hub
     @Environment(UpdateChecker.self) private var updates
     @Environment(\.openURL) private var openURL
     @Bindable var model: SessionListModel
@@ -39,6 +40,12 @@ struct SessionListView: View {
                     if let url = URL(string: published.installPage) { openURL(url) }
                 }
             }
+        }
+        // 待答集合的唯一来源是 `$events` 的 waterfall（host 的会话摘要里没有这个
+        // 信息：等回答时它照样报 running）。把它同步进 model，行状态与计数才看得见它；
+        // hub 是 @Observable，这里读一下就等于订阅了变化。
+        .task(id: hub.pending.map(\.sessionId)) {
+            model.waitingSessionIds = Set(hub.pending.map(\.sessionId))
         }
         .searchable(text: $model.searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "搜索会话")
         .refreshable { await model.refresh() }
@@ -105,6 +112,9 @@ struct SessionListView: View {
             }
             Spacer(minLength: 0)
             HStack(spacing: DSHTheme.Spacing.hairline) {
+                if model.waitingCount > 0 {
+                    Badge(text: "\(model.waitingCount) 等你回应", tone: .attention)
+                }
                 if model.runningCount > 0 {
                     Badge(text: "\(model.runningCount) 运行中", tone: .brand)
                 }
@@ -196,6 +206,7 @@ struct SessionListView: View {
                     LooseHeader(
                         count: model.loose.count,
                         running: model.ungroupedRunningCount,
+                        waiting: model.ungroupedWaitingCount,
                         isExpanded: $isLooseExpanded
                     )
                 }
@@ -444,6 +455,9 @@ private struct LooseHeader: View {
     let count: Int
     /// Running sessions inside the bucket, so folding it cannot hide them.
     let running: Int
+    /// Sessions inside the bucket that are waiting on the user — folding those
+    /// away would hide the one thing the list exists to surface.
+    var waiting: Int = 0
     @Binding var isExpanded: Bool
 
     var body: some View {
@@ -460,6 +474,9 @@ private struct LooseHeader: View {
                 Text("\(count)")
                     .font(DSHTheme.Typography.micro)
                     .foregroundStyle(DSHTheme.labelDimmed)
+                if waiting > 0 {
+                    Badge(text: "\(waiting) 等你回应", tone: .attention)
+                }
                 if running > 0 {
                     Badge(text: "\(running) 运行中", tone: .brand)
                 }
@@ -528,7 +545,9 @@ struct SessionRow: View {
                 if rowState == .finishedSeen {
                     Color.clear
                 } else {
-                    StatusDot(level: statusLevel, animated: session.running)
+                    // 只有真在跑的才脉冲：等用户回应的那个是不动的，脉冲会让人
+                    // 以为它在干活。
+                    StatusDot(level: statusLevel, animated: session.running && rowState == .running)
                 }
             }
             .frame(width: 8, height: 8)
@@ -545,7 +564,17 @@ struct SessionRow: View {
                 }
 
                 HStack(spacing: DSHTheme.Spacing.hairline) {
-                    if session.running {
+                    if rowState == .waitingForYou {
+                        // 灰色小字容易被扫过去，而这一条是"你不回答它就不动"，
+                        // 所以用徽标把它从"运行中"里拎出来。
+                        Badge(text: "等你回应", tone: .attention)
+                            // 与其它状态同一个命名法（session.state.<rawValue>），
+                            // 用例断言用的是 model.stateIdentifier(of:)。
+                            .accessibilityIdentifier("session.state.\(rowState.rawValue)")
+                        Text("·")
+                            .font(DSHTheme.Typography.micro)
+                            .foregroundStyle(DSHTheme.labelDimmed)
+                    } else if session.running {
                         Text("运行中")
                             .font(DSHTheme.Typography.micro)
                             .foregroundStyle(DSHTheme.brand)
@@ -608,6 +637,7 @@ struct SessionRow: View {
 
     private var statusLevel: StatusDot.Level {
         switch rowState {
+        case .waitingForYou: return .attention
         case .running: return .busy
         case .finishedUnseen: return .unseen
         case .finishedSeen: return .ok

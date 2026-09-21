@@ -1,3 +1,4 @@
+import UIKit
 import XCTest
 
 /// The one Swift file a test case never changes.
@@ -308,6 +309,52 @@ final class Engine: XCTestCase {
                                      dy: frame.minY + frame.height * point.dy))
                 .tap()
             return Outcome(ok: true, detail: "已点击 \(step.target ?? "") 的\(where_)位置")
+
+        case "long_press":
+            // Aimed, never a coordinate: a hand-rolled drag once archived a real
+            // session when its target had already left the tree (see
+            // test/CAPABILITY-GAPS.md 交互-7), and that rule covers presses too.
+            guard let target = step.target else { return Outcome(ok: false, detail: "缺少目标") }
+            // 转写的行会被流式输出顶出屏幕、也会被整批重建；按下之前先把它滚回来。
+            // 这里自己查元素而不是走 `element(_:)`：那个助手会对每个候选直接问
+            // `isHittable`，而行在"在树上但 frame 已经不可用"的那一刻问它会抛
+            // `Activation point invalid` —— 那是测试进程级失败（2026-09-22 实测，
+            // 整轮报 ERROR），不是一个可以判失败的步骤。所以：先看 frame 是否可用。
+            var pressed: XCUIElement?
+            let deadline = Date().addingTimeInterval(12)
+            var rounds = 0
+            repeat {
+                rounds += 1
+                let query = resolveQuery(target)
+                for index in 0..<min(query.count, 8) {
+                    let candidate = query.element(boundBy: index)
+                    guard candidate.exists else { continue }
+                    let frame = candidate.frame
+                    guard frame.width > 1, frame.height > 1,
+                          frame.minX.isFinite, frame.minY.isFinite else { continue }
+                    if candidate.isHittable { pressed = candidate; break }
+                }
+                if pressed != nil { break }
+                // 不在可视区就往上翻一点再看；长按自己不滚动，交给容器的滑动手势。
+                if rounds % 3 == 0, let container = mainScrollableContainer() ?? identifiedContainer(),
+                   container.exists {
+                    container.swipeUp()
+                }
+                Thread.sleep(forTimeInterval: 0.35)
+            } while Date() < deadline
+            guard let element = pressed else {
+                return Outcome(ok: false, detail: "找不到可长按的 \(target)，不做长按")
+            }
+            // 1.1s by default: long enough to beat the system's own 0.5s
+            // long-press, short enough not to read as a drag.
+            let where_ = step.value ?? "center"
+            let offset: CGVector = switch where_ {
+            case "left": CGVector(dx: 0.25, dy: 0.5)
+            case "right": CGVector(dx: 0.75, dy: 0.5)
+            default: CGVector(dx: 0.5, dy: 0.5)
+            }
+            element.coordinate(withNormalizedOffset: offset).press(forDuration: step.timeout ?? 1.1)
+            return Outcome(ok: true, detail: "已长按 \(target) 的\(where_)位置")
 
         case "type":
             // No target means "the field that is focused" — the same thing a
@@ -764,8 +811,42 @@ final class Engine: XCTestCase {
         return best?.element
     }
 
+    /// 读系统剪贴板，必要时回答 iOS 的粘贴板隐私弹窗。
+    ///
+    /// iOS 16 起，另一个进程读 App 写进去的粘贴板会先弹一个 SpringBoard 确认框；
+    /// 第一次读拿到的是空值，弹窗就在那一刻出现。所以：先直接读，读到就用；读不到
+    /// 就找那个弹窗点掉、再读一次。两条路都不做坐标兜底。
+    private func clipboardText() -> String {
+        if let text = UIPasteboard.general.string, !text.isEmpty { return text }
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        for label in ["允许粘贴", "Allow Paste", "粘贴"] {
+            let button = springboard.buttons[label]
+            if button.waitForExistence(timeout: 1.5) {
+                button.tap()
+                break
+            }
+        }
+        Thread.sleep(forTimeInterval: 0.4)
+        return UIPasteboard.general.string ?? ""
+    }
+
     private func assertStep(_ step: Step) -> Outcome {
         guard let target = step.target else { return Outcome(ok: false, detail: "缺少目标") }
+
+        // 剪贴板不是界面元素，读的是系统粘贴板：拷贝这条路的证据只能是"里面
+        // 到底是什么"，而不是"按钮点过了"。选择器 `clipboard:期望内容` 是**全等**比对。
+        if let wanted = target.dropPrefix("clipboard:") {
+            let actual = clipboardText()
+            if step.value == "absent" {
+                return actual.isEmpty
+                    ? Outcome(ok: true, detail: "剪贴板是空的")
+                    : Outcome(ok: false, detail: "剪贴板里还有「\(actual.prefix(60))」")
+            }
+            return actual == wanted
+                ? Outcome(ok: true, detail: "剪贴板内容正是「\(wanted)」")
+                : Outcome(ok: false, detail: "剪贴板是「\(actual.prefix(120))」，期望「\(wanted.prefix(120))」")
+        }
+
         let query = resolveQuery(target)
 
         // `absent`: the check is that nothing matches, which is how the report

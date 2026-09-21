@@ -54,6 +54,8 @@ struct ChatView: View {
     /// lives in the transcript; this exists so the end of a long run is noticed
     /// even if the reader has scrolled away from the last message.
     @State private var completionBanner: String?
+    /// 打开成「单条全文」的那条消息（长按正文 → 选择文本）。
+    @State private var readingMessage: MessageSelection?
     /// Owned here rather than in the composer so the transcript can re-pin
     /// itself when the keyboard changes the viewport.
     @FocusState private var isFocused: Bool
@@ -111,6 +113,9 @@ struct ChatView: View {
         }
         .sheet(isPresented: $isShowingModelPicker) {
             ModelPickerSheet(model: model)
+        }
+        .sheet(item: $readingMessage) { message in
+            MessageTextSheet(message: message)
         }
     }
 
@@ -337,6 +342,13 @@ struct ChatView: View {
             .modifier(TranscriptRowChrome(inList: !ProbeVariants.lazyStack))
             .id(item.id)
             .probed("row:\(item.id)")
+            // 长按 = 这一行的文字入口：全文/选择文本、拷贝整条。
+            //
+            // 为什么长按菜单而不是长按选中：转写容器是 `List`，长按会被 cell
+            // 先接走，行上声明的 `textSelection` 根本到不了手指；选中改在打开的
+            // 全文页里做（那里由文本视图自己接管手势）。`contextMenu` 在 List 行上
+            // 是稳的，且不引入任何新的滚动手势——转写容器刚因跳白/闪退加固过。
+            .modifier(MessageActions(item: item) { readingMessage = $0 })
     }
 
     /// 尾部那块（等待提示或流式气泡）。

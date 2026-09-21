@@ -67,10 +67,11 @@ final class SessionRowStateTests: XCTestCase {
         )
     }
 
-    func testTheRankOrderIsRunningUnseenSeenBlank() {
+    func testTheRankOrderIsWaitingRunningUnseenSeenBlank() {
+        // 待答排最前：运行的turn会自己结束，被问题卡住的不会。
         XCTAssertEqual(
             SessionRowState.allCases.sorted { $0.rank < $1.rank },
-            [.running, .finishedUnseen, .finishedSeen, .blank]
+            [.waitingForYou, .running, .finishedUnseen, .finishedSeen, .blank]
         )
     }
 }
