@@ -22,8 +22,9 @@ they differ only in who runs the relay.
    and the connector prints the enrolment command when it starts without an identity.
 4. **Restart DSH** so the connector picks up its new identity. After that it reconnects by itself.
 5. **Pair the phone:** open `/mobile-link/qr` in DSH (or the mobile-connection page) and scan the
-   QR code in the app, or type the pairing code by hand. The relay address is
-   `wss://www.storyworld.site/dsh-link`.
+   QR code in the app, or type the pairing code by hand. Relay addresses look like
+   `wss://relay.example.com/dsh-link` — whoever hands out the invite also hands out the address to
+   use with it.
 6. **Check the link:** the app's status chip turns green and the session list fills in.
 
 ## B · Run your own relay (20 minutes)
