@@ -4,6 +4,16 @@
 [语义化版本](https://semver.org/lang/zh-CN/)。三处部署（App / 连接器 / 中转）的组合见
 [`docs/VERSIONING.md`](docs/VERSIONING.md)。
 
+## 连接器 0.3.1 — 2026-09-22
+
+`dsh-plugin-mobile-link` 0.3.1：手机断开之后，连接器替它把 `$events` 流留 15 分钟，
+并把期间没有人回答的提问记下来；手机再连上（哪怕 App 中途崩过一次）时补发，
+列表里就能看到"在等你回应"。以前手机不在的那一刻提出的问题，回到手机是看不到的。
+
+- 宽限期与缓冲上限可用 `DSH_MOBILE_LINK_EVENTS_GRACE_MS`／`DSH_MOBILE_LINK_EVENTS_BACKLOG` 调。
+- 只有 `waterfall` / `cancel` 会留；`emit` 类通知不补发（补发旧事件只会发错通知）。
+- 被回答（`$events/result`）或 host 作废（`cancel`）之后立刻从待答表里删掉。
+
 ## 连接器 0.3.0 — 2026-09-20
 
 `dsh-plugin-mobile-link` 0.3.0 与两个图片插件（`dsh-plugin-send-image` 0.1.1、
