@@ -54,8 +54,8 @@ final class AttachmentImages {
 
     /// 写完这份字节。调用点在**取图的那个异步任务**里，不在渲染路径上；
     /// 单张图的写入是几毫秒级，换来的是下次冷启动不必再走一趟中转。
-    private func persist(_ data: Data, attachmentId: String) {
-        diskCache.save(data, scope: scopeId, attachmentId: attachmentId)
+    private func persist(_ data: Data, attachmentId: String, variant: String?) {
+        diskCache.save(data, scope: scopeId, attachmentId: attachmentId, variant: variant)
     }
 
     private func bucketKey(_ session: String, _ attachmentId: String) -> String {
@@ -88,6 +88,14 @@ final class AttachmentImages {
     /// How many attachments are sitting in a failed state, for diagnostics.
     var failureCount: Int { (failures[key] ?? [:]).count }
 
+    /// 丢掉所有内存里的图片（「清除本地缓存」时用；磁盘那份由设置页删）。
+    func clearAllCached() {
+        images.removeAll()
+        inFlight.removeAll()
+        recent.removeAll()
+        failures.removeAll()
+    }
+
     /// Forgets every failure, so the next render tries again.
     ///
     /// Called when the link is re-established: whatever failed during the
@@ -106,8 +114,13 @@ final class AttachmentImages {
     private var scopeId: String { store?.scopeId ?? "unknown" }
 
     /// Fetches the bytes once, coalescing everyone who asks for the same image.
+    ///
+    /// `variant` identifies the *content* as far as the wire tells us (size and
+    /// media type). Attachment ids are the host's; if it ever reuses one for a
+    /// different picture, a different variant means a different cache entry
+    /// rather than the old picture forever.
     @discardableResult
-    func load(_ attachmentId: String) async -> UIImage? {
+    func load(_ attachmentId: String, variant: String? = nil) async -> UIImage? {
         let session = key
         let flightKey = bucketKey(session, attachmentId)
         if let cached = images[session]?[attachmentId] {
@@ -115,7 +128,7 @@ final class AttachmentImages {
             return cached
         }
         // 内存没有就问磁盘：同一个会话翻回去看时，图不该再走一遍网络。
-        if let data = diskCache.load(scope: scopeId, attachmentId: attachmentId),
+        if let data = diskCache.load(scope: scopeId, attachmentId: attachmentId, variant: variant),
            let image = UIImage(data: data) {
             store(image, for: attachmentId, in: session)
             // 诊断：这张图是**从磁盘**拿到的（没走网络）。
@@ -140,7 +153,7 @@ final class AttachmentImages {
                       let image = UIImage(data: data)
                 else { return nil }
                 // 下到了就留一份：下次冷启动不必再为这张图跑一趟中转。
-                self?.persist(data, attachmentId: attachmentId)
+                self?.persist(data, attachmentId: attachmentId, variant: variant)
                 return image
             } catch {
                 return nil

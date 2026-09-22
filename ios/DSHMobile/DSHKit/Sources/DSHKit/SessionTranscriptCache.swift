@@ -9,6 +9,9 @@ import Foundation
 /// follow snapshot would have built — without inventing a second representation
 /// that could drift from the wire model.
 public struct SessionTranscriptSnapshot: Codable, Sendable {
+    /// 结构版本：字段/语义变了就加一，旧文件据此作废（而不是解出半个东西）。
+    public static let schemaVersion = 1
+    public let schema: Int
     public let savedAt: Date
     public let records: [SessionRecord]
     public let oldestSeq: Int?
@@ -20,8 +23,10 @@ public struct SessionTranscriptSnapshot: Codable, Sendable {
         records: [SessionRecord],
         oldestSeq: Int?,
         throughSeq: Int,
-        hasOlder: Bool
+        hasOlder: Bool,
+        schema: Int = SessionTranscriptSnapshot.schemaVersion
     ) {
+        self.schema = schema
         self.savedAt = savedAt
         self.records = records
         self.oldestSeq = oldestSeq
@@ -96,6 +101,11 @@ public struct SessionTranscriptCache {
             try? fileManager.removeItem(at: file)
             return nil
         }
+        guard snapshot.schema == SessionTranscriptSnapshot.schemaVersion else {
+            // 旧结构：宁可重下一遍，也不要按新语义解释老字段。
+            try? fileManager.removeItem(at: file)
+            return nil
+        }
         guard now().timeIntervalSince(snapshot.savedAt) <= Self.maxAge else {
             try? fileManager.removeItem(at: file)
             return nil
@@ -155,6 +165,10 @@ public struct SessionTranscriptCache {
             ))
         }
 
+        // 刚写出来的文件（10 秒内）不参与裁剪：prune 在启动时后台跑，
+        // 别跟"打开会话时正在写的那份"撞上。
+        let settled = now().addingTimeInterval(-10)
+
         var removed = 0
         let deadline = now().addingTimeInterval(-Self.maxAge)
         for file in files where file.modified < deadline {
@@ -163,7 +177,7 @@ public struct SessionTranscriptCache {
         }
 
         var survivors = files
-            .filter { $0.modified >= deadline }
+            .filter { $0.modified >= deadline && $0.modified <= settled }
             .sorted { $0.modified > $1.modified }
         var total = survivors.reduce(0) { $0 + $1.size }
         while total > budgetBytes, let oldest = survivors.popLast() {

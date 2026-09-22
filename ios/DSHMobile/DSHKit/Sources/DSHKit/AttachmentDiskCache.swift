@@ -34,15 +34,19 @@ public struct AttachmentDiskCache {
         self.budgetBytes = budgetBytes
     }
 
-    private func url(scope: String, attachmentId: String) -> URL {
-        root
+    /// 文件名 = 附件 id + 内容标识。同 id 换了内容就是另一个文件，不会拿到旧图。
+    private func url(scope: String, attachmentId: String, variant: String?) -> URL {
+        let name = variant == nil
+            ? SessionTranscriptCache.slug(attachmentId)
+            : "\(SessionTranscriptCache.slug(attachmentId))-\(SessionTranscriptCache.slug(variant!))"
+        return root
             .appendingPathComponent(SessionTranscriptCache.slug(scope), isDirectory: true)
-            .appendingPathComponent(SessionTranscriptCache.slug(attachmentId), isDirectory: false)
+            .appendingPathComponent(name, isDirectory: false)
     }
 
     /// The stored bytes, or `nil` when there are none, they are stale, or unreadable.
-    public func load(scope: String, attachmentId: String) -> Data? {
-        let file = url(scope: scope, attachmentId: attachmentId)
+    public func load(scope: String, attachmentId: String, variant: String? = nil) -> Data? {
+        let file = url(scope: scope, attachmentId: attachmentId, variant: variant)
         guard let data = try? Data(contentsOf: file) else { return nil }
         let modified = (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?
             .contentModificationDate ?? .distantPast
@@ -53,9 +57,9 @@ public struct AttachmentDiskCache {
         return data
     }
 
-    public func save(_ data: Data, scope: String, attachmentId: String) {
+    public func save(_ data: Data, scope: String, attachmentId: String, variant: String? = nil) {
         guard !data.isEmpty else { return }
-        let file = url(scope: scope, attachmentId: attachmentId)
+        let file = url(scope: scope, attachmentId: attachmentId, variant: variant)
         try? fileManager.createDirectory(
             at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? data.write(to: file, options: .atomic)
@@ -84,6 +88,10 @@ public struct AttachmentDiskCache {
             ))
         }
 
+        // 刚写出来的文件（10 秒内）不参与裁剪：原子写会先落一个临时文件，
+        // 启动时的后台 prune 跟保存撞上时，别把正在写的那份卷进去。
+        let settled = now().addingTimeInterval(-10)
+
         var removed = 0
         let deadline = now().addingTimeInterval(-Self.maxAge)
         for file in files where file.modified < deadline {
@@ -92,7 +100,7 @@ public struct AttachmentDiskCache {
         }
 
         var survivors = files
-            .filter { $0.modified >= deadline }
+            .filter { $0.modified >= deadline && $0.modified <= settled }
             .sorted { $0.modified > $1.modified }
         var total = survivors.reduce(0) { $0 + $1.size }
         while total > budgetBytes, let oldest = survivors.popLast() {

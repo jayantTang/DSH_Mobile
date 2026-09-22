@@ -23,6 +23,12 @@ public enum ContentBlock: Sendable {
         public let width: Int?
         public let height: Int?
         public let name: String?
+
+        /// What the wire tells us about this picture's *content*, for caches that
+        /// must not serve an old picture under a reused id.
+        public var cacheVariant: String {
+            "\(bytes ?? 0)-\(mediaType)"
+        }
     }
 
     public struct FileAttachment: Sendable, Hashable {

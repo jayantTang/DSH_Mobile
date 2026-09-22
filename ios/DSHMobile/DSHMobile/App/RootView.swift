@@ -448,6 +448,7 @@ private struct MainView: View {
     @Environment(ConnectionStore.self) private var store
     @Environment(HostEventHub.self) private var hub
     @Environment(SessionAlerts.self) private var alerts
+    @Environment(AttachmentImages.self) private var attachmentImages
     /// Which layout this screen gets: a phone needs a stack it can drive.
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     /// Whether the app is in front, which decides if "already on screen" is a
@@ -534,6 +535,11 @@ private struct MainView: View {
             // The fallback resolves its own surface from the active connection
             // and explains itself when a relay link cannot serve one.
             PluginWebFallback(store: store)
+        }
+        // 设置页清了缓存：内存里的转写尾部与图片桶一起放手（否则会被写回来）。
+        .onReceive(NotificationCenter.default.publisher(for: .localCachesCleared)) { _ in
+            chatModel.dropPersistedTail()
+            attachmentImages.clearAllCached()
         }
         .onChange(of: listModel.finishedSignal) {
             guard let finished = listModel.lastFinished else { return }

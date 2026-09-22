@@ -410,6 +410,8 @@ struct SettingsView: View {
                 SessionListSnapshotStore().clear()
                 SessionTranscriptCache().clearAll()
                 AttachmentDiskCache().clearAll()
+                // 内存里那一份也要放掉，否则下一次落盘会把刚清掉的文件写回来。
+                NotificationCenter.default.post(name: .localCachesCleared, object: nil)
                 cacheClearedAt = Date()
             } label: {
                 HStack {

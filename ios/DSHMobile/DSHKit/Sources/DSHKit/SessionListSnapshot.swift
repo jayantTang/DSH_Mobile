@@ -13,6 +13,9 @@ import Foundation
 /// Scope: this is metadata only (titles, times, running flags, usage numbers) —
 /// no transcript content. Transcript caching is a separate decision.
 public struct SessionListSnapshot: Codable, Sendable {
+    /// 结构版本：字段变了就加一，旧文件据此作废。
+    public static let schemaVersion = 1
+    public let schema: Int
     public let savedAt: Date
     public let items: [SessionSummary]
     public let workspaces: [Workspace]
@@ -22,8 +25,10 @@ public struct SessionListSnapshot: Codable, Sendable {
         savedAt: Date,
         items: [SessionSummary],
         workspaces: [Workspace],
-        archivedSessionIds: [String]
+        archivedSessionIds: [String],
+        schema: Int = SessionListSnapshot.schemaVersion
     ) {
+        self.schema = schema
         self.savedAt = savedAt
         self.items = items
         self.workspaces = workspaces
@@ -62,6 +67,10 @@ public struct SessionListSnapshotStore {
         guard let snapshot = try? JSONDecoder().decode(SessionListSnapshot.self, from: data) else {
             // A snapshot we cannot read is worse than none: it would be shown
             // forever. Drop it and let the next refresh write a fresh one.
+            clear()
+            return nil
+        }
+        guard snapshot.schema == SessionListSnapshot.schemaVersion else {
             clear()
             return nil
         }

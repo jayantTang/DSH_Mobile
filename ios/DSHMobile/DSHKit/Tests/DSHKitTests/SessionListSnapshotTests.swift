@@ -91,6 +91,17 @@ struct SessionListSnapshotTests {
         #expect(FileManager.default.fileExists(atPath: file.path) == false)
     }
 
+    @Test("a snapshot from an older schema is discarded")
+    func schemaMismatchIsDiscarded() {
+        let dir = tempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SessionListSnapshotStore(directory: dir)
+        store.save(SessionListSnapshot(
+            savedAt: Date(), items: [summary("s-1", title: "旧")], workspaces: [], archivedSessionIds: [],
+            schema: SessionListSnapshot.schemaVersion + 1))
+        #expect(store.load() == nil)
+    }
+
     @Test("clearing removes it")
     func clear() {
         let dir = tempDirectory()

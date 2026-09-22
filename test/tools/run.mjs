@@ -82,13 +82,19 @@ function probeVerdicts({ simId, detailDir, verdicts, log }) {
     if (last && sample.at - last.to <= 0.7) last.to = sample.at
     else episodes.push({ from: sample.at, to: sample.at })
   }
-  const describe = episodes.map((item) => `${item.from.toFixed(1)}s–${item.to.toFixed(1)}s`).join('、')
+  // 单帧不算：页面切换、回前台的第一帧都会让采样区短暂为空，而用户看到的"跳白"
+  // 是持续好几秒的那种（2026-09-20 复现时是 12.5–13.0s、27.3–41.7s）。
+  // 0.5 秒（够 2 个采样点）以上才算一段，否则判定会被过渡帧刷成假阳性。
+  const meaningful = episodes.filter((item) => item.to - item.from >= 0.5)
+  const describe = meaningful.map((item) => `${item.from.toFixed(1)}s–${item.to.toFixed(1)}s`).join('、')
+  const ignored = episodes.length - meaningful.length
   verdicts.push({
     seq: -3, id: 'probe.blank', kind: 'probe',
-    status: episodes.length ? 'fail' : 'pass',
-    detail: episodes.length
-      ? `会话区白过 ${episodes.length} 段（${describe}）；现场图见 detail/probe-*-blank*.png`
-      : `探针 ${samples.length} 个采样点里会话区墨迹最低 ${Math.min(...samples.map((s) => s.ink)).toFixed(3)}，没有变白`,
+    status: meaningful.length ? 'fail' : 'pass',
+    detail: meaningful.length
+      ? `会话区白过 ${meaningful.length} 段（${describe}）；现场图见 detail/probe-*-blank*.png`
+      : `探针 ${samples.length} 个采样点里会话区墨迹最低 ${Math.min(...samples.map((s) => s.ink)).toFixed(3)}，没有变白`
+        + (ignored ? `（另有 ${ignored} 段单帧过渡空白，不计）` : ''),
   })
   // 启动那几拍的内容高度是 1pt（会话还没折进来），不参与统计。
   const grown = content.filter((value) => value > 500)

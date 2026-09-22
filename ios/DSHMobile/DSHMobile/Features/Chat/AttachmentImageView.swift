@@ -51,7 +51,7 @@ struct AttachmentThumbnail: View {
             }
         }
         .task(id: attachment.attachmentId) {
-            await images.load(attachment.attachmentId)
+            await images.load(attachment.attachmentId, variant: attachment.cacheVariant)
         }
         .fullScreenCover(isPresented: $isShowingPreview) {
             if let resolved {

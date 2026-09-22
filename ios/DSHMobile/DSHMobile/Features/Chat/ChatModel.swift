@@ -126,6 +126,8 @@ final class ChatModel {
     private var lastDiskSave = Date.distantPast
     /// 距上次落盘又攒了多少条（够了就写，不等计时器）。
     private var unsavedRecords = 0
+    /// 用户刚清过缓存：在重新打开一个会话之前不要再写。
+    private var persistSuspended = false
 
     /// 用户最后想看、但可能还没连上而没能打开的会话。
     private var pendingOpen: SessionSummary?
@@ -193,6 +195,7 @@ final class ChatModel {
         close()
 
         let key = summary.sessionId
+        persistSuspended = false
         // 这次跟 host 要多少条快照：本地尾部很新（差 ≤20 条）时只要 20 条就够对齐，
         // 少拉一遍重复数据；本地落后很多或没有本地缓存时按 60 条来，避免中间留洞。
         var syncPlan = TranscriptSyncPlan.plan(localThrough: nil, hostCursor: summary.asOfSeq)
@@ -410,7 +413,7 @@ final class ChatModel {
 
     /// 把尾部写盘。默认节流：流式输出时每个事件都写会把磁盘当内存用。
     private func persistIfDue(force: Bool = false) {
-        guard let sessionId = session?.sessionId else { return }
+        guard !persistSuspended, let sessionId = session?.sessionId else { return }
         let now = Date()
         // 一轮进行中也可能被杀：1 秒或攒够 20 条就写一次，尽量把丢失窗口压小。
         let due = unsavedRecords >= 20 || now.timeIntervalSince(lastDiskSave) > 1
@@ -438,6 +441,16 @@ final class ChatModel {
     /// 立刻落盘（退到后台、离开会话时用：那些时刻之后进程可能就没了）。
     func persistTranscriptNow() {
         persistIfDue(force: true)
+    }
+
+    /// 「清除本地缓存」被按下：把内存里的尾部也丢掉，并暂停写盘直到下次打开会话。
+    ///
+    /// 否则会出现"清完 1 秒又回来"的假象：屏幕上的会话仍然握着 200 条记录，
+    /// 下一次节流落盘就把文件写回去了。
+    func dropPersistedTail() {
+        recentRecords = []
+        unsavedRecords = 0
+        persistSuspended = true
     }
 
     private func startFollowing(client: DSHClient, summary: SessionSummary, maxMessages: Int = 60) {
@@ -493,7 +506,10 @@ final class ChatModel {
             oldestSeq = [oldestSeq, snapshot.records.first?.event.seq]
                 .compactMap { $0 }
                 .min()
-            hasOlder = snapshot.hasMore || hasOlder
+            // 以 host 为准：`hasMore=false` 意味着这次快照的窗口已经退到日志开头，
+            // 那就真的没有更早的了。以前写成 `|| hasOlder`，本地旧状态会把"到底了"
+            // 硬说成"还能往前翻"，点下去什么也加载不出来。
+            hasOlder = snapshot.hasMore
             phase = .ready
             scrollSignal += 1
             // 快照要**并进**本地尾部，不能替换：本地可能存着 200 条，而这次的快照

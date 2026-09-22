@@ -61,6 +61,39 @@ struct AttachmentDiskCacheTests {
         #expect(cache.load(scope: "agt_a", attachmentId: "att_0") == nil)
     }
 
+    @Test("two contents under one id do not collide")
+    func variantSeparatesContent() {
+        let root = tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let cache = AttachmentDiskCache(root: root)
+
+        cache.save(Data("old".utf8), scope: "agt_a", attachmentId: "att_1", variant: "10-image/png")
+        cache.save(Data("new".utf8), scope: "agt_a", attachmentId: "att_1", variant: "20-image/png")
+
+        #expect(cache.load(scope: "agt_a", attachmentId: "att_1", variant: "10-image/png") == Data("old".utf8))
+        #expect(cache.load(scope: "agt_a", attachmentId: "att_1", variant: "20-image/png") == Data("new".utf8))
+        // 没给标识时按 id 本身取（老调用方）
+        #expect(cache.load(scope: "agt_a", attachmentId: "att_1") == nil)
+    }
+
+    @Test("pruning leaves files that were just written alone")
+    func pruneSkipsFreshFiles() {
+        let root = tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        var current = Date()
+        let cache = AttachmentDiskCache(root: root, now: { current }, budgetBytes: 1)
+        cache.save(Data(repeating: 1, count: 2_000), scope: "agt_a", attachmentId: "att_1")
+
+        // 预算小到任何东西都超：但刚写的（10 秒内）不参与裁剪
+        #expect(cache.prune() == 0)
+        #expect(cache.load(scope: "agt_a", attachmentId: "att_1") != nil)
+
+        // 过了 10 秒再看，它就该被预算挤掉了
+        current = current.addingTimeInterval(11)
+        #expect(cache.prune() == 1)
+        #expect(cache.load(scope: "agt_a", attachmentId: "att_1") == nil)
+    }
+
     @Test("clearing removes everything")
     func clearAll() {
         let root = tempRoot()
