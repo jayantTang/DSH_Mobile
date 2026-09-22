@@ -407,7 +407,7 @@ struct SettingsView: View {
     private var cacheSection: some View {
         Section {
             Button(role: .destructive) {
-                SessionListSnapshotStore().clear()
+                SessionListSnapshotStore().clearAll()
                 SessionTranscriptCache().clearAll()
                 AttachmentDiskCache().clearAll()
                 // 内存里那一份也要放掉，否则下一次落盘会把刚清掉的文件写回来。

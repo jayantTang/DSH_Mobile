@@ -39,13 +39,14 @@ struct SessionListSnapshotTests {
 
         // savedAt 必须是"现在"：30 天窗口之外的一律当过期丢掉（这条规则本身另有测试）。
         store.save(SessionListSnapshot(
+            scope: "agt_a",
             savedAt: Date(),
             items: [summary("s-1", title: "定位跳白"), summary("s-2", title: "另一个")],
             workspaces: [workspace("19_dsh_iosapp")],
             archivedSessionIds: ["s-9"]
         ))
 
-        let loaded = store.load()
+        let loaded = store.load(scope: "agt_a")
         #expect(loaded?.items.count == 2)
         #expect(loaded?.items.first?.displayTitle == "定位跳白")
         #expect(loaded?.items.first?.asOfSeq == 12)
@@ -61,33 +62,35 @@ struct SessionListSnapshotTests {
         let store = SessionListSnapshotStore(directory: dir, now: { saved })
 
         store.save(SessionListSnapshot(
-            savedAt: saved, items: [summary("s-1", title: "旧")], workspaces: [], archivedSessionIds: []))
+            scope: "agt_a", savedAt: saved, items: [summary("s-1", title: "旧")],
+            workspaces: [], archivedSessionIds: []))
 
         // 31 天后再打开：不能把一个月前的列表当成今天的。
         let later = SessionListSnapshotStore(
             directory: dir, now: { saved.addingTimeInterval(31 * 24 * 60 * 60) })
-        #expect(later.load() == nil)
+        #expect(later.load(scope: "agt_a") == nil)
         // 而且已经删掉了，不会每次启动都白读一遍。
         let fresh = SessionListSnapshotStore(directory: dir, now: { saved })
-        #expect(fresh.load() == nil)
+        #expect(fresh.load(scope: "agt_a") == nil)
 
         // 29 天时仍然可用（窗口边界内）。
         let inside = SessionListSnapshotStore(
             directory: dir, now: { saved.addingTimeInterval(29 * 24 * 60 * 60) })
         store.save(SessionListSnapshot(
-            savedAt: saved, items: [summary("s-2", title: "还在")], workspaces: [], archivedSessionIds: []))
-        #expect(inside.load()?.items.first?.sessionId == "s-2")
+            scope: "agt_a", savedAt: saved, items: [summary("s-2", title: "还在")],
+            workspaces: [], archivedSessionIds: []))
+        #expect(inside.load(scope: "agt_a")?.items.first?.sessionId == "s-2")
     }
 
     @Test("an unreadable snapshot is discarded rather than shown")
     func corruptSnapshotIsCleared() {
         let dir = tempDirectory()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let file = dir.appendingPathComponent("session-list.json")
+        let file = dir.appendingPathComponent("session-list-agt_a.json")
         try? Data("not json".utf8).write(to: file)
 
         let store = SessionListSnapshotStore(directory: dir)
-        #expect(store.load() == nil)
+        #expect(store.load(scope: "agt_a") == nil)
         #expect(FileManager.default.fileExists(atPath: file.path) == false)
     }
 
@@ -97,31 +100,51 @@ struct SessionListSnapshotTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let store = SessionListSnapshotStore(directory: dir)
         store.save(SessionListSnapshot(
+            scope: "agt_a",
             savedAt: Date(), items: [summary("s-1", title: "旧")], workspaces: [], archivedSessionIds: [],
             schema: SessionListSnapshot.schemaVersion + 1))
-        #expect(store.load() == nil)
+        #expect(store.load(scope: "agt_a") == nil)
     }
 
     @Test("the fingerprint tracks content, not the clock")
     func fingerprintFollowsContent() {
         let items = [summary("s-1", title: "a"), summary("s-2", title: "b")]
-        let base = SessionListSnapshot(savedAt: Date(), items: items, workspaces: [], archivedSessionIds: [])
+        let base = SessionListSnapshot(
+            scope: "agt_a", savedAt: Date(), items: items, workspaces: [], archivedSessionIds: [])
         // 同一份内容，保存时间不同 → 指纹相同（否则每次刷新都会白写一遍）
         let again = SessionListSnapshot(
-            savedAt: Date().addingTimeInterval(60), items: items, workspaces: [], archivedSessionIds: [])
+            scope: "agt_a", savedAt: Date().addingTimeInterval(60), items: items,
+            workspaces: [], archivedSessionIds: [])
         #expect(base.contentFingerprint == again.contentFingerprint)
 
         // 内容变了 → 指纹不同（标题/时间/游标状态都算内容）
         let moved = SessionListSnapshot(
-            savedAt: base.savedAt,
+            scope: "agt_a", savedAt: base.savedAt,
             items: [summary("s-1", title: "a", updatedAt: 1_700_000_999_000), summary("s-2", title: "b")],
             workspaces: [], archivedSessionIds: [])
         #expect(moved.contentFingerprint != base.contentFingerprint)
 
         // 工作区变化也要算进去（分组变了列表就不一样）
         let regrouped = SessionListSnapshot(
-            savedAt: base.savedAt, items: items, workspaces: [workspace("19_dsh_iosapp")], archivedSessionIds: [])
+            scope: "agt_a", savedAt: base.savedAt, items: items,
+            workspaces: [workspace("19_dsh_iosapp")], archivedSessionIds: [])
         #expect(regrouped.contentFingerprint != base.contentFingerprint)
+    }
+
+    @Test("a snapshot from another computer is never shown")
+    func otherScopeIsNotAdopted() {
+        let dir = tempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SessionListSnapshotStore(directory: dir)
+        store.save(SessionListSnapshot(
+            scope: "agt_a", savedAt: Date(), items: [summary("s-1", title: "A 的会话")],
+            workspaces: [], archivedSessionIds: []))
+
+        #expect(store.load(scope: "agt_a") != nil)
+        // 换到另一台：读不到 A 的列表（两台电脑的会话 id 可能撞）
+        #expect(store.load(scope: "agt_b") == nil)
+        // 而且不会因为读 B 就把 A 的文件删掉
+        #expect(store.load(scope: "agt_a") != nil)
     }
 
     @Test("clearing removes it")
@@ -130,9 +153,10 @@ struct SessionListSnapshotTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let store = SessionListSnapshotStore(directory: dir)
         store.save(SessionListSnapshot(
+            scope: "agt_a",
             savedAt: Date(), items: [summary("s-1", title: "x")], workspaces: [], archivedSessionIds: []))
-        #expect(store.load() != nil)
-        store.clear()
-        #expect(store.load() == nil)
+        #expect(store.load(scope: "agt_a") != nil)
+        store.clear(scope: "agt_a")
+        #expect(store.load(scope: "agt_a") == nil)
     }
 }

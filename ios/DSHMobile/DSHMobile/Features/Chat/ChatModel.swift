@@ -132,6 +132,13 @@ final class ChatModel {
     /// 用户最后想看、但可能还没连上而没能打开的会话。
     private var pendingOpen: SessionSummary?
 
+    /// 打开这个会话时属于哪台电脑。
+    ///
+    /// 不能在落盘那一刻现取 `store.scopeId`：切换/断开时 profile 已经被清掉或换成
+    /// 新电脑了，旧电脑的尾部会落到 `unknown/` 或**新电脑**的目录里——两台电脑的
+    /// 会话 id 本来就可能撞（fork/clone），那就是把 A 的记录当成 B 的显示。
+    private var sessionScope: String?
+
     /// 这次打开用的同步计划（快照到达时还要用它判断合并还是重来）。
     private var syncPlanRef = TranscriptSyncPlan.plan(localThrough: nil, hostCursor: 0)
 
@@ -195,6 +202,7 @@ final class ChatModel {
         close()
 
         let key = summary.sessionId
+        sessionScope = scopeId == "unknown" ? nil : scopeId
         persistSuspended = false
         // 这次跟 host 要多少条快照：本地尾部很新（差 ≤20 条）时只要 20 条就够对齐，
         // 少拉一遍重复数据；本地落后很多或没有本地缓存时按 60 条来，避免中间留洞。
@@ -227,11 +235,12 @@ final class ChatModel {
             // 记录也要一起恢复：否则下一次落盘会把"这个会话只有刚到的这几条"
             // 写进磁盘，之前那段就被截掉了。
             recentRecords = cached.records.isEmpty
-                ? (transcriptCache.load(scope: scopeId, sessionId: key)?.records ?? [])
+                ? (sessionScope.flatMap { transcriptCache.load(scope: $0, sessionId: key)?.records } ?? [])
                 : cached.records
             phase = .ready
             scrollSignal += 1
-        } else if let stored = transcriptCache.load(scope: scopeId, sessionId: key) {
+        } else if let scope = sessionScope,
+                  let stored = transcriptCache.load(scope: scope, sessionId: key) {
             // 窗口按"本地落后 host 多少"来定：落后很多时要更大的窗口，否则
             // 快照接不上本地尾部，时间线中间会留一个永远补不上的洞。
             syncPlan = TranscriptSyncPlan.plan(
@@ -313,6 +322,7 @@ final class ChatModel {
     /// message belongs to the host it was typed for.
     func forgetConnection() {
         close()
+        sessionScope = nil
         session = nil
         timeline = ChatTimeline()
         cache.removeAll()
@@ -392,7 +402,7 @@ final class ChatModel {
     func forget(_ sessionId: String) {
         cache.removeValue(forKey: sessionId)
         cacheOrder.removeAll { $0 == sessionId }
-        transcriptCache.clear(scope: scopeId, sessionId: sessionId)
+        transcriptCache.clear(scope: sessionScope ?? scopeId, sessionId: sessionId)
     }
 
     /// 当前会话属于哪台电脑——缓存按它分目录，换电脑不会串味。
@@ -417,6 +427,10 @@ final class ChatModel {
     /// 把尾部写盘。默认节流：流式输出时每个事件都写会把磁盘当内存用。
     private func persistIfDue(force: Bool = false) {
         guard !persistSuspended, let sessionId = session?.sessionId else { return }
+        guard let scope = sessionScope else { return }
+        // 会话已经不属于当前这台电脑了（用户切走了）：别再往任何地方写。
+        let currentScope = scopeId
+        guard currentScope == "unknown" || currentScope == scope else { return }
         let now = Date()
         // 一轮进行中也可能被杀：1 秒或攒够 20 条就写一次，尽量把丢失窗口压小。
         let due = unsavedRecords >= 20 || now.timeIntervalSince(lastDiskSave) > 1
@@ -438,7 +452,7 @@ final class ChatModel {
                 throughSeq: throughSeq,
                 hasOlder: hasOlder
             ),
-            scope: scopeId,
+            scope: scope,
             sessionId: sessionId
         )
     }

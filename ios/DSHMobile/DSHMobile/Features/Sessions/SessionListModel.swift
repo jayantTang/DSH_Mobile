@@ -431,6 +431,11 @@ final class SessionListModel {
         previouslyRunning = []
         phase = .idle
         lastRefreshed = nil
+        // 换了电脑：指纹与"显示的是缓存"都必须复位，否则新一轮刷新可能因为
+        // 指纹相同而跳过落盘（缓存文件已经不属于这台的语义），状态行也会一直
+        // 说"显示上次数据"。
+        lastSavedFingerprint = nil
+        isShowingSnapshot = false
     }
 
     func refresh() async {
@@ -481,7 +486,12 @@ final class SessionListModel {
     /// with older ones. And it never merges snapshot rows into a live list —
     /// that would resurrect sessions the user has since archived.
     private func showSnapshotIfEmpty() {
-        guard allSessions.isEmpty, groups.isEmpty, let snapshot = snapshotStore.load() else { return }
+        // 只认**这台电脑**的快照：以前是全局单文件，换电脑之后冷启动会把上一台的
+        // 列表画出来（两台电脑的会话 id 可能撞）。
+        guard let scope = store?.scopeId,
+              allSessions.isEmpty, groups.isEmpty,
+              let snapshot = snapshotStore.load(scope: scope)
+        else { return }
         allSessions = snapshot.items
         workspaces = snapshot.workspaces
         archivedSessionIds = Set(snapshot.archivedSessionIds)
@@ -503,7 +513,9 @@ final class SessionListModel {
     /// time is disk churn nobody asked for. The window/archived sets are part of
     /// the fingerprint, so a change there still lands.
     private func saveSnapshot() {
+        guard let scope = store?.scopeId else { return }
         let snapshot = SessionListSnapshot(
+            scope: scope,
             savedAt: Date(),
             items: allSessions,
             workspaces: workspaces,
@@ -529,7 +541,8 @@ final class SessionListModel {
 
     /// 设置页里的"清除缓存"。
     func clearCachedSnapshot() {
-        snapshotStore.clear()
+        if let scope = store?.scopeId { snapshotStore.clear(scope: scope) }
+        lastSavedFingerprint = nil
         isShowingSnapshot = false
     }
 

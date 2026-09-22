@@ -16,6 +16,8 @@ public struct SessionListSnapshot: Codable, Sendable {
     /// 结构版本：字段变了就加一，旧文件据此作废。
     public static let schemaVersion = 1
     public let schema: Int
+    /// 这份列表属于哪台电脑（agent id，未登记时是 profile 的 UUID）。
+    public let scope: String
     public let savedAt: Date
     public let items: [SessionSummary]
     public let workspaces: [Workspace]
@@ -46,6 +48,7 @@ public struct SessionListSnapshot: Codable, Sendable {
     }
 
     public init(
+        scope: String,
         savedAt: Date,
         items: [SessionSummary],
         workspaces: [Workspace],
@@ -53,6 +56,7 @@ public struct SessionListSnapshot: Codable, Sendable {
         schema: Int = SessionListSnapshot.schemaVersion
     ) {
         self.schema = schema
+        self.scope = scope
         self.savedAt = savedAt
         self.items = items
         self.workspaces = workspaces
@@ -72,34 +76,42 @@ public struct SessionListSnapshotStore {
     /// How long a snapshot may still be shown.
     public static let maxAge: TimeInterval = 30 * 24 * 60 * 60
 
-    private let url: URL
+    private let directory: URL
     private let now: () -> Date
 
     /// - Parameters:
     ///   - directory: overridable so tests get a temporary directory; the app
-    ///     uses `Caches/session-list.json`.
+    ///     uses `Caches/session-list-<scope>.json`.
     ///   - now: injectable clock, for the same reason.
     public init(directory: URL? = nil, now: @escaping () -> Date = Date.init) {
         let base = directory ?? FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-        self.url = base.appendingPathComponent("session-list.json", isDirectory: false)
+        self.directory = base
         self.now = now
     }
 
-    /// The snapshot, or `nil` when there is none, it is unreadable, or it is stale.
-    public func load() -> SessionListSnapshot? {
+    /// 一台电脑一份。以前是全局单文件，换电脑之后冷启动会把上一台的列表当成
+    /// "上次数据"画出来——两台电脑的会话 id 本来就可能撞（fork/clone）。
+    private func url(scope: String) -> URL {
+        let name = "session-list-\(SessionTranscriptCache.slug(scope)).json"
+        return directory.appendingPathComponent(name, isDirectory: false)
+    }
+
+    /// This computer's snapshot, or `nil` when there is none, it is unreadable,
+    /// it is stale, or it belongs to a different computer.
+    public func load(scope: String) -> SessionListSnapshot? {
+        let url = url(scope: scope)
         guard let data = try? Data(contentsOf: url) else { return nil }
         guard let snapshot = try? JSONDecoder().decode(SessionListSnapshot.self, from: data) else {
             // A snapshot we cannot read is worse than none: it would be shown
             // forever. Drop it and let the next refresh write a fresh one.
-            clear()
+            clear(scope: scope)
             return nil
         }
-        guard snapshot.schema == SessionListSnapshot.schemaVersion else {
-            clear()
-            return nil
-        }
-        guard now().timeIntervalSince(snapshot.savedAt) <= Self.maxAge else {
-            clear()
+        guard snapshot.schema == SessionListSnapshot.schemaVersion,
+              snapshot.scope == scope,
+              now().timeIntervalSince(snapshot.savedAt) <= Self.maxAge
+        else {
+            clear(scope: scope)
             return nil
         }
         return snapshot
@@ -108,13 +120,25 @@ public struct SessionListSnapshotStore {
     /// Writes atomically: a half-written snapshot must never be readable.
     public func save(_ snapshot: SessionListSnapshot) {
         guard let data = try? JSONEncoder().encode(snapshot) else { return }
+        let url = url(scope: snapshot.scope)
         try? FileManager.default.createDirectory(
             at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? data.write(to: url, options: .atomic)
     }
 
-    /// Forgets it now — used by the settings switch and when a snapshot is corrupt.
-    public func clear() {
-        try? FileManager.default.removeItem(at: url)
+    /// Forgets one computer's snapshot — the settings switch and corrupt files.
+    public func clear(scope: String) {
+        try? FileManager.default.removeItem(at: url(scope: scope))
+    }
+
+    /// Forgets every computer's snapshot — including the unscoped
+    /// `session-list.json` an earlier build wrote, which nothing reads any more.
+    public func clearAll() {
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
+        for name in names where name.hasPrefix("session-list-") && name.hasSuffix(".json") {
+            try? FileManager.default.removeItem(at: directory.appendingPathComponent(name))
+        }
+        try? FileManager.default.removeItem(
+            at: directory.appendingPathComponent("session-list.json", isDirectory: false))
     }
 }
