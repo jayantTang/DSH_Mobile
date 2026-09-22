@@ -432,6 +432,31 @@ public final class ConnectionStore {
 
     /// Reconnects the profile that was in use, if the link has dropped.
     ///
+    /// 冷启动时沿用上次那台电脑：把最近用过的 profile 设为活动，然后照常去连。
+    ///
+    /// 为什么要有这一步：列表页只在"有活动连接"之后才出现，于是冷启动永远先落在
+    /// 连接页——手机上有缓存也只能干等用户点一下「连接」。用户要的是微信那种
+    /// "打开就是上次的样子"，所以启动就把上次那台电脑认下来：连上了直接是实时数据，
+    /// 连不上也是**列表 + 缓存行 + 未连接提示**，而不是一个空白的选择页。
+    ///
+    /// - Returns: 是否认下了某个 profile（没有历史/没有密钥时为 false，仍然显示连接页）。
+    @discardableResult
+    public func adoptPreferredProfile() -> Bool {
+        guard activeProfile == nil else { return true }
+        guard let profile = preferredProfile else {
+            // 没有可用的历史（首次安装、或密钥被清）：仍然显示连接页。留一行日志，
+            // 排查"为什么没直接进列表"时不用再猜。
+            ViewportProbe.note("adopt.none", [
+                "profiles": String(profiles.count),
+                "withSecret": String(profiles.filter { hasSecret(for: $0) }.count),
+            ], force: true)
+            return false
+        }
+        activeProfile = profile
+        state = .connecting("正在连接…")
+        return true
+    }
+
     /// Called when the app returns to the foreground. iOS suspends a backgrounded
     /// app and its sockets with it, so the link is often dead by the time the
     /// user looks again — this is what puts it back without asking them to pair

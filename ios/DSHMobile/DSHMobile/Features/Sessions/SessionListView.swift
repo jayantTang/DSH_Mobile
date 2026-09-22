@@ -148,7 +148,7 @@ struct SessionListView: View {
             // 屏幕上是缓存时把话说明白：列表能用，但它不是"现在"。
             return model.isShowingSnapshot ? "\(count) 个会话 · 显示上次数据" : "\(count) 个会话"
         case .connecting(let message):
-            return message
+            return model.isShowingSnapshot ? "\(message) · 显示上次数据" : message
         case .failed(let message):
             return model.isShowingSnapshot ? "\(message) · 显示上次数据" : message
         case .disconnected:

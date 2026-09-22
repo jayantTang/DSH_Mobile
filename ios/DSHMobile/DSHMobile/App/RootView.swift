@@ -101,9 +101,17 @@ struct RootView: View {
                 await alerts.prepare()
             }
             .task {
-                // 一启动就把落盘的列表装进 model，**不等连接**：用户点「连接」时屏幕
-                // 立刻有行可看，而不是先空着等 host 答话（这正是"打开是空的"的来源）。
+                // 一启动就把落盘的列表装进 model，**不等连接**：屏幕立刻有行可看，
+                // 而不是先空着等 host 答话（这正是"打开是空的"的来源）。
                 listModel.loadCachedList()
+                // 认下上次那台电脑并直接进列表：连不上也在列表上显示缓存 + 未连接，
+                // 而不是把用户拦在连接页（换电脑走列表顶部的连接入口）。
+                if store.adoptPreferredProfile() {
+                    // 采纳即视为"进过工作区"：屏幕留在列表上（缓存行 + 状态胶囊），
+                    // 而不是被弹回连接页——连接页只负责"从没连过任何一台"这件事。
+                    enteredWorkspace = true
+                    Task { await store.reconnectIfNeeded() }
+                }
             }
             .task {
                 // 夹具：`-DSHProbeAsk <sessionId>` 时由 App 自己给那个会话发一条
