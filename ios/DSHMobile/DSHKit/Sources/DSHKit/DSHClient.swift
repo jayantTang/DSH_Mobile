@@ -16,10 +16,18 @@ public struct DSHClient: Sendable {
     // MARK: - Sessions
 
     /// Lists sessions, newest first.
-    public func sessions(cursor: String? = nil) async throws -> SessionListValue {
+    /// The whole session list, in one call.
+    ///
+    /// `SessionListRequest.cursor` exists on the wire but is **inert in this
+    /// deployment** — a bogus cursor returns the same full list and no
+    /// `nextCursor` comes back (documented, with a verification note, in
+    /// `docs/DSH-PROTOCOL.md` §"accepted but ignored"). The helper therefore does
+    /// not offer a cursor parameter: an unused knob is an invitation to build
+    /// pagination that silently pages nothing.
+    public func sessions() async throws -> SessionListValue {
         try await carrier.unary(
             method: "session/list",
-            args: UnderscoreRequestArgs(_request: SessionListRequest(cursor: cursor)),
+            args: UnderscoreRequestArgs(_request: SessionListRequest()),
             as: SessionListValue.self
         )
     }
@@ -472,8 +480,17 @@ public struct DSHClient: Sendable {
 
 // MARK: - Argument carriers
 
+/// The wire shape of `session/list`'s args.
+///
+/// `cursor` is part of the protocol but inert in this deployment (no `nextCursor`
+/// comes back), so nothing in the app sets it — it is modelled only so the
+/// request keeps matching the descriptor the host validates against.
 struct SessionListRequest: Encodable, Sendable {
-    let cursor: String?
+    var cursor: String?
+
+    init(cursor: String? = nil) {
+        self.cursor = cursor
+    }
 }
 
 public struct SessionCreateRequest: Encodable, Sendable {

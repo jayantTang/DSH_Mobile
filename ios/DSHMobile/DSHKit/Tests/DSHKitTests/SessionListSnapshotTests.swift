@@ -102,6 +102,28 @@ struct SessionListSnapshotTests {
         #expect(store.load() == nil)
     }
 
+    @Test("the fingerprint tracks content, not the clock")
+    func fingerprintFollowsContent() {
+        let items = [summary("s-1", title: "a"), summary("s-2", title: "b")]
+        let base = SessionListSnapshot(savedAt: Date(), items: items, workspaces: [], archivedSessionIds: [])
+        // 同一份内容，保存时间不同 → 指纹相同（否则每次刷新都会白写一遍）
+        let again = SessionListSnapshot(
+            savedAt: Date().addingTimeInterval(60), items: items, workspaces: [], archivedSessionIds: [])
+        #expect(base.contentFingerprint == again.contentFingerprint)
+
+        // 内容变了 → 指纹不同（标题/时间/游标状态都算内容）
+        let moved = SessionListSnapshot(
+            savedAt: base.savedAt,
+            items: [summary("s-1", title: "a", updatedAt: 1_700_000_999_000), summary("s-2", title: "b")],
+            workspaces: [], archivedSessionIds: [])
+        #expect(moved.contentFingerprint != base.contentFingerprint)
+
+        // 工作区变化也要算进去（分组变了列表就不一样）
+        let regrouped = SessionListSnapshot(
+            savedAt: base.savedAt, items: items, workspaces: [workspace("19_dsh_iosapp")], archivedSessionIds: [])
+        #expect(regrouped.contentFingerprint != base.contentFingerprint)
+    }
+
     @Test("clearing removes it")
     func clear() {
         let dir = tempDirectory()

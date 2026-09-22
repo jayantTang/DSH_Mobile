@@ -59,6 +59,9 @@ final class SessionListModel {
     /// 有它才能在离线时把话说明白：列表能看，但后面跟一句"显示的是上次的数据"，
     /// 而不是让用户以为这就是现在的状态。
     private(set) var isShowingSnapshot = false
+
+    /// 上一次写盘的快照内容指纹（内容没变就不重写）。
+    private var lastSavedFingerprint: Int?
     private(set) var groups: [Group] = []
     /// The desktop client's explicit workspace list, in its own order.
     private(set) var workspaces: [Workspace] = []
@@ -487,19 +490,41 @@ final class SessionListModel {
         // 里的更新时间打底，等真数据回来再算（否则一冷启动整屏都是绿的）。
         seedFirstSightings()
         isShowingSnapshot = true
+        lastSavedFingerprint = snapshot.contentFingerprint
         phase = .loaded
         // 诊断：冷启动到底有没有用上缓存（排查"打开是空的"时第一眼要看的就是这行）。
         ViewportProbe.note("snapshot.loaded", ["items": String(snapshot.items.count)], force: true)
     }
 
     /// Remembers the list for the next cold start. Metadata only.
+    ///
+    /// Skipped when the content is identical to what was last written: the list is
+    /// refetched on every debounced host event, and rewriting ~150 KB of JSON each
+    /// time is disk churn nobody asked for. The window/archived sets are part of
+    /// the fingerprint, so a change there still lands.
     private func saveSnapshot() {
-        snapshotStore.save(SessionListSnapshot(
+        let snapshot = SessionListSnapshot(
             savedAt: Date(),
             items: allSessions,
             workspaces: workspaces,
             archivedSessionIds: Array(archivedSessionIds)
-        ))
+        )
+        let fingerprint = snapshot.contentFingerprint
+        guard fingerprint != lastSavedFingerprint else {
+            ViewportProbe.note("snapshot.unchanged", ["items": String(allSessions.count)], force: false)
+            return
+        }
+        lastSavedFingerprint = fingerprint
+        snapshotStore.save(snapshot)
+        // 规模可见：会话上千时这个 RPC 的载荷会开始咬人（协议里没有分页可用，
+        // 见 DSHClient.sessions 的注释），到时候能在日志里先看见。
+        ViewportProbe.note("snapshot.saved", [
+            "items": String(allSessions.count),
+            "workspaces": String(workspaces.count),
+        ], force: true)
+        if allSessions.count > 2_000 {
+            ViewportProbe.note("snapshot.large", ["items": String(allSessions.count)], force: true)
+        }
     }
 
     /// 设置页里的"清除缓存"。

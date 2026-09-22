@@ -21,6 +21,30 @@ public struct SessionListSnapshot: Codable, Sendable {
     public let workspaces: [Workspace]
     public let archivedSessionIds: [String]
 
+    /// What this snapshot's *content* is, ignoring when it was saved.
+    ///
+    /// The list is refetched every time the host says something changed, and the
+    /// answer is almost always identical — writing a fresh 150 KB file each time
+    /// is pure disk churn during heavy work. Comparing fingerprints lets the
+    /// caller skip the write when nothing moved.
+    public var contentFingerprint: Int {
+        var hasher = Hasher()
+        hasher.combine(items.count)
+        for item in items {
+            hasher.combine(item.sessionId)
+            hasher.combine(item.updatedAt)
+            hasher.combine(item.running)
+            hasher.combine(item.blank)
+        }
+        hasher.combine(workspaces.count)
+        for workspace in workspaces {
+            hasher.combine(workspace.workspaceId)
+            hasher.combine(workspace.sessionIds)
+        }
+        hasher.combine(archivedSessionIds.count)
+        return hasher.finalize()
+    }
+
     public init(
         savedAt: Date,
         items: [SessionSummary],
