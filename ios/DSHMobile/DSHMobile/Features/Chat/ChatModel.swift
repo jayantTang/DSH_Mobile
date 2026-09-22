@@ -124,9 +124,14 @@ final class ChatModel {
     /// 最近的记录（尾部），落盘写的就是它。
     private var recentRecords: [SessionRecord] = []
     private var lastDiskSave = Date.distantPast
+    /// 距上次落盘又攒了多少条（够了就写，不等计时器）。
+    private var unsavedRecords = 0
 
     /// 用户最后想看、但可能还没连上而没能打开的会话。
     private var pendingOpen: SessionSummary?
+
+    /// 这次打开用的同步计划（快照到达时还要用它判断合并还是重来）。
+    private var syncPlanRef = TranscriptSyncPlan.plan(localThrough: nil, hostCursor: 0)
 
     /// Half-written messages, one per session.
     ///
@@ -190,7 +195,7 @@ final class ChatModel {
         let key = summary.sessionId
         // 这次跟 host 要多少条快照：本地尾部很新（差 ≤20 条）时只要 20 条就够对齐，
         // 少拉一遍重复数据；本地落后很多或没有本地缓存时按 60 条来，避免中间留洞。
-        var followWindow = 60
+        var syncPlan = TranscriptSyncPlan.plan(localThrough: nil, hostCursor: summary.asOfSeq)
         // 记录必须按会话隔离：带着上一个会话的 recentRecords 去写这个会话的文件，
         // 就是把 A 的内容盖到 B 上（用户看到的就是"记录丢了一部分"）。
         recentRecords = []
@@ -224,25 +229,41 @@ final class ChatModel {
             phase = .ready
             scrollSignal += 1
         } else if let stored = transcriptCache.load(scope: scopeId, sessionId: key) {
-            let gap = max(0, summary.asOfSeq - stored.throughSeq)
-            followWindow = gap <= 20 ? 20 : 60
+            // 窗口按"本地落后 host 多少"来定：落后很多时要更大的窗口，否则
+            // 快照接不上本地尾部，时间线中间会留一个永远补不上的洞。
+            syncPlan = TranscriptSyncPlan.plan(
+                localThrough: stored.throughSeq, hostCursor: summary.asOfSeq)
             ViewportProbe.note("transcript.window", [
-                "gap": String(gap), "maxMessages": String(followWindow),
+                "local": String(stored.throughSeq),
+                "host": String(summary.asOfSeq),
+                "maxMessages": String(syncPlan.maxMessages),
+                "rebase": syncPlan.reBase ? "1" : "0",
             ], force: true)
-            // 冷启动/新进程：用落盘的尾部立刻把转写画出来，**不进 loading**。
-            // 随后 follow 的快照会按 seq 合并进来，只补差量。
+            // 接不上（落后太多，或本地游标比 host 还大）就别画本地那段了：
+            // 画出来只会先闪一下跟 host 对不上的内容，然后被快照换掉。
+            // 更老的历史仍在电脑上，往前翻能取回。
             timeline = ChatTimeline()
-            timeline.reset(with: stored.records)
             timeline.record(usage: summary.projections?.values?.tokenUsage)
-            recentRecords = stored.records
-            hasOlder = stored.hasOlder
-            oldestSeq = stored.oldestSeq
-            throughSeq = max(stored.throughSeq, summary.asOfSeq)
-            phase = .ready
-            scrollSignal += 1
-            ViewportProbe.note("transcript.loaded", [
-                "session": key, "records": String(stored.records.count),
-            ], force: true)
+            if syncPlan.reBase {
+                recentRecords = []
+                hasOlder = false
+                oldestSeq = nil
+                throughSeq = summary.asOfSeq
+                phase = .loading
+            } else {
+                // 冷启动/新进程：用落盘的尾部立刻把转写画出来，**不进 loading**。
+                // 随后 follow 的快照会按 seq 合并进来，只补差量。
+                timeline.reset(with: stored.records)
+                recentRecords = stored.records
+                hasOlder = stored.hasOlder
+                oldestSeq = stored.oldestSeq
+                throughSeq = max(stored.throughSeq, summary.asOfSeq)
+                phase = .ready
+                scrollSignal += 1
+                ViewportProbe.note("transcript.loaded", [
+                    "session": key, "records": String(stored.records.count),
+                ], force: true)
+            }
         } else {
             timeline = ChatTimeline()
             timeline.record(usage: summary.projections?.values?.tokenUsage)
@@ -252,7 +273,8 @@ final class ChatModel {
             phase = .loading
         }
 
-        startFollowing(client: client, summary: summary, maxMessages: followWindow)
+        syncPlanRef = syncPlan
+        startFollowing(client: client, summary: summary, maxMessages: syncPlan.maxMessages)
         pendingOpen = nil
         await loadCatalog(client: client)
         subscribeToPrompts()
@@ -382,6 +404,7 @@ final class ChatModel {
         if merged.count > SessionTranscriptCache.maxRecords {
             merged.removeFirst(merged.count - SessionTranscriptCache.maxRecords)
         }
+        if merged.count > recentRecords.count { unsavedRecords += merged.count - recentRecords.count }
         recentRecords = merged
     }
 
@@ -389,8 +412,11 @@ final class ChatModel {
     private func persistIfDue(force: Bool = false) {
         guard let sessionId = session?.sessionId else { return }
         let now = Date()
-        guard force || now.timeIntervalSince(lastDiskSave) > 3 else { return }
+        // 一轮进行中也可能被杀：1 秒或攒够 20 条就写一次，尽量把丢失窗口压小。
+        let due = unsavedRecords >= 20 || now.timeIntervalSince(lastDiskSave) > 1
+        guard force || due else { return }
         lastDiskSave = now
+        unsavedRecords = 0
         ViewportProbe.note("transcript.saved", [
             "session": sessionId,
             "records": String(recentRecords.count),
@@ -441,8 +467,21 @@ final class ChatModel {
     private func apply(_ frame: SessionFollowFrame) {
         switch frame {
         case .snapshot(let snapshot):
-            if timeline.items.isEmpty {
+            // 计划说得再好，也要看实际回来的第一条接不接得上本地尾部：
+            // 接不上（中间缺一段）就只能重来，否则那个洞会写进磁盘、永远补不上。
+            let needsReBase = syncPlanRef.reBase
+                || TranscriptSyncPlan.stillNeedsReBase(
+                    localLastSeq: recentRecords.last?.event.seq,
+                    snapshotFirstSeq: snapshot.records.first?.event.seq)
+            if timeline.items.isEmpty || needsReBase {
                 timeline.reset(with: snapshot.records)
+                if needsReBase, !timeline.items.isEmpty {
+                    ViewportProbe.note("transcript.rebased", [
+                        "localLast": String(recentRecords.last?.event.seq ?? -1),
+                        "snapshotFirst": String(snapshot.records.first?.event.seq ?? -1),
+                    ], force: true)
+                    recentRecords = []
+                }
             } else {
                 // Warm cache: update in place so the reader keeps any older
                 // history they had already paged in.
