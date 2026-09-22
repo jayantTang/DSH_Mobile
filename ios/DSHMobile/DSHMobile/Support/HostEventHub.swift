@@ -112,11 +112,22 @@ final class HostEventHub {
     private func handle(_ event: HostEvent) {
         switch event {
         case .ready(let clientId, let home):
+            // 每次重连都会拿到新的 clientId——补投是否发生，就看 ready 之后有没有
+            // hub.waterfall。
+            ViewportProbe.note("hub.ready", ["client": String(clientId.prefix(8))], force: true)
             self.clientId = clientId
             if !home.isEmpty { hostHome = home }
             isLive = true
 
         case .waterfall(let waterfall):
+            // 待答状态是"手机看不看得出 agent 在等你"的唯一来源，所以这里留一行
+            // 诊断日志（只在 -DSHViewportProbe 时写文件）：排查"host 明明挂着提问、
+            // 手机却没反应"时，第一件事就是看这行有没有出现。
+            ViewportProbe.note("hub.waterfall", [
+                "event": waterfall.event,
+                "agent": waterfall.agentId,
+                "pending": String(pending.count + 1),
+            ], force: true)
             // A waterfall blocks the host until answered, so it is promoted
             // into the pending list rather than merely forwarded.
             if !pending.contains(where: { $0.id == waterfall.eventId }) {
@@ -132,6 +143,7 @@ final class HostEventHub {
             }
 
         case .cancelled(let eventId):
+            ViewportProbe.note("hub.cancelled", ["id": eventId], force: true)
             pending.removeAll { $0.id == eventId }
 
         case .emit, .unknown:

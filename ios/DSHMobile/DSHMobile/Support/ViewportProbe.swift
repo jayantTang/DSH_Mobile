@@ -469,6 +469,7 @@ struct ScrollGeometryProbe: ViewModifier {
 }
 
 #else
+import DSHKit
 import SwiftUI
 
 /// Release 构建里这些钩子都不存在，产品行为与探针无关。
