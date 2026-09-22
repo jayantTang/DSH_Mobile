@@ -255,7 +255,7 @@ test('a question raised while the phone is away is replayed when it comes back',
   agent.onStreamItem('ev:dev_1', question)
   // 攒着，不往一个已经断开的 socket 上发（发了也没人收）。
   assert.equal(socket.last('event')?.value?.eventId, undefined)
-  assert.equal(agent.devices.get('dev_1').eventsBacklog.length, 1)
+  assert.equal(agent.devices.get('dev_1').eventsPending.size, 1)
 
   // 手机回来了：ready 先补（App 要拿 clientId 才能回答），紧接着补发那条提问。
   await agent.handleRelayFrame(attach('dev_1'))
@@ -263,7 +263,8 @@ test('a question raised while the phone is away is replayed when it comes back',
   const items = socket.frames('item').filter((frame) => frame.id === '4')
   assert.equal(items[0].value.type, 'ready')
   assert.equal(items[1].value.eventId, 'wf_1')
-  assert.equal(agent.devices.get('dev_1').eventsBacklog.length, 0)
+  // 送过之后**不能清空**：App 再重启一次还得能拿到它（除非有人回答了）。
+  assert.equal(agent.devices.get('dev_1').eventsPending.size, 1)
 })
 
 test('an emit that happened while the phone was away is dropped, not replayed', async () => {
@@ -273,7 +274,54 @@ test('an emit that happened while the phone was away is dropped, not replayed', 
   await agent.handleRelayFrame({ t: 'deviceDetach', deviceId: 'dev_1', reason: 'socket closed' })
   // emit 是"某事刚发生"的通知：几分钟后补发只会让 App 对着旧事件发通知。
   agent.onStreamItem('ev:dev_1', { type: 'emit', event: 'api-session/status', args: [{ sessionId: 's-1' }] })
-  assert.equal(agent.devices.get('dev_1').eventsBacklog.length, 0)
+  assert.equal(agent.devices.get('dev_1').eventsPending.size, 0)
+})
+
+test('an answered question is not replayed again', async () => {
+  const { agent, dsh, socket } = makeAgent()
+  await agent.handleRelayFrame(attach('dev_1'))
+  agent.onStreamItem('ev:dev_1', ready('c1'))
+  await agent.handleRelayFrame({ t: 'open', id: '3', endpoint: '$events', args: {}, deviceId: 'dev_1' })
+  agent.onStreamItem('ev:dev_1', {
+    type: 'waterfall', event: 'user-questions/request', eventId: 'wf_9', agentId: 's-1', request: {},
+  })
+  assert.equal(agent.devices.get('dev_1').eventsPending.size, 1)
+
+  dsh.responses.set('$events/result', { ok: true, value: undefined })
+  await agent.handleRelayFrame({
+    t: 'eventResult', id: '7', deviceId: 'dev_1',
+    result: { eventId: 'wf_9', outcome: { kind: 'result', value: { answers: [] } } },
+  })
+  assert.equal(agent.devices.get('dev_1').eventsPending.size, 0)
+
+  // 重连一次：不该再冒出来
+  await agent.handleRelayFrame({ t: 'deviceDetach', deviceId: 'dev_1', reason: 'socket closed' })
+  await agent.handleRelayFrame(attach('dev_1'))
+  const before = socket.frames('item').length
+  await agent.handleRelayFrame({ t: 'open', id: '5', endpoint: '$events', args: {}, deviceId: 'dev_1' })
+  const replayed = socket.frames('item').slice(before).filter((f) => f.value?.eventId === 'wf_9')
+  assert.equal(replayed.length, 0)
+})
+
+test('a second reconnect still gets the same unanswered question', async () => {
+  const { agent, socket } = makeAgent()
+  await agent.handleRelayFrame(attach('dev_1'))
+  agent.onStreamItem('ev:dev_1', ready('c1'))
+  await agent.handleRelayFrame({ t: 'deviceDetach', deviceId: 'dev_1', reason: 'socket closed' })
+  agent.onStreamItem('ev:dev_1', {
+    type: 'waterfall', event: 'user-questions/request', eventId: 'wf_7', agentId: 's-1', request: {},
+  })
+
+  const countReplays = async (openId) => {
+    await agent.handleRelayFrame(attach('dev_1'))
+    const before = socket.frames('item').length
+    await agent.handleRelayFrame({ t: 'open', id: openId, endpoint: '$events', args: {}, deviceId: 'dev_1' })
+    await agent.handleRelayFrame({ t: 'deviceDetach', deviceId: 'dev_1', reason: 'socket closed' })
+    return socket.frames('item').slice(before).filter((f) => f.value?.eventId === 'wf_7').length
+  }
+  assert.equal(await countReplays('4'), 1)
+  // App 又崩了一次：没人回答过，所以还得再给一遍。
+  assert.equal(await countReplays('6'), 1)
 })
 
 test('the grace period ends and the kept $events stream is finally cancelled', async () => {

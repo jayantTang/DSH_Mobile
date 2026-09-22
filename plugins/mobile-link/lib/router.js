@@ -144,7 +144,7 @@ export class DeviceRouter {
         existing.offlineTimer = undefined
         existing.offlineSince = undefined
         this.logger.info?.(
-          `mobile-link: device ${deviceId} reattached with ${existing.eventsBacklog.length} buffered event(s)`)
+          `mobile-link: device ${deviceId} reattached with ${existing.eventsPending.size} unanswered question(s)`)
         this.#changed()
       }
       return
@@ -158,11 +158,13 @@ export class DeviceRouter {
       readyValue: undefined,
       eventsMuxId: undefined,
       dlpIds: new Set(),
-      // 手机不在时的"值班"状态：offlineSince 有值 = 这条流在替它留着，
-      // eventsBacklog 里是这段时间攒下、还没送达的 waterfall/cancel。
+      // 手机不在时的"值班"状态：offlineSince 有值 = 这条流在替它留着；
+      // eventsPending 是**还没被回答**的提问（按 eventId 存）。
+      // 注意它不是一个"送一次就清空"的队列：送过也要留着，否则 App 再重启一次
+      // （或崩一次）这条提问就永远丢了——2026-09-22 验收时正是这么发现的。
       offlineSince: undefined,
       offlineTimer: undefined,
-      eventsBacklog: [],
+      eventsPending: new Map(),
     })
     this.logger.info?.(`mobile-link: device ${deviceId} attached (${info?.name ?? 'unknown'})`)
     this.#changed()
@@ -207,7 +209,7 @@ export class DeviceRouter {
     for (const muxId of this.streams.removeDevice(deviceId)) this.dsh.cancelStream(muxId)
     this.devices.delete(deviceId)
     this.logger.info?.(
-      `mobile-link: device ${deviceId} 宽限期结束，已放下（丢掉 ${record.eventsBacklog.length} 条未送达事件）`)
+      `mobile-link: device ${deviceId} 宽限期结束，已放下（丢掉 ${record.eventsPending.size} 条没人回答的提问）`)
     this.#changed()
   }
 
@@ -341,13 +343,14 @@ export class DeviceRouter {
       if (record.readyValue !== undefined) {
         this.send(deviceId, { t: 'item', id: frame.id, value: record.readyValue })
       }
-      // 手机不在的这段时间攒下的提问（waterfall/cancel）在这里补发：
-      // ready 已经发过，所以 App 拿得到 clientId，补发的提问是可以被回答的。
-      if (record.eventsBacklog.length > 0) {
-        const backlog = record.eventsBacklog
-        record.eventsBacklog = []
-        this.logger.info?.(`mobile-link: replaying ${backlog.length} buffered event(s) to ${deviceId}`)
-        for (const value of backlog) {
+      // 还没被回答的提问在这里补发：ready 已经发过，所以 App 拿得到 clientId，
+      // 补发的提问是可以被回答的。**送出去不清空**——App 可能又崩/又重启，
+      // 只要还没人回答，下次连上还得再给一遍（App 侧按 eventId 去重）。
+      if (record.eventsPending.size > 0) {
+        const pending = [...record.eventsPending.values()]
+        this.logger.info?.(
+          `mobile-link: replaying ${pending.length} unanswered question(s) to ${deviceId}`)
+        for (const value of pending) {
           this.send(deviceId, { t: 'item', id: frame.id, value })
         }
       }
@@ -400,6 +403,8 @@ export class DeviceRouter {
       })
       return
     }
+    // 答过了就不再是"待答"：删掉它，免得下次重连又把已经回答过的问题推给 App。
+    record.eventsPending.delete(eventId)
     // The clientId is always the one from *this device's* $events ready frame
     // (spec §4.1.5); any clientId the device echoed is ignored on purpose.
     if (!this.dedupe.claim(eventId)) return
@@ -437,13 +442,25 @@ export class DeviceRouter {
   forwardEvent(deviceId, value) {
     const record = this.devices.get(deviceId)
     if (!record) return
+    // 只有"待回答的提问"值得留：别的都是"某事刚发生"的通知，补发只会让 App
+    // 对着几分钟前的事件发通知（例如一条早就结束的 turn）。
+    // 待答表：不管手机在不在都记下来，直到**有人回答**或 host 作废它。
+    // 只记在线时的转发是不够的——App 收下提问后崩一次/重启一次，那条提问就再也没人
+    // 记得了（host 认为已经投给这条流了，不会重发）。连接器记着，重连时再给一遍。
+    if (nonEmptyString(value?.eventId)) {
+      if (value.type === 'cancel') record.eventsPending.delete(value.eventId)
+      else if (value.type === 'waterfall') {
+        record.eventsPending.set(value.eventId, value)
+        if (record.eventsPending.size > this.eventsBacklog) {
+          // 超上限时丢最老的（Map 保持插入顺序）。
+          const oldest = record.eventsPending.keys().next().value
+          record.eventsPending.delete(oldest)
+        }
+      }
+    }
     if (record.offlineSince !== undefined && isBufferedEvent(value)) {
-      // 手机不在：先攒着（只攒 waterfall/cancel——别的都是过期噪音，
-      // 补发出去只会让 App 对着几分钟前的事件发通知）。
-      record.eventsBacklog.push(value)
-      if (record.eventsBacklog.length > this.eventsBacklog) record.eventsBacklog.shift()
       this.logger.debug?.(
-        `mobile-link: buffered ${value.type} ${value.event ?? value.eventId ?? ''} for offline ${deviceId}`)
+        `mobile-link: kept ${value.type} ${value.event ?? value.eventId ?? ''} for offline ${deviceId}`)
       return
     }
     if (value && value.type === 'ready' && nonEmptyString(value.clientId)) {
@@ -519,7 +536,7 @@ export class DeviceRouter {
       client: record.client ?? null,
       connectedAt: record.connectedAt,
       offlineSince: record.offlineSince ?? null,
-      bufferedEvents: record.eventsBacklog.length,
+      unansweredEvents: record.eventsPending.size,
       eventsReady: Boolean(record.clientId),
       openStreams: record.dlpIds.size,
     }))

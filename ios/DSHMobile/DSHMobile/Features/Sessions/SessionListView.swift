@@ -112,8 +112,11 @@ struct SessionListView: View {
             }
             Spacer(minLength: 0)
             HStack(spacing: DSHTheme.Spacing.hairline) {
-                if model.waitingCount > 0 {
-                    Badge(text: "\(model.waitingCount) 等你回应", tone: .attention)
+                // 待答的总数包含折叠桶里的：那个桶默认收着，不把它算进来的话，
+                // 一条"在等你回答"的会话可以在里面烂着而列表顶部毫无提示
+                // （2026-09-22 验收时就撞上了：probe 夹具会话全落在未分组里）。
+                if model.waitingCount + model.ungroupedWaitingCount > 0 {
+                    Badge(text: "\(model.waitingCount + model.ungroupedWaitingCount) 等你回应", tone: .attention)
                 }
                 if model.runningCount > 0 {
                     Badge(text: "\(model.runningCount) 运行中", tone: .brand)
