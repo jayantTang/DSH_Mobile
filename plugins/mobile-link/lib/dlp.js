@@ -190,6 +190,15 @@ export class StreamTable {
     return this.byDlp.get(StreamTable.key(deviceId, dlpId))
   }
 
+  /** Every open entry for one device, in insertion order. */
+  byDevice(deviceId) {
+    const entries = []
+    for (const entry of this.byMux.values()) {
+      if (entry.deviceId === deviceId) entries.push(entry)
+    }
+    return entries
+  }
+
   entryOfMux(muxId) {
     return this.byMux.get(muxId)
   }

@@ -12,6 +12,8 @@ import test from 'node:test'
 
 import { MobileLinkAgent } from '../lib/link.js'
 
+const setTimeoutFnReal = setTimeout
+
 class FakeSocket {
   constructor() {
     this.sent = []
@@ -80,11 +82,14 @@ class FakeDsh extends EventEmitter {
   }
 }
 
-function makeAgent({ responses } = {}) {
+function makeAgent({ responses, eventsGraceMs } = {}) {
   const dsh = new FakeDsh()
   if (responses) for (const [method, value] of Object.entries(responses)) dsh.responses.set(method, value)
   const logger = { debug() {}, info() {}, warn() {}, error() {} }
-  const agent = new MobileLinkAgent({ dshClient: dsh, logger, relayUrl: 'ws://relay.test', agentId: 'agt_1' })
+  const agent = new MobileLinkAgent({
+    dshClient: dsh, logger, relayUrl: 'ws://relay.test', agentId: 'agt_1',
+    ...(eventsGraceMs === undefined ? {} : { eventsGraceMs }),
+  })
   agent.identity = { agentId: 'agt_1', agentSecret: 'as_1', relayUrl: 'ws://relay.test', agentName: 'test mac' }
   const socket = new FakeSocket()
   agent.socket = socket
@@ -222,14 +227,62 @@ test('stream error and end are mapped back to the owning device only', async () 
   assert.deepEqual(socket.last('end'), { t: 'end', id: '3', deviceId: 'dev_2' })
 })
 
-test('detaching a device cancels every stream it owned', async () => {
+test('detaching a device cancels its ordinary streams but keeps $events on duty', async () => {
   const { agent, dsh } = makeAgent()
   await agent.handleRelayFrame(attach('dev_1'))
   await agent.handleRelayFrame({ t: 'open', id: '2', endpoint: 'session/follow', args: {}, deviceId: 'dev_1' })
   await agent.handleRelayFrame({ t: 'open', id: '3', endpoint: '$events', args: {}, deviceId: 'dev_1' })
   await agent.handleRelayFrame({ t: 'deviceDetach', deviceId: 'dev_1', reason: 'socket closed' })
-  const cancelled = dsh.cancels().map((call) => call.muxId).sort()
-  assert.deepEqual(cancelled, ['ev:dev_1', 's:dev_1:2'])
+
+  // 普通流立刻撤；`$events` 留着替手机值班（不然这期间的提问会连同 Agent Context
+  // 一起被 host 撤掉，用户回到手机就再也看不到）。
+  assert.deepEqual(dsh.cancels().map((call) => call.muxId), ['s:dev_1:2'])
+  assert.equal(agent.devices.size, 1)
+  assert.equal(agent.streams.size, 1)
+  assert.notEqual(agent.devices.get('dev_1').offlineSince, undefined)
+})
+
+test('a question raised while the phone is away is replayed when it comes back', async () => {
+  const { agent, socket } = makeAgent()
+  await agent.handleRelayFrame(attach('dev_1'))
+  agent.onStreamItem('ev:dev_1', ready('c1'))
+  await agent.handleRelayFrame({ t: 'open', id: '3', endpoint: '$events', args: {}, deviceId: 'dev_1' })
+  await agent.handleRelayFrame({ t: 'deviceDetach', deviceId: 'dev_1', reason: 'socket closed' })
+
+  const question = {
+    type: 'waterfall', event: 'user-questions/request', eventId: 'wf_1', agentId: 's-1', request: { args: {} },
+  }
+  agent.onStreamItem('ev:dev_1', question)
+  // 攒着，不往一个已经断开的 socket 上发（发了也没人收）。
+  assert.equal(socket.last('event')?.value?.eventId, undefined)
+  assert.equal(agent.devices.get('dev_1').eventsBacklog.length, 1)
+
+  // 手机回来了：ready 先补（App 要拿 clientId 才能回答），紧接着补发那条提问。
+  await agent.handleRelayFrame(attach('dev_1'))
+  await agent.handleRelayFrame({ t: 'open', id: '4', endpoint: '$events', args: {}, deviceId: 'dev_1' })
+  const items = socket.frames('item').filter((frame) => frame.id === '4')
+  assert.equal(items[0].value.type, 'ready')
+  assert.equal(items[1].value.eventId, 'wf_1')
+  assert.equal(agent.devices.get('dev_1').eventsBacklog.length, 0)
+})
+
+test('an emit that happened while the phone was away is dropped, not replayed', async () => {
+  const { agent } = makeAgent()
+  await agent.handleRelayFrame(attach('dev_1'))
+  agent.onStreamItem('ev:dev_1', ready('c1'))
+  await agent.handleRelayFrame({ t: 'deviceDetach', deviceId: 'dev_1', reason: 'socket closed' })
+  // emit 是"某事刚发生"的通知：几分钟后补发只会让 App 对着旧事件发通知。
+  agent.onStreamItem('ev:dev_1', { type: 'emit', event: 'api-session/status', args: [{ sessionId: 's-1' }] })
+  assert.equal(agent.devices.get('dev_1').eventsBacklog.length, 0)
+})
+
+test('the grace period ends and the kept $events stream is finally cancelled', async () => {
+  const { agent, dsh } = makeAgent({ eventsGraceMs: 5 })
+  await agent.handleRelayFrame(attach('dev_1'))
+  await agent.handleRelayFrame({ t: 'deviceDetach', deviceId: 'dev_1', reason: 'socket closed' })
+  assert.equal(agent.devices.size, 1)
+  await new Promise((resolve) => setTimeoutFnReal(resolve, 30))
+  assert.deepEqual(dsh.cancels().map((call) => call.muxId), ['ev:dev_1'])
   assert.equal(agent.devices.size, 0)
   assert.equal(agent.streams.size, 0)
 })

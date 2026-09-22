@@ -19,6 +19,33 @@ import { isHelloMethod, helloPayload, parseClientInfo } from './hello.js'
 export const EVENTS_ENDPOINT = '$events'
 export const EVENTS_RESULT = '$events/result'
 
+/**
+ * 手机断了之后，这条 `$events` 流还替它留多久（毫秒）。
+ *
+ * 为什么需要：手机是唯一客户端时，它一断，DSH 那边就没人持有这条流了——
+ * 提问（waterfall）会随 Agent Context 释放被撤掉，用户回到手机再也看不到
+ * （根因见 maintainers/PENDING-WATERFALL-LOSS.md）。留着流就等于"代手机值班"：
+ * 这期间来的提问先攒着，手机回来补发。
+ *
+ * 代价是这段时间里 DSH 认为"设备还在"，会话的 Agent Context 不会因此释放；
+ * 所以必须有上限，不能无限留。
+ */
+export const DEFAULT_EVENTS_GRACE_MS = 15 * 60 * 1000
+
+/** 离线期间最多替一台设备攒多少条 `$events` 项（只攒 waterfall/cancel）。 */
+export const DEFAULT_EVENTS_BACKLOG = 50
+
+/**
+ * 手机不在时要攒下来的 `$events` 项：只有"待回答的提问"和"提问作废"两种。
+ *
+ * 别的一律不攒——emit 类的都是"某事刚发生"的通知，几分钟后补发只会让 App
+ * 对着旧事件发通知（例如一条早就结束的 turn）。
+ */
+export function isBufferedEvent(value) {
+  if (!value || typeof value !== 'object') return false
+  return value.type === 'waterfall' || value.type === 'cancel'
+}
+
 export function messageOf(error) {
   return error instanceof Error ? error.message : String(error)
 }
@@ -34,8 +61,16 @@ export class DeviceRouter {
    * @param {(deviceId: string, frame: object) => boolean} options.send  deliver one frame to one device
    * @param {() => void} [options.onChange]    called whenever the status snapshot changes
    */
-  constructor({ dsh, send, logger = console, onChange = () => {}, now = Date.now, protocolVersion = 1 } = {}) {
+  constructor({
+    dsh, send, logger = console, onChange = () => {}, now = Date.now, protocolVersion = 1,
+    eventsGraceMs = DEFAULT_EVENTS_GRACE_MS, eventsBacklog = DEFAULT_EVENTS_BACKLOG,
+    setTimeoutFn = setTimeout, clearTimeoutFn = clearTimeout,
+  } = {}) {
     this.dsh = dsh
+    this.eventsGraceMs = eventsGraceMs
+    this.eventsBacklog = eventsBacklog
+    this.setTimeoutFn = setTimeoutFn
+    this.clearTimeoutFn = clearTimeoutFn
     // Reported to the app so it can tell which wire revision it is talking to.
     this.protocolVersion = protocolVersion
     this.send = send
@@ -100,7 +135,20 @@ export class DeviceRouter {
   // ── device lifecycle ────────────────────────────────────────────────────
 
   async attachDevice(deviceId, info = {}) {
-    if (!nonEmptyString(deviceId) || this.devices.has(deviceId)) return
+    if (!nonEmptyString(deviceId)) return
+    const existing = this.devices.get(deviceId)
+    if (existing) {
+      // 回头客：宽限期内又连上了。流和攒下的提问都还在，交给 handleOpen 补发。
+      if (existing.offlineSince !== undefined) {
+        this.clearTimeoutFn(existing.offlineTimer)
+        existing.offlineTimer = undefined
+        existing.offlineSince = undefined
+        this.logger.info?.(
+          `mobile-link: device ${deviceId} reattached with ${existing.eventsBacklog.length} buffered event(s)`)
+        this.#changed()
+      }
+      return
+    }
     this.devices.set(deviceId, {
       deviceId,
       name: info?.name,
@@ -110,6 +158,11 @@ export class DeviceRouter {
       readyValue: undefined,
       eventsMuxId: undefined,
       dlpIds: new Set(),
+      // 手机不在时的"值班"状态：offlineSince 有值 = 这条流在替它留着，
+      // eventsBacklog 里是这段时间攒下、还没送达的 waterfall/cancel。
+      offlineSince: undefined,
+      offlineTimer: undefined,
+      eventsBacklog: [],
     })
     this.logger.info?.(`mobile-link: device ${deviceId} attached (${info?.name ?? 'unknown'})`)
     this.#changed()
@@ -119,9 +172,42 @@ export class DeviceRouter {
   async detachDevice(deviceId, reason) {
     const record = this.devices.get(deviceId)
     if (!record) return
+    // 除了 `$events`，其它流（文件、会话流）立刻撤掉：它们没有"值班"的意义，
+    // 留着只会占资源。`$events` 留着，见 DEFAULT_EVENTS_GRACE_MS 的说明。
+    const keep = []
+    for (const entry of this.streams.byDevice(deviceId)) {
+      if (entry.endpoint === EVENTS_ENDPOINT) {
+        keep.push(entry)
+        continue
+      }
+      this.streams.removeByMux(entry.muxId)
+      this.dsh.cancelStream(entry.muxId)
+    }
+    record.dlpIds.clear()
+    for (const entry of keep) record.dlpIds.add(entry.dlpId)
+
+    if (record.offlineSince === undefined) {
+      record.offlineSince = this.now()
+      record.offlineTimer = this.setTimeoutFn(() => {
+        void this.#expireOfflineDevice(deviceId)
+      }, this.eventsGraceMs)
+      // 定时器不该把进程钉住（CLI 与测试里尤其明显）。
+      record.offlineTimer?.unref?.()
+    }
+    this.logger.info?.(
+      `mobile-link: device ${deviceId} detached (${reason ?? 'closed'})；`
+      + `$events 流替它留 ${Math.round(this.eventsGraceMs / 1000)} 秒，期间来的提问会攒着`)
+    this.#changed()
+  }
+
+  /** 宽限期到点：真的把这台设备放下（撤流、清缓冲）。 */
+  async #expireOfflineDevice(deviceId) {
+    const record = this.devices.get(deviceId)
+    if (!record || record.offlineSince === undefined) return
     for (const muxId of this.streams.removeDevice(deviceId)) this.dsh.cancelStream(muxId)
     this.devices.delete(deviceId)
-    this.logger.info?.(`mobile-link: device ${deviceId} detached (${reason ?? 'closed'})`)
+    this.logger.info?.(
+      `mobile-link: device ${deviceId} 宽限期结束，已放下（丢掉 ${record.eventsBacklog.length} 条未送达事件）`)
     this.#changed()
   }
 
@@ -148,6 +234,8 @@ export class DeviceRouter {
   teardownAll() {
     const muxIds = []
     for (const deviceId of [...this.devices.keys()]) {
+      const record = this.devices.get(deviceId)
+      this.clearTimeoutFn(record?.offlineTimer)
       muxIds.push(...this.streams.removeDevice(deviceId))
       this.devices.delete(deviceId)
     }
@@ -253,6 +341,16 @@ export class DeviceRouter {
       if (record.readyValue !== undefined) {
         this.send(deviceId, { t: 'item', id: frame.id, value: record.readyValue })
       }
+      // 手机不在的这段时间攒下的提问（waterfall/cancel）在这里补发：
+      // ready 已经发过，所以 App 拿得到 clientId，补发的提问是可以被回答的。
+      if (record.eventsBacklog.length > 0) {
+        const backlog = record.eventsBacklog
+        record.eventsBacklog = []
+        this.logger.info?.(`mobile-link: replaying ${backlog.length} buffered event(s) to ${deviceId}`)
+        for (const value of backlog) {
+          this.send(deviceId, { t: 'item', id: frame.id, value })
+        }
+      }
       return
     }
     const muxId = `s:${deviceId}:${frame.id}`
@@ -339,6 +437,15 @@ export class DeviceRouter {
   forwardEvent(deviceId, value) {
     const record = this.devices.get(deviceId)
     if (!record) return
+    if (record.offlineSince !== undefined && isBufferedEvent(value)) {
+      // 手机不在：先攒着（只攒 waterfall/cancel——别的都是过期噪音，
+      // 补发出去只会让 App 对着几分钟前的事件发通知）。
+      record.eventsBacklog.push(value)
+      if (record.eventsBacklog.length > this.eventsBacklog) record.eventsBacklog.shift()
+      this.logger.debug?.(
+        `mobile-link: buffered ${value.type} ${value.event ?? value.eventId ?? ''} for offline ${deviceId}`)
+      return
+    }
     if (value && value.type === 'ready' && nonEmptyString(value.clientId)) {
       record.clientId = value.clientId
       record.readyValue = value
@@ -411,6 +518,8 @@ export class DeviceRouter {
       // Which build that phone reported on its last handshake.
       client: record.client ?? null,
       connectedAt: record.connectedAt,
+      offlineSince: record.offlineSince ?? null,
+      bufferedEvents: record.eventsBacklog.length,
       eventsReady: Boolean(record.clientId),
       openStreams: record.dlpIds.size,
     }))

@@ -10,7 +10,10 @@ import { DshClient } from './dsh-client.js'
 import { agentEndpoint, decodeFrame, encodeFrame, nextBackoff, normalizeRelayUrl, pongFor } from './dlp.js'
 import { enrollAgent, enrollCommand, inviteFrom } from './enroll.js'
 import { mintPairCode } from './pairing.js'
-import { EVENTS_ENDPOINT, EVENTS_RESULT, DeviceRouter, messageOf } from './router.js'
+import {
+  DEFAULT_EVENTS_BACKLOG, DEFAULT_EVENTS_GRACE_MS,
+  EVENTS_ENDPOINT, EVENTS_RESULT, DeviceRouter, messageOf,
+} from './router.js'
 import { SERVER_VERSION, SERVER_CAPABILITIES } from './hello.js'
 import { MissingIdentity, resolveIdentity } from './state.js'
 import { connect as wsConnect } from './ws.js'
@@ -28,12 +31,24 @@ function sleep(ms, signal) {
   })
 }
 
+/** Read a positive number from the environment; anything else falls back. */
+function numberFromEnv(raw, fallback) {
+  if (raw === undefined || raw === null || String(raw).trim() === '') return fallback
+  const value = Number(raw)
+  return Number.isFinite(value) && value >= 0 ? value : fallback
+}
+
 export class MobileLinkAgent extends EventEmitter {
   constructor({
     relayUrl, agentId, agentSecret, agentName, stateFile, dshUrl, endpointFile,
     logger = console, heartbeatMs = 20000, pongTimeoutMs = 60000, maxBackoffMs = 30000,
     random = Math.random, now = Date.now, dshClient, connectImpl = wsConnect, enabled = true,
     inviteCode, fetchImpl = fetch, env = process.env,
+    // 「手机不在时替它留着 $events 流」的宽限期与缓冲上限（见 router.js 的说明）；
+    // 环境变量给部署用，构造参数给测试用。
+    eventsGraceMs = numberFromEnv(env.DSH_MOBILE_LINK_EVENTS_GRACE_MS, DEFAULT_EVENTS_GRACE_MS),
+    eventsBacklog = numberFromEnv(env.DSH_MOBILE_LINK_EVENTS_BACKLOG, DEFAULT_EVENTS_BACKLOG),
+    setTimeoutFn = setTimeout, clearTimeoutFn = clearTimeout,
   } = {}) {
     super()
     this.config = { relayUrl, agentId, agentSecret, agentName, stateFile, dshUrl, endpointFile, inviteCode }
@@ -56,6 +71,10 @@ export class MobileLinkAgent extends EventEmitter {
       logger,
       now,
       protocolVersion: PROTOCOL_VERSION,
+      eventsGraceMs,
+      eventsBacklog,
+      setTimeoutFn,
+      clearTimeoutFn,
       send: (deviceId, frame) => this.sendToDevice(deviceId, frame),
       onChange: () => this.emit('status'),
     })
