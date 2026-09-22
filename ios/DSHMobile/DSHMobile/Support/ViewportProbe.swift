@@ -27,6 +27,8 @@ enum ViewportProbe {
     private static var lastFlush = Date.distantPast
     private static var anomalyCount = 0
     private static var ticker: Timer?
+    /// 上一次"不在前台"的时刻：回前台后的头两秒不采样（第一帧还没画完）。
+    private static var suspendedAt: Date?
     private static var ticks = 0
 
     static var logURL: URL {
@@ -167,7 +169,17 @@ enum ViewportProbe {
 
     /// 每 100ms 一次：结构覆盖 + 每 5 次做一次像素核对。
     private static func tick() {
-        guard isOn, isReady else { return }
+        guard isOn, isReady, !isPaused else { return }
+        // App 不在前台、以及刚回前台的头两秒不采样：那段时间转写区本来就还没画，
+        // 采出来的"空白"是假阳性（2026-09-22 用例里"切到后台 3 秒"误报了两段）。
+        guard UIApplication.shared.applicationState == .active else {
+            suspendedAt = Date()
+            return
+        }
+        if let suspendedAt {
+            if Date().timeIntervalSince(suspendedAt) < 2 { return }
+            self.suspendedAt = nil
+        }
         ticks += 1
         evaluate(force: true)
         if ticks % 5 == 0, !ProbeVariants.noPixelProbe { pixelCheck() }
@@ -240,6 +252,13 @@ enum ViewportProbe {
     }
 
     // MARK: - 生命周期
+
+    /// 转写页不在屏幕上时暂停采样：退回列表后"转写区"本来就什么都没有，
+    /// 继续采就是纯误报（2026-09-22 用例里"返回列表"那几秒被记成空白）。
+    private static var isPaused = false
+
+    static func pause() { isPaused = true }
+    static func resume() { isPaused = false }
 
     static func start() {
         guard isOn, ticker == nil else { return }
@@ -478,6 +497,8 @@ enum ViewportProbe {
     static var typingProbe: (text: String, seconds: Double, oscillate: Bool, immediately: Bool,
                              keyboardCycles: Bool)? { nil }
     static var askProbeSession: String? { nil }
+    static func pause() {}
+    static func resume() {}
     static func runAskProbe(provider: @MainActor () -> DSHClient?) async {}
     static func note(_ kind: String, _ fields: [String: String] = [:], force: Bool = false) {}
     static func setViewport(_ rect: CGRect) {}

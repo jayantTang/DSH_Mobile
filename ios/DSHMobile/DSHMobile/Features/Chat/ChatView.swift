@@ -73,6 +73,7 @@ struct ChatView: View {
         .background(DSHTheme.background)
         .task {
             ViewportProbe.start()
+            ViewportProbe.resume()
             await ViewportProbe.runTyping(into: model, focus: $isFocused)
         }
         .overlay(alignment: .top) {
@@ -242,8 +243,12 @@ struct ChatView: View {
         }
         .onAppear {
             isFollowing = true
+            ViewportProbe.resume()
             scrollToBottom(proxy, animated: false)
         }
+        // 离开转写页就暂停探针采样：退回列表后"转写区"没有任何内容可量，
+        // 继续采只会把列表记成"会话区白了"。
+        .onDisappear { ViewportProbe.pause() }
         .onChange(of: model.session?.sessionId, initial: true) { _, sessionId in
             attachmentImages.sessionId = sessionId
             userScrolled = false

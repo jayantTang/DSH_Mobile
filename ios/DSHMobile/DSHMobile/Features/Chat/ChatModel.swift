@@ -183,10 +183,18 @@ final class ChatModel {
             return
         }
         // Persist whatever the previous session had before switching away —
-        // transcript and draft both.
+        // transcript and draft both. `close()` 里会写盘，所以这一步不能省：
+        // 之前只写内存缓存，进程一没，刚才看的那段就没了。
         close()
 
         let key = summary.sessionId
+        // 这次跟 host 要多少条快照：本地尾部很新（差 ≤20 条）时只要 20 条就够对齐，
+        // 少拉一遍重复数据；本地落后很多或没有本地缓存时按 60 条来，避免中间留洞。
+        var followWindow = 60
+        // 记录必须按会话隔离：带着上一个会话的 recentRecords 去写这个会话的文件，
+        // 就是把 A 的内容盖到 B 上（用户看到的就是"记录丢了一部分"）。
+        recentRecords = []
+        lastDiskSave = .distantPast
         let cached = cache[key]
         session = summary
         // This session's own half-written message, not the last one's.
@@ -208,9 +216,19 @@ final class ChatModel {
             hasOlder = cached.hasOlder
             oldestSeq = cached.oldestSeq
             throughSeq = max(cached.throughSeq, summary.asOfSeq)
+            // 记录也要一起恢复：否则下一次落盘会把"这个会话只有刚到的这几条"
+            // 写进磁盘，之前那段就被截掉了。
+            recentRecords = cached.records.isEmpty
+                ? (transcriptCache.load(scope: scopeId, sessionId: key)?.records ?? [])
+                : cached.records
             phase = .ready
             scrollSignal += 1
         } else if let stored = transcriptCache.load(scope: scopeId, sessionId: key) {
+            let gap = max(0, summary.asOfSeq - stored.throughSeq)
+            followWindow = gap <= 20 ? 20 : 60
+            ViewportProbe.note("transcript.window", [
+                "gap": String(gap), "maxMessages": String(followWindow),
+            ], force: true)
             // 冷启动/新进程：用落盘的尾部立刻把转写画出来，**不进 loading**。
             // 随后 follow 的快照会按 seq 合并进来，只补差量。
             timeline = ChatTimeline()
@@ -234,7 +252,7 @@ final class ChatModel {
             phase = .loading
         }
 
-        startFollowing(client: client, summary: summary)
+        startFollowing(client: client, summary: summary, maxMessages: followWindow)
         pendingOpen = nil
         await loadCatalog(client: client)
         subscribeToPrompts()
@@ -242,6 +260,8 @@ final class ChatModel {
 
     /// Stops the live streams and keeps the transcript warm for a revisit.
     func close() {
+        // 顺序要紧：先把记录和转写写下去，再清状态。
+        persistTranscriptNow()
         saveToCache()
         stashDraft()
         followTask?.cancel()
@@ -309,6 +329,8 @@ final class ChatModel {
         var hasOlder: Bool
         var oldestSeq: Int?
         var throughSeq: Int
+        /// 这个会话的原始记录尾部（落盘写的就是它）。
+        var records: [SessionRecord]
     }
 
     /// Keeps the composer's contents under the session it was typed for.
@@ -327,7 +349,8 @@ final class ChatModel {
             timeline: timeline,
             hasOlder: hasOlder,
             oldestSeq: oldestSeq,
-            throughSeq: throughSeq
+            throughSeq: throughSeq,
+            records: recentRecords
         )
         cacheOrder.removeAll { $0 == key }
         cacheOrder.append(key)
@@ -347,12 +370,32 @@ final class ChatModel {
     /// 当前会话属于哪台电脑——缓存按它分目录，换电脑不会串味。
     private var scopeId: String { store?.scopeId ?? "unknown" }
 
+    /// 把新记录并进尾部：按 seq 去重、保持顺序、只留最新 `maxRecords` 条。
+    ///
+    /// 两条来源（本地已存的尾部、host 刚给的快照/事件）会在同一会话里重叠——
+    /// 快照的第一条往往本地早就有了。去重是必须的，替换是错的。
+    private func mergeTail(_ incoming: [SessionRecord]) {
+        guard !incoming.isEmpty else { return }
+        var bySeq = Dictionary(recentRecords.map { ($0.event.seq, $0) }, uniquingKeysWith: { _, new in new })
+        for record in incoming { bySeq[record.event.seq] = record }
+        var merged = bySeq.values.sorted { $0.event.seq < $1.event.seq }
+        if merged.count > SessionTranscriptCache.maxRecords {
+            merged.removeFirst(merged.count - SessionTranscriptCache.maxRecords)
+        }
+        recentRecords = merged
+    }
+
     /// 把尾部写盘。默认节流：流式输出时每个事件都写会把磁盘当内存用。
     private func persistIfDue(force: Bool = false) {
         guard let sessionId = session?.sessionId else { return }
         let now = Date()
         guard force || now.timeIntervalSince(lastDiskSave) > 3 else { return }
         lastDiskSave = now
+        ViewportProbe.note("transcript.saved", [
+            "session": sessionId,
+            "records": String(recentRecords.count),
+            "lastSeq": String(recentRecords.last?.event.seq ?? -1),
+        ], force: true)
         transcriptCache.save(
             SessionTranscriptSnapshot(
                 savedAt: now,
@@ -371,11 +414,11 @@ final class ChatModel {
         persistIfDue(force: true)
     }
 
-    private func startFollowing(client: DSHClient, summary: SessionSummary) {
+    private func startFollowing(client: DSHClient, summary: SessionSummary, maxMessages: Int = 60) {
         followTask = Task { [weak self] in
             guard let self else { return }
             let stream = await client.follow(
-                SessionFollowRequest(address: summary.address, maxMessages: 60, assistantStream: true)
+                SessionFollowRequest(address: summary.address, maxMessages: maxMessages, assistantStream: true)
             )
             do {
                 for try await frame in stream {
@@ -406,22 +449,25 @@ final class ChatModel {
                 timeline.merge(snapshot: snapshot.records)
             }
             throughSeq = max(throughSeq, snapshot.cursor)
-            oldestSeq = snapshot.records.first?.event.seq
-            hasOlder = snapshot.hasMore
+            // 本地可能已经存着比这次快照更老的一段（冷启动缓存）：取更小的那个，
+            // 否则"往前翻"会从快照的第一条开始要，等于把本地已有的又拉一遍。
+            oldestSeq = [oldestSeq, snapshot.records.first?.event.seq]
+                .compactMap { $0 }
+                .min()
+            hasOlder = snapshot.hasMore || hasOlder
             phase = .ready
             scrollSignal += 1
-            // 快照就是"尾部"，直接当作要落盘的内容。
-            recentRecords = snapshot.records
+            // 快照要**并进**本地尾部，不能替换：本地可能存着 200 条，而这次的快照
+            // 只有 20 条（本地很新时故意少要），直接替换等于把已落盘的历史截掉
+            // ——用户看到的就是"切后台回来少了一部分记录"。
+            mergeTail(snapshot.records)
             persistIfDue(force: true)
 
         case .event(let event):
             flushStreamFrames()
             let change = timeline.apply(event)
             if case .none = change {} else { scrollSignal += 1 }
-            recentRecords.append(SessionRecord(event: event))
-            if recentRecords.count > SessionTranscriptCache.maxRecords {
-                recentRecords.removeFirst(recentRecords.count - SessionTranscriptCache.maxRecords)
-            }
+            mergeTail([SessionRecord(event: event)])
             persistIfDue()
             // A live event proves the stream is healthy even if the summary
             // was stale when the list was fetched.
@@ -485,6 +531,8 @@ final class ChatModel {
             hostReportsRunning = false
             awaitingTimeout?.cancel()
             awaitingTimeout = nil
+            // 一轮结束是天然检查点：此刻把尾部写死，进程随后没了也不丢这一轮。
+            persistIfDue(force: true)
             if let finished = timeline.lastCompletion,
                finished.at != lastSeenCompletionAt {
                 lastSeenCompletionAt = finished.at
