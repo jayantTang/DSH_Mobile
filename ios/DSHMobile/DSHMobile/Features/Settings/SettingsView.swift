@@ -29,7 +29,6 @@ struct SettingsView: View {
 
     var body: some View {
         List {
-            languageSection
             statusSection
             devicesSection
             permissionSection
@@ -203,41 +202,6 @@ struct SettingsView: View {
     /// of the picture is that this is a relay rather than a LAN address, and
     /// that part is not secret.
     private func masked(_ endpoint: String) -> String { DemoMode.maskedEndpoint(endpoint) }
-
-    /// 语言：App 跟随系统语言，这里只做"告诉你在哪改 + 一键跳过去"。
-    ///
-    /// 不自己做选择器：iOS 的每 App 语言（设置 → DSH Mobile → 首选语言）已经是标准做法，
-    /// 自己做一套会和系统打架（还得重启才生效）。但用户会来找"在哪切英文"，
-    /// 所以把入口摆到最上面、并把当前语言写清楚。
-    private var languageSection: some View {
-        Section {
-            LabeledContent(String(localized: "语言 / Language"), value: Self.currentLanguageName)
-            Button {
-                guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
-                openURL(url)
-            } label: {
-                HStack {
-                    Text(String(localized: "在系统设置里更改"))
-                    Spacer(minLength: 0)
-                    Image(systemName: "arrow.up.forward.app")
-                        .foregroundStyle(DSHTheme.labelTertiary)
-                }
-            }
-            .accessibilityIdentifier("settings.language")
-        } footer: {
-            Text(String(localized: "App 跟随系统语言。要换语言：上面这个入口 → 首选语言 → English / 简体中文（改完 App 会重新载入）。"))
-        }
-    }
-
-    /// 当前生效的语言（用来告诉用户"你现在看到的是哪种"）。
-    private static var currentLanguageName: String {
-        let code = Bundle.main.preferredLocalizations.first
-            ?? Locale.preferredLanguages.first
-            ?? "en"
-        if code.hasPrefix("zh") { return "简体中文" }
-        if code.hasPrefix("en") { return "English" }
-        return code
-    }
 
     private var statusSection: some View {
         Section {

@@ -542,7 +542,3 @@ It is registered as a workspace first, so a new group appears in the desktop sid
 "需要你回应" = "Needs your answer";
 "钥匙串操作失败（OSStatus %lld）" = "Keychain operation failed (OSStatus %lld)";
 
-/* language row */
-"语言 / Language" = "Language";
-"在系统设置里更改" = "Change in iOS Settings";
-"App 跟随系统语言。要换语言：上面这个入口 → 首选语言 → English / 简体中文（改完 App 会重新载入）。" = "The app follows the system language. To switch: the entry above → Preferred Language → English / 简体中文 (the app reloads after the change).";
