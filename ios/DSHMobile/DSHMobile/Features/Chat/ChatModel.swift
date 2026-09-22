@@ -114,6 +114,20 @@ final class ChatModel {
     /// Warm transcripts, most recently used last.
     private var cache: [String: CachedSession] = [:]
 
+    /// 转写尾部的落盘缓存（每个"电脑 + 会话"一份）。
+    ///
+    /// 内存缓存让"再进同一个会话"很快，但 App 一冷启动就归零，于是打开会话仍然是
+    /// 空白 + 转圈。落盘的是**原始记录**的尾部——和 `session/follow` 打开时给的快照
+    /// 是同一种东西，所以恢复路径与合并路径都复用现成逻辑。
+    private let transcriptCache = SessionTranscriptCache()
+
+    /// 最近的记录（尾部），落盘写的就是它。
+    private var recentRecords: [SessionRecord] = []
+    private var lastDiskSave = Date.distantPast
+
+    /// 用户最后想看、但可能还没连上而没能打开的会话。
+    private var pendingOpen: SessionSummary?
+
     /// Half-written messages, one per session.
     ///
     /// The draft used to be a single field on this (single, app-wide) model, and
@@ -161,6 +175,9 @@ final class ChatModel {
     /// conversation is the single most common navigation in this app, so it must
     /// not feel like a page load.
     func open(_ summary: SessionSummary) async {
+        // 记下"用户想看的那个会话"：如果此刻还没连上（冷启动刚进列表就点开），
+        // 这一屏会停在"尚未连接"——连上之后要能自己回来，而不是让用户点重试。
+        pendingOpen = summary
         guard let client = store?.client else {
             phase = .failed("尚未连接")
             return
@@ -193,6 +210,21 @@ final class ChatModel {
             throughSeq = max(cached.throughSeq, summary.asOfSeq)
             phase = .ready
             scrollSignal += 1
+        } else if let stored = transcriptCache.load(scope: scopeId, sessionId: key) {
+            // 冷启动/新进程：用落盘的尾部立刻把转写画出来，**不进 loading**。
+            // 随后 follow 的快照会按 seq 合并进来，只补差量。
+            timeline = ChatTimeline()
+            timeline.reset(with: stored.records)
+            timeline.record(usage: summary.projections?.values?.tokenUsage)
+            recentRecords = stored.records
+            hasOlder = stored.hasOlder
+            oldestSeq = stored.oldestSeq
+            throughSeq = max(stored.throughSeq, summary.asOfSeq)
+            phase = .ready
+            scrollSignal += 1
+            ViewportProbe.note("transcript.loaded", [
+                "session": key, "records": String(stored.records.count),
+            ], force: true)
         } else {
             timeline = ChatTimeline()
             timeline.record(usage: summary.projections?.values?.tokenUsage)
@@ -203,6 +235,7 @@ final class ChatModel {
         }
 
         startFollowing(client: client, summary: summary)
+        pendingOpen = nil
         await loadCatalog(client: client)
         subscribeToPrompts()
     }
@@ -258,8 +291,14 @@ final class ChatModel {
     /// Re-opening reuses the warm cache, so the rows and the reading position
     /// stay where the user left them.
     func reopenAfterReconnect() async {
-        guard let current = session, store?.client != nil else { return }
-        await open(current)
+        guard store?.client != nil else { return }
+        // 两种情况都要恢复：先打开再断线（session 还在），以及**没连上就打开过**
+        // （session 还是 nil，只有 pendingOpen 记得用户想看谁）。
+        if let current = session {
+            await open(current)
+        } else if let wanted = pendingOpen {
+            await open(wanted)
+        }
     }
 
     // MARK: - Warm cache
@@ -302,6 +341,34 @@ final class ChatModel {
     func forget(_ sessionId: String) {
         cache.removeValue(forKey: sessionId)
         cacheOrder.removeAll { $0 == sessionId }
+        transcriptCache.clear(scope: scopeId, sessionId: sessionId)
+    }
+
+    /// 当前会话属于哪台电脑——缓存按它分目录，换电脑不会串味。
+    private var scopeId: String { store?.scopeId ?? "unknown" }
+
+    /// 把尾部写盘。默认节流：流式输出时每个事件都写会把磁盘当内存用。
+    private func persistIfDue(force: Bool = false) {
+        guard let sessionId = session?.sessionId else { return }
+        let now = Date()
+        guard force || now.timeIntervalSince(lastDiskSave) > 3 else { return }
+        lastDiskSave = now
+        transcriptCache.save(
+            SessionTranscriptSnapshot(
+                savedAt: now,
+                records: recentRecords,
+                oldestSeq: oldestSeq,
+                throughSeq: throughSeq,
+                hasOlder: hasOlder
+            ),
+            scope: scopeId,
+            sessionId: sessionId
+        )
+    }
+
+    /// 立刻落盘（退到后台、离开会话时用：那些时刻之后进程可能就没了）。
+    func persistTranscriptNow() {
+        persistIfDue(force: true)
     }
 
     private func startFollowing(client: DSHClient, summary: SessionSummary) {
@@ -343,11 +410,19 @@ final class ChatModel {
             hasOlder = snapshot.hasMore
             phase = .ready
             scrollSignal += 1
+            // 快照就是"尾部"，直接当作要落盘的内容。
+            recentRecords = snapshot.records
+            persistIfDue(force: true)
 
         case .event(let event):
             flushStreamFrames()
             let change = timeline.apply(event)
             if case .none = change {} else { scrollSignal += 1 }
+            recentRecords.append(SessionRecord(event: event))
+            if recentRecords.count > SessionTranscriptCache.maxRecords {
+                recentRecords.removeFirst(recentRecords.count - SessionTranscriptCache.maxRecords)
+            }
+            persistIfDue()
             // A live event proves the stream is healthy even if the summary
             // was stale when the list was fetched.
             if phase != .ready { phase = .ready }

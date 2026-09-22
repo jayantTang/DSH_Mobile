@@ -52,6 +52,12 @@ final class AttachmentImages {
 
     private var key: String { sessionId ?? "" }
 
+    /// 写完这份字节。调用点在**取图的那个异步任务**里，不在渲染路径上；
+    /// 单张图的写入是几毫秒级，换来的是下次冷启动不必再走一趟中转。
+    private func persist(_ data: Data, attachmentId: String) {
+        diskCache.save(data, scope: scopeId, attachmentId: attachmentId)
+    }
+
     private func bucketKey(_ session: String, _ attachmentId: String) -> String {
         "\(session)|\(attachmentId)"
     }
@@ -94,6 +100,11 @@ final class AttachmentImages {
         failures.removeAll()
     }
 
+    /// 图片的落盘层：进程一没，内存桶就空了，冷启动会把每张图都重下一遍。
+    private let diskCache = AttachmentDiskCache()
+
+    private var scopeId: String { store?.scopeId ?? "unknown" }
+
     /// Fetches the bytes once, coalescing everyone who asks for the same image.
     @discardableResult
     func load(_ attachmentId: String) async -> UIImage? {
@@ -102,6 +113,14 @@ final class AttachmentImages {
         if let cached = images[session]?[attachmentId] {
             touch(flightKey)
             return cached
+        }
+        // 内存没有就问磁盘：同一个会话翻回去看时，图不该再走一遍网络。
+        if let data = diskCache.load(scope: scopeId, attachmentId: attachmentId),
+           let image = UIImage(data: data) {
+            store(image, for: attachmentId, in: session)
+            // 诊断：这张图是**从磁盘**拿到的（没走网络）。
+            ViewportProbe.note("attachment.disk", ["id": attachmentId], force: true)
+            return image
         }
         if hasFailed(attachmentId) { return nil }
         // Past the quiet window the stale entry must not block the retry.
@@ -120,6 +139,8 @@ final class AttachmentImages {
                       let data = Data(base64Encoded: encoded),
                       let image = UIImage(data: data)
                 else { return nil }
+                // 下到了就留一份：下次冷启动不必再为这张图跑一趟中转。
+                self?.persist(data, attachmentId: attachmentId)
                 return image
             } catch {
                 return nil

@@ -104,6 +104,11 @@ struct RootView: View {
                 // 一启动就把落盘的列表装进 model，**不等连接**：屏幕立刻有行可看，
                 // 而不是先空着等 host 答话（这正是"打开是空的"的来源）。
                 listModel.loadCachedList()
+                // 磁盘缓存的自净：过期与超预算的转写在启动时清一次（不在热路径上做）。
+                await Task.detached {
+                    SessionTranscriptCache().prune()
+                    AttachmentDiskCache().prune()
+                }.value
                 // 认下上次那台电脑并直接进列表：连不上也在列表上显示缓存 + 未连接，
                 // 而不是把用户拦在连接页（换电脑走列表顶部的连接入口）。
                 if store.adoptPreferredProfile() {
@@ -132,6 +137,8 @@ struct RootView: View {
                 syncConnectionState(isConnected)
             }
             .onChange(of: scenePhase) { _, phase in
+                // 退到后台/被挂起：把转写尾部立刻写盘——此刻之后进程可能就没了。
+                if phase != .active { chatModel.persistTranscriptNow() }
                 // Re-checked on every return to the foreground: that is when a
                 // user who just installed an update comes back to look.
                 if phase == .active { Task { await updates.refresh() } }
@@ -357,11 +364,7 @@ struct RootView: View {
     /// What identifies "the computer we are talking to", for caches that must
     /// not survive a switch. The agent id is the host's own name for itself;
     /// the profile's UUID covers a profile that has not enrolled yet.
-    private var connectionScope: String? {
-        guard let profile = store.activeProfile else { return nil }
-        if case .relay(_, let agentId) = profile.transport, !agentId.isEmpty { return agentId }
-        return profile.id.uuidString
-    }
+    private var connectionScope: String? { store.scopeId }
 
     private func syncConnectionState(_ isConnected: Bool) {
         guard isConnected != lastConnected else { return }

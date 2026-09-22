@@ -122,6 +122,15 @@ public final class ConnectionStore {
     /// The profile currently connected, if any.
     public private(set) var activeProfile: ConnectionProfile?
 
+    /// What identifies "the computer we are talking to", for caches that must
+    /// not survive a switch: the agent id when there is one, otherwise the
+    /// profile's own id (a profile that has not enrolled yet).
+    public var scopeId: String? {
+        guard let profile = activeProfile else { return nil }
+        if case .relay(_, let agentId) = profile.transport, !agentId.isEmpty { return agentId }
+        return profile.id.uuidString
+    }
+
     /// The profile to reconnect to when nothing is active: most recent first.
     private var preferredProfile: ConnectionProfile? {
         profiles

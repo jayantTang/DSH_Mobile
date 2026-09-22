@@ -274,6 +274,10 @@ public struct ModelSelection: Sendable, Codable, Hashable {
 /// One item of session history as the host journals it.
 public struct SessionRecord: Sendable, Codable {
     public let event: SessionEvent
+
+    public init(event: SessionEvent) {
+        self.event = event
+    }
 }
 
 /// A single durable session event.

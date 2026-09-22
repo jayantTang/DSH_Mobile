@@ -408,10 +408,12 @@ struct SettingsView: View {
         Section {
             Button(role: .destructive) {
                 SessionListSnapshotStore().clear()
+                SessionTranscriptCache().clearAll()
+                AttachmentDiskCache().clearAll()
                 cacheClearedAt = Date()
             } label: {
                 HStack {
-                    Text("清除会话列表缓存")
+                    Text("清除本地缓存")
                     Spacer(minLength: 0)
                     if cacheClearedAt != nil {
                         Text("已清除")
@@ -423,7 +425,7 @@ struct SettingsView: View {
         } header: {
             Text("缓存")
         } footer: {
-            Text("会话列表会留一份「上次看到的样子」在本机，冷启动先显示它再更新；只存标题、时间、用量这类元数据，不存对话内容，30 天后自动失效。")
+            Text("本机留两份缓存：会话列表（标题、时间、用量这类元数据）和每个会话的对话尾部（最近 200 条，用来冷启动先显示再增量更新）。都在 Caches 里、不进备份，30 天后自动失效，总占用有上限（转写 40 MB、图片 100 MB），这里可以随时一键清掉。")
         }
     }
 
