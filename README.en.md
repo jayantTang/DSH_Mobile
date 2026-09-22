@@ -53,8 +53,10 @@ transcript, settings) are in English, while longer screens are still Chinese.
 
 ## More
 
-- [`docs/`](docs/) — protocol, architecture, pairing, images (Chinese; the protocol reference is
-  generated from the real wire captures).
+- [`docs/ONBOARDING.en.md`](docs/ONBOARDING.en.md) — install, pair, self-host a relay.
+- [`docs/PRIVACY.en.md`](docs/PRIVACY.en.md) — what is stored where.
+- [`docs/`](docs/) — protocol, architecture, pairing, images (mostly Chinese; the protocol
+  reference is generated from real wire captures).
 - [`docs/DSH-PROTOCOL.md`](docs/DSH-PROTOCOL.md) — the client/host wire, if you want to build your
   own client.
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) · [`SECURITY.md`](SECURITY.md) · [`CHANGELOG.md`](CHANGELOG.md)

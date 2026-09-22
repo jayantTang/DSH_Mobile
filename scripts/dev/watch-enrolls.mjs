@@ -103,7 +103,7 @@ const TABLE_ROW = /^\|\s*(\d+)\s*\|\s*`([A-Za-z0-9-]+)`\s*\|.*$/
 
 function parseTable(body) {
   const lines = body.split('\n')
-  const header = lines.findIndex((line) => /^\|\s*#\s*\|\s*邀请码/.test(line))
+  const header = lines.findIndex((line) => /^\|\s*#\s*\|\s*(邀请码|Invite code)/.test(line))
   if (header < 0) return null
   const rows = []
   let end = header + 2  // header + separator
@@ -117,18 +117,18 @@ function parseTable(body) {
 }
 
 function statusCell(row) {
-  if (!row.status || row.status.exists === false) return '⚠️ 无效（可能抄错了）'
+  if (!row.status || row.status.exists === false) return '⚠️ 无效 / invalid（可能抄错 / typo?）'
   if (row.status.state === 'used') {
     const when = row.status.usedAt ? beijing(row.status.usedAt).slice(5, 10) : ''
-    return `❌ 已被领取${when ? `（${when}）` : ''}`
+    return `❌ 已被领取 / claimed${when ? `（${when}）` : ''}`
   }
-  if (row.status.state === 'expired') return '⌛ 已过期'
-  return '✅ 可用'
+  if (row.status.state === 'expired') return '⌛ 已过期 / expired'
+  return '✅ 可用 / available'
 }
 
 function renderTable(rows) {
   return [
-    '| # | 邀请码 | 状态 |',
+    '| # | 邀请码 Invite code | 状态 Status |',
     '|---|---|---|',
     ...rows.map((row) => `| ${row.number} | \`${row.code}\` | ${statusCell(row)} |`),
   ].join('\n')
@@ -139,10 +139,10 @@ function renderBody(body, rows, free) {
   const parsed = parseTable(body)
   if (!parsed) return null
   const lines = body.split('\n')
-  const note = `**还有 ${free} 个可用**（${beijing(Date.now()).slice(0, 10)} 自动核对；用掉一个这张表就会变）`
+  const note = `**还有 ${free} 个可用 / ${free} still available**（${beijing(Date.now()).slice(0, 10)} 自动核对 auto-checked）`
   // 上一次的"还有 N 个可用"整行先删掉，免得越积越多。
-  const cleaned = lines.filter((line) => !/^\*\*还有 \d+ 个可用\*\*/.test(line))
-  const header = cleaned.findIndex((line) => /^\|\s*#\s*\|\s*邀请码/.test(line))
+  const cleaned = lines.filter((line) => !/^\*\*还有 \d+ 个可用/.test(line))
+  const header = cleaned.findIndex((line) => /^\|\s*#\s*\|\s*(邀请码|Invite code)/.test(line))
   const shift = cleaned.length - lines.length
   const start = header + (shift ? 0 : 0)
   const tableEnd = (() => {
@@ -162,7 +162,8 @@ function renderBody(body, rows, free) {
   // "回一句 N 号已用"的老约定不再需要：表是准的。
   const text = rebuilt.join('\n').replace(
     /^> 用掉一个可以在下面回一句.*$/m,
-    '> 表由脚本自动核对（用掉的会当场标出来，不必回帖抢号）。用完我会贴新的一批。')
+    '> 表由脚本自动核对（用掉的会当场标出来，不必回帖抢号）。用完我会贴新的一批。\n'
+    + '> This table is checked by a script — claimed codes are marked in place, no need to race in the comments.')
   return text === body ? null : text
 }
 
@@ -254,9 +255,9 @@ const line = (row, details) => {
 
 function summaryBody(trials, total, internal) {
   return [
-    '### 试用登记汇总（自动更新）',
+    '### 试用登记汇总（自动更新）· Trial sign-ups (auto-updated)',
     '',
-    `邀请码 **${total.minted}** 张 · 已用 **${total.used}** 张`
+    `邀请码 **${total.minted}** 张 · 已用 **${total.used}** 张（${total.minted} minted · ${total.used} used）`
       + `（其中 ${internal} 张为内部测试）· 剩 **${total.remaining}** 张`,
     '',
     `已登记 **${trials.length}** 位试用者：`,
@@ -268,13 +269,15 @@ function summaryBody(trials, total, internal) {
 
 function enrollBody(row, index, trials, total, internal) {
   return [
-    `### 第 ${index} 位试用者已登记`,
+    `### 第 ${index} 位试用者已登记 · Tester #${index} enrolled`,
     '',
-    `${beijing(row.usedAt)}（北京时间）· 邀请码批次${row.inviteNote ? `「${row.inviteNote}」` : '（无备注）'}`
+    `${beijing(row.usedAt)}（北京时间 / Beijing time）· 邀请码批次${row.inviteNote ? `「${row.inviteNote}」` : '（无备注）'}`
       + (has('details') ? ` · ${row.agentName}（${row.accountId}）` : ''),
     '',
     `累计：邀请码 ${total.minted} 张 · 已用 ${total.used} 张（其中 ${internal} 张为内部测试）`
-      + `· 剩 ${total.remaining} 张 · 已登记 ${trials.length} 位`,
+      + ` · 剩 ${total.remaining} 张 · 已登记 ${trials.length} 位`
+      + `\nTotal: ${total.minted} minted · ${total.used} used (${internal} internal)`
+      + ` · ${total.remaining} left · ${trials.length} enrolled`,
     '',
     '<sub>由 `scripts/dev/watch-enrolls.mjs` 自动更新。</sub>',
   ].join('\n')

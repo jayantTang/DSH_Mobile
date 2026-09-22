@@ -20,7 +20,9 @@ import { dirname, join, resolve } from 'node:path'
 
 const PERSON_ALLOWED = new Set([
   'docs/ONBOARDING.md',
+  'docs/ONBOARDING.en.md',
   'docs/PRIVACY.md',
+  'docs/PRIVACY.en.md',
   'CONTRIBUTING.md',
   'SECURITY.md',
   'CHANGELOG.md',
@@ -42,6 +44,8 @@ const DOCS = [
   'docs/IMAGES.md',
   'docs/VERSIONING.md',
   'docs/PRIVACY.md',
+  'docs/PRIVACY.en.md',
+  'docs/ONBOARDING.en.md',
   'docs/DSH-PROTOCOL.md',
   'docs/RELAY-PROTOCOL.md',
   'docs/CONNECTOR-NOTES.md',

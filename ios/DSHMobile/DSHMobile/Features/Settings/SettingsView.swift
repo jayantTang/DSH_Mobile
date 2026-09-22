@@ -301,10 +301,14 @@ struct SettingsView: View {
         }
     }
 
+    /// 名字与说明都过一遍本地化：表里存中文是为了跟电脑端文案一致，
+    /// 英文用户看到的应当是英文。
     private static let permissionPresets: [(value: String, name: String, detail: String)] = [
-        ("read-only", "只读", "可以查看文件，但不能做任何修改。"),
-        ("workspace-write", "仅工作区可写", "可在项目目录内创建和修改文件，工作区之外只读。"),
-        ("danger-full-access", "完全访问", "可以执行任意命令，读写整台电脑。"),
+        ("read-only", String(localized: "只读"), String(localized: "可以查看文件，但不能做任何修改。")),
+        ("workspace-write", String(localized: "仅工作区可写"),
+         String(localized: "可在项目目录内创建和修改文件，工作区之外只读。")),
+        ("danger-full-access", String(localized: "完全访问"),
+         String(localized: "可以执行任意命令，读写整台电脑。")),
     ]
 
     private var currentPreset: String {

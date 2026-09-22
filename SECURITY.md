@@ -1,5 +1,16 @@
 # 安全
 
+**English** · [中文](#中文) — Security (English)
+
+Please do not open a public issue for a vulnerability. Report it privately through GitHub's
+  "Report a vulnerability" on this repository, or by email to the address in the Chinese section
+  below, and give us a reasonable window to ship a fix before disclosing.
+
+In scope: the relay, the connector plugin, the iOS app, and anything that could leak a pairing
+secret or conversation content. Out of scope: findings that require a rooted device or physical
+access to an unlocked phone.
+
+---
 ## 报告问题
 
 请使用 GitHub 的[私有漏洞报告](https://github.com/jayantTang/DSH_Mobile/security/advisories/new)，

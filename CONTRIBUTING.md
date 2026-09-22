@@ -1,5 +1,20 @@
 # 参与开发
 
+**English** · [中文](#中文) — Contributing (English)
+
+We take patches, issues and case reports. The short version:
+
+1. Open an issue first for anything larger than a typo — it saves a rewrite.
+2. Run the checks before pushing: `npm test`, `npm run check:docs`, `npm run check:secrets`,
+   plus `swift test` under `ios/DSHMobile/DSHKit` and `pytest` under `relay/`.
+3. Behaviour changes come with a case (see `test/README.md`) and a report; UI changes come with a
+   simulator screenshot.
+4. Commit messages are written in Chinese in this repository — that is a convention, not a rule
+   about who may contribute.
+
+The Chinese section below has the same rules in more detail.
+
+---
 本仓库包含四部分：iOS App（SwiftUI）、协议层 Swift Package、电脑侧连接器（DSH 插件，Node ESM）
 与公网中转（Python）。改动任一处的流程一致：本地测试 → 文档同步 → 提交。
 
