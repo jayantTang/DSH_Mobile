@@ -170,7 +170,7 @@ struct Composer: View {
     /// is focused redraws unreliably — it can come back blank. The activity is
     /// already shown in the transcript and in the control cluster, so the
     /// placeholder has no reason to move.
-    private let placeholder = "给 DSH 发消息…"
+    private var placeholder: String { String(localized: "给 DSH 发消息…") }
 
     private var controls: some View {
         HStack(spacing: DSHTheme.Spacing.hairline) {
@@ -438,10 +438,12 @@ struct ModelPickerSheet: View {
                 }
 
                 if !model.permissionOptions.isEmpty {
-                    Section("权限预设") {
+                    Section(String(localized: "权限预设")) {
                         ForEach(model.permissionOptions, id: \.value) { option in
                             HStack {
-                                Text(option.name)
+                                // 权限档位的名字是 host（DSH）下发的，通常是中文；
+                                // 认识的词条过一遍本地化，不认识的按原样显示。
+                                Text(String(localized: String.LocalizationValue(option.name)))
                                     .font(DSHTheme.Typography.body)
                                 Spacer()
                                 if option.value == model.currentPermission {

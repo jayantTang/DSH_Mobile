@@ -1,5 +1,7 @@
 # DSH Mobile
 
+**中文** · [English](README.en.md)
+
 [![DSH plugin](https://img.shields.io/badge/DSH-plugin-4D6BFE)](https://github.com/deepseek-ai/deepseek-harness)
 [![listed in awesome-deepseek-harness](https://img.shields.io/badge/listed%20in-awesome--deepseek--harness-4D6BFE?logo=awesomelists&logoColor=white)](https://github.com/Dominic789654/awesome-deepseek-harness)
 [![Awesome](https://awesome.re/badge.svg)](https://github.com/Dominic789654/awesome-deepseek-harness)

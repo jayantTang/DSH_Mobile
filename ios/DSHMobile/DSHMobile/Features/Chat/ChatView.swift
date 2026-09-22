@@ -88,7 +88,7 @@ struct ChatView: View {
             let normal = finished.reason == "completed" || finished.reason == "unknown"
             var text = normal ? "本轮已完成" : TurnDividerRow.describe(finished.reason)
             if let duration = finished.duration {
-                text += String(format: " · 用时 %.1fs", duration)
+                text += " · " + String(format: String(localized: "用时 %.1fs"), duration)
             }
             withAnimation(.snappy(duration: 0.2)) { completionBanner = text }
             Task {

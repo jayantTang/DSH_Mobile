@@ -443,7 +443,7 @@ final class SessionListModel {
         // 再去问 host。有缓存时**不进 loading**——那正是"空白等网络"的来源。
         showSnapshotIfEmpty()
         guard let client = store?.client else {
-            phase = .failed("尚未连接")
+            phase = .failed(String(localized: "尚未连接"))
             return
         }
         if groups.isEmpty { phase = .loading }

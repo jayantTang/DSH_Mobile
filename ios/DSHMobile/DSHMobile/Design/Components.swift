@@ -255,10 +255,10 @@ enum TokenFormat {
 enum RelativeTime {
     static func string(from date: Date) -> String {
         let interval = Date().timeIntervalSince(date)
-        if interval < 60 { return "刚刚" }
-        if interval < 3_600 { return "\(Int(interval / 60)) 分钟前" }
-        if interval < 86_400 { return "\(Int(interval / 3_600)) 小时前" }
-        if interval < 604_800 { return "\(Int(interval / 86_400)) 天前" }
+        if interval < 60 { return String(localized: "刚刚") }
+        if interval < 3_600 { return String(localized: "\(Int(interval / 60)) 分钟前") }
+        if interval < 86_400 { return String(localized: "\(Int(interval / 3_600)) 小时前") }
+        if interval < 604_800 { return String(localized: "\(Int(interval / 86_400)) 天前") }
         // Only the long tail needs calendar-aware phrasing, so the formatter is
         // built here rather than shared: `RelativeDateTimeFormatter` is not
         // `Sendable`, and a shared instance would need synchronization for a

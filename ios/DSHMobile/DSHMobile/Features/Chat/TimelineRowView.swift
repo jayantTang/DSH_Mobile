@@ -147,7 +147,7 @@ struct TurnDividerRow: View {
 
     private var text: String {
         var parts: [String] = []
-        parts.append(isNormal ? "已完成" : Self.describe(reason))
+        parts.append(isNormal ? String(localized: "已完成") : Self.describe(reason))
         if let duration {
             parts.append(String(format: "%.1fs", duration))
         }

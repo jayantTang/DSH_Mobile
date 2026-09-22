@@ -393,20 +393,26 @@ enum SettingsLabels {
     ]
 
     /// A field whose name collides across namespaces needs its parent's help.
-    static func fieldLabel(_ name: String, namespace: String, path: [String]) -> String {
-        if name == "preference" {
-            if namespace == "ui-theme" { return "外观" }
-            if namespace == "locale" { return "语言" }
-        }
-        if name == "default" { return path.count > 1 ? "默认值" : "默认预设" }
-        return fieldLabels[name] ?? name
+    /// 表里存的是中文标签，出口统一本地化一次：这些字符串不是 `Text` 字面量，
+    /// 不包一层就不会走 Localizable.strings（设置页曾经整页中文就是这么来的）。
+    private static func localized(_ text: String) -> String {
+        String(localized: String.LocalizationValue(text))
     }
 
-    static func namespaceTitle(_ ns: String) -> String { namespaceTitles[ns] ?? ns }
+    static func fieldLabel(_ name: String, namespace: String, path: [String]) -> String {
+        if name == "preference" {
+            if namespace == "ui-theme" { return localized("外观") }
+            if namespace == "locale" { return localized("语言") }
+        }
+        if name == "default" { return localized(path.count > 1 ? "默认值" : "默认预设") }
+        return localized(fieldLabels[name] ?? name)
+    }
+
+    static func namespaceTitle(_ ns: String) -> String { localized(namespaceTitles[ns] ?? ns) }
 
     static func valueLabel(_ value: JSONValue, fallback: String) -> String {
         guard let raw = value.stringValue else { return fallback }
-        return valueLabels[raw] ?? raw
+        return localized(valueLabels[raw] ?? raw)
     }
 
     /// Orders fields the way a person scans them: switches and the primary

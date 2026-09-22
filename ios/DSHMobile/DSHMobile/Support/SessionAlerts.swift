@@ -73,7 +73,7 @@ final class SessionAlerts: NSObject, UNUserNotificationCenterDelegate {
         guard notifyOnTurnEnd else { return }
         post(
             identifier: "turn-end-\(sessionId)",
-            title: "运行结束",
+            title: String(localized: "运行结束"),
             body: title,
             sessionId: sessionId
         )
@@ -84,7 +84,7 @@ final class SessionAlerts: NSObject, UNUserNotificationCenterDelegate {
         guard notifyOnAttention else { return }
         post(
             identifier: "attention-\(sessionId)",
-            title: "需要你确认",
+            title: String(localized: "需要你确认"),
             body: detail.isEmpty ? title : "\(title)：\(detail)",
             sessionId: sessionId
         )

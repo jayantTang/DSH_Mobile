@@ -58,7 +58,7 @@ final class SettingsModel {
             switch self {
             case .direct: return "局域网直连"
             case .relay: return "中转"
-            case .unknown: return "未确定"
+            case .unknown: return String(localized: "未确定")
             }
         }
     }

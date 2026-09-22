@@ -247,7 +247,7 @@ struct SettingsView: View {
 
     private var connectionLabel: String {
         switch store.state {
-        case .connected: return "已连接"
+        case .connected: return String(localized: "已连接")
         case .connecting: return "连接中"
         case .failed: return "连接失败"
         case .disconnected: return "未连接"

@@ -193,7 +193,7 @@ final class ChatModel {
         // 这一屏会停在"尚未连接"——连上之后要能自己回来，而不是让用户点重试。
         pendingOpen = summary
         guard let client = store?.client else {
-            phase = .failed("尚未连接")
+            phase = .failed(String(localized: "尚未连接"))
             return
         }
         // Persist whatever the previous session had before switching away —

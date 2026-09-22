@@ -37,7 +37,7 @@ public struct DSHRPCFailure: Error, Sendable, Hashable, Codable {
 }
 
 extension DSHRPCFailure: LocalizedError {
-    public var errorDescription: String? { message }
+    public var errorDescription: String? { String(localized: String.LocalizationValue(message)) }
     public var failureReason: String? { code }
 }
 

@@ -118,13 +118,13 @@ struct SessionListView: View {
                 // 一条"在等你回答"的会话可以在里面烂着而列表顶部毫无提示
                 // （2026-09-22 验收时就撞上了：probe 夹具会话全落在未分组里）。
                 if model.waitingCount + model.ungroupedWaitingCount > 0 {
-                    Badge(text: "\(model.waitingCount + model.ungroupedWaitingCount) 等你回应", tone: .attention)
+                    Badge(text: String(localized: "\(model.waitingCount + model.ungroupedWaitingCount) 等你回应"), tone: .attention)
                 }
                 if model.runningCount > 0 {
-                    Badge(text: "\(model.runningCount) 运行中", tone: .brand)
+                    Badge(text: String(localized: "\(model.runningCount) 运行中"), tone: .brand)
                 }
                 if model.ungroupedRunningCount > 0 {
-                    Badge(text: "未分组 \(model.ungroupedRunningCount)", tone: .neutral)
+                    Badge(text: String(localized: "未分组 \(model.ungroupedRunningCount)"), tone: .neutral)
                 }
             }
         }
@@ -143,16 +143,18 @@ struct SessionListView: View {
                 // Say so rather than looking correct: directory grouping is not
                 // the desktop's grouping, and a silent fallback once hid a real
                 // defect behind something that looked right.
-                return "\(count) 个会话 · 工作区未加载，暂按目录分组"
+                return String(localized: "\(count) 个会话 · 工作区未加载，暂按目录分组")
             }
             // 屏幕上是缓存时把话说明白：列表能用，但它不是"现在"。
-            return model.isShowingSnapshot ? "\(count) 个会话 · 显示上次数据" : "\(count) 个会话"
+            return model.isShowingSnapshot
+                ? String(localized: "\(count) 个会话 · 显示上次数据")
+                : String(localized: "\(count) 个会话")
         case .connecting(let message):
-            return model.isShowingSnapshot ? "\(message) · 显示上次数据" : message
+            return model.isShowingSnapshot ? String(localized: "\(message) · 显示上次数据") : message
         case .failed(let message):
-            return model.isShowingSnapshot ? "\(message) · 显示上次数据" : message
+            return model.isShowingSnapshot ? String(localized: "\(message) · 显示上次数据") : message
         case .disconnected:
-            return model.isShowingSnapshot ? "未连接 · 显示上次数据" : "未连接"
+            return model.isShowingSnapshot ? String(localized: "未连接 · 显示上次数据") : String(localized: "未连接")
         }
     }
 
@@ -481,10 +483,10 @@ private struct LooseHeader: View {
                     .font(DSHTheme.Typography.micro)
                     .foregroundStyle(DSHTheme.labelDimmed)
                 if waiting > 0 {
-                    Badge(text: "\(waiting) 等你回应", tone: .attention)
+                    Badge(text: String(localized: "\(waiting) 等你回应"), tone: .attention)
                 }
                 if running > 0 {
-                    Badge(text: "\(running) 运行中", tone: .brand)
+                    Badge(text: String(localized: "\(running) 运行中"), tone: .brand)
                 }
                 Spacer(minLength: 0)
             }
@@ -700,10 +702,10 @@ struct ConnectionStatusButton: View {
 
     private var label: String {
         switch store.state {
-        case .connected: return "已连接"
-        case .connecting: return "连接中"
-        case .failed: return "连接失败"
-        case .disconnected: return "未连接"
+        case .connected: return String(localized: "已连接")
+        case .connecting: return String(localized: "连接中…")
+        case .failed: return String(localized: "连接失败")
+        case .disconnected: return String(localized: "未连接")
         }
     }
 }
