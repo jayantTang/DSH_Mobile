@@ -5,7 +5,7 @@ import Foundation
 /// `path` is absolute and host-owned: clients jump with it directly and never
 /// join segments themselves, because the host is the only side that knows the
 /// platform's separator rules.
-public struct HostDirectoryEntry: Sendable, Decodable, Hashable, Identifiable {
+public struct HostDirectoryEntry: Sendable, Codable, Hashable, Identifiable {
     public let name: String
     public let path: String
     /// Hidden by the host platform's convention (dot-prefixed on POSIX). The
@@ -20,7 +20,7 @@ public struct HostDirectoryEntry: Sendable, Decodable, Hashable, Identifiable {
 /// A listing is what makes the phone's directory browser possible at all: the
 /// host walks its own filesystem, so no path travels back and forth as a
 /// request to be interpreted.
-public struct HostDirectoryListing: Sendable, Decodable, Hashable {
+public struct HostDirectoryListing: Sendable, Codable, Hashable {
     /// Absolute path of the listed directory.
     public let path: String
     /// The host account's home directory, for the breadcrumb's "Home" anchor

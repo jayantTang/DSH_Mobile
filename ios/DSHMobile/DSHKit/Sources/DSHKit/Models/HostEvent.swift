@@ -111,10 +111,10 @@ public struct EventAnswer: Encodable, Sendable {
 /// This is the host asking the human to choose; the phone renders it as a
 /// native question sheet and answers with the selected option labels plus, when
 /// the user typed one, a free-text answer of their own.
-public struct UserQuestionsRequest: Sendable, Decodable {
+public struct UserQuestionsRequest: Sendable, Codable {
     public let questions: [Question]
 
-    public struct Question: Sendable, Decodable, Identifiable {
+    public struct Question: Sendable, Codable, Identifiable {
         public let id: String
         public let question: String
         /// Supporting detail the host sends alongside the question, kept out of
@@ -127,7 +127,7 @@ public struct UserQuestionsRequest: Sendable, Decodable {
         public var allowsMultiple: Bool { multiSelect ?? false }
     }
 
-    public struct Option: Sendable, Decodable, Identifiable, Hashable {
+    public struct Option: Sendable, Codable, Identifiable, Hashable {
         public let label: String
         public let description: String?
 

@@ -5,7 +5,7 @@ import Foundation
 /// Workspaces are an explicit, user-curated grouping — not a derived one. The
 /// sidebar shows these, in this order, with the sessions the user put in them.
 /// Anything not listed here belongs to no workspace at all.
-public struct Workspace: Sendable, Decodable, Identifiable, Hashable {
+public struct Workspace: Sendable, Codable, Identifiable, Hashable {
     public let workspaceId: String
     public let path: String
     public let title: String
@@ -19,13 +19,13 @@ public struct Workspace: Sendable, Decodable, Identifiable, Hashable {
 ///
 /// `created` is false when the directory was already registered: the call is
 /// "resolve or register", and the caller only needs the identity either way.
-public struct WorkspaceCreateValue: Sendable, Decodable {
+public struct WorkspaceCreateValue: Sendable, Codable {
     public let workspace: Workspace
     public let created: Bool
 }
 
 /// The opening frame of the `workspace/follow` stream.
-public struct WorkspaceBaseline: Sendable, Decodable {
+public struct WorkspaceBaseline: Sendable, Codable {
     public let items: [Workspace]
     public let archivedSessionIds: [String]
 

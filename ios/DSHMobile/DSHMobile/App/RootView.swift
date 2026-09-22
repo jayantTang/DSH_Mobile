@@ -101,6 +101,11 @@ struct RootView: View {
                 await alerts.prepare()
             }
             .task {
+                // 一启动就把落盘的列表装进 model，**不等连接**：用户点「连接」时屏幕
+                // 立刻有行可看，而不是先空着等 host 答话（这正是"打开是空的"的来源）。
+                listModel.loadCachedList()
+            }
+            .task {
                 // 夹具：`-DSHProbeAsk <sessionId>` 时由 App 自己给那个会话发一条
                 // "立刻提问"的提示词——host 侧 RPC 发起的提问送不到手机，
                 // 只有走产品这条路（本设备发起的 turn）waterfall 才会回到 App。

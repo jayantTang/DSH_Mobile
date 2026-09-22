@@ -59,12 +59,12 @@ public enum SessionAddress: Sendable, Hashable, Codable {
 // MARK: - Session list
 
 /// One page of the session list.
-public struct SessionListValue: Sendable, Decodable {
+public struct SessionListValue: Sendable, Codable {
     public let items: [SessionSummary]
 }
 
 /// One row in the session list.
-public struct SessionSummary: Sendable, Decodable, Identifiable, Hashable {
+public struct SessionSummary: Sendable, Codable, Identifiable, Hashable {
     public let sessionId: String
     public let updatedAt: Double
     public let running: Bool
@@ -116,7 +116,7 @@ public struct SessionSummary: Sendable, Decodable, Identifiable, Hashable {
     public var asOfSeq: Int { projections?.asOfSeq ?? 0 }
 }
 
-public struct SessionProjectionHints: Sendable, Decodable, Hashable {
+public struct SessionProjectionHints: Sendable, Codable, Hashable {
     public let asOfSeq: Int
     public let values: SessionProjectionValues?
 }
@@ -125,7 +125,7 @@ public struct SessionProjectionHints: Sendable, Decodable, Hashable {
 ///
 /// Only the fields the phone renders are modelled; everything else stays
 /// available as raw JSON so a DSH upgrade cannot break decoding.
-public struct SessionProjectionValues: Sendable, Decodable, Hashable {
+public struct SessionProjectionValues: Sendable, Codable, Hashable {
     public let title: String?
     public let goal: GoalProjection?
     public let tokenUsage: TokenUsageProjection?
@@ -147,16 +147,16 @@ public struct SessionProjectionValues: Sendable, Decodable, Hashable {
 /// The list row alone does not say whether a child is addressable as
 /// one-shot or continuable, and the host rejects a mismatched mode, so this
 /// projection is what makes subagent transcripts openable at all.
-public struct SubagentProjection: Sendable, Decodable, Hashable {
+public struct SubagentProjection: Sendable, Codable, Hashable {
     public let mode: SessionAddress.SubagentMode?
     public let label: String?
     public let seq: Int?
 }
 
-public struct GoalProjection: Sendable, Decodable, Hashable {
+public struct GoalProjection: Sendable, Codable, Hashable {
     public let goal: Goal?
 
-    public struct Goal: Sendable, Decodable, Hashable {
+    public struct Goal: Sendable, Codable, Hashable {
         public let id: String
         public let revision: Int
         public let objective: String
@@ -200,7 +200,7 @@ public struct GoalProjection: Sendable, Decodable, Hashable {
     }
 }
 
-public struct TokenUsageProjection: Sendable, Decodable, Hashable {
+public struct TokenUsageProjection: Sendable, Codable, Hashable {
     public let uncachedInputTokens: Int?
     public let outputTokens: Int?
     public let cacheReadTokens: Int?
@@ -211,7 +211,7 @@ public struct TokenUsageProjection: Sendable, Decodable, Hashable {
     }
 }
 
-public struct ContextPressureProjection: Sendable, Decodable, Hashable {
+public struct ContextPressureProjection: Sendable, Codable, Hashable {
     public let pressureTokens: Int?
     public let projectedTokens: Int?
     public let contextWindow: Int?
@@ -223,35 +223,35 @@ public struct ContextPressureProjection: Sendable, Decodable, Hashable {
     }
 }
 
-public struct SessionStatsProjection: Sendable, Decodable, Hashable {
+public struct SessionStatsProjection: Sendable, Codable, Hashable {
     public let turns: Int?
     public let steps: Int?
     public let llmMs: Double?
     public let toolMs: Double?
 }
 
-public struct PermissionsProjection: Sendable, Decodable, Hashable {
+public struct PermissionsProjection: Sendable, Codable, Hashable {
     public let options: [Option]?
     public let currentValue: String?
 
-    public struct Option: Sendable, Decodable, Hashable {
+    public struct Option: Sendable, Codable, Hashable {
         public let value: String
         public let name: String
     }
 }
 
-public struct ModelSelectionProjection: Sendable, Decodable, Hashable {
+public struct ModelSelectionProjection: Sendable, Codable, Hashable {
     public let lastUsed: ModelSelection?
     public let next: ModelSelection?
     public let pending: ModelSelection?
 }
 
-public struct SessionListMetadata: Sendable, Decodable, Hashable {
+public struct SessionListMetadata: Sendable, Codable, Hashable {
     public let blank: Bool?
     public let lastPromptAt: Double?
 }
 
-public struct PlanProjection: Sendable, Decodable, Hashable {
+public struct PlanProjection: Sendable, Codable, Hashable {
     public let active: Bool?
     public let pending: Bool?
 }
@@ -272,12 +272,12 @@ public struct ModelSelection: Sendable, Codable, Hashable {
 // MARK: - History and live frames
 
 /// One item of session history as the host journals it.
-public struct SessionRecord: Sendable, Decodable {
+public struct SessionRecord: Sendable, Codable {
     public let event: SessionEvent
 }
 
 /// A single durable session event.
-public struct SessionEvent: Sendable, Decodable {
+public struct SessionEvent: Sendable, Codable {
     public let type: String
     public let seq: Int
     public let time: Double?
@@ -292,7 +292,7 @@ public struct SessionEvent: Sendable, Decodable {
 }
 
 /// A page of backwards history.
-public struct SessionPage: Sendable, Decodable {
+public struct SessionPage: Sendable, Codable {
     public let records: [SessionRecord]
     public let hasMore: Bool
 }
@@ -337,7 +337,7 @@ extension SessionFollowFrame: Decodable {
 }
 
 /// The opening frame of a follow stream: the tail of history plus a cursor.
-public struct SessionSnapshot: Sendable, Decodable {
+public struct SessionSnapshot: Sendable, Codable {
     public let cursor: Int
     public let records: [SessionRecord]
     public let hasMore: Bool
@@ -355,7 +355,7 @@ public struct SessionSnapshot: Sendable, Decodable {
 }
 
 /// A one-shot RPC result carrying nothing meaningful.
-public struct SessionAck: Sendable, Decodable {}
+public struct SessionAck: Sendable, Codable {}
 
 // MARK: - Requests
 

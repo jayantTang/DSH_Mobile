@@ -33,6 +33,7 @@ struct SettingsView: View {
             permissionSection
             credentialsSection
             alertsSection
+            cacheSection
             aboutSection
             desktopOnlySection
         }
@@ -395,6 +396,34 @@ struct SettingsView: View {
                     ? "通知会在这台手机上弹出；点一下直接打开对应会话。"
                     : "尚未获得通知权限，请到 iOS 设置里允许 DSH 发送通知。"
             )
+        }
+    }
+
+    /// 缓存：会话列表的本地快照（只有元数据，30 天后自动失效）。
+    ///
+    /// 放在设置里是为了让"手机上留了什么"可见、可清——用户不该需要相信我们没存东西。
+    @State private var cacheClearedAt: Date?
+
+    private var cacheSection: some View {
+        Section {
+            Button(role: .destructive) {
+                SessionListSnapshotStore().clear()
+                cacheClearedAt = Date()
+            } label: {
+                HStack {
+                    Text("清除会话列表缓存")
+                    Spacer(minLength: 0)
+                    if cacheClearedAt != nil {
+                        Text("已清除")
+                            .foregroundStyle(DSHTheme.labelTertiary)
+                    }
+                }
+            }
+            .accessibilityIdentifier("settings.clear-cache")
+        } header: {
+            Text("缓存")
+        } footer: {
+            Text("会话列表会留一份「上次看到的样子」在本机，冷启动先显示它再更新；只存标题、时间、用量这类元数据，不存对话内容，30 天后自动失效。")
         }
     }
 

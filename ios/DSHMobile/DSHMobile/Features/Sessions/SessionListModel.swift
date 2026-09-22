@@ -50,6 +50,15 @@ final class SessionListModel {
     }
 
     private(set) var phase: Phase = .idle
+
+    /// 上一次成功刷新落盘的快照（冷启动先拿它把行画出来，再和 host 对账）。
+    private let snapshotStore = SessionListSnapshotStore()
+
+    /// 屏幕上这些行是"上次的数据"还是"刚问来的"。
+    ///
+    /// 有它才能在离线时把话说明白：列表能看，但后面跟一句"显示的是上次的数据"，
+    /// 而不是让用户以为这就是现在的状态。
+    private(set) var isShowingSnapshot = false
     private(set) var groups: [Group] = []
     /// The desktop client's explicit workspace list, in its own order.
     private(set) var workspaces: [Workspace] = []
@@ -422,6 +431,9 @@ final class SessionListModel {
     }
 
     func refresh() async {
+        // 冷启动（或上次没拉成）：先把落盘的旧列表画出来，屏幕上立刻有东西，
+        // 再去问 host。有缓存时**不进 loading**——那正是"空白等网络"的来源。
+        showSnapshotIfEmpty()
         guard let client = store?.client else {
             phase = .failed("尚未连接")
             return
@@ -443,7 +455,9 @@ final class SessionListModel {
             seedFirstSightings()
             noteFinishedRuns()
             lastRefreshed = Date()
+            isShowingSnapshot = false
             phase = .loaded
+            saveSnapshot()
         } catch {
             // Keep any previously loaded rows visible: a transient failure
             // should not blank out a list the user is reading.
@@ -451,6 +465,47 @@ final class SessionListModel {
                 phase = .failed(ConnectionStore.describe(error))
             }
         }
+    }
+
+    /// 冷启动/离线时先把上次的列表画出来（不等连接）。
+    func loadCachedList() {
+        showSnapshotIfEmpty()
+    }
+
+    /// Draws the last known list when there is nothing on screen yet.
+    ///
+    /// Only when empty: a refresh that fails halfway must never replace live rows
+    /// with older ones. And it never merges snapshot rows into a live list —
+    /// that would resurrect sessions the user has since archived.
+    private func showSnapshotIfEmpty() {
+        guard allSessions.isEmpty, groups.isEmpty, let snapshot = snapshotStore.load() else { return }
+        allSessions = snapshot.items
+        workspaces = snapshot.workspaces
+        archivedSessionIds = Set(snapshot.archivedSessionIds)
+        regroup()
+        // 这些行还没跟 host 对过账，所以先不进"已完成未看"的判定：把看到时间按快照
+        // 里的更新时间打底，等真数据回来再算（否则一冷启动整屏都是绿的）。
+        seedFirstSightings()
+        isShowingSnapshot = true
+        phase = .loaded
+        // 诊断：冷启动到底有没有用上缓存（排查"打开是空的"时第一眼要看的就是这行）。
+        ViewportProbe.note("snapshot.loaded", ["items": String(snapshot.items.count)], force: true)
+    }
+
+    /// Remembers the list for the next cold start. Metadata only.
+    private func saveSnapshot() {
+        snapshotStore.save(SessionListSnapshot(
+            savedAt: Date(),
+            items: allSessions,
+            workspaces: workspaces,
+            archivedSessionIds: Array(archivedSessionIds)
+        ))
+    }
+
+    /// 设置页里的"清除缓存"。
+    func clearCachedSnapshot() {
+        snapshotStore.clear()
+        isShowingSnapshot = false
     }
 
     /// Subscribes to the host feed so sessions started elsewhere appear here.

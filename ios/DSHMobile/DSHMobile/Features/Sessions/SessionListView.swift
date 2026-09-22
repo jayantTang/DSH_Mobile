@@ -41,6 +41,8 @@ struct SessionListView: View {
                 }
             }
         }
+        // 不等连接：离线冷启动也要先把上次的列表画出来（否则就是空白+转圈）。
+        .task { model.loadCachedList() }
         // 待答集合的唯一来源是 `$events` 的 waterfall（host 的会话摘要里没有这个
         // 信息：等回答时它照样报 running）。把它同步进 model，行状态与计数才看得见它；
         // hub 是 @Observable，这里读一下就等于订阅了变化。
@@ -143,13 +145,14 @@ struct SessionListView: View {
                 // defect behind something that looked right.
                 return "\(count) 个会话 · 工作区未加载，暂按目录分组"
             }
-            return "\(count) 个会话"
+            // 屏幕上是缓存时把话说明白：列表能用，但它不是"现在"。
+            return model.isShowingSnapshot ? "\(count) 个会话 · 显示上次数据" : "\(count) 个会话"
         case .connecting(let message):
             return message
         case .failed(let message):
-            return message
+            return model.isShowingSnapshot ? "\(message) · 显示上次数据" : message
         case .disconnected:
-            return "未连接"
+            return model.isShowingSnapshot ? "未连接 · 显示上次数据" : "未连接"
         }
     }
 
