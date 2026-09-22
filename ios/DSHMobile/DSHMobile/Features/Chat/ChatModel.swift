@@ -264,7 +264,10 @@ final class ChatModel {
                 phase = .ready
                 scrollSignal += 1
                 ViewportProbe.note("transcript.loaded", [
-                    "session": key, "records": String(stored.records.count),
+                    "session": key,
+                    "records": String(stored.records.count),
+                    // 诊断用：读回来的"最老一条"必须等于记录里的第一条
+                    "oldest": String(stored.oldestSeq ?? -1),
                 ], force: true)
             }
         } else {
@@ -429,7 +432,9 @@ final class ChatModel {
             SessionTranscriptSnapshot(
                 savedAt: now,
                 records: recentRecords,
-                oldestSeq: oldestSeq,
+                // 传尾部自己的第一条：这个字段必须描述"文件里存了什么"，
+                // 而不是"屏幕上翻到过哪里"（后者会被 prepend 推得更老）。
+                oldestSeq: recentRecords.first?.event.seq,
                 throughSeq: throughSeq,
                 hasOlder: hasOlder
             ),
@@ -480,6 +485,9 @@ final class ChatModel {
     private func apply(_ frame: SessionFollowFrame) {
         switch frame {
         case .snapshot(let snapshot):
+            // 这次之前本地尾部到哪（用来判断"是不是真的丢掉了一段"，冷启动没有尾部时
+            // 不该记成 rebased）。
+            let localLastAtSnapshot = recentRecords.last?.event.seq
             // 计划说得再好，也要看实际回来的第一条接不接得上本地尾部：
             // 接不上（中间缺一段）就只能重来，否则那个洞会写进磁盘、永远补不上。
             let needsReBase = syncPlanRef.reBase
@@ -488,7 +496,7 @@ final class ChatModel {
                     snapshotFirstSeq: snapshot.records.first?.event.seq)
             if timeline.items.isEmpty || needsReBase {
                 timeline.reset(with: snapshot.records)
-                if needsReBase, !timeline.items.isEmpty {
+                if needsReBase, !timeline.items.isEmpty, localLastAtSnapshot != nil {
                     ViewportProbe.note("transcript.rebased", [
                         "localLast": String(recentRecords.last?.event.seq ?? -1),
                         "snapshotFirst": String(snapshot.records.first?.event.seq ?? -1),

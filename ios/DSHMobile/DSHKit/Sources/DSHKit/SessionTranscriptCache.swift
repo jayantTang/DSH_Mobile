@@ -110,21 +110,39 @@ public struct SessionTranscriptCache {
             try? fileManager.removeItem(at: file)
             return nil
         }
-        return snapshot
+        // 读侧同样按记录推导 `oldestSeq`：旧版本可能写过"游标比记录老"的一对
+        // （翻过旧页之后），照着它往前翻会在中间留一段永远补不上的空白。
+        // 让不变量在读出时就成立，而不是指望下一次写盘修好。
+        return SessionTranscriptSnapshot(
+            savedAt: snapshot.savedAt,
+            records: snapshot.records,
+            oldestSeq: snapshot.records.first?.event.seq,
+            throughSeq: snapshot.throughSeq,
+            hasOlder: snapshot.hasOlder,
+            schema: snapshot.schema
+        )
     }
 
     /// Stores the tail, keeping only the newest ``maxRecords`` records.
+    ///
+    /// `oldestSeq` is **derived from the records that are actually written**, not
+    /// taken from the caller. A live session's "oldest row" moves further back
+    /// every time the reader pages up, while the tail this file keeps does not —
+    /// persisting the live value would tell the next cold start to page older from
+    /// a seq the file no longer holds, and the transcript would come back with a
+    /// gap between what was paged in and what was stored.
     public func save(_ snapshot: SessionTranscriptSnapshot, scope: String, sessionId: String) {
-        var trimmed = snapshot
-        if snapshot.records.count > Self.maxRecords {
-            trimmed = SessionTranscriptSnapshot(
-                savedAt: snapshot.savedAt,
-                records: Array(snapshot.records.suffix(Self.maxRecords)),
-                oldestSeq: snapshot.records.suffix(Self.maxRecords).first?.event.seq,
-                throughSeq: snapshot.throughSeq,
-                hasOlder: true
-            )
-        }
+        let kept = snapshot.records.count > Self.maxRecords
+            ? Array(snapshot.records.suffix(Self.maxRecords))
+            : snapshot.records
+        let trimmed = SessionTranscriptSnapshot(
+            savedAt: snapshot.savedAt,
+            records: kept,
+            // 与本文件里真正存下的记录对齐（见上面的说明）。
+            oldestSeq: kept.first?.event.seq,
+            throughSeq: snapshot.throughSeq,
+            hasOlder: snapshot.hasOlder || kept.count < snapshot.records.count
+        )
         guard let data = try? JSONEncoder().encode(trimmed) else { return }
         let file = url(scope: scope, sessionId: sessionId)
         try? fileManager.createDirectory(

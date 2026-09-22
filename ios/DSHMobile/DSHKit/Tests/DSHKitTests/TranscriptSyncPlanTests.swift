@@ -33,11 +33,14 @@ struct TranscriptSyncPlanTests {
         #expect(plan.maxMessages > 100)
     }
 
-    @Test("a gap too large to bridge re-bases instead of leaving a hole")
-    func hugeGapReBases() {
+    @Test("a large gap asks for the whole window and lets the snapshot decide")
+    func largeGapUsesTheWholeWindow() {
         let plan = TranscriptSyncPlan.plan(localThrough: 4_000, hostCursor: 5_000)
         #expect(plan.maxMessages == TranscriptSyncPlan.maxWindow)
-        #expect(plan.reBase)
+        // 估算接不上不等于真接不上：是否重来由快照实际的第一条决定
+        #expect(plan.reBase == false)
+        #expect(TranscriptSyncPlan.stillNeedsReBase(localLastSeq: 4_000, snapshotFirstSeq: 4_500))
+        #expect(TranscriptSyncPlan.stillNeedsReBase(localLastSeq: 4_000, snapshotFirstSeq: 3_900) == false)
     }
 
     @Test("a local tail ahead of the host is not trusted")

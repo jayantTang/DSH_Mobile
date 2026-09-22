@@ -54,11 +54,10 @@ public struct TranscriptSyncPlan: Equatable, Sendable {
         }
         let gap = hostCursor - localThrough
         let wanted = gap + margin
-        if wanted > maxWindow {
-            // Too far behind to bridge in one read: take the tail and re-base.
-            return TranscriptSyncPlan(maxMessages: maxWindow, reBase: true)
-        }
-        return TranscriptSyncPlan(maxMessages: max(minWindow, wanted), reBase: false)
+        // 超上限时也先把窗口开到最大：能不能接上要看**快照实际回来的第一条**
+        // （`stillNeedsReBase`），而不是看这个估算——估算偏保守会让本来接得上的
+        // 情况白丢一次本地尾部。
+        return TranscriptSyncPlan(maxMessages: min(maxWindow, max(minWindow, wanted)), reBase: false)
     }
 
     /// The belt-and-braces check, run once the snapshot is in hand.
