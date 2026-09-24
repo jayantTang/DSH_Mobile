@@ -90,6 +90,33 @@ const EFFORTS_BY_MODEL = {
 const effortsFor = (id) => (id in EFFORTS_BY_MODEL ? EFFORTS_BY_MODEL[id] : EFFORTS)
 
 /**
+ * 哪些模型能看图。
+ *
+ * 2026-09-24 实测（把一张手机截图发给 16 个模型，问图里有没有「公司网关」四个字）：
+ *   - 能看（回答「有」）：下面这 9 个；
+ *   - 收得下但看不见（回答「看不到图片」）：deepseek-v4-flash、glm-5.3、hy3；
+ *   - 直接 400（Invalid content type）：deepseek-v4-pro、glm-5.2、qwen3.7-max、zhipu/glm-5.3。
+ *
+ * 为什么必须逐个声明：DSH 在**发请求之前**就按模型声明的 input 拦——`dsh-llm-pi-ai`
+ * 里 `if (containsImage && !model.input.includes("image")) throw UNSUPPORTED_CONTENT`，
+ * 手写 route 的模型默认只有 `text`。所以不声明的话，手机上带图发消息会被 host 直接拒掉
+ * （`session/attachment-invalid` / `MODEL_DOES_NOT_SUPPORT_IMAGES`），根本到不了网关——
+ * 而网关其实是能看的。只给真能看的开：给"看不见"的开了会白送图还答非所问，
+ * 给会 400 的开了是一选就报错。
+ */
+const VISION_MODELS = new Set([
+  'deepseek-v4.1-flash',
+  'doubao-seed-2.1-pro',
+  'glm-5.3-flash',
+  'kimi-k2.7-code',
+  'kimi-k3',
+  'MiniMax-M3',
+  'qwen3.7-plus',
+  'qwen3.8-flash',
+  'qwen3.8-max',
+])
+
+/**
  * 每个模型声明的输出上限，**必须显式给**。
  *
  * 为什么：pi-ai 只在"请求带了上限"时才往线上写 `max_tokens`（它自己的源码里是
@@ -210,6 +237,8 @@ async function wire() {
         // 档位按模型给：有的模型没有 Off、有的没有 Max，给错了手机上一选就 400；
         // false 表示这个模型不提供档位（请求里不带 reasoning_effort）。
         reasoningEfforts: efforts,
+        // 图片能力同样按模型给：没声明的话 DSH 在发之前就把带图的 prompt 拒了。
+        input: VISION_MODELS.has(model.id) ? ['text', 'image'] : ['text'],
         maxTokens: MAX_TOKENS_BY_MODEL[model.id] ?? MAX_TOKENS,
         contextWindow: window,
       }
