@@ -136,6 +136,12 @@ async function forwardChat({ req, res, upstream, router, counters, inflight, sta
   // `max_completion_tokens`。两个都看，否则统计里会显示成"没带上限"。
   const declaredMax = body.max_tokens ?? body.max_completion_tokens
   const maxTokens = Number.isFinite(Number(declaredMax)) ? Number(declaredMax) : null
+  // 思考档位同样要能看见：2026-09-24 的坑是 pi-ai 用 `thinkingFormat: deepseek` 时
+  // 会同时发 `thinking:{type:enabled}` 和 `reasoning_effort`，而这条网关只认后者单独出现，
+  // 于是"选 Max 其实没生效"。日志里带上 effort/thinking，下次一眼能看出手机上选了什么、
+  // 线上到底发了什么。
+  const effort = body.reasoning_effort ?? body.reasoning?.effort ?? null
+  const thinking = body.thinking?.type ?? null
   const streaming = body.stream === true
   counters.requests += 1
   counters.byModel[model] = (counters.byModel[model] ?? 0) + 1
@@ -249,7 +255,7 @@ async function forwardChat({ req, res, upstream, router, counters, inflight, sta
         stats.noteTruncation({ model, keyLabel: key.label, maxTokens })
       }
       logger.info?.(
-        `ok ${model} max=${maxTokens ?? '-'} session=${session.slice(0, 24)} key=${key.label}(${reason})`
+        `ok ${model} max=${maxTokens ?? '-'} effort=${effort ?? '-'} thinking=${thinking ?? '-'} session=${session.slice(0, 24)} key=${key.label}(${reason})`
         + `${u.cachedTokens ? ` cached=${u.cachedTokens}` : ''}`
         + `${u.truncated ? ' ⚠️ 被 max_tokens 截断' : ''}`
       )

@@ -33,40 +33,60 @@ const AGENT_PATH = join(homedir(), 'Library', 'LaunchAgents', `${AGENT_LABEL}.pl
 const PROVIDER = 'company-gateway'
 
 /**
- * 上游思考档位 → 线上拼写。
+ * 上游思考档位 → 线上拼写（这张表就是 pi-ai 的 `thinkingLevelMap`）。
  *
- * pi-ai 在 `thinkingFormat: deepseek` 下会发两样东西：选 Off 发 `thinking:{type:'disabled'}`，
- * 选别的档发 `thinking:{type:'enabled'}` + `reasoning_effort:<拼写>`。
+ * **关键发现（2026-09-24 实测）：这条网关只认"光秃秃的 reasoning_effort"。**
+ * pi-ai 有两种发法，取决于 route 的 `compat.thinkingFormat`：
+ *   - `deepseek`：选 Off 发 `thinking:{type:'disabled'}`，选别的档发
+ *     `thinking:{type:'enabled'}` **加上** `reasoning_effort`；
+ *   - `openai`：只发 `reasoning_effort`（Off 发 `none`，因为我们表里 off 的线上值就是 none）。
  *
- * **但不是每个模型都吃这五档**：2026-09-24 对 16 个模型 × 5 档逐个打过真实请求，
- * 有 5 个模型会在某些档位上直接 400（手机上一选就报错）：
+ * 之前用的是 `deepseek`，结果这条路关上 `reasoning_effort` 被完全忽略：同一个模型、
+ * 同一道题，`none`/`low`/`high`/`max` 的思考 token 各 8 次跑下来中位数是
+ * 1496/1367/1528——完全重叠，也就是"选 Max 其实没用"。改成 `openai` 后同样实测：
+ * 难题上 `none`=0 token（1 秒出答案）、`low`/`high`≈600~1300、`max`≈1700~2200（慢 2~3 倍）。
+ * 所以 route 必须用 `thinkingFormat: 'openai'`，档位才是真的。
+ *
+ * 档位集合还要按模型给：16 个模型 × 5 档逐个打真实请求，有 5 个模型会直接 400
+ * （手机上一选就报错）：
  *   - glm-5.3-flash、zhipu/glm-5.3：「该模型始终思考，不支持关闭思考；请使用 low、high 或 max」
  *     → Off 与 Medium 都是 400，只能用 low/high/max；
  *   - kimi-k2.7-code、qwen3.7-max、qwen3.7-plus：`max` 不在允许列表里（允许 none/minimal/low/medium/high/xhigh）
  *     → Max 是 400；
- *   - MiniMax-M3：只认 `thinking.type: adaptive|disabled`，pi-ai 发不出 adaptive
- *     → 只要带 thinking 字段就 400，所以它不声明档位（请求里干脆不带 thinking）。
- * 其余模型五档全通。所以档位要按模型给，不能一套打天下。
+ * 另外「Off 到底关不关得掉」也是分模型的：发 `reasoning_effort: none` 之后 glm-5.3、
+ * kimi-k2.7-code、kimi-k3 照样思考（三道题分别 848/627/775、1923/578/789、1333/529/953 token），
+ * deepseek-v4-pro 也不稳（0/0/1631），MiniMax-M3 则从来不上报思考 token——这些模型的 Off
+ * 按钮是假的，干脆不给（glm-5.3-flash / zhipu 那两个给了会 400，同理）。
+ * 只显示实测真的有效果的档位，是用户 2026-09-24 的要求。
  */
 const EFFORTS = { off: 'none', low: 'low', medium: 'medium', high: 'high', max: 'max' }
 
-/** 始终思考的模型：没有 Off，也没有 Medium。 */
-const EFFORTS_ALWAYS_ON = { low: 'low', high: 'high', max: 'max' }
-
-/** 允许列表里没有 max 的模型。 */
+/** 有 Off，但上游允许列表里没有 max。 */
 const EFFORTS_NO_MAX = { off: 'none', low: 'low', medium: 'medium', high: 'high' }
+
+/** 关不掉思考（none 会被忽略），但有 max。 */
+const EFFORTS_NO_OFF = { low: 'low', medium: 'medium', high: 'high', max: 'max' }
+
+/** 既关不掉思考，也没有 max。 */
+const EFFORTS_NO_OFF_NO_MAX = { low: 'low', medium: 'medium', high: 'high' }
+
+/** 始终思考的模型：没有 Off，也没有 Medium（给 none/medium 会直接 400）。 */
+const EFFORTS_ALWAYS_ON = { low: 'low', high: 'high', max: 'max' }
 
 const EFFORTS_BY_MODEL = {
   'glm-5.3-flash': EFFORTS_ALWAYS_ON,
   'zhipu/glm-5.3': EFFORTS_ALWAYS_ON,
-  'kimi-k2.7-code': EFFORTS_NO_MAX,
+  'glm-5.3': EFFORTS_NO_OFF,
+  'kimi-k3': EFFORTS_NO_OFF,
+  'deepseek-v4-pro': EFFORTS_NO_OFF,
+  'kimi-k2.7-code': EFFORTS_NO_OFF_NO_MAX,
   'qwen3.7-max': EFFORTS_NO_MAX,
   'qwen3.7-plus': EFFORTS_NO_MAX,
-  // 值写成 null 表示"这个模型不声明档位"：DSH 就不会显示档位按钮，请求里也不带 thinking。
-  'MiniMax-M3': null,
+  // false = 声明成"没有思考档位"：手机端不显示档位按钮，请求里也不带 reasoning_effort。
+  'MiniMax-M3': false,
 }
 
-/** 该模型能安全使用的档位；null = 不声明（请求不带 thinking 字段）。 */
+/** 该模型能安全使用的档位；false = 不声明档位。 */
 const effortsFor = (id) => (id in EFFORTS_BY_MODEL ? EFFORTS_BY_MODEL[id] : EFFORTS)
 
 /**
@@ -187,8 +207,9 @@ async function wire() {
         // 窗口写进名字：选择器里一眼能比出"这个够不够用"（不给名字的话客户端看不到窗口，
         // host 的 modelCatalog 只下发 id/name/描述/思考档位）。
         name: `${model.name ?? model.id} · ${label}${verified ? '' : `（${PROBE_CAVEAT}）`}`,
-        // 档位按模型给：有的模型没有 Off、有的没有 Max，给错了手机上一选就 400。
-        ...(efforts ? { reasoningEfforts: efforts } : {}),
+        // 档位按模型给：有的模型没有 Off、有的没有 Max，给错了手机上一选就 400；
+        // false 表示这个模型不提供档位（请求里不带 reasoning_effort）。
+        reasoningEfforts: efforts,
         maxTokens: MAX_TOKENS_BY_MODEL[model.id] ?? MAX_TOKENS,
         contextWindow: window,
       }
@@ -209,7 +230,10 @@ async function wire() {
         api: 'openai-completions',
         baseURL: `http://127.0.0.1:${config.port}/v1`,
         apiKeyEnv: 'LLM_ROUTER_TOKEN',
-        compat: { thinkingFormat: 'deepseek' },
+        // thinkingFormat 必须是 openai：这条网关只在"请求里没有 thinking 字段"时才认
+        // 光秃秃的 reasoning_effort。用 deepseek 发法（thinking + reasoning_effort）时
+        // 档位会被整个忽略——实测 none/low/high/max 思考长度完全一样。理由见 EFFORTS 注释。
+        compat: { thinkingFormat: 'openai', supportsReasoningEffort: true, maxTokensField: 'max_tokens' },
         models,
       },
     },
