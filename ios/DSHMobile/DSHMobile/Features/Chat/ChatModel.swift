@@ -117,6 +117,12 @@ final class ChatModel {
 
     /// Bumped whenever the transcript grows, so the view can autoscroll.
     private(set) var scrollSignal: Int = 0
+    /// 搜索范围（时间线 + 搜索缓冲）变了多少次，给搜索面板当刷新信号。
+    private(set) var searchScopeVersion: Int = 0
+    /// 搜索缓冲里还能不能往前取。
+    private(set) var searchHasOlder = true
+    /// 正在往前取搜索缓冲（面板据此显示转圈）。
+    private(set) var isExtendingSearch = false
     /// 补页（在时间线**头部**插入更早的消息）完成的次数。
     ///
     /// 要这一位是因为"追上尾部"和"往前补一页"必须分开：前者该钉到底部，后者
@@ -134,6 +140,18 @@ final class ChatModel {
     private var hub: HostEventHub?
     /// Warm transcripts, most recently used last.
     private var cache: [String: CachedSession] = [:]
+
+    /// 搜索时往前读进来、但**还没进时间线**的更早记录（由旧到新）。
+    ///
+    /// 为什么不让搜索直接调 `loadOlder()`：那会往时间线头部插内容，而读者此刻可能停在
+    /// 会话中间或底部——`List` 保留的是偏移量，插进去的高度会把读者正在看的那一段整体
+    /// 挪走（`anchorAfterPrepend` 只在"视口就在顶部"时锚得回来）。搜索时往前翻历史
+    /// 不该动读者的位置，所以先放这里；等读者真的点了某一条，再把这段并进时间线
+    /// （`commitSearchHistory`），紧接着的跳转会把视口带到那一条上。
+    private var searchRecords: [SessionRecord] = []
+    private var searchOldestSeq: Int?
+    /// `searchItems` 的结果缓存，键是"缓冲条数 + 时间线条数"。
+    private var cachedSearchItems: (key: String, items: [TimelineItem])?
 
     /// 转写尾部的落盘缓存（每个"电脑 + 会话"一份）。
     ///
@@ -306,6 +324,8 @@ final class ChatModel {
             hasOlder = false
             oldestSeq = nil
             throughSeq = summary.asOfSeq
+            // 换会话：搜索缓冲是上一个会话的东西，跟着一起清。
+            clearSearchHistory()
             phase = .loading
         }
 
@@ -359,7 +379,17 @@ final class ChatModel {
         oldestSeq = nil
         throughSeq = 0
         pendingStreamFrames.removeAll()
+        clearSearchHistory()
         phase = .idle
+    }
+
+    /// 丢掉搜索缓冲：它属于刚关掉的那个会话。
+    private func clearSearchHistory() {
+        searchRecords.removeAll()
+        searchOldestSeq = nil
+        cachedSearchItems = nil
+        searchHasOlder = true
+        searchScopeVersion += 1
     }
 
     /// Re-opens the session on screen after the link came back.
@@ -737,7 +767,7 @@ final class ChatModel {
 
     /// Loads one older page and prepends it.
     func loadOlder() async {
-        guard let client = store?.client, let address, let oldest = oldestSeq, oldest > 1 else {
+        guard let oldest = oldestSeq, oldest > 1 else {
             hasOlder = false
             return
         }
@@ -745,10 +775,42 @@ final class ChatModel {
         isLoadingOlder = true
         defer { isLoadingOlder = false }
 
-        // host 的 `session/page` 把 beforeSeq 当**日志偏移**用，而偏移不总等于 seq
-        // （会话里有只占偏移不占 seq 的记录）。结果就是"每次翻页静默跳过一段"。
-        // 这里按实际回来的边界校正重问，保证交给时间线的每一页都严丝合缝。
-        var requested = oldest
+        guard let page = await fetchOlderPage(before: oldest) else {
+            hasOlder = false
+            return
+        }
+        // 只并入边界以内的记录：校正后可能把已经有的几条又带回来一次。
+        let fresh = page.records.filter { $0.event.seq < oldest }
+        let change = timeline.prepend(older: fresh)
+        hasOlder = page.hasMore
+        if let first = fresh.first?.event.seq {
+            oldestSeq = first
+        } else if TranscriptPageBoundary.hasHole(newest: page.returnedLast, oldest: oldest) {
+            // 校正到上限仍接不上：别再往下翻，读者宁可"没有更早的了"，
+            // 也不要一页中间缺一段。
+            hasOlder = false
+            ViewportProbe.note("paging.gap", [
+                "oldest": String(oldest), "returnedLast": String(page.returnedLast),
+            ], force: true)
+        }
+        ViewportProbe.note("paging.page", [
+            "attempts": String(page.attempts),
+            "records": String(fresh.count),
+            "oldest": String(oldestSeq ?? -1),
+            "hasOlder": hasOlder ? "1" : "0",
+        ], force: true)
+        if case .none = change {} else { prependSignal += 1 }
+    }
+
+    /// 往前取一页，按实际回来的边界校正到严丝合缝。
+    ///
+    /// host 的 `session/page` 把 beforeSeq 当**日志偏移**用，而偏移不总等于 seq
+    /// （会话里有只占偏移不占 seq 的记录）。结果就是"每次翻页静默跳过一段"。
+    /// 这里按实际回来的边界校正重问；接不上（超过 `maxAttempts`）就返回 nil。
+    private func fetchOlderPage(before floor: Int)
+        async -> (records: [SessionRecord], hasMore: Bool, returnedLast: Int, attempts: Int)? {
+        guard let client = store?.client, let address else { return nil }
+        var requested = floor
         for attempt in 1...TranscriptPageBoundary.maxAttempts {
             do {
                 let page = try await client.sessionPage(
@@ -762,13 +824,10 @@ final class ChatModel {
                 // 探针注入（只得带 `-DSHProbePageShortfall <n>` 的 DEBUG 构建）：
                 // 每页少给最新的 n 条，模拟 host 按日志偏移解释边界。产品构建里是原样。
                 let records = Self.injectedPageShortfall(page.records)
-                guard !records.isEmpty else {
-                    hasOlder = false
-                    return
-                }
+                guard !records.isEmpty else { return nil }
                 let returnedLast = records.last?.event.seq ?? 0
                 if let next = TranscriptPageBoundary.corrected(
-                    requested: requested, returnedLast: returnedLast, wanted: oldest
+                    requested: requested, returnedLast: returnedLast, wanted: floor
                 ), attempt < TranscriptPageBoundary.maxAttempts {
                     ViewportProbe.note("paging.corrected", [
                         "requested": String(requested),
@@ -779,36 +838,115 @@ final class ChatModel {
                     requested = next
                     continue
                 }
-
-                // 只并入边界以内的记录：校正后可能把已经有的几条又带回来一次。
-                let fresh = records.filter { $0.event.seq < oldest }
-                let change = timeline.prepend(older: fresh)
-                hasOlder = page.hasMore
-                if let first = fresh.first?.event.seq {
-                    oldestSeq = first
-                } else if TranscriptPageBoundary.hasHole(newest: returnedLast, oldest: oldest) {
-                    // 校正到上限仍接不上：别再往下翻，读者宁可"没有更早的了"，
-                    // 也不要一页中间缺一段。
-                    hasOlder = false
-                    ViewportProbe.note("paging.gap", [
-                        "oldest": String(oldest), "returnedLast": String(returnedLast),
-                    ], force: true)
-                }
-                ViewportProbe.note("paging.page", [
-                    "attempts": String(attempt),
-                    "records": String(fresh.count),
-                    "oldest": String(oldestSeq ?? -1),
-                    "hasOlder": hasOlder ? "1" : "0",
-                ], force: true)
-                if case .none = change {} else { prependSignal += 1 }
-                return
+                return (records, page.hasMore, returnedLast, attempt)
             } catch {
                 // 越过游标是"host 裁过会话"后的常见失败；安静地停止，别弹错误。
-                hasOlder = false
-                return
+                return nil
             }
         }
-        hasOlder = false
+        return nil
+    }
+
+    // MARK: - 搜索用的"再往前那一段"
+
+    /// 已加载 + 已读进来待用的全部可搜索行（由旧到新）。
+    var searchItems: [TimelineItem] {
+        let key = "\(searchRecords.count)-\(timeline.items.count)"
+        if let cached = cachedSearchItems, cached.key == key { return cached.items }
+        var scratch = ChatTimeline()
+        for record in searchRecords { scratch.apply(record.event) }
+        // 缓冲和已加载窗口会在边界上重叠（缓冲那一页的"最新几条"往往就是窗口里已经有的），
+        // 折叠出来就是同一行出现两次——列表里肉眼可见的重复（2026-09-24 实拍）。
+        let existing = Set(timeline.items.map(\.id))
+        let items = scratch.items.filter { !existing.contains($0.id) } + timeline.items
+        cachedSearchItems = (key, items)
+        return items
+    }
+
+    /// 搜索还能不能往前扩（缓冲还能取，或时间线还有更早的）。
+    var canExtendSearch: Bool {
+        if !searchRecords.isEmpty, !searchHasOlder { return false }
+        return searchOldestSeq ?? oldestSeq ?? 1 > 1
+    }
+
+    /// 往前取一页进**搜索缓冲**（时间线不动）。
+    @discardableResult
+    func extendSearchHistory() async -> Bool {
+        guard let from = searchOldestSeq ?? oldestSeq, from > 1 else {
+            searchHasOlder = false
+            return false
+        }
+        guard !isExtendingSearch else { return false }
+        isExtendingSearch = true
+        defer { isExtendingSearch = false }
+        guard let page = await fetchOlderPage(before: from) else {
+            searchHasOlder = false
+            return false
+        }
+        let fresh = page.records.filter { $0.event.seq < from }
+        guard !fresh.isEmpty else {
+            searchHasOlder = false
+            return false
+        }
+        searchRecords.insert(contentsOf: fresh, at: 0)
+        searchOldestSeq = fresh.first?.event.seq
+        searchHasOlder = page.hasMore
+        searchScopeVersion += 1
+        ViewportProbe.note("search.extended", [
+            "from": String(from),
+            "records": String(fresh.count),
+            "searchOldest": String(searchOldestSeq ?? -1),
+            "hasOlder": searchHasOlder ? "1" : "0",
+        ], force: true)
+        return true
+    }
+
+    /// 「只看我的提问」的默认列表：一直往前翻到够 `target` 条提问（或翻完/到上限）。
+    ///
+    /// 读者点这颗胶囊是想**浏览**自己问过什么，不该只看到已加载的这一小段；但也不能
+    /// 无上限地翻。上限 6 页（约 1700 条记录）既够列出几十条提问，又不会把内存吃满。
+    func extendSearchHistory(untilQuestionsAtLeast target: Int, maxPages: Int = 6) async {
+        guard !isExtendingSearch else { return }
+        var pages = 0
+        while pages < maxPages, canExtendSearch, userMessageCount() < target {
+            let before = searchRecords.count
+            let extended = await extendSearchHistory()
+            if !extended || searchRecords.count == before { return }
+            pages += 1
+        }
+    }
+
+    /// 缓冲里 + 时间线里的用户消息条数（判断"够不够列"用，不解折叠成行）。
+    private func userMessageCount() -> Int {
+        var count = timeline.items.reduce(0) { total, item in
+            if case .userMessage = item.kind { return total + 1 }
+            return total
+        }
+        count += searchRecords.reduce(0) { $0 + ($1.event.type == "user/message" ? 1 : 0) }
+        return count
+    }
+
+    /// 把搜索缓冲并进时间线（读者点了缓冲里的某一条时才做）。
+    ///
+    /// 只并"比时间线最老那条还老"的记录；并完清空缓冲，视图那边会跟着跳转。
+    @discardableResult
+    func commitSearchHistory() -> Bool {
+        guard !searchRecords.isEmpty, let oldest = oldestSeq else { return false }
+        let fresh = searchRecords.filter { $0.event.seq < oldest }
+        searchRecords.removeAll()
+        searchOldestSeq = nil
+        cachedSearchItems = nil
+        searchScopeVersion += 1
+        guard !fresh.isEmpty else { return false }
+        let change = timeline.prepend(older: fresh)
+        if let first = fresh.first?.event.seq { oldestSeq = first }
+        if case .none = change { return false }
+        prependSignal += 1
+        ViewportProbe.note("search.committed", [
+            "records": String(fresh.count),
+            "oldest": String(oldestSeq ?? -1),
+        ], force: true)
+        return true
     }
 
     /// 见 `ProbeVariants.pageShortfall`：只在探针变体下裁掉一页的最新几条。

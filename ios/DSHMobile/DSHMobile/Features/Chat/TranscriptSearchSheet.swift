@@ -21,6 +21,8 @@ struct TranscriptSearchSheet: View {
     @State private var onlyMine = false
     @State private var hits: [TranscriptSearchHit] = []
     @State private var isLoadingMore = false
+    /// 浏览态正在自动往前翻历史。
+    @State private var isExtending = false
     @FocusState private var isFocused: Bool
 
     var body: some View {
@@ -42,12 +44,15 @@ struct TranscriptSearchSheet: View {
         }
         .onAppear {
             refresh()
-            isFocused = true
+            // 不抢焦点：面板的默认态是"能一眼看到并点选"，键盘会把列表盖掉一半。
+            // 想搜关键词的点一下输入框就行。
+            Task { await extendIfNeeded() }
         }
         .onChange(of: query) { _, _ in refresh() }
         .onChange(of: onlyMine) { _, _ in refresh() }
-        // 补页之后已加载范围变大，结果要跟着更新（读者不用重新打字）。
+        // 补页 / 往前翻历史之后范围变大，结果要跟着更新（读者不用重新打字）。
         .onChange(of: model.timeline.items.count) { _, _ in refresh() }
+        .onChange(of: model.searchScopeVersion) { _, _ in refresh() }
     }
 
     // MARK: - 输入与筛选
@@ -86,10 +91,20 @@ struct TranscriptSearchSheet: View {
     /// （见 14 号用例踩过的坑），而这两颗本来就是"选一个"的语义。
     private var filter: some View {
         HStack(spacing: DSHTheme.Spacing.tight) {
-            chip("全部内容", selected: !onlyMine) { onlyMine = false }
-                .accessibilityIdentifier("search.scope.all")
-            chip("只看我的提问", selected: onlyMine) { onlyMine = true }
-                .accessibilityIdentifier("search.scope.mine")
+            chip("全部内容", selected: !onlyMine) {
+                onlyMine = false
+                refresh()
+            }
+            .accessibilityIdentifier("search.scope.all")
+            chip("只看我的提问", selected: onlyMine) {
+                onlyMine = true
+                // 收起键盘，让"我原来问过什么"这份列表整屏可见；想按关键词缩小范围
+                // 再点输入框。
+                isFocused = false
+                refresh()
+                Task { await extendIfNeeded() }
+            }
+            .accessibilityIdentifier("search.scope.mine")
             Spacer()
         }
         .padding(.horizontal, DSHTheme.Spacing.loose)
@@ -115,12 +130,40 @@ struct TranscriptSearchSheet: View {
     /// 「继续往上找」。都放在同一个 List 里，是因为那颗按钮不属于某一种状态——
     /// 读者打开面板第一件事就可能是"先往上取一页再搜"（第一版把它藏在"有结果"分支里，
     /// 空查询时根本看不到，用例的 s21 就是这么挂的）。
+    /// 结果区永远是一个 `List`：浏览态（只看我的提问、还没输关键词）、空态、
+    /// 命中态三种，加上底部那段「继续往上找」。都放在同一个 List 里，是因为那颗按钮
+    /// 不属于某一种状态——读者打开面板第一件事就可能是"先往上取一页再搜"。
     @ViewBuilder
     private var results: some View {
         List {
-            if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            if isBrowsing {
                 Section {
-                    Text("输入关键词，搜已加载的这段会话记录。")
+                    if hits.isEmpty {
+                        Text(isExtending ? "正在往前翻历史…" : "这段历史里还没有你发过的消息。")
+                            .font(DSHTheme.Typography.caption)
+                            .foregroundStyle(DSHTheme.labelTertiary)
+                    }
+                    ForEach(hits) { hit in
+                        Button {
+                            pick(hit)
+                        } label: {
+                            row(hit)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("search.hit.\(hit.id)")
+                    }
+                } header: {
+                    Text(summary)
+                        .font(DSHTheme.Typography.micro)
+                        .foregroundStyle(DSHTheme.labelTertiary)
+                } footer: {
+                    Text("由近及远。上面还有更早的时候，可以继续往前翻。")
+                        .font(DSHTheme.Typography.micro)
+                        .foregroundStyle(DSHTheme.labelTertiary)
+                }
+            } else if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Section {
+                    Text("输入关键词，搜已加载的这段会话记录；或者切到「只看我的提问」，直接点选你问过的那句。")
                         .font(DSHTheme.Typography.caption)
                         .foregroundStyle(DSHTheme.labelTertiary)
                 }
@@ -135,8 +178,7 @@ struct TranscriptSearchSheet: View {
                 Section {
                     ForEach(hits) { hit in
                         Button {
-                            onPick(hit.id)
-                            dismiss()
+                            pick(hit)
                         } label: {
                             row(hit)
                         }
@@ -155,17 +197,25 @@ struct TranscriptSearchSheet: View {
         .scrollContentBackground(.hidden)
     }
 
+    /// 浏览态：只看我的提问，且还没输入关键词。
+    private var isBrowsing: Bool {
+        onlyMine && query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     private var summary: String {
-        let loaded = model.timeline.items.count
-        if onlyMine {
-            return String(format: String(localized: "已加载 %lld 条 · 我的提问 %lld 条"), loaded, hits.count)
+        if isBrowsing {
+            return String(format: String(localized: "我的提问 %lld 条"), hits.count)
         }
-        return String(format: String(localized: "已加载 %lld 条 · 命中 %lld 条"), loaded, hits.count)
+        let searched = model.searchItems.count
+        if onlyMine {
+            return String(format: String(localized: "已搜 %lld 行 · 我的提问 %lld 条"), searched, hits.count)
+        }
+        return String(format: String(localized: "已搜 %lld 行 · 命中 %lld 条"), searched, hits.count)
     }
 
     @ViewBuilder
     private var olderSection: some View {
-        if model.hasOlder {
+        if model.canExtendSearch {
             Section {
                 Button {
                     Task { await loadMore() }
@@ -181,7 +231,7 @@ struct TranscriptSearchSheet: View {
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("search.older")
             } footer: {
-                Text("搜索只覆盖已经加载到手机上的那段历史。")
+                Text("搜索只覆盖已经读到手机上的那段历史；「继续往上找」会往前多读一页。")
                     .font(DSHTheme.Typography.micro)
                     .foregroundStyle(DSHTheme.labelTertiary)
             }
@@ -200,7 +250,8 @@ struct TranscriptSearchSheet: View {
                     .font(DSHTheme.Typography.caption)
                     .foregroundStyle(DSHTheme.labelPrimary)
                     .lineLimit(3)
-                Text(String(format: String(localized: "%@ · 第 %lld 条"), label(hit.role), hit.seq))
+                Text(isBrowsing ? String(format: String(localized: "第 %lld 条"), hit.seq)
+                                : String(format: String(localized: "%@ · 第 %lld 条"), label(hit.role), hit.seq))
                     .font(DSHTheme.Typography.micro)
                     .foregroundStyle(DSHTheme.labelTertiary)
             }
@@ -241,14 +292,32 @@ struct TranscriptSearchSheet: View {
     // MARK: - 动作
 
     private func refresh() {
-        hits = TranscriptSearch.hits(in: model.timeline.items, query: query, onlyMine: onlyMine)
+        // 浏览态列全部提问；否则按关键词在"时间线 + 往前读进来的缓冲"里搜。
+        hits = isBrowsing
+            ? TranscriptSearch.myQuestions(in: model.searchItems)
+            : TranscriptSearch.hits(in: model.searchItems, query: query, onlyMine: onlyMine)
     }
 
+    /// 浏览态下先把历史翻够（够 30 条提问或翻完为止），读者不用一条条点「继续往上找」。
+    private func extendIfNeeded() async {
+        guard isBrowsing, model.canExtendSearch else { return }
+        isExtending = true
+        defer { isExtending = false }
+        await model.extendSearchHistory(untilQuestionsAtLeast: 30)
+        refresh()
+    }
+
+    private func pick(_ hit: TranscriptSearchHit) {
+        onPick(hit.id)
+        dismiss()
+    }
+
+    /// 「继续往上找」：往搜索缓冲里再取一页（**不动时间线**，也就不会挪动读者的位置）。
     private func loadMore() async {
         guard !isLoadingMore else { return }
         isLoadingMore = true
         defer { isLoadingMore = false }
-        await model.loadOlder()
+        await model.extendSearchHistory()
         refresh()
     }
 }

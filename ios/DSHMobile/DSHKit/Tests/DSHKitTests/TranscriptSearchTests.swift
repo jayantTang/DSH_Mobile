@@ -82,3 +82,28 @@ final class TranscriptSearchTests: XCTestCase {
         XCTAssertEqual(TranscriptSearch.hits(in: items, query: "Package.swift").map(\.id), ["t1"])
     }
 }
+
+/// 「只看我的提问」不输关键词时的默认列表。
+extension TranscriptSearchTests {
+    func testMyQuestionsListsEveryUserRowNewestFirst() {
+        let items = [
+            user("u1", seq: 1, "第一个问题"),
+            assistant("a1", seq: 2, "回答"),
+            tool("t1", seq: 3, name: "bash", summary: "ls", result: "x"),
+            user("u2", seq: 4, "第二个问题\n第二行"),
+        ]
+        let questions = TranscriptSearch.myQuestions(in: items)
+        XCTAssertEqual(questions.map(\.id), ["u2", "u1"], "由近及远，且只有我自己发的")
+        XCTAssertEqual(questions.first?.snippet, "第二个问题 第二行", "换行压成空格")
+        XCTAssertEqual(questions.first?.highlightLength, 0, "浏览态不做高亮")
+        XCTAssertTrue(questions.allSatisfy { $0.role == .me })
+    }
+
+    func testMyQuestionsSkipsEmptyTextAndHonoursLimit() {
+        var items: [TimelineItem] = [user("empty", seq: 1, "   ")]
+        items += (1...10).map { user("u\($0)", seq: $0 + 1, "问题 \($0)") }
+        let questions = TranscriptSearch.myQuestions(in: items, limit: 3)
+        XCTAssertEqual(questions.count, 3)
+        XCTAssertEqual(questions.map(\.id), ["u10", "u9", "u8"])
+    }
+}

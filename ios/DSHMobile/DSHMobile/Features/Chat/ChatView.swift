@@ -65,6 +65,8 @@ struct ChatView: View {
     /// 8 轮里有 2 轮整段回调都没来，补页一次都没触发。所以距离要缓存，改由
     /// "会话/内容变化"这些时机重新判一次（`evaluateTopDistance`）。
     @State private var topDistance: CGFloat?
+    /// 上面那个距离是什么时候量到的。补页必须用"刚量到的"位置，见 `evaluateTopDistance`。
+    @State private var topDistanceAt = Date.distantPast
     /// 正在跑的那串"连续补页"。见 `pumpOlder`。
     @State private var olderPump: Task<Void, Never>?
     /// 已经处理过的补页代数，用来把"头部插入"从"尾部追加"里分出来。
@@ -400,23 +402,25 @@ struct ChatView: View {
             .frame(height: 1)
             .modifier(TranscriptRowChrome(inList: !ProbeVariants.lazyStack))
             .id(Self.topAnchor)
-            // iOS 17 上没有滚动几何，补页只能靠"这一行被建出来"（= 读者滑到了最上面）。
-            // iOS 18 起由 `TranscriptTopDistance` 说了算，这里不再抢着触发。
+            // 「读者到没到最上面」这件事**以这一行的生死为准**，滚动几何只是提前量。
+            //
+            // 为什么不能只靠几何：`onScrollGeometryChange` 只在**值变化**时回调，而"内容长出来
+            // 但没滚动"（首屏快照落地、补页插入）不产生回调。2026-09-24 实测：一次运行里
+            // 0.3 秒之后它整段不响，内容高从 39 涨到 5978 都没报——补页与"钉回底部"一起失灵。
+            // 行是被 `List` 按"离视口多远"建/拆的，这个信号一直有。
             .onAppear {
-                guard !TranscriptTopDistance.available else { return }
-                // 17 上没有滚动几何，只能拿"行被建出来"当信号。多一道 `!isFollowing`：
-                // 读者还在看最新的一轮（跟随时）不该因为 `List` 提前建了这行就补页——
-                // 补页会往视口上方插内容，而那时没法把位置锚回来。
-                guard !isFollowing, model.hasOlder else { return }
                 sentinelNearTop = true
                 ViewportProbe.note("older.sentinel", ["near": "1", "why": "appear",
                                                      "items": String(model.timeline.items.count)])
+                if isFollowing, !userScrolled {
+                    // 读者没往上翻过、却已经在内容顶部：那是"打开会话没钉到底"，先钉回去。
+                    ViewportProbe.note("older.repin", ["distance": "-1"])
+                    repinAfterContentChange(proxy)
+                    return
+                }
                 pumpOlder(proxy)
             }
-            .onDisappear {
-                guard !TranscriptTopDistance.available else { return }
-                sentinelNearTop = false
-            }
+            .onDisappear { sentinelNearTop = false }
     }
 
     /// 补页进行中的提示：浮在转写区顶部，不进内容（行高恒定，见 `olderSentinel`）。
@@ -513,6 +517,7 @@ struct ChatView: View {
     /// 记下新的距离并重新判定（iOS 18 起才有距离可测；更低的系统只剩哨兵的 `onAppear`）。
     private func noteTopDistance(_ distance: CGFloat, proxy: ScrollViewProxy) {
         topDistance = distance
+        topDistanceAt = Date()
         evaluateTopDistance(proxy)
     }
 
@@ -552,7 +557,20 @@ struct ChatView: View {
             ViewportProbe.note("older.repin", ["distance": String(format: "%.0f", distance)])
             // 带一次延迟重钉：这次判定往往发生在"内容刚落地、行还没排完"的那一刻，
             // 单次 `scrollTo` 会落在空布局上（2026-09-24 实测 3 轮里 1 轮就这么卡住了）。
+            // 这一支**允许用旧数据**：钉底是幂等的、方向明确的（读者没往上翻，就该在底部）。
             repinAfterContentChange(proxy)
+            return
+        }
+        // 补页这一支必须用"刚量到的"位置：几何只在**值变化**时回调，而"视口一直停在顶部"
+        // 这种情况不再产生变化，缓存下来的 0 会一直留着。读者其实已经不在顶部时拿它去补页，
+        // 就是往视口上方插内容、把读者看到的位置顶走（2026-09-24 实测：跳转到搜索命中后
+        // 又白补了一页，命中那一行被顶出屏幕）。
+        let fresh = Date().timeIntervalSince(topDistanceAt) < Self.distanceFreshness
+        guard fresh else {
+            ViewportProbe.note("older.stale", [
+                "distance": String(format: "%.0f", distance),
+                "age": String(format: "%.1f", Date().timeIntervalSince(topDistanceAt)),
+            ])
             return
         }
         pumpOlder(proxy)
@@ -639,6 +657,12 @@ struct ChatView: View {
         guard ownsTranscript else { return }
         isFollowing = false
         userScrolled = true
+        // 选中的那条可能还在"搜索缓冲"里（面板往前翻过历史、但没动时间线）：
+        // 先把它并进时间线，下面的重试才找得到这一行。并入会往视口上方插内容，
+        // 所以紧接着的跳转本身也是"把视口带到那一条"。
+        if !model.timeline.items.contains(where: { $0.id == id }) {
+            _ = model.commitSearchHistory()
+        }
         ViewportProbe.note("search.jump", ["item": id], force: true)
         Task { @MainActor in
             for delay in [0, 120, 300] {
@@ -728,19 +752,22 @@ struct ChatView: View {
     /// 单次、延迟、可取消：每次内容变化都把上一次排的撤掉，所以流式输出时不会堆积；
     /// 读者自己翻上去（isFollowing == false）就完全不动。
     private func repinAfterContentChange(_ proxy: ScrollViewProxy) {
-        guard isFollowing, ownsTranscript else { return }
+        guard isFollowing, !userScrolled, ownsTranscript else { return }
         // 先立刻钉一次：这一批内容如果已经布局好，它就直接生效，用户看不到任何中间态。
         proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)
         contentRepinTask?.cancel()
         contentRepinTask = Task { @MainActor in
-            // 再延迟一次：`LazyVStack` 的行高会在折入过程中被修正，修正会让内容总高变化，
-            // 系统的底部锚定因此可能停在半路——等这批布局落定后再钉一次才是最终位置。
-            // 150ms 是"够布局完成"与"看不出延迟"之间的取值（实测 150ms 能落到底，
-            // 不排这一次则停在半路）。
-            try? await Task.sleep(for: .milliseconds(150))
-            if Task.isCancelled { return }
-            guard ownsTranscript else { return }
-            proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)
+            // 再按 150/450/900ms 各钉一次：行高是在折入过程中被修正的，修正会改变内容总高，
+            // 系统的底部锚定因此可能停在半路。三次的成本只是一次 `scrollTo`（不布局、不动画），
+            // 而"打开会话停在顶部"这个毛病是**间歇性**的——2026-09-24 实测 8 轮里 2 轮，
+            // 只排一次 150ms 会漏（那次内容 1.1 秒才落地，行高更晚）。
+            // 每次之前都重新问一遍"读者还在跟随吗"，一旦他自己拖过就立刻停手。
+            for delay in [150, 450, 900] {
+                try? await Task.sleep(for: .milliseconds(delay))
+                if Task.isCancelled { return }
+                guard isFollowing, !userScrolled, ownsTranscript else { return }
+                proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)
+            }
         }
     }
 
@@ -815,6 +842,8 @@ struct ChatView: View {
     private static let sentinelApproach: CGFloat = 16
     /// 判"位置没跳"的容差：内容长了多少、偏移就该跟着走多少，差在这一点之内算原地不动。
     private static let keepTolerance: CGFloat = 20
+    /// 位置数据的新鲜度上限：超过它就不许拿它触发补页（见 `evaluateTopDistance`）。
+    private static let distanceFreshness: TimeInterval = 0.6
 
     private static let bottomAnchor = "transcript-bottom"
     private static let topAnchor = "transcript-top"
