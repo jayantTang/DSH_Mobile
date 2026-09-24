@@ -21,8 +21,28 @@ struct TranscriptSearchSheet: View {
     @State private var onlyMine = false
     @State private var hits: [TranscriptSearchHit] = []
     @State private var isLoadingMore = false
-    /// 浏览态正在自动往前翻历史。
-    @State private var isExtending = false
+    /// 现在**真的在屏幕上**的结果行（行自己上报，用于算"底下还剩几条"）。
+    @State private var visibleHitIds: Set<String> = []
+    /// 读者上次滑动之后，已经"没有新行产出"地预读了几页（滑动会把它清零）。
+    @State private var scrollDrivenLoads = 0
+    /// 最近一次滚动偏移（用来判"读者真的滑了"；追加行不会改变它）。
+    @State private var lastScrollOffset: CGFloat?
+    /// 上一次看到的行数，用来判这一轮预读有没有产出。
+    @State private var lastRowCount = 0
+    /// 可见范围之外至少要先备好这么多条：不够就继续往前读。
+    ///
+    /// 为什么不是"底部哨兵露面才读"：哨兵行只在 `onAppear` 时触发一次，之后它一直
+    /// 留在屏幕上（新行是追加在它上面的？不，是追加在末尾、把它挤下去之前）——
+    /// 2026-09-25 用户实测"继续下拉会往前读"根本没生效：第一页之后哨兵没重建，
+    /// 就再没有第二次触发。改成按可见范围算余量，读到够为止。
+    private static let prefetchAhead = 10
+    /// 读者滑一次最多"没有新行产出"地预读几页。
+    ///
+    /// 为什么要有这个上限：关键词很"冷"的时候（比如整段历史里只有 1 条命中），
+    /// "可见范围外备够 10 条"这个条件**永远满足不了**，不限量就会把整段历史读完
+    /// （2026-09-25 实测就是这么把 43 页全读光的）。滑动一次最多试探 4 页，
+    /// 读者再滑一次就再试探 4 页——仍然是"一边下拉一边读"，但不会自己跑到底。
+    private static let maxScrollDrivenLoads = 4
     @FocusState private var isFocused: Bool
 
     var body: some View {
@@ -48,7 +68,10 @@ struct TranscriptSearchSheet: View {
             // 想搜关键词的点一下输入框就行。
             // 浏览态的第一页交给列表底部的哨兵行去取（它一露面就会触发）。
         }
-        .onChange(of: query) { _, _ in refresh() }
+        .onChange(of: query) { _, _ in
+            scrollDrivenLoads = 0
+            refresh()
+        }
         .onChange(of: onlyMine) { _, _ in refresh() }
         // 补页 / 往前翻历史之后范围变大，结果要跟着更新（读者不用重新打字）。
         .onChange(of: model.timeline.items.count) { _, _ in refresh() }
@@ -93,11 +116,13 @@ struct TranscriptSearchSheet: View {
         HStack(spacing: DSHTheme.Spacing.tight) {
             chip("全部内容", selected: !onlyMine) {
                 onlyMine = false
+                scrollDrivenLoads = 0
                 refresh()
             }
             .accessibilityIdentifier("search.scope.all")
             chip("只看我的提问", selected: onlyMine) {
                 onlyMine = true
+                scrollDrivenLoads = 0
                 // 收起键盘，让"我原来问过什么"这份列表整屏可见；想按关键词缩小范围
                 // 再点输入框。
                 isFocused = false
@@ -141,7 +166,7 @@ struct TranscriptSearchSheet: View {
             if isBrowsing {
                 Section {
                     if hits.isEmpty {
-                        Text(isExtending ? "正在往前翻历史…" : "这段历史里还没有你发过的消息。")
+                        Text(isLoadingMore ? "正在往前读…" : "这段历史里还没有你发过的消息。")
                             .font(DSHTheme.Typography.caption)
                             .foregroundStyle(DSHTheme.labelTertiary)
                     }
@@ -153,6 +178,11 @@ struct TranscriptSearchSheet: View {
                         }
                         .buttonStyle(.plain)
                         .accessibilityIdentifier("search.hit.\(hit.id)")
+                        .onAppear {
+                            visibleHitIds.insert(hit.id)
+                            prefetchIfRunningLow()
+                        }
+                        .onDisappear { visibleHitIds.remove(hit.id) }
                     }
                 } header: {
                     Text(summary)
@@ -186,6 +216,11 @@ struct TranscriptSearchSheet: View {
                         }
                         .buttonStyle(.plain)
                         .accessibilityIdentifier("search.hit.\(hit.id)")
+                        .onAppear {
+                            visibleHitIds.insert(hit.id)
+                            prefetchIfRunningLow()
+                        }
+                        .onDisappear { visibleHitIds.remove(hit.id) }
                     }
                 } header: {
                     Text(summary)
@@ -197,6 +232,12 @@ struct TranscriptSearchSheet: View {
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
+        // 读者滑动 = 新一轮预读预算（偏移变了才算滑动；追加行不会改变偏移，
+        // 所以这里不会被自动预读自己触发）。
+        .modifier(SheetScrollWatcher { offset in
+            if let last = lastScrollOffset, abs(offset - last) > 8 { scrollDrivenLoads = 0 }
+            lastScrollOffset = offset
+        })
     }
 
     /// 浏览态：只看我的提问，且还没输入关键词。
@@ -215,29 +256,29 @@ struct TranscriptSearchSheet: View {
         return String(format: String(localized: "已搜 %lld 行 · 命中 %lld 条"), searched, hits.count)
     }
 
-    /// 列表底部：滑到这里就再往前读一页（无限滚动），读完给出明确交代。
+    /// 列表底部：备货不够时显示转圈，读完了显示"到头了"，中间态给一颗可点的兜底。
     ///
-    /// 为什么不一次读完：长会话整段历史要 9–43 页（实测 20_lieGuo 12968 条），
-    /// 一次读完既让读者盯着转圈、又白读一堆用不上的记录。所以按读者的滑动节奏来：
-    /// 新行**追加在列表末尾**，已经看到的那几行不动，界面不跳。
+    /// 真正的触发在 `prefetchIfRunningLow()`（按可见范围算余量）；这一行只是把状态
+    /// 说清楚，外加一个"点了就再读一页"的兜底——自动预加载万一没触发，读者还有手可用。
     @ViewBuilder
     private var olderSection: some View {
         if model.canExtendSearch {
             Section {
-                HStack(spacing: DSHTheme.Spacing.hairline) {
-                    if isLoadingMore { ProgressView().controlSize(.mini) }
-                    Text(isLoadingMore ? "正在往前读…" : "继续下拉会接着往前读")
-                        .font(DSHTheme.Typography.micro)
-                        .foregroundStyle(DSHTheme.labelTertiary)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, DSHTheme.Spacing.tight)
-                .onAppear {
-                    // 哨兵露面 = 读者滑到了底部：接着读一页。没在读的时候不重复触发。
-                    guard !isLoadingMore else { return }
+                Button {
                     Task { await loadMore() }
+                } label: {
+                    HStack(spacing: DSHTheme.Spacing.hairline) {
+                        if isLoadingMore { ProgressView().controlSize(.mini) }
+                        Text(isLoadingMore ? "正在往前读…" : "继续往下滑，会接着往前读")
+                            .font(DSHTheme.Typography.micro)
+                            .foregroundStyle(isLoadingMore ? DSHTheme.labelTertiary : DSHTheme.brand)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, DSHTheme.Spacing.tight)
                 }
+                .buttonStyle(.plain)
                 .accessibilityIdentifier("search.older")
+                .onAppear { prefetchIfRunningLow(fallbackWhenNothingVisible: true) }
             } footer: {
                 Text("搜索只覆盖已经读到手机上的那段历史。")
                     .font(DSHTheme.Typography.micro)
@@ -250,6 +291,7 @@ struct TranscriptSearchSheet: View {
                     .foregroundStyle(DSHTheme.labelTertiary)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, DSHTheme.Spacing.tight)
+                    .accessibilityIdentifier("search.older.done")
             }
         }
     }
@@ -312,6 +354,10 @@ struct TranscriptSearchSheet: View {
         hits = isBrowsing
             ? TranscriptSearch.myQuestions(in: model.searchItems)
             : TranscriptSearch.hits(in: model.searchItems, query: query, onlyMine: onlyMine)
+        // 结果集换了（切筛选、改关键词、缓冲变大）：可见集合按 id 保留即可，
+        // 余量重新算一次。这一步不能省——它也是"点一下只读一页就够显示"的入口。
+        visibleHitIds = visibleHitIds.filter { id in hits.contains { $0.id == id } }
+        prefetchIfRunningLow()
     }
 
     private func pick(_ hit: TranscriptSearchHit) {
@@ -320,6 +366,45 @@ struct TranscriptSearchSheet: View {
     }
 
     /// 往搜索缓冲里再取一页（**不动时间线**，也就不会挪动读者的位置）。
+    /// 可见范围之外还剩几条？不够 `prefetchAhead` 就继续往前读——读完再判一次，
+    /// 所以"一旦触发就会连着读到够"（页里通常只有几条提问，一次要读好几页才攒够 10 条）。
+    private func prefetchIfRunningLow(fallbackWhenNothingVisible: Bool = false) {
+        guard !isLoadingMore, model.canExtendSearch, !hits.isEmpty else { return }
+        let lastVisible = hits.lastIndex { visibleHitIds.contains($0.id) }
+        guard let lastVisible else {
+            // 还没有行上报可见（首次布局那一瞬间）：只有底部那行露面时才兜底读一页。
+            if fallbackWhenNothingVisible { Task { await loadMore() } }
+            return
+        }
+        let remaining = hits.count - 1 - lastVisible
+        ViewportProbe.note("search.buffer", [
+            "rows": String(hits.count),
+            "visible": String(visibleHitIds.count),
+            "remaining": String(remaining),
+        ])
+        guard remaining <= Self.prefetchAhead else { return }
+        // 一轮滑动（或一次筛选/关键词变更）里最多自动读 `maxScrollDrivenLoads` 页：
+        // 读者再滑一下就又有这么多。**不能**按"有产出就一直读"放开——关键词命中很多时
+        // 那条路会把整段历史读完（2026-09-25 实测：搜 circleboom 一次读掉 9 页到 seq 0）。
+        let produced = hits.count > lastRowCount
+        guard scrollDrivenLoads < Self.maxScrollDrivenLoads else {
+            ViewportProbe.note("search.prefetch.budget", [
+                "rows": String(hits.count),
+                "remaining": String(remaining),
+                "budget": String(scrollDrivenLoads),
+            ], force: true)
+            return
+        }
+        scrollDrivenLoads += 1
+        ViewportProbe.note("search.prefetch", [
+            "rows": String(hits.count),
+            "remaining": String(remaining),
+            "produced": produced ? "1" : "0",
+            "budget": String(scrollDrivenLoads),
+        ], force: true)
+        Task { await loadMore() }
+    }
+
     private func loadMore() async {
         guard !isLoadingMore, model.canExtendSearch else { return }
         isLoadingMore = true
@@ -337,5 +422,30 @@ struct TranscriptSearchSheet: View {
             "firstAfter": hits.first?.id ?? "-",
             "kept": firstBefore == hits.first?.id ? "1" : "0",
         ], force: true)
+        lastRowCount = hits.count
+        // 追加进来的行在屏幕外，不会再触发 `onAppear`；所以这里主动再判一次余量，
+        // 不够就接着读（"触发了就继续预加载"）。
+        prefetchIfRunningLow()
+    }
+}
+
+/// 监听面板列表的滚动偏移，只为一件事：判断"读者真的滑了"（追加行不会改变偏移）。
+///
+/// 不用 `DragGesture`：在 `List` 上挂 drag 会吃掉行内的点击（2026-09-25 实测：
+/// 点了结果面板不关）。iOS 17 没有这个 API，那边就只剩"有产出才继续预读"这条腿——
+/// 表现为读者滑到底后可能要再点一下底部那行，属于可接受的降级。
+private struct SheetScrollWatcher: ViewModifier {
+    let onChange: (CGFloat) -> Void
+
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, *) {
+            content.onScrollGeometryChange(for: CGFloat.self) { geometry in
+                geometry.contentOffset.y
+            } action: { _, offset in
+                onChange(offset)
+            }
+        } else {
+            content
+        }
     }
 }
