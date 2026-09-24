@@ -91,8 +91,21 @@ final class ChatModel {
     private(set) var hasOlder = false
     private(set) var lastError: String?
 
-    /// Model routes the host can serve, loaded once per session.
+    /// Model routes the host can serve.
+    ///
+    /// Refreshed rather than loaded once: the desktop can add a provider route
+    /// (a company gateway, a second vendor) while the phone is open, and waiting
+    /// for an app restart to see it made the picker look like it was missing
+    /// models it could actually use.
     private(set) var catalog: ModelCatalog?
+    /// When `catalog` was last read, so opening the picker can decide to re-read.
+    private var catalogFetchedAt: Date?
+    /// How long a catalog stays fresh.
+    private static let catalogMaxAge: TimeInterval = 300
+    /// True while the "make this the default for new sessions" write is in flight.
+    private(set) var isSettingDefaultModel = false
+    /// Set when that write failed, so the picker can say why.
+    private(set) var defaultModelError: String?
     private(set) var currentSelection: ModelSelection?
     private(set) var permissionOptions: [PermissionsProjection.Option] = []
     private(set) var currentPermission: String?
@@ -658,7 +671,58 @@ final class ChatModel {
 
     private func loadCatalog(client: DSHClient) async {
         guard catalog == nil else { return }
-        catalog = try? await client.modelCatalog()
+        await refreshCatalog(client: client)
+    }
+
+    /// Re-reads the host's model routes.
+    ///
+    /// A failure keeps the catalog already on screen: a picker that empties out
+    /// because one request timed out is worse than a slightly stale list.
+    func refreshCatalog(client: DSHClient? = nil) async {
+        guard let client = client ?? store?.client else { return }
+        if let fresh = try? await client.modelCatalog() {
+            catalog = fresh
+            catalogFetchedAt = Date()
+        }
+    }
+
+    /// Re-reads the catalog when it is older than the freshness window.
+    func refreshCatalogIfStale() async {
+        if let at = catalogFetchedAt, catalog != nil,
+           Date().timeIntervalSince(at) < Self.catalogMaxAge {
+            return
+        }
+        await refreshCatalog()
+    }
+
+    /// The model new sessions start with, as the host reports it.
+    var defaultSelection: ModelSelection? { catalog?.default }
+
+    /// Makes one model the default for sessions created from now on.
+    ///
+    /// Deliberately separate from ``selectModel(_:)``: that one changes the
+    /// session on screen, while this writes the host's `agent-default-model`
+    /// setting and therefore every session started afterwards — including ones
+    /// started on the desktop.
+    func setDefaultModel(_ selection: ModelSelection) async {
+        guard let client = store?.client else { return }
+        guard !isSettingDefaultModel else { return }
+        isSettingDefaultModel = true
+        defaultModelError = nil
+        defer { isSettingDefaultModel = false }
+        var patch: [String: JSONValue] = [
+            "provider": .string(selection.provider),
+            "model": .string(selection.model),
+        ]
+        if let effort = selection.reasoningEffort { patch["reasoningEffort"] = .string(effort) }
+        do {
+            try await client.updateSettings(namespace: "agent-default-model", patch: .object(patch))
+            // Read it back rather than assuming: the host is the one that owns
+            // the value, and the picker marks whichever model it reports.
+            await refreshCatalog(client: client)
+        } catch {
+            defaultModelError = ConnectionStore.describe(error)
+        }
     }
 
     // MARK: - History pagination

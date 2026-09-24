@@ -1,0 +1,15 @@
+{
+  "name": "dsh-llm-key-router",
+  "version": "0.1.0",
+  "private": true,
+  "description": "本机 LLM key 轮换代理：会话粘性 + 失败才换，多把 key 对客户端与手机端完全透明",
+  "type": "module",
+  "main": "lib/proxy.mjs",
+  "scripts": {
+    "start": "node bin/llm-key-router.mjs start",
+    "test": "node --test test/"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

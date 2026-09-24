@@ -1,0 +1,10 @@
+{
+  "port": 8799,
+  "upstream": "https://<你的上游网关域名>",
+  "keysFile": "~/.dsh/llm-key-router/keys.txt",
+  "affinityPath": "~/.dsh/llm-key-router/affinity.json",
+  "affinityTtlHours": 24,
+  "cooldownSeconds": 60,
+  "maxAttempts": 3,
+  "token": "<本机令牌，pi-ai route 的 apiKeyEnv 指向它>"
+}

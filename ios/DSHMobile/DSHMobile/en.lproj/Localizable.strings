@@ -545,3 +545,9 @@ It is registered as a workspace first, so a new group appears in the desktop sid
 
 /* feedback entry */
 "反馈" = "Feedback";
+
+/* 模型选择器：默认模型 vs 当前会话 */
+"默认" = "Default";
+"设为新会话默认" = "Set as default for new sessions";
+"点一下 = 只切当前会话；「设为新会话默认」会写回电脑端，之后新建的会话都用它。" = "Tap = this session only; “Set as default for new sessions” writes back to your computer and applies to sessions created afterwards.";
+"设为默认失败：%@" = "Could not set the default: %@";

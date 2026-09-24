@@ -24,6 +24,12 @@ public struct ModelDescriptor: Sendable, Codable, Identifiable {
     /// The selectable reasoning efforts this model accepts.
     public struct Reasoning: Sendable, Codable {
         public let efforts: [Effort]?
+        /// The effort the host picks when the caller names none.
+        ///
+        /// Carried through rather than re-derived: "the first effort in the
+        /// list" is a different answer, and writing a default model without it
+        /// would silently pick a level the host never chose.
+        public let defaultEffort: String?
 
         public struct Effort: Sendable, Codable, Identifiable {
             public let id: String

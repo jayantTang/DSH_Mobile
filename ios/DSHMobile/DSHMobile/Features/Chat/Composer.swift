@@ -433,6 +433,16 @@ struct ModelPickerSheet: View {
                             }
                         }
                     }
+                    Section {
+                        if let failure = model.defaultModelError {
+                            Text("设为默认失败：\(failure)")
+                                .font(DSHTheme.Typography.caption)
+                                .foregroundStyle(DSHTheme.danger)
+                        }
+                        Text("点一下 = 只切当前会话；「设为新会话默认」会写回电脑端，之后新建的会话都用它。")
+                            .font(DSHTheme.Typography.micro)
+                            .foregroundStyle(DSHTheme.labelTertiary)
+                    }
                 } else {
                     ProgressView().controlSize(.small)
                 }
@@ -483,9 +493,35 @@ struct ModelPickerSheet: View {
                         .foregroundStyle(DSHTheme.labelTertiary)
                 }
                 Spacer()
-                if model.currentSelection?.model == descriptor.id {
-                    Image(systemName: "checkmark")
-                        .foregroundStyle(DSHTheme.brand)
+                VStack(alignment: .trailing, spacing: 3) {
+                    if model.currentSelection?.model == descriptor.id {
+                        Image(systemName: "checkmark")
+                            .foregroundStyle(DSHTheme.brand)
+                    }
+                    if isHostDefault(group: group, descriptor: descriptor) {
+                        // 新会话用的就是它：标出来，省得"我改了默认却看不出来"。
+                        Text("默认")
+                            .font(DSHTheme.Typography.micro)
+                            .foregroundStyle(DSHTheme.labelSecondary)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 1)
+                            .background(DSHTheme.layer3, in: Capsule())
+                            .accessibilityIdentifier("model.default.badge.\(descriptor.id)")
+                    } else {
+                        Menu {
+                            Button {
+                                Task { await model.setDefaultModel(selection(for: group, descriptor: descriptor)) }
+                            } label: {
+                                Label("设为新会话默认", systemImage: "pin")
+                            }
+                        } label: {
+                            Image(systemName: "ellipsis.circle")
+                                .font(.system(size: 14))
+                                .foregroundStyle(DSHTheme.labelTertiary)
+                        }
+                        .accessibilityLabel("更多")
+                        .accessibilityIdentifier("model.menu.\(descriptor.id)")
+                    }
                 }
             }
             if !efforts.isEmpty {
@@ -522,16 +558,26 @@ struct ModelPickerSheet: View {
         }
         .contentShape(Rectangle())
         .onTapGesture {
-            Task {
-                await model.selectModel(
-                    ModelSelection(
-                        provider: group.id,
-                        model: descriptor.id,
-                        reasoningEffort: descriptor.reasoning?.efforts?.first?.id
-                    )
-                )
-            }
+            Task { await model.selectModel(selection(for: group, descriptor: descriptor)) }
         }
+    }
+
+    /// 新会话默认用的就是这个模型（host 下发的 `catalog.default`）。
+    private func isHostDefault(group: ModelProviderGroup, descriptor: ModelDescriptor) -> Bool {
+        guard let fallback = model.defaultSelection else { return false }
+        return fallback.provider == group.id && fallback.model == descriptor.id
+    }
+
+    /// 点一下改的是**当前会话**用的模型与思考档位。
+    ///
+    /// 档位优先用 host 给这个模型标的默认档（`defaultEffort`），没有才退回第一档：
+    /// "列表里的第一个"和"host 认为合适的那个"不是一回事。
+    private func selection(for group: ModelProviderGroup, descriptor: ModelDescriptor) -> ModelSelection {
+        let efforts = descriptor.reasoning?.efforts
+        let preferred = descriptor.reasoning?.defaultEffort
+            ?? efforts?.first(where: { $0.id == model.currentSelection?.reasoningEffort })?.id
+            ?? efforts?.first?.id
+        return ModelSelection(provider: group.id, model: descriptor.id, reasoningEffort: preferred)
     }
 }
 
