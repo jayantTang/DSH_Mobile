@@ -69,6 +69,14 @@ struct ChatView: View {
     @State private var olderPump: Task<Void, Never>?
     /// 已经处理过的补页代数，用来把"头部插入"从"尾部追加"里分出来。
     @State private var handledPrepend = 0
+    /// 搜索面板是否打开。
+    @State private var isSearching = false
+    /// 搜索面板选中的那条（行 id）：转写页滚动到它并短暂高亮。
+    @State private var searchJumpId: String?
+    /// 刚刚跳过去、正在高亮的那一行。
+    @State private var highlightedItemId: String?
+    /// 高亮的清除任务（连续跳转时上一次要取消）。
+    @State private var highlightTask: Task<Void, Never>?
     /// 补页前视口里最上面那条消息的 id：补完要把它锚回视口顶部（见 `anchorAfterPrepend`）。
     @State private var prependAnchor: String?
     /// 那一次锚定的重试序列。
@@ -131,6 +139,9 @@ struct ChatView: View {
         }
         .sheet(isPresented: $isShowingModelPicker) {
             ModelPickerSheet(model: model)
+        }
+        .sheet(isPresented: $isSearching) {
+            TranscriptSearchSheet(model: model) { id in searchJumpId = id }
         }
         .sheet(item: $readingMessage) { message in
             MessageTextSheet(message: message)
@@ -264,6 +275,10 @@ struct ChatView: View {
             ViewportProbe.resume()
             scrollToBottom(proxy, animated: false)
         }
+        .onChange(of: searchJumpId) { _, id in
+            guard let id else { return }
+            jumpToItem(id, proxy: proxy)
+        }
         // 探针驱动（`-DSHProbeOlderScroll`）：仿真器里没法对转写页做手势滑动，
         // 所以"往上滑"这一段由 App 自己代劳，其余全是产品代码。
         .task { await runOlderScrollDrive(proxy) }
@@ -276,6 +291,9 @@ struct ChatView: View {
             openedSessionId = nil
             olderPump?.cancel()
             olderPump = nil
+            highlightTask?.cancel()
+            highlightedItemId = nil
+            searchJumpId = nil
             prependAnchorTask?.cancel()
             prependAnchorTask = nil
             prependAnchor = nil
@@ -424,6 +442,18 @@ struct ChatView: View {
     /// 一行消息。抽出来是为了让"懒加载/非懒加载"两种排布共用同一份定义。
     private func row(_ item: TimelineItem) -> some View {
         TimelineRowView(item: item)
+            // 搜索跳过来的那一行：淡底 + 左侧色条，一眼能认出"就是这条"。
+            .background(alignment: .leading) {
+                if highlightedItemId == item.id {
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(DSHTheme.brand.opacity(0.10))
+                        .overlay(alignment: .leading) {
+                            Rectangle()
+                                .fill(DSHTheme.brand)
+                                .frame(width: 2)
+                        }
+                }
+            }
             .modifier(TranscriptRowChrome(inList: !ProbeVariants.lazyStack))
             .id(item.id)
             .probed("row:\(item.id)")
@@ -596,6 +626,33 @@ struct ChatView: View {
                 guard model.timeline.items.contains(where: { $0.id == anchor }) else { return }
                 if !sentinelNearTop { return }
                 proxy.scrollTo(anchor, anchor: .top)
+            }
+        }
+    }
+
+    /// 滚到搜索选中的那一行，并高亮一会儿。
+    ///
+    /// 三次重试的理由和 `pinOnOpen` 一样：目标行的位置要等 `List` 把这一批行折完才准，
+    /// 只滚一次会落在"当时的"位置上。同时把跟随关掉、并记成"读者自己滚过"——
+    /// 否则滚过去之后只要内容一变，`repinAfterContentChange` 就把人拽回底部。
+    private func jumpToItem(_ id: String, proxy: ScrollViewProxy) {
+        guard ownsTranscript else { return }
+        isFollowing = false
+        userScrolled = true
+        ViewportProbe.note("search.jump", ["item": id], force: true)
+        Task { @MainActor in
+            for delay in [0, 120, 300] {
+                if delay > 0 { try? await Task.sleep(for: .milliseconds(delay)) }
+                if Task.isCancelled || !ownsTranscript { return }
+                guard model.timeline.items.contains(where: { $0.id == id }) else { return }
+                proxy.scrollTo(id, anchor: .center)
+            }
+            highlightedItemId = id
+            highlightTask?.cancel()
+            highlightTask = Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(1600))
+                if Task.isCancelled { return }
+                if highlightedItemId == id { highlightedItemId = nil }
             }
         }
     }
@@ -774,6 +831,14 @@ struct ChatView: View {
                     .accessibilityIdentifier("chat.running")
                     .accessibilityLabel("运行中")
             }
+
+            Button {
+                isSearching = true
+            } label: {
+                Image(systemName: "magnifyingglass")
+            }
+            .accessibilityIdentifier("chat.search")
+            .accessibilityLabel("在本会话里搜索")
 
             Button {
                 isShowingInfo = true
