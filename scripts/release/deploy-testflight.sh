@@ -83,8 +83,12 @@ BUILD_NUMBER="${DSH_BUILD_NUMBER:-$(date +%Y%m%d.%H%M)}"
 if [ "$EXPORT_ONLY" = 0 ] && [ "$UPLOAD_ONLY" = 0 ]; then
   say "归档（Release，构建号 ${BUILD_NUMBER}）"
   mkdir -p "$BUILD_DIR"
+  # 独立 DerivedData：默认那份是 ~/Library/Developer/Xcode/DerivedData 下的共享目录，
+  # 别的会话同时在构建同一个工程时会让 build.db 打架（2026-09-24 实测报
+  # "build.db: disk I/O error" + "failed to deserialize Info.plist task context"）。
   xcodebuild -project "$PROJECT_DIR/DSHMobile.xcodeproj" -scheme DSHMobile \
     -configuration Release -destination 'generic/platform=iOS' \
+    -derivedDataPath "$BUILD_DIR/derived" \
     -archivePath "$BUILD_DIR/DSHMobile.xcarchive" \
     -allowProvisioningUpdates \
     ${AUTH_ARGS[@]+"${AUTH_ARGS[@]}"} \
