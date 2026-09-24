@@ -331,6 +331,7 @@ final class ChatModel {
 
         syncPlanRef = syncPlan
         startFollowing(client: client, summary: summary, maxMessages: syncPlan.maxMessages)
+        restoreSearchHistory()
         pendingOpen = nil
         await loadCatalog(client: client)
         subscribeToPrompts()
@@ -381,6 +382,41 @@ final class ChatModel {
         pendingStreamFrames.removeAll()
         clearSearchHistory()
         phase = .idle
+    }
+
+    /// 把本地的"更早历史"读进搜索缓冲。
+    ///
+    /// 冷启动、换会话、从后台回来都走这里：本地有就先用本地的，**不联网**；
+    /// 读者往下翻越过这段范围，`extendSearchHistory()` 才去 host 取下一页。
+    /// 这正是"跟会话查看历史对话一样"的那套逻辑。
+    private func restoreSearchHistory() {
+        guard let sessionId = session?.sessionId, let scope = sessionScope else { return }
+        guard let stored = transcriptCache.loadOlder(scope: scope, sessionId: sessionId) else { return }
+        // 只留比当前窗口最老那条还老的：窗口本身可能已经变过（换会话/重新同步）。
+        let windowOldest = oldestSeq ?? Int.max
+        let usable = stored.records.filter { $0.event.seq < windowOldest }
+        guard !usable.isEmpty else {
+            ViewportProbe.note("search.restore.skipped", ["stored": String(stored.records.count)])
+            return
+        }
+        searchRecords = usable
+        searchOldestSeq = usable.first?.event.seq
+        searchHasOlder = stored.hasOlder
+        cachedSearchItems = nil
+        searchScopeVersion += 1
+        ViewportProbe.note("search.restore", [
+            "records": String(usable.count),
+            "oldest": String(searchOldestSeq ?? -1),
+            "hasOlder": searchHasOlder ? "1" : "0",
+        ], force: true)
+    }
+
+    /// 把搜索缓冲写盘（读者每次往下翻一页都会走一次）。
+    private func persistSearchHistory() {
+        guard let sessionId = session?.sessionId, let scope = sessionScope else { return }
+        guard !searchRecords.isEmpty else { return }
+        transcriptCache.saveOlder(records: searchRecords, hasOlder: searchHasOlder,
+                                  scope: scope, sessionId: sessionId)
     }
 
     /// 丢掉搜索缓冲：它属于刚关掉的那个会话。
@@ -892,6 +928,7 @@ final class ChatModel {
         searchOldestSeq = fresh.first?.event.seq
         searchHasOlder = page.hasMore
         searchScopeVersion += 1
+        persistSearchHistory()
         ViewportProbe.note("search.extended", [
             "from": String(from),
             "records": String(fresh.count),

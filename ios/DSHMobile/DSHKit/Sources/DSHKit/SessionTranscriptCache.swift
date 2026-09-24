@@ -35,6 +35,35 @@ public struct SessionTranscriptSnapshot: Codable, Sendable {
     }
 }
 
+/// 「搜索时往前读到的那段更早的历史」，同样按会话落盘。
+///
+/// 与尾部快照分开存：尾部是"打开会话就显示"的 200 条，这段是读者为了搜索往上翻出来的
+/// 更早记录（可以到几千条）。分开的理由是两者的淘汰节奏完全不同——尾部每次会话都被
+/// 重写，这段只在读者往下翻的时候长大。
+///
+/// 为什么值得落盘：不落的话，每次冷启动/换会话再打开搜索面板，都要把同样那几十页
+/// 从 host 重新读一遍（长会话一页 ~300 条），既慢又费流量。存下来之后，
+/// "本地有就直接用，越过本地范围才走网络"。
+public struct SessionOlderSnapshot: Codable, Sendable {
+    public static let schemaVersion = 1
+    public let schema: Int
+    public let savedAt: Date
+    /// 由旧到新；总是紧挨着尾部窗口的下界（`oldestSeq` 是这段里最老的一条）。
+    public let records: [SessionRecord]
+    public let oldestSeq: Int?
+    /// 这段最老的一条之前，host 那边还有没有更早的。
+    public let hasOlder: Bool
+
+    public init(savedAt: Date, records: [SessionRecord], oldestSeq: Int?, hasOlder: Bool,
+                schema: Int = SessionOlderSnapshot.schemaVersion) {
+        self.schema = schema
+        self.savedAt = savedAt
+        self.records = records
+        self.oldestSeq = oldestSeq
+        self.hasOlder = hasOlder
+    }
+}
+
 /// Keeps those tails on disk, one file per (computer, session).
 ///
 /// Scope is part of the path on purpose: two computers can both have a session
@@ -51,6 +80,11 @@ public struct SessionTranscriptCache {
     /// How many records of the tail are kept. The live view opens with a 60-record
     /// snapshot, so 200 covers "what was on screen" plus a screen of history.
     public static let maxRecords = 200
+
+    /// 每个会话最多留多少条"搜索往前读"的记录。按 ~300 条/页算，3000 条约等于
+    /// 十页；再往前的就不留了（那是磁盘预算问题，不是功能问题——越过本地范围的
+    /// 部分照样能现取）。淘汰时丢**最老**的那头，保住紧挨窗口的这一段连续区间。
+    public static let maxOlderRecords = 3000
 
     /// What all transcripts together may occupy before the oldest files go.
     public static let budgetBytes = 40 * 1024 * 1024
@@ -79,6 +113,16 @@ public struct SessionTranscriptCache {
         root
             .appendingPathComponent(Self.slug(scope), isDirectory: true)
             .appendingPathComponent("\(Self.slug(sessionId)).json", isDirectory: false)
+    }
+
+    /// 搜索用的更早历史存哪儿：同一个 scope 目录下的另一个文件。
+    ///
+    /// 放同一个目录是故意的：`prune()`（30 天 + 40MB 预算）与 `sizeOnDisk()`
+    /// （设置页的"占用多少"）都在目录上走，多一种文件不用再写第二套清理逻辑。
+    private func olderURL(scope: String, sessionId: String) -> URL {
+        root
+            .appendingPathComponent(Self.slug(scope), isDirectory: true)
+            .appendingPathComponent("\(Self.slug(sessionId)).older.json", isDirectory: false)
     }
 
     public static func slug(_ value: String) -> String {
@@ -152,6 +196,50 @@ public struct SessionTranscriptCache {
 
     public func clear(scope: String, sessionId: String) {
         try? fileManager.removeItem(at: url(scope: scope, sessionId: sessionId))
+        try? fileManager.removeItem(at: olderURL(scope: scope, sessionId: sessionId))
+    }
+
+    // MARK: - 搜索用的更早历史
+
+    /// 读回那段更早的历史；没有、过期或结构不对都返回 nil（并把坏文件删掉）。
+    public func loadOlder(scope: String, sessionId: String) -> SessionOlderSnapshot? {
+        let file = olderURL(scope: scope, sessionId: sessionId)
+        guard let data = try? Data(contentsOf: file) else { return nil }
+        guard let snapshot = try? JSONDecoder().decode(SessionOlderSnapshot.self, from: data),
+              snapshot.schema == SessionOlderSnapshot.schemaVersion,
+              now().timeIntervalSince(snapshot.savedAt) <= Self.maxAge
+        else {
+            try? fileManager.removeItem(at: file)
+            return nil
+        }
+        guard !snapshot.records.isEmpty else { return nil }
+        // `oldestSeq` 一律按真正存下的记录推，不信调用方写进去的值（与尾部快照同一条规矩）。
+        return SessionOlderSnapshot(
+            savedAt: snapshot.savedAt,
+            records: snapshot.records,
+            oldestSeq: snapshot.records.first?.event.seq,
+            hasOlder: snapshot.hasOlder
+        )
+    }
+
+    /// 写入那段更早的历史，只留最新的 ``maxOlderRecords`` 条。
+    public func saveOlder(records: [SessionRecord], hasOlder: Bool,
+                          scope: String, sessionId: String) {
+        guard !records.isEmpty else { return }
+        let kept = records.count > Self.maxOlderRecords
+            ? Array(records.suffix(Self.maxOlderRecords))
+            : records
+        let snapshot = SessionOlderSnapshot(
+            savedAt: now(),
+            records: kept,
+            oldestSeq: kept.first?.event.seq,
+            hasOlder: hasOlder
+        )
+        guard let data = try? JSONEncoder().encode(snapshot) else { return }
+        let file = olderURL(scope: scope, sessionId: sessionId)
+        try? fileManager.createDirectory(
+            at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? data.write(to: file, options: .atomic)
     }
 
     /// Forgets every computer's transcripts (the settings switch).
