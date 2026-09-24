@@ -47,6 +47,22 @@ const EFFORTS = { off: 'none', low: 'low', medium: 'medium', high: 'high', max: 
  */
 const MAX_TOKENS = 131072
 
+/**
+ * 每个模型的**上下文窗口**与显示用的短标签。
+ *
+ * 为什么要显式声明：DSH 用这个数字决定"什么时候压缩上下文"。pi-ai 对没声明窗口的
+ * 手写模型一律按 262144 兜底，而官方 DeepSeek 那条 route 是 1,000,000 —— 也就是说
+ * 不声明就等于"在公司网关上把有效上下文砍成官方的四分之一"，压缩会明显提前。
+ *
+ * 表中数字来自公开规格/实测；`WINDOW` 缺省仍是 pi-ai 的 262144，标成「未核实」，
+ * 逐模型核准后改这里即可（手机端显示的名字会跟着变）。
+ */
+const WINDOW = 262144
+const WINDOWS = {
+  // 已核实的写在这里：'deepseek-v4.1-flash': 256 * 1024,
+}
+const PROBE_CAVEAT = '未核实'
+
 const [command, argument] = process.argv.slice(2)
 
 if (command === 'keys') {
@@ -93,12 +109,20 @@ async function wire() {
   try {
     const response = await fetch(`http://127.0.0.1:${config.port}/v1/models`, { headers })
     if (!response.ok) throw new Error(`HTTP ${response.status}`)
-    models = (await response.json()).data.map((model) => ({
-      id: model.id,
-      name: model.name ?? model.id,
-      reasoningEfforts: EFFORTS,
-      maxTokens: MAX_TOKENS,
-    }))
+    models = (await response.json()).data.map((model) => {
+      const window = WINDOWS[model.id] ?? WINDOW
+      const label = window >= 1_000_000 ? `${Math.round(window / 1_000_000)}M` : `${Math.round(window / 1024)}k`
+      const verified = WINDOWS[model.id] !== undefined
+      return {
+        id: model.id,
+        // 窗口写进名字：选择器里一眼能比出"这个够不够用"（不给名字的话客户端看不到窗口，
+        // host 的 modelCatalog 只下发 id/name/描述/思考档位）。
+        name: `${model.name ?? model.id} · ${label}${verified ? '' : `（${PROBE_CAVEAT}）`}`,
+        reasoningEfforts: EFFORTS,
+        maxTokens: MAX_TOKENS,
+        contextWindow: window,
+      }
+    })
   } catch (error) {
     fail(`读不到代理的模型清单（${error.message}）——先把代理跑起来：`
       + `node sidecars/llm-key-router/bin/llm-key-router.mjs start`)

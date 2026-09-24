@@ -55,6 +55,24 @@ DSH 会话 → dsh-llm-pi-ai(route: 公司网关) → http://127.0.0.1:8799/v1 �
 两种读法：`node scripts/dev/llm-router-setup.mjs status`（给人看的几行），
 或 `curl -H "Authorization: Bearer <token>" 'http://127.0.0.1:8799/stats?days=30'`（原始 JSON）。
 
+## 上下文窗口：决定"什么时候压缩"
+
+DSH 用 route 里声明的 `contextWindow` 判断一个会话还能装多少，到线就压缩上下文。
+官方 DeepSeek 那条 route 声明的是 **1,000,000 / 输出 256,000**（`dsh-llm-deepseek` 里的
+`DEFAULT_CONTEXT_WINDOW` / `DEFAULT_MAX_TOKENS`）；手写 route 不声明窗口时，pi-ai 按
+**262,144** 兜底 —— 也就是说，**不声明就等于把有效上下文砍成官方的四分之一**，
+压缩会明显提前。
+
+host 的 `session/modelCatalog` 只下发 id/name/描述/思考档位，**不带窗口**，客户端看不到。
+所以 `llm-router-setup.mjs` 把窗口写进模型名（`DeepSeek V4.1 Flash · 256k`），
+选择器里一眼能比；`WINDOWS` 表里没有的模型标「未核实」——那些数字是 pi-ai 的兜底值，
+不是实测值，核准一个改一个即可（改完重跑 `wire`，手机端名字跟着变）。
+
+用荒谬的 `max_tokens` 探针可以免费问出各家**单次输出**上限（实测 2026-09-24）：
+qwen3.8-flash `[1, 131072]`、kimi-k3 `[1, 1048576]`、MiniMax-M3 `≤ 524288`，
+而 deepseek/glm/doubao/hy3 不校验（接受 5,000,000）。输出上限与窗口是两回事：
+前者只限"单次生成长度"，后者才决定"能装多少历史"。
+
 ## 坑：输出上限必须自己声明
 
 pi-ai 只在**请求带了上限**时才往线上写 `max_tokens`（它源码里就是
