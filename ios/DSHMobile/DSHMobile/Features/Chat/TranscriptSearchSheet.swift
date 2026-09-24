@@ -29,6 +29,16 @@ struct TranscriptSearchSheet: View {
     @State private var lastScrollOffset: CGFloat?
     /// 上一次看到的行数，用来判这一轮预读有没有产出。
     @State private var lastRowCount = 0
+    /// 防抖之后真正跑的那次搜索（打字时每敲一下都会把它取消重排）。
+    @State private var searchTask: Task<Void, Never>?
+    /// 已经搜过的"筛选 + 关键词"指纹：没变就不重搜（用户要求"有变更再触发"）。
+    @State private var lastSearchKey = ""
+    /// 最新排队的指纹；只有它对应的那次搜索有权把 `isSearchPending` 放下来。
+    @State private var latestSearchKey = ""
+    /// 正在搜（打字期间为真）：这段时间里不预读、不追加行，免得和输入抢主线程。
+    @State private var isSearchPending = false
+    /// 打字停顿多久才真正搜。60ms 一跳的输入里，只有最后一次会落地。
+    private static let typingDebounce = 260
     /// 可见范围之外至少要先备好这么多条：不够就继续往前读。
     ///
     /// 为什么不是"底部哨兵露面才读"：哨兵行只在 `onAppear` 时触发一次，之后它一直
@@ -63,19 +73,23 @@ struct TranscriptSearchSheet: View {
             }
         }
         .onAppear {
-            refresh()
+            scheduleSearch(immediate: true)
             // 不抢焦点：面板的默认态是"能一眼看到并点选"，键盘会把列表盖掉一半。
             // 想搜关键词的点一下输入框就行。
             // 浏览态的第一页交给列表底部的哨兵行去取（它一露面就会触发）。
         }
+        // 打字：防抖，只有停下来（或换了关键词）才真正搜一次。
         .onChange(of: query) { _, _ in
             scrollDrivenLoads = 0
-            refresh()
+            scheduleSearch()
         }
-        .onChange(of: onlyMine) { _, _ in refresh() }
+        .onChange(of: onlyMine) { _, _ in
+            scrollDrivenLoads = 0
+            scheduleSearch(immediate: true)
+        }
         // 补页 / 往前翻历史之后范围变大，结果要跟着更新（读者不用重新打字）。
-        .onChange(of: model.timeline.items.count) { _, _ in refresh() }
-        .onChange(of: model.searchScopeVersion) { _, _ in refresh() }
+        .onChange(of: model.timeline.items.count) { _, _ in scheduleSearch() }
+        .onChange(of: model.searchScopeVersion) { _, _ in scheduleSearch() }
     }
 
     // MARK: - 输入与筛选
@@ -117,7 +131,7 @@ struct TranscriptSearchSheet: View {
             chip("全部内容", selected: !onlyMine) {
                 onlyMine = false
                 scrollDrivenLoads = 0
-                refresh()
+                scheduleSearch(immediate: true)
             }
             .accessibilityIdentifier("search.scope.all")
             chip("只看我的提问", selected: onlyMine) {
@@ -126,10 +140,10 @@ struct TranscriptSearchSheet: View {
                 // 收起键盘，让"我原来问过什么"这份列表整屏可见；想按关键词缩小范围
                 // 再点输入框。
                 isFocused = false
-                refresh()
-                // 只先取一页：读到多少显示多少，剩下的由列表往下滑时一页页接着读
-                // （见 `olderSection` 的哨兵行）。读者看不到"等它读完"的阻塞。
-                Task { await loadMore() }
+                scheduleSearch(immediate: true)
+                // 只先取一页：读到多少显示多少，剩下的由列表往下滑时一页页接着读。
+                // 读者看不到"等它读完"的阻塞。
+                requestLoad()
             }
             .accessibilityIdentifier("search.scope.mine")
             Spacer()
@@ -265,7 +279,7 @@ struct TranscriptSearchSheet: View {
         if model.canExtendSearch {
             Section {
                 Button {
-                    Task { await loadMore() }
+                    requestLoad()
                 } label: {
                     HStack(spacing: DSHTheme.Spacing.hairline) {
                         if isLoadingMore { ProgressView().controlSize(.mini) }
@@ -349,14 +363,63 @@ struct TranscriptSearchSheet: View {
 
     // MARK: - 动作
 
-    private func refresh() {
-        // 浏览态列全部提问；否则按关键词在"时间线 + 往前读进来的缓冲"里搜。
-        hits = isBrowsing
-            ? TranscriptSearch.myQuestions(in: model.searchItems)
-            : TranscriptSearch.hits(in: model.searchItems, query: query, onlyMine: onlyMine)
-        // 结果集换了（切筛选、改关键词、缓冲变大）：可见集合按 id 保留即可，
-        // 余量重新算一次。这一步不能省——它也是"点一下只读一页就够显示"的入口。
-        visibleHitIds = visibleHitIds.filter { id in hits.contains { $0.id == id } }
+    /// 现在要搜什么（筛选 + 关键词）——同时也是"要不要重搜"的指纹。
+    private var searchKey: String {
+        "\(onlyMine ? "mine" : "all")|\(query.trimmingCharacters(in: .whitespacesAndNewlines))"
+    }
+
+    /// 排一次搜索。打字时每敲一下都会把上一次排的取消掉，所以只有停下来那一次会真的跑；
+    /// 指纹没变（比如只是内容变大）也走这条路，但 `immediate` 之外的重复输入不会重搜。
+    private func scheduleSearch(immediate: Bool = false) {
+        let key = searchKey
+        searchTask?.cancel()
+        latestSearchKey = key
+        isSearchPending = true
+        ViewportProbe.note("search.schedule", ["key": key, "immediate": immediate ? "1" : "0"])
+        if immediate {
+            searchTask = Task { @MainActor in await performSearch(key: key) }
+            return
+        }
+        searchTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(Self.typingDebounce))
+            if Task.isCancelled {
+                // 打字期间被打断的那些：探针留痕，用来证明"只有最后一次落地"。
+                ViewportProbe.note("search.dropped", ["key": key])
+                return
+            }
+            await performSearch(key: key)
+        }
+    }
+
+    /// 真正的匹配：在后台线程跑，主线程只负责把结果换上去。
+    ///
+    /// 为什么必须离开主线程：一边打字一边把整段已读历史（长会话几千上万条）重新匹配一遍，
+    /// 每敲一个字都卡一下——2026-09-25 用户实测。`TimelineItem` 是 `Sendable`，
+    /// 主线程只取一次快照交给后台。
+    @MainActor
+    private func performSearch(key: String) async {
+        lastSearchKey = key
+        let items = model.searchItems
+        let query = self.query
+        let mine = onlyMine
+        let browsing = isBrowsing
+        let started = Date()
+        let found = await Task.detached(priority: .userInitiated) {
+            browsing ? TranscriptSearch.myQuestions(in: items)
+                     : TranscriptSearch.hits(in: items, query: query, onlyMine: mine)
+        }.value
+        if Task.isCancelled { return }
+        ViewportProbe.note("search.run", [
+            "key": key,
+            "items": String(items.count),
+            "hits": String(found.count),
+            "ms": String(format: "%.0f", Date().timeIntervalSince(started) * 1000),
+        ], force: true)
+        if latestSearchKey == key { isSearchPending = false }
+        guard latestSearchKey == key else { return }
+        hits = found
+        // 结果集换了（切筛选、改关键词、缓冲变大）：可见集合按 id 保留，余量重算一次。
+        visibleHitIds = visibleHitIds.filter { id in found.contains { $0.id == id } }
         prefetchIfRunningLow()
     }
 
@@ -370,10 +433,12 @@ struct TranscriptSearchSheet: View {
     /// 所以"一旦触发就会连着读到够"（页里通常只有几条提问，一次要读好几页才攒够 10 条）。
     private func prefetchIfRunningLow(fallbackWhenNothingVisible: Bool = false) {
         guard !isLoadingMore, model.canExtendSearch, !hits.isEmpty else { return }
+        // 打字期间不读：那会一边追加行一边重排列表，和输入抢主线程（也正是"卡"的来源）。
+        guard !isSearchPending else { return }
         let lastVisible = hits.lastIndex { visibleHitIds.contains($0.id) }
         guard let lastVisible else {
             // 还没有行上报可见（首次布局那一瞬间）：只有底部那行露面时才兜底读一页。
-            if fallbackWhenNothingVisible { Task { await loadMore() } }
+            if fallbackWhenNothingVisible { requestLoad() }
             return
         }
         let remaining = hits.count - 1 - lastVisible
@@ -402,19 +467,25 @@ struct TranscriptSearchSheet: View {
             "produced": produced ? "1" : "0",
             "budget": String(scrollDrivenLoads),
         ], force: true)
+        requestLoad()
+    }
+
+    /// 起一次"往前读一页"。同步占住 `isLoadingMore`，避免同一批行事件里起好几个。
+    private func requestLoad() {
+        guard !isLoadingMore, model.canExtendSearch else { return }
+        isLoadingMore = true
         Task { await loadMore() }
     }
 
     private func loadMore() async {
-        guard !isLoadingMore, model.canExtendSearch else { return }
-        isLoadingMore = true
-        defer { isLoadingMore = false }
         // 探针：记下"追加前后"的条数与**第一条**。追加只发生在列表末尾，所以第一条
         // 必须始终不变——这是"加载无感、列表不跳"的机器判据（`firstBefore == firstAfter`）。
         let firstBefore = hits.first?.id
         let countBefore = hits.count
         await model.extendSearchHistory()
-        refresh()
+        await performSearch(key: searchKey)
+        lastRowCount = hits.count
+        isLoadingMore = false
         ViewportProbe.note("search.page", [
             "before": String(countBefore),
             "after": String(hits.count),
@@ -422,9 +493,9 @@ struct TranscriptSearchSheet: View {
             "firstAfter": hits.first?.id ?? "-",
             "kept": firstBefore == hits.first?.id ? "1" : "0",
         ], force: true)
-        lastRowCount = hits.count
         // 追加进来的行在屏幕外，不会再触发 `onAppear`；所以这里主动再判一次余量，
-        // 不够就接着读（"触发了就继续预加载"）。
+        // 不够就接着读（"触发了就继续预加载"）。放在 `isLoadingMore` 放下之后，
+        // 否则会被自己的 guard 挡掉（上一版就是这样：连读其实是靠别的行事件凑出来的）。
         prefetchIfRunningLow()
     }
 }
