@@ -37,6 +37,33 @@ DSH 会话 → dsh-llm-pi-ai(route: 公司网关) → http://127.0.0.1:8799/v1 �
 
 请求体一个字不改、SSE 逐块透传：前缀只要差一个字节，上游缓存就作废。
 
+## 统计
+
+`~/.dsh/llm-key-router/stats.json` 里按天累计（保留 90 天），进程重启不丢 ——
+"哪把 key 什么时候被停用"这种问题只有过几天才会被问到，只放内存里等于没有：
+
+| 记什么 | 用来回答 |
+| --- | --- |
+| `requests` / `failures` | 今天用了多少次、错了几次 |
+| `cacheHits` / `cachedTokens` / `promptTokens` | 缓存命中率（多 key 有没有把缓存毁掉） |
+| `failovers` / `retries` | 换了几次线路、原地重试几次 |
+| `truncated` | **输出被 max_tokens 截断**的次数（上游 `finish_reason=length`） |
+| `byKey` | 每把 key 的请求数、限流次数、判死 |
+| `byModel` | 每个模型用了多少 |
+| `rotations` | 最近的换线路事件（谁换到谁、原因、状态码） |
+
+两种读法：`node scripts/dev/llm-router-setup.mjs status`（给人看的几行），
+或 `curl -H "Authorization: Bearer <token>" 'http://127.0.0.1:8799/stats?days=30'`（原始 JSON）。
+
+## 坑：输出上限必须自己声明
+
+pi-ai 只在**请求带了上限**时才往线上写 `max_tokens`（它源码里就是
+`params.max_tokens = options.maxTokens`），所以路由里的模型必须显式给 `maxTokens`：
+不给就是上游的默认值，而本机网关的默认把一次长回合截断过——2026-09-24，公司模型的
+一个长回合以 `reason: max-tokens` 结束，紧接着上下文压缩报
+`summarization truncated at the token cap`。字段是**模型级 `maxTokens`**；
+路由级的 `defaultMaxTokens` 只对"目录里没描述过的模型"兜底，别指望它。
+
 ## 用法
 
 一个人用的一套（公司网关 + 多把 key）就长这样；这套配置只属于本机，

@@ -7,7 +7,7 @@
   "main": "lib/proxy.mjs",
   "scripts": {
     "start": "node bin/llm-key-router.mjs start",
-    "test": "node --test test/"
+    "test": "node --test test/*.test.mjs"
   },
   "engines": {
     "node": ">=20"

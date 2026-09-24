@@ -21,6 +21,10 @@ export function defaultConfig() {
     keysFile: join(DEFAULT_HOME, 'keys.txt'),
     /** 会话粘性表落盘位置 */
     affinityPath: join(DEFAULT_HOME, 'affinity.json'),
+    /** 轮换统计落盘位置（按天累计，重启不丢） */
+    statsPath: join(DEFAULT_HOME, 'stats.json'),
+    /** 统计保留天数 */
+    statsKeepDays: 90,
     /** 粘性有效期（小时）：24 小时内回来接着聊仍然命中同一把 key */
     affinityTtlHours: 24,
     /** 429 时该 key 冷却多久（秒），上游给了 Retry-After 就以它为准 */

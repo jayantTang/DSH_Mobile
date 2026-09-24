@@ -15,6 +15,7 @@ import { loadKeys } from './config.mjs'
 import { KeyPool } from './keys.mjs'
 import { KeyRouter } from './router.mjs'
 import { sessionIdentity } from './session.mjs'
+import { StatsStore } from './stats.mjs'
 
 /** 响应里出现的用量字段：用来证明"缓存有没有保住"。 */
 function usageOf(payload) {
@@ -27,9 +28,10 @@ function usageOf(payload) {
   }
 }
 
-/** 从一段 SSE 文本里尽量抠出 usage（上游只有在流末尾才给）。 */
+/** 从一段 SSE 文本里尽量抠出 usage 与 finish_reason（两者都只在流末尾给）。 */
 function usageFromSSE(text) {
   let found = {}
+  let truncated = false
   for (const line of text.split('\n')) {
     if (!line.startsWith('data:')) continue
     const payload = line.slice(5).trim()
@@ -38,14 +40,17 @@ function usageFromSSE(text) {
       const parsed = JSON.parse(payload)
       const usage = usageOf(parsed)
       if (Object.keys(usage).length) found = usage
+      for (const choice of parsed.choices ?? []) {
+        if (choice?.finish_reason === 'length') truncated = true
+      }
     } catch {
-      // 半截的 JSON（跨块）忽略：usage 那一帧本身很小，实际不会跨块丢。
+      // 半截的 JSON（跨块）忽略：usage 与 finish_reason 那两帧都很小，实际不会跨块丢。
     }
   }
-  return found
+  return { ...found, truncated }
 }
 
-export function createRouterServer({ router, upstream, token, logger = console }) {
+export function createRouterServer({ router, upstream, token, stats = new StatsStore(), logger = console }) {
   const inflight = { total: 0 }
   const counters = {
     requests: 0,
@@ -65,7 +70,13 @@ export function createRouterServer({ router, upstream, token, logger = console }
       return json(res, 200, { ok: true, upstream, ...router.snapshot() })
     }
     if (req.method === 'GET' && url.pathname === '/stats') {
-      return json(res, 200, { ...counters, inflight: inflight.total, ...router.snapshot() })
+      const days = Math.max(1, Math.min(90, Number(url.searchParams.get('days') ?? 7) || 7))
+      return json(res, 200, {
+        ...counters,
+        inflight: inflight.total,
+        ...router.snapshot(),
+        history: stats.snapshot(days),
+      })
     }
 
     // 本机令牌：不是安全边界（服务只监听 127.0.0.1），只是"配错了会立刻报错"。
@@ -80,7 +91,7 @@ export function createRouterServer({ router, upstream, token, logger = console }
       return forwardModels({ req, res, upstream, router, logger })
     }
     if (url.pathname === '/v1/chat/completions' && req.method === 'POST') {
-      return forwardChat({ req, res, upstream, router, counters, inflight, logger })
+      return forwardChat({ req, res, upstream, router, counters, inflight, stats, logger })
     }
     return json(res, 404, { error: { message: `no route for ${req.method} ${url.pathname}` } })
   })
@@ -107,7 +118,7 @@ async function forwardModels({ req, res, upstream, router, logger }) {
   }
 }
 
-async function forwardChat({ req, res, upstream, router, counters, inflight, logger }) {
+async function forwardChat({ req, res, upstream, router, counters, inflight, stats, logger }) {
   const bodyText = await readBody(req)
   let body
   try {
@@ -118,6 +129,13 @@ async function forwardChat({ req, res, upstream, router, counters, inflight, log
 
   const session = sessionIdentity({ headers: req.headers, body })
   const model = String(body.model ?? 'unknown')
+  // 上游真正收到的输出上限：pi-ai 用 route 的 defaultMaxTokens，没声明就是它自己的
+  // 32768 —— 2026-09-24 长回合撞上它，turn 被截断（reason=max-tokens）。记下来，
+  // 这类问题下次只看统计就能认出来。
+  // pi-ai 按 compat.maxTokensField 二选一写：有的模型写 `max_tokens`，有的写
+  // `max_completion_tokens`。两个都看，否则统计里会显示成"没带上限"。
+  const declaredMax = body.max_tokens ?? body.max_completion_tokens
+  const maxTokens = Number.isFinite(Number(declaredMax)) ? Number(declaredMax) : null
   const streaming = body.stream === true
   counters.requests += 1
   counters.byModel[model] = (counters.byModel[model] ?? 0) + 1
@@ -176,6 +194,8 @@ async function forwardChat({ req, res, upstream, router, counters, inflight, log
           `上游 ${response.status}（${key.label}，${verdict.reason}）`
           + `${verdict.retry ? ' → 换 key 重试' : ' → 直接回给客户端'}`
         )
+        stats.noteRequest({ model, keyLabel: key.label, ok: false })
+        if (attempt > 1) stats.noteRotation({ from: key.label, reason: verdict.reason, model, status: response.status })
         if (!verdict.retry) {
           res.writeHead(response.status, { 'content-type': 'application/json' })
           return res.end(text)
@@ -188,13 +208,18 @@ async function forwardChat({ req, res, upstream, router, counters, inflight, log
         const text = await response.text()
         let parsed = null
         try { parsed = JSON.parse(text) } catch { /* 原样转发 */ }
+        let truncated = false
         if (parsed) {
           const u = usageOf(parsed)
           key.noteUsage(u)
           counters.promptTokens += u.promptTokens ?? 0
           counters.cachedTokens += u.cachedTokens ?? 0
           if ((u.cachedTokens ?? 0) > 0) counters.cacheHits += 1
+          truncated = (parsed.choices ?? []).some((choice) => choice?.finish_reason === 'length')
         }
+        stats.noteRequest({ model, keyLabel: key.label, ok: true, ...(parsed ? usageOf(parsed) : {}) })
+        if (truncated) stats.noteTruncation({ model, keyLabel: key.label, maxTokens })
+        if (truncated) counters.truncated = (counters.truncated ?? 0) + 1
         res.writeHead(response.status, { 'content-type': 'application/json' })
         return res.end(text)
       }
@@ -218,9 +243,15 @@ async function forwardChat({ req, res, upstream, router, counters, inflight, log
       counters.promptTokens += u.promptTokens ?? 0
       counters.cachedTokens += u.cachedTokens ?? 0
       if ((u.cachedTokens ?? 0) > 0) counters.cacheHits += 1
+      stats.noteRequest({ model, keyLabel: key.label, ok: true, promptTokens: u.promptTokens, cachedTokens: u.cachedTokens })
+      if (u.truncated) {
+        counters.truncated = (counters.truncated ?? 0) + 1
+        stats.noteTruncation({ model, keyLabel: key.label, maxTokens })
+      }
       logger.info?.(
-        `ok ${model} session=${session.slice(0, 24)} key=${key.label}(${reason})`
+        `ok ${model} max=${maxTokens ?? '-'} session=${session.slice(0, 24)} key=${key.label}(${reason})`
         + `${u.cachedTokens ? ` cached=${u.cachedTokens}` : ''}`
+        + `${u.truncated ? ' ⚠️ 被 max_tokens 截断' : ''}`
       )
       return undefined
     }
@@ -262,11 +293,15 @@ export function startRouterServer({ config, logger = console }) {
     cooldownSeconds: config.cooldownSeconds,
     maxAttempts: config.maxAttempts,
   })
+  const stats = new StatsStore({ path: config.statsPath, keepDays: config.statsKeepDays })
   const { server, counters, inflight } = createRouterServer({
     router,
     upstream: config.upstream.replace(/\/+$/, ''),
     token: config.token,
+    stats,
     logger,
   })
-  return { server, router, counters, inflight, pool, affinity }
+  // 退出前把这一批统计写盘（KeepAlive 重启、Ctrl-C、升级都走这条路）。
+  for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => stats.save())
+  return { server, router, counters, inflight, pool, affinity, stats }
 }

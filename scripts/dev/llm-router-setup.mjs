@@ -35,6 +35,18 @@ const PROVIDER = 'company-gateway'
 /** 上游思考档位 → 线上拼写。实测这个网关认 none/low/medium/high/max（别的模型忽略 none 也安全）。 */
 const EFFORTS = { off: 'none', low: 'low', medium: 'medium', high: 'high', max: 'max' }
 
+/**
+ * 每个模型声明的输出上限，**必须显式给**。
+ *
+ * 为什么：pi-ai 只在"请求带了上限"时才往线上写 `max_tokens`（它自己的源码里是
+ * `params.max_tokens = options.maxTokens`），不写就是上游的默认值——本机网关的默认
+ * 把一次长回合截断了：2026-09-24 用公司模型跑长回合时 turn 以 `reason=max-tokens`
+ * 结束，紧接着的上下文压缩也报 "summarization truncated at the token cap"。
+ * 字段名是模型级的 `maxTokens`（不是路由级的 `defaultMaxTokens`，那个只对
+ * "目录里没描述过的模型"兜底）。
+ */
+const MAX_TOKENS = 131072
+
 const [command, argument] = process.argv.slice(2)
 
 if (command === 'keys') {
@@ -85,6 +97,7 @@ async function wire() {
       id: model.id,
       name: model.name ?? model.id,
       reasoningEfforts: EFFORTS,
+      maxTokens: MAX_TOKENS,
     }))
   } catch (error) {
     fail(`读不到代理的模型清单（${error.message}）——先把代理跑起来：`
@@ -110,7 +123,7 @@ async function wire() {
   const applied = await host.call('settings/update', { ns: 'llm-pi-ai', patch })
   if (!applied.ok) fail(`写 route 失败：${JSON.stringify(applied.error)}`)
   console.log(`凭据 LLM_ROUTER_TOKEN 已写入；route「公司网关」已建（${models.length} 个模型，`
-    + `思考档位 ${Object.keys(EFFORTS).join('/')}）`)
+    + `思考档位 ${Object.keys(EFFORTS).join('/')}，输出上限 ${MAX_TOKENS}）`)
   console.log('手机端：打开任一会话的「模型」选择器即可看到「公司网关」这一组；'
     + '多把 key 的轮换对手机不可见。')
 }
@@ -171,6 +184,26 @@ async function status() {
   } catch (error) {
     console.log(`代理没在跑：${error.message}`)
   }
+  const stats = await fetch(`http://127.0.0.1:${config.port}/stats?days=7`, {
+    headers: { authorization: `Bearer ${config.token}` },
+  }).then((response) => response.json()).catch(() => null)
+  if (stats?.history) {
+    const totals = stats.history.totals
+    const rate = totals.requests ? Math.round((totals.cacheHits / totals.requests) * 100) : 0
+    console.log(`  近 ${stats.history.days.length} 天：${totals.requests} 次请求，`
+      + `缓存命中 ${totals.cacheHits} 次（${rate}%），缓存 token ${totals.cachedTokens}/${totals.promptTokens}，`
+      + `换线路 ${totals.failovers}，被截断 ${totals.truncated}，失败 ${totals.failures}`)
+    for (const day of stats.history.days.slice(-5)) {
+      console.log(`    ${day.day}  请求 ${day.requests}  缓存命中 ${day.cacheHits}  截断 ${day.truncated}  换线路 ${day.failovers}`)
+    }
+    const byKey = Object.entries(stats.history.totals.byKey ?? {})
+      .sort((a, b) => b[1].requests - a[1].requests).slice(0, 5)
+    if (byKey.length) {
+      console.log('    用得最多的 key：' + byKey.map(([label, v]) =>
+        `${label} ${v.requests} 次${v.rateLimited ? `（限流 ${v.rateLimited}）` : ''}`).join('、'))
+    }
+  }
+
   const host = await hostRPC()
   const catalog = await host.call('session/modelCatalog', {})
   if (catalog.ok) {
