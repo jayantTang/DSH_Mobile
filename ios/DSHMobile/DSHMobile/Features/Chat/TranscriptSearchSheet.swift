@@ -46,7 +46,7 @@ struct TranscriptSearchSheet: View {
             refresh()
             // 不抢焦点：面板的默认态是"能一眼看到并点选"，键盘会把列表盖掉一半。
             // 想搜关键词的点一下输入框就行。
-            Task { await extendIfNeeded() }
+            // 浏览态的第一页交给列表底部的哨兵行去取（它一露面就会触发）。
         }
         .onChange(of: query) { _, _ in refresh() }
         .onChange(of: onlyMine) { _, _ in refresh() }
@@ -102,7 +102,9 @@ struct TranscriptSearchSheet: View {
                 // 再点输入框。
                 isFocused = false
                 refresh()
-                Task { await extendIfNeeded() }
+                // 只先取一页：读到多少显示多少，剩下的由列表往下滑时一页页接着读
+                // （见 `olderSection` 的哨兵行）。读者看不到"等它读完"的阻塞。
+                Task { await loadMore() }
             }
             .accessibilityIdentifier("search.scope.mine")
             Spacer()
@@ -213,27 +215,41 @@ struct TranscriptSearchSheet: View {
         return String(format: String(localized: "已搜 %lld 行 · 命中 %lld 条"), searched, hits.count)
     }
 
+    /// 列表底部：滑到这里就再往前读一页（无限滚动），读完给出明确交代。
+    ///
+    /// 为什么不一次读完：长会话整段历史要 9–43 页（实测 20_lieGuo 12968 条），
+    /// 一次读完既让读者盯着转圈、又白读一堆用不上的记录。所以按读者的滑动节奏来：
+    /// 新行**追加在列表末尾**，已经看到的那几行不动，界面不跳。
     @ViewBuilder
     private var olderSection: some View {
         if model.canExtendSearch {
             Section {
-                Button {
-                    Task { await loadMore() }
-                } label: {
-                    HStack(spacing: DSHTheme.Spacing.hairline) {
-                        if isLoadingMore { ProgressView().controlSize(.mini) }
-                        Text(isLoadingMore ? "正在往上找…" : "上面还有更早的消息，继续往上找")
-                            .font(DSHTheme.Typography.caption)
-                    }
-                    .foregroundStyle(DSHTheme.brand)
-                    .frame(maxWidth: .infinity)
+                HStack(spacing: DSHTheme.Spacing.hairline) {
+                    if isLoadingMore { ProgressView().controlSize(.mini) }
+                    Text(isLoadingMore ? "正在往前读…" : "继续下拉会接着往前读")
+                        .font(DSHTheme.Typography.micro)
+                        .foregroundStyle(DSHTheme.labelTertiary)
                 }
-                .buttonStyle(.plain)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, DSHTheme.Spacing.tight)
+                .onAppear {
+                    // 哨兵露面 = 读者滑到了底部：接着读一页。没在读的时候不重复触发。
+                    guard !isLoadingMore else { return }
+                    Task { await loadMore() }
+                }
                 .accessibilityIdentifier("search.older")
             } footer: {
-                Text("搜索只覆盖已经读到手机上的那段历史；「继续往上找」会往前多读一页。")
+                Text("搜索只覆盖已经读到手机上的那段历史。")
                     .font(DSHTheme.Typography.micro)
                     .foregroundStyle(DSHTheme.labelTertiary)
+            }
+        } else {
+            Section {
+                Text("已经读到这段会话的最开头。")
+                    .font(DSHTheme.Typography.micro)
+                    .foregroundStyle(DSHTheme.labelTertiary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, DSHTheme.Spacing.tight)
             }
         }
     }
@@ -298,26 +314,28 @@ struct TranscriptSearchSheet: View {
             : TranscriptSearch.hits(in: model.searchItems, query: query, onlyMine: onlyMine)
     }
 
-    /// 浏览态下先把历史翻够（够 30 条提问或翻完为止），读者不用一条条点「继续往上找」。
-    private func extendIfNeeded() async {
-        guard isBrowsing, model.canExtendSearch else { return }
-        isExtending = true
-        defer { isExtending = false }
-        await model.extendSearchHistory(untilQuestionsAtLeast: 30)
-        refresh()
-    }
-
     private func pick(_ hit: TranscriptSearchHit) {
         onPick(hit.id)
         dismiss()
     }
 
-    /// 「继续往上找」：往搜索缓冲里再取一页（**不动时间线**，也就不会挪动读者的位置）。
+    /// 往搜索缓冲里再取一页（**不动时间线**，也就不会挪动读者的位置）。
     private func loadMore() async {
-        guard !isLoadingMore else { return }
+        guard !isLoadingMore, model.canExtendSearch else { return }
         isLoadingMore = true
         defer { isLoadingMore = false }
+        // 探针：记下"追加前后"的条数与**第一条**。追加只发生在列表末尾，所以第一条
+        // 必须始终不变——这是"加载无感、列表不跳"的机器判据（`firstBefore == firstAfter`）。
+        let firstBefore = hits.first?.id
+        let countBefore = hits.count
         await model.extendSearchHistory()
         refresh()
+        ViewportProbe.note("search.page", [
+            "before": String(countBefore),
+            "after": String(hits.count),
+            "firstBefore": firstBefore ?? "-",
+            "firstAfter": hits.first?.id ?? "-",
+            "kept": firstBefore == hits.first?.id ? "1" : "0",
+        ], force: true)
     }
 }

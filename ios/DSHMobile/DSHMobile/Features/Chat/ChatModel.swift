@@ -901,31 +901,6 @@ final class ChatModel {
         return true
     }
 
-    /// 「只看我的提问」的默认列表：一直往前翻到够 `target` 条提问（或翻完/到上限）。
-    ///
-    /// 读者点这颗胶囊是想**浏览**自己问过什么，不该只看到已加载的这一小段；但也不能
-    /// 无上限地翻。上限 6 页（约 1700 条记录）既够列出几十条提问，又不会把内存吃满。
-    func extendSearchHistory(untilQuestionsAtLeast target: Int, maxPages: Int = 6) async {
-        guard !isExtendingSearch else { return }
-        var pages = 0
-        while pages < maxPages, canExtendSearch, userMessageCount() < target {
-            let before = searchRecords.count
-            let extended = await extendSearchHistory()
-            if !extended || searchRecords.count == before { return }
-            pages += 1
-        }
-    }
-
-    /// 缓冲里 + 时间线里的用户消息条数（判断"够不够列"用，不解折叠成行）。
-    private func userMessageCount() -> Int {
-        var count = timeline.items.reduce(0) { total, item in
-            if case .userMessage = item.kind { return total + 1 }
-            return total
-        }
-        count += searchRecords.reduce(0) { $0 + ($1.event.type == "user/message" ? 1 : 0) }
-        return count
-    }
-
     /// 把搜索缓冲并进时间线（读者点了缓冲里的某一条时才做）。
     ///
     /// 只并"比时间线最老那条还老"的记录；并完清空缓冲，视图那边会跟着跳转。

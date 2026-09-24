@@ -195,6 +195,8 @@
 "空会话" = "Empty session";
 "在下面输入内容，或从电脑端继续这个会话。" = "Type below, or continue this session from your computer.";
 "正在加载更早的消息…" = "Loading earlier messages…";
+"继续下拉会接着往前读" = "Keep scrolling down to read further back";
+"已经读到这段会话的最开头。" = "You have reached the start of this conversation.";
 "我的提问 %lld 条" = "%lld questions from me";
 "已搜 %lld 行 · 我的提问 %lld 条" = "%lld rows searched · %lld of my questions";
 "已搜 %lld 行 · 命中 %lld 条" = "%lld rows searched · %lld matches";
