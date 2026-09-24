@@ -549,6 +549,7 @@ enum ViewportProbe {
                              keyboardCycles: Bool)? { nil }
     static var askProbeSession: String? { nil }
     static var olderScrollRounds: Int? { nil }
+    static var scrollFacts: (offset: CGFloat, content: CGFloat)? { nil }
     static func topVisibleRow() -> String? { nil }
     static func pause() {}
     static func resume() {}
