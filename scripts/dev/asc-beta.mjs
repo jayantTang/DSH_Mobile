@@ -31,6 +31,39 @@ const BETA_DESCRIPTION = `DSH Mobile 是你电脑上 DeepSeek Harness 的手机�
 
 测试重点：会话列表与转写渲染、发消息与打断正在跑的任务、回答 agent 的提问、查看与放大图片、上传文件到会话工作区。`
 const FEEDBACK_EMAIL = process.env.ASC_FEEDBACK_EMAIL || 'forwoshitjy@live.com'
+/// 测试者打开 TestFlight 更新时看到的「测试内容 / What to test」。
+///
+/// 写它的理由不只是"告诉测试者测什么"：这是**唯一一个不用公开喊话、又一定能被测试者看到**
+/// 的触点（他们更新时必然经过这一屏）。所以除了本版改了什么，末尾要留一句反馈邀请——
+/// 两位试用者都静默过，而我们在 GitHub 上说不上话（他们没有公开联系方式）。
+const WHATS_TO_TEST = {
+  'zh-Hans': `这一版修了几件你可能会碰到的事：
+· 手机没连着时提出的问题，回到手机会补上（以前会永久丢）
+· 重新打开 App 先显示上次的会话与内容，再增量更新（不再空白等网络）
+· 切后台、换会话之后，转写不再少一段记录
+· 界面支持英文（跟随系统语言）
+
+遇到问题请告诉我们：在 TestFlight 里截图即可直接发反馈，或在 App 的会话列表右上角点反馈按钮。
+不说我们就不知道 —— 一句话就够。
+
+In this build: missed questions now arrive when the phone reconnects; the app opens with the last
+session list and content; transcripts no longer lose a chunk after backgrounding; the UI speaks
+English too. If something breaks, send feedback from TestFlight or tap the feedback button in the
+app — one sentence is enough.`,
+  'en-US': `In this build:
+· Questions asked while your phone was away now arrive when it reconnects (they used to be lost)
+· The app opens with the last session list and its content, then updates incrementally — no more
+  blank wait for the network
+· Transcripts no longer lose a chunk after backgrounding or switching sessions
+· The interface speaks English (it follows the system language)
+
+If something breaks, tell us: take a screenshot in TestFlight and send it as feedback, or tap the
+feedback button at the top of the session list in the app. One sentence is enough — we cannot fix
+what we never hear about.
+
+这一版修了"错过的提问会丢""重开是空的""切后台少一段记录"，并支持英文界面；
+有问题在 TestFlight 里截图反馈，或点 App 里会话列表右上角的反馈入口。`,
+}
 /// 审核联系电话。Apple 要求填，且只在审核需要时使用；可以从环境变量覆盖。
 const CONTACT_PHONE_NOTE = 'ASC_CONTACT_PHONE 可覆盖（默认是个占位号，第一次提交后建议改成真号）'
 
@@ -123,6 +156,34 @@ async function latestBuild(appId) {
   }
   const { data } = await get(`/v1/builds?filter[app]=${appId}&limit=1&sort=-uploadedDate`)
   return data[0]
+}
+
+/// 写入/更新这一版构建的「测试内容」（ASC 里这个字段叫 `whatsNew`）：中英各一条，缺哪条建哪条。
+async function setWhatsToTest(buildId) {
+  const existing = await call('GET', `/v1/betaBuildLocalizations?filter[build]=${buildId}&limit=50`)
+  const rows = existing.data ?? []
+  for (const [locale, text] of Object.entries(WHATS_TO_TEST)) {
+    const found = rows.find((item) => item.attributes.locale === locale)
+    if (found) {
+      if (found.attributes.whatsNew === text) {
+        console.log(`测试内容：${locale} 已是最新`)
+        continue
+      }
+      await call('PATCH', `/v1/betaBuildLocalizations/${found.id}`, {
+        data: { type: 'betaBuildLocalizations', id: found.id, attributes: { whatsNew: text } },
+      })
+      console.log(`测试内容：更新 ${locale}`)
+      continue
+    }
+    await call('POST', '/v1/betaBuildLocalizations', {
+      data: {
+        type: 'betaBuildLocalizations',
+        attributes: { locale, whatsNew: text },
+        relationships: { build: { data: { type: 'builds', id: buildId } } },
+      },
+    })
+    console.log(`测试内容：创建 ${locale}`)
+  }
 }
 
 async function groups(appId) {
@@ -246,6 +307,10 @@ async function prepare() {
       },
     })
   }
+
+  // 2.5 「测试内容 / What to test」：挂在**构建**上（与上面的 App 级说明不同），
+  //     测试者每次更新都会看到这一屏，所以反馈邀请写在这里。
+  await setWhatsToTest(build.id)
 
   // 3. 外部测试组 + 把构建挂进去。
   let group = existing.find((item) => item.attributes.name === GROUP_NAME)
