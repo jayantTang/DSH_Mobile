@@ -542,3 +542,6 @@ It is registered as a workspace first, so a new group appears in the desktop sid
 "需要你回应" = "Needs your answer";
 "钥匙串操作失败（OSStatus %lld）" = "Keychain operation failed (OSStatus %lld)";
 
+
+/* feedback entry */
+"反馈" = "Feedback";

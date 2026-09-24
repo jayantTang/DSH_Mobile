@@ -8,10 +8,10 @@ import SwiftUI
 /// work — subagent transcripts, sessions with no workspace — stays collapsed
 /// until asked for.
 struct SessionListView: View {
+    @Environment(\.openURL) private var openURL
     @Environment(ConnectionStore.self) private var store
     @Environment(HostEventHub.self) private var hub
     @Environment(UpdateChecker.self) private var updates
-    @Environment(\.openURL) private var openURL
     @Bindable var model: SessionListModel
     var onOpenConnections: () -> Void
     var onOpenSettings: () -> Void
@@ -87,6 +87,18 @@ struct SessionListView: View {
                     Image(systemName: "gearshape")
                 }
                 .accessibilityLabel("设置")
+            }
+            // 反馈入口就放在设置按钮旁边：用户找"哪里能提意见"时，第一反应是看这一排图标。
+            // 点开是一个 GitHub 表单（问题都在那里公开讨论），预填了版本与设备，
+            // 不采集任何对话内容；不想发的人什么都不会发生。
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    openURL(FeedbackLink.issueURL)
+                } label: {
+                    Image(systemName: "text.bubble")
+                }
+                .accessibilityLabel("反馈")
+                .accessibilityIdentifier("session.feedback")
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Button {

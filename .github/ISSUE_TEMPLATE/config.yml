@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 使用说明（中文） / Onboarding
+    url: https://github.com/jayantTang/DSH_Mobile/blob/main/docs/ONBOARDING.md
+    about: 装完之后怎么用：装 App、装连接器、配对 / Install, pair, and what you can do
+  - name: Onboarding (English)
+    url: https://github.com/jayantTang/DSH_Mobile/blob/main/docs/ONBOARDING.en.md
+    about: Install, pair, self-host a relay

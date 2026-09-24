@@ -1,0 +1,75 @@
+name: 反馈 / Feedback
+description: 试用中遇到问题、或想提一个需求 / Report a problem or ask for something
+title: "[反馈/Feedback] "
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        谢谢你愿意花时间。**不需要写得很完整**：一句"哪一步不好用"就很有用。
+        如果只是想吐槽或提一个想法，直接写在第 1 题也行。
+
+        Thanks for taking the time. **Short is fine** — one sentence about what got in your way is
+        already useful. Answering only the first question is perfectly okay.
+
+  - type: textarea
+    id: doing
+    attributes:
+      label: 你当时在做什么 / What were you doing
+      description: 看进度、回问题、继续对话、翻文件……以及期望发生什么
+      placeholder: 例：在手机上等 agent 跑完，想直接回答问题，但……
+    validations:
+      required: true
+
+  - type: textarea
+    id: went-wrong
+    attributes:
+      label: 哪里不对 / What went wrong
+      description: 现象、复现步骤、截图都可以；没有也没关系
+    validations:
+      required: false
+
+  - type: textarea
+    id: wish
+    attributes:
+      label: 最想要的一件事 / The one thing you would want next
+    validations:
+      required: false
+
+  - type: input
+    id: version
+    attributes:
+      label: 版本 / Version
+      description: App → 设置 → 关于里的「App 版本」，或用 App 内反馈入口自动填好
+      placeholder: 例如 1.0 20260923.1210
+    validations:
+      required: false
+
+  - type: input
+    id: device
+    attributes:
+      label: 设备与系统 / Device and iOS
+      placeholder: 例如 iPhone15,4 · iOS 18.2
+    validations:
+      required: false
+
+  - type: dropdown
+    id: contact
+    attributes:
+      label: 愿意被跟进吗 / May we follow up
+      options:
+        - 在 issue 里回复就行 / A reply here is fine
+        - 可以，我留了联系方式 / Yes, I left a way to reach me
+        - 不用了，只是反馈 / No need, just reporting
+    validations:
+      required: false
+
+  - type: markdown
+    attributes:
+      value: |
+        <sub>这个表单不会自动收集任何信息：上面所有内容都是你自己填的，提交前可以看到全部。
+        不想公开的话，也可以只在 App 里用「反馈」入口看看要填什么，或者忽略。</sub>
+
+        <sub>Nothing is collected automatically — everything above is what you type, and you can see
+        all of it before submitting. If you would rather not post publicly, ignore this form; the app
+        keeps working either way.</sub>
