@@ -571,3 +571,15 @@ It is registered as a workspace first, so a new group appears in the desktop sid
 "设为新会话默认" = "Set as default for new sessions";
 "点一下 = 只切当前会话；「设为新会话默认」会写回电脑端，之后新建的会话都用它。" = "Tap = this session only; “Set as default for new sessions” writes back to your computer and applies to sessions created afterwards.";
 "设为默认失败：%@" = "Could not set the default: %@";
+
+/* Folding for an over-long notice, and the card title for a tool result whose call never loaded. */
+"收起" = "Collapse";
+"展开其余 %lld 行" = "Show %lld more lines";
+"工具输出" = "Tool output";
+"文件内容" = "File contents";
+"文件列表" = "File list";
+"网页内容" = "Page contents";
+"搜索结果" = "Search results";
+"改动" = "Changes";
+
+"展开全文" = "Show full text";

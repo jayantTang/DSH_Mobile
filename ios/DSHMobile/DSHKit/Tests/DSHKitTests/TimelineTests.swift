@@ -146,16 +146,59 @@ final class TimelineTests: XCTestCase {
 
     func testOrphanToolResultIsSurfacedRatherThanDropped() throws {
         // A trimmed history page can start after the call that produced a
-        // result; the output must still be visible.
+        // result — or the host re-emits a pruned result during compaction — so
+        // the output must still be visible. It used to become a `.notice`, which
+        // has no cap and no fold: a 703-line file dump filled the phone screen
+        // with no way to collapse it (2026-09-24). It is a collapsed tool card
+        // now, like every other result.
         var timeline = ChatTimeline()
         _ = timeline.apply(try toolResult(seq: 9, turn: 3, step: 2, callId: "missing", text: "output from a trimmed call"))
 
         XCTAssertEqual(timeline.items.count, 1)
-        guard case .notice(let text, let isError) = timeline.items[0].kind else {
-            return XCTFail("an orphaned result should become a notice row")
+        guard case .toolCall(let invocation) = timeline.items[0].kind else {
+            return XCTFail("an orphaned result should become a tool card, not a notice")
         }
-        XCTAssertEqual(text, "output from a trimmed call")
-        XCTAssertFalse(isError)
+        XCTAssertEqual(invocation.resultText, "output from a trimmed call")
+        XCTAssertFalse(invocation.isError)
+        XCTAssertFalse(invocation.isRunning, "a result that has arrived is not still running")
+        XCTAssertEqual(invocation.name, "工具输出", "without metadata the card says only that this is tool output")
+        XCTAssertEqual(timeline.items[0].id, "tool-missing", "keyed by call id so a late call merges instead of duplicating")
+    }
+
+    func testOrphanToolResultWithFileMetadataNamesTheFile() throws {
+        // `read` results carry the path in `meta`; the wire has no tool name on a
+        // result, so this is what the orphan card has to work with.
+        var timeline = ChatTimeline()
+        _ = timeline.apply(try event("""
+        {"type":"tool/result","seq":4,"time":1789276359200,
+         "data":{"turn":1,"step":2,
+                 "meta":{"path":"/Users/someone/project/ios/Features/Sessions/SessionListView.swift","totalLines":703},
+                 "message":{"source":{"kind":"tool","callId":"call_x"},
+                            "content":[{"type":"tool-result","toolCallId":"call_x",
+                                        "content":[{"type":"text","text":"1: import SwiftUI"}]}]}}}
+        """))
+
+        guard case .toolCall(let invocation) = timeline.items[0].kind else {
+            return XCTFail("an orphaned file result should become a tool card")
+        }
+        XCTAssertEqual(invocation.name, "文件内容")
+        XCTAssertEqual(invocation.summary, "…/Sessions/SessionListView.swift")
+    }
+
+    func testOrphanResultMergesIntoItsCallWhenTheCallArrivesLater() throws {
+        // A page loaded after the fact can bring the call the result belonged
+        // to; the two must collapse into one card rather than showing the output
+        // twice.
+        var timeline = ChatTimeline()
+        _ = timeline.apply(try toolResult(seq: 9, turn: 3, step: 2, callId: "call_late", text: "the output"))
+        _ = timeline.apply(try toolCall(seq: 10, turn: 3, step: 2, callId: "call_late", name: "read", arguments: "{}"))
+
+        XCTAssertEqual(timeline.items.count, 1, "the call and its orphaned result are one row")
+        guard case .toolCall(let invocation) = timeline.items[0].kind else {
+            return XCTFail("row should still be the tool card")
+        }
+        XCTAssertEqual(invocation.name, "read")
+        XCTAssertEqual(invocation.resultText, "the output", "the result the card already had must survive the merge")
     }
 
     func testStreamingBubbleIsSupersededByTheCommittedMessage() throws {

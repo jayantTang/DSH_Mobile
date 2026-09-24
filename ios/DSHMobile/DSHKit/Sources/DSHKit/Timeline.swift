@@ -315,6 +315,7 @@ public struct ChatTimeline: Sendable {
                         identity: "reasoning-\(event.seq)-\(index)"
                     )
                 case .toolCall(let id, let name, let arguments):
+                    let carried = carriedResult(for: id)
                     change = append(
                         kind: .toolCall(
                             ToolInvocation(
@@ -322,9 +323,9 @@ public struct ChatTimeline: Sendable {
                                 name: name,
                                 arguments: arguments,
                                 summary: Self.summarize(name: name, arguments: arguments),
-                                resultBlocks: [],
-                                isError: false,
-                                isRunning: true,
+                                resultBlocks: carried?.resultBlocks ?? [],
+                                isError: carried?.isError ?? false,
+                                isRunning: carried?.isRunning ?? true,
                                 turn: message.turn,
                                 step: message.step
                             )
@@ -347,9 +348,9 @@ public struct ChatTimeline: Sendable {
                 name: call.name,
                 arguments: call.arguments,
                 summary: call.summary,
-                resultBlocks: [],
-                isError: false,
-                isRunning: true,
+                resultBlocks: carriedResult(for: call.callId)?.resultBlocks ?? [],
+                isError: carriedResult(for: call.callId)?.isError ?? false,
+                isRunning: carriedResult(for: call.callId)?.isRunning ?? true,
                 turn: call.turn,
                 step: call.step
             )
@@ -365,15 +366,33 @@ public struct ChatTimeline: Sendable {
 
         case .toolResult(let result):
             guard let index = toolIndex[result.callId] else {
-                // A result without a matching call (a trimmed history page):
-                // still surface it rather than dropping the output.
+                // A result without a matching call: its call is outside the
+                // loaded window (a trimmed history page) — or, more often now,
+                // the host re-emitted a **pruned** result during compaction.
+                // 2026-09-24: that path used to become a `.notice`, and a notice
+                // has no cap and no fold, so a 703-line file dump filled the
+                // whole phone screen and could not be collapsed. Render it as
+                // the same collapsed card every other tool result gets, keyed by
+                // its call id so a real call merges into it if a page loads it.
                 let text = Self.joinedText(result.content)
                 guard !text.isEmpty else { return .none }
-                return append(
-                    kind: .notice(text: text, isError: result.isError),
-                    seq: event.seq,
-                    identity: "orphan-result-\(event.seq)"
+                let invocation = ToolInvocation(
+                    callId: result.callId,
+                    name: Self.orphanToolName(result),
+                    arguments: "",
+                    summary: result.metaLabel ?? text.split(separator: "\n").first.map(String.init) ?? "",
+                    resultBlocks: result.content,
+                    isError: result.isError,
+                    isRunning: false,
+                    turn: result.turn,
+                    step: result.step
                 )
+                let identity = result.callId.isEmpty ? "orphan-result-\(event.seq)" : "tool-\(result.callId)"
+                let change = append(kind: .toolCall(invocation), seq: event.seq, identity: identity)
+                if !result.callId.isEmpty, case .appended = change {
+                    toolIndex[result.callId] = items.count - 1
+                }
+                return change
             }
             guard case .toolCall(var invocation) = items[index].kind else { return .none }
             invocation.resultBlocks = result.content
@@ -489,6 +508,19 @@ public struct ChatTimeline: Sendable {
         return .appended
     }
 
+    /// The row a call would replace, so its result is not thrown away.
+    ///
+    /// Order is not guaranteed on the wire: the host re-emits a pruned result
+    /// during compaction (a card gets built from the result alone), and a page
+    /// loaded later can then bring the call that produced it. Without this the
+    /// call's arrival would replace the card with an empty running one and the
+    /// output would vanish.
+    private func carriedResult(for callId: String) -> ToolInvocation? {
+        guard !callId.isEmpty, let index = toolIndex[callId] else { return nil }
+        guard case .toolCall(let existing) = items[index].kind else { return nil }
+        return existing
+    }
+
     /// Marks every tool row as finished, used when history is authoritative.
     private mutating func settleRunningTools() {
         for index in items.indices {
@@ -557,6 +589,23 @@ public struct ChatTimeline: Sendable {
             }
         }
         .joined()
+    }
+
+    /// What to call a tool result whose call never loaded.
+    ///
+    /// The wire carries no tool name on a result, so the label comes from the
+    /// metadata the host attaches: a `path` means a file was read or written, a
+    /// `url` means a page was fetched, and so on. Anything else is simply "tool
+    /// output" — a generic card is still better than a wall of raw text.
+    static func orphanToolName(_ result: ChatEvent.ToolResult) -> String {
+        switch result.metaKind {
+        case "diffs": return "改动"
+        case "file": return "文件内容"
+        case "web": return "网页内容"
+        case "files": return "文件列表"
+        case "sources": return "搜索结果"
+        default: return "工具输出"
+        }
     }
 
     /// A short label for a tool call, mirroring the desktop client's summaries.

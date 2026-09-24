@@ -299,7 +299,10 @@ struct ToolCallRow: View {
                     .frame(width: 16)
 
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(invocation.name)
+                    // Tool names come from the host ("read", "bash") and pass
+                    // through untouched; the labels this client mints itself for
+                    // a result whose call never loaded are translated.
+                    Text(String(localized: String.LocalizationValue(invocation.name)))
                         .font(DSHTheme.Typography.micro)
                         .foregroundStyle(DSHTheme.labelSecondary)
                     if !invocation.summary.isEmpty {
@@ -612,14 +615,34 @@ private struct NoticeRow: View {
     let text: String
     let isError: Bool
 
+    /// Host prose can be arbitrarily long (a compaction summary, an error, and
+    /// before 2026-09-24 a whole tool result whose call was not loaded). The
+    /// folding rule lives in DSHKit so it is testable; this view only draws it.
+    private var folded: NoticeFolding.Result { NoticeFolding.fold(text) }
+
+    @State private var isExpanded = false
+
     var body: some View {
-        HStack(spacing: DSHTheme.Spacing.hairline) {
-            Image(systemName: isError ? "exclamationmark.triangle" : "info.circle")
-                .font(.system(size: 11))
-            Text(text)
-                .font(DSHTheme.Typography.micro)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
+        VStack(alignment: .leading, spacing: DSHTheme.Spacing.hairline) {
+            HStack(alignment: .top, spacing: DSHTheme.Spacing.hairline) {
+                Image(systemName: isError ? "exclamationmark.triangle" : "info.circle")
+                    .font(.system(size: 11))
+                Text(isExpanded ? text : folded.text)
+                    .font(DSHTheme.Typography.micro)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+            }
+            if folded.isTruncated {
+                Button {
+                    withAnimation(.snappy(duration: 0.18)) { isExpanded.toggle() }
+                } label: {
+                    Text(isExpanded ? "收起" : Self.expandLabel(hiddenLines: folded.hiddenLines))
+                        .font(DSHTheme.Typography.micro)
+                        .foregroundStyle(DSHTheme.brand)
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("row.notice.expand")
+            }
         }
         .foregroundStyle(isError ? DSHTheme.danger : DSHTheme.labelTertiary)
         .padding(.horizontal, DSHTheme.Spacing.tight)
@@ -628,5 +651,11 @@ private struct NoticeRow: View {
             RoundedRectangle(cornerRadius: DSHTheme.Radius.medium, style: .continuous)
                 .fill(DSHTheme.layer1)
         )
+    }
+
+    /// A notice clipped by characters alone hides no *lines*, so promising a
+    /// line count there would read as "展开其余 0 行" (or a negative number).
+    static func expandLabel(hiddenLines: Int) -> String {
+        hiddenLines > 0 ? "展开其余 \(hiddenLines) 行" : "展开全文"
     }
 }

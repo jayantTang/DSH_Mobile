@@ -170,6 +170,40 @@ public enum ChatEvent: Sendable {
         public let callId: String
         public let content: [ContentBlock]
         public let isError: Bool
+        /// The host's structured metadata for this result: a file path and line
+        /// range for `read`, a URL and status code for `web_fetch`, match counts
+        /// for `glob`, hunks for `edit`. Absent for tools that add nothing.
+        ///
+        /// A result that arrives **without its call** has no other way to say
+        /// what it was about — the wire carries no tool name on a result — so
+        /// the orphan row reads its label from here.
+        public let meta: JSONValue?
+
+        /// A one-line label (file name, URL, match count) when there is one.
+        public var metaLabel: String? {
+            if let path = meta?["path"]?.stringValue { return Self.shortPath(path) }
+            if let url = meta?["url"]?.stringValue { return url }
+            if let total = meta?["total"]?.intValue { return "\(total) 项" }
+            return nil
+        }
+
+        /// Which kind of result this looks like, for the orphan row's icon.
+        public var metaKind: String? {
+            if meta?["diffs"] != nil { return "diffs" }
+            if meta?["path"] != nil { return "file" }
+            if meta?["url"] != nil { return "web" }
+            if meta?["files"] != nil { return "files" }
+            if meta?["sources"] != nil { return "sources" }
+            return nil
+        }
+
+        /// `…/Sessions/SessionListView.swift` — enough to recognise, short
+        /// enough to fit one line on a phone.
+        static func shortPath(_ path: String) -> String {
+            let parts = path.split(separator: "/").map(String.init)
+            guard parts.count > 2 else { return path }
+            return "…/" + parts.suffix(2).joined(separator: "/")
+        }
     }
 
     public struct InboxSpliced: Sendable {
@@ -264,7 +298,8 @@ public enum ChatEventDecoder {
                     step: data["step"]?.intValue ?? 0,
                     callId: message?["source"]?["callId"]?.stringValue ?? "",
                     content: flattened,
-                    isError: isError
+                    isError: isError,
+                    meta: data["meta"]
                 )
             )
 
