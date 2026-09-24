@@ -194,8 +194,7 @@
 "回到底部" = "Back to bottom";
 "空会话" = "Empty session";
 "在下面输入内容，或从电脑端继续这个会话。" = "Type below, or continue this session from your computer.";
-"加载中…" = "Loading…";
-"加载更早的消息" = "Load earlier messages";
+"正在加载更早的消息…" = "Loading earlier messages…";
 "已发送，等待电脑端开始…" = "Sent — waiting for the computer to start…";
 "会话信息" = "Session info";
 "选择模型" = "Choose a model";

@@ -56,6 +56,23 @@ struct ChatView: View {
     @State private var completionBanner: String?
     /// 打开成「单条全文」的那条消息（长按正文 → 选择文本）。
     @State private var readingMessage: MessageSelection?
+    /// 顶部哨兵是否已经（或即将）进入视口。见 `evaluateTopDistance`。
+    @State private var sentinelNearTop = false
+    /// 最近一次量到的"视口顶部离内容顶部还有多远"。
+    ///
+    /// 必须存下来：`onScrollGeometryChange` 只在**值变化**时回调，而"会话一打开就停在
+    /// 内容顶部"这种情况（初次布局时内容还是空的）从头到尾就没变过——2026-09-24 实测
+    /// 8 轮里有 2 轮整段回调都没来，补页一次都没触发。所以距离要缓存，改由
+    /// "会话/内容变化"这些时机重新判一次（`evaluateTopDistance`）。
+    @State private var topDistance: CGFloat?
+    /// 正在跑的那串"连续补页"。见 `pumpOlder`。
+    @State private var olderPump: Task<Void, Never>?
+    /// 已经处理过的补页代数，用来把"头部插入"从"尾部追加"里分出来。
+    @State private var handledPrepend = 0
+    /// 补页前视口里最上面那条消息的 id：补完要把它锚回视口顶部（见 `anchorAfterPrepend`）。
+    @State private var prependAnchor: String?
+    /// 那一次锚定的重试序列。
+    @State private var prependAnchorTask: Task<Void, Never>?
     /// Owned here rather than in the composer so the transcript can re-pin
     /// itself when the keyboard changes the viewport.
     @FocusState private var isFocused: Bool
@@ -152,7 +169,7 @@ struct ChatView: View {
         //
         // 换普通 `VStack` 也能不白，但整份已加载历史都要布局，重会话打开 25 秒
         // 还没就绪，那条路已否掉（见用例 `32-长会话里边流式边打字不跳白.md`）。
-        stackContainer
+        stackContainer(proxy)
         // Imperative scrolling only, and only in one direction (us -> view).
         //
         // A `scrollPosition(id:)` binding was tried here and had to be removed:
@@ -196,6 +213,7 @@ struct ChatView: View {
                 }
             }
         )
+        .overlay(alignment: .top) { olderLoadingPill }
         .overlay(alignment: .bottomTrailing) {
             if !isFollowing, !model.timeline.items.isEmpty {
                 Button {
@@ -246,6 +264,9 @@ struct ChatView: View {
             ViewportProbe.resume()
             scrollToBottom(proxy, animated: false)
         }
+        // 探针驱动（`-DSHProbeOlderScroll`）：仿真器里没法对转写页做手势滑动，
+        // 所以"往上滑"这一段由 App 自己代劳，其余全是产品代码。
+        .task { await runOlderScrollDrive(proxy) }
         // 离开转写页就暂停探针采样：退回列表后"转写区"没有任何内容可量，
         // 继续采只会把列表记成"会话区白了"。
         .onDisappear { ViewportProbe.pause() }
@@ -253,10 +274,29 @@ struct ChatView: View {
             attachmentImages.sessionId = sessionId
             userScrolled = false
             openedSessionId = nil
+            olderPump?.cancel()
+            olderPump = nil
+            prependAnchorTask?.cancel()
+            prependAnchorTask = nil
+            prependAnchor = nil
+            sentinelNearTop = false
+            // 注意：**不要**把 `topDistance` 清掉。它是滚动几何的事实，不是会话状态；
+            // 而"首次布局时内容还是空的、视口就停在顶部"这种情况，几何值此后**再也不变**，
+            // 清了就永远补不回来（2026-09-24 实测：清了之后补页和钉底一起失灵）。
             if let sessionId { pinOnOpen(proxy, sessionId: sessionId) }
+            evaluateTopDistance(proxy)
         }
         .onChange(of: model.timeline.items.count) { _, count in
             ViewportProbe.setContent(items: count, streaming: model.timeline.streaming?.text.count ?? 0)
+            // 内容变了要重判一次：首次快照落地时"视口停在内容顶部"这件事本身
+            // 不产生滚动几何变化，只靠回调会漏（见 `topDistance`）。
+            evaluateTopDistance(proxy)
+            // 头部插入（补更早的一页）不跟着钉底，改把读者原本那一行锚回视口顶部。
+            if model.prependSignal != handledPrepend {
+                handledPrepend = model.prependSignal
+                anchorAfterPrepend(proxy)
+                return
+            }
             repinAfterContentChange(proxy)
         }
         .onChange(of: model.timeline.streaming?.text.count ?? 0) { _, streamed in
@@ -276,30 +316,36 @@ struct ChatView: View {
         }
         .onChange(of: isFollowing) { _, following in
             ViewportProbe.note("following", ["on": following ? "1" : "0"])
+            // 手指往上滑正是"到没到顶部"这条判定的输入之一。而且拖动是**唯一**不依赖
+            // 滚动几何变化的信号：视口本来就停在顶部时，再拖也不产生几何变化，
+            // 只靠回调会漏掉补页（2026-09-24 实测 3 轮里 1 轮）。
+            evaluateTopDistance(proxy)
         }
     }
 
     /// 转写容器本身。抽出来是因为把 `List`/`ScrollView` 两套容器写在同一个
     /// 修饰符链里，编译器会报"表达式太复杂"。
     @ViewBuilder
-    private var stackContainer: some View {
+    private func stackContainer(_ proxy: ScrollViewProxy) -> some View {
         if ProbeVariants.lazyStack {
             // 复现用：换回懒加载容器（`-DSHProbeVariants lazy-stack`）。
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: DSHTheme.Spacing.standard) {
-                    stackContent
+                    stackContent(proxy)
                 }
                 .scrollTargetLayout()
                 .padding(.horizontal, DSHTheme.Spacing.loose)
                 .padding(.vertical, DSHTheme.Spacing.standard)
             }
+            .modifier(TranscriptTopDistance { distance in noteTopDistance(distance, proxy: proxy) })
         } else {
             List {
-                stackContent
+                stackContent(proxy)
             }
             .listStyle(.plain)
             .environment(\.defaultMinListRowHeight, 1)
             .scrollContentBackground(.hidden)
+            .modifier(TranscriptTopDistance { distance in noteTopDistance(distance, proxy: proxy) })
         }
     }
 
@@ -308,37 +354,71 @@ struct ChatView: View {
     /// 必须**直接**吐出行，不能再套一层 `VStack`：套一层就等于让 `LazyVStack`
     /// 只有一个子视图，懒加载随之失效。
     @ViewBuilder
-    private var stackContent: some View {
-        if model.hasOlder {
-            Button {
-                Task { await model.loadOlder() }
-            } label: {
-                HStack(spacing: DSHTheme.Spacing.hairline) {
-                    if model.isLoadingOlder {
-                        ProgressView().controlSize(.mini)
-                    }
-                    Text(model.isLoadingOlder ? "加载中…" : "加载更早的消息")
-                        .font(DSHTheme.Typography.micro)
-                }
-                .foregroundStyle(DSHTheme.brand)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, DSHTheme.Spacing.tight)
-            }
-            .buttonStyle(.plain)
-            .id(Self.topAnchor)
-        } else {
-            // 同一类隐患的第二处：「加载更早的消息」翻到底之后会消失，那也是一行。
-            // 它消失的时机正是读者翻到最上面的时候，而那时 `pinOnOpen`（换会话）
-            // 或发送时的强制钉底可能刚把滚动排进队列。留一行 1pt 占位，
-            // 整份转写的行数就只增不减。
-            Color.clear
-                .frame(height: 1)
-                .modifier(TranscriptRowChrome(inList: !ProbeVariants.lazyStack))
-        }
-
+    private func stackContent(_ proxy: ScrollViewProxy) -> some View {
+        olderSentinel(proxy)
         ForEach(model.timeline.items) { item in row(item) }
         tail
         bottomMarker
+    }
+
+    /// 顶部哨兵：读者滑到最上面就自动补更早的一页。**没有按钮**。
+    ///
+    /// 2026-09-24 用户反馈的原话是「每页一个『查看更多』，点了还会跳到那一段的开头」，
+    /// 要的是微信那种"一直往上滑就一直有"。所以这里换成一行哨兵：
+    ///
+    /// - 它一进入视口（提前 `sentinelApproach`，见 `noteTopDistance`）就自己补页，读者不用点；
+    /// - 补回来的一页**长在视口上方**：`anchorAfterPrepend` 把补页前的那一条重新锚回
+    ///   视口顶部，于是读者手指底下的内容一动不动，继续上滑才看到更早的消息。
+    ///   这正是"跳到新那段开头"的解药——不锚的话，`List` 保留的是偏移量而不是
+    ///   可见内容，插进头部的高度会把视口顶到新页的中间去。
+    /// - 它**永远占一行、高度永远 1pt**（这是老约束，见 `tail` 的注释）：转写容器是
+    ///   `UICollectionView` 撑起来的，`scrollTo` 先把锚点解析成 index path，
+    ///   行数在这中间少一行，那条滚动就越界崩溃。行高也必须恒定——哨兵上面长出来的
+    ///   任何一点高度都会让"把某一行锚回顶部"差出那么多（实测差 13pt）。
+    ///   所以"正在加载"不画在这一行里，而是浮在转写区顶部（`olderLoadingPill`）。
+    @ViewBuilder
+    private func olderSentinel(_ proxy: ScrollViewProxy) -> some View {
+        Color.clear
+            .frame(height: 1)
+            .modifier(TranscriptRowChrome(inList: !ProbeVariants.lazyStack))
+            .id(Self.topAnchor)
+            // iOS 17 上没有滚动几何，补页只能靠"这一行被建出来"（= 读者滑到了最上面）。
+            // iOS 18 起由 `TranscriptTopDistance` 说了算，这里不再抢着触发。
+            .onAppear {
+                guard !TranscriptTopDistance.available else { return }
+                // 17 上没有滚动几何，只能拿"行被建出来"当信号。多一道 `!isFollowing`：
+                // 读者还在看最新的一轮（跟随时）不该因为 `List` 提前建了这行就补页——
+                // 补页会往视口上方插内容，而那时没法把位置锚回来。
+                guard !isFollowing, model.hasOlder else { return }
+                sentinelNearTop = true
+                ViewportProbe.note("older.sentinel", ["near": "1", "why": "appear",
+                                                     "items": String(model.timeline.items.count)])
+                pumpOlder(proxy)
+            }
+            .onDisappear {
+                guard !TranscriptTopDistance.available else { return }
+                sentinelNearTop = false
+            }
+    }
+
+    /// 补页进行中的提示：浮在转写区顶部，不进内容（行高恒定，见 `olderSentinel`）。
+    @ViewBuilder
+    private var olderLoadingPill: some View {
+        if model.isLoadingOlder {
+            HStack(spacing: DSHTheme.Spacing.hairline) {
+                ProgressView().controlSize(.mini)
+                Text("正在加载更早的消息…")
+                    .font(DSHTheme.Typography.micro)
+                    .foregroundStyle(DSHTheme.labelSecondary)
+            }
+            .padding(.horizontal, DSHTheme.Spacing.tight)
+            .padding(.vertical, 5)
+            .background(DSHTheme.layer3, in: Capsule())
+            .overlay(Capsule().stroke(DSHTheme.border2, lineWidth: 1))
+            .padding(.top, DSHTheme.Spacing.hairline)
+            .allowsHitTesting(false)
+            .transition(.opacity)
+        }
     }
 
     /// 一行消息。抽出来是为了让"懒加载/非懒加载"两种排布共用同一份定义。
@@ -398,6 +478,163 @@ struct ChatView: View {
             .modifier(TranscriptRowChrome(inList: !ProbeVariants.lazyStack))
             .id(Self.bottomAnchor)
             .probed("bottom")
+    }
+
+    /// 记下新的距离并重新判定（iOS 18 起才有距离可测；更低的系统只剩哨兵的 `onAppear`）。
+    private func noteTopDistance(_ distance: CGFloat, proxy: ScrollViewProxy) {
+        topDistance = distance
+        evaluateTopDistance(proxy)
+    }
+
+    /// 视口贴在内容顶部时该做什么。
+    ///
+    /// 两件事，顺序不能反：
+    /// 1. **该在底部却停在顶部**——读者没往上翻过（`isFollowing`）却已经在内容顶部，
+    ///    那是"打开会话没钉到底"（老毛病，8 轮里见 2 轮：初次布局时内容还是空的，
+    ///    `pinOnOpen` 那一串滚完就再没人管了）。这时补页是错的：读者要看的是最新。
+    ///    钉回底部，距离随之变大，补页自然不触发。
+    /// 2. **读者真在顶部**——补一页。补完距离会跳成"一页那么高"，于是重新武装，
+    ///    再滑上来就再补，不用点任何东西。
+    private func evaluateTopDistance(_ proxy: ScrollViewProxy) {
+        guard ownsTranscript else { return }
+        guard let distance = topDistance else {
+            // 一次滚动几何都没量到（iOS 17，或内容落地前）：按"该在底部"处理——
+            // 读者没往上翻过就钉回底部，别停在会话开头。
+            ViewportProbe.note("older.nogeometry", [
+                "following": isFollowing ? "1" : "0",
+                "items": String(model.timeline.items.count),
+            ])
+            if isFollowing, !userScrolled { scrollToBottom(proxy, animated: false, force: true) }
+            return
+        }
+        let near = distance < Self.sentinelApproach
+        if near != sentinelNearTop {
+            sentinelNearTop = near
+            ViewportProbe.note("older.sentinel", [
+                "distance": String(format: "%.0f", distance),
+                "near": near ? "1" : "0",
+                "following": isFollowing ? "1" : "0",
+                "items": String(model.timeline.items.count),
+            ])
+        }
+        guard near else { return }
+        if isFollowing, !userScrolled {
+            ViewportProbe.note("older.repin", ["distance": String(format: "%.0f", distance)])
+            // 带一次延迟重钉：这次判定往往发生在"内容刚落地、行还没排完"的那一刻，
+            // 单次 `scrollTo` 会落在空布局上（2026-09-24 实测 3 轮里 1 轮就这么卡住了）。
+            repinAfterContentChange(proxy)
+            return
+        }
+        pumpOlder(proxy)
+    }
+
+    /// 连续补页：只要视口还贴着已加载内容的顶部、上面还有更早的消息，就一直补。
+    ///
+    /// 三条约束，每一条都对应一个已经看到的坏现象：
+    /// 1. 补页前记住"当前第一条"，补完由 `anchorAfterPrepend` 把它锚回视口顶部——
+    ///    新内容因此长在视口**上方**。不锚的话 `List` 保留的是偏移量而不是可见内容，
+    ///    插进头部的高度会把视口顶进新那一页的中间，也就是用户说的"跳到新那段的开头"。
+    /// 2. 一次上滑最多连补 `maxOlderBurst` 页：视口比一页还高（短会话）时补一页填不满
+    ///    屏幕，那就接着补；但绝不允许无限补下去。
+    /// 3. 每次补完等一拍再判断"视口还在不在顶部"：锚定与插入都要下一帧才落地。
+    private func pumpOlder(_ proxy: ScrollViewProxy) {
+        guard ownsTranscript, sentinelNearTop, model.hasOlder, !model.isLoadingOlder,
+              olderPump == nil else { return }
+        olderPump = Task { @MainActor in
+            defer { olderPump = nil }
+            for _ in 0..<Self.maxOlderBurst {
+                if Task.isCancelled || !ownsTranscript { return }
+                let anchor = model.timeline.items.first?.id
+                let before = ViewportProbe.scrollFacts
+                let count = model.timeline.items.count
+                await model.loadOlder()
+                guard model.timeline.items.count > count else { return }
+                prependAnchor = anchor
+                try? await Task.sleep(for: .milliseconds(400))
+                if Task.isCancelled { return }
+                let after = ViewportProbe.scrollFacts
+                var kept = "-"
+                if let before, let after {
+                    let movedOffset = after.offset - before.offset
+                    let grewContent = after.content - before.content
+                    kept = abs(movedOffset - grewContent) <= Self.keepTolerance ? "1" : "0"
+                    if kept == "0" {
+                        ViewportProbe.note("older.jumped", [
+                            "movedOffset": String(format: "%.0f", movedOffset),
+                            "grewContent": String(format: "%.0f", grewContent),
+                            "items": String(model.timeline.items.count),
+                        ], force: true)
+                    }
+                }
+                ViewportProbe.note("older.pump", [
+                    "items": String(model.timeline.items.count),
+                    "anchor": anchor ?? "-",
+                    "hasOlder": model.hasOlder ? "1" : "0",
+                    // `kept == 1` = 内容长了多少、偏移就跟着走了多少：可见内容没动。
+                    "kept": kept,
+                ], force: true)
+                if !sentinelNearTop { return }
+            }
+        }
+    }
+
+    /// 补页之后把"补页前那一条"锚回视口顶部——读者原地不动。
+    ///
+    /// 为什么不能在 `loadOlder()` 返回时立刻锚：那一刻 `List` 还没应用这次插入
+    /// （2026-09-24 实测：锚定滚动的落点是"插入前"的布局，偏移停在 -103，插入一生效，
+    /// 视口就留在了新内容上）。所以真正的锚定放在**视图看到条数变化之后**
+    /// （`onChange(of: items.count)`），并按 0 / 60 / 160 / 320ms 重试几次：
+    /// 第一次通常和插入同一帧落地，后面几次兜住"行高还在折"的情况。
+    /// 视口一旦离开顶部（`sentinelNearTop == false`）就停手，绝不和读者抢滚动。
+    private func anchorAfterPrepend(_ proxy: ScrollViewProxy) {
+        guard let anchor = prependAnchor else { return }
+        prependAnchorTask?.cancel()
+        prependAnchorTask = Task { @MainActor in
+            for delay in [0, 60, 160, 320] {
+                if delay > 0 { try? await Task.sleep(for: .milliseconds(delay)) }
+                if Task.isCancelled || !ownsTranscript { return }
+                guard model.timeline.items.contains(where: { $0.id == anchor }) else { return }
+                if !sentinelNearTop { return }
+                proxy.scrollTo(anchor, anchor: .top)
+            }
+        }
+    }
+
+    /// `-DSHProbeOlderScroll <n>`：由 App 自己把视口送到顶部 n 次（见
+    /// `ViewportProbe.olderScrollRounds`）。仿真器里没法对转写页做手势滑动，
+    /// 所以"一直往上滑"这一段只能这样驱动；送上去之后的一切都是产品代码。
+    private func runOlderScrollDrive(_ proxy: ScrollViewProxy) async {
+        guard let rounds = ViewportProbe.olderScrollRounds, rounds > 0 else { return }
+        // 等首屏与钉底那一串走完，否则驱动会和 `pinOnOpen` 抢滚动位置。
+        try? await Task.sleep(for: .seconds(6))
+        for round in 1...rounds {
+            guard ownsTranscript, !Task.isCancelled else { return }
+            // 手指挥做的事这里也要做：真实拖动会把"跟随中"关掉（见 `simultaneousGesture`），
+            // 而 `scrollTo` 不会。不置这一位，读者到了顶部却还被判成"在看最新"，
+            // 于是被钉回底部（`evaluateTopDistance` 的第一条），补页永远不触发。
+            isFollowing = false
+            userScrolled = true
+            ViewportProbe.note("older.drive", [
+                "round": String(round), "phase": "up",
+                "items": String(model.timeline.items.count),
+                "top": ViewportProbe.topVisibleRow() ?? "-",
+            ], force: true)
+            proxy.scrollTo(Self.topAnchor, anchor: .top)
+            try? await Task.sleep(for: .milliseconds(500))
+            ViewportProbe.note("older.drive", [
+                "round": String(round), "phase": "at-top",
+                "loading": model.isLoadingOlder ? "1" : "0",
+                "near": sentinelNearTop ? "1" : "0",
+                "top": ViewportProbe.topVisibleRow() ?? "-",
+            ], force: true)
+            try? await Task.sleep(for: .seconds(4))
+        }
+        ViewportProbe.note("older.drive", [
+            "phase": "done",
+            "items": String(model.timeline.items.count),
+            "hasOlder": model.hasOlder ? "1" : "0",
+            "top": ViewportProbe.topVisibleRow() ?? "-",
+        ], force: true)
     }
 
     /// 打开会话时把视口钉到底部：立即一次 + 120ms + 300ms 各一次，**都不带动画**。
@@ -509,6 +746,18 @@ struct ChatView: View {
 
     /// Minimum interval between follow-the-tail scrolls.
     private static let scrollThrottle: TimeInterval = 0.15
+
+    /// 一次"上滑到底"最多连补几页（见 `pumpOlder`）。
+    private static let maxOlderBurst = 3
+    /// 视口离内容顶部还剩这么多点就补页（见 `noteTopDistance`）。
+    ///
+    /// 取"哨兵行的高度"这个量级（1pt 行 + 12pt 行距）是有原因的：补页时把**第一条消息**
+    /// 锚回视口顶部，而触发那一刻视口顶其实在哨兵行里，所以读者看到的内容会往上挪
+    /// `sentinelApproach` 以内的一点点。阈值放大到一屏，这个挪动就成了"倒退几行"的跳。
+    /// 实测 13pt（不到一行字）：锚定误差 ≤ 哨兵行高 + 阈值。
+    private static let sentinelApproach: CGFloat = 16
+    /// 判"位置没跳"的容差：内容长了多少、偏移就该跟着走多少，差在这一点之内算原地不动。
+    private static let keepTolerance: CGFloat = 20
 
     private static let bottomAnchor = "transcript-bottom"
     private static let topAnchor = "transcript-top"
@@ -808,5 +1057,34 @@ private struct CompletionBanner: View {
             )
         )
         .shadow(color: .black.opacity(0.15), radius: 8, y: 2)
+    }
+}
+
+/// 视口顶部到内容顶部的距离（点）；停在最上面时是 0。
+///
+/// iOS 18 起直接读滚动几何（`contentOffset + contentInsets.top`）。更低的系统没有这个
+/// API，`ChatView` 就只剩哨兵行的 `onAppear` 触发——补页仍然会自动发生，只是要等行被
+/// 建出来那一刻，而不是提前 120pt。
+private struct TranscriptTopDistance: ViewModifier {
+    let onChange: (CGFloat) -> Void
+
+    /// 这个平台上有没有滚动几何可读（决定"到没到顶部"由谁说了算）。
+    static var available: Bool {
+        if #available(iOS 18.0, *) { return true }
+        return false
+    }
+
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, *) {
+            // 值取数组而不是单个 `CGFloat`：`CGFloat` 那一版实测有一次整段回调都没来
+            // （2026-09-24 run 20260924-225605：补页一次都没触发），换数组之后 3/3 轮都到。
+            content.onScrollGeometryChange(for: [CGFloat].self) { geometry in
+                [geometry.contentOffset.y, geometry.contentInsets.top]
+            } action: { _, values in
+                onChange(values[0] + values[1])
+            }
+        } else {
+            content
+        }
     }
 }

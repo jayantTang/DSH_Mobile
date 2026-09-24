@@ -85,6 +85,8 @@ enum ViewportProbe {
 
     /// 已渲染的行（含尾部气泡）；键是行 id，值是它在屏幕坐标里的矩形。
     private static var rows: [String: CGRect] = [:]
+    /// 最近一次 `scroll` 记录，供 `scrollFacts` 读。
+    static var lastScroll: (offset: CGFloat, content: CGFloat)?
     /// 转写区的可见矩形（屏幕坐标）。
     private static var viewport: CGRect = .zero
     private static var lastUncovered: CGFloat = -1
@@ -122,6 +124,26 @@ enum ViewportProbe {
         guard isOn else { return }
         viewport = rect
         evaluate(force: false)
+    }
+
+    /// 最近一次滚动几何（偏移 / 内容高）。
+    ///
+    /// 判"补页之后位置有没有跳"就靠它：往视口上方插进 Δ 的内容而**可见内容不变**时，
+    /// 偏移必须同时增加 Δ——`|Δoffset - Δcontent| < 4` 就是"读者原地不动"。
+    /// 行矩形（`topVisibleRow`）在 `List` 里滚动时不刷新，不能拿来当判据。
+    static var scrollFacts: (offset: CGFloat, content: CGFloat)? {
+        guard isOn, let facts = lastScroll else { return nil }
+        return (facts.offset, facts.content)
+    }
+
+    /// 视口里**最上面**那一行的 id，以及它离视口顶还有多远。
+    ///
+    /// 用来机器判定"补页之后读者看到的第一行有没有变"：补更早的一页时，如果位置没被
+    /// 锚回来，`List` 会把视口顶到新插入内容的中段，这一行的 id 立刻换人。
+    static func topVisibleRow() -> String? {
+        guard isOn, viewport.height > 1 else { return nil }
+        let visible = rows.filter { $0.value.maxY > viewport.minY + 1 && $0.value.minY < viewport.maxY - 1 }
+        return visible.min { $0.value.minY < $1.value.minY }?.key
     }
 
     static func markReady() {
@@ -287,6 +309,20 @@ enum ViewportProbe {
         return arguments[index + 1]
     }
 
+    /// `-DSHProbeOlderScroll <n>`：由 App 自己把转写视口送到顶部 n 次。
+    ///
+    /// 为什么要这个钩子：XCUITest 对转写页做手势会抛 "Pointer events are not
+    /// supported for this device"（进程级异常，整轮直接 ERROR），所以"一直往上滑"
+    /// 这件事在仿真器里没法由手指完成。钩子只负责**把视口送上去**；送上去之后的
+    /// 一切——哨兵露出来、自动补页、把读者那一行锚回顶部——都还是产品代码。
+    static var olderScrollRounds: Int? {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let index = arguments.firstIndex(of: "-DSHProbeOlderScroll"),
+              index + 1 < arguments.count
+        else { return nil }
+        return Int(arguments[index + 1])
+    }
+
     @MainActor
     static func runAskProbe(provider: @MainActor () -> DSHClient?) async {
         guard let sessionId = askProbeSession else { return }
@@ -411,6 +447,20 @@ enum ProbeVariants {
         return Set(arguments[index + 1].split(separator: ",").map(String.init))
     }()
 
+    /// 复现用：模拟"host 把 `beforeSeq` 当日志偏移用"——每页少给最新的 N 条记录。
+    ///
+    /// 2026-09-24 实测真 host 已经按 seq 收边界（四个真实会话整段历史翻下来一条不漏），
+    /// 所以正常的仿真器用例碰不到 `TranscriptPageBoundary` 那条校正重试。
+    /// `-DSHProbePageShortfall <n>` 注入这个"少给一段"的故障，让校正路径能被端到端验证：
+    /// 少了就必须重问，重问之后时间线里不许留洞。
+    static var pageShortfall: Int {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let index = arguments.firstIndex(of: "-DSHProbePageShortfall"),
+              index + 1 < arguments.count
+        else { return 0 }
+        return Int(arguments[index + 1]) ?? 0
+    }
+
     /// 复现用：把转写换回 `ScrollView + LazyVStack`（产品默认已经是 `List`）。
     static var lazyStack: Bool { all.contains("lazy-stack") }
     static var noRowProbe: Bool { all.contains("no-rows") }
@@ -467,6 +517,7 @@ struct ScrollGeometryProbe: ViewModifier {
                             content: geometry.contentSize.height,
                             container: geometry.containerSize.height)
             } action: { _, facts in
+                ViewportProbe.lastScroll = (facts.offset, facts.content)
                 ViewportProbe.note("scroll", [
                     "offset": String(format: "%.0f", facts.offset),
                     "content": String(format: "%.0f", facts.content),
@@ -497,6 +548,8 @@ enum ViewportProbe {
     static var typingProbe: (text: String, seconds: Double, oscillate: Bool, immediately: Bool,
                              keyboardCycles: Bool)? { nil }
     static var askProbeSession: String? { nil }
+    static var olderScrollRounds: Int? { nil }
+    static func topVisibleRow() -> String? { nil }
     static func pause() {}
     static func resume() {}
     static func runAskProbe(provider: @MainActor () -> DSHClient?) async {}
@@ -509,6 +562,7 @@ enum ViewportProbe {
 }
 
 enum ProbeVariants {
+    static var pageShortfall: Int { 0 }
     static var lazyStack: Bool { false }
     static var noRowProbe: Bool { false }
     static var noPixelProbe: Bool { false }

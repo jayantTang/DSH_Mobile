@@ -117,6 +117,14 @@ final class ChatModel {
 
     /// Bumped whenever the transcript grows, so the view can autoscroll.
     private(set) var scrollSignal: Int = 0
+    /// 补页（在时间线**头部**插入更早的消息）完成的次数。
+    ///
+    /// 要这一位是因为"追上尾部"和"往前补一页"必须分开：前者该钉到底部，后者
+    /// 一次都不能动视口。以前补页也发 `scrollSignal`，于是读者刚翻到上面、跟随
+    /// 状态还没被判成"用户自己在滚"的时候，补回来的一页会把人拽回底部；
+    /// 而新插入的内容本身又会把视口顶到"新那段的开头"（2026-09-24 用户反馈）。
+    /// 现在由视图自己按 `timeline.items.first` 把位置锚回来，见 `ChatView.pumpOlder`。
+    private(set) var prependSignal: Int = 0
     /// Bumped when the user themselves adds something, which is the one case
     /// where the view should jump back to the bottom even if they had scrolled
     /// away: they are waiting to see their own message land.
@@ -737,23 +745,77 @@ final class ChatModel {
         isLoadingOlder = true
         defer { isLoadingOlder = false }
 
-        do {
-            let page = try await client.sessionPage(
-                SessionPageRequest(
-                    address: address,
-                    throughSeq: throughSeq,
-                    beforeSeq: oldest,
-                    maxMessages: 60
+        // host 的 `session/page` 把 beforeSeq 当**日志偏移**用，而偏移不总等于 seq
+        // （会话里有只占偏移不占 seq 的记录）。结果就是"每次翻页静默跳过一段"。
+        // 这里按实际回来的边界校正重问，保证交给时间线的每一页都严丝合缝。
+        var requested = oldest
+        for attempt in 1...TranscriptPageBoundary.maxAttempts {
+            do {
+                let page = try await client.sessionPage(
+                    SessionPageRequest(
+                        address: address,
+                        throughSeq: throughSeq,
+                        beforeSeq: requested,
+                        maxMessages: 60
+                    )
                 )
-            )
-            _ = timeline.prepend(older: page.records)
-            hasOlder = page.hasMore && !page.records.isEmpty
-            if let first = page.records.first?.event.seq { oldestSeq = first }
-        } catch {
-            // Paging past the cursor is the common failure after the host has
-            // trimmed a session; stop offering more rather than surfacing it.
-            hasOlder = false
+                // 探针注入（只得带 `-DSHProbePageShortfall <n>` 的 DEBUG 构建）：
+                // 每页少给最新的 n 条，模拟 host 按日志偏移解释边界。产品构建里是原样。
+                let records = Self.injectedPageShortfall(page.records)
+                guard !records.isEmpty else {
+                    hasOlder = false
+                    return
+                }
+                let returnedLast = records.last?.event.seq ?? 0
+                if let next = TranscriptPageBoundary.corrected(
+                    requested: requested, returnedLast: returnedLast, wanted: oldest
+                ), attempt < TranscriptPageBoundary.maxAttempts {
+                    ViewportProbe.note("paging.corrected", [
+                        "requested": String(requested),
+                        "returnedLast": String(returnedLast),
+                        "next": String(next),
+                        "attempt": String(attempt),
+                    ], force: true)
+                    requested = next
+                    continue
+                }
+
+                // 只并入边界以内的记录：校正后可能把已经有的几条又带回来一次。
+                let fresh = records.filter { $0.event.seq < oldest }
+                let change = timeline.prepend(older: fresh)
+                hasOlder = page.hasMore
+                if let first = fresh.first?.event.seq {
+                    oldestSeq = first
+                } else if TranscriptPageBoundary.hasHole(newest: returnedLast, oldest: oldest) {
+                    // 校正到上限仍接不上：别再往下翻，读者宁可"没有更早的了"，
+                    // 也不要一页中间缺一段。
+                    hasOlder = false
+                    ViewportProbe.note("paging.gap", [
+                        "oldest": String(oldest), "returnedLast": String(returnedLast),
+                    ], force: true)
+                }
+                ViewportProbe.note("paging.page", [
+                    "attempts": String(attempt),
+                    "records": String(fresh.count),
+                    "oldest": String(oldestSeq ?? -1),
+                    "hasOlder": hasOlder ? "1" : "0",
+                ], force: true)
+                if case .none = change {} else { prependSignal += 1 }
+                return
+            } catch {
+                // 越过游标是"host 裁过会话"后的常见失败；安静地停止，别弹错误。
+                hasOlder = false
+                return
+            }
         }
+        hasOlder = false
+    }
+
+    /// 见 `ProbeVariants.pageShortfall`：只在探针变体下裁掉一页的最新几条。
+    private static func injectedPageShortfall(_ records: [SessionRecord]) -> [SessionRecord] {
+        let shortfall = ProbeVariants.pageShortfall
+        guard shortfall > 0, records.count > shortfall else { return records }
+        return Array(records.dropLast(shortfall))
     }
 
     // MARK: - Outbound actions
