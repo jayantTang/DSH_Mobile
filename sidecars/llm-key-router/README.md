@@ -32,19 +32,22 @@ DSH 会话 → dsh-llm-pi-ai(route: 公司网关) → http://127.0.0.1:8799/v1 �
 | 新会话 | 健康 key 轮转分摊 | 无（本来就没缓存） |
 | 429 / 配额 | 该 key 冷却（`Retry-After` 优先），**整个会话**迁移 | 一次全量重算 |
 | 5xx / 网络错 | 同一把先重试一次，仍失败才迁 | 尽量不丢 |
-| 401 / 403 | 判死（实测 49 把里有 3 把 `Consumer is forbidden.`） | — |
+| 401 / 403 | 判死（上游停用的 key 会在首用时被标掉，如 `Consumer is forbidden.`） | — |
 | 流式已开始输出 | 不换 key 重放，错误透给 DSH 的重试策略 | — |
 
 请求体一个字不改、SSE 逐块透传：前缀只要差一个字节，上游缓存就作废。
 
 ## 用法
 
+一个人用的一套（公司网关 + 多把 key）就长这样；这套配置只属于本机，
+和 DSH Mobile 这个产品无关：App 不认识它，别的用户也不需要它。
+
 ```bash
 # 1. 配置：~/.dsh/llm-key-router/config.json（照 config.example.json 抄）
 # 2. 导入 key（一行一把，可「标签:key」；只写入本机 600 文件）
 node scripts/dev/llm-router-setup.mjs keys ~/path/to/keys.txt
 # 3. 起代理（前台）
-node plugins/llm-key-router/bin/llm-key-router.mjs start
+node sidecars/llm-key-router/bin/llm-key-router.mjs start
 # 4. 接到 DSH 上（写凭据 + 建 pi-ai route，模型清单从代理的 /v1/models 抓）
 node scripts/dev/llm-router-setup.mjs wire
 # 5. 常驻（开机自起、掉线自拉）
@@ -59,5 +62,5 @@ node scripts/dev/llm-router-setup.mjs status
 ## 测试
 
 ```bash
-cd plugins/llm-key-router && npm test        # 12 项：粘性、分摊、冷却、判死、迁移、指纹
+cd sidecars/llm-key-router && npm test        # 12 项：粘性、分摊、冷却、判死、迁移、指纹
 ```

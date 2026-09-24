@@ -1,6 +1,10 @@
 #!/usr/bin/env node
 /**
- * 把「公司网关 + 多 key 轮换代理」接到本机 DSH 上。
+ * 把「自建/公司网关 + 多 key 轮换代理」接到本机 DSH 上。
+ *
+ * 这套东西是**本机个人的模型接入**，与 DSH Mobile 这个产品无关：
+ * 它只改本机 ~/.dsh 下的配置与一个 LaunchAgent，仓库里没有任何产品路径依赖它
+ * （所以它住在 sidecars/ 而不是 plugins/——plugins/ 是随产品安装的 DSH 插件）。
  *
  *   node scripts/dev/llm-router-setup.mjs keys <文件>     导入上游 key（一行一把）
  *   node scripts/dev/llm-router-setup.mjs wire            写凭据 + 建 pi-ai route（需代理在跑）
@@ -21,7 +25,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
-const ROUTER_DIR = join(ROOT, 'plugins', 'llm-key-router')
+const ROUTER_DIR = join(ROOT, 'sidecars', 'llm-key-router')
 const ROUTER_HOME = join(homedir(), '.dsh', 'llm-key-router')
 const CONFIG = join(ROUTER_HOME, 'config.json')
 const AGENT_LABEL = 'com.jayanttang.dsh-llm-key-router'
@@ -51,7 +55,7 @@ if (command === 'keys') {
     .split('\n').filter((line) => line.startsWith(' *') || line.startsWith('/**')).join('\n'))
 }
 
-/// 导入之后立刻验一遍：49 把里可能混着被停用的（实测 3 把 403），早发现比晚发现好。
+/// 导入之后立刻验一遍：一批 key 里可能混着上游已停用的（403），早发现比晚发现好。
 function verifyKeys() {
   const keys = readFileSync(join(ROUTER_HOME, 'keys.txt'), 'utf8').split('\n').filter(Boolean)
   const config = JSON.parse(readFileSync(CONFIG, 'utf8'))
@@ -84,7 +88,7 @@ async function wire() {
     }))
   } catch (error) {
     fail(`读不到代理的模型清单（${error.message}）——先把代理跑起来：`
-      + `node plugins/llm-key-router/bin/llm-key-router.mjs start`)
+      + `node sidecars/llm-key-router/bin/llm-key-router.mjs start`)
   }
 
   const host = await hostRPC()
