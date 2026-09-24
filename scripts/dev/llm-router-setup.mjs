@@ -32,8 +32,42 @@ const AGENT_LABEL = 'com.jayanttang.dsh-llm-key-router'
 const AGENT_PATH = join(homedir(), 'Library', 'LaunchAgents', `${AGENT_LABEL}.plist`)
 const PROVIDER = 'company-gateway'
 
-/** 上游思考档位 → 线上拼写。实测这个网关认 none/low/medium/high/max（别的模型忽略 none 也安全）。 */
+/**
+ * 上游思考档位 → 线上拼写。
+ *
+ * pi-ai 在 `thinkingFormat: deepseek` 下会发两样东西：选 Off 发 `thinking:{type:'disabled'}`，
+ * 选别的档发 `thinking:{type:'enabled'}` + `reasoning_effort:<拼写>`。
+ *
+ * **但不是每个模型都吃这五档**：2026-09-24 对 16 个模型 × 5 档逐个打过真实请求，
+ * 有 5 个模型会在某些档位上直接 400（手机上一选就报错）：
+ *   - glm-5.3-flash、zhipu/glm-5.3：「该模型始终思考，不支持关闭思考；请使用 low、high 或 max」
+ *     → Off 与 Medium 都是 400，只能用 low/high/max；
+ *   - kimi-k2.7-code、qwen3.7-max、qwen3.7-plus：`max` 不在允许列表里（允许 none/minimal/low/medium/high/xhigh）
+ *     → Max 是 400；
+ *   - MiniMax-M3：只认 `thinking.type: adaptive|disabled`，pi-ai 发不出 adaptive
+ *     → 只要带 thinking 字段就 400，所以它不声明档位（请求里干脆不带 thinking）。
+ * 其余模型五档全通。所以档位要按模型给，不能一套打天下。
+ */
 const EFFORTS = { off: 'none', low: 'low', medium: 'medium', high: 'high', max: 'max' }
+
+/** 始终思考的模型：没有 Off，也没有 Medium。 */
+const EFFORTS_ALWAYS_ON = { low: 'low', high: 'high', max: 'max' }
+
+/** 允许列表里没有 max 的模型。 */
+const EFFORTS_NO_MAX = { off: 'none', low: 'low', medium: 'medium', high: 'high' }
+
+const EFFORTS_BY_MODEL = {
+  'glm-5.3-flash': EFFORTS_ALWAYS_ON,
+  'zhipu/glm-5.3': EFFORTS_ALWAYS_ON,
+  'kimi-k2.7-code': EFFORTS_NO_MAX,
+  'qwen3.7-max': EFFORTS_NO_MAX,
+  'qwen3.7-plus': EFFORTS_NO_MAX,
+  // 值写成 null 表示"这个模型不声明档位"：DSH 就不会显示档位按钮，请求里也不带 thinking。
+  'MiniMax-M3': null,
+}
+
+/** 该模型能安全使用的档位；null = 不声明（请求不带 thinking 字段）。 */
+const effortsFor = (id) => (id in EFFORTS_BY_MODEL ? EFFORTS_BY_MODEL[id] : EFFORTS)
 
 /**
  * 每个模型声明的输出上限，**必须显式给**。
@@ -147,12 +181,14 @@ async function wire() {
       // 按十进制写标签：256,000 该念 256k，不是 250k。
       const label = window >= 1_000_000 ? `${Math.round(window / 1_000_000)}M` : `${Math.round(window / 1000)}k`
       const verified = WINDOWS[model.id] !== undefined
+      const efforts = effortsFor(model.id)
       return {
         id: model.id,
         // 窗口写进名字：选择器里一眼能比出"这个够不够用"（不给名字的话客户端看不到窗口，
         // host 的 modelCatalog 只下发 id/name/描述/思考档位）。
         name: `${model.name ?? model.id} · ${label}${verified ? '' : `（${PROBE_CAVEAT}）`}`,
-        reasoningEfforts: EFFORTS,
+        // 档位按模型给：有的模型没有 Off、有的没有 Max，给错了手机上一选就 400。
+        ...(efforts ? { reasoningEfforts: efforts } : {}),
         maxTokens: MAX_TOKENS_BY_MODEL[model.id] ?? MAX_TOKENS,
         contextWindow: window,
       }
@@ -181,7 +217,10 @@ async function wire() {
   const applied = await host.call('settings/update', { ns: 'llm-pi-ai', patch })
   if (!applied.ok) fail(`写 route 失败：${JSON.stringify(applied.error)}`)
   console.log(`凭据 LLM_ROUTER_TOKEN 已写入；route「公司网关」已建（${models.length} 个模型，`
-    + `思考档位 ${Object.keys(EFFORTS).join('/')}，输出上限 ${MAX_TOKENS}`
+    + `思考档位默认 ${Object.keys(EFFORTS).join('/')}`
+    + `（${Object.keys(EFFORTS_BY_MODEL).length} 个模型按实测收窄：`
+    + `${Object.entries(EFFORTS_BY_MODEL).map(([id, set]) => `${id}=${set ? Object.keys(set).join('/') : '无档位'}`).join('、')}）`
+    + `，输出上限 ${MAX_TOKENS}`
     + `${Object.keys(MAX_TOKENS_BY_MODEL).length ? `（${Object.keys(MAX_TOKENS_BY_MODEL).join('、')} 另给 ${Object.values(MAX_TOKENS_BY_MODEL)[0]}）` : ''}）`)
   console.log('手机端：打开任一会话的「模型」选择器即可看到「公司网关」这一组；'
     + '多把 key 的轮换对手机不可见。')
