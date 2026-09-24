@@ -48,6 +48,20 @@ const EFFORTS = { off: 'none', low: 'low', medium: 'medium', high: 'high', max: 
 const MAX_TOKENS = 131072
 
 /**
+ * 少数模型的输出上限跟默认值（131072）不一样，逐个覆盖。
+ *
+ * 为什么只抬 DeepSeek 这一族：火山方舟的模型列表写着它们的「最大回答」是 384k，
+ * 而我们默认只给 131k——长回合会在 131k 处被 `reason=max-tokens` 截断，正是
+ * 2026-09-24 那次事故的形态。其余模型（glm 128k、qwen 131k、doubao 256k、
+ * MiniMax 524k、hy3/kimi）的文档上限都 ≥ 默认值，或与默认值相当，保持默认不动。
+ */
+const MAX_TOKENS_BY_MODEL = {
+  'deepseek-v4.1-flash': 393216,
+  'deepseek-v4-flash': 393216,
+  'deepseek-v4-pro': 393216,
+}
+
+/**
  * 每个模型的**上下文窗口**与显示用的短标签。
  *
  * 为什么要显式声明：DSH 用这个数字决定"什么时候压缩上下文"。pi-ai 对没声明窗口的
@@ -59,7 +73,26 @@ const MAX_TOKENS = 131072
  */
 const WINDOW = 262144
 const WINDOWS = {
-  // 已核实的写在这里：'deepseek-v4.1-flash': 256 * 1024,
+  // 1M 一档：公开规格写 1M / 1,048,576 / 1,024,000 的都按 1,000,000 声明（和官方
+  // DeepSeek 那条 route 一致）。宁可少报一点也不多报：报大了会在长会话里直接撞上游的
+  // 硬报错，报小了只是压缩早一点。
+  'deepseek-v4.1-flash': 1_000_000, // 阿里云百炼规格 1,000,000；实测 565,833 输入通过
+  'deepseek-v4-pro': 1_000_000,
+  'deepseek-v4-flash': 1_000_000,
+  'MiniMax-M3': 1_000_000, // 官方「最高 1M、保障至少 512K」；实测 687,755 输入通过
+  'kimi-k3': 1_000_000, // 阿里云百炼 1,048,576
+  'glm-5.3': 1_000_000, // 阿里云百炼 1,048,576
+  'zhipu/glm-5.3': 1_000_000, // 智谱官方「上下文窗口 1M」
+  'glm-5.3-flash': 1_000_000, // 智谱/360 规格 1M，最大输出 128K
+  'glm-5.2': 1_000_000,
+  'qwen3.8-max': 1_000_000,
+  'qwen3.8-flash': 1_000_000,
+  'qwen3.7-max': 1_000_000,
+  'qwen3.7-plus': 1_000_000,
+  // 明显小一档的，写在下面，别跟着上面的 1M 走。
+  'doubao-seed-2.1-pro': 1_000_000, // 火山方舟模型列表 1024k；2.0 那一代才是 256k
+  'hy3': 256_000, // 腾讯混元官方「支持 256K 上下文长度」
+  'kimi-k2.7-code': 262_144, // 火山方舟 262,144 / 输出 32,768
 }
 const PROBE_CAVEAT = '未核实'
 
@@ -111,7 +144,8 @@ async function wire() {
     if (!response.ok) throw new Error(`HTTP ${response.status}`)
     models = (await response.json()).data.map((model) => {
       const window = WINDOWS[model.id] ?? WINDOW
-      const label = window >= 1_000_000 ? `${Math.round(window / 1_000_000)}M` : `${Math.round(window / 1024)}k`
+      // 按十进制写标签：256,000 该念 256k，不是 250k。
+      const label = window >= 1_000_000 ? `${Math.round(window / 1_000_000)}M` : `${Math.round(window / 1000)}k`
       const verified = WINDOWS[model.id] !== undefined
       return {
         id: model.id,
@@ -119,7 +153,7 @@ async function wire() {
         // host 的 modelCatalog 只下发 id/name/描述/思考档位）。
         name: `${model.name ?? model.id} · ${label}${verified ? '' : `（${PROBE_CAVEAT}）`}`,
         reasoningEfforts: EFFORTS,
-        maxTokens: MAX_TOKENS,
+        maxTokens: MAX_TOKENS_BY_MODEL[model.id] ?? MAX_TOKENS,
         contextWindow: window,
       }
     })
@@ -147,7 +181,8 @@ async function wire() {
   const applied = await host.call('settings/update', { ns: 'llm-pi-ai', patch })
   if (!applied.ok) fail(`写 route 失败：${JSON.stringify(applied.error)}`)
   console.log(`凭据 LLM_ROUTER_TOKEN 已写入；route「公司网关」已建（${models.length} 个模型，`
-    + `思考档位 ${Object.keys(EFFORTS).join('/')}，输出上限 ${MAX_TOKENS}）`)
+    + `思考档位 ${Object.keys(EFFORTS).join('/')}，输出上限 ${MAX_TOKENS}`
+    + `${Object.keys(MAX_TOKENS_BY_MODEL).length ? `（${Object.keys(MAX_TOKENS_BY_MODEL).join('、')} 另给 ${Object.values(MAX_TOKENS_BY_MODEL)[0]}）` : ''}）`)
   console.log('手机端：打开任一会话的「模型」选择器即可看到「公司网关」这一组；'
     + '多把 key 的轮换对手机不可见。')
 }
