@@ -1,6 +1,7 @@
 {
   "protocolVersion": 1,
   "maxFrameBytes": 33554432,
+  "capabilities": ["file-transfer", "events", "session-streams", "pair-code", "qr-pairing", "self-enroll", "git"],
   "deviceToAgent": ["req", "open", "cancel", "eventResult", "ping", "hello"],
   "agentToDevice": ["res", "item", "end", "streamError", "event", "hostStatus", "pong", "error"],
   "relayControl": ["deviceAttach", "deviceDetach"],
@@ -62,5 +63,10 @@
       "summary": "只有 iOS 有 FrameAssembler；连接器 ws.js 不重组",
       "status": "documented"
     }
-  ]
+  ],
+  "hostBaseline": {
+    "dshVersion": "0.1.5-rc.3",
+    "source": "npm 上 @deepseek-ai/dsh 的 0.1.5-rc.3（2026-09-22），与本机运行中的 Host 一致",
+    "note": "低于这个版本的主机，App 会在会话列表顶部给一条**可关闭**的提示，不阻断连接。写低了提示永不出现（功能等于没有），写高了天天误报——改这个值请一并跑 npm run gen:host-baseline 与 npm run check:contracts。"
+  }
 }

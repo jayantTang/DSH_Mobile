@@ -14,13 +14,18 @@
  *      随 npm 发布、单列，差异只打印不失败。
  *   3. 调试钩子闸门：`-DSHDemoMode` / `-DSHForgetDirect` / `-DSHFailAttachmentLoad`
  *      在 iOS 源码里的每一处都必须在 `#if DEBUG` 区间内，Release 分支里不许有。
+ *   4. send-image 采集脚本：包内副本与 `skills/` 下的 canonical 必须逐字节相同。
+ *   5. 能力词汇表：`hello.js` 是全集，Swift 常量只能取子集，App 不许写裸字面量。
+ *   6. RPC catalog 自洽：`endpointCount` 与 `endpoints` / `kindCounts` 对得上。
+ *   7. host 版本基线：契约里的 `hostBaseline.dshVersion` 与生成的 Swift 常量一致。
+ *   8. `test:scripts` 列出的每个文件都已入库（`node --test` 会静默跳过缺失的）。
  *
  * **这是文本解析**：它拦得住「改了一份忘了另一份/把锚点顺序调了/把调试钩子移出门外」，
  * 拦不住等价重写。不要把它当成契约测试来宣传。
  */
 
 import { execFileSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { readFileSync, existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -214,11 +219,209 @@ for (const hook of DEBUG_HOOKS) {
   }
 }
 
+// ── ④ send-image 采集脚本：包内副本与 canonical 必须逐字节相同 ──────────────
+//
+// 两份副本是**有意**的：canonical 在 `skills/` 下（skill 用），另一份在 npm 包里
+// （npm 用户没有 `skills/` 目录，那是他们唯一能命中的候选）。人不会记得同时改两处，
+// 所以由这条检查兜着。漂移了就 `node scripts/dev/sync-send-image-script.mjs`。
+
+const sendImageContract = readJson('test/contract/send-image-script.json')
+
+console.log('send-image 采集脚本（包内副本必须与 canonical 逐字节相同）：')
+for (const { file, canonical } of sendImageContract.copies) {
+  if (read(file) === read(canonical)) {
+    console.log(`  ok   ${file} == ${canonical}`)
+  } else {
+    fail(`${file} 与 ${canonical} 不一致——跑 node scripts/dev/sync-send-image-script.mjs`)
+    console.log(`  FAIL ${file} != ${canonical}`)
+  }
+}
+
+// ── ⑤ 能力词汇表：JS 定义全集，Swift 只能取子集，App 不许写裸字面量 ──────────
+//
+// 能力名散落在三处（连接器 JS、iOS 常量、App 调用点）。契约文件是单一来源，
+// 三端各自被钉在上面。**这不是运行时校验**：真正的行为在 `_link/hello` 交换里。
+
+const CAPABILITY_CONTRACT = 'docs/relay-contract.json'
+const HELLO_JS = 'plugins/mobile-link/lib/hello.js'
+const LINK_HANDSHAKE_SWIFT = 'ios/DSHMobile/DSHKit/Sources/DSHKit/LinkHandshake.swift'
+const APP_SWIFT_DIR = 'ios/DSHMobile/DSHMobile'
+
+/** 从 `hello.js` 的 `SERVER_CAPABILITIES = [...]` 里抠出字符串元素。 */
+function serverCapabilities() {
+  const text = read(HELLO_JS)
+  const match = text.match(/SERVER_CAPABILITIES\s*=\s*\[([\s\S]*?)\]/)
+  if (!match) return null
+  return [...match[1].matchAll(/'([^']+)'/g)].map((entry) => entry[1])
+}
+
+/** 从 Swift 的 `Capability` 枚举里抠出 `static let x = "..."` 的值。 */
+function swiftCapabilityValues() {
+  const text = read(LINK_HANDSHAKE_SWIFT)
+  const block = text.match(/enum Capability\s*\{([\s\S]*?)\n\}/)
+  if (!block) return null
+  return [...block[1].matchAll(/static let \w+\s*=\s*"([^"]+)"/g)].map((entry) => entry[1])
+}
+
+console.log('能力词汇表（契约是全集；Swift 取子集；App 不写裸字面量）：')
+const contractCapabilities = contract.capabilities ?? []
+const jsCapabilities = serverCapabilities()
+
+if (!Array.isArray(contractCapabilities) || contractCapabilities.length === 0) {
+  fail(`${CAPABILITY_CONTRACT}: 缺少 capabilities 数组（能力词表的单一来源）`)
+  console.log('  FAIL 契约里没有 capabilities')
+} else if (!jsCapabilities) {
+  fail(`${HELLO_JS}: 没找到 SERVER_CAPABILITIES 数组`)
+  console.log('  FAIL hello.js 里没找到 SERVER_CAPABILITIES')
+} else {
+  const sorted = (list) => [...list].sort().join(',')
+  if (sorted(jsCapabilities) !== sorted(contractCapabilities)) {
+    fail(`${HELLO_JS} 的 SERVER_CAPABILITIES 与契约不一致：`
+      + `JS=[${jsCapabilities.join(', ')}] 契约=[${contractCapabilities.join(', ')}]`)
+    console.log(`  FAIL JS [${jsCapabilities.join(', ')}] != 契约 [${contractCapabilities.join(', ')}]`)
+  } else {
+    console.log(`  ok   JS 全集 == 契约（${contractCapabilities.length} 个：${contractCapabilities.join(', ')}）`)
+  }
+
+  const known = new Set(contractCapabilities)
+  const swiftValues = swiftCapabilityValues()
+  if (!swiftValues) {
+    fail(`${LINK_HANDSHAKE_SWIFT}: 没找到 Capability 枚举`)
+    console.log('  FAIL LinkHandshake.swift 里没找到 Capability')
+  } else {
+    const unknown = swiftValues.filter((value) => !known.has(value))
+    if (unknown.length) {
+      fail(`${LINK_HANDSHAKE_SWIFT} 的 Capability 里有契约之外的值：${unknown.join(', ')}`)
+      console.log(`  FAIL Swift 常量不在契约里：${unknown.join(', ')}`)
+    } else {
+      console.log(`  ok   Swift 常量是契约子集（${swiftValues.length} 个：${swiftValues.join(', ')}）`)
+    }
+  }
+}
+
+// App 源码里不许再出现裸能力字面量：`store.supports("git")` 绕过了常量。
+//
+// 只看 `supports(`（ConnectionStore 的能力查询 API）。**不看 `contains(`**：那个名字
+// 在这份代码里被用来问字符串/数组，18 处命中里 16 处是 `arguments.contains("-DSH…")`
+// 这类无关调用，把它们算进来只会让检查变成噪音。
+const nakedCapabilityUse = []
+for (const file of listAppSwiftSources()) {
+  read(file).split('\n').forEach((line, index) => {
+    const code = withoutComments(line)
+    if (/\bsupports\s*\(\s*"/.test(code)) {
+      nakedCapabilityUse.push(`${file}:${index + 1}`)
+    }
+  })
+}
+if (nakedCapabilityUse.length) {
+  fail(`App 里有裸能力字面量（应传 LinkHandshake.Capability 常量）：${nakedCapabilityUse.join(', ')}`)
+  console.log(`  FAIL 裸字面量 ${nakedCapabilityUse.join(', ')}`)
+} else {
+  console.log('  ok   App 源码里没有 supports("…")')
+}
+
+// ── ⑥ RPC catalog 自洽 ─────────────────────────────────────────────────────
+//
+// catalog 没有消费者（没有脚本读它），所以它不会因为真实 host 变了而红。
+// 这是**降级后的最低保证**：至少它自己不矛盾，不会被当成"活契约"引用。
+
+const catalog = readJson('docs/dsh-rpc-catalog.json')
+
+console.log('RPC catalog 自洽（端点计数与分类计数对得上）：')
+{
+  const endpoints = Array.isArray(catalog.endpoints) ? catalog.endpoints.length : -1
+  const kindSum = Object.values(catalog.kindCounts ?? {}).reduce((sum, n) => sum + n, 0)
+  const problemsHere = []
+  if (catalog.endpointCount !== endpoints) {
+    problemsHere.push(`endpointCount=${catalog.endpointCount} 但 endpoints.length=${endpoints}`)
+  }
+  if (kindSum !== catalog.endpointCount) {
+    problemsHere.push(`kindCounts 之和=${kindSum} 但 endpointCount=${catalog.endpointCount}`)
+  }
+  if (problemsHere.length) {
+    fail(`docs/dsh-rpc-catalog.json 自相矛盾：${problemsHere.join('；')}`)
+    console.log(`  FAIL ${problemsHere.join('；')}`)
+  } else {
+    console.log(`  ok   endpointCount ${catalog.endpointCount} == endpoints.length；`
+      + `kindCounts 之和 ${kindSum}（${JSON.stringify(catalog.kindCounts)}）`)
+  }
+}
+
+// ── ⑦ host 版本基线：契约与生成的 Swift 常量必须一致 ────────────────────────
+//
+// App 运行时读不到 `docs/`，所以基线要生成成 Swift 常量。两处手改必然漂，
+// 这条检查兜着：改了契约就重跑生成脚本。
+
+const HOST_BASELINE_SWIFT = 'ios/DSHMobile/DSHMobile/Support/HostBaseline.swift'
+
+console.log('host 版本基线（契约 == 生成的 Swift 常量）：')
+{
+  const baseline = contract.hostBaseline?.dshVersion
+  const generatedText = existsSync(join(REPO_ROOT, HOST_BASELINE_SWIFT)) ? read(HOST_BASELINE_SWIFT) : null
+  const generated = generatedText?.match(/dshVersion\s*=\s*"([^"]+)"/)?.[1]
+  if (!baseline) {
+    fail(`${CAPABILITY_CONTRACT}: 缺少 hostBaseline.dshVersion`)
+    console.log('  FAIL 契约里没有 hostBaseline.dshVersion')
+  } else if (!generatedText) {
+    fail(`${HOST_BASELINE_SWIFT} 不存在——跑 npm run gen:host-baseline 生成`)
+    console.log(`  FAIL 生成物不存在（${HOST_BASELINE_SWIFT}）`)
+  } else if (!generated) {
+    fail(`${HOST_BASELINE_SWIFT}: 没找到 dshVersion 常量`)
+    console.log('  FAIL 生成物里没有 dshVersion')
+  } else if (baseline !== generated) {
+    fail(`host 基线不一致：契约=${baseline} 生成物=${generated}——`
+      + `跑 npm run gen:host-baseline 重新生成`)
+    console.log(`  FAIL 契约 ${baseline} != 生成物 ${generated}`)
+  } else {
+    console.log(`  ok   契约与生成物都是 ${baseline}`)
+  }
+}
+
+// ── ⑧ test:scripts 里列的每个文件都必须入库 ────────────────────────────────
+//
+// `node --test` 对不存在的路径**只打印 `Could not find …` 然后 exit 0**——
+// 漏提交一个测试文件，CI 会照绿，只是少跑若干条用例（本批实测：24 → 20）。
+// 只有 git 层面拦得住，所以这里逐个 `git ls-files --error-unmatch`。
+
+const packageJson = readJson('package.json')
+const testScripts = packageJson.scripts?.['test:scripts'] ?? ''
+
+console.log('test:scripts 的文件都在库里（防 --test 静默跳过）：')
+{
+  const listed = [...testScripts.matchAll(/(\S+\.mjs)/g)].map((entry) => entry[1])
+  if (listed.length === 0) {
+    fail('package.json 的 test:scripts 里没解析出任何 .mjs 文件')
+    console.log('  FAIL 没解析出文件')
+  } else {
+    const missing = listed.filter((file) => {
+      try {
+        execFileSync('git', ['ls-files', '--error-unmatch', '--', file], {
+          cwd: REPO_ROOT, stdio: 'ignore',
+        })
+        return false
+      } catch {
+        return true
+      }
+    })
+    if (missing.length) {
+      fail(`这些文件列在 test:scripts 里但没入库（node --test 会静默跳过）：${missing.join(', ')}`)
+      console.log(`  FAIL 未入库：${missing.join(', ')}`)
+    } else {
+      console.log(`  ok   ${listed.length} 个文件都已入库`)
+    }
+  }
+}
+
 /** 所有 Swift 源文件（App + DSHKit），跳过构建产物。 */
 function listSwiftSources() {
   return execFileSync('git', ['ls-files', '-z', '--', 'ios/**/*.swift'], {
     cwd: REPO_ROOT, encoding: 'utf8',
   }).split('\0').filter(Boolean)
+}
+
+/** 只属于 App 目标的 Swift 源（不含 DSHKit / 测试）。 */
+function listAppSwiftSources() {
+  return listSwiftSources().filter((file) => file.startsWith(`${APP_SWIFT_DIR}/`))
 }
 
 // ── 结论 ───────────────────────────────────────────────────────────────────
@@ -228,4 +431,4 @@ if (problems.length) {
   for (const problem of problems) console.error(`  - ${problem}`)
   process.exit(1)
 }
-console.log('\nok  契约检查通过（DLP 向量接线 / 安装阶梯 / 调试钩子闸门）')
+console.log('\nok  契约检查通过（DLP 向量接线 / 安装阶梯 / 调试钩子闸门 / send-image 脚本一致性 / 能力词表 / catalog 自洽 / host 基线 / test:scripts 入库）')

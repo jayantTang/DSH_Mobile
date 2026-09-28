@@ -41,11 +41,17 @@ public struct LinkHandshake: Decodable, Sendable {
     }
 
     /// Names used on the wire.
+    ///
+    /// Only the ones the app actually asks about are declared here: the full set
+    /// (plus `qr-pairing` / `self-enroll`) lives in `docs/relay-contract.json`,
+    /// and `npm run check:contracts` keeps this list a subset of it. Declaring a
+    /// name nothing calls would just be dead code.
     public enum Capability {
         public static let fileTransfer = "file-transfer"
         public static let events = "events"
         public static let sessionStreams = "session-streams"
         public static let pairCode = "pair-code"
+        public static let git = "git"
     }
 }
 

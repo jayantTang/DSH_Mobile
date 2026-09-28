@@ -82,7 +82,7 @@ final class GitModel {
         // Ask before calling: a connector that predates the git bridge does not
         // advertise the capability (`_link/hello`), and the app's job then is to
         // say so rather than to fire a call the Host answers with a 404.
-        guard store.supports("git") else {
+        guard store.supports(LinkHandshake.Capability.git) else {
             phase = .unsupported
             return
         }
@@ -99,7 +99,7 @@ final class GitModel {
     /// The first page, or the next one.
     func loadLog(reset: Bool = false) async {
         guard let store, store.client != nil else { return }
-        guard store.supports("git") else {
+        guard store.supports(LinkHandshake.Capability.git) else {
             logPhase = .unsupported
             return
         }
