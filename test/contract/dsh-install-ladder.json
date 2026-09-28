@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "what": "DSH 安装目录解析阶梯（插件的 ws / @deepseek-ai/cordis 从哪找）。四处实现，前三处必须一致，第四处随包发布、有意保留差异。",
+  "canonical": [
+    "DSH_INSTALL_DIR",
+    "self",
+    "$DSH_HOME/profiles/web",
+    "which dsh",
+    "npm root -g"
+  ],
+  "copies": [
+    {
+      "file": "plugins/doubao-image/lib/dsh-install.mjs",
+      "entry": "dshAnchors",
+      "matches": "canonical"
+    },
+    {
+      "file": "plugins/mobile-link/test/dsh-install.js",
+      "entry": "dshAnchors",
+      "matches": "canonical"
+    },
+    {
+      "file": "docs/artifacts/samples/capture.mjs",
+      "entry": "dshAnchors",
+      "matches": "canonical"
+    },
+    {
+      "file": "plugins/mobile-link/lib/ws.js",
+      "entry": "candidateAnchors",
+      "extra": ["process.argv[1]"],
+      "missing": ["DSH_INSTALL_DIR", "which dsh", "npm root -g"],
+      "reason": "随包发布，改锚点集合会改变已发布插件的解析行为；本批不动",
+      "pendingAlignment": true
+    }
+  ],
+  "notes": [
+    "这是**文本级**检查，不是运行时验证：它按出现顺序在入口函数体里找锚点，拦得住『有人只改了一份的顺序或删了一个锚点』，拦不住等价重写。",
+    "plugins/doubao-image/lib/cdp.mjs 也命中 grep DSH_INSTALL_DIR，但它只是 import { requireFromDsh }——不是第五份实现。",
+    "第四处的差异（少三个锚点、多 process.argv[1]）只打印、不失败：owner 口径是本批记账不动它。"
+  ]
+}
