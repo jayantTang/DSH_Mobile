@@ -1,0 +1,15 @@
+{
+  "name": "dsh-agent-team",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "多模型 Agent 开发团队的流程规范（本机个人工具，不属于 DSH Mobile 产品侧）",
+  "scripts": {
+    "gen": "node lib/gen-docs.mjs",
+    "check": "node lib/gen-docs.mjs --check",
+    "run": "node lib/run.mjs"
+  },
+  "dependencies": {
+    "yaml": "^2.5.1"
+  }
+}
