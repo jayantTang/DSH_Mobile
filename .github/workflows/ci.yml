@@ -83,10 +83,14 @@ jobs:
         with:
           node-version: '22'
       - run: npm run check:docs
-      - name: 契约守卫（DLP 向量接线 / 安装目录阶梯 / 调试钩子闸门）
+      - name: 契约守卫（DLP 向量接线 / 安装目录阶梯 / 调试钩子闸门 / 单一来源）
         run: npm run check:contracts
       - name: 脚本单测（含测试台与契约检查自身的用例）
         run: npm run test:scripts
+      # 纯文本解析 + readdirSync，不依赖 macOS / Xcode / 网络（本机 0.3s），
+      # 所以放在这个 Ubuntu job 里跑没有平台风险，不必新建 job。
+      - name: 本地化检查（双向缺键 / 硬编码 / 未本地化绑定）
+        run: npm run check:i18n
 
   node:
     runs-on: ubuntu-latest
