@@ -20,6 +20,15 @@ final class WorkspaceFileDownloaderTests: XCTestCase {
         private let lock = NSLock()
         private(set) var calls: [Call] = []
 
+        /// The `readBytes` answers this host has already handed back, in order.
+        ///
+        /// A test that needs to know the *download* has moved waits on this, not
+        /// on `calls`: `calls` only proves a request went out, so cancelling on
+        /// it is cancelling on a reply that may still be in flight. Offsets and
+        /// answers are appended under one lock, so a count read here is at most
+        /// what the host has finished serving — never ahead of it.
+        private(set) var answers: [Data] = []
+
         var body: Data
         /// What `stat` reports; defaults to the body's real size.
         var reportedBytes: Int?
@@ -38,6 +47,25 @@ final class WorkspaceFileDownloaderTests: XCTestCase {
             lock.withLock {
                 calls.filter { $0.method == "workspaceFiles/readBytes" }
                     .compactMap { ($0.args["range"] as? [String: Any])?["offset"] as? Int }
+            }
+        }
+
+        /// Waits until the host has answered `count` windows, and reports the
+        /// bytes it handed back.
+        ///
+        /// This is a *precondition*, never an assertion: it fails the test with a
+        /// plain `XCTFail` when the deadline passes, so a broken precondition can
+        /// never be mistaken for the race it is meant to rule out.
+        func waitForAnswers(_ count: Int, timeout: Duration = .seconds(5)) async throws -> [Data] {
+            let deadline = ContinuousClock.now + timeout
+            while true {
+                let ready = lock.withLock { answers }
+                if ready.count >= count { return ready }
+                guard ContinuousClock.now < deadline else {
+                    XCTFail("the host never served \(count) window(s); a later assertion about what arrived would be meaningless")
+                    return ready
+                }
+                try await Task.sleep(for: .milliseconds(1))
             }
         }
 
@@ -88,6 +116,9 @@ final class WorkspaceFileDownloaderTests: XCTestCase {
                 let end = min(start + requested, body.count)
                 let piece = body.subdata(in: start..<end)
                 let eof = end >= body.count
+                // Recorded before the reply is built, so the moment a test can
+                // see this answer is the moment the caller is about to receive it.
+                lock.withLock { answers.append(piece) }
                 return try Self.decode(Value.self, """
                 {"offset":\(offset),"data":"\(piece.base64EncodedString())","eof":\(eof),\
                 "bytes":\(reportedBytes ?? body.count),"version":"v1"}
@@ -262,16 +293,19 @@ final class WorkspaceFileDownloaderTests: XCTestCase {
 
     func testCancellationKeepsWhatArrivedSoItCanResume() async throws {
         // Big enough that the fetch is still running when the task is cancelled.
-        let host = Host(body: body(bytes: WorkspaceFileDownloader.windowBytes * 40))
+        let total = WorkspaceFileDownloader.windowBytes * 40
+        let host = Host(body: body(bytes: total))
         let destination = temporaryFile()
         let downloader = downloader(host)
 
         let task = Task {
             try await downloader.fetch(scopeId: "s", path: "report.pdf", to: destination)
         }
-        // Cancel once at least one window has landed, so this exercises the loop
-        // rather than a task that never started.
-        while host.calls.isEmpty { try await Task.sleep(for: .milliseconds(1)) }
+        // Cancel only once the host has actually answered — waiting for the
+        // request to go out is not the same thing, and cancelling on that signal
+        // is what made this test pass on a fast machine and fail on a loaded
+        // runner: the reply was still in flight, so nothing had been written yet.
+        _ = try await host.waitForAnswers(1)
         task.cancel()
 
         do {
@@ -284,7 +318,7 @@ final class WorkspaceFileDownloaderTests: XCTestCase {
         // and resuming it must not start from zero.
         let saved = (try? Data(contentsOf: destination).count) ?? 0
         XCTAssertGreaterThan(saved, 0)
-        XCTAssertLessThan(saved, WorkspaceFileDownloader.windowBytes * 40, "cancelled early")
+        XCTAssertLessThan(saved, total, "cancelled early")
     }
 
     func testAWindowOverADeploymentsCapShrinksInsteadOfFailing() async throws {
