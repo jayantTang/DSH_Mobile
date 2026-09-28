@@ -35,19 +35,23 @@ struct SessionListView: View {
         }
         .background(DSHTheme.background)
         .safeAreaInset(edge: .top, spacing: 0) {
-            if let published = updates.available {
-                UpdateBanner(published: published) {
-                    if let url = URL(string: published.installPage) { openURL(url) }
+            // 必须套一个容器：`safeAreaInset` 把闭包当**单个**视图，写两个兄弟视图
+            // 会重叠绘制（实测：提示条压在更新横幅上，两行字叠在一处看不清）。
+            VStack(spacing: 0) {
+                if let published = updates.available {
+                    UpdateBanner(published: published) {
+                        if let url = URL(string: published.installPage) { openURL(url) }
+                    }
                 }
-            }
-            // 提示，不是故障：连接已经建立，旧连接器照常可用，只是能力少一些。
-            // 所以用中性的底色、不阻断、可以关掉，关掉后按 profile 记住。
-            if store.showsOutdatedHostNotice {
-                OutdatedHostBanner(
-                    reported: store.hostVersion ?? "",
-                    baseline: HostBaseline.dshVersion
-                ) {
-                    store.dismissOutdatedHostNotice()
+                // 提示，不是故障：连接已经建立，旧连接器照常可用，只是能力少一些。
+                // 所以用中性的底色、不阻断、可以关掉，关掉后按 profile 记住。
+                if store.showsOutdatedHostNotice {
+                    OutdatedHostBanner(
+                        reported: store.hostVersion ?? "",
+                        baseline: HostBaseline.dshVersion
+                    ) {
+                        store.dismissOutdatedHostNotice()
+                    }
                 }
             }
         }
@@ -759,6 +763,9 @@ private struct OutdatedHostBanner: View {
                     .font(DSHTheme.Typography.micro)
                     .foregroundStyle(DSHTheme.labelSecondary)
             }
+            // 标识放在**文本块**上，不放在整个 HStack 上：给容器加标识会让 SwiftUI
+            // 把整条提示合成一个可访问元素，里面的关闭按钮就再也点不到（实测）。
+            .accessibilityIdentifier("host.outdated.banner")
             Spacer(minLength: 0)
             Button(action: onDismiss) {
                 Image(systemName: "xmark")
@@ -774,7 +781,6 @@ private struct OutdatedHostBanner: View {
         .padding(.horizontal, DSHTheme.Spacing.loose)
         .padding(.vertical, DSHTheme.Spacing.tight)
         .background(DSHTheme.labelSecondary.opacity(0.10))
-        .accessibilityIdentifier("host.outdated.banner")
     }
 }
 
