@@ -4,8 +4,8 @@
   Export options for a TestFlight (App Store Connect) upload, **signed locally**.
 
   `ExportOptions-appstore.plist` asks for automatic signing, which on this team means
-  cloud signing — and cloud signing is refused (see maintainers/APPSTORE.md: the team
-  had no distribution certificate at all until 2026-09-21). This file signs with the
+  cloud signing — and cloud signing is refused (this team had no distribution
+  certificate at all until 2026-09-21). This file signs with the
   distribution identity that `scripts/release/asc-dist-signing.mjs cert` installs into
   `~/Library/Keychains/dshbuild.keychain-db`, using the App Store profile that
   `… profile <id>` installs into Xcode's Profiles directory.

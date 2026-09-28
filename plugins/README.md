@@ -28,7 +28,7 @@ plugins/mobile-link/
 
 Design deviations and spec gaps are recorded in
 [`docs/RELAY-NOTES.md`](../docs/RELAY-NOTES.md); the connector-specific ones are in
-[`docs/notes/connector.md`](../docs/CONNECTOR-NOTES.md).
+[`docs/CONNECTOR-NOTES.md`](../docs/CONNECTOR-NOTES.md).
 
 ## Install
 

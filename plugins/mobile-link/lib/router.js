@@ -23,8 +23,8 @@ export const EVENTS_RESULT = '$events/result'
  * 手机断了之后，这条 `$events` 流还替它留多久（毫秒）。
  *
  * 为什么需要：手机是唯一客户端时，它一断，DSH 那边就没人持有这条流了——
- * 提问（waterfall）会随 Agent Context 释放被撤掉，用户回到手机再也看不到
- * （根因见 maintainers/PENDING-WATERFALL-LOSS.md）。留着流就等于"代手机值班"：
+ * 提问（waterfall）会随 Agent Context 释放被撤掉，用户回到手机再也看不到——
+ * 这正是留流的原因。留着流就等于"代手机值班"：
  * 这期间来的提问先攒着，手机回来补发。
  *
  * 代价是这段时间里 DSH 认为"设备还在"，会话的 Agent Context 不会因此释放；

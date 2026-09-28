@@ -11,7 +11,7 @@ export const MAX_FRAME_BYTES = 32 * 1024 * 1024
 
 export const DEVICE_TO_AGENT = new Set(['req', 'open', 'cancel', 'eventResult', 'ping', 'hello'])
 export const AGENT_TO_DEVICE = new Set(['res', 'item', 'end', 'streamError', 'event', 'hostStatus', 'pong', 'error'])
-/** Relay-internal control frames carrying device lifecycle (see relay/NOTES.md). */
+/** Relay-internal control frames carrying device lifecycle (see docs/RELAY-NOTES.md). */
 export const RELAY_CONTROL = new Set(['deviceAttach', 'deviceDetach'])
 
 const ID_FRAMES = new Set(['req', 'open', 'cancel', 'res', 'item', 'end', 'streamError', 'eventResult'])

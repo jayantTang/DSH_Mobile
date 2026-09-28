@@ -366,7 +366,7 @@ async def pair_refresh(request: web.Request) -> web.Response:
 
 
 async def pair_code(request: web.Request) -> web.Response:
-    """Mint a one-time pairing code for the authenticated agent (docs/notes/relay.md §2)."""
+    """Mint a one-time pairing code for the authenticated agent (docs/RELAY-NOTES.md §2)."""
     store: Store = request.app["store"]
     body = await read_json(request) or {}
     token = bearer_token(request)

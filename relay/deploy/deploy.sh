@@ -106,7 +106,7 @@ for module in relay.py api.py dlp.py store.py hub.py admin.py; do
 done
 install -m 0644 -o root -g root "$SRC_DIR/requirements.txt" "$APP_DIR/requirements.txt"
 [ -f "$SRC_DIR/README.md" ] && install -m 0644 -o root -g root "$SRC_DIR/README.md" "$APP_DIR/README.md" || true
-[ -f "$SRC_DIR/../docs/notes/relay.md" ] && install -m 0644 -o root -g root "$SRC_DIR/../docs/notes/relay.md" "$APP_DIR/NOTES.md" || true
+[ -f "$SRC_DIR/../docs/RELAY-NOTES.md" ] && install -m 0644 -o root -g root "$SRC_DIR/../docs/RELAY-NOTES.md" "$APP_DIR/NOTES.md" || true
 
 if [ ! -x "$APP_DIR/.venv/bin/python" ]; then
   say "creating the virtualenv"

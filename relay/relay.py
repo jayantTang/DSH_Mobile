@@ -6,7 +6,7 @@
 plus, from :mod:`api`, ``GET /healthz``, ``POST /pair/{claim,refresh,code}`` and
 CORS preflight. Every route is served both at the root and under the optional
 ``--base-path`` prefix, because a front end may either strip the prefix (Caddy's
-``handle_path``) or forward it verbatim. See ``docs/notes/relay.md`` §2c.
+``handle_path``) or forward it verbatim. See ``docs/RELAY-NOTES.md`` §2c.
 """
 
 from __future__ import annotations

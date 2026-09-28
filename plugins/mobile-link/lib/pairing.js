@@ -1,6 +1,6 @@
 /**
  * Pairing helper: ask the relay to mint a one-time code and build the QR
- * payload the desktop shows. Spec §2.1 plus relay/NOTES.md §2 (the endpoint the
+ * payload the desktop shows. Spec §2.1 plus docs/RELAY-NOTES.md §2 (the endpoint the
  * spec's table is missing).
  */
 

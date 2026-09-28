@@ -51,7 +51,7 @@ front end.
 | `WS` | `/link/device?agentId=<id>` | `Bearer <deviceToken>` | up to `--max-devices-per-agent` per agent (past it: an `error` frame `limit/devices`, then close `4012`) |
 | `POST` | `/pair/claim` | — | `{pairCode, deviceName, deviceModel, appVersion}` → device token |
 | `POST` | `/pair/refresh` | device token | rotates the token; the old one dies immediately |
-| `POST` | `/pair/code` | agent secret | mints a one-time pairing code (see `notes/relay.md` §2) |
+| `POST` | `/pair/code` | agent secret | mints a one-time pairing code (see `docs/RELAY-NOTES.md` §2) |
 | `POST` | `/agents/enroll` | invite code | redeems a one-time invite for `agentId`/`agentSecret` (closed: no valid invite, no identity) |
 | `GET` | `/devices` | device token | the caller's own pairings |
 | `POST` | `/devices/revoke` | device token | revokes one of the caller's own pairings |
@@ -103,7 +103,8 @@ is the string to render as a QR code.
 From the repository root:
 
 ```bash
-relay/.venv/bin/python -m pytest -q                                 # 83 relay unit tests, no network
+relay/.venv/bin/python -m pytest -q                                 # relay unit tests, no network
+                                                                    # (条数以 pytest --collect-only -q 为准)
                                                                     # (Caddy validation tests skip without a caddy binary)
 relay/.venv/bin/python relay/tests/integration_e2e.py               # full middle tier vs the real local DSH
 DSH_E2E=1 relay/.venv/bin/python -m pytest relay/tests -q           # unit + end-to-end under pytest
@@ -295,6 +296,9 @@ agents(agentId, accountId, name, secretHash, createdAt, updatedAt, disabled, las
 devices(deviceId, deviceTokenHash, agentId, accountId, name, model, appVersion,
         createdAt, expiresAt, lastSeenAt, revokedAt)
 pairCodes(codeHash, agentId, accountId, createdAt, expiresAt, usedAt, deviceId)
+usageDaily(day, deviceId, agentId, accountId, egressBytes, connections,
+           firstSeenAt, lastSeenAt, lastBuild)
+invites(codeHash, createdAt, expiresAt, usedAt, usedByAgentId, note)
 ```
 
 Back up by copying `state.db` (plus `-wal`/`-shm`) with the service stopped, or

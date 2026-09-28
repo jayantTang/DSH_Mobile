@@ -17,7 +17,9 @@
   machine yet — `security find-identity -v -p codesigning` shows only the
   development identity. Both appear once the team is enrolled in the Apple
   Developer Program and Xcode's "Automatically manage signing" is on. Until
-  then this file is a plan, not a working path; see `maintainers/ENABLE-TRIAL.md`.
+  then this file is a plan, not a working path.
+  (Trial enablement is documented in the maintainer docs, which are not shipped with
+  the repository; the plan below stands on its own.)
 
   The team identifier is substituted from DSH_TEAM_ID (or Signing.local.plist) by
   the upload script into a copy under .build/, exactly like the OTA one: a team
