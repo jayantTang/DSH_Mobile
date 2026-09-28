@@ -12,7 +12,7 @@
     "unary": 42,
     "stream": 5
   },
-  "note": "Generated from the installed Host FaceModel (typert.host.js TYPERT.invocations), cross-checked against every live endpoint with the descriptor-validation probe. `args` lists the exact wire field names accepted in payload.args (an OBJECT of named fields, never a positional array). A field absent from `requiredArgs` is optional: the validator does not report it when missing.",
+  "note": "Generated from the installed Host FaceModel (typert.host.js TYPERT.invocations), cross-checked against every live endpoint with the descriptor-validation probe. `args` lists the exact wire field names accepted in payload.args (an OBJECT of named fields, never a positional array). A field absent from `requiredArgs` is optional: the validator does not report it when missing. NOTE: this is a SNAPSHOT taken on 2026-09-13 against dsh 0.1.5-rc.1, NOT a continuously verified contract — it has no consumer in the repository and does not track a newer Host. When it disagrees with the actual DSH, `docs/DSH-PROTOCOL.md` (measured against a live Host) is authoritative. Internal consistency (endpointCount / endpoints / kindCounts) is enforced by `npm run check:contracts`.",
   "endpoints": [
     {
       "method": "$events",

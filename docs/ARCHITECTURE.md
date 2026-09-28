@@ -23,7 +23,8 @@ typert gateway: workspaceFiles/list: args fields do not match the descriptor:
 missing "workspaceFileScopeId", "path"; unexpected "__probe__"
 ```
 
-于是 `docs/dsh-rpc-catalog.json` 里的 36 个方法签名是**测出来的**，不是猜的。
+于是 `docs/dsh-rpc-catalog.json` 里的方法签名是**测出来的**，不是猜的
+（那份目录是某一次快照，方法数以它自己的 `endpointCount` 为准，不要在这里写死数字）。
 
 ## 2. 传输抽象
 

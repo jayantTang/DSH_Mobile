@@ -1,6 +1,9 @@
 # 版本与部署策略
 
 > 面向：维护者与部署方 · 状态：stable · 最近核对：2026-09-20
+>
+> 日期只表示最后一次人工过目，**内容是否仍然成立以本文件内的 `文件:行` 引用与
+> 第六节那几条命令为准**（见「六、本篇的结论怎么自己验」）。
 
 本项目的代码分布在**一个仓库**里，但运行时会**部署到三个地方**。三者独立发布、
 必须互相兼容——这是版本策略要解决的核心问题。
@@ -60,13 +63,15 @@
 
 ### 当前的真实缺口
 
-| 缺口 | 风险 | 建议 |
+三态：**已解决**（附 `文件:行`，下一个人不必重查）/ **仍然存在** / **无法核对**（附原因）。
+
+| 缺口 | 状态 | 依据 |
 |---|---|---|
-| **1. 连接器没有版本号** | 无法判断本机装的是哪一版；排查只能靠文件时间戳 | 在插件 `package.json` 记 `version`，并在 `mobile-link/status` 里回显 |
-| **2. App 不做能力探测** | 文件发送在旧连接器下只是报错，用户不知道「升级连接器就能用」 | 连接器在 `status` 里声明 `capabilities`，App 据此决定是否显示文件入口 |
-| **3. 三方版本无对应关系记录** | 出问题时无法复现「当时的组合」 | 每次发布记一行：App 版本 / 连接器版本 / 中转版本（发布记录在部署方内部维护，不随仓库发布） |
-| **4. 无「一键装齐」入口** | 容易漏装（实际发生过：改了连接器但没重启 DSH，白排查一轮） | 加 `scripts/install/install-all.sh`，串起 skill + 插件 + 提示重启 |
-| **5. ~~直连与中转能力不同~~** | 已决策：**只保留中转一条路**，见 `docs/PAIRING.md` | 从 App 界面移除直连入口；直连退化为 DEBUG-only 的测试通道 |
+| **1. 连接器没有版本号** | **已解决** | `plugins/mobile-link/lib/hello.js:25-33` 的 `SERVER_VERSION` 直接读 `package.json`，`_link/hello` 回传给 App |
+| **2. App 不做能力探测** | **已解决** | `ios/DSHMobile/DSHKit/Sources/DSHKit/LinkHandshake.swift:44-58` 的 `Capability` 常量；`ConnectionStore.swift:212` 的 `supports()`；使用点 `Features/Chat/Composer.swift:235`、`Features/Files/GitModel.swift:85,102`。能力全集与三端一致性由 `npm run check:contracts` 的第 ⑤ 段守住 |
+| **3. 三方版本无对应关系记录** | **无法核对** | 记录在部署方内部维护、不随仓库发布，所以本仓库的任何断言都无法验证它是否在记。这一条只能在部署方那边核 |
+| **4. 无「一键装齐」入口** | **已解决** | `scripts/install/install-all.sh`（skill + 插件 + 提示重启，第三步逐个核对接了哪些包） |
+| **5. ~~直连与中转能力不同~~** | **已关闭** | 已决策只保留中转一条路，见 `docs/PAIRING.md`；直连退化为 DEBUG-only 测试通道 |
 
 ## 四、发布流程（建议固定下来）
 
@@ -91,13 +96,29 @@
 | 部件 | 编号方式 | 说明 |
 |---|---|---|
 | iOS App | `yyyyMMddHHmm`（UTC） | 由 `deploy-ota.sh` 自动打；单调递增，iOS 才肯装 |
-| 连接器 / 插件 | 语义化 `0.x.y`（**待落地**） | 目前是 `0.1.0` 且从不递增 |
+| 连接器 / 插件 | 语义化 `0.x.y` | 写在各自 `package.json`；连接器把它当 `SERVER_VERSION` 回显给 App（缺口 1 已解决）。线上真值以 `npm view <name> version` 为准 |
 | 中转 | 整数协议版本 + 部署时间 | `/healthz` 暴露协议版本 |
 
-## 六、待办
+## 六、本篇的结论怎么自己验
 
-1. 给连接器加版本号并在 `status` 中回显
-2. 连接器声明 `capabilities`，App 据此显示/隐藏文件入口
-3. 建立三方版本组合的发布记录（在部署方内部维护，不进仓库）
-4. 新建 `scripts/install/install-all.sh`
-5. 决定直连模式的文件发送：补 HTTP 上传路由，或在 App 中明确提示不可用
+第 3 行的「最近核对」日期只表示**最后一次人工过目**，不表示内容仍然成立——会漂的东西
+交给命令，而不是交给一个越放越假的日期。下面几条不依赖网络，`npm run` 的那几条在
+CI 的 `docs` job 里每次都会跑：
+
+```bash
+npm run check:docs        # 结构、口吻、链接与裸路径
+npm run check:secrets     # 跟踪文件里没有本机真值
+npm run check:contracts   # 契约单一来源：DLP 向量 / 安装阶梯 / 调试钩子 / 能力词表 / host 基线
+npm run check:i18n        # 本地化双向缺键、硬编码、未本地化绑定
+npm view dsh-plugin-mobile-link version   # 上面那张状态表的连接器版本（需要网络）
+```
+
+缺口表里每条「已解决」都附了 `文件:行`——**核对就打开那个文件看那一行**，不要以日期为准。
+
+## 七、待办
+
+1. ~~给连接器加版本号并在 `status` 中回显~~ 已解决（`plugins/mobile-link/lib/hello.js:25-33`）
+2. ~~连接器声明 `capabilities`，App 据此显示/隐藏文件入口~~ 已解决（`LinkHandshake.swift:44-58` + `ConnectionStore.supports()`）
+3. **仍然存在**：建立三方版本组合的发布记录——记录在部署方内部维护，不进仓库（缺口 3）
+4. ~~新建 `scripts/install/install-all.sh`~~ 已解决
+5. ~~决定直连模式的文件发送~~ 已关闭：只保留中转，直连退化为 DEBUG-only 测试通道

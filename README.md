@@ -27,10 +27,11 @@
 | 组件 | 当前版本 | 分发方式 |
 |---|---|---|
 | iOS App | 1.0 | TestFlight 公开测试（[加入](https://testflight.apple.com/join/tHKQsbCk)）；需先安装 TestFlight，构建 90 天后过期 |
-| 连接器 `dsh-plugin-mobile-link` | 0.3.0 | npm |
+| 连接器 `dsh-plugin-mobile-link` | 0.3.1 | npm |
 | 中转（DLP v1） | 本仓库 `relay/` | 自行部署 |
 
 三者的版本组合与发布策略见 [`docs/VERSIONING.md`](docs/VERSIONING.md)。
+表中版本以 **npm 上已发布的为准**（`npm view dsh-plugin-mobile-link version`），不是仓库里 `package.json` 的值。
 
 ## 前提
 
@@ -138,7 +139,7 @@ cd ios/DSHMobile && xcodebuild -scheme DSHMobile \
 | [`docs/IMAGES.md`](docs/IMAGES.md) | 图片能力的设计约束与实现 |
 | [`docs/VERSIONING.md`](docs/VERSIONING.md) | 三处部署的版本与发布策略 |
 | [`docs/PRIVACY.md`](docs/PRIVACY.md) | 隐私说明：App 不收集数据，中转只做转发 |
-| [`docs/dsh-rpc-catalog.json`](docs/dsh-rpc-catalog.json) | 机器可读的 RPC 目录 |
+| [`docs/dsh-rpc-catalog.json`](docs/dsh-rpc-catalog.json) | 某次快照：机器可读的 RPC 目录（不是持续校验的契约） |
 | [`docs/artifacts/samples/`](docs/artifacts/samples) | 从真实 DSH 抓取的响应样例（已脱敏） |
 
 参与开发见 [`CONTRIBUTING.md`](CONTRIBUTING.md)，安全问题的报告方式见 [`SECURITY.md`](SECURITY.md)，
@@ -149,8 +150,11 @@ cd ios/DSHMobile && xcodebuild -scheme DSHMobile \
 - **iOS 安装走 TestFlight**：需先安装 Apple 的 TestFlight；测试构建 90 天后过期，到期需安装新构建。
   自行部署时也可以走 OTA（部署脚本会生成 `https://<站点>/ios/`）：那用 Ad Hoc 描述文件，
   只覆盖已登记 UDID 的设备，适合自己用，不适合公开分发。
-- 手机处于后台时，电脑端**新开始**的会话无法唤起 App——需要 APNs，尚未实现。
-- 后台通知依赖无声音频保活，仅在「有会话运行或有待回答的提问」时生效。
+- **后台通知覆盖这些场景**：从手机发出任务后把 App 退到后台，任务完成、以及 Agent 提问后
+  等待回答（App 列表顶部会显示一条待回应提示）这两件事，仍会通知到手机。它只在
+  「有任务在跑，或有待回答的提问」时生效，空闲时不耗电。
+- **这些场景不覆盖**：手机在后台时，电脑端**新开始**的会话唤不起 App（需要 APNs，尚未实现）；
+  长时间未回答的提问可能丢失。
 - 文件发送仅在经中转时可用。
 
 ## 许可
