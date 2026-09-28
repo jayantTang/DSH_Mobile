@@ -41,6 +41,14 @@ class FakeStore:
     def touch_agent(self, *_args, **_kwargs):
         return None
 
+    # `attach_agent` 现在还会问一遍「这台电脑名下有谁是回不来的」（臂 2）。
+    # 这些用例只关心配额与限速，答案一律是"没有"。
+    def list_devices(self, *_args, **_kwargs):
+        return []
+
+    def expired_ids_of_agent(self, *_args, **_kwargs):
+        return set()
+
 
 class FakeWS:
     """Counts what was sent so a test can reason about order and volume."""

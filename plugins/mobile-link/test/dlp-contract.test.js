@@ -18,7 +18,7 @@ import test from 'node:test'
 import { readFileSync } from 'node:fs'
 
 import {
-  AGENT_TO_DEVICE, DEVICE_TO_AGENT, RELAY_CONTROL, deviceFrameError, joinRelayPath,
+  AGENT_CONTROL, AGENT_TO_DEVICE, DEVICE_TO_AGENT, RELAY_CONTROL, deviceFrameError, joinRelayPath,
   normalizeRelayUrl,
 } from '../lib/dlp.js'
 
@@ -35,6 +35,9 @@ test('the frame vocabularies match docs/relay-contract.json', () => {
   assert.deepEqual(sorted(DEVICE_TO_AGENT), sorted(contract.deviceToAgent))
   assert.deepEqual(sorted(AGENT_TO_DEVICE), sorted(contract.agentToDevice))
   assert.deepEqual(sorted(RELAY_CONTROL), sorted(contract.relayControl))
+  // agent 侧控制帧（`notify`）：agent→relay，**不跨到设备**。它单独一张表是有意的——
+  // 加进 deviceToAgent/agentToDevice 会让 iOS 的 DLPContractTests 双向全等断言变红。
+  assert.deepEqual(sorted(AGENT_CONTROL), sorted(contract.agentControl))
 })
 
 test('the connector default error code matches the contract', () => {

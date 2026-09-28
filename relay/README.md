@@ -136,6 +136,12 @@ $A admin.py --db $DB purge                                   # drop expired code
 $A admin.py --db $DB usage --days 7 --by account             # 最近 7 天的出口用量
 ```
 
+`device-revoke` 只写库——**库里撤销即完成**。在线设备由中转自己的对账踢下线，最长一个
+对账周期（`DLP_REVOKE_RECONCILE_S`，默认 5 秒；`0` = 关）；连接器在它下次连上时会被告知
+放下那台设备的记录。`--device` 与 `--token` 的结果因此完全相同——`admin.py` 是另一个进程，
+够不着 relay 的 hub，拿被撤对象的令牌去打 relay 也只会得到 401（`device_by_token` 对已撤销
+令牌返回 None），所以那条直连路径已经删掉，不再有第二条会漂移的实现。
+
 ### Daily usage accounting
 
 `usageDaily` 一天一台设备一行：出口字节、连接次数、当天最后上报的构建号。
@@ -286,6 +292,7 @@ These numbers are the relay's, so they can.
 | a second phone cannot connect at all (`limit/devices` / close `4012`) | `--max-devices-per-agent` is reached; raise it or revoke a pairing (`admin.py device-revoke`) |
 | phone shows "host offline" repeatedly | the agent is reconnecting; check its `lastError` via `GET /mobile-link/status` or `MOBILE_LINK_STATE` lines |
 | `https://relay.example.com/dsh-link/healthz` is 404 | the marked block is missing from the right site block; run `caddy_splice.py check` then `deploy.sh` |
+| `admin.py device-revoke` 之后手机还连着 | 等一个对账周期；仍连着就看 `journalctl -u dsh-relay` 有没有 `was revoked in the database but still connected; detaching`——没有就是 `DLP_REVOKE_RECONCILE_S=0` 或对账任务挂了（日志里有 `revoke reconcile tick failed`） |
 | WebSockets close every 30–60s through Caddy | `read_timeout`/`write_timeout` were overridden; they must stay `0` (no timeout) in the reverse_proxy transport |
 
 ### Database

@@ -63,5 +63,11 @@
 	<string>$(DSH_RELAY_URL)</string>
 	<key>DSHUpdateFeed</key>
 	<string>$(DSH_UPDATE_FEED)</string>
+	<!-- 大于这个大小（MB）的文件走后台 URL 会话（经中转的 HTTPS），小文件仍走 WSS。
+	     它是**构建**配置而不是用户可见的设置项：它是个风险开关，设成很大的值就等于
+	     回到"只有 WSS"的今天。读取处见 Support/ConnectionStore.swift 的
+	     backgroundUploadThreshold。 -->
+	<key>DSHBackgroundUploadMB</key>
+	<string>$(DSH_BACKGROUND_UPLOAD_MB)</string>
 </dict>
 </plist>

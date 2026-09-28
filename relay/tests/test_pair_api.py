@@ -227,3 +227,93 @@ async def test_devices_revoke_rejects_an_unknown_id(client, provisioned):
         headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status == 404
+
+
+# ── POST /devices/push（R-1 C-08）────────────────────────────────────────────
+
+
+async def _device_id(client, token) -> str:
+    body = await (await client.get("/devices", headers={"Authorization": f"Bearer {token}"})).json()
+    return body["currentDeviceId"]
+
+
+async def test_devices_push_registers_a_token_and_the_two_switches(client, provisioned, store):
+    token = await _paired_device(client, provisioned)
+    device_id = await _device_id(client, token)
+
+    response = await client.post("/devices/push", headers={"Authorization": f"Bearer {token}"},
+                                 json={"apnsToken": "ab" * 32, "env": "sandbox",
+                                       "turnEnd": True, "attention": False})
+    assert response.status == 200, await response.text()
+    assert await response.json() == {"ok": True}
+
+    row = store.device_by_id(device_id)
+    assert row["apnsToken"] == "ab" * 32
+    assert row["apnsEnv"] == "sandbox"
+    assert row["pushTurnEnd"] == 1 and row["pushAttention"] == 0
+    assert row["pushUpdatedAt"] is not None
+
+
+async def test_devices_push_with_an_empty_token_clears_the_registration(client, provisioned, store):
+    """用户在系统里关掉通知权限时 App 上报空令牌——这条必须和登记一样好走。"""
+    token = await _paired_device(client, provisioned)
+    device_id = await _device_id(client, token)
+    await client.post("/devices/push", headers={"Authorization": f"Bearer {token}"},
+                      json={"apnsToken": "cd" * 32, "env": "production",
+                            "turnEnd": True, "attention": True})
+
+    response = await client.post("/devices/push", headers={"Authorization": f"Bearer {token}"},
+                                 json={"apnsToken": "", "env": "production",
+                                       "turnEnd": True, "attention": True})
+    assert response.status == 200, await response.text()
+    row = store.device_by_id(device_id)
+    assert row["apnsToken"] is None and row["apnsEnv"] is None
+    # 开关本身留着：用户关的是"通知权限"，不是"我想不想收这类提醒"。
+    assert row["pushTurnEnd"] == 1
+    assert store.push_targets(provisioned["agent"]["agentId"]) == []
+
+
+async def test_devices_push_needs_a_valid_device_token(client, provisioned):
+    for headers in ({}, {"Authorization": "Bearer dt_nope"}):
+        response = await client.post("/devices/push", headers=headers,
+                                     json={"apnsToken": "ab" * 32, "env": "sandbox"})
+        assert response.status == 401
+
+
+async def test_devices_push_refuses_a_revoked_device_token(client, provisioned):
+    token = await _paired_device(client, provisioned)
+    device_id = await _device_id(client, token)
+    await client.post("/devices/revoke", headers={"Authorization": f"Bearer {token}"},
+                      json={"deviceId": device_id})
+    response = await client.post("/devices/push", headers={"Authorization": f"Bearer {token}"},
+                                 json={"apnsToken": "ab" * 32, "env": "sandbox"})
+    assert response.status == 401
+
+
+@pytest.mark.parametrize("env", ["staging", "SANDBOX", "prod", 1, ""])
+async def test_devices_push_rejects_an_unknown_environment(client, provisioned, env):
+    """环境只认 sandbox/production：标错会让 APNs 回 BadDeviceToken，静默收不到。"""
+    token = await _paired_device(client, provisioned)
+    response = await client.post("/devices/push", headers={"Authorization": f"Bearer {token}"},
+                                 json={"apnsToken": "ab" * 32, "env": env})
+    assert response.status == 400
+    assert (await response.json())["error"]["code"] == "request/apns-env"
+
+
+async def test_devices_push_rejects_a_non_string_token(client, provisioned):
+    token = await _paired_device(client, provisioned)
+    response = await client.post("/devices/push", headers={"Authorization": f"Bearer {token}"},
+                                 json={"apnsToken": 12345, "env": "sandbox"})
+    assert response.status == 400
+    assert (await response.json())["error"]["code"] == "request/apns-token"
+
+
+async def test_devices_push_defaults_the_switches_on(client, provisioned, store):
+    """老 App 只报令牌（不带开关）时两个提醒都算开着，而不是被静默关掉。"""
+    token = await _paired_device(client, provisioned)
+    device_id = await _device_id(client, token)
+    response = await client.post("/devices/push", headers={"Authorization": f"Bearer {token}"},
+                                 json={"apnsToken": "ef" * 32, "env": "sandbox"})
+    assert response.status == 200, await response.text()
+    row = store.device_by_id(device_id)
+    assert row["pushTurnEnd"] == 1 and row["pushAttention"] == 1

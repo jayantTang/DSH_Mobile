@@ -1082,6 +1082,12 @@ final class ChatModel {
     /// `uploadFile` is not served — so the link stages the file on the computer
     /// and the prompt names the path. The agent then reads it with the ordinary
     /// tools it already has.
+    ///
+    /// Two entry points on purpose. `data:` is what the composer already had and
+    /// what pictures-in-a-prompt go through. `fileURL:` is the background path: a
+    /// large file has to stay a *file* all the way down, because iOS only
+    /// continues file-based tasks after the app is suspended — handing `Data` to
+    /// the background session would quietly lose that property.
     func sendFile(named name: String, data: Data) async {
         guard let session, let store else { return }
         let owner = session.sessionId
@@ -1094,20 +1100,55 @@ final class ChatModel {
                 name: name,
                 sessionId: session.sessionId
             )
-            // The path is what makes this useful: without it the agent knows a
-            // file exists but not where. The prompt belongs to the session the
-            // file was staged for, which is not necessarily the one on screen
-            // by the time the upload finishes.
-            let text = "我发送了一个文件，已保存到：\(staged.path)（\(staged.bytes) 字节）"
-            guard session.sessionId == owner else {
-                drafts[owner] = Draft(text: text, images: [])
-                return
-            }
-            draft = text
-            await send()
+            await announceStagedFile(staged, name: name, owner: owner)
         } catch {
             lastError = ConnectionStore.describe(error)
         }
+    }
+
+    /// Uploads a file the caller already has as a URL on disk (R-1 C-18).
+    ///
+    /// Whether that becomes a background HTTPS upload or the WSS path is
+    /// `ConnectionStore`'s decision (size, capability, and what the relay
+    /// accepts) — this end only has to hand over a file and then say the same
+    /// thing it always said.
+    func sendFile(named name: String, fileURL: URL) async {
+        guard let session, let store else { return }
+        let owner = session.sessionId
+        isUploadingFile = name
+        defer { isUploadingFile = nil }
+
+        do {
+            let staged = try await store.uploadFile(
+                fileURL: fileURL,
+                name: name,
+                sessionId: session.sessionId
+            )
+            await announceStagedFile(staged, name: name, owner: owner)
+        } catch {
+            lastError = ConnectionStore.describe(error)
+        }
+    }
+
+    /// Writes the prompt that names where the file landed.
+    ///
+    /// The path is what makes an upload useful: without it the agent knows a file
+    /// exists but not where. The prompt belongs to the session the file was staged
+    /// for, which is not necessarily the one on screen by the time the upload
+    /// finishes — so a late completion goes to that session's draft instead.
+    /// **The wording is unchanged**: this is plumbing, not a prompt change.
+    private func announceStagedFile(
+        _ staged: FileUploader.Staged,
+        name: String,
+        owner: String
+    ) async {
+        let text = "我发送了一个文件，已保存到：\(staged.path)（\(staged.bytes) 字节）"
+        guard session?.sessionId == owner else {
+            drafts[owner] = Draft(text: text, images: [])
+            return
+        }
+        draft = text
+        await send()
     }
 
     /// The prompt body: the words, then one part per picture.

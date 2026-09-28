@@ -150,6 +150,25 @@ iOS `DSHKit/Tests/DSHKitTests/DLPContractTests.swift`）。它同时**记录已�
 {"t":"eventResult","id":"3","result":{"clientId":"ae3f...","eventId":"5e51...","outcome":{"kind":"result","value":{"answers":[...]}}}}
 ```
 
+### 3.4 agent 侧控制帧
+
+上面两张表是**设备与 agent 之间的 DLP**。还有第三类帧：**agent → relay 的控制帧**，
+由中转自己消费，**不跨到设备**——手机既不发送也不接收它们（所以不在
+`deviceToAgent`/`agentToDevice` 两张表里，iOS 那侧也不认识它们）。
+
+| `t` | 字段 | 语义 |
+|---|---|---|
+| `notify` | `kind`, `sid`, `eid`? | 「这台电脑上有事发生」：`kind` 为 `turnEnd`（一轮跑完了）或 `attention`（有提问/审批在等人）；`sid` 是会话语义标识，`eid` 仅 `attention` 带。**不带 `deviceId`**——连接器不知道、也不需要知道这台电脑配了哪些手机 |
+
+`notify` 的用法（R-1）：连接器在 `$events` 上认出这两类事件就发一条。中转手里有「这台设备
+此刻在不在线」——**在线就不推**（App 自己会弹本地通知，再推就是重复），不在线才转成一条
+APNs 提醒。所以它是一条**尽力而为**的帧：中转没连上就丢掉、不重试；`attention` 侧另有
+待答记账，手机回来会补发。
+
+**加新帧时注意**：这类 agent 侧控制帧登记进 `relay-contract.json` 的 `agentControl`（与
+`relayControl` 并列）。**绝不能**加进 `deviceToAgent` / `agentToDevice`——iOS 的
+`DLPContractTests` 对那两张表做双向全等断言，加进去会让 iOS 契约测试直接红。
+
 ---
 
 ## 4. agent 行为规范

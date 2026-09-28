@@ -55,7 +55,17 @@ CREATE TABLE IF NOT EXISTS devices (
   createdAt       INTEGER NOT NULL,
   expiresAt       INTEGER NOT NULL,
   lastSeenAt      INTEGER,
-  revokedAt       INTEGER
+  revokedAt       INTEGER,
+  -- 推送登记（R-1）。`apnsToken` 是 App 通过 `POST /devices/push` 上报的 APNs
+  -- 设备令牌（hex）；`apnsEnv` 是 `sandbox` / `production`，令牌与环境绑定，送错
+  -- 主机 APNs 回 `BadDeviceToken`。两个 `push*` 是用户那两类提醒的开关。
+  -- `pushUpdatedAt` 记最后一次上报的时刻，运维看"这台手机还活着吗"用。
+  -- 换手机/重装/关权限都会让令牌失效，中转收到 `410`/`BadDeviceToken` 时清掉它。
+  apnsToken       TEXT,
+  apnsEnv         TEXT,
+  pushTurnEnd     INTEGER NOT NULL DEFAULT 1,
+  pushAttention   INTEGER NOT NULL DEFAULT 1,
+  pushUpdatedAt   INTEGER
 );
 CREATE INDEX IF NOT EXISTS devices_agent ON devices(agentId);
 
@@ -119,7 +129,7 @@ DEFAULT_INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000
 #: "no such column" — on a relay that had otherwise reported itself healthy.
 #: Bumping this number and adding a step to ``_MIGRATIONS`` is what turns that
 #: into a startup migration.
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 def _migrate_to_1(conn: sqlite3.Connection) -> None:
@@ -134,10 +144,39 @@ def _migrate_to_1(conn: sqlite3.Connection) -> None:
     return None
 
 
+def _migrate_to_2(conn: sqlite3.Connection) -> None:
+    """推送登记：``devices`` 加五列（R-1 C-07）。
+
+    A fresh database gets these from ``SCHEMA``; this step is only for a live one
+    that already has a ``devices`` table without them — ``CREATE TABLE IF NOT
+    EXISTS`` would leave it untouched, and the first push write would then fail
+    at runtime on a relay that had reported itself healthy.
+
+    Idempotent as the contract requires: a re-run after a partial commit must not
+    fail. ``ADD COLUMN`` is not ``IF NOT EXISTS`` in SQLite, so the column list is
+    checked first.
+    """
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(devices)")}
+    additions = (
+        ("apnsToken", "TEXT"),
+        ("apnsEnv", "TEXT"),
+        ("pushTurnEnd", "INTEGER NOT NULL DEFAULT 1"),
+        ("pushAttention", "INTEGER NOT NULL DEFAULT 1"),
+        ("pushUpdatedAt", "INTEGER"),
+    )
+    for column, declaration in additions:
+        if column in existing:
+            continue
+        # `PRAGMA table_info` 给不出带 NOT NULL DEFAULT 的语句，所以这里拼的是
+        # 写死的字面量（不是用户输入），不能参数化。
+        conn.execute(f"ALTER TABLE devices ADD COLUMN {column} {declaration}")
+
+
 #: ``generation → function``, applied in order. Each step must be idempotent:
 #: a migration that fails after a partial commit is retried on the next start.
 _MIGRATIONS: dict[int, Any] = {
     1: _migrate_to_1,
+    2: _migrate_to_2,
 }
 
 _SCRYPT_N = 1 << 14
@@ -663,6 +702,69 @@ class Store:
         row = self._row("SELECT * FROM devices WHERE deviceId=?", (device_id,))
         return dict(row) if row else None
 
+    def revoked_ids_among(self, device_ids: Iterable[str]) -> set[str]:
+        """Of these device ids, which ones are revoked in the database?
+
+        The reconcile loop asks this about the devices it currently has *live*:
+        a row that is revoked but whose socket is still open is exactly the state
+        the relay must never sit in. Read-only, chunked because SQLite's bound-
+        variable ceiling is historically 999.
+        """
+        ids = [d for d in dict.fromkeys(device_ids) if d]
+        if not ids:
+            return set()
+        found: set[str] = set()
+        for start in range(0, len(ids), 500):
+            chunk = ids[start:start + 500]
+            marks = ",".join("?" * len(chunk))
+            rows = self._rows(
+                f"SELECT deviceId FROM devices WHERE revokedAt IS NOT NULL "
+                f"AND deviceId IN ({marks})", chunk)
+            found.update(row["deviceId"] for row in rows)
+        return found
+
+    def gone_ids_among(self, device_ids: Iterable[str]) -> set[str]:
+        """Of these device ids, which ones can never authenticate again?
+
+        Two ways a device row becomes permanently unusable: it was revoked, or
+        its pairing is older than the device TTL (``expiresAt`` has passed —
+        ``touch_device`` refreshes ``lastSeenAt`` but never the TTL, so a phone
+        that has been paired for a year expires even if it is currently
+        connected). ``device_by_token`` refuses both, so the phone can never
+        reconnect and anything left waiting for it is waste.
+
+        The reconcile loop uses this **only** for devices that are not currently
+        online; see :meth:`RelayHub.reconcile_revoked_devices` for why a live
+        socket is never cut for expiry alone.
+        """
+        ids = [d for d in dict.fromkeys(device_ids) if d]
+        if not ids:
+            return set()
+        found: set[str] = set()
+        stamp = now_ms()
+        for start in range(0, len(ids), 500):
+            chunk = ids[start:start + 500]
+            marks = ",".join("?" * len(chunk))
+            rows = self._rows(
+                f"SELECT deviceId FROM devices WHERE "
+                f"(revokedAt IS NOT NULL OR expiresAt <= ?) "
+                f"AND deviceId IN ({marks})", [stamp, *chunk])
+            found.update(row["deviceId"] for row in rows)
+        return found
+
+    def expired_ids_of_agent(self, agent_id: str) -> set[str]:
+        """The agent's devices whose pairing has passed the TTL.
+
+        Used by :meth:`RelayHub.attach_agent` to tell a reconnecting connector
+        which of its leftovers are dead for good. Revoked devices are handled
+        separately (and are what ``list_devices(include_revoked=True)`` covers),
+        so this answers only the expiry half.
+        """
+        rows = self._rows(
+            "SELECT deviceId FROM devices WHERE agentId=? AND expiresAt <= ?",
+            (agent_id, now_ms()))
+        return {row["deviceId"] for row in rows}
+
     def list_devices(self, agent_id: str | None = None, *, include_revoked: bool = False) -> list[dict[str, Any]]:
         clauses: list[str] = []
         params: list[Any] = []
@@ -695,7 +797,58 @@ class Store:
     def revoke_device(self, device_id: str) -> None:
         if self._row("SELECT deviceId FROM devices WHERE deviceId=?", (device_id,)) is None:
             raise NotFound(f"device {device_id} does not exist")
-        self._write("UPDATE devices SET revokedAt=? WHERE deviceId=?", (now_ms(), device_id))
+        # 撤销顺手清掉推送登记：这台设备不会再回来，留着令牌只会让中转继续往一台
+        # 已经解绑的手机推（那是这台手机的用户明确表示"别再找我了"）。
+        self._write(
+            "UPDATE devices SET revokedAt=?, apnsToken=NULL, apnsEnv=NULL, pushUpdatedAt=? "
+            "WHERE deviceId=?",
+            (now_ms(), now_ms(), device_id))
+
+    # ── push registration (R-1) ─────────────────────────────────────────────
+
+    def set_push(self, device_id: str, token: str | None, env: str | None,
+                 turn_end: bool, attention: bool) -> None:
+        """Record (or clear) one device's APNs registration.
+
+        ``token`` empty means *clear*: the app reports an empty token when the
+        user turns notifications off, and that has to be as easy as registering.
+        The two switches are stored separately from the token so "notify me about
+        finished runs but not questions" is expressible.
+        """
+        if self._row("SELECT deviceId FROM devices WHERE deviceId=?", (device_id,)) is None:
+            raise NotFound(f"device {device_id} does not exist")
+        value = (token or "").strip() or None
+        self._write(
+            "UPDATE devices SET apnsToken=?, apnsEnv=?, pushTurnEnd=?, pushAttention=?, "
+            "pushUpdatedAt=? WHERE deviceId=?",
+            (value, env if value else None, 1 if turn_end else 0, 1 if attention else 0,
+             now_ms(), device_id))
+
+    def clear_push(self, device_id: str) -> None:
+        """Forget a device's APNs token without touching anything else.
+
+        Used when Apple says the token is dead (``410 Unregistered`` /
+        ``BadDeviceToken``): the phone is gone or reinstalled, so retrying is
+        pointless until it registers again.
+        """
+        self._write(
+            "UPDATE devices SET apnsToken=NULL, apnsEnv=NULL, pushUpdatedAt=? WHERE deviceId=?",
+            (now_ms(), device_id))
+
+    def push_targets(self, agent_id: str) -> list[dict[str, Any]]:
+        """The devices of one agent that are candidates for a push.
+
+        Filtered here rather than in the caller because every condition is a
+        column: registered token, known environment, not revoked, not expired.
+        Whether the device is *online right now* is deliberately not part of this
+        — only the relay's hub knows that.
+        """
+        rows = self._rows(
+            "SELECT * FROM devices WHERE agentId=? AND apnsToken IS NOT NULL "
+            "AND apnsEnv IS NOT NULL AND revokedAt IS NULL AND expiresAt > ? "
+            "ORDER BY createdAt",
+            (agent_id, now_ms()))
+        return [dict(row) for row in rows]
 
     def set_device_app_version(self, device_id: str, version: str) -> None:
         """Record the build a device just reported.

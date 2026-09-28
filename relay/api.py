@@ -8,6 +8,7 @@ size budget) with a one-way import: ``relay`` imports ``api``, never the reverse
 from __future__ import annotations
 
 import asyncio
+import base64
 import ipaddress
 import json
 import logging
@@ -438,7 +439,31 @@ async def devices_revoke(request: web.Request) -> web.Response:
         return json_error(403, "auth/agent-mismatch", "that device belongs to another agent")
 
     await asyncio.to_thread(store.revoke_device, target)
+    detach_revoked_device(request, target)
+    # 返回结构一字不改：iOS 侧在解它（`RelayDeviceList`/`RelayDevices.swift`）。
+    # "有没有踢到一个在线的"不进这个响应，运维命令想知道就自己查 relay 日志。
     return web.json_response({"ok": True, "deviceId": target})
+
+
+def detach_revoked_device(request: web.Request, device_id: str) -> bool:
+    """Drop a just-revoked device's live socket; returns whether there was one.
+
+    Revoking used to be a database write and nothing else, which left the phone
+    connected with a token that no longer authenticated: it kept its socket, kept
+    receiving frames, and — now that the connector keeps a device's ``$events``
+    stream for as long as the device record exists — kept a stream on duty
+    forever with nobody able to come back for it. So the live socket is closed,
+    and the agent is told ``reason="revoked"``: that is the connector's *only*
+    signal to let the device go (``plugins/mobile-link/lib/router.js``).
+    """
+    hub = request.app["hub"]
+    # The hub's own registry, keyed by device id: no new public API for a
+    # traversal whose whole job is "is this one device connected right now".
+    link = hub._devices.get(device_id)  # noqa: SLF001 - deliberate, see docstring
+    if link is None:
+        return False
+    hub.schedule_detach(link, reason="revoked")
+    return True
 
 
 #: How many failed enrollments a code may absorb before it is frozen for the rest
@@ -450,6 +475,162 @@ async def devices_revoke(request: web.Request) -> web.Response:
 #: 2026-09-25; see the handler and ``docs/RELAY-PROTOCOL.md`` §5.2).
 _ENROLL_FAILURES = 5
 _ENROLL_WINDOW_S = 900
+
+
+#: 推送开关的上报值只认这两个环境：令牌与环境绑定，送错主机 APNs 回
+#: `BadDeviceToken`，从手机上看就像"推送坏了"（`push.py` 的错误映射表）。
+_APNS_ENVS = ("sandbox", "production")
+
+
+async def devices_push(request: web.Request) -> web.Response:
+    """Register (or clear) this device's APNs token and reminder switches.
+
+    Authenticated with the device token, the same as :func:`devices_list`: a
+    phone manages its own registration and cannot touch anyone else's. The app
+    calls this at launch, whenever the token changes, whenever either switch in
+    Settings moves, and — with an empty token — when notification permission is
+    turned off, which is what makes "I said no" actually stop the pushes.
+    """
+    store: Store = request.app["store"]
+    token = bearer_token(request)
+    device = await asyncio.to_thread(store.device_by_token, token) if token else None
+    if device is None:
+        return json_error(401, "auth/invalid-token", "a valid device token is required")
+
+    body = await read_json(request) or {}
+    apns_token = body.get("apnsToken")
+    if not isinstance(apns_token, str):
+        return json_error(400, "request/apns-token", "apnsToken must be a string")
+    apns_token = apns_token.strip()
+
+    env = body.get("env")
+    if env is not None and env not in _APNS_ENVS:
+        return json_error(400, "request/apns-env",
+                          "env must be sandbox or production")
+    if not apns_token:
+        # 空令牌 = 清除登记。环境一并清掉，免得留下一对不一致的值。
+        env = None
+
+    await asyncio.to_thread(
+        store.set_push, device["deviceId"], apns_token, env,
+        _flag(body.get("turnEnd"), True), _flag(body.get("attention"), True))
+    return web.json_response({"ok": True})
+
+
+def _flag(value: Any, fallback: bool) -> bool:
+    """A boolean body field, tolerating the absent case an older app sends."""
+    return fallback if value is None else bool(value)
+
+
+#: 桥接分片：1 MB 原始字节（base64 后约 1.33 MB）。192 KB 是给"手机↔relay 共享链路"
+#: 定的妥协；relay↔家里的电脑是服务器↔宽带，没那个顾虑，而 32 MB 的帧上限留了余量。
+BRIDGE_CHUNK_BYTES = 1 << 20
+
+#: `fsPutBegin` 发出后等 ack 的上限。超时＝对面连接器不认这一族帧（未知类型是被**静默
+#: 忽略**的，这是唯一能分辨"版本太旧"的信号），回 501 让它有个明确错误而不是挂死。
+BRIDGE_ACK_TIMEOUT_S = 5.0
+
+
+async def files_up(request: web.Request) -> web.Response:
+    """Stream one large upload from a phone to the connector (R-1 C-17).
+
+    The relay is the HTTP endpoint because the phone cannot reach the computer
+    (the connector dials out and listens on loopback only), but the relay does
+    **not** keep the bytes: it reads the request body and pumps it straight out
+    over the connector's WebSocket. Nothing is written to disk here, so the
+    published promise that the relay stores no session content still holds.
+
+    It answers fast in the two cases that matter: an agent that is not connected
+    gets a 503 immediately (no queueing, nothing to wait for), and a connector too
+    old to know these frames gets a 501 after a short deadline instead of hanging.
+    """
+    store: Store = request.app["store"]
+    hub = request.app["hub"]
+    token = bearer_token(request)
+    device = await asyncio.to_thread(store.device_by_token, token) if token else None
+    if device is None:
+        return json_error(401, "auth/invalid-token", "a valid device token is required")
+
+    session_id = request.query.get("sessionId", "")
+    name = request.query.get("name", "")
+    bid = request.query.get("bid", "")
+    if not session_id or not name or not bid:
+        return json_error(400, "request/incomplete",
+                          "sessionId, name and bid are all required")
+    try:
+        declared = int(request.query.get("bytes", ""))
+    except (TypeError, ValueError):
+        return json_error(400, "request/bytes", "bytes must be an integer")
+    if declared < 0:
+        return json_error(400, "request/bytes", "bytes must not be negative")
+
+    agent = hub.agents.get(device["agentId"])
+    if agent is None or agent.closed:
+        # 不排队、不落盘：用户此刻传不了就是传不了，App 会走 WSS 老路或重试。
+        return json_error(503, "host/offline", "the PC connector is not connected")
+
+    bridge = hub.open_bridge(bid, device["agentId"])
+    try:
+        agent.enqueue_frame({
+            "t": "fsPutBegin", "deviceId": device["deviceId"], "bid": bid,
+            "sessionId": session_id, "name": name, "bytes": declared,
+        })
+        if not await bridge.wait_ack(BRIDGE_ACK_TIMEOUT_S):
+            # 旧连接器会静默忽略这一族帧——给个明确的错误，别让它挂死。
+            return json_error(501, "file/unsupported",
+                              "连接器版本过旧，不支持后台上传；请更新连接器")
+        if bridge.done.done():
+            # 连接器在 begin 就拒绝了（`fsErr`）：那也是一个答复，直接把它的
+            # 原错误码带回去，不必再往上读一个没人要的请求体。
+            outcome = bridge.done.result()
+            return json_error(409, outcome["error"], outcome["message"])
+
+        seq = 0
+        received = 0
+        # 边读边发：**不缓冲整个请求体**。`readany()` 每次只给一小块（aiohttp 的
+        # 内部读取尺寸，实测 256 KB），所以这里自己攒到 `BRIDGE_CHUNK_BYTES` 再发一片
+        # ——分片大小是给桥接段定的（服务器↔家用宽带），不该由 aiohttp 的读缓冲决定。
+        # 内存里最多只有一个分片，与文件总大小无关。
+        pending = bytearray()
+        while True:
+            chunk = await request.content.readany()
+            if not chunk:
+                break
+            received += len(chunk)
+            if received > declared:
+                return json_error(400, "request/bytes",
+                                  f"the body is longer than the declared {declared} bytes")
+            pending.extend(chunk)
+            while len(pending) >= BRIDGE_CHUNK_BYTES:
+                piece = bytes(pending[:BRIDGE_CHUNK_BYTES])
+                del pending[:BRIDGE_CHUNK_BYTES]
+                agent.enqueue_frame({
+                    "t": "fsPutChunk", "deviceId": device["deviceId"], "bid": bid,
+                    "seq": seq, "data": base64.b64encode(piece).decode("ascii"),
+                })
+                seq += 1
+            # 让出事件循环：帧已经进了 agent 的发送队列，这里不该饿死别的请求。
+            await asyncio.sleep(0)
+
+        if received != declared:
+            return json_error(400, "request/bytes",
+                              f"expected {declared} bytes but received {received}")
+        # 尾巴（不足一片的那段）也要发出去，否则文件会短一截。
+        if pending:
+            agent.enqueue_frame({
+                "t": "fsPutChunk", "deviceId": device["deviceId"], "bid": bid,
+                "seq": seq, "data": base64.b64encode(bytes(pending)).decode("ascii"),
+            })
+
+        agent.enqueue_frame({"t": "fsPutEnd", "deviceId": device["deviceId"], "bid": bid})
+        outcome = await bridge.done
+        if "error" in outcome:
+            return json_error(409, outcome["error"], outcome["message"])
+        return web.json_response({
+            "ok": True, "path": outcome.get("path"), "bytes": outcome.get("bytes"),
+        })
+    finally:
+        hub.close_bridge(bid)
 
 
 async def agents_enroll(request: web.Request) -> web.Response:
@@ -555,6 +736,8 @@ def register_http_routes(app: web.Application, route: Any, base_path: str) -> No
     route("POST", "/pair/code", pair_code)
     route("GET", "/devices", devices_list)
     route("POST", "/devices/revoke", devices_revoke)
+    route("POST", "/devices/push", devices_push)
+    route("PUT", "/files/up", files_up)
     route("POST", "/agents/enroll", agents_enroll)
     app["claim_limiter"] = ClaimLimiter()
     app["enroll_limiter"] = ClaimLimiter(limit=_ENROLL_FAILURES, window_s=_ENROLL_WINDOW_S)

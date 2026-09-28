@@ -44,6 +44,9 @@ def test_the_frame_vocabularies_match_the_contract():
     assert set(dlp.DEVICE_TO_AGENT) == set(CONTRACT["deviceToAgent"])
     assert set(dlp.AGENT_TO_DEVICE) == set(CONTRACT["agentToDevice"])
     assert set(dlp.RELAY_TO_AGENT) == set(CONTRACT["relayControl"])
+    # agent 侧控制帧单独一张表：加进 deviceToAgent/agentToDevice 会让 iOS 的
+    # DLPContractTests 双向全等断言变红。
+    assert set(dlp.AGENT_CONTROL) == set(CONTRACT["agentControl"])
 
 
 def test_the_protocol_version_and_frame_ceiling_match_the_contract():

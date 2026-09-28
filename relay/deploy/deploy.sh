@@ -97,10 +97,15 @@ install -d -m 0755 -o root -g root "$APP_DIR"
 install -d -m 0755 -o root -g root "$APP_DIR/public"
 install -d -m 0700 -o "$SERVICE_USER" -g "$SERVICE_USER" "$DATA_DIR"
 
+# APNs 密钥目录（R-1）：**只在需要时建**，权限 0750 root:dsh-relay。
+# 密钥不能放 /root 或 /home——unit 里有 ProtectHome=yes（见 dsh-relay.service），
+# 那些路径在服务自己的命名空间里根本不存在。
+install -d -m 0750 -o root -g "$SERVICE_USER" /etc/dsh-relay/apns
+
 # ── 2. sources and venv ─────────────────────────────────────────────────────
 
 say "installing relay sources into $APP_DIR"
-for module in relay.py api.py dlp.py store.py hub.py admin.py; do
+for module in relay.py api.py dlp.py store.py hub.py admin.py push.py; do
   [ -f "$SRC_DIR/$module" ] || die "$SRC_DIR/$module is missing"
   install -m 0644 -o root -g root "$SRC_DIR/$module" "$APP_DIR/$module"
 done
@@ -116,6 +121,17 @@ say "installing Python dependencies"
 "$APP_DIR/.venv/bin/python" -m pip install --quiet --upgrade pip
 "$APP_DIR/.venv/bin/python" -m pip install --quiet --upgrade -r "$APP_DIR/requirements.txt"
 chown -R root:root "$APP_DIR/.venv"
+
+# APNs 配置模板：**只在不存在时写一份**（与"绝不覆盖数据"的既有风格一致——
+# 里面会有 owner 填的 KEY_ID/TEAM_ID，覆盖一次就等于把推送配置弄丢）。
+# 默认 DLP_APNS_ENABLED=0：装上模板不等于打开推送。
+APNS_ENV=/etc/dsh-relay/apns.env
+if [ ! -f "$APNS_ENV" ]; then
+  say "writing the APNs config template to $APNS_ENV (placeholders only)"
+  install -m 0640 -o root -g "$SERVICE_USER" "$SRC_DIR/deploy/apns.env.example" "$APNS_ENV"
+else
+  say "keeping the existing $APNS_ENV"
+fi
 
 # ── 3. systemd unit ─────────────────────────────────────────────────────────
 

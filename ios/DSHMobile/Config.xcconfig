@@ -9,4 +9,9 @@
 DSH_RELAY_URL = https:/$()/relay.example.com/dsh-link
 DSH_UPDATE_FEED = https:/$()/relay.example.com/ios/version.json
 
+// 后台上传的阈值（MB）：≥ 它的文件走后台 URL 会话（经中转的 HTTPS），小于它的仍走 WSS。
+// 默认 8。设成很大的值（例如 100000）＝ 回到"只有 WSS"的今天，这是本项的回落手段之一。
+// **不是**用户可见的设置项。
+DSH_BACKGROUND_UPLOAD_MB = 8
+
 #include? "Config.local.xcconfig"

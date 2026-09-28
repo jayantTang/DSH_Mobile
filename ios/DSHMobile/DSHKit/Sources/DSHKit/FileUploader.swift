@@ -28,6 +28,14 @@ public struct FileUploader: Sendable {
     public struct Staged: Decodable, Sendable {
         public let path: String
         public let bytes: Int
+
+        /// Explicit because the background-upload path builds one of these from
+        /// the relay's own answer: callers should not have to know which transport
+        /// carried the file.
+        public init(path: String, bytes: Int) {
+            self.path = path
+            self.bytes = bytes
+        }
     }
 
     private struct BeginArgs: Encodable { let transferId, sessionId, name: String; let bytes: Int }

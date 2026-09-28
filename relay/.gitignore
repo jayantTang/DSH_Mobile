@@ -7,3 +7,9 @@ state.db
 state.db-wal
 state.db-shm
 .local/
+
+# APNs 凭据（R-1）：私钥与填好的配置**绝不入库**。模板叫 apns.env.example，
+# 所以下面这条 apns.env 不会把它一起忽略。
+apns.env
+*.p8
+AuthKey_*

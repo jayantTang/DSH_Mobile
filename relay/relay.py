@@ -21,6 +21,7 @@ from typing import Any
 from aiohttp import WSMsgType, web
 
 import dlp
+import push
 from api import bearer_token, cors_preflight, register_http_routes
 from hub import CLOSE_DEVICE_LIMIT, DeviceLimitReached, Limits, RelayHub
 from store import DEFAULT_DEVICE_TTL_MS, DEFAULT_PAIR_TTL_MS, Store
@@ -246,8 +247,17 @@ def create_app(*, store: Store, limits: Limits | None = None,
     async def _startup(_app: web.Application) -> None:
         # 用量记账的周期冲盘：内存里攒、按天落库（见 RelayHub.flush_usage）。
         _app["hub"].start_usage_flush()
+        # 撤销对账：库里撤销是唯一事实来源，relay 负责让在线世界跟上它
+        # （admin.py / 手工改库这些 relay 够不着的撤销路径靠这条兜底）。
+        _app["hub"].start_revoke_reconcile()
+        # APNs 投递器（R-1）。未配置或 `DLP_APNS_ENABLED=0` 时它把自己标成 disabled
+        # 并打一行 warn——**转发行为与今天逐字一致**，这是「推送配置错掉转发」的防线。
+        _app["hub"].set_push_sender(push.PushSender.from_env())
 
     async def _cleanup(_app: web.Application) -> None:
+        sender = getattr(_app["hub"], "push", None)
+        if sender is not None:
+            await sender.aclose()
         await _app["hub"].shutdown()
 
     app.on_startup.append(_startup)

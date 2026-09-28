@@ -79,6 +79,14 @@ class RecordingStore:
     def touch_agent(self, *_a, **_k):
         return None
 
+    # `attach_agent` 的臂 2（告诉连接器哪些设备回不来了）会问这两句。
+    # 这些用例讲的是配额，所以答案一律为空。
+    def list_devices(self, *_a, **_k):
+        return []
+
+    def expired_ids_of_agent(self, *_a, **_k):
+        return set()
+
 
 async def attach(hub: RelayHub, device_id="d1"):
     if "a1" not in hub.agents:

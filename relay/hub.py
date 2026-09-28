@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from typing import Any, Callable, Iterable
 
@@ -402,6 +403,82 @@ class AgentLink(Link):
                 dropped.append(device.device_id)
         return dropped
 
+class FileBridge:
+    """One in-flight background upload, as seen from the relay.
+
+    The HTTP request and the connector's `fs*` replies are two different
+    conversations: this is the join between them. The request side awaits
+    :meth:`wait`; :meth:`deliver` is called from the agent's socket handler.
+
+    Deliberately **not** a queue and not durable: an upload that is interrupted
+    is retried by the app from the beginning (the whole file goes again, with the
+    same ``bid``, which the connector overwrites). Keeping partial state here
+    would only invent a resumption protocol neither end has.
+    """
+
+    def __init__(self, *, bid: str, agent_id: str, logger: logging.Logger):
+        self.bid = bid
+        self.agent_id = agent_id
+        self.logger = logger
+        self.acknowledged = asyncio.Event()
+        self.done: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
+        self.error: str | None = None
+
+    def deliver(self, kind: str, frame: dict[str, Any]) -> None:
+        """One reply from the connector."""
+        if kind == "fsPutAck":
+            self.acknowledged.set()
+            return
+        if self.done.done():
+            return
+        if kind == "fsPutDone":
+            self.done.set_result(frame)
+            self.acknowledged.set()
+            return
+        if kind == "fsErr":
+            # The connector answers with the same `{code, message}` shape it uses
+            # for everything else; carry it through so the phone's error text is
+            # the connector's, not a generic "upload failed".
+            self.done.set_result({
+                "error": frame.get("code") or "file/rejected",
+                "message": frame.get("message") or "the connector refused the upload",
+            })
+            # A failure **is** an answer: a connector that rejects the transfer at
+            # `fsPutBegin` never sends an ack, so without this the caller would sit
+            # out the full ack deadline and report "connector too old" for what is
+            # really "the connector said no".
+            self.acknowledged.set()
+
+    def fail(self, reason: str) -> None:
+        """The agent went away (or the bridge was abandoned)."""
+        self.error = reason
+        self.acknowledged.set()
+        if not self.done.done():
+            self.done.set_result({"error": "host/offline", "message": reason})
+
+    async def wait_ack(self, timeout: float) -> bool:
+        """Wait for the connector to accept the transfer.
+
+        A connector that predates these frames **silently ignores them** (unknown
+        frame types are ignored by design), so "no ack" is the only signal that
+        the far end is too old — hence a deadline rather than an open wait. The
+        caller turns this into a 501 that says exactly that.
+        """
+        try:
+            await asyncio.wait_for(self.acknowledged.wait(), timeout)
+            return True
+        except asyncio.TimeoutError:
+            return False
+
+
+def _reconcile_interval_from_env() -> float:
+    """``DLP_REVOKE_RECONCILE_S``, seconds; anything unparsable falls back to 5."""
+    try:
+        return float(os.environ.get("DLP_REVOKE_RECONCILE_S", "5"))
+    except ValueError:
+        return 5.0
+
+
 class RelayHub:
     """Registry of live agents and devices plus the routing rules between them."""
 
@@ -411,6 +488,15 @@ class RelayHub:
         self.limits = limits or Limits()
         self.agents: dict[str, AgentLink] = {}
         self._devices: dict[str, DeviceLink] = {}
+        # 由同步调用方（撤销设备的 HTTP handler）排下的 detach 任务，见
+        # `schedule_detach`。持着引用，免得任务在半路被回收。
+        self._detach_tasks: set[asyncio.Task[None]] = set()
+        # 推送投递任务（见 `_notify`）：只为了持有引用，别让任务被回收。
+        self._push_tasks: set[asyncio.Task[None]] = set()
+        #: APNs 投递器（`push.py`）。默认 None = 不发推送（未配置的部署就是这样）。
+        self.push: Any = None
+        #: 进行中的 HTTP 上传桥（`bid → FileBridge`，见 `open_bridge`）。
+        self._bridges: dict[str, FileBridge] = {}
         # 按天按设备的用量，攒在内存里、周期冲盘（见 `flush_usage`）。
         # 键是 (本地日, deviceId)，值是这一批的增量；库里那份是"已经加上去的"。
         self._usage: dict[tuple[int, str], dict[str, Any]] = {}
@@ -419,6 +505,10 @@ class RelayHub:
         self._usage_task: asyncio.Task[None] | None = None
         self.usage_flush_interval = 30.0
         self.usage_flush_bytes = 1 << 20
+        # 「库已撤销但 socket 还活着」的对账周期（见 reconcile_revoked_devices）。
+        # 0 或负数 = 关掉（只给测试与极端场景用）。
+        self.revoked_reconcile_interval = _reconcile_interval_from_env()
+        self._reconcile_task: asyncio.Task[None] | None = None
 
     # ── agent lifecycle ─────────────────────────────────────────────────────
 
@@ -444,9 +534,45 @@ class RelayHub:
                 online=True, agent_id=link.agent_id, name=agent["name"]))
         if previous is not None and previous is not link:
             previous.devices.clear()
+        await self._tell_agent_about_the_gone(link, agent)
         self.logger.info("relay: agent %s connected (%s), %d device(s) re-adopted",
                          agent["agentId"], agent["name"], len(link.devices))
         return link
+
+    async def _tell_agent_about_the_gone(self, link: AgentLink, agent: dict[str, Any]) -> None:
+        """告诉刚连上的连接器：这些设备永远回不来了，把它们的值班流放掉。
+
+        连接器可能还留着一些设备记录（上一次 relay 运行期间 attach 过，然后
+        relay 重启 / 手机再也没回来），而 relay 这边根本不知道它们还在——那些
+        记录各自挂着一条 `$events` 值班流。库里凡是已撤销、或配对已满 365 天
+        （`expiresAt` 过去）的设备，都已经不可能回来了（`device_by_token` 把两种
+        都拒掉），所以在这里逐条告知「放下」。连接器对它没持有的设备是空操作
+        （`plugins/mobile-link/lib/router.js` 的 `if (!record) return`），所以这里
+        是安全的广播：不需要连接器上报它持有哪些设备。
+
+        只报**不在线**的那些：仍然握在 `_devices` 里的设备，撤销那一半马上会被
+        对账踢掉（重复告知也幂等），但过期那一半**不许**因此被打断——见
+        :meth:`reconcile_revoked_devices` 的理由。
+        """
+        revoked = await asyncio.to_thread(
+            self.store.list_devices, agent["agentId"], include_revoked=True)
+        expired = await asyncio.to_thread(
+            self.store.expired_ids_of_agent, agent["agentId"])
+        live = set(self._devices)
+        gone = sorted(
+            {row["deviceId"] for row in revoked if row.get("revokedAt")} | expired)
+        stale = [device_id for device_id in gone if device_id not in live]
+        for device_id in stale:
+            link.enqueue_frame(dlp.device_detach_frame(device_id, reason="revoked"))
+        if stale:
+            self.logger.info(
+                "relay: told the connector about %d device(s) that can never come back",
+                len(stale))
+            if len(stale) > 200:
+                self.logger.warning(
+                    "relay: agent %s has %d dead device records; that is a lot — "
+                    "`admin.py device-list --all` shows them",
+                    agent["agentId"], len(stale))
 
     async def detach_agent(self, link: AgentLink) -> None:
         if self.agents.get(link.agent_id) is not link:
@@ -456,6 +582,9 @@ class RelayHub:
         if link.superseded:
             return
         self.logger.info("relay: agent %s disconnected", link.agent_id)
+        # 挂在这台电脑上的上传立刻失败：不然 HTTP 请求会等到自己的超时，
+        # 手机上看起来是"一直在传"，而不是"传失败了"。
+        await self._drop_agent_bridges(link.agent_id, "the PC connector disconnected")
         for device in list(link.devices.values()):
             device.agent = None
             device.enqueue_frame(dlp.host_status(online=False, agent_id=link.agent_id))
@@ -529,6 +658,27 @@ class RelayHub:
         # 断开时冲一次：这一批的尾巴不留在内存里，运维命令跑完就是准的。
         await self.flush_usage()
 
+    def schedule_detach(self, link: DeviceLink, *, reason: str | None = None) -> None:
+        """Detach a device from a **synchronous** caller (e.g. an HTTP handler).
+
+        :meth:`detach_device` is the real thing; this only exists because the
+        revoke handler is a normal request/response and nothing there can await
+        a socket close. It keeps the returned task referenced until it settles so
+        it cannot be collected mid-flight, and a failure is logged rather than
+        lost.
+        """
+        task = asyncio.create_task(self.detach_device(link, reason=reason))
+        self._detach_tasks.add(task)
+        task.add_done_callback(self._detach_tasks.discard)
+        task.add_done_callback(self._note_detach_failure)
+
+    def _note_detach_failure(self, task: asyncio.Task[None]) -> None:
+        if task.cancelled():
+            return
+        error = task.exception()
+        if error is not None:
+            self.logger.warning("relay: detaching a device failed: %r", error)
+
     # ── routing ─────────────────────────────────────────────────────────────
 
     async def route_from_device(self, link: DeviceLink, frame: dict[str, Any]) -> None:
@@ -592,6 +742,16 @@ class RelayHub:
             return
         if kind == "pong":
             return
+        if kind == "notify":
+            # 「这台电脑上有事发生」：**不转发给设备**（它根本不是 DLP 帧），而是
+            # 交给 push 层——只有"此刻不在线"的手机才需要被推（在线那台 App 自己
+            # 会弹本地通知，再推一次就是两条提醒一起响）。见 `_notify`。
+            self._notify(link, frame)
+            return
+        if self._route_bridge_frame(link, kind, frame):
+            # `fsPutAck`/`fsPutDone`/`fsErr`：后台上传桥的回复，**不跨到设备**。
+            # 它们在 `device_id is None` 那条 debug 丢弃分支之前就被收走了。
+            return
         device_id = dlp.device_id_of(frame)
         if device_id is None:
             if kind == "hostStatus":
@@ -620,6 +780,141 @@ class RelayHub:
             return
         if not device.enqueue_text(text):
             await self._drop_device(device_id, "backpressure")
+
+    # ── push notifications (R-1) ────────────────────────────────────────────
+
+    def set_push_sender(self, sender: Any) -> None:
+        """Install the APNs sender. Called at startup; a no-op stub is fine.
+
+        Injected rather than constructed here so ``hub`` does not depend on
+        ``push`` (tests run the whole routing surface without a push stack) and so
+        an unconfigured relay simply never sends.
+        """
+        self.push = sender
+
+    def _notify(self, link: AgentLink, frame: dict[str, Any]) -> None:
+        """Turn an agent's ``notify`` into APNs pushes for the devices that need one.
+
+        Four conditions, all of which must hold (``02-design.md`` §5.4). The first
+        one is the whole reason this lives in the relay and not in the connector:
+        **only the relay knows whether a device is connected right now**, and a
+        device that is connected gets the event over its own socket and raises a
+        local notification — pushing as well would make the phone buzz twice.
+
+        The store read runs in a thread (the handler is on the routing path) and
+        delivery runs on a task: nothing here waits on Apple, and a push that
+        fails is a log line, never a broken forward.
+        """
+        sender = self.push
+        kind = frame.get("kind")
+        sid = frame.get("sid")
+        if sender is None or not getattr(sender, "enabled", False):
+            return
+        if kind not in ("turnEnd", "attention") or not isinstance(sid, str) or not sid:
+            self.logger.debug("relay: ignoring malformed notify from agent %s", link.agent_id)
+            return
+
+        async def deliver() -> None:
+            try:
+                rows = await asyncio.to_thread(self.store.push_targets, link.agent_id)
+            except Exception as error:  # noqa: BLE001 - a lookup must not break routing
+                self.logger.warning("relay: could not read push targets for %s: %s",
+                                    link.agent_id, error)
+                return
+            wanted = [row for row in rows if self._should_push(link, row, kind)]
+            if not wanted:
+                return
+            results = await sender.send_many(
+                wanted, kind=kind, sid=sid, eid=frame.get("eid"))
+            for row, result in zip(wanted, results):
+                if result.ok:
+                    self.logger.info("relay: pushed %s to %s", kind, row["deviceId"])
+                    continue
+                if result.dead_token:
+                    # Apple's verdict is the only automatic cleanup this system
+                    # has: the app is gone or reinstalled, so the registration is
+                    # stale until it comes back and registers again.
+                    self.logger.info("relay: device %s push token is dead (%s); clearing it",
+                                     row["deviceId"], result.reason)
+                    try:
+                        await asyncio.to_thread(self.store.clear_push, row["deviceId"])
+                    except Exception as error:  # noqa: BLE001
+                        self.logger.warning("relay: could not clear push for %s: %s",
+                                            row["deviceId"], error)
+                elif result.skipped:
+                    self.logger.debug("relay: push to %s skipped (%s)",
+                                      row["deviceId"], result.skipped)
+                else:
+                    self.logger.warning("relay: push to %s failed (HTTP %s, %s)",
+                                        row["deviceId"], result.status, result.reason)
+
+        task = asyncio.create_task(deliver())
+        self._push_tasks.add(task)
+        task.add_done_callback(self._push_tasks.discard)
+
+    def _should_push(self, link: AgentLink, device_row: dict[str, Any], kind: str) -> bool:
+        """Whether one device should receive this reminder.
+
+        Split out so each condition is testable on its own, and so ``push-test``
+        can deliberately bypass the first one (during the transition period a
+        phone is usually "online" because of the keep-alive, which would make the
+        operator command useless for its main purpose: telling sandbox from
+        production).
+        """
+        device_id = device_row["deviceId"]
+        # ① 此刻不在线。在线的手机自己会弹本地通知（`$events` → App），再推就是重复。
+        if device_id in link.devices:
+            return False
+        # ② 有推送登记（令牌与环境都有效；store 已经把撤销/过期的滤掉了）。
+        if not device_row.get("apnsToken") or not device_row.get("apnsEnv"):
+            return False
+        # ③ 用户开着这一类提醒。
+        column = "pushTurnEnd" if kind == "turnEnd" else "pushAttention"
+        if not device_row.get(column):
+            return False
+        return True
+
+    # ── background-transfer bridge (R-1 C-17) ───────────────────────────────
+
+    def open_bridge(self, bid: str, agent_id: str) -> "FileBridge":
+        """Register one in-flight `PUT /files/up` so the connector's replies find it.
+
+        Correlation is by ``bid`` alone: the connector's bridge replies carry no
+        ``deviceId`` (it does not know which phone is uploading, and should not),
+        so this table is what turns "some file finished" back into "that HTTP
+        request may now answer 200".
+        """
+        bridge = FileBridge(bid=bid, agent_id=agent_id, logger=self.logger)
+        self._bridges[bid] = bridge
+        return bridge
+
+    def close_bridge(self, bid: str) -> None:
+        self._bridges.pop(bid, None)
+
+    def _route_bridge_frame(self, link: AgentLink, kind: str, frame: dict[str, Any]) -> bool:
+        """Hand a bridge reply to its waiting request. True when it was one."""
+        if kind not in dlp.AGENT_CONTROL:
+            return False
+        bid = frame.get("bid")
+        bridge = self._bridges.get(bid) if isinstance(bid, str) else None
+        if bridge is None:
+            # A late reply after the request gave up (client went away, or the
+            # 5-second ack deadline already fired). Nothing to do but say so.
+            self.logger.debug("relay: no bridge waiting for %s (bid=%r)", kind, bid)
+            return True
+        bridge.deliver(kind, frame)
+        return True
+
+    async def _drop_agent_bridges(self, agent_id: str, reason: str) -> None:
+        """Fail every waiting upload of an agent that just went away.
+
+        Without this the HTTP request would sit until its own timeout with the
+        connector gone — the phone would look like "uploading forever" instead of
+        "upload failed", and the user would wait on nothing.
+        """
+        for bridge in list(self._bridges.values()):
+            if bridge.agent_id == agent_id:
+                bridge.fail(reason)
 
     async def _drop_device(self, device_id: str, reason: str, *,
                            code: int = CLOSE_BACKPRESSURE) -> None:
@@ -730,6 +1025,57 @@ class RelayHub:
         """起周期冲盘任务（由 app 启动钩子调用）。"""
         if self._usage_task is None:
             self._usage_task = asyncio.create_task(self._usage_flush_loop())
+
+    def start_revoke_reconcile(self) -> None:
+        """起「撤销对账」周期任务（由 app 启动钩子调用）。幂等。"""
+        if self._reconcile_task is None and self.revoked_reconcile_interval > 0:
+            self.logger.info("relay: revoke reconcile loop every %ss (0 = off)",
+                             self.revoked_reconcile_interval)
+            self._reconcile_task = asyncio.create_task(self._revoke_reconcile_loop())
+
+    async def reconcile_revoked_devices(self) -> list[str]:
+        """让在线世界与「库里已撤销」这条唯一事实来源保持一致。
+
+        为什么需要：撤销可能来自 relay 够不着的地方（`admin.py` 直接写库、
+        运维手工改库）。socket 一旦留在「库已撤、自己还在线」这种状态，那台手机
+        **永远回不来**（令牌已被 `device_by_token` 否掉），而连接器会一直替它留着
+        `$events` 值班流（`plugins/mobile-link/lib/router.js`）——没人会来拿。
+
+        只处理**在线**设备，且只因为「已撤销」。令牌过期（配对满 365 天）的设备
+        不在这一臂里：在线 socket 不做重新鉴权，踢它等于打断一条此刻仍能正常
+        工作的连接，那是产品行为变更。过期的残留由 `attach_agent` 那一段收
+        （见 :meth:`_tell_agent_about_the_gone`）。
+
+        返回被踢的设备 id，供日志与测试断言。
+        """
+        live = list(self._devices.keys())
+        if not live:
+            return []                       # 没人在线就不查库
+        stale = await asyncio.to_thread(self.store.revoked_ids_among, live)
+        detached: list[str] = []
+        for device_id in sorted(stale):
+            link = self._devices.get(device_id)
+            if link is None:
+                continue                    # 竞态：这一轮里它自己断开了
+            self.logger.info(
+                "relay: device %s was revoked in the database but still connected; "
+                "detaching (reason=revoked)", device_id)
+            self.schedule_detach(link, reason="revoked")
+            detached.append(device_id)
+        return detached
+
+    async def _revoke_reconcile_loop(self) -> None:
+        # 注意：try/except 在**循环体内**（与 `_usage_flush_loop` 不同，那里
+        # 一次异常就把循环打死了）。这里是撤销唯一的兜底，一次数据库抖动
+        # 绝不能让对账停摆。
+        while True:
+            try:
+                await asyncio.sleep(self.revoked_reconcile_interval)
+                await self.reconcile_revoked_devices()
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 - 对账失败不能把中转带下去
+                self.logger.warning("relay: revoke reconcile tick failed", exc_info=True)
 
     async def _usage_flush_loop(self) -> None:
         try:
@@ -861,6 +1207,9 @@ class RelayHub:
         if self._usage_task is not None:
             self._usage_task.cancel()
             self._usage_task = None
+        if self._reconcile_task is not None:
+            self._reconcile_task.cancel()
+            self._reconcile_task = None
         # 先把账写掉再断开：进程收尾也是"今天"的一部分。
         await self.flush_usage()
         for link in list(self._devices.values()):

@@ -60,6 +60,17 @@ Environment=DLP_DEVICE_DAILY_MB=5120
 # ProtectSystem=strict makes the filesystem read-only: never write .pyc files.
 Environment=PYTHONDONTWRITEBYTECODE=1
 
+# ── APNs 推送（R-1）─────────────────────────────────────────────────────────
+# **默认关**。未设或为 0 时 relay 的行为与没有推送时逐字一致，只多一行启动日志；
+# 这是"推送配置错掉转发"的防线。
+Environment=DLP_APNS_ENABLED=0
+# 真值放这里（模板由 deploy.sh 在文件不存在时写入，已存在绝不覆盖）：
+#   DLP_APNS_KEY_PATH / DLP_APNS_KEY_ID / DLP_APNS_TEAM_ID / DLP_APNS_TOPIC
+#   DLP_APNS_ENV_DEFAULT / DLP_APNS_MIN_INTERVAL_S
+# `-` 前缀＝文件不存在不算失败（没配推送的部署照常启动）。
+# 密钥文件放 /etc/dsh-relay/apns/，**不能放 /root·/home**：下面有 ProtectHome=yes。
+EnvironmentFile=-/etc/dsh-relay/apns.env
+
 ExecStart=/opt/dsh-relay/.venv/bin/python /opt/dsh-relay/relay.py --host 127.0.0.1 --port 8787 --db /var/lib/dsh-relay/state.db
 ExecReload=/bin/kill -HUP $MAINPID
 

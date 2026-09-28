@@ -1,6 +1,7 @@
 import DSHKit
 import Foundation
 import Observation
+import RelayKit
 
 #if canImport(UIKit)
 import UIKit
@@ -262,11 +263,7 @@ public final class ConnectionStore {
         persist()
     }
 
-    /// Stages a file on the computer and returns where it landed.
-    ///
-    /// Exposed here rather than handing the carrier out: the transport is this
-    /// store's business, and callers should not have to know which carrier is
-    /// live to send a file.
+    /// Stages a file already in memory (the WSS path, unchanged).
     public func uploadFile(
         data: Data,
         name: String,
@@ -279,6 +276,67 @@ public final class ConnectionStore {
             sessionId: sessionId
         )
     }
+
+    /// Stages a file the caller has as a URL, choosing the path by size (R-1).
+    ///
+    /// A file at or above `backgroundUploadThreshold` goes over the relay's HTTPS
+    /// surface with a **background** URL session, so the system finishes it after
+    /// the app is suspended; anything smaller stays on the WSS path it has always
+    /// used. The fallback is deliberate and total — no capability, below the
+    /// threshold, or a relay/connector that refuses the route all land on the WSS
+    /// path, so the new path can never become the only way to send a file.
+    public func uploadFile(
+        fileURL: URL,
+        name: String,
+        sessionId: String
+    ) async throws -> FileUploader.Staged {
+        guard let request = backgroundUploadRequest(fileURL: fileURL, name: name, sessionId: sessionId)
+        else {
+            // 回落：WSS 老路，行为与今天一致。
+            return try await uploadFile(data: try Data(contentsOf: fileURL), name: name, sessionId: sessionId)
+        }
+        do {
+            return try await RelayFileTransfer(
+                relayURL: request.relayURL, deviceToken: request.deviceToken
+            ).upload(fileURL: fileURL, name: name, sessionId: sessionId, bid: request.bid).asStaged
+        } catch let failure as DSHRPCFailure where !RelayFileTransfer.shouldFallBack(status: 0) {
+            throw failure
+        } catch {
+            // 被中转/连接器明确拒绝（501 老连接器、413 体积、404 无此路由）→ 回落，
+            // 别让用户的一次发送因为"这条路不被支持"而彻底失败。
+            return try await uploadFile(data: try Data(contentsOf: fileURL), name: name, sessionId: sessionId)
+        }
+    }
+
+    /// The parts of a background upload, or `nil` when the WSS path should be used.
+    ///
+    /// Split out so the decision is testable on its own — it is the whole
+    /// "which path" policy, and the three ways it can say no are the fallback.
+    public func backgroundUploadRequest(
+        fileURL: URL,
+        name: String,
+        sessionId: String
+    ) -> (relayURL: URL, deviceToken: String, bid: String)? {
+        _ = (name, sessionId)   // 由调用方组进请求；这里留着是为了签名对称
+        let size = RelayFileTransfer.fileSize(fileURL)
+        guard size >= Self.backgroundUploadThreshold else { return nil }
+        guard supports(RelayFileTransfer.capability) else { return nil }
+        guard case .relay(let relayURL, _)? = activeProfile?.transport else { return nil }
+        guard let httpRelay = ConnectLink.normalizedRelayURL(relayURL) else { return nil }
+        guard let profile = activeProfile, let secret = Keychain.get(profile.secretAccount) else { return nil }
+        return (httpRelay, secret, UUID().uuidString)
+    }
+
+    /// The size at or above which the background path is used.
+    ///
+    /// A **build** setting (`DSH_BACKGROUND_UPLOAD_MB`, injected through
+    /// Info.plist like the relay address), not a user-visible preference: it is a
+    /// risk switch, and setting it very high restores the WSS-only behaviour
+    /// exactly. Default 8 MB.
+    public static let backgroundUploadThreshold: Int = {
+        let raw = Bundle.main.object(forInfoDictionaryKey: "DSHBackgroundUploadMB") as? String
+        return RelayFileTransfer.thresholdBytes(value: raw)
+    }()
 
     /// Connects using a saved profile, reusing its stored secret.
     public func connect(to profile: ConnectionProfile) async {

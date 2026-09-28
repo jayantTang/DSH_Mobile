@@ -40,6 +40,13 @@ class FakeStore:
     def usage_rows(self, day):
         return []
 
+    # `attach_agent` 的臂 2 会问这两句；用量用例里没有连接器，答案一律为空。
+    def list_devices(self, *_args, **_kwargs):
+        return []
+
+    def expired_ids_of_agent(self, *_args, **_kwargs):
+        return set()
+
 
 class FakeLink:
     """The bits of `DeviceLink` the accounting touches."""

@@ -12,25 +12,37 @@
 import {
   StreamTable, WaterfallDedupe, deviceFrameError, deviceIdOf, nonEmptyString, resultFrame,
 } from './dlp.js'
-import { FileInbox, isFileMethod } from './files.js'
+import { FileInbox, FILE_BEGIN, FILE_CHUNK, FILE_END, isFileMethod } from './files.js'
 import { GitBridge, isGitMethod } from './git.js'
 import { isHelloMethod, helloPayload, parseClientInfo } from './hello.js'
+
+/**
+ * 后台大文件上传的桥接帧（relay → 连接器），名字见 `docs/relay-contract.json`
+ * 的 `agentControl`。转义成 `FileInbox` 的三件套，见 `handleFsPutBegin` 那段注释。
+ */
+export const FSPUT_BEGIN = 'fsPutBegin'
+export const FSPUT_CHUNK = 'fsPutChunk'
+export const FSPUT_END = 'fsPutEnd'
 
 export const EVENTS_ENDPOINT = '$events'
 export const EVENTS_RESULT = '$events/result'
 
 /**
- * 手机断了之后，这条 `$events` 流还替它留多久（毫秒）。
+ * 手机不在时一直替它留 `$events`，直到设备被撤销或进程退出。
  *
  * 为什么需要：手机是唯一客户端时，它一断，DSH 那边就没人持有这条流了——
  * 提问（waterfall）会随 Agent Context 释放被撤掉，用户回到手机再也看不到——
- * 这正是留流的原因。留着流就等于"代手机值班"：
- * 这期间来的提问先攒着，手机回来补发。
+ * 这正是留流的原因。留着流就等于"代手机值班"：这期间来的提问先攒着，手机回来补发。
+ *
+ * **没有时限**：这里曾经有一个 15 分钟的宽限期（`DEFAULT_EVENTS_GRACE_MS`），
+ * 到点撤流；2026-09-28 的 R-1 把它拆掉了——手机离线超过 15 分钟提问就永远丢了，
+ * 而那正是"值班"最该起作用的时候。唯一的出口是 `reason === 'revoked'`（见
+ * `detachDevice`），以及进程退出（`teardownAll`）。
  *
  * 代价是这段时间里 DSH 认为"设备还在"，会话的 Agent Context 不会因此释放；
- * 所以必须有上限，不能无限留。
+ * 也就是"挂着的提问所在会话的 Agent Context 长期不释放"。owner 已裁定这不是
+ * 风险（电脑一直运行），所以不加上限、也不为此写额外的清理机制。
  */
-export const DEFAULT_EVENTS_GRACE_MS = 15 * 60 * 1000
 
 /** 离线期间最多替一台设备攒多少条 `$events` 项（只攒 waterfall/cancel）。 */
 export const DEFAULT_EVENTS_BACKLOG = 50
@@ -63,14 +75,13 @@ export class DeviceRouter {
    */
   constructor({
     dsh, send, logger = console, onChange = () => {}, now = Date.now, protocolVersion = 1,
-    eventsGraceMs = DEFAULT_EVENTS_GRACE_MS, eventsBacklog = DEFAULT_EVENTS_BACKLOG,
-    setTimeoutFn = setTimeout, clearTimeoutFn = clearTimeout,
+    eventsBacklog = DEFAULT_EVENTS_BACKLOG, notify = () => {},
   } = {}) {
     this.dsh = dsh
-    this.eventsGraceMs = eventsGraceMs
     this.eventsBacklog = eventsBacklog
-    this.setTimeoutFn = setTimeoutFn
-    this.clearTimeoutFn = clearTimeoutFn
+    // 「跑完了 / 待你回应」这类事件到了就报一声（见 `notifyFor`）。默认空函数，
+    // 测试与不关心提醒的调用方可以不管它。帧由 link.js 发（router 不发帧）。
+    this.notify = notify
     // Reported to the app so it can tell which wire revision it is talking to.
     this.protocolVersion = protocolVersion
     this.send = send
@@ -126,10 +137,69 @@ export class DeviceRouter {
       case 'eventResult':
         await this.handleEventResult(deviceId, frame)
         return
+      case FSPUT_BEGIN:
+        this.handleFsPutBegin(deviceId, frame)
+        return
+      case FSPUT_CHUNK:
+        this.handleFsPutChunk(frame)
+        return
+      case FSPUT_END:
+        this.handleFsPutEnd(frame)
+        return
       default:
         /* Unknown frame types are ignored by design (spec §3). */
         return
     }
+  }
+
+  // ── background-transfer bridge (relay → connector) ──────────────────────
+  //
+  // 一族 agent 侧控制帧（`docs/relay-contract.json` 的 `agentControl`），由 relay 的
+  // `PUT /files/up` 驱动。它们**不跨到设备**——手机走的是普通 HTTPS，relay 终结它、
+  // 再把字节泵到这条 agent WSS 上，落盘仍然是连接器的活（中转不落盘）。
+  //
+  // 实现体复用 `FileInbox`：它的 begin/chunk/end 语义正好是这三帧要的。
+  // **上行回复只带 `bid`，不带 `deviceId`**——relay 靠 `bid` 关联回那个 HTTP 请求。
+
+  handleFsPutBegin(deviceId, frame) {
+    // `deviceId` 只用来在出错时记账；**回复一律不带 deviceId**——relay 是靠
+    // `bid` 把它对回那个 HTTP 请求的（见 `handleRelayFrame` 那段注释）。
+    void deviceId
+    try {
+      this.fileInbox.handle(FILE_BEGIN, {
+        transferId: frame.bid, sessionId: frame.sessionId, name: frame.name, bytes: frame.bytes,
+      })
+      this.send(undefined, { t: 'fsPutAck', bid: frame.bid, received: 0 })
+    } catch (error) {
+      this.sendFsError(frame.bid, error)
+    }
+  }
+
+  handleFsPutChunk(frame) {
+    // **不回 ack**：整条链是流水线，一片一个 RTT 会把吞吐毁掉（roof 见
+    // `02-design.md` §4.4 第 3 条）。出错用 `fsErr` 中断。
+    try {
+      this.fileInbox.handle(FILE_CHUNK, {
+        transferId: frame.bid, seq: frame.seq, data: frame.data,
+      })
+    } catch (error) {
+      this.sendFsError(frame.bid, error)
+    }
+  }
+
+  handleFsPutEnd(frame) {
+    try {
+      const done = this.fileInbox.handle(FILE_END, { transferId: frame.bid })
+      this.send(undefined, { t: 'fsPutDone', bid: frame.bid, path: done.path, bytes: done.bytes })
+    } catch (error) {
+      this.sendFsError(frame.bid, error)
+    }
+  }
+
+  /** One failure shape for the whole family; the relay turns it into an HTTP error. */
+  sendFsError(bid, error) {
+    this.logger.warn?.(`mobile-link: file bridge ${bid} failed: ${messageOf(error)}`)
+    this.send(undefined, { t: 'fsErr', bid, ...errorObject('file/rejected', messageOf(error)) })
   }
 
   // ── device lifecycle ────────────────────────────────────────────────────
@@ -138,10 +208,8 @@ export class DeviceRouter {
     if (!nonEmptyString(deviceId)) return
     const existing = this.devices.get(deviceId)
     if (existing) {
-      // 回头客：宽限期内又连上了。流和攒下的提问都还在，交给 handleOpen 补发。
+      // 回头客：手机又连上了。流和攒下的提问都还在，交给 handleOpen 补发。
       if (existing.offlineSince !== undefined) {
-        this.clearTimeoutFn(existing.offlineTimer)
-        existing.offlineTimer = undefined
         existing.offlineSince = undefined
         this.logger.info?.(
           `mobile-link: device ${deviceId} reattached with ${existing.eventsPending.size} unanswered question(s)`)
@@ -163,7 +231,6 @@ export class DeviceRouter {
       // 注意它不是一个"送一次就清空"的队列：送过也要留着，否则 App 再重启一次
       // （或崩一次）这条提问就永远丢了——2026-09-22 验收时正是这么发现的。
       offlineSince: undefined,
-      offlineTimer: undefined,
       eventsPending: new Map(),
     })
     this.logger.info?.(`mobile-link: device ${deviceId} attached (${info?.name ?? 'unknown'})`)
@@ -171,11 +238,26 @@ export class DeviceRouter {
     await this.ensureEventsStream(deviceId)
   }
 
+  /**
+   * 手机断了。
+   *
+   * `reason === 'revoked'`（中转发来的"这台设备被撤销了"）是**放下**：撤掉它全部的流、
+   * 删掉记录——不再有人会回来拿那些提问了，继续值班只是白占一条流。
+   *
+   * 别的 reason（socket closed、backpressure…）一律是"手机暂时不在"：普通流（文件、
+   * 会话流）立刻撤，`$events` 留着替它值班——**一直留**，没有时限（见 `$events`
+   * 那段的说明）。这也是「撤销即放下」是唯一出口的原因。
+   */
   async detachDevice(deviceId, reason) {
     const record = this.devices.get(deviceId)
     if (!record) return
+    if (reason === 'revoked') {
+      await this.#dropDevice(deviceId)
+      this.logger.info?.(`mobile-link: device ${deviceId} 已被撤销，放下（不再替它值班）`)
+      return
+    }
     // 除了 `$events`，其它流（文件、会话流）立刻撤掉：它们没有"值班"的意义，
-    // 留着只会占资源。`$events` 留着，见 DEFAULT_EVENTS_GRACE_MS 的说明。
+    // 留着只会占资源。`$events` 留着，见上面那段说明。
     const keep = []
     for (const entry of this.streams.byDevice(deviceId)) {
       if (entry.endpoint === EVENTS_ENDPOINT) {
@@ -188,28 +270,21 @@ export class DeviceRouter {
     record.dlpIds.clear()
     for (const entry of keep) record.dlpIds.add(entry.dlpId)
 
-    if (record.offlineSince === undefined) {
-      record.offlineSince = this.now()
-      record.offlineTimer = this.setTimeoutFn(() => {
-        void this.#expireOfflineDevice(deviceId)
-      }, this.eventsGraceMs)
-      // 定时器不该把进程钉住（CLI 与测试里尤其明显）。
-      record.offlineTimer?.unref?.()
-    }
+    if (record.offlineSince === undefined) record.offlineSince = this.now()
     this.logger.info?.(
       `mobile-link: device ${deviceId} detached (${reason ?? 'closed'})；`
-      + `$events 流替它留 ${Math.round(this.eventsGraceMs / 1000)} 秒，期间来的提问会攒着`)
+      + '$events 流一直替它留着，直到设备被撤销或进程退出')
     this.#changed()
   }
 
-  /** 宽限期到点：真的把这台设备放下（撤流、清缓冲）。 */
-  async #expireOfflineDevice(deviceId) {
+  /** 真的把这台设备放下：撤全部流、删记录。唯一调用点是撤销与进程收尾。 */
+  async #dropDevice(deviceId) {
     const record = this.devices.get(deviceId)
-    if (!record || record.offlineSince === undefined) return
+    if (!record) return
     for (const muxId of this.streams.removeDevice(deviceId)) this.dsh.cancelStream(muxId)
     this.devices.delete(deviceId)
     this.logger.info?.(
-      `mobile-link: device ${deviceId} 宽限期结束，已放下（丢掉 ${record.eventsPending.size} 条没人回答的提问）`)
+      `mobile-link: 放下设备 ${deviceId}（丢掉 ${record.eventsPending.size} 条没人回答的提问）`)
     this.#changed()
   }
 
@@ -236,8 +311,6 @@ export class DeviceRouter {
   teardownAll() {
     const muxIds = []
     for (const deviceId of [...this.devices.keys()]) {
-      const record = this.devices.get(deviceId)
-      this.clearTimeoutFn(record?.offlineTimer)
       muxIds.push(...this.streams.removeDevice(deviceId))
       this.devices.delete(deviceId)
     }
@@ -458,6 +531,10 @@ export class DeviceRouter {
         }
       }
     }
+    // 「报一声」与「要不要攒」是两件事：攒只对 waterfall/cancel，报的是"跑完了"与
+    // "待你回应"两类。这里放在离线早退**之前**，所以在不在线都会报——
+    // 手机在线时它自己会弹本地通知，这条 notify 到了中转会被判"在线不推"（不然重复）。
+    this.notifyFor(value)
     if (record.offlineSince !== undefined && isBufferedEvent(value)) {
       this.logger.debug?.(
         `mobile-link: kept ${value.type} ${value.event ?? value.eventId ?? ''} for offline ${deviceId}`)
@@ -472,6 +549,36 @@ export class DeviceRouter {
     // Spec §4.1.5: every $events item is broadcast as an `event` frame until the
     // device opens the stream explicitly, so nothing is delivered twice.
     if (record.dlpIds.size === 0) this.send(deviceId, { t: 'event', value })
+  }
+
+  /**
+   * 要不要为这条 `$events` 项报一声（就是「提醒手机」）。
+   *
+   * 只有两类，判据都是现成的：
+   *
+   * - **跑完了**：`emit: api-session/status(sid, false)`。只能从这条 `emit` 认——
+   *   `turn/end` 不在 `$events` 的转发白名单里（`docs/DSH-PROTOCOL.md:3141-3165`；
+   *   `turn/end` 在 `:3229`，那是 `session/follow` 的事件），在这条流上永远看不到。
+   * - **待你回应**：两种 `waterfall` 都算——`user-questions/request`（`:3164`）与
+   *   `approval/request`（`:3145`），两者都让 host 停在那儿等人。App 侧本来就两种都认
+   *   （`Support/HostEventHub.swift:191-198`）。
+   *
+   * `api-session/error`（`:3150`）**有意不推**：它不一定是"跑完了"（也可能是一轮中途
+   * 报错后继续），拿它当"跑完了"会发出一堆噪音提醒。这是决定，不是漏做。
+   *
+   * 不做去抖、不做队列、不做重试：一轮才一条，发失败（中转断了）就丢。`turnEnd` 丢一条
+   * 不值得为它做重试；`attention` 丢不了，它同时被记账，手机回来会补发。
+   */
+  notifyFor(value) {
+    if (!value || typeof value !== 'object') return
+    if (value.type === 'emit' && value.event === 'api-session/status' && value.args?.[1] === false) {
+      const sid = String(value.args[0] ?? '')
+      if (sid) this.notify({ kind: 'turnEnd', sid })
+      return
+    }
+    if (value.type === 'waterfall') {
+      this.notify({ kind: 'attention', sid: value.agentId, eid: value.eventId })
+    }
   }
 
   onStreamError(muxId, error) {

@@ -15,13 +15,45 @@ iOS 客户端这一天的改动（TestFlight 构建 `20260922.1913` 起）：
 - **英文本地化**：连接、会话列表、转写、设置等主要路径支持英文（跟随系统语言）；
   英文 README 见 `README.en.md`。
 
+## 未发布（R-1，2026-09-28 起）— 连接器
+
+- **一直值班**：拆掉 15 分钟的宽限期。手机离开之后，连接器替它留 `$events` 流，
+  **一直留到设备被撤销或连接器退出**——以前超过 15 分钟不回来，提问就永远丢了，
+  而那正是"值班"最该起作用的时候。待答表上限仍然是 50 条
+  （`DSH_MOBILE_LINK_EVENTS_BACKLOG`）；`DSH_MOBILE_LINK_EVENTS_GRACE_MS` 这个旋钮
+  **已删除**（设了也没用了，所以不留）。
+- **报一声**：认出「一轮跑完了」（`emit: api-session/status(sid,false)`）与
+  「待你回应」（两种 `waterfall`）时，往中转发一条 `{"t":"notify",kind,sid,eid?}`。
+  这是新的一类 **agent 侧控制帧**，不跨到设备（见 `docs/RELAY-PROTOCOL.md` §3.4）。
+  手机在不在线都发：在线那台自己会弹本地通知，中转判「在线就不推」。
+- **撤销即放下**：`deviceDetach` 带 `reason:"revoked"` 时直接撤掉这台设备的全部流并删记录
+  ——这是拆掉宽限期之后**唯一**的放下出口。中转运维命令与 App 撤销设备时，
+  在线的那台会被顺手踢下线（以前撤销一台在线设备它不会被踢）。
+
+## 未发布（R-1，2026-09-28 起）— 中转
+
+- **撤销与在线状态解耦**：`admin.py device-revoke` 现在**只写库**。以前它还会拿被撤对象的
+  令牌去打一次 relay 的 `POST /devices/revoke`，但库一撤那个令牌立刻失效，那一步必然是
+  401，而 `HTTPError` 是 `URLError` 的子类，被 `except` 静默吞掉之后照样报 `ok:true`——
+  于是「撤销了但设备还赖在线上」谁都不知道。那条路已删掉（`--device` 原理上也够不着
+  hub），输出改成 `{ok,deviceId,revoked,detach:"relay-reconcile"}`：`ok` 只陈述 admin
+  自己核实过的事（库里这台已撤销），踢下线由谁在多长时间内完成写在 `detach` 里。
+- **中转自己对账**：relay 每 `DLP_REVOKE_RECONCILE_S`（默认 5 秒，`0`=关）扫一遍在线
+  设备，把「库里已撤销、socket 还活着」的按既有 `reason:"revoked"` 出口踢掉；连接器重连时
+  中转再把它已经不可能回来的设备（已撤销，或配对满 365 天）逐条告知，让连接器放下那些
+  没人会来拿的 `$events` 值班流。**只报不在线的那些**——仍在线的过期设备不踢，那是产品
+  行为变更。App 内撤销那条路一行没改，仍然是立即生效。
+- **对账失败不静默停摆**：一次数据库异常只打 warning，下一轮照常工作（撤销唯一的兜底
+  不能因为一次抖动就死掉）。
+
 ## 连接器 0.3.1 — 2026-09-22
 
 `dsh-plugin-mobile-link` 0.3.1：手机断开之后，连接器替它把 `$events` 流留 15 分钟，
 并把期间没有人回答的提问记下来；手机再连上（哪怕 App 中途崩过一次）时补发，
 列表里就能看到"在等你回应"。以前手机不在的那一刻提出的问题，回到手机是看不到的。
 
-- 宽限期与缓冲上限可用 `DSH_MOBILE_LINK_EVENTS_GRACE_MS`／`DSH_MOBILE_LINK_EVENTS_BACKLOG` 调。
+- 宽限期与缓冲上限可用 `DSH_MOBILE_LINK_EVENTS_GRACE_MS`／`DSH_MOBILE_LINK_EVENTS_BACKLOG` 调
+  （**宽限期的旋钮在 R-1 中已删除**，见上方「未发布」）。
 - 只有 `waterfall` / `cancel` 会留；`emit` 类通知不补发（补发旧事件只会发错通知）。
 - 被回答（`$events/result`）或 host 作废（`cancel`）之后立刻从待答表里删掉。
 

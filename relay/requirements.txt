@@ -1,1 +1,5 @@
 aiohttp>=3.9,<4
+# APNs 投递（push.py，R-1）。aiohttp 不支持 HTTP/2，标准库也没有 ECDSA，
+# 所以这两条是硬依赖。**默认关闭**（DLP_APNS_ENABLED=0），装上也不影响转发。
+httpx[http2]>=0.27,<1
+PyJWT[crypto]>=2.8,<3

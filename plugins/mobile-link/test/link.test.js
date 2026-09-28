@@ -82,17 +82,19 @@ class FakeDsh extends EventEmitter {
   }
 }
 
-function makeAgent({ responses, eventsGraceMs } = {}) {
+function makeAgent({ responses, notify } = {}) {
   const dsh = new FakeDsh()
   if (responses) for (const [method, value] of Object.entries(responses)) dsh.responses.set(method, value)
   const logger = { debug() {}, info() {}, warn() {}, error() {} }
   const agent = new MobileLinkAgent({
     dshClient: dsh, logger, relayUrl: 'ws://relay.test', agentId: 'agt_1',
-    ...(eventsGraceMs === undefined ? {} : { eventsGraceMs }),
   })
   agent.identity = { agentId: 'agt_1', agentSecret: 'as_1', relayUrl: 'ws://relay.test', agentName: 'test mac' }
   const socket = new FakeSocket()
   agent.socket = socket
+  // 桩：`notify` 的默认实现是往 relay socket 上发 `{t:'notify'}`；这里替换成记账，
+  // 单测要断言的就是"报了什么"（`socket.frames('notify')` 走的是真实现那条路）。
+  if (notify) agent.router.notify = notify
   return { agent, dsh, socket }
 }
 
@@ -273,8 +275,80 @@ test('an emit that happened while the phone was away is dropped, not replayed', 
   agent.onStreamItem('ev:dev_1', ready('c1'))
   await agent.handleRelayFrame({ t: 'deviceDetach', deviceId: 'dev_1', reason: 'socket closed' })
   // emit 是"某事刚发生"的通知：几分钟后补发只会让 App 对着旧事件发通知。
+  // 注：**"不补发" ≠ "不报一声"**——`turnEnd`/`attention` 照样会走 notify（见下面那组
+  // 用例），区别只是它不进待答表、不占 `$events` 的补发额度。
   agent.onStreamItem('ev:dev_1', { type: 'emit', event: 'api-session/status', args: [{ sessionId: 's-1' }] })
   assert.equal(agent.devices.get('dev_1').eventsPending.size, 0)
+})
+
+// ── 「报一声」（C-02）────────────────────────────────────────────────────────
+// 手机在不在线都要报：在线的手机自己会弹本地通知，报一声是给"离线"那一段用的；
+// 中转按"这台设备此刻在不在线"决定推不推（在线不推，否则两条提醒一起响）。
+
+test('离线时"跑完了"会报一声：{t:"notify", kind:"turnEnd", sid}', async () => {
+  const { agent, socket } = makeAgent()
+  await agent.handleRelayFrame(attach('dev_1'))
+  await agent.handleRelayFrame({ t: 'deviceDetach', deviceId: 'dev_1', reason: 'socket closed' })
+
+  agent.onStreamItem('ev:dev_1', {
+    type: 'emit', event: 'api-session/status', args: ['s-1', false],
+  })
+  assert.deepEqual(socket.last('notify'), { t: 'notify', kind: 'turnEnd', sid: 's-1' })
+  // 报一声不改"攒什么"：emit 本来就不进待答表。
+  assert.equal(agent.devices.get('dev_1').eventsPending.size, 0)
+})
+
+test('离线时的两种 waterfall 都报 attention，并且同时记账', async () => {
+  for (const event of ['user-questions/request', 'approval/request']) {
+    const { agent, socket } = makeAgent()
+    await agent.handleRelayFrame(attach('dev_1'))
+    await agent.handleRelayFrame({ t: 'deviceDetach', deviceId: 'dev_1', reason: 'socket closed' })
+    agent.onStreamItem('ev:dev_1', {
+      type: 'waterfall', event, eventId: `wf_${event}`, agentId: 's-1', request: {},
+    })
+    assert.deepEqual(socket.last('notify'), {
+      t: 'notify', kind: 'attention', sid: 's-1', eid: `wf_${event}`,
+    })
+    // 报一声与记账是两件事：这条同时被攒下来，手机回来能补发。
+    assert.equal(agent.devices.get('dev_1').eventsPending.size, 1, `${event} 没被记账`)
+  }
+})
+
+test('不该报的三种一律不报：running=true / turn·end / api-session·error', async () => {
+  const { agent, socket } = makeAgent()
+  await agent.handleRelayFrame(attach('dev_1'))
+  agent.onStreamItem('ev:dev_1', ready('c1'))
+  await agent.handleRelayFrame({ t: 'deviceDetach', deviceId: 'dev_1', reason: 'socket closed' })
+
+  // running=true 是"开跑了"，不是"跑完了"。
+  agent.onStreamItem('ev:dev_1', { type: 'emit', event: 'api-session/status', args: ['s-1', true] })
+  // `turn/end` 根本不在 `$events` 白名单上（它是 session/follow 的事件），这里模拟
+  // "万一来了"也不该被当成"跑完了"。
+  agent.onStreamItem('ev:dev_1', { type: 'emit', event: 'turn/end', args: [{ sessionId: 's-1' }] })
+  // `api-session/error` 有意不推（见 router.js notifyFor 的注释）。
+  agent.onStreamItem('ev:dev_1', { type: 'emit', event: 'api-session/error', args: ['s-1', 'boom'] })
+  // sid 为空（`args[0]` 缺失）时也不发一条指向不了任何会话的提醒。
+  agent.onStreamItem('ev:dev_1', { type: 'emit', event: 'api-session/status', args: [undefined, false] })
+
+  assert.deepEqual(socket.frames('notify'), [])
+})
+
+test('在线时两条也都报一声（推不推由中转判，见 C-06）', async () => {
+  const { agent, socket } = makeAgent()
+  await agent.handleRelayFrame(attach('dev_1'))
+  agent.onStreamItem('ev:dev_1', ready('c1'))
+
+  agent.onStreamItem('ev:dev_1', { type: 'emit', event: 'api-session/status', args: ['s-1', false] })
+  agent.onStreamItem('ev:dev_1', {
+    type: 'waterfall', event: 'approval/request', eventId: 'wf_on', agentId: 's-2', request: {},
+  })
+
+  assert.deepEqual(socket.frames('notify').map((f) => [f.kind, f.sid, f.eid]), [
+    ['turnEnd', 's-1', undefined],
+    ['attention', 's-2', 'wf_on'],
+  ])
+  // 在线时照旧逐项转发给设备（`$events` 转发语义一字没改）。
+  assert.ok(socket.frames('event').some((f) => f.value?.eventId === 'wf_on'))
 })
 
 test('an answered question is not replayed again', async () => {
@@ -324,15 +398,55 @@ test('a second reconnect still gets the same unanswered question', async () => {
   assert.equal(await countReplays('6'), 1)
 })
 
-test('the grace period ends and the kept $events stream is finally cancelled', async () => {
-  const { agent, dsh } = makeAgent({ eventsGraceMs: 5 })
+test('新契约：手机一直不在也不撤流，$events 替它值班到设备被撤销', async () => {
+  // 这条以前叫「the grace period ends and the kept $events stream is finally
+  // cancelled」——15 分钟到点撤流。2026-09-28 的 R-1 把这套拆掉了：手机离线
+  // 超过 15 分钟提问就永远丢了，而那正是"值班"最该起作用的时候。现在**没有时限**，
+  // 唯一的出口是 `reason === 'revoked'`（下一条用例）与进程退出。
+  const { agent, dsh } = makeAgent()
   await agent.handleRelayFrame(attach('dev_1'))
   await agent.handleRelayFrame({ t: 'deviceDetach', deviceId: 'dev_1', reason: 'socket closed' })
   assert.equal(agent.devices.size, 1)
+
+  // 把注入的时钟推进 30 分钟（远超旧的 15 分钟宽限期）：设备记录、流与待答表都还在。
+  agent.router.now = () => Date.now() + 30 * 60 * 1000
+  agent.now = agent.router.now
+  agent.onStreamItem('ev:dev_1', {
+    type: 'waterfall', event: 'user-questions/request', eventId: 'wf_late', agentId: 's-1', request: {},
+  })
   await new Promise((resolve) => setTimeoutFnReal(resolve, 30))
-  assert.deepEqual(dsh.cancels().map((call) => call.muxId), ['ev:dev_1'])
+
+  assert.deepEqual(dsh.cancels().map((call) => call.muxId), [], '挂了 30 分钟后 $events 不该被撤')
+  assert.equal(agent.devices.size, 1)
+  assert.equal(agent.streams.size, 1)
+  assert.equal(agent.devices.get('dev_1').eventsPending.size, 1)
+})
+
+test('撤销设备即放下：撤全部流、删记录，不再替它值班', async () => {
+  const { agent, dsh } = makeAgent()
+  await agent.handleRelayFrame(attach('dev_1'))
+  await agent.handleRelayFrame({ t: 'open', id: '2', endpoint: 'session/follow', args: {}, deviceId: 'dev_1' })
+  await agent.handleRelayFrame({ t: 'open', id: '3', endpoint: '$events', args: {}, deviceId: 'dev_1' })
+  agent.onStreamItem('ev:dev_1', {
+    type: 'waterfall', event: 'user-questions/request', eventId: 'wf_1', agentId: 's-1', request: {},
+  })
+  assert.equal(agent.devices.get('dev_1').eventsPending.size, 1)
+
+  await agent.handleRelayFrame({ t: 'deviceDetach', deviceId: 'dev_1', reason: 'revoked' })
+
+  // 这台手机不会再回来了（令牌已经作废），继续留流只是白占一条。
+  assert.deepEqual(dsh.cancels().map((call) => call.muxId).sort(), ['ev:dev_1', 's:dev_1:2'])
   assert.equal(agent.devices.size, 0)
   assert.equal(agent.streams.size, 0)
+})
+
+test('别的 detach reason 仍然走"值班"：记录与 $events 流都留着', async () => {
+  const { agent, dsh } = makeAgent()
+  await agent.handleRelayFrame(attach('dev_1'))
+  await agent.handleRelayFrame({ t: 'deviceDetach', deviceId: 'dev_1', reason: 'socket closed' })
+  assert.deepEqual(dsh.cancels(), [])
+  assert.equal(agent.devices.size, 1)
+  assert.equal(agent.streams.size, 1)
 })
 
 test('eventResult answers $events/result with this device clientId, first answer wins', async () => {
@@ -541,4 +655,65 @@ test('a phone that says nothing about itself reports nothing', async () => {
   await agent.handleRelayFrame({ t: 'req', id: 'h1', method: '_link/hello', args: {}, deviceId: 'dev_1' })
   const record = agent.router.snapshot().find((entry) => entry.deviceId === 'dev_1')
   assert.equal(record.client, null)
+})
+
+
+test('桥接回复不带 deviceId：relay 靠 bid 关联回那个 HTTP 请求', async () => {
+  // 这是线上真正生效的那一层：`sendToDevice(undefined, frame)` 必须原样发出去，
+  // 不能顺手补一个 deviceId——relay 的 `PUT /files/up` 是靠 `bid` 找回那个请求的。
+  const { agent, socket } = makeAgent()
+  await agent.handleRelayFrame(attach('dev_1'))
+
+  const sessionId = `bridge-test-${process.pid}`
+  const body = Buffer.from('bridge bytes')
+  await agent.handleRelayFrame({
+    t: 'fsPutBegin', deviceId: 'dev_1', bid: 'b1', sessionId, name: 'b.txt', bytes: body.length,
+  })
+  await agent.handleRelayFrame({
+    t: 'fsPutChunk', deviceId: 'dev_1', bid: 'b1', seq: 0, data: body.toString('base64'),
+  })
+  await agent.handleRelayFrame({ t: 'fsPutEnd', deviceId: 'dev_1', bid: 'b1' })
+
+  const ack = socket.last('fsPutAck')
+  assert.deepEqual(ack, { t: 'fsPutAck', bid: 'b1', received: 0 })
+  const done = socket.last('fsPutDone')
+  assert.equal(done.bid, 'b1')
+  assert.equal(done.bytes, body.length)
+  assert.equal('deviceId' in done, false, `fsPutDone 带了 deviceId：${JSON.stringify(done)}`)
+  assert.ok(readFileSync(done.path).equals(body))
+
+  rmSync(join(homedir(), '.dsh', 'inbox', sessionId), { recursive: true, force: true })
+})
+
+test('unknown frame types with a deviceId still produce nothing (bridge 帧不跨到设备)', async () => {
+  // `notify` / `fs*` 是 agent 侧控制帧，设备方向根本不该见到它们；未知类型照旧忽略。
+  const { agent, socket } = makeAgent()
+  await agent.handleRelayFrame(attach('dev_1'))
+  const before = socket.sent.length
+  await agent.handleRelayFrame({ t: 'notify', deviceId: 'dev_1', kind: 'turnEnd', sid: 's' })
+  assert.equal(socket.sent.length, before, 'notify 被当成设备帧处理了')
+})
+
+test('C-04 臂 2：连接器重连时，中转广播"这台回不来了"只放下那一台', async () => {
+  // relay 重启后连接器重连，中转会把该 agent 名下**已撤销**的设备逐条
+  // `deviceDetach(revoked)` 广播过来（连接器没持有的那些是空操作）。
+  // 关键在"克制"：只是手机不在的那台（B）必须原样留着——那是 C-01 的核心。
+  const { agent, dsh } = makeAgent()
+  await agent.handleRelayFrame(attach('dev_A'))
+  await agent.handleRelayFrame(attach('dev_B'))
+  await agent.handleRelayFrame({ t: 'open', id: '2', endpoint: '$events', args: {}, deviceId: 'dev_A' })
+  await agent.handleRelayFrame({ t: 'open', id: '3', endpoint: '$events', args: {}, deviceId: 'dev_B' })
+  // 两台都只是"手机不在"：各自留一条值班流。
+  await agent.handleRelayFrame({ t: 'deviceDetach', deviceId: 'dev_A', reason: 'socket closed' })
+  await agent.handleRelayFrame({ t: 'deviceDetach', deviceId: 'dev_B', reason: 'socket closed' })
+  assert.equal(agent.devices.size, 2)
+
+  // 重连之后中转只说 A（它已被撤销），并且重复说一次也是空操作。
+  await agent.handleRelayFrame({ t: 'deviceDetach', deviceId: 'dev_A', reason: 'revoked' })
+  await agent.handleRelayFrame({ t: 'deviceDetach', deviceId: 'dev_A', reason: 'revoked' })
+
+  assert.deepEqual(dsh.cancels().map((call) => call.muxId), ['ev:dev_A'])
+  assert.equal(agent.devices.has('dev_A'), false)
+  assert.equal(agent.devices.has('dev_B'), true, 'B 只是手机不在，不许被误伤')
+  assert.equal(agent.streams.byDevice('dev_B').length, 1, 'B 的 $events 值班流必须原样留着')
 })

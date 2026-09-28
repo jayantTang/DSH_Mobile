@@ -377,3 +377,51 @@ async def test_a_client_that_reports_nothing_leaves_the_row_alone(client, provis
 
     await agent_ws.close()
     await device_ws.close()
+
+
+async def test_revoking_a_live_device_closes_its_socket_and_tells_the_agent(client, provisioned):
+    """撤销即放下（R-1 C-04）。
+
+    撤销以前只写库：那台手机还挂着 socket、还在收帧；而连接器现在会为一个存在
+    的设备记录一直留着 `$events` 流——于是它会永远替一台再也回不来的设备值班。
+    所以撤销要顺手踢它下线，并让连接器收到 `reason="revoked"`（那是它唯一的放下信号）。
+    """
+    agent_ws = await open_agent(client, provisioned)
+    device_ws, device = await open_device(client, provisioned)
+    assert (await recv_json(agent_ws))["t"] == "deviceAttach"
+    await recv_json(device_ws)
+
+    response = await client.post("/devices/revoke", json={"deviceId": device["deviceId"]},
+                                headers={"Authorization": f"Bearer {device['deviceToken']}"})
+    assert response.status == 200, await response.text()
+    body = await response.json()
+    # 返回结构与以前逐字一致（iOS 在解它），所以"踢没踢到"只能从下面这些断言看。
+    assert body == {"ok": True, "deviceId": device["deviceId"]}
+
+    detach = await recv_json(agent_ws)
+    assert detach["t"] == "deviceDetach"
+    assert detach["deviceId"] == device["deviceId"]
+    assert detach["reason"] == "revoked"
+
+    # 那台设备的 socket 真的被关了。
+    deadline = asyncio.get_running_loop().time() + 3.0
+    while True:
+        remaining = deadline - asyncio.get_running_loop().time()
+        assert remaining > 0, "relay 没有关掉被撤销设备的 socket"
+        message = await asyncio.wait_for(device_ws.receive(), remaining)
+        if message.type == WSMsgType.CLOSE:
+            break
+    assert device["deviceId"] not in client.app["hub"]._devices
+
+    await agent_ws.close()
+    await device_ws.close()
+
+
+async def test_revoking_an_offline_device_reports_that_nothing_was_detached(client, provisioned):
+    """不在线的设备：库里照样撤销，但没什么可踢的，`detached` 为 false。"""
+    device = await claim_device(client, provisioned)
+    response = await client.post("/devices/revoke", json={"deviceId": device["deviceId"]},
+                                headers={"Authorization": f"Bearer {device['deviceToken']}"})
+    assert response.status == 200, await response.text()
+    assert (await response.json()) == {"ok": True, "deviceId": device["deviceId"]}
+    assert device["deviceId"] not in client.app["hub"]._devices

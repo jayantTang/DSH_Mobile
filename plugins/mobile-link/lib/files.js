@@ -12,7 +12,7 @@
  * neither the relay nor the protocol needs to change.
  */
 
-import { mkdirSync, writeFileSync, rmSync, statSync } from 'node:fs'
+import { mkdirSync, openSync, closeSync, writeSync, renameSync, rmSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 
@@ -26,21 +26,39 @@ export function isFileMethod(method) {
 }
 
 /**
- * One in-flight transfer. Chunks are appended in order and the file only
- * appears at its final path once the end frame arrives, so a half-sent file is
- * never mistaken for a complete one.
+ * One in-flight transfer.
+ *
+ * Chunks are **appended to a staging file as they arrive**, so the memory a
+ * transfer holds is one chunk, not the whole file. It used to accumulate every
+ * chunk in an array and `Buffer.concat` at the end, which meant a 300 MB upload
+ * needed 300 MB (plus the concatenation's copy) of RSS on this computer — fine
+ * for the few-MB screenshots this path was written for, not fine for the large
+ * files the background-URL-session path now sends through the same code.
+ *
+ * The final name only appears once the end frame has arrived and the byte count
+ * checks out, so a half-sent file is never mistaken for a complete one.
  */
 class Transfer {
   constructor({ sessionId, name, bytes }) {
     this.sessionId = sessionId
     this.name = basename(name || 'file')
     this.bytes = Number.isFinite(bytes) ? bytes : undefined
-    this.parts = []
     this.received = 0
     this.expectedSeq = 0
     this.directory = join(homedir(), '.dsh', 'inbox', sessionId)
     mkdirSync(this.directory, { recursive: true, mode: 0o700 })
     this.staging = join(this.directory, `.${this.name}.part`)
+    // Opened once and kept: reopening per chunk would be a syscall per chunk for
+    // no benefit. `w` truncates, which is what a retried transfer wants.
+    this.fd = undefined
+  }
+
+  #handle() {
+    if (this.fd === undefined) {
+      rmSync(this.staging, { force: true })
+      this.fd = openSync(this.staging, 'w', 0o600)
+    }
+    return this.fd
   }
 
   append(seq, base64) {
@@ -48,26 +66,34 @@ class Transfer {
       throw new Error(`chunk ${seq} arrived out of order (expected ${this.expectedSeq})`)
     }
     const buffer = Buffer.from(base64, 'base64')
-    this.parts.push(buffer)
+    writeSync(this.#handle(), buffer)
     this.received += buffer.length
     this.expectedSeq += 1
   }
 
   finish() {
-    const body = Buffer.concat(this.parts)
-    if (this.bytes !== undefined && body.length !== this.bytes) {
-      throw new Error(`expected ${this.bytes} bytes but received ${body.length}`)
+    if (this.bytes !== undefined && this.received !== this.bytes) {
+      throw new Error(`expected ${this.bytes} bytes but received ${this.received}`)
     }
-    writeFileSync(this.staging, body, { mode: 0o600 })
+    this.#close()
     // Renamed only now: the final name means "complete".
     const final = join(this.directory, this.name)
     rmSync(final, { force: true })
-    writeFileSync(final, body, { mode: 0o600 })
-    rmSync(this.staging, { force: true })
+    renameSync(this.staging, final)
     return { path: final, bytes: statSync(final).size }
   }
 
+  #close() {
+    if (this.fd === undefined) return
+    try {
+      closeSync(this.fd)
+    } finally {
+      this.fd = undefined
+    }
+  }
+
   dispose() {
+    this.#close()
     rmSync(this.staging, { force: true })
   }
 }

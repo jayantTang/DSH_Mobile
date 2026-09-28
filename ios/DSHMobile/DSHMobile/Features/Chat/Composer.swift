@@ -125,6 +125,12 @@ struct Composer: View {
     /// Pictures ride the prompt as inline images — the Host keeps them as
     /// durable attachments. Everything else is uploaded to the computer and
     /// named in the prompt, because the Host cannot receive file bytes at all.
+    ///
+    /// A picked file is **copied into the app's own container** rather than read
+    /// into `Data` (R-1): iOS only continues a *file-based* background task after
+    /// the app is suspended, so a large file has to stay a file all the way down.
+    /// The copy happens inside the security scope, which is why the scope is not
+    /// closed until the file has been copied.
     private func load(_ urls: [URL]) async {
         var images: [UIImage] = []
         var names: [String] = []
@@ -132,18 +138,41 @@ struct Composer: View {
             // Files outside the sandbox need an explicit scope.
             let scoped = url.startAccessingSecurityScopedResource()
             defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-            guard let data = try? Data(contentsOf: url) else {
+
+            // Images stay in memory: they are bounded (the prompt downsamples
+            // them) and they have to travel *with* the prompt, not as a file.
+            if let data = try? Data(contentsOf: url), let image = UIImage(data: data) {
+                images.append(image)
+                names.append(url.lastPathComponent)
+                continue
+            }
+            guard let copy = Self.copyIntoContainer(url) else {
                 unsupportedFile = url.lastPathComponent
                 continue
             }
-            if let image = UIImage(data: data) {
-                images.append(image)
-                names.append(url.lastPathComponent)
-            } else {
-                await model.sendFile(named: url.lastPathComponent, data: data)
-            }
+            await model.sendFile(named: url.lastPathComponent, fileURL: copy)
         }
         model.addDraftImages(images, names: names)
+    }
+
+    /// Copies one picked file into the app's temporary directory.
+    ///
+    /// Returns `nil` when it cannot be read (a file provider that vanished, a
+    /// format iOS will not open); the caller reports that the way it always has.
+    /// The copy is deliberately left on disk: the background session needs a
+    /// stable URL, and the system may finish the upload after this view is gone.
+    private static func copyIntoContainer(_ url: URL) -> URL? {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("outgoing-files", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let destination = directory.appendingPathComponent(url.lastPathComponent)
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try FileManager.default.copyItem(at: url, to: destination)
+            return destination
+        } catch {
+            return nil
+        }
     }
 
     private var field: some View {

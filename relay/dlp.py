@@ -31,6 +31,14 @@ DEVICE_TO_AGENT = frozenset({"req", "open", "cancel", "eventResult", "ping", "he
 AGENT_TO_DEVICE = frozenset({"res", "item", "end", "streamError", "event", "hostStatus", "pong", "error"})
 RELAY_TO_AGENT = frozenset({"deviceAttach", "deviceDetach"})
 
+#: Agent-side control frames: connector → relay, **never forwarded to a device**
+#: (they are not DLP; a phone neither sends nor receives them). ``notify`` is the
+#: "a run finished / something needs you" ping the relay turns into an APNs push
+#: when the device is offline (R-1 C-02/C-06).
+AGENT_CONTROL = frozenset({
+    "notify", "fsPutBegin", "fsPutChunk", "fsPutEnd", "fsPutAck", "fsPutDone", "fsErr",
+})
+
 #: Frame types that carry a unary request and therefore need an ``id``.
 _ID_FRAMES = frozenset({"req", "open", "cancel", "res", "item", "end", "streamError", "eventResult"})
 

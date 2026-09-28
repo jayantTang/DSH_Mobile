@@ -17,12 +17,14 @@ on their own computer through ``POST /agents/enroll`` (the connector's
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import os
 import sys
 from typing import Any
 from urllib.parse import quote
 
+from push import PushSender
 from store import DEFAULT_INVITE_TTL_MS, DEFAULT_PAIR_TTL_MS, Store, StoreError, now_ms
 
 #: The relay is published as a path prefix on the existing, already-certified
@@ -163,6 +165,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     purge = subs.add_parser("purge", help="drop expired pairing codes")
     purge.add_argument("--json", action="store_true")
+
+    push_test = subs.add_parser(
+        "push-test",
+        help="send one APNs reminder now and print Apple's answer (needs apns.env)",
+    )
+    push_test.add_argument("--device", required=True, help="deviceId (see device-list)")
+    push_test.add_argument("--kind", choices=("turnEnd", "attention"), default="turnEnd")
+    push_test.add_argument("--sid", default="push-test",
+                           help="session id to put in the payload (never displayed)")
     return parser
 
 
@@ -274,8 +285,31 @@ def run(args: argparse.Namespace, store: Store) -> int:
     if command == "device-list":
         agent_id = _resolve_agent(store, args.agent)["agentId"] if args.agent else None
         rows = store.list_devices(agent_id, include_revoked=bool(args.all))
-        _emit([{**row, "deviceTokenHash": row["deviceTokenHash"][:12] + "…"} for row in rows])
+        # 只**加**字段，不改已有字段名——`scripts/dev/*.mjs` 在解这份 JSON。
+        _emit([
+            {
+                **row,
+                "deviceTokenHash": row["deviceTokenHash"][:12] + "…",
+                # APNs 令牌同样打码：它是能往这台手机推通知的凭据，而
+                # `device-list` 的输出会进终端记录。排障要的是"有没有登记"，
+                # 那是下面的 `push.registered`；缺失仍是 None，不是空串。
+                "apnsToken": (row["apnsToken"][:8] + "…") if row.get("apnsToken") else None,
+                # 推送登记状态。排障第一眼看的就是这一列：环境标错了，
+                # 推送会静默收不到（APNs 回 BadDeviceToken）。
+                "push": {
+                    "registered": bool(row.get("apnsToken")),
+                    "env": row.get("apnsEnv"),
+                    "turnEnd": bool(row.get("pushTurnEnd")),
+                    "attention": bool(row.get("pushAttention")),
+                    "updatedAt": row.get("pushUpdatedAt"),
+                },
+            }
+            for row in rows
+        ])
         return 0
+
+    if command == "push-test":
+        return _push_test(store, args)
 
     if command == "device-revoke":
         if args.token:
@@ -288,7 +322,20 @@ def run(args: argparse.Namespace, store: Store) -> int:
         else:
             raise StoreError("pass --device or --token")
         store.revoke_device(device_id)
-        _emit({"ok": True, "deviceId": device_id, "revoked": True})
+        # 库里撤销**就是**这次操作的全部：它是在线世界的事实来源。
+        # 在线那台手机由中转自己踢（hub 的「撤销对账」，每
+        # DLP_REVOKE_RECONCILE_S 秒一轮）——`admin.py` 是另一个进程，够不着
+        # relay 的 hub；拿同一个令牌去打 relay 也不行：库一撤，
+        # `device_by_token` 立刻拒掉它（store.py 的 revokedAt 分支），那条路
+        # 只会得到静默 401。所以 `--device` 与 `--token` 在这里**结果完全相同**。
+        # 为什么不保留"直连踢人"，见 relay/README.md 的 device-revoke 段。
+        _emit({
+            "ok": True,
+            "deviceId": device_id,
+            "revoked": True,
+            # 给运维的明示：admin 不能、也没有去踢在线设备。
+            "detach": "relay-reconcile",
+        })
         return 0
 
     if command == "purge":
@@ -297,6 +344,59 @@ def run(args: argparse.Namespace, store: Store) -> int:
         return 0
 
     raise StoreError(f"unhandled command {command}")
+
+
+def _push_test(store: Store, args: argparse.Namespace) -> int:
+    """Send one push on demand and report what Apple said.
+
+    This command exists because the failure mode it diagnoses is invisible from
+    the phone: a token registered against the wrong environment is accepted by
+    the relay, sent to the wrong APNs host, and answered with
+    ``BadDeviceToken`` — the phone simply never buzzes and nothing anywhere says
+    why. So this **prints the status and the reason**, and it deliberately
+    **ignores "the device is online"**: during the transition period a phone
+    usually still holds its socket because of the keep-alive, and refusing to
+    send would make the one command that could tell sandbox from production
+    useless for its main purpose.
+
+    ``--device`` is a ``deviceId``; a typo is reported as such, not as a
+    traceback.
+    """
+    row = store.device_by_id(args.device)
+    if row is None:
+        raise StoreError(f"no device {args.device!r}; `device-list` shows the ids")
+    if not row.get("apnsToken"):
+        raise StoreError(
+            f"device {args.device} 没有推送登记（App 启动/开关变化时才会上报）")
+    if row.get("revokedAt"):
+        raise StoreError(f"device {args.device} 已被撤销，不会再收到推送")
+
+    sender = PushSender.from_env()
+    if not sender.enabled:
+        raise StoreError(
+            "APNs 未配置或已关闭；需要 DLP_APNS_ENABLED=1 与 "
+            "DLP_APNS_KEY_PATH/KEY_ID/TEAM_ID/TOPIC（见 deploy/apns.env.example）")
+
+    result = asyncio.run(sender.send(
+        device_id=row["deviceId"], token=row["apnsToken"], env=row.get("apnsEnv"),
+        kind=args.kind, sid=args.sid, ignore_throttle=True))
+    report = {
+        "ok": result.ok,
+        "deviceId": row["deviceId"],
+        "env": row.get("apnsEnv"),
+        "kind": args.kind,
+        "status": result.status,
+        "reason": result.reason,
+        "apnsId": result.apns_id,
+        "deadToken": result.dead_token,
+        "skipped": result.skipped,
+    }
+    if result.dead_token:
+        # 与 relay 在线时的行为一致：Apple 说这个令牌死了，就清掉登记。
+        store.clear_push(row["deviceId"])
+        report["cleared"] = True
+    _emit(report)
+    return 0 if result.ok else 1
 
 
 def main(argv: list[str] | None = None) -> int:

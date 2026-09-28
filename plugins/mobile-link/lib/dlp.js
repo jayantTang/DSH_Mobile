@@ -13,6 +13,15 @@ export const DEVICE_TO_AGENT = new Set(['req', 'open', 'cancel', 'eventResult', 
 export const AGENT_TO_DEVICE = new Set(['res', 'item', 'end', 'streamError', 'event', 'hostStatus', 'pong', 'error'])
 /** Relay-internal control frames carrying device lifecycle (see docs/RELAY-NOTES.md). */
 export const RELAY_CONTROL = new Set(['deviceAttach', 'deviceDetach'])
+/**
+ * Agent-side control frames: sent by the connector to the relay and **never
+ * forwarded to a device** (they are not part of DLP — a phone neither sends nor
+ * receives them). `notify` is the "a run finished / something needs you" ping the
+ * relay turns into an APNs push when the device is offline (R-1 C-02/C-06).
+ */
+export const AGENT_CONTROL = new Set([
+  'notify', 'fsPutBegin', 'fsPutChunk', 'fsPutEnd', 'fsPutAck', 'fsPutDone', 'fsErr',
+])
 
 const ID_FRAMES = new Set(['req', 'open', 'cancel', 'res', 'item', 'end', 'streamError', 'eventResult'])
 

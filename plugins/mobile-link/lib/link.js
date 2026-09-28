@@ -11,7 +11,7 @@ import { agentEndpoint, decodeFrame, encodeFrame, nextBackoff, normalizeRelayUrl
 import { enrollAgent, enrollCommand, inviteFrom } from './enroll.js'
 import { mintPairCode } from './pairing.js'
 import {
-  DEFAULT_EVENTS_BACKLOG, DEFAULT_EVENTS_GRACE_MS,
+  DEFAULT_EVENTS_BACKLOG,
   EVENTS_ENDPOINT, EVENTS_RESULT, DeviceRouter, messageOf,
 } from './router.js'
 import { SERVER_VERSION, SERVER_CAPABILITIES } from './hello.js'
@@ -44,11 +44,9 @@ export class MobileLinkAgent extends EventEmitter {
     logger = console, heartbeatMs = 20000, pongTimeoutMs = 60000, maxBackoffMs = 30000,
     random = Math.random, now = Date.now, dshClient, connectImpl = wsConnect, enabled = true,
     inviteCode, fetchImpl = fetch, env = process.env,
-    // 「手机不在时替它留着 $events 流」的宽限期与缓冲上限（见 router.js 的说明）；
-    // 环境变量给部署用，构造参数给测试用。
-    eventsGraceMs = numberFromEnv(env.DSH_MOBILE_LINK_EVENTS_GRACE_MS, DEFAULT_EVENTS_GRACE_MS),
+    // 手机不在时替它攒下来的提问条数上限（见 router.js）；环境变量给部署用，
+    // 构造参数给测试用。**没有"留多久"这个旋钮**：`$events` 一直留到设备被撤销。
     eventsBacklog = numberFromEnv(env.DSH_MOBILE_LINK_EVENTS_BACKLOG, DEFAULT_EVENTS_BACKLOG),
-    setTimeoutFn = setTimeout, clearTimeoutFn = clearTimeout,
   } = {}) {
     super()
     this.config = { relayUrl, agentId, agentSecret, agentName, stateFile, dshUrl, endpointFile, inviteCode }
@@ -71,11 +69,13 @@ export class MobileLinkAgent extends EventEmitter {
       logger,
       now,
       protocolVersion: PROTOCOL_VERSION,
-      eventsGraceMs,
       eventsBacklog,
-      setTimeoutFn,
-      clearTimeoutFn,
       send: (deviceId, frame) => this.sendToDevice(deviceId, frame),
+      // 「跑完了 / 待你回应」到了就报一声（`{t:'notify'}`）。这是 agent 侧控制帧，
+      // **不带 deviceId**：连接器不知道、也不需要知道这台电脑配了哪些手机，
+      // 「该不该推给某台手机」由中转判（它手里才有"这台设备此刻在不在线"）。
+      // `#rawSend` 自己处理"socket 不在就丢掉"，这里不必另判。
+      notify: (payload) => this.#rawSend({ t: 'notify', ...payload }),
       onChange: () => this.emit('status'),
     })
 
@@ -345,6 +345,9 @@ export class MobileLinkAgent extends EventEmitter {
   }
 
   sendToDevice(deviceId, frame) {
+    // `deviceId` 为空＝这是一条**不带寻址**的帧（`fsPutAck`/`fsPutDone`/`fsErr` 那一族）：
+    // relay 靠 `bid` 把回复对回发起的那个 HTTP 请求，多一个 deviceId 反而会让它对不上。
+    if (deviceId === undefined || deviceId === null) return this.#rawSend(frame)
     return this.#rawSend({ ...frame, deviceId })
   }
 
