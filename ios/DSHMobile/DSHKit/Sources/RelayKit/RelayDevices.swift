@@ -1,4 +1,5 @@
 import Foundation
+import DSHKit
 
 #if canImport(FoundationNetworking)
 import FoundationNetworking
@@ -188,21 +189,5 @@ public struct RelayDeviceAdmin: Sendable {
         } catch {
             throw DSHTransportError.httpStatus(http.statusCode, body: String(data: data, encoding: .utf8))
         }
-    }
-}
-
-extension LinkCarrier {
-    /// Relay identity this carrier is using, when it is a relay connection.
-    ///
-    /// Device management is a relay call, so the UI needs the relay origin and
-    /// this phone's device token. Exposing them here keeps the transport details
-    /// inside the carrier instead of spreading them into the view layer.
-    public nonisolated var relay: (url: URL, deviceToken: String, agentId: String)? {
-        (configuration.relayURL, configuration.deviceToken, configuration.agentId)
-    }
-
-    /// A ready-made device administrator for this connection.
-    public nonisolated func deviceAdmin() -> RelayDeviceAdmin {
-        RelayDeviceAdmin(relayURL: configuration.relayURL, deviceToken: configuration.deviceToken)
     }
 }

@@ -2,6 +2,7 @@ import Foundation
 import Testing
 
 @testable import DSHKit
+import RelayKit
 
 #if canImport(FoundationNetworking)
 import FoundationNetworking
@@ -183,7 +184,9 @@ struct RelayDeviceAdminTests {
         #expect(relay?.url.absoluteString == "https://relay.test/dsh-link")
         #expect(relay?.deviceToken == "dt_1")
         #expect(relay?.agentId == "agt_1")
-        let admin = await carrier.deviceAdmin()
+        // 管理员是从这个 tuple 构造的，不走 `carrier.deviceAdmin()`：DSHKit 不能依赖
+        // RelayKit（那会成环），所以构造函数调用留在调用方。App 侧同理（SettingsModel）。
+        let admin = RelayDeviceAdmin(relayURL: relay!.url, deviceToken: relay!.deviceToken)
         #expect(admin.relayURL.absoluteString == "https://relay.test/dsh-link")
         #expect(admin.deviceToken == "dt_1")
         await carrier.close()

@@ -10,7 +10,7 @@ import XCTest
 /// the relay (`relay/tests/test_dlp_contract.py`) all read the *same* file. The
 /// contract itself is `docs/relay-contract.json`.
 ///
-/// **This test depends on the repository layout**: it walks five levels up from
+/// **This test depends on the repository layout**: it walks six levels up from
 /// `#filePath` to reach the repo root. Copying `ios/DSHMobile/DSHKit` out on its
 /// own and running `swift test` will fail here — the vectors belong to the
 /// repository, not to the package. That is deliberate: the whole point is that

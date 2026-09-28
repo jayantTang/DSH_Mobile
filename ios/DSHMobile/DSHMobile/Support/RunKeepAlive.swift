@@ -23,6 +23,14 @@ import Observation
 ///
 /// `UIBackgroundModes: audio` in Info.plist is what makes the session legal; the
 /// audio is inaudible (a zero-filled buffer), so nothing is heard.
+///
+/// **Keeping this is a decision, not an unfinished prototype** (owner, 2026-09-25):
+/// the silent keep-alive and the `audio` background mode stay. The replacement
+/// path is APNs, which is a larger item on its own (push key, relay-side delivery,
+/// app registration and permission, privacy note, review material) — see the R-1
+/// section of the repository-internal maintainer notes. Do not delete this on the
+/// assumption that push has landed: until it has, removing this is what makes a
+/// backgrounded run go silent.
 @MainActor
 @Observable
 final class RunKeepAlive {

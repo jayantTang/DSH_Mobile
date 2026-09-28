@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		1A0000000000000000000012 /* DSHKit in Frameworks */ = {isa = PBXBuildFile; productRef = 1A0000000000000000000011 /* DSHKit */; };
+		1A0000000000000000000015 /* RelayKit in Frameworks */ = {isa = PBXBuildFile; productRef = 1A0000000000000000000014 /* RelayKit */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -37,6 +38,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				1A0000000000000000000012 /* DSHKit in Frameworks */,
+				1A0000000000000000000015 /* RelayKit in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -90,6 +92,7 @@
 			name = DSHMobile;
 			packageProductDependencies = (
 				1A0000000000000000000011 /* DSHKit */,
+				1A0000000000000000000014 /* RelayKit */,
 			);
 			productName = DSHMobile;
 			productReference = 1A0000000000000000000005 /* DSHMobile.app */;
@@ -452,6 +455,10 @@
 		1A0000000000000000000011 /* DSHKit */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = DSHKit;
+		};
+		1A0000000000000000000014 /* RelayKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = RelayKit;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

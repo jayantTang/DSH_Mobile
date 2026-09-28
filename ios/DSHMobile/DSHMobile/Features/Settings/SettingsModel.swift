@@ -1,6 +1,7 @@
 import DSHKit
 import Foundation
 import Observation
+import RelayKit
 
 /// Loads, edits and saves the DSH settings document.
 ///
@@ -275,9 +276,14 @@ final class SettingsModel {
     // MARK: - Paired devices
 
     /// The relay administrator for the live connection, when there is one.
+    ///
+    /// Built from the carrier's relay identity rather than from a method on the
+    /// carrier: the client lives in `RelayKit`, which depends on `DSHKit`, so
+    /// `DSHKit` cannot return one without a dependency cycle.
     private var deviceAdmin: RelayDeviceAdmin? {
-        guard let link = store?.client?.carrier as? LinkCarrier else { return nil }
-        return link.deviceAdmin()
+        guard let link = store?.client?.carrier as? LinkCarrier,
+              let relay = link.relay else { return nil }
+        return RelayDeviceAdmin(relayURL: relay.url, deviceToken: relay.deviceToken)
     }
 
     /// Reads the pairing list from the relay.

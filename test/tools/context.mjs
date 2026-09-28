@@ -185,6 +185,10 @@ export function build(simId, { force = false } = {}) {
     if (product >= newestMtime(sourceRoots())) return { skipped: true }
   }
   const started = Date.now()
+  // `Debug` 不是风格选择，别顺手改成 Release：`-DSHDemoMode` / `-DSHForgetDirect` /
+  // `-DSHFailAttachmentLoad` 这三个调试参数在 App 里被 `#if DEBUG` 关着，切到 Release
+  // 之后它们会**静默失效**——用例照样跑、照样绿，只是参数不再生效，于是拿到的是
+  // 另一套行为。这条耦合由 `npm run check:contracts` 的调试钩子闸门守着（源码侧）。
   run('xcodebuild', ['-project', join(PROJECT, 'DSHMobile.xcodeproj'), '-scheme', 'DSHMobile',
     '-configuration', 'Debug', '-destination', `platform=iOS Simulator,id=${simId}`,
     '-derivedDataPath', DERIVED, 'build-for-testing'], { quiet: true })
