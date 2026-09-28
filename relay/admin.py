@@ -89,8 +89,10 @@ def _resolve_agent(store: Store, raw: str) -> dict[str, Any]:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="admin.py", description="DLP relay administration")
+    # 与 relay.py 的默认值**必须一致**：两处不同步的话，admin.py 建出来的账号
+    # relay 看不到（各开一个库），排查起来像"账号不存在"。
     parser.add_argument("--db", default=os.environ.get("DLP_DB", os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "state.db")))
+        os.path.dirname(os.path.abspath(__file__)), ".local", "state.db")))
     subs = parser.add_subparsers(dest="command", required=True)
 
     account_create = subs.add_parser("account-create", help="create a new account")

@@ -6,3 +6,4 @@ __pycache__/
 state.db
 state.db-wal
 state.db-shm
+.local/

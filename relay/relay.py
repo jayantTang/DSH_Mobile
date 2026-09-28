@@ -259,8 +259,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="relay.py", description="DSH Link Protocol v1 relay")
     parser.add_argument("--host", default=os.environ.get("DLP_HOST", "127.0.0.1"))
     parser.add_argument("--port", type=int, default=int(os.environ.get("DLP_PORT", "8787")))
+    # 默认落在 .local/ 下：源码目录只放源码。生产不受影响——systemd 单元
+    # 显式传 --db /var/lib/dsh-relay/state.db（见 deploy/dsh-relay.service）。
     parser.add_argument("--db", default=os.environ.get("DLP_DB", os.path.join(os.path.dirname(
-        os.path.abspath(__file__)), "state.db")))
+        os.path.abspath(__file__)), ".local", "state.db")))
     parser.add_argument("--pair-ttl-seconds", type=int, default=DEFAULT_PAIR_TTL_MS // 1000)
     parser.add_argument("--device-ttl-days", type=int, default=DEFAULT_DEVICE_TTL_MS // 86_400_000)
     parser.add_argument("--queue-depth", type=int, default=512)
