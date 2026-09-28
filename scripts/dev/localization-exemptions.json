@@ -108,14 +108,14 @@
     },
     {
       "rule": "hardcoded-string",
-      "file": "ios/DSHMobile/DSHMobile/Features/Connection/ConnectionStore.swift",
+      "file": "ios/DSHMobile/DSHMobile/Support/ConnectionStore.swift",
       "snippet": "正在连接",
       "reason": "直连时写入 state 的连接状态文案（「正在连接 …」），由连接页/状态胶囊显示；不含设置页的「主机地址」值（那一处已在 ConnectionStore.subtitle 本地化）。不在本轮范围（G5 backlog）",
       "backlog": "i18n-backlog-app-connectionstore"
     },
     {
       "rule": "unlocalized-binding",
-      "file": "ios/DSHMobile/DSHMobile/Features/Connection/ConnectionStore.swift",
+      "file": "ios/DSHMobile/DSHMobile/Support/ConnectionStore.swift",
       "snippet": "无法从启动令牌|我的电脑",
       "reason": "连接层的内部错误文案与默认设备名兜底；设置页显示值不在这里（「主机地址」已本地化）。不在本轮范围（G5 backlog）",
       "backlog": "i18n-backlog-app-connectionstore"

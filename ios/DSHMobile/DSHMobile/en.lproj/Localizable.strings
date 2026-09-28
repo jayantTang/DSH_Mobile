@@ -92,6 +92,9 @@
 "有新版本可安装" = "An update is available";
 "去更新" = "Update";
 "有新版本" = "An update is available";
+"电脑端连接器版本偏旧" = "Your computer's connector is out of date";
+"当前 %@，建议 ≥%@；升级电脑上的 DSH 即可" = "Running %1$@; %2$@ or newer recommended. Update DSH on your computer.";
+"不再提示" = "Don't show again";
 
 /* counted / formatted strings */
 "%lld 个会话" = "%lld sessions";

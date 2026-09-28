@@ -26,13 +26,24 @@ public struct ConnectionProfile: Codable, Identifiable, Sendable, Hashable {
     public var relayName: String?
     public var lastConnectedAt: Date?
 
+    /// The version that made the user dismiss the "connector is out of date"
+    /// notice on this profile, so it is not shown again for the same version.
+    ///
+    /// Optional on purpose: the synthesized `Codable` decoding treats a missing
+    /// optional key as `nil`, so profiles already on disk keep decoding (a
+    /// non-optional field here would fail the whole array and lose the user's
+    /// connections). Storing the version — rather than a bare `Bool` — is what
+    /// makes the notice come back when the app's baseline moves past it.
+    public var outdatedNoticeDismissedFor: String?
+
     public init(
         id: UUID = UUID(),
         name: String,
         transport: Transport,
         hostHome: String? = nil,
         relayName: String? = nil,
-        lastConnectedAt: Date? = nil
+        lastConnectedAt: Date? = nil,
+        outdatedNoticeDismissedFor: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -40,6 +51,7 @@ public struct ConnectionProfile: Codable, Identifiable, Sendable, Hashable {
         self.hostHome = hostHome
         self.relayName = relayName
         self.lastConnectedAt = lastConnectedAt
+        self.outdatedNoticeDismissedFor = outdatedNoticeDismissedFor
     }
 
     /// Keychain account holding this profile's bearer secret.
@@ -148,6 +160,14 @@ public final class ConnectionStore {
     /// that would come back as a 404 from the Host.
     public private(set) var capabilities: Set<String> = []
 
+    /// The version of DSH the connected computer reports, from the handshake.
+    ///
+    /// Kept only to tell the user when their connector is behind the baseline the
+    /// app was built against (see `HostVersion`). It is **not** a gate: a
+    /// connection is never refused because of this value, and an unreadable or
+    /// missing version simply produces no notice.
+    public private(set) var hostVersion: String? = nil
+
 
     private var carrier: (any DSHCarrier)?
     private var statusTask: Task<Void, Never>?
@@ -213,6 +233,32 @@ public final class ConnectionStore {
         capabilities.contains(capability)
     }
 
+    // MARK: - Host version notice
+
+    /// Whether to show "the computer's connector is out of date".
+    ///
+    /// **This never gates anything** — the connection is already up by the time
+    /// it can be true, and a stale connector keeps working, just with fewer
+    /// capabilities. It is a hint the user can act on, so it is shown only when
+    /// we are sure (`HostVersion.isOlder`, which refuses to guess) and it stays
+    /// hidden once dismissed for that same reported version.
+    public var showsOutdatedHostNotice: Bool {
+        guard let reported = hostVersion,
+              HostVersion.isOlder(reported, than: HostBaseline.dshVersion) else { return false }
+        return activeProfile?.outdatedNoticeDismissedFor != reported
+    }
+
+    /// Remembers that the user dismissed the notice, for this profile and this
+    /// reported version. A later baseline (or a different computer) shows it again.
+    public func dismissOutdatedHostNotice() {
+        guard let reported = hostVersion,
+              let id = activeProfile?.id,
+              let index = profiles.firstIndex(where: { $0.id == id }) else { return }
+        profiles[index].outdatedNoticeDismissedFor = reported
+        activeProfile = profiles[index]
+        persist()
+    }
+
     /// Stages a file on the computer and returns where it landed.
     ///
     /// Exposed here rather than handing the carrier out: the transport is this
@@ -236,6 +282,7 @@ public final class ConnectionStore {
         // Re-resolved by the handshake: leftovers from another computer would
         // offer entries that host does not serve.
         capabilities = []
+        hostVersion = nil
         guard let secret = Keychain.get(profile.secretAccount) else {
             state = .failed("此连接的凭据已丢失，请重新配对。")
             return
@@ -343,6 +390,8 @@ public final class ConnectionStore {
             clientBuild: Self.clientBuild
         ))
         capabilities = Set(handshake?.capabilities ?? [])
+        // Recorded for the out-of-date notice only; never used to refuse the link.
+        hostVersion = handshake?.serverVersion
         state = .connected(hostHome: profile.hostHome)
         recordConnection(profile.id, hostHome: profile.hostHome)
         startWatching()
@@ -491,6 +540,7 @@ public final class ConnectionStore {
         hostHome = nil
         // What the previous host could do says nothing about the next one.
         capabilities = []
+        hostVersion = nil
         state = .disconnected
     }
 

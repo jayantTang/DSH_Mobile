@@ -40,6 +40,16 @@ struct SessionListView: View {
                     if let url = URL(string: published.installPage) { openURL(url) }
                 }
             }
+            // 提示，不是故障：连接已经建立，旧连接器照常可用，只是能力少一些。
+            // 所以用中性的底色、不阻断、可以关掉，关掉后按 profile 记住。
+            if store.showsOutdatedHostNotice {
+                OutdatedHostBanner(
+                    reported: store.hostVersion ?? "",
+                    baseline: HostBaseline.dshVersion
+                ) {
+                    store.dismissOutdatedHostNotice()
+                }
+            }
         }
         // 不等连接：离线冷启动也要先把上次的列表画出来（否则就是空白+转圈）。
         .task { model.loadCachedList() }
@@ -725,6 +735,49 @@ struct ConnectionStatusButton: View {
 
 /// A one-line notice that a newer build is published.
 ///
+/// The computer's connector is behind the version this app was built against.
+///
+/// Deliberately **not** a red/yellow warning: nothing is broken and the user's
+/// session works. It is a nudge they can dismiss, and dismissing it sticks per
+/// profile until the app's baseline moves past what the connector reported.
+private struct OutdatedHostBanner: View {
+    let reported: String
+    let baseline: String
+    let onDismiss: () -> Void
+
+    var body: some View {
+        HStack(spacing: DSHTheme.Spacing.tight) {
+            Image(systemName: "desktopcomputer")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(DSHTheme.labelSecondary)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("电脑端连接器版本偏旧")
+                    .font(DSHTheme.Typography.caption)
+                    .foregroundStyle(DSHTheme.labelPrimary)
+                // 说清「为什么」和「怎么办」：只说"版本旧"用户无从下手。
+                Text("当前 \(reported)，建议 ≥\(baseline)；升级电脑上的 DSH 即可")
+                    .font(DSHTheme.Typography.micro)
+                    .foregroundStyle(DSHTheme.labelSecondary)
+            }
+            Spacer(minLength: 0)
+            Button(action: onDismiss) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(DSHTheme.labelSecondary)
+                    .padding(DSHTheme.Spacing.tight)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("host.outdated.dismiss")
+            .accessibilityLabel("不再提示")
+        }
+        .padding(.horizontal, DSHTheme.Spacing.loose)
+        .padding(.vertical, DSHTheme.Spacing.tight)
+        .background(DSHTheme.labelSecondary.opacity(0.10))
+        .accessibilityIdentifier("host.outdated.banner")
+    }
+}
+
 /// Deliberately at the top of the list: this is the one place a user looks
 /// every time they open the app, and the update has to be installable from the
 /// phone alone.
