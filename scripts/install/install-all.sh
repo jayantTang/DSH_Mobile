@@ -25,7 +25,7 @@ const { join } = require('node:path')
 const home = process.env.DSH_HOME || join(homedir(), '.dsh')
 const profile = JSON.parse(require('node:fs').readFileSync(join(home, 'profiles', 'web', 'package.json'), 'utf8'))
 const bundles = profile.dsh.profile.bundles
-const wanted = ['dsh-plugin-mobile-link', 'dsh-plugin-send-image']
+const wanted = ['dsh-plugin-mobile-link', 'dsh-plugin-send-image', 'dsh-plugin-doubao-image']
 for (const name of wanted) {
   const linked = existsSync(join(home, 'profiles', 'web', 'node_modules', name))
   const listed = bundles.includes(name)
