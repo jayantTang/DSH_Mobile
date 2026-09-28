@@ -97,18 +97,132 @@ async def test_enroll_rejects_non_json(client):
 
 
 async def test_enroll_is_rate_limited_per_code(client, store):
-    """A frozen code cannot be used to probe the relay indefinitely."""
+    """A frozen code cannot be used to probe the relay indefinitely.
+
+    Five failures are allowed against one code — that is what the budget means —
+    and the next request naming it is refused.
+    """
     for _ in range(5):
         assert (await client.post("/agents/enroll",
                                   json={"inviteCode": "AAAA-BBBB-CCCC-DDDD"})).status == 404
     blocked = await client.post("/agents/enroll", json={"inviteCode": "AAAA-BBBB-CCCC-DDDD"})
     assert blocked.status == 429
     assert (await blocked.json())["error"]["code"] == "enroll/rate-limited"
+    assert store.list_accounts() == []
 
-    # A different code is unaffected by that key's budget.
+
+async def test_enroll_is_rate_limited_per_client_across_codes(client, store):
+    """The per-code budget alone bounds nothing, so the client has its own.
+
+    Invite codes are handed out publicly — review notes, chat, a screenshot — so
+    an attacker who spends one failed guess per code never fills any single
+    code's bucket. Keying only on the code (which is what this route did before
+    CI-02) let them probe indefinitely; the client address is what accumulates.
+
+    Under the owner's ruling of 2026-09-25 the client bucket is a *record*, not a
+    veto: the failures are charged to it and stay visible to the operator, but
+    they do not stop a valid code. What still stops the walk is the code bucket —
+    five guesses against any one code and that code is frozen. Both are asserted
+    here, so neither can quietly become the other.
+    """
+    for index in range(5):
+        response = await client.post("/agents/enroll",
+                                     json={"inviteCode": f"AAAA-BBBB-CCCC-DDD{index}"})
+        assert response.status == 404, await response.text()
+    limiter = client.app["enroll_limiter"]
+    assert limiter.blocked("127.0.0.1") is True, "同一来源的失败必须被累计"
+    assert limiter.failures_total == 5
+
+    # Hammering one code is still bounded: the sixth guess against it is refused.
+    for _ in range(5):
+        await client.post("/agents/enroll", json={"inviteCode": "EEEE-FFFF-GGGG-HHHH"})
+    frozen = await client.post("/agents/enroll", json={"inviteCode": "EEEE-FFFF-GGGG-HHHH"})
+    assert frozen.status == 429
+    assert (await frozen.json())["error"]["code"] == "enroll/rate-limited"
+
+    # A different client is a different bucket and is unaffected.
     invite = store.mint_invite()
-    ok = await client.post("/agents/enroll", json={"inviteCode": invite["code"], "name": "Sam"})
-    assert ok.status == 200, await ok.text()
+    other = await client.post("/agents/enroll",
+                              json={"inviteCode": invite["code"], "name": "Sam"},
+                              headers={"X-Forwarded-For": "203.0.113.8"})
+    assert other.status == 200, await other.text()
+
+
+async def test_a_valid_code_is_admitted_after_five_failures_from_the_same_client(client, store):
+    """A valid invite is sufficient to get in, whatever the client did before.
+
+    Owner's ruling, 2026-09-25: the failures are counted and attributable, but
+    they must not veto the operator's own decision to admit someone. The exact
+    sequence asked for: five failures from one source, then the *valid* code.
+    """
+    for _ in range(5):
+        assert (await client.post("/agents/enroll",
+                                  json={"inviteCode": "AAAA-BBBB-CCCC-DDDD"})).status == 404
+    # The failures really were accumulated against this source…
+    limiter = client.app["enroll_limiter"]
+    assert limiter.blocked("127.0.0.1") is True
+    assert limiter.failures_total == 5
+
+    # …and the valid code goes through anyway.
+    invite = store.mint_invite()
+    admitted = await client.post("/agents/enroll",
+                                 json={"inviteCode": invite["code"], "name": "Late but valid"})
+    assert admitted.status == 200, await admitted.text()
+    body = await admitted.json()
+    assert body["ok"] is True
+    assert body["agentId"].startswith("agt_")
+    assert body["agentSecret"].startswith("as_")
+    assert body["agentName"] == "Late but valid"
+    # A real identity was created, not just a 200.
+    assert store.agent_by_secret(body["agentSecret"]) is not None
+    assert len(store.list_accounts()) == 1
+
+    # The five failures are still on the books — for watching, not for vetoing.
+    assert limiter.failures_total == 5
+
+    # The code itself was consumed exactly once, like any other redemption. This
+    # rejection is itself a failure, which is why the tally is read above.
+    replay = await client.post("/agents/enroll", json={"inviteCode": invite["code"], "name": "Sam"})
+    assert replay.status == 404
+    assert (await replay.json())["error"]["code"] == "enroll/used"
+    assert limiter.failures_total == 6
+
+
+async def test_after_five_failures_an_invalid_code_is_still_refused(client, store):
+    """The other half: the same client, no valid code, still runs into a wall.
+
+    The wall is the *code* bucket, not a ban on the caller: under the owner's
+    ruling the client bucket records failures without vetoing admission, so what
+    keeps the endpoint closed is that a code with five failures behind it is
+    frozen. Everything below is a code that could not have been redeemed.
+    """
+    # An unknown code: five guesses at it are allowed, the sixth is refused.
+    for _ in range(5):
+        assert (await client.post("/agents/enroll",
+                                  json={"inviteCode": "ZZZZ-ZZZZ-ZZZZ-ZZZZ"})).status == 404
+    unknown = await client.post("/agents/enroll", json={"inviteCode": "ZZZZ-ZZZZ-ZZZZ-ZZZZ"})
+    assert unknown.status == 429
+    assert (await unknown.json())["error"]["code"] == "enroll/rate-limited"
+
+    # The refusal is about that code, not about the caller: a code nobody has
+    # guessed at yet is still answered normally rather than 429'd.
+    fresh = await client.post("/agents/enroll", json={"inviteCode": "YYYY-YYYY-YYYY-YYYY"})
+    assert fresh.status == 404
+    assert (await fresh.json())["error"]["code"] == "enroll/unknown"
+
+    assert store.list_accounts() == []
+
+
+async def test_after_five_failures_a_missing_code_is_still_a_bad_request(client, store):
+    """Malformed input never reaches the limiter: 400 stays 400."""
+    for _ in range(5):
+        assert (await client.post("/agents/enroll",
+                                  json={"inviteCode": "AAAA-BBBB-CCCC-DDDD"})).status == 404
+
+    response = await client.post("/agents/enroll", json={"name": "Sam"})
+    assert response.status == 400
+    assert (await response.json())["error"]["code"] == "enroll/bad-request"
+
 
 
 async def test_enroll_tolerates_separators_and_case(client, store):

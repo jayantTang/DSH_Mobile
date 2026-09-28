@@ -8,14 +8,16 @@ size budget) with a one-way import: ``relay`` imports ``api``, never the reverse
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import json
 import logging
+import time
 from typing import Any
 
 from aiohttp import web
 
 import dlp
-from store import InviteRejected, Store, StoreError, hash_invite_code
+from store import InviteRejected, PairCodeRejected, Store, StoreError, hash_invite_code
 
 LOGGER = logging.getLogger("relay.api")
 
@@ -23,7 +25,9 @@ LOGGER = logging.getLogger("relay.api")
 #: verify, so an unbounded number of claims would be a cheap CPU denial.
 _SCRYPT_SLOTS = asyncio.Semaphore(2)
 
-#: Per-IP failed-claim budget.
+#: Per-client failed-claim budget. "Client" means whatever
+#: :func:`client_identifier` returns — not the socket peer, which behind a front
+#: end is the front end itself and would put every caller in one bucket.
 _CLAIM_FAILURES = 10
 _CLAIM_WINDOW_S = 300
 
@@ -60,22 +64,135 @@ async def read_json(request: web.Request) -> dict[str, Any] | None:
     return body if isinstance(body, dict) else None
 
 
+#: The header the front end is required to set. Caddy's ``header_up X-Real-IP
+#: {remote_host}`` in ``deploy/Caddyfile.snippet`` is the deployed instance of it.
+_FORWARDED_FOR = "X-Forwarded-For"
+
+
+def is_loopback(value: str | None) -> bool:
+    """Is ``value`` a loopback address?
+
+    This single predicate is the relay's **trust boundary**. Everything that
+    depends on "did this request really come from our own front end?" — the
+    ``X-Forwarded-For`` header, and the operator-only ``/stats`` page — asks this
+    and nothing else. Keeping it in one place is what stops the two answers from
+    drifting apart.
+    """
+    if not value:
+        return False
+    text = value.strip()
+    if text.startswith("[") and text.endswith("]"):
+        text = text[1:-1]          # an IPv6 literal arrives bracketed
+    if text.startswith("::ffff:"):
+        text = text[len("::ffff:"):]   # IPv4-mapped IPv6, as a dual-stack host reports it
+    try:
+        return ipaddress.ip_address(text).is_loopback
+    except ValueError:
+        # aiohttp normally hands over a bare address, but a unix socket peer or
+        # a hostname is not something we can call trusted.
+        return text in ("localhost",)
+
+
+def client_identifier(request: web.Request) -> str:
+    """The address a rate-limit bucket is keyed on.
+
+    Behind a front end every request arrives from ``127.0.0.1``, so ``remote``
+    alone would put the whole internet in one bucket — one attacker could then
+    exhaust everybody's budget, and a second attacker would be invisible.
+
+    ``X-Forwarded-For`` fixes that, but only for the requests our own front end
+    forwarded: a client can send the header itself, and a single-hop front end
+    **appends** rather than replaces, so ``"1.2.3.4, <real>"`` on a request that
+    did not come through the front end is entirely attacker-chosen. The rule is
+    therefore:
+
+    * the peer is loopback **and** the header carries a usable address → the
+      **leftmost** entry (the original client; anything after it was added by
+      proxies);
+    * anything else → the socket peer, and the header is ignored outright.
+
+    Being wrong in the first direction lets one client escape its own budget;
+    being wrong in the second lets anyone spend someone else's. The second is
+    the one worth being strict about.
+    """
+    peer = (request.remote or "").strip()
+    if is_loopback(peer):
+        forwarded = request.headers.get(_FORWARDED_FOR, "")
+        first = forwarded.split(",")[0].strip()
+        if first:
+            return first
+    return peer or "unknown"
+
+
 class ClaimLimiter:
-    """In-memory failure budget for ``/pair/claim``, keyed by client IP."""
+    """In-memory failure budget keyed by whatever bucket the caller chose.
+
+    ``/pair/claim`` keys on the client address alone and that bucket *does* admit
+    or refuse. ``/agents/enroll`` keeps two — the code hash (the gate) and the
+    client address (a record that never vetoes a valid code); see
+    :func:`agents_enroll` for why they differ. Deciding *what a client is* is
+    :func:`client_identifier`'s job, not this class's — the trust boundary lives
+    in one place.
+    """
 
     def __init__(self, *, limit: int = _CLAIM_FAILURES, window_s: int = _CLAIM_WINDOW_S):
         self.limit = limit
         self.window_s = window_s
         self._hits: dict[str, list[float]] = {}
+        self._failures_total = 0
+
+    @property
+    def failures_total(self) -> int:
+        """Every failure this limiter has recorded, across all buckets.
+
+        Exposed because the counts are kept for accounting as well as for
+        enforcement: ``/agents/enroll`` no longer refuses a *valid* code on the
+        strength of its bucket alone (see :func:`agents_enroll`), so this counter
+        is what still shows an operator how much guessing is going on.
+        """
+        return self._failures_total
+
+    @staticmethod
+    def _now() -> float:
+        """Monotonic seconds.
+
+        The event loop's clock when there is one — that is the norm, and it keeps
+        the window honest under a loaded loop — and ``time.monotonic`` otherwise.
+        The fallback is not decoration: the store enforces the same budgets from
+        the worker thread that runs ``claim_invite`` (there is no running loop
+        there), so a clock that only exists inside the loop would make a check
+        from that thread raise instead of answering.
+        """
+        try:
+            return asyncio.get_running_loop().time()
+        except RuntimeError:
+            return time.monotonic()
 
     def blocked(self, key: str) -> bool:
-        now = asyncio.get_running_loop().time()
+        now = self._now()
         hits = [at for at in self._hits.get(key, []) if now - at < self.window_s]
         self._hits[key] = hits
         return len(hits) >= self.limit
 
     def record_failure(self, key: str) -> None:
-        self._hits.setdefault(key, []).append(asyncio.get_running_loop().time())
+        self._record(key)
+        self._failures_total += 1
+
+    def count_failure(self, key: str, *, total: bool = True) -> None:
+        """Record one failure against ``key``, optionally off the global tally.
+
+        ``total=False`` is for the caller that counts the same failure against a
+        second bucket. One request is one failure, however many budgets it is
+        charged to, so the *first* bucket counts it towards
+        :attr:`failures_total` and any further bucket merely records it. Without
+        this, two buckets would double every number an operator reads.
+        """
+        self._record(key)
+        if total:
+            self._failures_total += 1
+
+    def _record(self, key: str) -> None:
+        self._hits.setdefault(key, []).append(self._now())
 
     def reset(self, key: str) -> None:
         self._hits.pop(key, None)
@@ -85,7 +202,7 @@ async def healthz(_request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "version": dlp.PROTOCOL_VERSION})
 
 
-async def stats(_request: web.Request) -> web.Response:
+async def stats(request: web.Request) -> web.Response:
     """Live load and traffic accounting, for the operator.
 
     Not part of the protocol: nothing in the app or the connector calls it. It
@@ -96,11 +213,26 @@ async def stats(_request: web.Request) -> web.Response:
 
     Serving a page as well as JSON keeps it to one command on the server:
     ``curl -s localhost:8787/stats | head`` for a number, or open the same URL in
-    a browser for a self-refreshing view. The relay listens on loopback only, so
-    this is never public — it names devices and their byte counts.
+    a browser for a self-refreshing view.
+
+    **Reachable from loopback only, and that takes two independent halves.**
+    This handler refuses anything whose peer is not loopback (see
+    :func:`is_loopback`), and ``deploy/Caddyfile.snippet`` carries an explicit
+    reject for the public path so such a request never reaches the relay at all.
+    Neither half is sufficient alone: a front end that forwards everything would
+    make this page public, and losing this check would do the same the moment a
+    deployment moved the relay off loopback (``--host 0.0.0.0``). The page names
+    devices and their byte counts, so this is not a cosmetic distinction.
+
+    A refusal answers **404**, never 403: a probe should not be able to tell this
+    endpoint apart from a path that never existed.
     """
-    hub = _request.app["hub"]
-    limits = _request.app["limits"]
+    if not is_loopback(request.remote):
+        LOGGER.info("relay: refused /stats for non-loopback peer %s", request.remote)
+        return json_error(404, "not-found", "not found")
+
+    hub = request.app["hub"]
+    limits = request.app["limits"]
     payload = {
         "ok": True,
         "version": dlp.PROTOCOL_VERSION,
@@ -115,7 +247,7 @@ async def stats(_request: web.Request) -> web.Response:
         # 合起来才是"此刻为止"；完整历史用 `relay/admin.py usage --days 7`。
         "today": hub.usage_today(),
     }
-    if "text/html" in (_request.headers.get("Accept") or ""):
+    if "text/html" in (request.headers.get("Accept") or ""):
         return web.Response(text=_stats_page(payload), content_type="text/html")
     return web.json_response(payload)
 
@@ -182,7 +314,7 @@ async def pair_claim(request: web.Request) -> web.Response:
     code = body.get("pairCode")
     if not isinstance(code, str) or not code.strip():
         return json_error(400, "pair/bad-request", "pairCode is required")
-    peer = request.remote or "unknown"
+    peer = client_identifier(request)
     if limiter.blocked(peer):
         return json_error(429, "pair/rate-limited", "too many failed pairing attempts; try again later")
     device_name = body.get("deviceName")
@@ -304,11 +436,13 @@ async def devices_revoke(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "deviceId": target})
 
 
-#: How many failed enrollments one invite code may absorb before it is frozen
-#: for the rest of the window. A code is 20 characters of high-entropy
-#: alphabet, so this is not a brute-force defence like the pairing limiter —
-#: it is there to stop an online attacker from turning the relay into a
-#: code-guessing oracle at full speed.
+#: How many failed enrollments a code may absorb before it is frozen for the rest
+#: of the window. A code is 20 characters of high-entropy alphabet, so this is not
+#: a brute-force defence in the way the pairing limiter is; it is there to stop an
+#: online attacker from turning the relay into a code-guessing oracle at full
+#: speed. ``/agents/enroll`` also keeps a per-client bucket, but that one only
+#: records failures — it must never refuse a *valid* code (owner's ruling,
+#: 2026-09-25; see the handler and ``docs/RELAY-PROTOCOL.md`` §5.2).
 _ENROLL_FAILURES = 5
 _ENROLL_WINDOW_S = 900
 
@@ -337,15 +471,56 @@ async def agents_enroll(request: web.Request) -> web.Response:
     agent_name = name.strip() if isinstance(name, str) and name.strip() else "My computer"
 
     limiter: ClaimLimiter = request.app["enroll_limiter"]
-    key = hash_invite_code(code)
-    if limiter.blocked(key):
+    # Two buckets are kept, and they do different jobs:
+    #
+    #   * the **code** bucket (`hash_invite_code(code)`) is the *gate*: it stops
+    #     an online attacker from turning one invite into a guessing oracle at
+    #     full speed. Five failures against a code and that code is frozen.
+    #   * the **client** bucket (the caller's address) is a *record*: it
+    #     accumulates that source's failures so an operator can see who is
+    #     guessing. It does not admit and it does not veto.
+    #
+    # These are deliberately *not* combined into one `client|code` key, which
+    # would hand every new code a fresh allowance and make the code budget
+    # meaningless.
+    #
+    # **The client bucket never vetoes a valid code.** Owner's ruling,
+    # 2026-09-25: an invite is the operator's decision to admit someone, and a
+    # history of failures is grounds for watching, not for overriding it. So a
+    # caller who has failed five times still gets in by producing a real code.
+    # That is why nothing below consults the client bucket before trying the
+    # redemption: the only admitted-and-refusing check here is the code bucket.
+    #
+    # What that gives up, and it is the whole of it: the client dimension no
+    # longer bounds how fast a source can *fail* — after five bad guesses the
+    # next bad guess is tried rather than refused, and a caller moving from code
+    # to code gets five fresh guesses per code. It bounds nothing about how fast
+    # one can fail; it is kept so the failures are visible. See
+    # ``docs/RELAY-PROTOCOL.md`` §5.2.
+    code_key = hash_invite_code(code)
+    client_key = client_identifier(request)
+
+    # The code bucket is the gate, and consulting it before the store call is
+    # what makes "five failures against one code" mean five: the sixth request
+    # naming it, and every one after, is refused without being charged again.
+    if limiter.blocked(code_key):
         return json_error(429, "enroll/rate-limited",
                           "too many failed attempts for that invite code; try again later")
 
+    # The store charges both buckets itself, inside its lock and only once the
+    # attempt is known to have failed, so a concurrent burst cannot slip past a
+    # budget that the other requests have not filled yet. It reads ``client_key``
+    # purely to record against it.
     try:
-        result = await asyncio.to_thread(store.claim_invite, code, agent_name)
+        result = await asyncio.to_thread(
+            store.claim_invite, code, agent_name, limiter,
+            count_key=code_key, client_key=client_key)
+    except PairCodeRejected:
+        # A concurrent request against the same code filled the bucket first.
+        LOGGER.info("relay: invite rate-limited (%d failures so far)", limiter.failures_total)
+        return json_error(429, "enroll/rate-limited",
+                          "too many failed attempts for that invite code; try again later")
     except InviteRejected as error:
-        limiter.record_failure(key)
         LOGGER.info("relay: invite rejected (%s)", error.reason)
         return json_error(404, f"enroll/{error.reason}", str(error))
     except StoreError as error:
@@ -354,7 +529,8 @@ async def agents_enroll(request: web.Request) -> web.Response:
         LOGGER.warning("relay: invite redemption failed: %s", error)
         return json_error(500, "enroll/store-error", "the relay could not complete the enrollment")
 
-    limiter.reset(key)
+    limiter.reset(code_key)
+    limiter.reset(client_key)
     LOGGER.info("relay: enrolled agent %s from an invite", result["agentId"])
     return web.json_response({
         "ok": True,

@@ -219,7 +219,7 @@ def run(args: argparse.Namespace, store: Store) -> int:
 
     if command == "usage":
         # 记账只覆盖中转自己的出口字节（不含 SSH / OTA 下载）；日界是服务器本地日，
-        # 与设备每日额度的 UTC 日不同口径。
+        # 与设备每日额度是同一个口径（都走 store.local_day()）。
         _emit(store.usage_totals(days=args.days, by=args.by))
         return 0
 

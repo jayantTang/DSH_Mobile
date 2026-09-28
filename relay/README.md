@@ -48,7 +48,7 @@ front end.
 | `GET` | `/healthz` | — | `{"ok":true,"version":1}` |
 | `GET` | `/stats` | — (loopback only) | operator view: live load, effective limits, egress per device. JSON, or an HTML page when the client sends `Accept: text/html` |
 | `WS` | `/link/agent?agentId=<id>` | `Bearer <agentSecret>` | one live connection per `agentId`; a new one supersedes the old (close `4001`) |
-| `WS` | `/link/device?agentId=<id>` | `Bearer <deviceToken>` | up to `--max-devices-per-agent` per agent (`403` past it) |
+| `WS` | `/link/device?agentId=<id>` | `Bearer <deviceToken>` | up to `--max-devices-per-agent` per agent (past it: an `error` frame `limit/devices`, then close `4012`) |
 | `POST` | `/pair/claim` | — | `{pairCode, deviceName, deviceModel, appVersion}` → device token |
 | `POST` | `/pair/refresh` | device token | rotates the token; the old one dies immediately |
 | `POST` | `/pair/code` | agent secret | mints a one-time pairing code (see `notes/relay.md` §2) |
@@ -142,8 +142,10 @@ $A admin.py --db $DB usage --days 7 --by account             # 最近 7 天的�
 冲一次盘**，另外在设备断开、跨本地日、进程收尾时各冲一次——所以账最多丢最后一次
 冲盘前的那点字节，一次正常的重启（systemd stop/start）不丢。
 
-口径：**日界是服务器本地日**（回答"今天"）；设备每日额度的 UTC 日（`DailyQuota`）是
-另一套，两者不要混。这张表只记中转自己转发的字节，不含 SSH、OTA 下载和主机上的其它流量。
+口径：**日界是服务器本地日**（`store.local_day()`，回答"今天"）。设备每日额度
+（`DailyQuota`）用的是**同一个**函数——额度基线就是这张表里 `(deviceId, 今天)` 那一行的
+`egressBytes`，所以"今天用了多少"和"今天还剩多少"永远是同一件事。这张表只记中转自己
+转发的字节，不含 SSH、OTA 下载和主机上的其它流量。
 
 ```bash
 $A admin.py --db $DB usage --days 7 --by device    # 按设备
@@ -211,7 +213,7 @@ Overridable: `DSH_RELAY_USER`, `DSH_RELAY_DIR`, `DSH_RELAY_DATA`,
 | `--queue-depth` | `512` | per-device backpressure bound |
 | `--max-devices-per-agent` / `DLP_MAX_DEVICES_PER_AGENT` | `0` (unlimited) | how many devices one agent may keep attached; a reconnect never counts twice |
 | `--device-rate-kbps` / `DLP_DEVICE_RATE_KBPS` | `0` (no pacing) | per-device egress pacing, in **kilobits per second** |
-| `--device-daily-mb` / `DLP_DEVICE_DAILY_MB` | `0` (unlimited) | per-device egress allowance per **UTC** day, in megabytes |
+| `--device-daily-mb` / `DLP_DEVICE_DAILY_MB` | `0` (unlimited) | per-device egress allowance per **local** day, in megabytes; the count is read from `usageDaily`, so a reconnect or a restart does not reset it |
 | `--base-path` / `DLP_BASE_PATH` | *(empty)* | optional mount prefix; every route is served with and without it |
 | `--log-level` / `DLP_LOG_LEVEL` | `INFO` | log verbosity |
 
@@ -229,13 +231,18 @@ perfectly ordinary session not ruining everybody else's:
   simultaneous heavy devices*, not *pipe ÷ devices*.
 * **`--device-daily-mb`** — pacing bounds how fast, this bounds how much. A device
   that spends its allowance is closed with code **`4011`** after being told why
-  (`{"t":"error","code":"quota/device-daily"}`), and may connect again after UTC
-  midnight. Set it to a comfortable multiple of a heavy day (a few hundred MB)
-  rather than to a typical day.
+  (`{"t":"error","code":"quota/device-daily"}`), and may connect again after local
+  midnight. The count comes from `usageDaily`, so it is the day's total rather
+  than the connection's: reconnecting, or a relay restart, continues where it left
+  off. Set it to a comfortable multiple of a heavy day (a few hundred MB) rather
+  than to a typical day.
 * **`--max-devices-per-agent`** — one computer, one person. This is what stops a
   leaked device token (or a pairing script) from filling the relay with sockets
   that all multiplex onto one connector. A device reconnecting is counted once,
-  so a phone can never lock itself out.
+  so a phone can never lock itself out. A refusal is delivered as a DLP `error`
+  frame (code `limit/devices`) on an accepted socket followed by a clean close
+  with code **`4012`**, not as a bare HTTP `403` — the phone can then tell the
+  person the host is full.
 
 ### Watching the load
 
@@ -275,7 +282,7 @@ These numbers are the relay's, so they can.
 | device is dropped every few seconds | it is not draining frames; the relay closes on 512 queued frames (code `4008`) |
 | device stops receiving mid-session, close code `4011` | it spent its daily allowance (`--device-daily-mb`); the frame before the close is an `error` with code `quota/device-daily` |
 | a device feels slow but nothing is dropped | it is being paced (`--device-rate-kbps`); `GET /stats` shows the seconds each device spent waiting |
-| a second phone cannot connect at all (`403`) | `--max-devices-per-agent` is reached; raise it or revoke a pairing (`admin.py device-revoke`) |
+| a second phone cannot connect at all (`limit/devices` / close `4012`) | `--max-devices-per-agent` is reached; raise it or revoke a pairing (`admin.py device-revoke`) |
 | phone shows "host offline" repeatedly | the agent is reconnecting; check its `lastError` via `GET /mobile-link/status` or `MOBILE_LINK_STATE` lines |
 | `https://relay.example.com/dsh-link/healthz` is 404 | the marked block is missing from the right site block; run `caddy_splice.py check` then `deploy.sh` |
 | WebSockets close every 30–60s through Caddy | `read_timeout`/`write_timeout` were overridden; they must stay `0` (no timeout) in the reverse_proxy transport |

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+import re
 import shutil
 import subprocess
 
@@ -138,6 +139,52 @@ def test_the_global_options_block_is_not_mistaken_for_a_site():
     assert updated.index(cs.BEGIN) > updated.index("relay.example.com {")
 
 
+def test_the_fragment_refuses_the_operator_stats_page_publicly():
+    """``/stats`` names devices and their bytes; the public path must be refused.
+
+    This is half of a two-half guarantee — ``relay/api.py:stats`` refuses any
+    non-loopback peer as well. The fragment has to carry the other half because
+    the relay sits behind this block, and it must refuse before the catch-all
+    ``handle`` can ever see the request.
+
+    The shape matters as much as the text: the reject has to be a ``handle``
+    block, not a bare ``respond @relay_stats``. Caddy sorts directives, and a
+    bare ``respond`` is evaluated after ``handle_path /dsh-link/*`` wherever it
+    is written, which is exactly how the public path came to be proxied straight
+    to the relay. ``test_caddy_runtime.py`` drives the real thing; this test only
+    keeps the two obvious regressions (rule deleted, rule downgraded) cheap to
+    catch, and pins the compiled route order.
+    """
+    text = snippet()
+    assert "/stats" in text, "the fragment must name the path it refuses"
+    assert re.search(r"handle\s+@relay_stats\s*\{", text), \
+        "the reject must be a handle block — a bare respond loses to handle_path"
+    assert not re.search(r"^\s*respond\s+@relay_stats\b", text, re.M), \
+        "a bare respond @relay_stats is the ordering bug this test exists for"
+    assert re.search(r"respond\s+@public_stats\b[^\n]*404", text), \
+        "the public /stats path must be answered 404, not proxied"
+
+    updated, _ = cs.splice(PRODUCTION_LIKE, text, "relay.example.com")
+    lines = updated.splitlines()
+    reject = next(i for i, line in enumerate(lines) if "@relay_stats path" in line)
+    relay_block = next(i for i, line in enumerate(lines) if "handle_path /dsh-link/*" in line)
+    first_handle = next(i for i, line in enumerate(lines) if "handle /patent-landscape/*" in line)
+    assert reject < relay_block < first_handle
+
+
+def test_the_fragment_forwards_the_header_the_rate_limiter_depends_on():
+    """Without X-Forwarded-For every caller of the relay shares one bucket.
+
+    The relay only believes the header when the peer is loopback (see
+    ``api.client_identifier``), so this is a correctness requirement rather than
+    a security one — but a missing header silently degrades rate limiting to
+    "one bucket for the whole internet", which is worth pinning.
+    """
+    text = snippet()
+    assert "header_up X-Forwarded-For {remote_host}" in text
+    assert "header_up X-Real-IP {remote_host}" in text
+
+
 def test_an_empty_caddyfile_is_refused():
     with pytest.raises(cs.SpliceError, match="empty"):
         cs.splice("\n\n", snippet(), "relay.example.com")
@@ -219,6 +266,20 @@ def test_real_caddy_accepts_the_spliced_config(tmp_path):
         raise AssertionError("the relay.example.com route is missing")
 
     routes = site_routes(config)
+
+    def is_catch_all(route):
+        """The site's own terminal handler: a subroute with no path match.
+
+        Deliberately *not* "any route that mentions file_server": the /ios/* block
+        serves files too and is a route the relay's must not lose to, while the
+        site's catch-all is the one that must stay last. Matching on file_server
+        alone picks whichever comes first and proves nothing.
+        """
+        return paths_in(route) == [] and any(h["handler"] == "subroute"
+                                             for h in route.get("handle", []))
+
+    catch_all = max(i for i, route in enumerate(routes) if is_catch_all(route))
+
     relay_index = next(i for i, route in enumerate(routes) if paths_in(route) == ["/dsh-link/*"])
     relay_handlers = handlers_in(routes[relay_index])
     strip = next((h for h in relay_handlers if h["handler"] == "rewrite"), None)
@@ -231,7 +292,19 @@ def test_real_caddy_accepts_the_spliced_config(tmp_path):
     assert transport.get("read_timeout", 0) == 0 and transport.get("write_timeout", 0) == 0
     assert proxy.get("flush_interval") == -1
 
-    catch_all = next(i for i, route in enumerate(routes)
-                     if any(h["handler"] == "file_server" for h in handlers_in(route)))
     assert relay_index < catch_all, "/dsh-link/* must be matched before the catch-all handle"
+
+    # The reject must win over the proxy in the *compiled* order. Caddy sorts
+    # handle blocks by path specificity, so /dsh-link/stats lands before
+    # /dsh-link/* — that is the whole reason the reject is a handle block and not
+    # a bare `respond @relay_stats`, which sorts after every handle_path however
+    # it is written. If a future edit undoes that, this notices cheaply;
+    # test_caddy_runtime.py drives the real caddy and catches it end-to-end.
+    stats_index = next(i for i, route in enumerate(routes)
+                       if "/dsh-link/stats" in paths_in(route))
+    stats_handlers = handlers_in(routes[stats_index])
+    assert any(h["handler"] == "static_response" and h.get("status_code") == 404
+               for h in stats_handlers), "the public /stats path must be answered by a static 404"
+    assert stats_index < relay_index, \
+        "/stats must be matched before the /dsh-link/* proxy, not after it"
     assert any(paths_in(route) == ["/patent-landscape/*"] for route in routes), "existing blocks survive"

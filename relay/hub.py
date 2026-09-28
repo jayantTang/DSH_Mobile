@@ -32,6 +32,10 @@ CLOSE_BACKPRESSURE = 4008
 CLOSE_RATE_LIMITED = 4009
 CLOSE_AGENT_OFFLINE = 4010
 CLOSE_QUOTA_EXCEEDED = 4011
+#: The agent is at its device budget. Reported as a DLP ``error`` frame on an
+#: accepted socket (see ``relay._refuse_upgrade``) rather than as a bare HTTP
+#: 403 before the upgrade, so the phone can tell the person what happened.
+CLOSE_DEVICE_LIMIT = 4012
 
 #: Longest string handed to the WebSocket in one call while a device is over its
 #: rate. ~1 MB of JSON: small enough that pacing is visible on the wire, large
@@ -96,24 +100,33 @@ class TokenBucket:
 
 
 class DailyQuota:
-    """A per-device byte allowance that resets at UTC midnight.
+    """A per-device byte allowance for one **local** day.
 
     Rate pacing bounds how *fast* one device can move bytes; this bounds how many
     in a day, which is what protects a metered or fixed-bandwidth host from one
-    device that simply runs all day. The reset is by UTC day so that every device
-    and the operator's own daily accounting agree on when "today" ends.
+    device that simply runs all day.
+
+    The count has to be the *day's*, not the *connection's*: a phone reconnects on
+    a network change, after a background suspension, or because the relay was
+    restarted, and a budget that resets each time bounds a connection rather than
+    a day — which is not what "2 GB per day" says. The baseline therefore comes
+    from ``usageDaily`` (via :meth:`RelayHub._quota_for`), and ``used`` here is
+    that stored row plus whatever this connection has sent on top of it.
+
+    The day is the **local** one from :func:`store.local_day`, the same function
+    the accounting uses. The two used to be computed separately (local day for
+    the report, UTC for the allowance), so "today's traffic" and "today's
+    allowance" quietly described different days for anyone not on UTC.
     """
 
     __slots__ = ("limit", "used", "day")
 
-    def __init__(self, *, limit: int, now: float | None = None):
+    def __init__(self, *, limit: int, used: int = 0, day: int | None = None):
         self.limit = max(0, int(limit))
-        self.used = 0
-        self.day = self._day_of(time.time() if now is None else now)
-
-    @staticmethod
-    def _day_of(stamp: float) -> int:
-        return int(stamp // 86_400)
+        today = store_module.local_day()
+        # A baseline from a previous day is yesterday's news: start fresh.
+        self.used = max(0, int(used)) if day is None or day == today else 0
+        self.day = today
 
     @property
     def enabled(self) -> bool:
@@ -123,8 +136,7 @@ class DailyQuota:
         """Account ``amount`` bytes; ``False`` means the day's allowance is gone."""
         if not self.enabled:
             return True
-        stamp = time.time() if now is None else now
-        today = self._day_of(stamp)
+        today = store_module.local_day(now)
         if today != self.day:
             self.day = today
             self.used = 0
@@ -154,7 +166,9 @@ class Limits:
         self.max_devices_per_agent = max(0, int(max_devices_per_agent))
         #: Per-device egress pacing, in bytes per second. ``0`` disables it.
         self.device_bytes_per_second = max(0.0, float(device_bytes_per_second))
-        #: Per-device egress allowance per UTC day, in bytes. ``0`` disables it.
+        #: Per-device egress allowance per **local** day, in bytes. ``0`` disables
+        #: it. The day is ``store.local_day()`` — the same one the accounting and
+        #: the operator's report use (see :class:`DailyQuota`).
         self.device_daily_bytes = max(0, int(device_daily_bytes))
 
     def describe(self) -> dict[str, Any]:
@@ -448,25 +462,46 @@ class RelayHub:
 
     # ── device lifecycle ────────────────────────────────────────────────────
 
+    def _other_live_devices(self, agent: AgentLink, device_id: str) -> list[DeviceLink]:
+        """The agent's live devices other than ``device_id``.
+
+        A reconnecting device is not a *new* device, and the relay may still be
+        tearing its previous socket down when the new one arrives — so a phone
+        never counts against its own slot. Treating our own id as one of the slots
+        would lock a phone out of its own relay.
+        """
+        return [link for link in agent.devices.values()
+                if not link.closed and link.device_id != device_id]
+
+    def device_budget_exceeded(self, agent: AgentLink, device_id: str) -> bool:
+        """Would attaching ``device_id`` put this agent over its device budget?
+
+        The single definition of that rule. Both the pre-upgrade check in
+        ``relay.link_device`` (which can answer cleanly, before a socket is
+        prepared) and :meth:`attach_device` (the last line of defence) call this,
+        so a change to the rule cannot be applied to only one of them.
+        """
+        if not self.limits.max_devices_per_agent:
+            return False
+        return len(self._other_live_devices(agent, device_id)) >= self.limits.max_devices_per_agent
+
     async def attach_device(self, device: dict[str, Any], ws: Any) -> DeviceLink:
         agent = self.agents.get(device["agentId"])
         # One computer, one user: a device budget per agent is what keeps a
         # single leaked device token (or a script that pairs in a loop) from
         # filling the relay with sockets that all multiplex onto one connector.
-        # Refusing here — rather than after the socket is prepared — means the
-        # client gets a plain close instead of a half-open link.
-        if agent is not None and self.limits.max_devices_per_agent:
-            # Same rule as the route-level check: a reconnecting device does not
-            # occupy a second slot, even while its old link is still closing.
-            attached = [link for link in agent.devices.values()
-                        if not link.closed and link.device_id != device["deviceId"]]
-            if len(attached) >= self.limits.max_devices_per_agent:
-                raise DeviceLimitReached(
-                    f"agent {agent.agent_id} already has {len(attached)} devices "
-                    f"(limit {self.limits.max_devices_per_agent})")
+        # One check, in one place: the route-level pre-upgrade check in
+        # `relay.link_device` asks `device_budget_exceeded` rather than repeating
+        # the rule, so the two can never disagree about when a phone is full.
+        if agent is not None and self.device_budget_exceeded(agent, device["deviceId"]):
+            attached = self._other_live_devices(agent, device["deviceId"])
+            raise DeviceLimitReached(
+                f"agent {agent.agent_id} already has {len(attached)} devices "
+                f"(limit {self.limits.max_devices_per_agent})")
         link = DeviceLink(ws, device=device, logger=self.logger, limits=self.limits)
         link.agent = agent
         link.on_egress = self._note_egress
+        link.quota = self._quota_for(device["deviceId"])
         self._devices[device["deviceId"]] = link
         self._note_usage(link, connection=True)
         if agent is None:
@@ -595,6 +630,40 @@ class RelayHub:
         await self.detach_device(link, reason=reason, code=code)
 
     # ── daily usage accounting ──────────────────────────────────────────────
+
+    def _quota_for(self, device_id: str) -> DailyQuota:
+        """A daily allowance for one device, seeded with what it already spent.
+
+        The baseline is read **once, at attach**, from the same ``usageDaily`` row
+        the operator's report reads. Reading it per frame would put a SQLite
+        query on the forwarding path; reading it *again* at flush time would
+        double-count the bytes that flush just wrote, quietly halving the day.
+        In between, :class:`DailyQuota` counts this connection's own traffic on
+        top of that number.
+
+        A store that cannot answer must not take the relay down with it: the
+        allowance falls back to 0 (a fresh day) and the failure is logged. That is
+        the safe direction — it grants an allowance rather than refusing a device
+        its day over a bookkeeping error.
+        """
+        limit = self.limits.device_daily_bytes
+        if limit <= 0:
+            return DailyQuota(limit=0)
+        today = store_module.local_day()
+        used = 0
+        try:
+            used = self._stored_egress_today(device_id, today)
+        except Exception:  # noqa: BLE001 - 记账读不出来不该挡住连接
+            self.logger.warning("relay: could not read today's usage for %s; "
+                                "starting its allowance from zero", device_id, exc_info=True)
+        return DailyQuota(limit=limit, used=used, day=today)
+
+    def _stored_egress_today(self, device_id: str, day: int) -> int:
+        """`usageDaily` 里这台设备今天已经用掉的出口字节。"""
+        for row in self.store.usage_rows(day):
+            if row["deviceId"] == device_id:
+                return max(0, int(row["egressBytes"]))
+        return 0
 
     def _note_egress(self, link: DeviceLink, size: int) -> None:
         """发送热路径上的记账：只做一次字典加法，不碰磁盘。"""

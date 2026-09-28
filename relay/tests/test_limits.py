@@ -17,12 +17,15 @@ quietly break.
 from __future__ import annotations
 
 import asyncio
+import datetime
 import json
 import time
+from unittest.mock import patch
 
 import pytest
 
 import dlp
+import hub as hub_module
 from hub import (
     CLOSE_QUOTA_EXCEEDED,
     DailyQuota,
@@ -31,6 +34,7 @@ from hub import (
     RelayHub,
     TokenBucket,
 )
+from store import local_day
 
 
 class FakeStore:
@@ -91,13 +95,23 @@ def test_quota_allows_up_to_the_limit_then_refuses():
     assert quota.remaining() == 0
 
 
-def test_quota_resets_on_the_next_utc_day():
-    day = 20_000
-    quota = DailyQuota(limit=1_000, now=day * 86_400)
+def test_quota_resets_on_the_next_local_day():
+    """The day is `store.local_day()`, the same one the accounting uses.
+
+    CI-03 unified the two: the allowance used to roll over at UTC midnight while
+    the operator's report rolled over at local midnight, so for anyone not on UTC
+    "today's traffic" and "today's allowance" described different days.
+    """
+    day = local_day()
+    quota = DailyQuota(limit=1_000, day=day)
     assert quota.charge(1_000) is True
     assert quota.charge(1) is False
-    # One second past the boundary, the same device may send again.
-    assert quota.charge(500, now=(day + 1) * 86_400 + 1) is True
+
+    # One second into the next local day, the same device may send again.
+    tomorrow = datetime.date.fromtimestamp(time.time() + 86_400)
+    with patch.object(hub_module.store_module, "local_day",
+                      lambda *a: int(tomorrow.strftime("%Y%m%d"))):
+        assert quota.charge(500) is True
     assert quota.used == 500
 
 

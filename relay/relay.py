@@ -22,7 +22,7 @@ from aiohttp import WSMsgType, web
 
 import dlp
 from api import bearer_token, cors_preflight, register_http_routes
-from hub import Limits, RelayHub
+from hub import CLOSE_DEVICE_LIMIT, Limits, RelayHub
 from store import DEFAULT_DEVICE_TTL_MS, DEFAULT_PAIR_TTL_MS, Store
 
 LOGGER = logging.getLogger("relay")
@@ -118,6 +118,32 @@ async def link_agent(request: web.Request) -> web.WebSocketResponse:
     return ws
 
 
+async def _refuse_upgrade(request: web.Request, code: str, message: str, *,
+                          close_code: int, details: dict[str, Any] | None = None,
+                          ) -> web.WebSocketResponse:
+    """Accept the handshake only to deliver a reason, then close cleanly.
+
+    A relay refusal used to be a bare ``403`` from ``raise web.HTTPForbidden``
+    *before* the upgrade. The phone saw a failed WebSocket connect with no DLP
+    frame, which is indistinguishable from "the relay is broken" — it could not
+    tell the person that their host simply has as many devices as it allows, and
+    two clients hitting this ended up diagnosed as a network fault.
+
+    Accepting the socket first costs one upgrade for a connection that is about
+    to close, and buys the one thing the protocol has for this: an ``error``
+    frame carrying a code the client already knows how to surface. The close that
+    follows is clean (a normal application close code), so nothing looks like a
+    crash on either side.
+    """
+    ws = _make_socket(request, Limits())
+    await ws.prepare(request)
+    await ws.send_str(dlp.encode_frame(
+        dlp.error_frame(code, message, fatal=True, details=details)))
+    await ws.close(code=close_code, message=message.encode("utf-8")[:120])
+    LOGGER.warning("relay: refused a device socket (%s): %s", code, message)
+    return ws
+
+
 async def link_device(request: web.Request) -> web.WebSocketResponse:
     hub: RelayHub = request.app["hub"]
     store: Store = request.app["store"]
@@ -125,22 +151,17 @@ async def link_device(request: web.Request) -> web.WebSocketResponse:
     device = await _device_identity(request)
 
     # The budget is checked before the upgrade: a client that is refused should
-    # get a clean close, not a socket that opens and then dies.
-    #
-    # A device reconnecting is not a new device, and the relay may still be
-    # tearing its previous socket down when the new one arrives — so the budget
-    # counts *other* live devices, never the same id twice. Treating our own id
-    # as one of the slots would lock a phone out of its own relay.
+    # get a clean close, not a socket that opens and then dies. The rule itself
+    # lives in `hub.device_budget_exceeded`, so this check and the one inside
+    # `hub.attach_device` cannot drift apart.
     if limits.max_devices_per_agent:
         agent = hub.agents.get(device["agentId"])
-        if agent is not None:
-            mine = device["deviceId"]
-            attached = [link for link in agent.devices.values()
-                        if not link.closed and link.device_id != mine]
-            if len(attached) >= limits.max_devices_per_agent:
-                LOGGER.warning("relay: refusing device %s — agent %s is at its device budget (%d)",
-                               device["deviceId"], device["agentId"], limits.max_devices_per_agent)
-                raise web.HTTPForbidden(text="device limit reached for this host")
+        if agent is not None and hub.device_budget_exceeded(agent, device["deviceId"]):
+            return await _refuse_upgrade(
+                request, "limit/devices",
+                "this host already has as many devices connected as it allows",
+                close_code=CLOSE_DEVICE_LIMIT,
+                details={"maxDevicesPerAgent": limits.max_devices_per_agent})
 
     ws = _make_socket(request, limits)
     await ws.prepare(request)
@@ -230,7 +251,9 @@ def build_parser() -> argparse.ArgumentParser:
                              "frames from occupying the whole pipe")
     parser.add_argument("--device-daily-mb", type=float,
                         default=float(os.environ.get("DLP_DEVICE_DAILY_MB", "0")),
-                        help="per-device egress allowance per UTC day, in megabytes (0 = unlimited)")
+                        help="per-device egress allowance per local day, in megabytes "
+                             "(0 = unlimited). The count comes from `usageDaily`, so a "
+                             "reconnect or a restart does not reset it")
     parser.add_argument("--base-path", default=os.environ.get("DLP_BASE_PATH", ""),
                         help="optional mount prefix, e.g. /dsh-link; both the prefixed and the "
                              "already-stripped forms are served")

@@ -14,6 +14,7 @@ These are blocking sqlite3 calls; the HTTP handlers reach them through
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import secrets
 import sqlite3
@@ -72,8 +73,10 @@ CREATE INDEX IF NOT EXISTS pair_codes_agent ON pairCodes(agentId);
 -- 按天按设备的出口用量。中转只在内存里记当日额度（断开就丢），"今天谁用了多少"
 -- 这类问题以前只能靠猜；这张表就是那笔账：每台设备每天一行，UPSERT 累加。
 --
--- `day` 是**服务器本地日**（YYYYMMDD，与操作者口里的"今天"一致）；额度检查仍按 UTC 日，
--- 两个口径不要混。`lastBuild` 记当天最后一次上报的客户端构建号，"谁一直没升级"顺手能答。
+-- `day` 是**服务器本地日**（YYYYMMDD，与操作者口里的"今天"一致）。日额度的判定也走同一个
+-- `local_day()`（见 hub.DailyQuota），两边是同一个口径——以前额度按 UTC 日算，跨零点时会
+-- 出现"记账说今天用了 0、额度说今天已经用完"。`lastBuild` 记当天最后一次上报的客户端构建号，
+-- "谁一直没升级"顺手能答。
 CREATE TABLE IF NOT EXISTS usageDaily (
   day         INTEGER NOT NULL,
   deviceId    TEXT NOT NULL,
@@ -105,6 +108,38 @@ DEFAULT_DEVICE_TTL_MS = 365 * 24 * 60 * 60 * 1000
 #: codes which live for minutes.
 DEFAULT_INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000
 
+#: The schema generation this code expects, tracked in SQLite's own
+#: ``PRAGMA user_version``.
+#:
+#: Why it exists: ``SCHEMA`` is all ``CREATE TABLE IF NOT EXISTS``, which is
+#: exactly right for adding a *table* to a live database — and silently wrong for
+#: adding a *column*. A deployment that upgraded the code and kept its
+#: ``state.db`` would come up with the new table present and the new column
+#: missing, and the first write touching that column would fail at runtime with
+#: "no such column" — on a relay that had otherwise reported itself healthy.
+#: Bumping this number and adding a step to ``_MIGRATIONS`` is what turns that
+#: into a startup migration.
+SCHEMA_VERSION = 1
+
+
+def _migrate_to_1(conn: sqlite3.Connection) -> None:
+    """Baseline. Databases older than versioning existed are stamped, not altered.
+
+    Everything up to and including this generation was created by ``SCHEMA``
+    alone, so there is nothing to change — the step exists so that the *next*
+    column addition has somewhere to go, and so that an existing database is
+    recorded as being at version 1 rather than at 0 (which is what SQLite reports
+    for a file that predates the pragma).
+    """
+    return None
+
+
+#: ``generation → function``, applied in order. Each step must be idempotent:
+#: a migration that fails after a partial commit is retried on the next start.
+_MIGRATIONS: dict[int, Any] = {
+    1: _migrate_to_1,
+}
+
 _SCRYPT_N = 1 << 14
 _SCRYPT_R = 8
 _SCRYPT_P = 1
@@ -117,6 +152,16 @@ class NotFound(StoreError):
 
 class Conflict(StoreError):
     """The requested write violates a uniqueness invariant."""
+
+class PairCodeRejected(StoreError):
+    """A redemption was refused because the caller's failure budget is spent.
+
+    Distinct from :class:`InviteRejected`: nothing was learned about the code —
+    the budget answered first, so no failure is charged for this attempt. It
+    exists so the rate limit can be enforced *inside* ``claim_*`` next to the row
+    read, which closes the window in which concurrent guesses all see a bucket
+    that the others have not filled yet.
+    """
 
 class InviteRejected(StoreError):
     """An invite code could not be redeemed.
@@ -132,8 +177,8 @@ class InviteRejected(StoreError):
 def local_day(stamp: float | None = None) -> int:
     """服务器本地日的序号，形如 20260921。
 
-    记账用本地日（操作者问的"今天"是本地时间）；额度的 UTC 日是另一套（见 hub.DailyQuota），
-    两者不要混用。
+    记账与日额度判定都用本地日（操作者问的"今天"是本地时间）：额度那套见
+    ``hub.DailyQuota``，它读的也是这个函数，两边不要各算一套。
     """
     return int(time.strftime("%Y%m%d", time.localtime(time.time() if stamp is None else stamp)))
 
@@ -223,8 +268,37 @@ class Store:
         self._conn = sqlite3.connect(path, check_same_thread=False, timeout=15)
         self._conn.row_factory = sqlite3.Row
         with self._lock:
+            # Order matters. `SCHEMA` first so a brand-new file is complete and so
+            # an existing one gains any *new table*; then the versioned migrations
+            # for the changes `IF NOT EXISTS` cannot express (new columns,
+            # backfills). A database that predates versioning reports 0 and is
+            # brought up through every step.
             self._conn.executescript(SCHEMA)
+            applied = self._migrate()
             self._conn.commit()
+        if applied:
+            logging.getLogger("relay.store").info(
+                "relay: migrated the database schema to version %d", applied)
+
+    def _migrate(self) -> int:
+        """Bring the database up to :data:`SCHEMA_VERSION`; returns the new version.
+
+        Runs under the caller's lock, inside the constructor's transaction. Each
+        step runs once and the version is stamped in the same commit, so a
+        half-applied migration is not recorded as done. A version *newer* than
+        this code understands is left alone: a rollback to an older build must not
+        silently "downgrade" a database by skipping steps it never had.
+        """
+        current = int(self._conn.execute("PRAGMA user_version").fetchone()[0])
+        if current >= SCHEMA_VERSION:
+            return current
+        for version in sorted(step for step in _MIGRATIONS if step > current):
+            if version > SCHEMA_VERSION:
+                break
+            _MIGRATIONS[version](self._conn)
+            # `PRAGMA user_version` does not take a bound parameter.
+            self._conn.execute(f"PRAGMA user_version = {int(version)}")
+        return SCHEMA_VERSION
 
     def close(self) -> None:
         with self._lock:
@@ -430,27 +504,68 @@ class Store:
             return {"exists": True, "state": "expired", "expiresAt": row["expiresAt"]}
         return {"exists": True, "state": "unused", "expiresAt": row["expiresAt"]}
 
-    def claim_invite(self, code: str, name: str) -> dict[str, Any]:
+    def claim_invite(self, code: str, name: str, limiter: Any | None = None, *,
+                     count_key: str | None = None,
+                     client_key: str | None = None) -> dict[str, Any]:
         """Redeem one invite: create the account and its first agent.
 
         One transaction, so an invite can never be marked used without the
         identity existing, and a race between two machines redeeming the same
         code leaves exactly one winner.
+
+        ``limiter`` is the rate limiter the caller is charging failures to, and
+        it is passed in so those charges happen **inside** this lock, next to the
+        row read. The HTTP handler can only consult a bucket before calling here
+        (the row is not known until we look), so a burst of concurrent guesses
+        against one code would otherwise all pass that check before any of them
+        recorded a failure — a window exactly as wide as the number of requests
+        the client can have in flight. ``PairCodeRejected`` is raised for such an
+        already-frozen bucket, so the row is never touched and the failure is not
+        charged twice. Leaving ``limiter`` unset keeps this a plain redemption,
+        which is what the admin path and the store-level tests use.
         """
         normalized = normalize_invite_code(code)
-        if not normalized:
-            raise InviteRejected("unknown", "that invite code is not valid")
         stamp = now_ms()
         with self._lock:
-            row = self._conn.execute(
-                "SELECT * FROM invites WHERE codeHash=?", (hash_invite_code(normalized),)
-            ).fetchone()
+            # Consult the budget before anything else, so a burst of concurrent
+            # guesses cannot all read a bucket that the others have not filled
+            # yet. The consult does not charge anything — see below.
+            if limiter is not None and count_key is not None:
+                if limiter.blocked(count_key):
+                    raise PairCodeRejected("rate-limited",
+                                           "too many failed attempts for that invite code")
+
+            row = None
+            if normalized:
+                row = self._conn.execute(
+                    "SELECT * FROM invites WHERE codeHash=?", (hash_invite_code(normalized),)
+                ).fetchone()
+            reason: str | None = None
             if row is None:
-                raise InviteRejected("unknown", "that invite code is not valid")
-            if row["usedAt"] is not None:
-                raise InviteRejected("used", "that invite code has already been used")
-            if int(row["expiresAt"]) <= stamp:
-                raise InviteRejected("expired", "that invite code has expired")
+                reason = "unknown"
+            elif row["usedAt"] is not None:
+                reason = "used"
+            elif int(row["expiresAt"]) <= stamp:
+                reason = "expired"
+
+            # Charge the failure only once we know this attempt failed, and do it
+            # here — still inside the lock, next to the read that decided it — so
+            # the charge cannot drift from the decision. Charging before the
+            # lookup would bill a *successful* redemption as a failure, and the
+            # operator's tally would report guesses nobody made.
+            if reason is not None:
+                if limiter is not None and count_key is not None:
+                    # One request is one failure: the code bucket counts it
+                    # towards the operator's tally, the client bucket only
+                    # records it.
+                    limiter.count_failure(count_key)
+                    if client_key is not None:
+                        limiter.count_failure(client_key, total=False)
+                raise InviteRejected(reason, {
+                    "unknown": "that invite code is not valid",
+                    "used": "that invite code has already been used",
+                    "expired": "that invite code has expired",
+                }[reason])
 
             account_id = new_id("acc")
             agent_id = new_id("agt")
