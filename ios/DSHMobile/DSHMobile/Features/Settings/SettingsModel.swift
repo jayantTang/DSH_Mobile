@@ -67,7 +67,7 @@ final class SettingsModel {
     /// The facts the "关于" section renders.
     struct About: Sendable {
         var appVersion: String
-        var hostVersion: String?
+        var connectorVersion: String?
         var hostHome: String?
         var endpoint: String?
         var transport: Transport
@@ -78,7 +78,7 @@ final class SettingsModel {
 
         static let empty = About(
             appVersion: "—",
-            hostVersion: nil,
+            connectorVersion: nil,
             hostHome: nil,
             endpoint: nil,
             transport: .unknown,
@@ -609,12 +609,17 @@ final class SettingsModel {
         // A relay connector reports its own identity and the local DSH port on
         // its status stream, which is the closest thing to an endpoint the
         // protocol exposes.
+        //
+        // 连接器版本不在这里读：`hostStatus.info` 里根本没有版本键（连接器只发
+        // online/agentId/name/dshPort/protocol，relay 那条的 version 是显式 None），
+        // 原来那个「找一个像版本的键」的扫描因此永远命中不了，是死代码。真值来自
+        // 握手（`_link/hello` 的 serverVersion），store 已经存好了，直接读。
+        facts.connectorVersion = store?.connectorVersion
         if let link = store?.client?.carrier as? LinkCarrier {
             facts.transport = .relay
             if let status = await Self.firstStatus(from: link) {
                 facts.connectorName = status.info?["name"]?.stringValue
                 facts.connectorPort = status.info?["dshPort"]?.intValue
-                facts.hostVersion = Self.version(in: status.info)
             }
         }
         about = facts
@@ -639,26 +644,6 @@ final class SettingsModel {
             group.cancelAll()
             return first
         }
-    }
-
-    /// Finds a version-looking string in a relay status payload.
-    ///
-    /// DSH does not currently expose a host version over the client protocol, so
-    /// this searches for one anyway: a future connector that reports `version`
-    /// shows up here instead of being dropped.
-    private static func version(in info: JSONValue?) -> String? {
-        guard let object = info?.objectValue else { return nil }
-        for (key, value) in object where key.lowercased().contains("version") {
-            if let text = value.stringValue, !text.isEmpty { return text }
-        }
-        for value in object.values {
-            if let nested = value.objectValue {
-                for (key, inner) in nested where key.lowercased().contains("version") {
-                    if let text = inner.stringValue, !text.isEmpty { return text }
-                }
-            }
-        }
-        return nil
     }
 
     /// The endpoint the phone is talking to.

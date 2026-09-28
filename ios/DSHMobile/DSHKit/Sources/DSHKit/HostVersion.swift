@@ -1,5 +1,8 @@
 import Foundation
 
+/// Compares the **connector** version (`_link/hello`'s `serverVersion`) against a
+/// baseline — not the DSH host version, which is a different namespace.
+///
 /// Compares the host version a connector reports against a baseline.
 ///
 /// The point of this type is the **unparseable** case, which is the whole reason

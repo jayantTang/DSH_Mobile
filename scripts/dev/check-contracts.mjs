@@ -17,7 +17,8 @@
  *   4. send-image 采集脚本：包内副本与 `skills/` 下的 canonical 必须逐字节相同。
  *   5. 能力词汇表：`hello.js` 是全集，Swift 常量只能取子集，App 不许写裸字面量。
  *   6. RPC catalog 自洽：`endpointCount` 与 `endpoints` / `kindCounts` 对得上。
- *   7. host 版本基线：契约里的 `hostBaseline.dshVersion` 与生成的 Swift 常量一致。
+ *   7. 连接器版本基线：契约里的 `connectorBaseline.minVersion` 与生成的 Swift 常量一致，
+ *      且不高于仓库连接器版本、必须是 CHANGELOG 里已发布的连接器版本。
  *   8. `test:scripts` 列出的每个文件都已入库（`node --test` 会静默跳过缺失的）。
  *
  * **这是文本解析**：它拦得住「改了一份忘了另一份/把锚点顺序调了/把调试钩子移出门外」，
@@ -347,35 +348,100 @@ console.log('RPC catalog 自洽（端点计数与分类计数对得上）：')
   }
 }
 
-// ── ⑦ host 版本基线：契约与生成的 Swift 常量必须一致 ────────────────────────
+// ── ⑦ 连接器版本基线：契约与生成的 Swift 常量必须一致 ──────────────────────
 //
 // App 运行时读不到 `docs/`，所以基线要生成成 Swift 常量。两处手改必然漂，
 // 这条检查兜着：改了契约就重跑生成脚本。
+//
+// 除一致性外还有两条护栏（都是离线、CI 可跑的文本级断言）：
+//   (b1) 基线不许高于仓库里的连接器版本——写高了会天天误报；
+//   (b2) 基线必须是**已发布的连接器版本**（CHANGELOG 有 `## 连接器 <v>` 条目）——
+//        这条正是「基线被写成 DSH host 版本、提示永不出现」那个事故的机械护栏。
+//
+// 已知限制（不必修）：CHANGELOG.md 缺 `## 连接器 0.2.0` 条目，所以将来若要把基线
+// 降到 0.2.0，得先补那条变更记录，(b2) 才会绿。
 
-const HOST_BASELINE_SWIFT = 'ios/DSHMobile/DSHMobile/Support/HostBaseline.swift'
+const CONNECTOR_BASELINE_SWIFT = 'ios/DSHMobile/DSHMobile/Support/ConnectorBaseline.swift'
 
-console.log('host 版本基线（契约 == 生成的 Swift 常量）：')
+/** 与 `HostVersion` 同口径的数字段比较：`split('-')[0].split('.').map(Number)`，缺段补 0。 */
+const versionSegments = (value) => value.split('-')[0].split('.').map(Number)
+
+/** > 0 表示 a 比 b 新；只比数字段，rc 后缀不比（与 HostVersion 一致）。 */
+const compareVersions = (a, b) => {
+  const left = versionSegments(a)
+  const right = versionSegments(b)
+  const length = Math.max(left.length, right.length)
+  for (let index = 0; index < length; index += 1) {
+    const diff = (left[index] ?? 0) - (right[index] ?? 0)
+    if (diff !== 0) return diff
+  }
+  return 0
+}
+
+console.log('连接器版本基线（契约 == 生成的 Swift 常量）：')
 {
-  const baseline = contract.hostBaseline?.dshVersion
-  const generatedText = existsSync(join(REPO_ROOT, HOST_BASELINE_SWIFT)) ? read(HOST_BASELINE_SWIFT) : null
-  const generated = generatedText?.match(/dshVersion\s*=\s*"([^"]+)"/)?.[1]
+  const baseline = contract.connectorBaseline?.minVersion
+  const generatedText = existsSync(join(REPO_ROOT, CONNECTOR_BASELINE_SWIFT))
+    ? read(CONNECTOR_BASELINE_SWIFT) : null
+  const generated = generatedText?.match(/minVersion\s*=\s*"([^"]+)"/)?.[1]
   if (!baseline) {
-    fail(`${CAPABILITY_CONTRACT}: 缺少 hostBaseline.dshVersion`)
-    console.log('  FAIL 契约里没有 hostBaseline.dshVersion')
+    fail(`${CAPABILITY_CONTRACT}: 缺少 connectorBaseline.minVersion`)
+    console.log('  FAIL 契约里没有 connectorBaseline.minVersion')
   } else if (!generatedText) {
-    fail(`${HOST_BASELINE_SWIFT} 不存在——跑 npm run gen:host-baseline 生成`)
-    console.log(`  FAIL 生成物不存在（${HOST_BASELINE_SWIFT}）`)
+    fail(`${CONNECTOR_BASELINE_SWIFT} 不存在——跑 npm run gen:connector-baseline 生成`)
+    console.log(`  FAIL 生成物不存在（${CONNECTOR_BASELINE_SWIFT}）`)
   } else if (!generated) {
-    fail(`${HOST_BASELINE_SWIFT}: 没找到 dshVersion 常量`)
-    console.log('  FAIL 生成物里没有 dshVersion')
+    fail(`${CONNECTOR_BASELINE_SWIFT}: 没找到 minVersion 常量`)
+    console.log('  FAIL 生成物里没有 minVersion')
   } else if (baseline !== generated) {
-    fail(`host 基线不一致：契约=${baseline} 生成物=${generated}——`
-      + `跑 npm run gen:host-baseline 重新生成`)
+    fail(`连接器基线不一致：契约=${baseline} 生成物=${generated}——`
+      + `跑 npm run gen:connector-baseline 重新生成`)
     console.log(`  FAIL 契约 ${baseline} != 生成物 ${generated}`)
   } else {
     console.log(`  ok   契约与生成物都是 ${baseline}`)
   }
 }
+
+// ── ⑦(b1) 基线不许高于仓库里的连接器版本 ───────────────────────────────────
+
+console.log('连接器基线不高于仓库连接器（写高了会天天误报）：')
+{
+  const baseline = contract.connectorBaseline?.minVersion
+  const repoVersion = readJson('plugins/mobile-link/package.json')?.version
+  if (!baseline) {
+    console.log('  SKIP 契约里没有 connectorBaseline.minVersion')
+  } else if (!repoVersion) {
+    fail('plugins/mobile-link/package.json 里没有 version，(b1) 无法判定')
+    console.log('  FAIL 读不到仓库连接器版本')
+  } else if (compareVersions(baseline, repoVersion) > 0) {
+    fail(`基线 ${baseline} 高于仓库连接器 ${repoVersion}——写高了会天天误报`)
+    console.log(`  FAIL 基线 ${baseline} > 仓库连接器 ${repoVersion}`)
+  } else {
+    console.log(`  ok   基线 ${baseline} <= 仓库连接器 ${repoVersion}`)
+  }
+}
+
+// ── ⑦(b2) 基线必须是已发布的连接器版本（CHANGELOG 有 `## 连接器 <v>`）──────
+
+console.log('连接器基线是已发布的连接器版本（CHANGELOG 有 `## 连接器 <v>`）：')
+{
+  const baseline = contract.connectorBaseline?.minVersion
+  if (!baseline) {
+    console.log('  SKIP 契约里没有 connectorBaseline.minVersion')
+  } else {
+    const changelog = read('CHANGELOG.md')
+    const heading = `## 连接器 ${baseline}`
+    const found = changelog.split('\n').some((line) => line.startsWith(heading))
+    if (!found) {
+      fail(`基线 ${baseline} 不是已发布的连接器版本——命名空间写错了？`
+        + `（CHANGELOG.md 里没有以 \`${heading}\` 开头的行）`)
+      console.log(`  FAIL 基线 ${baseline} 在 CHANGELOG.md 里没有 \`${heading}\` 条目`)
+    } else {
+      console.log(`  ok   CHANGELOG.md 有 \`${heading}\``)
+    }
+  }
+}
+
 
 // ── ⑧ test:scripts 里列的每个文件都必须入库 ────────────────────────────────
 //

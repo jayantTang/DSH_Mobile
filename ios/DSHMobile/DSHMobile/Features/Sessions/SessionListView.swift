@@ -45,12 +45,12 @@ struct SessionListView: View {
                 }
                 // 提示，不是故障：连接已经建立，旧连接器照常可用，只是能力少一些。
                 // 所以用中性的底色、不阻断、可以关掉，关掉后按 profile 记住。
-                if store.showsOutdatedHostNotice {
-                    OutdatedHostBanner(
-                        reported: store.hostVersion ?? "",
-                        baseline: HostBaseline.dshVersion
+                if store.showsOutdatedConnectorNotice {
+                    OutdatedConnectorBanner(
+                        reported: store.connectorVersion ?? "",
+                        baseline: ConnectorBaseline.minVersion
                     ) {
-                        store.dismissOutdatedHostNotice()
+                        store.dismissOutdatedConnectorNotice()
                     }
                 }
             }
@@ -744,7 +744,7 @@ struct ConnectionStatusButton: View {
 /// Deliberately **not** a red/yellow warning: nothing is broken and the user's
 /// session works. It is a nudge they can dismiss, and dismissing it sticks per
 /// profile until the app's baseline moves past what the connector reported.
-private struct OutdatedHostBanner: View {
+private struct OutdatedConnectorBanner: View {
     let reported: String
     let baseline: String
     let onDismiss: () -> Void
@@ -759,7 +759,7 @@ private struct OutdatedHostBanner: View {
                     .font(DSHTheme.Typography.caption)
                     .foregroundStyle(DSHTheme.labelPrimary)
                 // 说清「为什么」和「怎么办」：只说"版本旧"用户无从下手。
-                Text("当前 \(reported)，建议 ≥\(baseline)；升级电脑上的 DSH 即可")
+                Text("当前 \(reported)，建议 ≥\(baseline)；升级电脑上的连接器即可")
                     .font(DSHTheme.Typography.micro)
                     .foregroundStyle(DSHTheme.labelSecondary)
             }

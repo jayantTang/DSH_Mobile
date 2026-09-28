@@ -64,9 +64,9 @@
       "status": "documented"
     }
   ],
-  "hostBaseline": {
-    "dshVersion": "0.1.5-rc.3",
-    "source": "npm 上 @deepseek-ai/dsh 的 0.1.5-rc.3（2026-09-22），与本机运行中的 Host 一致",
-    "note": "低于这个版本的主机，App 会在会话列表顶部给一条**可关闭**的提示，不阻断连接。写低了提示永不出现（功能等于没有），写高了天天误报——改这个值请一并跑 npm run gen:host-baseline 与 npm run check:contracts。"
+  "connectorBaseline": {
+    "minVersion": "0.3.1",
+    "source": "dsh-plugin-mobile-link 0.3.1（npm 已发布，2026-09-22，与 plugins/mobile-link/package.json:3 一致）。能力下限 0.3.0（0.2.0 无 git）；行为下限 0.3.1（离线期间替手机补发待答事件，App 1.0 的『等你回应』依赖它，见 CHANGELOG.md:18-25）。取两者较高者。",
+    "note": "比较的是**连接器**版本（_link/hello 的 serverVersion），不是 DSH host 版本——两者命名空间不同，混用会让提示永不出现或天天误报。低于它的连接器连上来时，App 在会话列表顶部给一条可关闭提示，不阻断连接。改这个值要一并跑 npm run gen:connector-baseline 与 npm run check:contracts。"
   }
 }

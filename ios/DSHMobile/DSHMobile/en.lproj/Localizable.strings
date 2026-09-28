@@ -93,7 +93,7 @@
 "去更新" = "Update";
 "有新版本" = "An update is available";
 "电脑端连接器版本偏旧" = "Your computer's connector is out of date";
-"当前 %@，建议 ≥%@；升级电脑上的 DSH 即可" = "Running %1$@; %2$@ or newer recommended. Update DSH on your computer.";
+"当前 %@，建议 ≥%@；升级电脑上的连接器即可" = "Running %1$@; %2$@ or newer recommended. Update the connector on your computer.";
 "不再提示" = "Don't show again";
 
 /* counted / formatted strings */
@@ -444,8 +444,8 @@ It is registered as a workspace first, so a new group appears in the desktop sid
 "尚未获得通知权限，请到 iOS 设置里允许 DSH 发送通知。" = "Notification permission is not granted yet — allow DSH in iOS Settings.";
 "APP 版本" = "App version";
 "App 版本" = "App version";
-"DSH 主机版本" = "DSH host version";
-"主机未上报" = "Host did not report";
+"连接器版本" = "Connector version";
+"连接器未上报" = "Connector did not report";
 "连接器" = "Connector";
 "连接器端口" = "Connector port";
 "原始设置文档" = "Raw settings document";

@@ -160,13 +160,16 @@ public final class ConnectionStore {
     /// that would come back as a 404 from the Host.
     public private(set) var capabilities: Set<String> = []
 
-    /// The version of DSH the connected computer reports, from the handshake.
+    /// The **connector** version the connected computer reports, from the handshake
+    /// (`_link/hello`'s `serverVersion` = `dsh-plugin-mobile-link`'s package version).
     ///
     /// Kept only to tell the user when their connector is behind the baseline the
     /// app was built against (see `HostVersion`). It is **not** a gate: a
     /// connection is never refused because of this value, and an unreadable or
-    /// missing version simply produces no notice.
-    public private(set) var hostVersion: String? = nil
+    /// missing version simply produces no notice. The baseline is a **connector**
+    /// version too — see `ConnectorBaseline`; mixing it with the DSH host version
+    /// (a different namespace) is what makes the notice never appear.
+    public private(set) var connectorVersion: String? = nil
 
 
     private var carrier: (any DSHCarrier)?
@@ -242,16 +245,16 @@ public final class ConnectionStore {
     /// capabilities. It is a hint the user can act on, so it is shown only when
     /// we are sure (`HostVersion.isOlder`, which refuses to guess) and it stays
     /// hidden once dismissed for that same reported version.
-    public var showsOutdatedHostNotice: Bool {
-        guard let reported = hostVersion,
-              HostVersion.isOlder(reported, than: HostBaseline.dshVersion) else { return false }
+    public var showsOutdatedConnectorNotice: Bool {
+        guard let reported = connectorVersion,
+              HostVersion.isOlder(reported, than: ConnectorBaseline.minVersion) else { return false }
         return activeProfile?.outdatedNoticeDismissedFor != reported
     }
 
     /// Remembers that the user dismissed the notice, for this profile and this
     /// reported version. A later baseline (or a different computer) shows it again.
-    public func dismissOutdatedHostNotice() {
-        guard let reported = hostVersion,
+    public func dismissOutdatedConnectorNotice() {
+        guard let reported = connectorVersion,
               let id = activeProfile?.id,
               let index = profiles.firstIndex(where: { $0.id == id }) else { return }
         profiles[index].outdatedNoticeDismissedFor = reported
@@ -282,7 +285,7 @@ public final class ConnectionStore {
         // Re-resolved by the handshake: leftovers from another computer would
         // offer entries that host does not serve.
         capabilities = []
-        hostVersion = nil
+        connectorVersion = nil
         guard let secret = Keychain.get(profile.secretAccount) else {
             state = .failed("此连接的凭据已丢失，请重新配对。")
             return
@@ -391,7 +394,7 @@ public final class ConnectionStore {
         ))
         capabilities = Set(handshake?.capabilities ?? [])
         // Recorded for the out-of-date notice only; never used to refuse the link.
-        hostVersion = handshake?.serverVersion
+        connectorVersion = handshake?.serverVersion
         state = .connected(hostHome: profile.hostHome)
         recordConnection(profile.id, hostHome: profile.hostHome)
         startWatching()
@@ -540,7 +543,7 @@ public final class ConnectionStore {
         hostHome = nil
         // What the previous host could do says nothing about the next one.
         capabilities = []
-        hostVersion = nil
+        connectorVersion = nil
         state = .disconnected
     }
 

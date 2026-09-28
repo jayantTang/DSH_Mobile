@@ -475,14 +475,13 @@ struct SettingsView: View {
                 Text(model.about.appVersion)
             }
             AdaptivePair {
-                Text("DSH 主机版本")
+                Text("连接器版本")
             } value: {
-                if let version = model.about.hostVersion {
+                if let version = model.about.connectorVersion {
                     Text(version)
                 } else {
-                    // The host does not publish its version over the client
-                    // protocol, so say so rather than showing a placeholder key.
-                    Text("主机未上报")
+                    // 连接器还没报（或没连上）——不是错误，说清「未上报」即可。
+                    Text("连接器未上报")
                         .foregroundStyle(DSHTheme.labelTertiary)
                 }
             }
