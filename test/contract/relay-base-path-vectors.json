@@ -1,0 +1,605 @@
+{
+  "version": 1,
+  "notes": [
+    "base 一律用 https 形态；JS/测试台断言时用同一行的 ws 形态（scheme 只换不拼，见 dlp.js:normalizeRelayUrl）。",
+    "path 是 URL path；url 是 JS 那侧算出的绝对地址（ws 形态）。swiftPath / harnessPath 是同两端的现状值。",
+    "空字符串 base 只给 JS：Swift 的 URL(string:\"\") 拿到 nil，测试台的 new URL(\"\") 直接抛，两端都没有这条路径。",
+    "Python 端只覆盖它有的那一步（normalize_base_path：raw → \"\" | /prefix），它不做 suffix 拼接，路由拼接由 test_base_path.py 的端到端用例守着。",
+    "knownDrift 那几行是**现状**，不是应该的值：suffix 不带前导斜杠时 Swift/测试台直接拼接得到 /dsh-linklink/agent 这类结果，JS 补斜杠。生产不可达（三个调用点都传带斜杠的 suffix）。"
+  ],
+  "bases": [
+    "https://host",
+    "https://host/",
+    "https://host/dsh-link",
+    "https://host/dsh-link/",
+    "https://host/a/b/",
+    "http://127.0.0.1:8787",
+    ""
+  ],
+  "suffixes": [
+    "/link/agent",
+    "link/agent",
+    "/pair/claim",
+    "/devices",
+    "/devices/revoke",
+    "/healthz"
+  ],
+  "cases": [
+    {
+      "base": "https://host",
+      "suffix": "/link/agent",
+      "path": "/link/agent",
+      "url": "wss://host/link/agent",
+      "ends": [
+        "swift",
+        "js",
+        "harness"
+      ],
+      "swiftPath": "/link/agent",
+      "harnessPath": "/link/agent",
+      "knownDrift": null
+    },
+    {
+      "base": "https://host",
+      "suffix": "link/agent",
+      "path": "/link/agent",
+      "url": "wss://host/link/agent",
+      "ends": [
+        "swift",
+        "js",
+        "harness"
+      ],
+      "swiftPath": "link/agent",
+      "harnessPath": "/link/agent",
+      "knownDrift": "suffix 不带前导斜杠：Swift/测试台直接拼成 link/agent，JS 会补斜杠成 /link/agent。三个调用点都传带斜杠的 suffix，生产不可达 → 记成漂移，不改行为"
+    },
+    {
+      "base": "https://host",
+      "suffix": "/pair/claim",
+      "path": "/pair/claim",
+      "url": "wss://host/pair/claim",
+      "ends": [
+        "swift",
+        "js",
+        "harness"
+      ],
+      "swiftPath": "/pair/claim",
+      "harnessPath": "/pair/claim",
+      "knownDrift": null
+    },
+    {
+      "base": "https://host",
+      "suffix": "/devices",
+      "path": "/devices",
+      "url": "wss://host/devices",
+      "ends": [
+        "swift",
+        "js",
+        "harness"
+      ],
+      "swiftPath": "/devices",
+      "harnessPath": "/devices",
+      "knownDrift": null
+    },
+    {
+      "base": "https://host",
+      "suffix": "/devices/revoke",
+      "path": "/devices/revoke",
+      "url": "wss://host/devices/revoke",
+      "ends": [
+        "swift",
+        "js",
+        "harness"
+      ],
+      "swiftPath": "/devices/revoke",
+      "harnessPath": "/devices/revoke",
+      "knownDrift": null
+    },
+    {
+      "base": "https://host",
+      "suffix": "/healthz",
+      "path": "/healthz",
+      "url": "wss://host/healthz",
+      "ends": [
+        "swift",
+        "js",
+        "harness"
+      ],
+      "swiftPath": "/healthz",
+      "harnessPath": "/healthz",
+      "knownDrift": null
+    },
+    {
+      "base": "https://host/",
+      "suffix": "/link/agent",
+      "path": "/link/agent",
+      "url": "wss://host/link/agent",
+      "ends": [
+        "swift",
+        "js",
+        "harness"
+      ],
+      "swiftPath": "/link/agent",
+      "harnessPath": "/link/agent",
+      "knownDrift": null
+    },
+    {
+      "base": "https://host/",
+      "suffix": "link/agent",
+      "path": "/link/agent",
+      "url": "wss://host/link/agent",
+      "ends": [
+        "swift",
+        "js",
+        "harness"
+      ],
+      "swiftPath": "link/agent",
+      "harnessPath": "/link/agent",
+      "knownDrift": "suffix 不带前导斜杠：Swift/测试台直接拼成 link/agent，JS 会补斜杠成 /link/agent。三个调用点都传带斜杠的 suffix，生产不可达 → 记成漂移，不改行为"
+    },
+    {
+      "base": "https://host/",
+      "suffix": "/pair/claim",
+      "path": "/pair/claim",
+      "url": "wss://host/pair/claim",
+      "ends": [
+        "swift",
+        "js",
+        "harness"
+      ],
+      "swiftPath": "/pair/claim",
+      "harnessPath": "/pair/claim",
+      "knownDrift": null
+    },
+    {
+      "base": "https://host/",
+      "suffix": "/devices",
+      "path": "/devices",
+      "url": "wss://host/devices",
+      "ends": [
+        "swift",
+        "js",
+        "harness"
+      ],
+      "swiftPath": "/devices",
+      "harnessPath": "/devices",
+      "knownDrift": null
+    },
+    {
+      "base": "https://host/",
+      "suffix": "/devices/revoke",
+      "path": "/devices/revoke",
+      "url": "wss://host/devices/revoke",
+      "ends": [
+        "swift",
+        "js",
+        "harness"
+      ],
+      "swiftPath": "/devices/revoke",
+      "harnessPath": "/devices/revoke",
+      "knownDrift": null
+    },
+    {
+      "base": "https://host/",
+      "suffix": "/healthz",
+      "path": "/healthz",
+      "url": "wss://host/healthz",
+      "ends": [
+        "swift",
+        "js",
+        "harness"
+      ],
+      "swiftPath": "/healthz",
+      "harnessPath": "/healthz",
+      "knownDrift": null
+    },
+    {
+      "base": "https://host/dsh-link",
+      "suffix": "/link/agent",
+      "path": "/dsh-link/link/agent",
+      "url": "wss://host/dsh-link/link/agent",
+      "ends": [
+        "swift",
+        "js",
+        "harness"
+      ],
+      "swiftPath": "/dsh-link/link/agent",
+      "harnessPath": "/dsh-link/link/agent",
+      "knownDrift": null
+    },
+    {
+      "base": "https://host/dsh-link",
+      "suffix": "link/agent",
+      "path": "/dsh-link/link/agent",
+      "url": "wss://host/dsh-link/link/agent",
+      "ends": [
+        "swift",
+        "js",
+        "harness"
+      ],
+      "swiftPath": "/dsh-linklink/agent",
+      "harnessPath": "/dsh-linklink/agent",
+      "knownDrift": "suffix 不带前导斜杠：Swift/测试台直接拼成 /dsh-linklink/agent，JS 会补斜杠成 /dsh-link/link/agent。三个调用点都传带斜杠的 suffix，生产不可达 → 记成漂移，不改行为"
+    },
+    {
+      "base": "https://host/dsh-link",
+      "suffix": "/pair/claim",
+      "path": "/dsh-link/pair/claim",
+      "url": "wss://host/dsh-link/pair/claim",
+      "ends": [
+        "swift",
+        "js",
+        "harness"
+      ],
+      "swiftPath": "/dsh-link/pair/claim",
+      "harnessPath": "/dsh-link/pair/claim",
+      "knownDrift": null
+    },
+    {
+      "base": "https://host/dsh-link",
+      "suffix": "/devices",
+      "path": "/dsh-link/devices",
+      "url": "wss://host/dsh-link/devices",
+      "ends": [
+        "swift",
+        "js",
+        "harness"
+      ],
+      "swiftPath": "/dsh-link/devices",
+      "harnessPath": "/dsh-link/devices",
+      "knownDrift": null
+    },
+    {
+      "base": "https://host/dsh-link",
+      "suffix": "/devices/revoke",
+      "path": "/dsh-link/devices/revoke",
+      "url": "wss://host/dsh-link/devices/revoke",
+      "ends": [
+        "swift",
+        "js",
+        "harness"
+      ],
+      "swiftPath": "/dsh-link/devices/revoke",
+      "harnessPath": "/dsh-link/devices/revoke",
+      "knownDrift": null
+    },
+    {
+      "base": "https://host/dsh-link",
+      "suffix": "/healthz",
+      "path": "/dsh-link/healthz",
+      "url": "wss://host/dsh-link/healthz",
+      "ends": [
+        "swift",
+        "js",
+        "harness"
+      ],
+      "swiftPath": "/dsh-link/healthz",
+      "harnessPath": "/dsh-link/healthz",
+      "knownDrift": null
+    },
+    {
+      "base": "https://host/dsh-link/",
+      "suffix": "/link/agent",
+      "path": "/dsh-link/link/agent",
+      "url": "wss://host/dsh-link/link/agent",
+      "ends": [
+        "swift",
+        "js",
+        "harness"
+      ],
+      "swiftPath": "/dsh-link/link/agent",
+      "harnessPath": "/dsh-link/link/agent",
+      "knownDrift": null
+    },
+    {
+      "base": "https://host/dsh-link/",
+      "suffix": "link/agent",
+      "path": "/dsh-link/link/agent",
+      "url": "wss://host/dsh-link/link/agent",
+      "ends": [
+        "swift",
+        "js",
+        "harness"
+      ],
+      "swiftPath": "/dsh-linklink/agent",
+      "harnessPath": "/dsh-linklink/agent",
+      "knownDrift": "suffix 不带前导斜杠：Swift/测试台直接拼成 /dsh-linklink/agent，JS 会补斜杠成 /dsh-link/link/agent。三个调用点都传带斜杠的 suffix，生产不可达 → 记成漂移，不改行为"
+    },
+    {
+      "base": "https://host/dsh-link/",
+      "suffix": "/pair/claim",
+      "path": "/dsh-link/pair/claim",
+      "url": "wss://host/dsh-link/pair/claim",
+      "ends": [
+        "swift",
+        "js",
+        "harness"
+      ],
+      "swiftPath": "/dsh-link/pair/claim",
+      "harnessPath": "/dsh-link/pair/claim",
+      "knownDrift": null
+    },
+    {
+      "base": "https://host/dsh-link/",
+      "suffix": "/devices",
+      "path": "/dsh-link/devices",
+      "url": "wss://host/dsh-link/devices",
+      "ends": [
+        "swift",
+        "js",
+        "harness"
+      ],
+      "swiftPath": "/dsh-link/devices",
+      "harnessPath": "/dsh-link/devices",
+      "knownDrift": null
+    },
+    {
+      "base": "https://host/dsh-link/",
+      "suffix": "/devices/revoke",
+      "path": "/dsh-link/devices/revoke",
+      "url": "wss://host/dsh-link/devices/revoke",
+      "ends": [
+        "swift",
+        "js",
+        "harness"
+      ],
+      "swiftPath": "/dsh-link/devices/revoke",
+      "harnessPath": "/dsh-link/devices/revoke",
+      "knownDrift": null
+    },
+    {
+      "base": "https://host/dsh-link/",
+      "suffix": "/healthz",
+      "path": "/dsh-link/healthz",
+      "url": "wss://host/dsh-link/healthz",
+      "ends": [
+        "swift",
+        "js",
+        "harness"
+      ],
+      "swiftPath": "/dsh-link/healthz",
+      "harnessPath": "/dsh-link/healthz",
+      "knownDrift": null
+    },
+    {
+      "base": "https://host/a/b/",
+      "suffix": "/link/agent",
+      "path": "/a/b/link/agent",
+      "url": "wss://host/a/b/link/agent",
+      "ends": [
+        "swift",
+        "js",
+        "harness"
+      ],
+      "swiftPath": "/a/b/link/agent",
+      "harnessPath": "/a/b/link/agent",
+      "knownDrift": null
+    },
+    {
+      "base": "https://host/a/b/",
+      "suffix": "link/agent",
+      "path": "/a/b/link/agent",
+      "url": "wss://host/a/b/link/agent",
+      "ends": [
+        "swift",
+        "js",
+        "harness"
+      ],
+      "swiftPath": "/a/blink/agent",
+      "harnessPath": "/a/blink/agent",
+      "knownDrift": "suffix 不带前导斜杠：Swift/测试台直接拼成 /a/blink/agent，JS 会补斜杠成 /a/b/link/agent。三个调用点都传带斜杠的 suffix，生产不可达 → 记成漂移，不改行为"
+    },
+    {
+      "base": "https://host/a/b/",
+      "suffix": "/pair/claim",
+      "path": "/a/b/pair/claim",
+      "url": "wss://host/a/b/pair/claim",
+      "ends": [
+        "swift",
+        "js",
+        "harness"
+      ],
+      "swiftPath": "/a/b/pair/claim",
+      "harnessPath": "/a/b/pair/claim",
+      "knownDrift": null
+    },
+    {
+      "base": "https://host/a/b/",
+      "suffix": "/devices",
+      "path": "/a/b/devices",
+      "url": "wss://host/a/b/devices",
+      "ends": [
+        "swift",
+        "js",
+        "harness"
+      ],
+      "swiftPath": "/a/b/devices",
+      "harnessPath": "/a/b/devices",
+      "knownDrift": null
+    },
+    {
+      "base": "https://host/a/b/",
+      "suffix": "/devices/revoke",
+      "path": "/a/b/devices/revoke",
+      "url": "wss://host/a/b/devices/revoke",
+      "ends": [
+        "swift",
+        "js",
+        "harness"
+      ],
+      "swiftPath": "/a/b/devices/revoke",
+      "harnessPath": "/a/b/devices/revoke",
+      "knownDrift": null
+    },
+    {
+      "base": "https://host/a/b/",
+      "suffix": "/healthz",
+      "path": "/a/b/healthz",
+      "url": "wss://host/a/b/healthz",
+      "ends": [
+        "swift",
+        "js",
+        "harness"
+      ],
+      "swiftPath": "/a/b/healthz",
+      "harnessPath": "/a/b/healthz",
+      "knownDrift": null
+    },
+    {
+      "base": "http://127.0.0.1:8787",
+      "suffix": "/link/agent",
+      "path": "/link/agent",
+      "url": "ws://127.0.0.1:8787/link/agent",
+      "ends": [
+        "swift",
+        "js",
+        "harness"
+      ],
+      "swiftPath": "/link/agent",
+      "harnessPath": "/link/agent",
+      "knownDrift": null
+    },
+    {
+      "base": "http://127.0.0.1:8787",
+      "suffix": "link/agent",
+      "path": "/link/agent",
+      "url": "ws://127.0.0.1:8787/link/agent",
+      "ends": [
+        "swift",
+        "js",
+        "harness"
+      ],
+      "swiftPath": "link/agent",
+      "harnessPath": "/link/agent",
+      "knownDrift": "suffix 不带前导斜杠：Swift/测试台直接拼成 link/agent，JS 会补斜杠成 /link/agent。三个调用点都传带斜杠的 suffix，生产不可达 → 记成漂移，不改行为"
+    },
+    {
+      "base": "http://127.0.0.1:8787",
+      "suffix": "/pair/claim",
+      "path": "/pair/claim",
+      "url": "ws://127.0.0.1:8787/pair/claim",
+      "ends": [
+        "swift",
+        "js",
+        "harness"
+      ],
+      "swiftPath": "/pair/claim",
+      "harnessPath": "/pair/claim",
+      "knownDrift": null
+    },
+    {
+      "base": "http://127.0.0.1:8787",
+      "suffix": "/devices",
+      "path": "/devices",
+      "url": "ws://127.0.0.1:8787/devices",
+      "ends": [
+        "swift",
+        "js",
+        "harness"
+      ],
+      "swiftPath": "/devices",
+      "harnessPath": "/devices",
+      "knownDrift": null
+    },
+    {
+      "base": "http://127.0.0.1:8787",
+      "suffix": "/devices/revoke",
+      "path": "/devices/revoke",
+      "url": "ws://127.0.0.1:8787/devices/revoke",
+      "ends": [
+        "swift",
+        "js",
+        "harness"
+      ],
+      "swiftPath": "/devices/revoke",
+      "harnessPath": "/devices/revoke",
+      "knownDrift": null
+    },
+    {
+      "base": "http://127.0.0.1:8787",
+      "suffix": "/healthz",
+      "path": "/healthz",
+      "url": "ws://127.0.0.1:8787/healthz",
+      "ends": [
+        "swift",
+        "js",
+        "harness"
+      ],
+      "swiftPath": "/healthz",
+      "harnessPath": "/healthz",
+      "knownDrift": null
+    },
+    {
+      "base": "",
+      "suffix": "/link/agent",
+      "path": "/link/agent",
+      "url": "/link/agent",
+      "ends": [
+        "js"
+      ],
+      "swiftPath": null,
+      "harnessPath": null,
+      "knownDrift": null
+    },
+    {
+      "base": "",
+      "suffix": "link/agent",
+      "path": "/link/agent",
+      "url": "/link/agent",
+      "ends": [
+        "js"
+      ],
+      "swiftPath": null,
+      "harnessPath": null,
+      "knownDrift": "suffix 不带前导斜杠：Swift/测试台直接拼成 (空 base)，JS 会补斜杠成 /link/agent。三个调用点都传带斜杠的 suffix，生产不可达 → 记成漂移，不改行为"
+    },
+    {
+      "base": "",
+      "suffix": "/pair/claim",
+      "path": "/pair/claim",
+      "url": "/pair/claim",
+      "ends": [
+        "js"
+      ],
+      "swiftPath": null,
+      "harnessPath": null,
+      "knownDrift": null
+    },
+    {
+      "base": "",
+      "suffix": "/devices",
+      "path": "/devices",
+      "url": "/devices",
+      "ends": [
+        "js"
+      ],
+      "swiftPath": null,
+      "harnessPath": null,
+      "knownDrift": null
+    },
+    {
+      "base": "",
+      "suffix": "/devices/revoke",
+      "path": "/devices/revoke",
+      "url": "/devices/revoke",
+      "ends": [
+        "js"
+      ],
+      "swiftPath": null,
+      "harnessPath": null,
+      "knownDrift": null
+    },
+    {
+      "base": "",
+      "suffix": "/healthz",
+      "path": "/healthz",
+      "url": "/healthz",
+      "ends": [
+        "js"
+      ],
+      "swiftPath": null,
+      "harnessPath": null,
+      "knownDrift": null
+    }
+  ]
+}

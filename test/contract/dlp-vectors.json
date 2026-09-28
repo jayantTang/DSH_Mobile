@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "contract": "docs/relay-contract.json",
+  "what": "DLP v1 帧的共享向量：三端（连接器 JS / relay Py / iOS Swift）读同一份，逐行断言各自的行为。",
+  "notes": [
+    "本文件记录的是**现状**，不是理想态。knownDrift 那几行故意把已知漂移钉死——它们红不了，但那正是记账的意义：谁把漂移改掉，就会看到这些行需要跟着改。",
+    "字段：name / t / direction / hasId / js / py / swift / why。",
+    "js / py 取 \"ok\" 或 \"error: <文案>\"；swift 取 \"handled\"（switch 里有 case）或 \"ignored\"（落到 default: break 或表外提前返回）。",
+    "JS 只校验 device→agent（dlp.js:deviceFrameError 对非 device 帧立即返回 undefined），因此 agent→device 的行一律 \"ok\"。",
+    "unknown-frame 那一行是三端的前向兼容契约：不认识的 `t` 必须放行/忽略，不得报错、不得断开。"
+  ],
+  "vectors": [
+    { "name": "device/req", "t": "req", "direction": "deviceToAgent", "hasId": true, "js": "ok", "py": "ok", "swift": "handled", "why": "基本一元请求" },
+    { "name": "device/open", "t": "open", "direction": "deviceToAgent", "hasId": true, "js": "ok", "py": "ok", "swift": "handled", "why": "开流" },
+    { "name": "device/cancel", "t": "cancel", "direction": "deviceToAgent", "hasId": true, "js": "ok", "py": "ok", "swift": "handled", "why": "取消流" },
+    { "name": "device/eventResult", "t": "eventResult", "direction": "deviceToAgent", "hasId": true, "js": "ok", "py": "ok", "swift": "handled", "why": "对 host event 的回执" },
+    { "name": "device/ping", "t": "ping", "direction": "deviceToAgent", "hasId": false, "js": "ok", "py": "ok", "swift": "handled", "why": "心跳；不在 idFrames 里，不需要 id" },
+    { "name": "device/hello", "t": "hello", "direction": "deviceToAgent", "hasId": false, "js": "ok", "py": "ok", "swift": "ignored", "why": "knownDrift hello-unused：两端声明并放行，实际都不发；iOS 不认识它" },
+    { "name": "agent/res", "t": "res", "direction": "agentToDevice", "hasId": true, "js": "ok", "py": "ok", "swift": "handled", "why": "一元结果" },
+    { "name": "agent/item", "t": "item", "direction": "agentToDevice", "hasId": true, "js": "ok", "py": "ok", "swift": "handled", "why": "流元素" },
+    { "name": "agent/end", "t": "end", "direction": "agentToDevice", "hasId": true, "js": "ok", "py": "ok", "swift": "handled", "why": "流结束" },
+    { "name": "agent/streamError", "t": "streamError", "direction": "agentToDevice", "hasId": true, "js": "ok", "py": "ok", "swift": "handled", "why": "流出错" },
+    { "name": "agent/event", "t": "event", "direction": "agentToDevice", "hasId": false, "js": "ok", "py": "ok", "swift": "handled", "why": "广播事件；iOS 把值扇出给所有事件流" },
+    { "name": "agent/hostStatus", "t": "hostStatus", "direction": "agentToDevice", "hasId": false, "js": "ok", "py": "ok", "swift": "handled", "why": "knownDrift hostStatus-fields：连接器与 relay 的 info 字段不同，iOS 只读 online" },
+    { "name": "agent/pong", "t": "pong", "direction": "agentToDevice", "hasId": false, "js": "ok", "py": "ok", "swift": "handled", "why": "knownDrift ping-3-ways：连接器与 relay 都回，iOS 只 break" },
+    { "name": "agent/error", "t": "error", "direction": "agentToDevice", "hasId": false, "js": "ok", "py": "ok", "swift": "handled", "why": "knownDrift two-error-code-sets：默认 code 两端不同" },
+
+    { "name": "drift/hello-is-never-sent", "t": "hello", "direction": "agentToDevice", "hasId": false, "js": "ok", "py": "ok", "swift": "ignored", "why": "knownDrift hello-unused：hello 只出现在 device→agent 表里，agent→device 方向它根本不该出现；三端都不处理" },
+    { "name": "drift/reassembly-only-on-ios", "t": "item", "direction": "agentToDevice", "hasId": true, "js": "ok", "py": "ok", "swift": "handled", "why": "knownDrift reassembly-only-ios：帧本身三端都认，但『大帧被 relay 拆成多条 WebSocket 消息』只有 iOS 有 FrameAssembler 重组；连接器 ws.js 不做这件事。这一行把该帧钉在合法集合里，重组能力的差异由契约的 framing 段记录" },
+
+    { "name": "missing-id/res", "t": "res", "direction": "agentToDevice", "hasId": false, "js": "ok", "py": "error: res: missing `id`", "swift": "handled", "why": "knownDrift validation-asymmetric：**这一行是漂移本身**——JS 的 deviceFrameError 只校验 device→agent，Py 双向校验。两端的期望故意不同，改任一端都会让这行红" },
+    { "name": "missing-id/item", "t": "item", "direction": "agentToDevice", "hasId": false, "js": "ok", "py": "error: item: missing `id`", "swift": "handled", "why": "同上（knownDrift validation-asymmetric）" },
+    { "name": "missing-id/end", "t": "end", "direction": "agentToDevice", "hasId": false, "js": "ok", "py": "error: end: missing `id`", "swift": "handled", "why": "同上（knownDrift validation-asymmetric）" },
+    { "name": "missing-id/streamError", "t": "streamError", "direction": "agentToDevice", "hasId": false, "js": "ok", "py": "error: streamError: missing `id`", "swift": "handled", "why": "同上（knownDrift validation-asymmetric）" },
+    { "name": "missing-id/req", "t": "req", "direction": "deviceToAgent", "hasId": false, "js": "error: req: missing `id`", "py": "error: req: missing `id`", "swift": "handled", "why": "device→agent 方向两端一致；id 检查先于 method 检查" },
+    { "name": "missing-id/open", "t": "open", "direction": "deviceToAgent", "hasId": false, "js": "error: open: missing `id`", "py": "error: open: missing `id`", "swift": "handled", "why": "同上" },
+    { "name": "missing-id/cancel", "t": "cancel", "direction": "deviceToAgent", "hasId": false, "js": "error: cancel: missing `id`", "py": "error: cancel: missing `id`", "swift": "handled", "why": "同上" },
+    { "name": "missing-id/eventResult", "t": "eventResult", "direction": "deviceToAgent", "hasId": false, "js": "error: eventResult: missing `id`", "py": "error: eventResult: missing `id`", "swift": "handled", "why": "同上" },
+
+    { "name": "req-without-method", "t": "req", "direction": "deviceToAgent", "hasId": true, "js": "error: req: missing `method`", "py": "error: req: missing `method`", "swift": "handled", "why": "method 是 req 的必需字段；两端一致" },
+    { "name": "open-without-endpoint", "t": "open", "direction": "deviceToAgent", "hasId": true, "js": "error: open: missing `endpoint`", "py": "error: open: missing `endpoint`", "swift": "handled", "why": "endpoint 是 open 的必需字段；两端一致" },
+
+    { "name": "unknown-frame", "t": "somethingNew", "direction": "unknown", "hasId": false, "js": "ok", "py": "ok", "swift": "ignored", "why": "前向兼容：三端都必须放行/忽略未知帧，不得报错、不得断开。将来加新帧类型时这条保证旧端不炸" }
+  ]
+}
