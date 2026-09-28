@@ -1,8 +1,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import {
   apply, buildArgs, describeSend, discardPrepared, inject, name, publish,
   renderResult, resolveSource, scriptPath,
@@ -156,11 +157,21 @@ test('describeSend names the file, its size and the caption', () => {
 })
 
 test('scriptPath finds the installed skill', () => {
-  // The plugin deliberately reuses the skill's script rather than keeping a
-  // second copy: two implementations of the same capture quirks would drift.
+  // This one only proves the script is reachable *from a repository checkout*
+  // (candidate 3). An npm user has no `skills/` directory, so what actually
+  // saves them is the copy inside the package — asserted separately below.
   const path = scriptPath()
   assert.ok(path, 'the send-image script was not found')
   assert.match(path, /send-image\.mjs$/)
+})
+
+test('the package ships its own copy of the capture script', () => {
+  // The package's own copy is what an npm install runs; without it the plugin
+  // installs fine and then fails at the first capture. `check:contracts` keeps
+  // it byte-identical to the canonical copy under `skills/`.
+  const inPackage = fileURLToPath(new URL('../lib/send-image.mjs', import.meta.url))
+  assert.ok(existsSync(inPackage), `the package must ship ${inPackage}`)
+  assert.ok(readFileSync(inPackage, 'utf8').trim().length > 0, 'it must not be empty')
 })
 
 test('publish hands the bytes to the attachment service', async () => {

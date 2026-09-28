@@ -1,0 +1,9 @@
+{
+  "note": "send-image 的采集脚本有两份逐字节相同的副本：canonical 在 skills/ 下（skill 用），file 在 npm 包里（npm 用户用，仓库里没有 skills/ 时唯一能命中的候选）。改 canonical 之后跑 node scripts/dev/sync-send-image-script.mjs 同步，check:contracts 会拦漂移。",
+  "copies": [
+    {
+      "file": "plugins/send-image/lib/send-image.mjs",
+      "canonical": "skills/send-image/send-image.mjs"
+    }
+  ]
+}

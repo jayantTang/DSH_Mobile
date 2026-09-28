@@ -32,12 +32,30 @@ const run = promisify(execFile)
 const name = 'tool-send-image'
 const inject = ['tools', 'attachments']
 
-/** Where the script lives: the installed skill first, then the checkout. */
+/**
+ * Where the script lives.
+ *
+ * Three candidates, in order:
+ *   1. the installed skill — a user who ran the installer keeps the script they
+ *      already had, so nothing changes for them;
+ *   2. **the copy inside this package** — this is the one npm users get. A
+ *      `dsh plugin add dsh-plugin-send-image` install has no repository around
+ *      it, so candidate 3 can never resolve; without this the plugin installs
+ *      but cannot actually capture anything;
+ *   3. the `skills/` directory of a repository checkout — only resolves inside
+ *      a checkout, kept last for local development and tests.
+ *
+ * Candidates 2 and 3 must stay byte-identical: `check:contracts` compares them
+ * (via `test/contract/send-image-script.json`). Edit the canonical copy under
+ * `skills/` and run `node scripts/dev/sync-send-image-script.mjs` to refresh.
+ */
 function scriptPath() {
   const home = process.env.DSH_HOME || join(homedir(), '.dsh')
   const candidates = [
     join(home, 'skills', 'send-image', 'send-image.mjs'),
-    // 同一个仓库里的 skill：按本模块定位，不写任何人的家目录。
+    // 包内那份：npm 用户唯一的来源。
+    fileURLToPath(new URL('./send-image.mjs', import.meta.url)),
+    // 仓库 checkout 里的 skill：只在仓库里成立。
     fileURLToPath(new URL('../../../skills/send-image/send-image.mjs', import.meta.url)),
   ]
   return candidates.find((path) => existsSync(path))
@@ -233,7 +251,9 @@ function apply(ctx) {
       if (!script) {
         return {
           ok: false,
-          error: '找不到 send-image.mjs；运行 scripts/install/install-skills.sh 安装',
+          error: '找不到采集脚本（send-image.mjs），这个插件本应自带它。'
+            + '请重新安装 dsh-plugin-send-image（例如 dsh plugin add dsh-plugin-send-image）；'
+            + '若只是手工删过文件，重装即可恢复。',
         }
       }
 
