@@ -43,7 +43,9 @@
     "demo:session": "node scripts/dev/demo-session.mjs",
     "check:secrets": "node scripts/dev/check-secrets.mjs",
     "check:docs": "node scripts/dev/check-docs.mjs",
+    "check:contracts": "node scripts/dev/check-contracts.mjs",
+    "check:i18n": "node scripts/dev/check-localization.mjs",
     "restart": "node scripts/dev/dsh-restart.mjs",
-    "test:scripts": "node --test scripts/dev/dsh-restart.test.mjs skills/send-image/send-image.test.mjs"
+    "test:scripts": "node --test scripts/dev/dsh-restart.test.mjs scripts/dev/check-contracts.test.mjs test/tools/relaypair.test.mjs skills/send-image/send-image.test.mjs"
   }
 }

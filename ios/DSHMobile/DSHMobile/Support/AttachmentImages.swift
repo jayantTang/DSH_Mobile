@@ -202,13 +202,20 @@ final class AttachmentImages {
     /// appeared) is exactly the one that is hardest to stage. Injected failure
     /// only; everything after it — the placeholder, the tap, the reload — is the
     /// real code.
+    ///
+    /// **Release 里恒为 0**（等于没有这个钩子），所以 `shouldInjectFailure`
+    /// 也恒为 false，发布产物没有任何注入口。
     private static let injectedFailures: Int = {
+        #if DEBUG
         let arguments = ProcessInfo.processInfo.arguments
         guard let index = arguments.firstIndex(of: "-DSHFailAttachmentLoad"),
               index + 1 < arguments.count,
               let count = Int(arguments[index + 1])
         else { return 0 }
         return max(0, count)
+        #else
+        return 0
+        #endif
     }()
 
     private var injectedAttempts: [String: Int] = [:]

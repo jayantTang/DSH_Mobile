@@ -29,9 +29,9 @@ final class SettingsModel {
         var label: String? {
             switch self {
             case .idle: return nil
-            case .saving: return "保存中…"
-            case .saved: return "已保存"
-            case .failed: return "保存失败"
+            case .saving: return String(localized: "保存中…")
+            case .saved: return String(localized: "已保存")
+            case .failed: return String(localized: "保存失败")
             }
         }
     }
@@ -56,8 +56,8 @@ final class SettingsModel {
 
         var label: String {
             switch self {
-            case .direct: return "局域网直连"
-            case .relay: return "中转"
+            case .direct: return String(localized: "局域网直连")
+            case .relay: return String(localized: "中转")
             case .unknown: return String(localized: "未确定")
             }
         }
@@ -132,9 +132,57 @@ final class SettingsModel {
         self.store = store
     }
 
+    /// The screen's read, in flight at most once at a time.
+    ///
+    /// The sheet calls this at launch and again when the link comes up
+    /// (`SettingsView`'s `onChange`), and the two overlap by construction: the
+    /// launch read is still waiting for the client at the moment the handshake
+    /// installs it. A second call therefore **joins** the read already running
+    /// rather than fetching everything beside it, and `runReads` is what makes
+    /// that join sufficient — it reads a second time when the first pass's
+    /// bounded waits gave up just before the link landed.
+    private var readTask: Task<Void, Never>?
+
     func start() async {
+        await readScreen()
+    }
+
+    /// Reads both halves of the screen: the document from the computer, then the
+    /// device list from the relay.
+    private func readScreen() async {
+        if let readTask {
+            await readTask.value
+            // The read we joined can have finished a moment before the link
+            // landed. One more pass here — bounded, and skipped whenever the
+            // document is already in — closes that ordering gap rather than
+            // relying on who woke first.
+            if document == nil, store?.client != nil { await runReads() }
+            return
+        }
+        let task = Task { [weak self] in
+            guard let self else { return }
+            await self.runReads()
+        }
+        readTask = task
+        await task.value
+        readTask = nil
+    }
+
+    /// One read, plus one more pass if the link arrived too late for it.
+    ///
+    /// Both `load()` and `loadDevices()` wait for the link with a cap, so a
+    /// handshake slower than the cap can land in the gap between "the waits gave
+    /// up" and "the read finished": the document would stay missing while the
+    /// device list (which was still waiting) came back. A second pass, now that
+    /// there is a client, closes that gap. Bounded to two passes on purpose —
+    /// this is a repair for a late link, not a retry loop.
+    private func runReads() async {
         await load()
         await loadDevices()
+        if document == nil, store?.client != nil {
+            await load()
+            await loadDevices()
+        }
     }
 
     func stop() {
@@ -155,9 +203,26 @@ final class SettingsModel {
         }
     }
 
+    /// Reads the settings document, waiting out the launch window first.
+    ///
+    /// The sheet follows the connection instead of waiting for it, so this can
+    /// run before the handshake has installed a client: launched straight into
+    /// settings (`-DSHOpenScreen settings`), and for anyone who taps the gear
+    /// while the link is still coming up, `start()` runs with `store.client`
+    /// still nil. Failing here left the screen showing「已连接」beside
+    ///「连接方式 未确定」with the address, home directory, credentials and about
+    /// rows all missing, and nothing retried — only「刷新」brought them back.
+    /// That is the same launch race that used to hide the device section, one
+    /// function over; waiting is free once the link is up, because the first
+    /// check finds the client and no sleep happens.
+    ///
+    /// The wait is bounded, so the screen is read again when the link comes up
+    /// (`start()`, which the sheet's `onChange` calls): a handshake slower than
+    /// the cap, or one that failed and was retried by the store's watcher, then
+    /// fills the page on its own.
     func load() async {
-        guard let client = store?.client else {
-            phase = .failed("尚未连接")
+        guard let client = await waitForClient() else {
+            phase = .failed(String(localized: "尚未连接"))
             return
         }
         if document == nil { phase = .loading }
@@ -176,12 +241,35 @@ final class SettingsModel {
         await loadAbout()
     }
 
+    /// Waits for the client the handshake installs, up to a short cap.
+    ///
+    /// Deliberately the same shape as `loadDevices`: one interval, one cap, and
+    /// the same early exit — a handshake that has already failed has no client
+    /// coming right now, so stop waiting and leave the original「尚未连接」in
+    /// place rather than inventing a new message. The store's watcher keeps
+    /// retrying, and the next `readScreen` picks the link up when it lands.
+    private func waitForClient(retries: Int = 20, interval: Duration = .milliseconds(250)) async -> DSHClient? {
+        var attempt = 0
+        while attempt < retries, !Task.isCancelled {
+            if let client = store?.client { return client }
+            if let state = store?.state, case .failed = state { return nil }
+            try? await Task.sleep(for: interval)
+            attempt += 1
+        }
+        return store?.client
+    }
+
     /// Pull-to-refresh: keeps the edited draft of a namespace the user is still
     /// typing into, and adopts everything else from the host.
+    ///
+    /// The device list is re-read too: it comes from the relay rather than from
+    /// the computer, so `load()` cannot bring it back, and a section that gave up
+    /// while the link was still coming up would otherwise stay gone until the
+    /// sheet was closed and reopened.
     func refresh() async {
         isRefreshing = true
         defer { isRefreshing = false }
-        await load()
+        await readScreen()
     }
 
     // MARK: - Paired devices
@@ -198,16 +286,30 @@ final class SettingsModel {
     /// computer, the device list comes from the relay. One being slow or broken
     /// must not blank the other.
     ///
-    /// The section can be opened before the relay connection is up (the sheet
-    /// follows the connection, it does not wait for it), so a missing carrier is
-    /// retried briefly instead of being treated as "this transport has no
-    /// devices" — that distinction is what keeps a direct connection from
-    /// showing an empty list.
+    /// Whether the section can be shown at all is a property of the **transport**,
+    /// not of the handshake: a direct (DEBUG) link has nowhere to send the
+    /// request, while a relay link can answer it as soon as its carrier is up.
+    /// The sheet follows the connection instead of waiting for it, so deciding
+    /// this from the live carrier made the section appear only when the
+    /// connection happened to be up before the sheet opened — that is the race
+    /// that made TC-UI-01's step 8 fail three runs in a row. Reading the resolved
+    /// profile (available before the handshake) shows the section straight away,
+    /// with a spinner until the list arrives.
     func loadDevices(retries: Int = 20, interval: Duration = .milliseconds(250)) async {
+        showDevicesWhenManageable()
+
+        // The carrier only appears once the handshake finishes, so wait for it
+        // rather than concluding "this transport has no devices" from a link
+        // that is still connecting.
         var admin = deviceAdmin
         var attempt = 0
         while admin == nil, attempt < retries, !Task.isCancelled {
-            if case .connected = store?.state {} else { break }
+            // A failed handshake is terminal — no carrier is coming — so stop
+            // waiting and hide the section rather than spinning forever.
+            if let state = store?.state, case .failed = state { break }
+            // The profile can be adopted a beat after the sheet opens (both are
+            // launch-time tasks), so keep re-checking instead of deciding once.
+            showDevicesWhenManageable()
             try? await Task.sleep(for: interval)
             admin = deviceAdmin
             attempt += 1
@@ -218,8 +320,6 @@ final class SettingsModel {
             devicesPhase = .idle
             return
         }
-        devicesAvailable = true
-        if devices.isEmpty { devicesPhase = .loading }
         do {
             let list = try await admin.devices()
             devices = list.active
@@ -229,6 +329,25 @@ final class SettingsModel {
             devicesError = Self.describe(error)
             devicesPhase = .failed(Self.describe(error))
         }
+    }
+
+    /// Shows the device section once this link is known to be able to manage
+    /// devices, and puts it into its loading state the first time.
+    private func showDevicesWhenManageable() {
+        guard !devicesAvailable, Self.canManageDevices(store) else { return }
+        devicesAvailable = true
+        if devices.isEmpty { devicesPhase = .loading }
+    }
+
+    /// Whether paired devices can be managed at all.
+    ///
+    /// Device management is a relay operation, so the answer is exactly "the
+    /// resolved transport is the relay". `endpoint(from:)` already resolves which
+    /// profile this phone is on — including the fallback to a single saved
+    /// profile before the handshake — so the two cannot drift apart.
+    private static func canManageDevices(_ store: ConnectionStore?) -> Bool {
+        if case .relay = endpoint(from: store).transport { return true }
+        return false
     }
 
     /// Revokes one pairing and drops it from the list.
@@ -252,11 +371,12 @@ final class SettingsModel {
 
     /// A device row's "last seen" text.
     func lastSeenLabel(for device: RelayDevice) -> String {
-        guard let seen = device.lastSeenAt else { return "尚未连接过" }
+        guard let seen = device.lastSeenAt else { return String(localized: "尚未连接过") }
         let formatter = RelativeDateTimeFormatter()
-        formatter.locale = Locale(identifier: "zh_Hans_CN")
+        // `Locale.current`, not a hardcoded `zh_Hans_CN`: the row read on an
+        // English phone used to say「3分钟前」.
         formatter.unitsStyle = .short
-        return "最后在线 " + formatter.localizedString(for: seen, relativeTo: Date())
+        return String(localized: "最后在线 \(formatter.localizedString(for: seen, relativeTo: Date()))")
     }
 
     private func adopt(_ loaded: SettingsDocument) {
@@ -354,7 +474,7 @@ final class SettingsModel {
         let dirty = dirtyKeys[ns] ?? []
         guard !dirty.isEmpty else { return }
         guard document?.writable == true else {
-            saveStates[ns] = .failed("本部署的设置为只读。")
+            saveStates[ns] = .failed(String(localized: "本部署的设置为只读。"))
             return
         }
 
@@ -446,16 +566,16 @@ final class SettingsModel {
 
     /// Stores a credential value. The value never round-trips back.
     func setCredential(ref: String, value: String) async throws {
-        guard let client = store?.client else { throw DSHTransportError.notAuthenticated("尚未连接") }
+        guard let client = store?.client else { throw DSHTransportError.notAuthenticated(String(localized: "尚未连接")) }
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { throw DSHTransportError.malformedResponse("密钥不能为空") }
+        guard !trimmed.isEmpty else { throw DSHTransportError.malformedResponse(String(localized: "密钥不能为空")) }
         try await client.setCredential(ref: .string(ref), value: trimmed)
         await loadCredentials()
         await reloadDocument()
     }
 
     func clearCredential(ref: String) async throws {
-        guard let client = store?.client else { throw DSHTransportError.notAuthenticated("尚未连接") }
+        guard let client = store?.client else { throw DSHTransportError.notAuthenticated(String(localized: "尚未连接")) }
         try await client.unsetCredential(ref: .string(ref))
         await loadCredentials()
         await reloadDocument()
@@ -566,13 +686,13 @@ final class SettingsModel {
         if let failure = error as? DSHRPCFailure {
             switch failure.code {
             case "settings-conflict":
-                return "设置已在其他位置更新。请刷新后重试。"
+                return String(localized: "设置已在其他位置更新。请刷新后重试。")
             case "settings-rejected", "gateway/bad-request", "bad-request":
-                return "本部署没有接受这些值：\(failure.message)"
+                return String(localized: "本部署没有接受这些值：\(failure.message)")
             case "credentials/credential-rejected", "credential-rejected":
-                return "提供方拒绝了这次凭据写入：\(failure.message)"
+                return String(localized: "提供方拒绝了这次凭据写入：\(failure.message)")
             case "gateway/lookup-not-found", "settings/unavailable":
-                return "本部署没有可用的设置提供方。"
+                return String(localized: "本部署没有可用的设置提供方。")
             default:
                 return failure.message
             }

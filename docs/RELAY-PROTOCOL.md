@@ -41,10 +41,15 @@ Relay 只做两件事：**鉴权**与**按 `agentId` 转发**。它不解析 DLP
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | `GET`  | `/healthz` | 健康检查，返回 `{"ok":true,"version":1}` |
+| `GET`  | `/stats` | **运维侧**实时负载与流量（不属于协议，见 §5.3）；**仅回环可达**（回环校验 + 网关显式拒绝，两半缺一不可） |
 | `WS`   | `/link/agent?agentId=<id>` | 电脑侧连接器接入；`Authorization: Bearer <agentToken>` |
 | `WS`   | `/link/device?agentId=<id>` | 手机侧接入；`Authorization: Bearer <deviceToken>` |
 | `POST` | `/pair/claim` | 手机用配对码换取 `deviceToken` |
 | `POST` | `/pair/refresh` | 刷新 `deviceToken`（长期使用） |
+| `POST` | `/pair/code` | 电脑侧用 agent secret 铸一次性配对码 |
+| `POST` | `/agents/enroll` | 用邀请码自助登记，换 `agentId` / `agentSecret` |
+| `GET`  | `/devices` | 用 device token 列出**自己的**配对设备 |
+| `POST` | `/devices/revoke` | 用 device token 撤销自己的某台配对设备 |
 | `OPTIONS` | `*` | CORS 预检 |
 
 `agentId` 也允许放在首帧 `hello` 中；query 参数优先。
@@ -92,6 +97,7 @@ WS 升级阶段失败直接回 HTTP `401` / `403`（不进入 WS 状态机）。
 | `cancel` | `id` | 取消逻辑流 |
 | `eventResult` | `id`, `result` | 回应宿主 `$events/result`（waterfall 应答） |
 | `ping` | `ts` | 心跳，agent 回 `pong` |
+| `hello` | `agentId`? | **v1 保留，当前两端都不发**：`agentId` 走 query 参数（query 优先）。声明在表里只为前向兼容，三端都不得依赖它 |
 
 ### 3.2 agent → device
 
@@ -109,6 +115,13 @@ WS 升级阶段失败直接回 HTTP `401` / `403`（不进入 WS 状态机）。
 `id` 为 device 生成的字符串，唯一标识一次 RPC 或一条逻辑流。agent 必须原样回填。
 
 `error` 对象统一为 `{"code":string,"message":string,"details":object}`，与 DSH 的失败形状一致。
+
+**机器可读的唯一事实来源是 [`relay-contract.json`](relay-contract.json)**：上面两张帧类型表、
+`id` 帧集合、默认错误码、关闭码与 `hostStatus.info` 的字段清单都在那里，三端各有测试读它
+（连接器 `plugins/mobile-link/test/dlp-contract.test.js`、relay `relay/tests/test_dlp_contract.py`、
+iOS `DSHKit/Tests/DSHKitTests/DLPContractTests.swift`）。它同时**记录已知漂移**（心跳三套、
+校验不对称、错误码两套、`hostStatus.info` 字段不一致、只有 iOS 做分片重组）——那些是记账，
+不是认可。改动帧协议时改那份文件，不要改本文的表格了事。
 
 ### 3.3 示例
 
@@ -193,9 +206,9 @@ WS 升级阶段失败直接回 HTTP `401` / `403`（不进入 WS 状态机）。
 
 | 限制 | 默认 | 生效时的可观测行为 |
 |---|---|---|
-| 单设备出口限速 | 关 | 设备**不会掉帧**，只是收得慢：relay 在写侧限速，必要时把一个大帧拆成多个 WebSocket 消息（通道是流，客户端照常重组） |
-| 单设备每日（UTC）出口额度 | 关 | 超额时先收到 `{"t":"error","code":"quota/device-daily","details":{"limitBytes":N}}`，随后连接以 **4011** 关闭；次日 UTC 零点后可重新连接 |
-| 每 agent 设备数上限 | 关 | 超出时 device WebSocket 在升级前被拒（HTTP **403**）。**同一 deviceId 的重连不占第二个名额**，所以手机不会把自己锁在外面 |
+| 单设备出口限速 | 关 | 设备**不会掉帧**，只是收得慢：relay 在写侧限速，必要时把一个大帧拆成多条 WebSocket 消息。**WebSocket 消息不是字节流**：relay 会把超过阈值的大帧拆开发，**客户端必须自己重组**（iOS 见 `DSHKit/FrameAssembler.swift`，连接器与未来的客户端同样必须），否则会把第一片当畸形 JSON 丢掉、把余下的当垃圾，背后的调用永远不返回 |
+| 单设备每日（服务器本地日）出口额度 | 关 | 计数按 `(deviceId, 本地日)` 从 `usageDaily` 读，**重连与 relay 重启都不会重置**。超额时先收到 `{"t":"error","code":"quota/device-daily","details":{"limitBytes":N}}`，随后连接以 **4011** 关闭；次日本地零点后可重新连接 |
+| 每 agent 设备数上限 | 关 | 超出时 device 收到 `{"t":"error","code":"limit/devices","fatal":true}`（DLP `error` 帧，不是 HTTP 403），随后以 **4012** 干净关闭。**同一 deviceId 的重连不占第二个名额**，所以手机不会把自己锁在外面 |
 
 relay 的关闭码（应用区间）：
 
@@ -206,10 +219,90 @@ relay 的关闭码（应用区间）：
 | `4009` | 保留：限速相关的断开（当前实现用限速而非断开，故未使用） |
 | `4010` | agent 不在线或已饱和 |
 | `4011` | 单设备每日额度用尽 |
+| `4012` | 该 agent 的设备数已达上限（同意升级后立刻以此码关闭，先发 `error` 帧） |
 
-运维侧的实时数据：`GET /stats`（**仅回环**，不属于协议）给出当前 agent/设备数、生效中的
-限制、以及每个设备本次启动以来的出口字节数与被限速时长。主机的网卡计数器回答不了
-「是哪台设备在用带宽」——它混进了 SSH 与 OTA 下载；这份数据是 relay 自己算的。
+### 5.2 限流与信任边界
+
+relay 的两个开放端点（`/pair/claim`、`/agents/enroll`）都按**客户端标识**限流。这个标识
+怎么算出来，是 relay 唯一的信任边界，规则只有一条：
+
+> **只有来源是回环地址时，才采信 `X-Forwarded-For`；否则一律用 TCP 对端地址。**
+
+具体地（实现见 `relay/api.py` 的 `is_loopback` 与 `client_identifier`，**只有这一处**）：
+
+| 对端（`request.remote`） | `X-Forwarded-For` | 用作限流键的地址 |
+|---|---|---|
+| 回环 且 头里有可用地址 | `A, B` | **`A`**（最左一个；在替换语义下它就是唯一那一个） |
+| 回环 且 头缺失/为空 | — | 对端地址（此时就是网关，等于全网一个桶） |
+| 非回环 | 任意（可伪造） | **对端地址**；头**完全忽略** |
+
+为什么必须是这个方向：请求头是调用方可以自己写的。若对非回环来源也采信它，任何人只要发一个
+`X-Forwarded-For: <别人的地址>` 就能把失败次数记到别人头上——既躲开自己的额度，又能把别人
+锁在门外。反过来（少采信一次）最坏只是分桶变粗，不会变成绕过，所以宁可保守。
+
+**部署方的义务**：网关**必须**把真实来源写进 `X-Forwarded-For`（`deploy/Caddyfile.snippet`
+已经加了 `header_up X-Forwarded-For {remote_host}`）。Caddy 用 `header_up` 把这个头
+**替换**成真实对端地址（实测 v2.11.4；**不是**追加）——所以客户端自带的值得不到利用。
+缺了它也不会造成绕过——relay 会退回用对端地址，也就是**所有调用方共用一个限流桶**：
+一个人打满，别人一起被限。**若换成会追加的网关**，就必须把取值改成取**最后一个**
+（或改用 `X-Real-IP`），否则可被伪造；当前实现取最左（`relay/api.py` 的
+`client_identifier`）只对替换语义安全。
+
+两个端点的桶：
+
+- `/pair/claim`：按客户端标识分桶，10 次失败 / 5 分钟（阈值是产品参数，不随部署变）。桶满即
+  返回 `429`，一次成功认领清空该桶。
+- `/agents/enroll`：**两个桶都在记账，但只有邀请码那个桶拦人**——按邀请码哈希一个，按客户端
+  标识一个，各 5 次失败 / 15 分钟。
+
+  - **邀请码桶**是准入闸门：同一个码被猜错 5 次后，此后凡是再提交这个码一律 `429`，不论来源。
+  - **客户端桶**是失败来源的记录：它把这台来源的每一次失败累计下来（运维可查，用于观察谁在
+    猜），但**不否决一个有效邀请码**。
+
+  这是 2026-09-25 owner 定下的口径：**有效邀请码是准入通过的充分条件**。邀请码是运营方主动
+  决定放人的凭据，一段失败历史是「值得盯」，不是「可以推翻这个决定」；因此一个来源先失败 5 次
+  之后再拿到有效码，照样放行。
+
+  **这个口径的代价要写清楚：客户端桶记账，但不拦人。** 它挡不住「换码继续猜」——真正拦人的是
+  **每个码自己的 5 次额度**：同一个码被猜错 5 次后，此后凡提交这个码一律 429，与来源无关；
+  换一个码就等于换一份新额度，所以同一来源对一批全新的未知码可以一直猜下去（实测：被记账
+  10 次以上的来源，对 3 个新码各猜 5 次，15 次全部 404、无一次 429）。客户端桶的价值是让运维
+  看得见「谁在猜」，不是拦人。
+
+  若需要「同一来源换码也限速」，做法是让客户端桶**只在码无效时**参与拦截；那是一个新的口径
+  决定，本轮没有做。
+
+  一次成功兑换会清空两个桶。
+
+### 5.3 `/stats` 的对外面
+
+`GET /stats` 给出当前 agent/设备数、生效中的限制、以及每个设备本次启动以来的出口字节数与被
+限速时长。主机的网卡计数器回答不了「是哪台设备在用带宽」——它混进了 SSH 与 OTA 下载；这份
+数据是 relay 自己算的。
+
+**它只应当能从回环读到，而这由两半各自独立保证**：
+
+1. relay 侧：handler 拒绝一切非回环来源（`is_loopback`），返回 **404**——不是 403，403 等于
+   告诉探测者「这里确实有个东西」；
+2. 网关侧：`deploy/Caddyfile.snippet` 对 `/dsh-link/stats` 与 `/stats` 有**显式拒绝**，
+   请求根本到不了 relay。
+
+两半缺一不可：只有第 2 条时，一旦站点多了一条通往 relay 的路由、或 relay 换到非回环监听，
+页面立刻就公开了；只有第 1 条时，网关一旦全量转发，同样公开。页面上是设备名与各自的字节数，
+不是无关紧要的数据，所以两边都留着。
+
+**网关那半必须写成 `handle` 块，不能写成裸的 `respond @relay_stats`。** Caddy 会对指令排序，
+裸 `respond` **无论写在片段哪个位置**都排在 `handle_path /dsh-link/*` 之后，于是公网请求被代理
+到 relay（TCP 对端是网关自己＝回环），relay 的回环校验放行，两半同时失效、返回 200 加完整
+stats 页——这正是 2026-09-28 批 1 测试抓到的 CI-01。改成 `handle` 之后，`handle` 块之间按路径
+精确度排序，`/dsh-link/stats` 比 `/dsh-link/*` 更精确，所以先于代理被求值。
+
+这条**只有真实请求能验**：`caddy adapt` 产物看着正常、片段文本看着也对，运行时照样漏。
+回归测试在 `relay/tests/test_caddy_runtime.py`（真实 caddy + 真实 relay 进程 + 真实 HTTP 请求），
+不要把它退化成对片段文本的正则断言。
+
+运维正常读它的方式是在主机上（或经 SSH）`curl -s localhost:8787/stats`；带
+`Accept: text/html` 时同一份数据渲染成自刷新页面。
 
 ---
 

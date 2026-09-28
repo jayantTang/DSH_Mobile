@@ -4,6 +4,28 @@ import Foundation
 import FoundationNetworking
 #endif
 
+/// DLP v1 帧类型词表 —— 与 `docs/relay-contract.json` 同步（测试 `DLPContractTests` 钉住）。
+///
+/// 这张表是**活的**：它既被编码侧引用（下面几个 `Encodable` 结构体的 `t`），
+/// 也被解码侧当成过滤器。给 device 方向增加一个能处理的帧类型，必须同时更新这里，
+/// 而这里被契约测试钉住，契约又被三端共享。
+enum DLPFrames {
+    static let request = "req"
+    static let open = "open"
+    static let cancel = "cancel"
+    static let eventResult = "eventResult"
+    static let ping = "ping"
+    static let deviceToAgent: Set<String> = [request, open, cancel, eventResult, ping, "hello"]
+    static let agentToDevice: Set<String> = ["res", "item", "end", "streamError", "event", "hostStatus", "pong", "error"]
+    static let idFrames: Set<String> = [request, open, cancel, "res", "item", "end", "streamError", eventResult]
+}
+
+/// DLP 协议版本（`relay/dlp.py:PROTOCOL_VERSION`）。
+let dlpProtocolVersion = 1
+
+/// 单帧字节上限，与 DSH 的图片附件上限对齐（`relay/dlp.py:MAX_FRAME_BYTES`）。
+let dlpMaxFrameBytes = 32 * 1024 * 1024
+
 /// How to reach a DSH host through a relay.
 public struct LinkConfiguration: Sendable, Hashable {
     /// Relay origin, e.g. `https://relay.example.com`.
@@ -86,14 +108,14 @@ public actor LinkCarrier: DSHCarrier {
     }
 
     private struct RequestFrame<Args: Encodable & Sendable>: Encodable {
-        let t = "req"
+        let t = DLPFrames.request
         let id: String
         let method: String
         let args: Args
     }
 
     private struct OpenFrame<Args: Encodable & Sendable>: Encodable {
-        let t = "open"
+        let t = DLPFrames.open
         let id: String
         let endpoint: String
         let args: Args
@@ -105,7 +127,7 @@ public actor LinkCarrier: DSHCarrier {
     }
 
     private struct EventResultFrame: Encodable {
-        let t = "eventResult"
+        let t = DLPFrames.eventResult
         let id: String
         let result: JSONValue
     }
@@ -351,7 +373,7 @@ public actor LinkCarrier: DSHCarrier {
 
     private func sendCancel(streamId: String) async {
         streams[streamId] = nil
-        try? await send(IdFrame(t: "cancel", id: streamId))
+        try? await send(IdFrame(t: DLPFrames.cancel, id: streamId))
     }
 
     private func forgetStream(streamId: String) {
@@ -431,7 +453,7 @@ public actor LinkCarrier: DSHCarrier {
     }
 
     private struct PingFrame: Encodable {
-        let t = "ping"
+        let t = DLPFrames.ping
         let ts: TimeInterval
     }
 
@@ -513,6 +535,8 @@ public actor LinkCarrier: DSHCarrier {
 
     private func handle(_ data: Data) {
         guard let frame = try? JSONDecoder().decode(IncomingFrame.self, from: data) else { return }
+        // 契约：docs/relay-contract.json。未知 kind 照旧忽略（与 default: break 等价）。
+        guard DLPFrames.agentToDevice.contains(frame.t) else { return }
 
         switch frame.t {
         case "res":

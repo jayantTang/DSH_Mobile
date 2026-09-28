@@ -72,7 +72,11 @@ struct Badge: View {
     }
 
     var body: some View {
-        Text(text)
+        // `text` is a `String`, so `Text(text)` would be verbatim and never reach
+        // Localizable.strings — every badge would read Chinese on an English
+        // phone. Looking the value up (and falling back to it unchanged) keeps
+        // data-shaped badges (`Badge(text: ref)`, byte counts) behaving the same.
+        Text(String(localized: String.LocalizationValue(text)))
             .font(DSHTheme.Typography.micro)
             .foregroundStyle(tone.foreground)
             .padding(.horizontal, 6)

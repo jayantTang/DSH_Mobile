@@ -435,7 +435,7 @@ enum SettingsLabels {
     /// A plain-language hint derived from the schema's own constraints.
     static func patternHint(_ meta: [String: JSONValue]) -> String? {
         guard meta["pattern"] != nil else { return nil }
-        return "需匹配主机要求的格式"
+        return String(localized: "需匹配主机要求的格式")
     }
 }
 
@@ -445,17 +445,17 @@ enum SettingsValueText {
         guard let value else { return "—" }
         switch value {
         case .null: return "—"
-        case .bool(let flag): return flag ? "开" : "关"
+        case .bool(let flag): return flag ? String(localized: "开") : String(localized: "关")
         case .int, .double: return numberText(value)
-        case .string(let text): return text.isEmpty ? "（空）" : text
+        case .string(let text): return text.isEmpty ? String(localized: "（空）") : text
         case .array(let items):
-            if items.isEmpty { return "（空列表）" }
+            if items.isEmpty { return String(localized: "（空列表）") }
             if items.count <= 3, items.allSatisfy({ $0.stringValue != nil || $0.intValue != nil || $0.boolValue != nil }) {
                 return items.map { scalarText($0) }.joined(separator: "、")
             }
-            return "\(items.count) 项"
+            return String(localized: "\(items.count) 项")
         case .object(let object):
-            if object.isEmpty { return "（空对象）" }
+            if object.isEmpty { return String(localized: "（空对象）") }
             return object.keys.sorted().prefix(3).joined(separator: "、") + (object.count > 3 ? " …" : "")
         }
     }
@@ -464,7 +464,7 @@ enum SettingsValueText {
         switch value {
         case .string(let text): return text
         case .int, .double: return numberText(value)
-        case .bool(let flag): return flag ? "开" : "关"
+        case .bool(let flag): return flag ? String(localized: "开") : String(localized: "关")
         default: return value.compactDescription
         }
     }

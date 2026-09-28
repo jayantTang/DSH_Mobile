@@ -43,6 +43,12 @@ RELAY_DIR = pathlib.Path(__file__).resolve().parents[1]
 SNIPPET_PATH = RELAY_DIR / "deploy" / "Caddyfile.snippet"
 CADDY = shutil.which("caddy")
 
+#: CI sets this: without a caddy the five tests below quietly turn into skips, and a
+#: green run would then say nothing at all about the ordering hazard this file exists
+#: for. Absent by default so a developer machine without caddy still runs the suite.
+if CADDY is None and os.environ.get("DSH_REQUIRE_CADDY"):
+    raise RuntimeError("DSH_REQUIRE_CADDY 已设置但没有 caddy：端到端那层会静默跳过")
+
 pytestmark = pytest.mark.skipif(CADDY is None, reason="the caddy binary is not installed")
 
 #: Deliberately the shape of the production Caddyfile: other handle blocks that

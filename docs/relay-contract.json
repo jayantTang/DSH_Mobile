@@ -1,0 +1,66 @@
+{
+  "protocolVersion": 1,
+  "maxFrameBytes": 33554432,
+  "deviceToAgent": ["req", "open", "cancel", "eventResult", "ping", "hello"],
+  "agentToDevice": ["res", "item", "end", "streamError", "event", "hostStatus", "pong", "error"],
+  "relayControl": ["deviceAttach", "deviceDetach"],
+  "idFrames": ["req", "open", "cancel", "res", "item", "end", "streamError", "eventResult"],
+  "errorFrame": {
+    "shape": {
+      "code": "string",
+      "message": "string",
+      "fatal": "bool?",
+      "details": "object?"
+    }
+  },
+  "defaultErrorCodes": {
+    "connector": "gateway/failed",
+    "ios": ["relay/failed", "relay/stream-failed", "relay/error"]
+  },
+  "closeCodes": {
+    "4011": "quota/device-daily",
+    "4012": "limit/devices",
+    "4008": "backpressure"
+  },
+  "hostStatusInfo": {
+    "producedByConnector": ["online", "agentId", "name", "dshPort", "protocol"],
+    "producedByRelay": ["online", "agentId", "name", "version"],
+    "readByIOS": ["online"]
+  },
+  "framing": {
+    "fragmentedOnly": "relay→device",
+    "reassembly": "client must reassemble; messages are not a byte stream"
+  },
+  "knownDrift": [
+    {
+      "id": "hello-unused",
+      "summary": "JS/Py 声明并处理，两端都不发；iOS 把 agentId 放 query（LinkCarrier.swift socketURL）",
+      "status": "documented"
+    },
+    {
+      "id": "ping-3-ways",
+      "summary": "connector 回 pong（link.js handleRelayFrame）/relay 双向回（hub.py）/iOS 不回（LinkCarrier.handle 把 \"pong\",\"ping\" 一起 break）",
+      "status": "documented"
+    },
+    {
+      "id": "validation-asymmetric",
+      "summary": "Py 双向校验（validate_from_device + validate_from_agent），JS 只校验 device→agent（dlp.js deviceFrameError 首行早退，res/item/end/streamError 永不可达）",
+      "status": "documented"
+    },
+    {
+      "id": "two-error-code-sets",
+      "summary": "连接器默认 gateway/failed（dlp.js），iOS 默认 relay/failed · relay/stream-failed · relay/error（LinkCarrier.swift）",
+      "status": "documented"
+    },
+    {
+      "id": "hostStatus-fields",
+      "summary": "连接器发 online/agentId/name/dshPort/protocol，relay 发 online/agentId/name/version；iOS 只读 online",
+      "status": "documented"
+    },
+    {
+      "id": "reassembly-only-ios",
+      "summary": "只有 iOS 有 FrameAssembler；连接器 ws.js 不重组",
+      "status": "documented"
+    }
+  ]
+}

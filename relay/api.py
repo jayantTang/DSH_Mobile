@@ -101,19 +101,24 @@ def client_identifier(request: web.Request) -> str:
     exhaust everybody's budget, and a second attacker would be invisible.
 
     ``X-Forwarded-For`` fixes that, but only for the requests our own front end
-    forwarded: a client can send the header itself, and a single-hop front end
-    **appends** rather than replaces, so ``"1.2.3.4, <real>"`` on a request that
-    did not come through the front end is entirely attacker-chosen. The rule is
-    therefore:
+    forwarded: a client can send the header itself. Caddy's ``header_up``
+    **replaces** the header with the real peer (measured on v2.11.4; it does
+    *not* append), so what arrives from our front end carries exactly one
+    address and a client-supplied value never survives. The rule is therefore:
 
     * the peer is loopback **and** the header carries a usable address → the
-      **leftmost** entry (the original client; anything after it was added by
-      proxies);
+      **leftmost** entry, which under replacement semantics is the only one;
     * anything else → the socket peer, and the header is ignored outright.
 
     Being wrong in the first direction lets one client escape its own budget;
     being wrong in the second lets anyone spend someone else's. The second is
     the one worth being strict about.
+
+    .. warning::
+       The leftmost entry is safe *because* the deployed front end replaces the
+       header. Swap in a gateway that appends instead and this must become the
+       **last** entry (or ``X-Real-IP``), otherwise the leftmost value is
+       attacker-chosen.
     """
     peer = (request.remote or "").strip()
     if is_loopback(peer):

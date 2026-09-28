@@ -57,7 +57,10 @@ public struct ConnectionProfile: Codable, Identifiable, Sendable, Hashable {
         case .direct(let baseURL, _):
             return baseURL.absoluteString
         case .relay(let relayURL, _):
-            return "\(relayURL.host() ?? relayURL.absoluteString) · 中转"
+            // The whole line is one key (`%@ · 中转`), not string concatenation:
+            // this value is painted on the settings screen as「主机地址」, and an
+            // English phone used to show the Chinese「中转」here.
+            return String(localized: "\(relayURL.host() ?? relayURL.absoluteString) · 中转")
         }
     }
 }

@@ -606,7 +606,8 @@ async function waitForNewDownload(dir, before, { timeoutMs = 30_000, pollMs = 70
  * Returns null when the Nth result could not be reached (fewer candidates than
  * asked for), so the caller can stop cleanly instead of erroring.
  */
-async function saveResultNth(session, { index, seedSrc, dir, stripWatermark = true, log }) {
+// 默认关是 owner 2026-09-25 的产品决定：保留角标便于溯源，要剥需显式开启。
+async function saveResultNth(session, { index, seedSrc, dir, stripWatermark = false, log }) {
   const point = await session
     .evaluate(
       `
@@ -742,7 +743,7 @@ async function saveResultNth(session, { index, seedSrc, dir, stripWatermark = tr
   appPath,
   relaunch = true,
   reuseCurrentChat = false,
-  stripWatermark = true,
+  stripWatermark = false,
   timeoutMs = 300_000,
   log = () => {},
 }) {

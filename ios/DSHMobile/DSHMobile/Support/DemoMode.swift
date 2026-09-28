@@ -13,8 +13,16 @@ import Foundation
 /// 是为了不再出现「设置页脱敏了、连接页忘了」这种情况（第一次拍上架截图就是）。
 public enum DemoMode {
     /// 是否处于演示模式（由启动参数决定）。
+    ///
+    /// **Release 里恒为 false**：这个钩子只在截图那一次运行传，发布产物不该认得它。
+    /// 调用点不用加门——`maskedEndpoint` / `maskedHostName` 在 `isOn == false` 时
+    /// 原样返回，行为等价。
     public static var isOn: Bool {
+        #if DEBUG
         ProcessInfo.processInfo.arguments.contains("-DSHDemoMode")
+        #else
+        false
+        #endif
     }
 
     /// 主目录的占位符。
@@ -23,7 +31,9 @@ public enum DemoMode {
     /// 中转地址的占位符，保留「· 中转」这类后缀。
     public static func maskedEndpoint(_ endpoint: String) -> String {
         guard isOn else { return endpoint }
-        return endpoint.contains("·") ? "relay.example.com · 中转" : "relay.example.com"
+        // 后缀同样要本地化：演示模式拍出来的英文截图里也不该留中文（`中转` 在表里）。
+        let relay = String(localized: "中转")
+        return endpoint.contains("·") ? "relay.example.com · \(relay)" : "relay.example.com"
     }
 
     /// 本机名（电脑名）的占位符。

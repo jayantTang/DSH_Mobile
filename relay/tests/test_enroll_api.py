@@ -111,8 +111,8 @@ async def test_enroll_is_rate_limited_per_code(client, store):
     assert store.list_accounts() == []
 
 
-async def test_enroll_is_rate_limited_per_client_across_codes(client, store):
-    """The per-code budget alone bounds nothing, so the client has its own.
+async def test_the_client_bucket_accumulates_across_codes_without_blocking_anyone(client, store):
+    """The client bucket only accumulates; it never turns anyone away.
 
     Invite codes are handed out publicly — review notes, chat, a screenshot — so
     an attacker who spends one failed guess per code never fills any single

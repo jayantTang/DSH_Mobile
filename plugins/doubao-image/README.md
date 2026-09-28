@@ -100,6 +100,12 @@ reference material — animation reference, storyboards, internal review. Doubao
 official API (Volcengine Ark) returns images with no watermark at all, and that
 is the right channel for anything published or commercial.
 
+**Stripping is off by default** (owner's decision, 2026-09-25): an image comes
+back with Doubao's own 「豆包AI生成」 badge unless the caller explicitly asks for
+`stripWatermark: true`. Keeping the badge is the safe default — it is what makes
+a picture traceable to the tool that made it — and the capability stays here for
+the internal-reference case described above.
+
 ## Known limitations
 
 - **Generation consumes the user's Doubao quota** (the app reports 「本次生成将

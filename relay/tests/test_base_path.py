@@ -7,6 +7,10 @@ sees ``/healthz``. A plain ``reverse_proxy`` (or any other front end) forwards
 
 from __future__ import annotations
 
+import json
+import pathlib
+from urllib.parse import urlsplit
+
 import pytest
 
 import relay as relay_module
@@ -110,3 +114,36 @@ async def test_options_preflight_works_under_the_prefix(prefixed_client):
 async def test_default_app_has_no_prefixed_routes(client):
     assert (await client.get("/healthz")).status == 200
     assert (await client.get("/dsh-link/healthz")).status == 404
+
+
+def test_normalize_base_path_matches_the_shared_vectors():
+    """The Python half of `test/contract/relay-base-path-vectors.json`.
+
+    Four implementations join a relay-relative path onto a configured base: this
+    one (`normalize_base_path`), iOS's `LinkConfiguration.appending(path:to:)`,
+    the connector's `dlp.js:joinRelayPath`, and the test harness's
+    `test/tools/relaypair.mjs:route`. All four read the same file.
+
+    This end only covers the **normalisation** step — the relay never appends a
+    suffix itself; routing composes `f"{base_path}{path}"` at request time
+    (`relay.py`), and that half is pinned by the end-to-end cases above. The
+    vectors say so in their `notes`.
+    """
+    repo_root = pathlib.Path(__file__).resolve().parents[2]
+    vectors = json.loads(
+        (repo_root / "test" / "contract" / "relay-base-path-vectors.json").read_text("utf-8"))
+    assert "只覆盖它有的那一步" in " ".join(vectors["notes"])
+
+    expectations = {
+        "https://host": "",
+        "https://host/": "",
+        "https://host/dsh-link": "/dsh-link",
+        "https://host/dsh-link/": "/dsh-link",
+        "https://host/a/b/": "/a/b",
+        "http://127.0.0.1:8787": "",
+    }
+    # 每个 base 都必须出现在向量里，且归一化结果与本端一致。
+    for base, expected in expectations.items():
+        assert any(case["base"] == base for case in vectors["cases"]), f"向量里缺 base {base}"
+        raw = urlsplit(base).path  # "/", "/dsh-link", "/a/b/" …
+        assert relay_module.normalize_base_path(raw) == expected, base

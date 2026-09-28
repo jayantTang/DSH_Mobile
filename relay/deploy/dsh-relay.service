@@ -38,12 +38,17 @@ Environment=DLP_LOG_LEVEL=INFO
 #                              定 100 Mbps——两台同时下大文件才刚好占满 200 Mbps。
 #                              限速只让设备变慢，不掉帧；真正防滥用的下面那条。
 #                              若换成小管子（例如 5 Mbps），按 2–5 Mbps 调。
-#   DLP_DEVICE_DAILY_MB        单设备每日（UTC）出口额度。用超会先收到
+#   DLP_DEVICE_DAILY_MB        单设备每日（服务器本地日）出口额度。用超会先收到
 #                              quota/device-daily 的 error 帧，再被断开（4011），
-#                              次日 UTC 零点恢复。**这才是防"把中转当代理/图床"的
-#                              那一道**：重度用户一天 100–300 MB（我们自己 16 周
-#                              累计才 22 GB），2 GB 留了约 10 倍余量，而拿它当中转
-#                              代理的话十几分钟就用完。
+#                              次日本地零点恢复。**这才是防"把中转当代理/图床"的
+#                              那一道**。取值口径：两个独立观察——① 外部重度用户
+#                              一天 100–300 MB；② 我们自己一台机配一台手机、会话里
+#                              图片多时，光冷启动重同步一天就能到 2 GB（2026-09-28
+#                              实测 16 小时 2.0 GiB，撞上旧的 2048 被反复断开）。
+#                              按这台实例 200 Mbps、200 并发算，同时满载平分是
+#                              ~10 GB/人/天，故取 5 GB 留一半余量：200 人当天全部
+#                              打满也只占管子日容量的 46%，而拿它当代理十几分钟
+#                              就用完。
 #
 # 三者留空或为 0 表示不限。改完：
 #   systemctl daemon-reload && systemctl restart dsh-relay
@@ -51,7 +56,7 @@ Environment=DLP_LOG_LEVEL=INFO
 #   curl -s http://127.0.0.1:8787/stats | python3 -m json.tool
 Environment=DLP_MAX_DEVICES_PER_AGENT=8
 Environment=DLP_DEVICE_RATE_KBPS=100000
-Environment=DLP_DEVICE_DAILY_MB=2048
+Environment=DLP_DEVICE_DAILY_MB=5120
 # ProtectSystem=strict makes the filesystem read-only: never write .pyc files.
 Environment=PYTHONDONTWRITEBYTECODE=1
 

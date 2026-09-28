@@ -49,3 +49,23 @@ test/cases/
 # 不进仓库。需要随仓库发布时，请用合成数据的截图替换后重新入库。
 docs/artifacts/screenshots/
 test/fixtures/media/
+
+# 密钥与私钥文件：任何目录都不入库（含 sidecars/ 下 llm-key-router 的 keys*.txt）
+# 注意：不要用 credentials* / *secret* 这类宽泛模式——
+# docs/artifacts/samples/credentials_describe.json 是入库样本，会被误伤。
+keys*.txt
+*.key
+*.pem
+*.p12
+id_rsa*
+id_ed25519*
+# 变体名（备份 / 编辑器临时文件）同样必须挡住：keys.txt.bak、backup-keys.txt、keys.txt~
+# 都绕过了上面那条 `keys*.txt`。*.bak/*.orig/*.swp/*~ 是通用模式——将来真要入库一个
+# .bak 样本会被静默忽略，这个方向的误伤按"宁可挡住"接受。
+*keys*.txt
+*keys*.txt.*
+*keys*.txt~
+*.bak
+*.orig
+*.swp
+*~

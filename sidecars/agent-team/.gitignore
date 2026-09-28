@@ -1,3 +1,17 @@
 node_modules/
 # 运行数据可能含真实项目内容，不入库
 runs/
+
+# 上游 key 清单（一行一把）与任何私钥：绝不入库（owner 2026-09-25 决定）
+keys*.txt
+*.key
+*.pem
+*.p12
+# 变体名（备份 / 编辑器临时文件）同样挡住：keys.txt.bak、backup-keys.txt、keys.txt~
+*keys*.txt
+*keys*.txt.*
+*keys*.txt~
+*.bak
+*.orig
+*.swp
+*~

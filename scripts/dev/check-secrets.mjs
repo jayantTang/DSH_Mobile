@@ -122,7 +122,26 @@ function trackedFiles() {
 const findings = []
 const add = (file, line, what, text) => findings.push({ file, line, what, text })
 
+/**
+ * 密钥类**文件名**绝不该入库。
+ *
+ * `.gitignore` 只能拦住还没被跟踪的文件，而且它对变体名（`keys.txt.bak`、
+ * `backup-keys.txt`、`keys.txt~`）的覆盖是最后才补上的——这里加一道闸门，
+ * 让"密钥文件已经进了 index"这件事在 check:secrets 就响。
+ *
+ * 模式**必须限定扩展名**：宽泛的 `*keys*` 会吃掉入库源码
+ * `sidecars/llm-key-router/lib/keys.mjs`。
+ */
+const FORBIDDEN_TRACKED = [
+  /(^|\/)keys?[-_.a-z0-9]*\.txt$/i,
+  /\.(pem|key|p12|pfx|bak|orig|swp|tmp)$/i,
+  /~$/,
+]
+
 for (const file of trackedFiles()) {
+  if (FORBIDDEN_TRACKED.some((pattern) => pattern.test(file))) {
+    add(file, 0, '密钥类文件名', file)
+  }
   let content
   try {
     content = readFileSync(join(REPO_ROOT, file), 'utf8')

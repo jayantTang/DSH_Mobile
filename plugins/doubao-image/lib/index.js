@@ -66,6 +66,11 @@ export function resolveCount(value) {
   return Math.min(Math.floor(n), 4)
 }
 
+/** 默认不去水印；只有显式传 true 才剥离（owner 2026-09-25 决定）。 */
+export function resolveStripWatermark(value) {
+  return value === true
+}
+
 const description = [
   '调用本机安装并已登录的豆包（Doubao）桌面应用生成图片，并把生成结果的原图保存到本地。',
   '',
@@ -123,7 +128,7 @@ const parameters = {
     stripWatermark: {
       type: 'boolean',
       description:
-        '默认 true，去掉豆包叠加的「豆包AI生成」水印（仅内部参考稿使用）。需要保留原始水印以便溯源时传 false。',
+        '默认 **false**，保留豆包自带「豆包AI生成」角标（便于溯源）；仅内部参考稿、确需去掉时显式传 true。',
     },
   },
   required: ['prompt'],
@@ -213,7 +218,7 @@ function apply(ctx) {
           dir,
           count: resolveCount(args?.count),
           reuseCurrentChat: args?.reuseCurrentChat === true,
-          stripWatermark: args?.stripWatermark !== false,
+          stripWatermark: resolveStripWatermark(args?.stripWatermark),
           timeoutMs: 300_000,
           log,
         })

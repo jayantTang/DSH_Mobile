@@ -70,6 +70,9 @@ jobs:
           DSH_RELAY_URL: ${{ secrets.DSH_RELAY_URL }}
         run: node scripts/dev/check-secrets.mjs
 
+  # 仓库卫生 + 契约检查 + 脚本单测。这三样都是"离线、几秒、不需要平台"的检查，
+  # 放同一个 job：contracts 是文本级守卫（三端读同一份向量 / 安装目录阶梯 /
+  # 调试钩子闸门），它必须进 CI —— 不进 CI 的守卫等于没有。
   docs:
     runs-on: ubuntu-latest
     steps:
@@ -80,6 +83,10 @@ jobs:
         with:
           node-version: '22'
       - run: npm run check:docs
+      - name: 契约守卫（DLP 向量接线 / 安装目录阶梯 / 调试钩子闸门）
+        run: npm run check:contracts
+      - name: 脚本单测（含测试台与契约检查自身的用例）
+        run: npm run test:scripts
 
   node:
     runs-on: ubuntu-latest
@@ -110,6 +117,19 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      # 端到端那半（test_caddy_runtime.py）要一个真的网关：文本级断言曾经全绿，
+      # 而生产上 /dsh-link/stats 正在 200 返回整页——只有真请求能抓住指令排序。
+      - name: 装 caddy（端到端那半要一个真的网关）
+        run: |
+          set -e
+          curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' \
+            | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+          curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' \
+            | sudo tee /etc/apt/sources.list.d/caddy-stable.list >/dev/null
+          sudo apt-get update && sudo apt-get install -y caddy
+      # 这一步不能省：装不上时 skipif 会把 5 个用例变成 skipped，CI 反而"更绿"。
+      - name: 确认 caddy 真的装上了（否则会静默退化成 skip）
+        run: command -v caddy && caddy version
       # 装的是 requirements-dev.txt——`aiohttp_client` 这个 fixture 来自 pytest-aiohttp，
       # 曾经只装在作者本机的 venv 里，clone 下来跑必然一片 setup error。
       - run: pip install -r relay/requirements-dev.txt
@@ -117,6 +137,8 @@ jobs:
         working-directory: relay
         env:
           DSH_HOME: ${{ runner.temp }}/dsh-home
+          # 硬性要求 caddy 在场：没有它就收集报错，而不是静默 skip。
+          DSH_REQUIRE_CADDY: '1'
 
   dshkit:
     runs-on: macos-latest
@@ -155,3 +177,22 @@ jobs:
             || { echo "::error::relayURL 不是占位符，检查 Config.xcconfig 与 Info.plist"; exit 1; }
           [ "$feed" = 'https://relay.example.com/ios/version.json' ] \
             || { echo "::error::updateFeed 不是占位符，检查 Config.xcconfig 与 Info.plist"; exit 1; }
+      - name: Release 产物里不许有调试启动参数
+        working-directory: ios/DSHMobile
+        run: |
+          set -e
+          bin="$RUNNER_TEMP/dd/Build/Products/Release-iphonesimulator/DSHMobile.app/DSHMobile"
+          status=0
+          # 只有这两个名字能靠字符串搜索验：`-DSHDemoMode` 是 12 字节，
+          # Swift 会把它做成立即数直接编进指令流，**改前改后都搜不到**，
+          # 「0 命中」对它没有诊断力。它由 `npm run check:contracts` 的源码闸门
+          # 与一次 Release 行为对照守着（见 docs/relay-contract.json 与批 2 报告）。
+          for hook in -DSHForgetDirect -DSHFailAttachmentLoad; do
+            count=$(grep -c --text -- "$hook" "$bin" || true)
+            echo "$hook -> $count"
+            if [ "$count" != "0" ]; then
+              echo "::error::$hook 进了 Release 产物——调试钩子必须在 #if DEBUG 里"
+              status=1
+            fi
+          done
+          exit $status

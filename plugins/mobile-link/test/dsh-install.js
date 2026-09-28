@@ -14,7 +14,16 @@
  *                                   package that owns it
  *   5. `npm root -g`                last resort
  *
- * The same ladder is duplicated in `plugins/doubao-image/lib/dsh-install.mjs`
+ * There is a **fourth** copy, and it is the only one that ships:
+ * `plugins/mobile-link/lib/ws.js` (`candidateAnchors`). That package's `files`
+ * includes `lib/`, so that ladder is the one that runs on a user's machine —
+ * change the anchors here and you must look at it too. It deliberately differs
+ * (it drops `DSH_INSTALL_DIR` / `which dsh` / `npm root -g` and adds
+ * `process.argv[1]`); those differences are recorded in
+ * `test/contract/dsh-install-ladder.json` and are **intentionally kept**,
+ * because changing them changes how the published plugin resolves `ws`.
+ *
+ * The other three are duplicated in `plugins/doubao-image/lib/dsh-install.mjs`
  * and `docs/artifacts/samples/capture.mjs` (plugin packages must install
  * standalone, so a cross-package import is not an option). Keep them in step.
  */

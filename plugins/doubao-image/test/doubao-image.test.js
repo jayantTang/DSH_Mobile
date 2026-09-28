@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { apply, buildPrompt, defaultDir, inject, name, renderResult, resolveCount } from '../lib/index.js'
+import { apply, buildPrompt, defaultDir, inject, name, renderResult, resolveCount, resolveStripWatermark } from '../lib/index.js'
 import { countOccurrences, submitPrompt } from '../lib/doubao.mjs'
 import { decodePng, encodePng } from '../lib/image.mjs'
 import {
@@ -107,6 +107,13 @@ test('resolveCount clamps to what Doubao will honour', () => {
   assert.equal(resolveCount(2), 2)
   assert.equal(resolveCount(2.7), 2)
   assert.equal(resolveCount(99), 4)
+})
+
+test('watermark stripping is off unless asked for', () => {
+  assert.equal(resolveStripWatermark(undefined), false)
+  assert.equal(resolveStripWatermark({}), false)
+  assert.equal(resolveStripWatermark(false), false)
+  assert.equal(resolveStripWatermark(true), true)
 })
 
 test('sniffFormat reads magic bytes, not file extensions', () => {

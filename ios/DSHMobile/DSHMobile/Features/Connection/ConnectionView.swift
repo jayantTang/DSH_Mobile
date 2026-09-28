@@ -126,7 +126,9 @@ struct ConnectionView: View {
                         if isWorking {
                             ProgressView().controlSize(.mini)
                         } else {
-                            Button("连接") {
+                            // 动词「连接设备」：名词「连接」（设置页章节标题）与它共用过一个键，
+                            // 英文下按钮因此显示成 "Connection"（见 check-localization 的 duplicate-key）。
+                            Button("连接设备") {
                                 Task { await connect(profile) }
                             }
                             .buttonStyle(.bordered)

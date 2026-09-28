@@ -236,10 +236,14 @@ struct RootView: View {
     /// run survives in the simulator and wins the reconnect race, so every later
     /// screenshot shows a transport the product does not offer.
     private func forgetDirectProfilesIfAsked() {
+        #if DEBUG
         guard CommandLine.arguments.contains("-DSHForgetDirect") else { return }
         for profile in store.profiles {
             if case .direct = profile.transport { store.removeProfile(profile) }
         }
+        #else
+        // Release: 调试钩子不存在（`dsh://direct` 本身也是 DEBUG-only 通道）。
+        #endif
     }
 
     private var preferredProfile: ConnectionProfile? {

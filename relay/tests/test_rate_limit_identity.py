@@ -9,8 +9,11 @@ believing it at all.
 
 The tests below pin both directions, which is the point of the item:
 
-* loopback peer + header  → bucketed by the **leftmost** entry (the original
-  client; a single-hop front end appends the real peer after it);
+* loopback peer + header  → bucketed by the **leftmost** entry. Caddy's
+  ``header_up`` *replaces* the header with the real peer (measured on
+  v2.11.4), so there is exactly one entry to read and no attacker-controlled
+  value can survive; a gateway that appended instead would force this to read
+  the *last* entry (or ``X-Real-IP``) instead;
 * non-loopback peer + header → header **ignored**, bucketed by the socket peer.
   This is the forged-header case, and the one that must never regress.
 
@@ -52,7 +55,9 @@ class _NoopStore:
 @pytest.mark.parametrize("remote,forwarded,expected", [
     # Behind the front end: the header is the only thing that distinguishes callers.
     ("127.0.0.1", "203.0.113.7", "203.0.113.7"),
-    # A single-hop front end appends, so the leftmost entry is the client.
+    # Under Caddy's replace semantics there is a single entry; the multi-value
+    # rows below pin the *helper's* behaviour (leftmost), not what the deployed
+    # front end sends. A gateway that appended would need the last entry.
     ("127.0.0.1", "203.0.113.7, 127.0.0.1", "203.0.113.7"),
     ("127.0.0.1", "  203.0.113.7 , 10.0.0.1", "203.0.113.7"),
     ("::1", "203.0.113.7", "203.0.113.7"),

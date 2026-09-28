@@ -16,8 +16,14 @@
  * Requires the `ws` package bundled with DSH. It is resolved from the DSH
  * installation, never from a hardcoded path: `DSH_INSTALL_DIR` overrides the
  * ladder, otherwise it is derived from the running DSH (`$DSH_HOME`, the `dsh`
- * executable on PATH, or npm's global root). The same ladder lives in the two
- * plugin packages (doubao-image 的 lib 与 mobile-link 的 test) — keep them in step.
+ * executable on PATH, or npm's global root). A **fourth** copy lives in
+ * `plugins/mobile-link/lib/ws.js` (`candidateAnchors`) and is the only one that
+ * actually ships — that package's `files` includes `lib/`. It deliberately
+ * differs (no `DSH_INSTALL_DIR` / `which dsh` / `npm root -g`, plus an extra
+ * `process.argv[1]`); those differences are recorded in
+ * `test/contract/dsh-install-ladder.json` and are intentionally kept. The other
+ * two copies are the plugin packages (doubao-image 的 lib 与 mobile-link 的 test)
+ * — keep those three in step.
  */
 
 import { execFileSync } from 'node:child_process';

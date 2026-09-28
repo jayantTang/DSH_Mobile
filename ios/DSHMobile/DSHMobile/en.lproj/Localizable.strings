@@ -3,7 +3,6 @@
 "连接 DSH" = "Connect to DSH";
 "连接你电脑上的 DSH，随时随地查看进度、回应提问、继续会话。" = "Connect to DSH on your computer — follow progress, answer its questions, and keep chatting from anywhere.";
 "已保存的连接" = "Saved connections";
-"连接" = "Connect";
 "连接中…" = "Connecting…";
 "连接方式" = "Connection";
 "中转配对" = "Relay pairing";
@@ -113,7 +112,6 @@
 "有新版本 %@，点此更新" = "Version %@ is available — tap to update";
 "@@ %@ · 显示上次数据" = "%@ · last saved data";
 "%@ · 显示上次数据" = "%@ · last saved data";
-"连接中…" = "Connecting…";
 
 /* settings */
 "设置" = "Settings";
@@ -176,10 +174,6 @@
 
 /* host-provided labels */
 "权限预设" = "Permission preset";
-"已连接" = "Connected";
-"未确定" = "Unknown";
-"刚刚" = "just now";
-"未连接" = "Not connected";
 
 /* app chrome — batch 1 */
 "选择一个会话" = "Pick a session";
@@ -281,7 +275,7 @@
 "隐藏详情" = "Hide details";
 "显示详情" = "Show details";
 "显示其余 %lld 行" = "Show %lld more lines";
-"%@ · 中转" = "%@ · relay";
+"%@ · 中转" = "%@ · Relay";
 "正在连接 %@" = "Connecting to %@";
 "这台设备无法使用取景器" = "This device has no camera view";
 "相机不可用（可能是权限未开启，或相机正被其他 App 占用）。你仍然可以返回后手动输入配对码。" = "The camera is unavailable (permission off, or another app is using it). Go back and type the pairing code instead.";
@@ -519,7 +513,6 @@ It is registered as a workspace first, so a new group appears in the desktop sid
 "浅色" = "Light";
 "深色" = "Dark";
 "跟随系统" = "Follow system";
-"排队发送" = "Queue";
 "插话发送" = "Steer";
 "最高" = "Highest";
 "标准" = "Standard";
@@ -528,7 +521,6 @@ It is registered as a workspace first, so a new group appears in the desktop sid
 "工作区内修改" = "Workspace write";
 "完全权限" = "Full access";
 "文本" = "Text";
-"图片" = "Image";
 "总是" = "Always";
 "历史中" = "In history";
 "启用思考" = "Reasoning on";
@@ -585,3 +577,15 @@ It is registered as a workspace first, so a new group appears in the desktop sid
 "改动" = "Changes";
 
 "展开全文" = "Show full text";
+
+/* 连接管理页行内按钮：名词「连接」（设置页章节标题）与动词「连接设备」必须是两个键 */
+"连接设备" = "Connect";
+
+/* 设备行的相对时间：formatter 改用 Locale.current，前缀键带 %@ */
+"最后在线 %@" = "Last seen %@";
+
+/* 缓存页脚（全页最长文案，原先硬编码） */
+"本机留两份缓存：会话列表（标题、时间、用量这类元数据）和每个会话的对话尾部（最近 200 条，用来冷启动先显示再增量更新）。都在 Caches 里、不进备份，30 天后自动失效，总占用有上限（转写 40 MB、图片 100 MB），这里可以随时一键清掉。" = "Two caches live on this phone: the session list (titles, times, usage metadata) and the tail of each conversation (the last 200 messages, so a cold start shows something before it catches up). Both are in Caches, excluded from backups, expire after 30 days, and are capped (40 MB transcripts, 100 MB images) — this clears them any time.";
+
+/* 转写搜索页脚（原先硬编码） */
+"搜索只覆盖已经读到手机上的那段历史。" = "Search only covers the history already read onto this phone.";

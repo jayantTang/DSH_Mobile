@@ -24,6 +24,7 @@ const { values } = parseArgs({
     reuse: { type: 'boolean', default: false },
     'no-relaunch': { type: 'boolean', default: false },
     'no-prefix': { type: 'boolean', default: false },
+    'strip-watermark': { type: 'boolean', default: false },
     help: { type: 'boolean', default: false },
   },
   allowPositionals: true,
@@ -39,6 +40,7 @@ if (values.help || !values.prompt) {
   --reuse          沿用当前会话，不新建（用于基于上一张改图）
   --no-relaunch    豆包在跑但不带调试端口时直接报错，不重启它
   --no-prefix      不自动加「生成图片：」前缀
+  --strip-watermark 去掉豆包自带的「豆包AI生成」角标（默认保留，便于溯源）
 `)
   process.exit(values.help ? 0 : 1)
 }
@@ -54,6 +56,7 @@ try {
     port: Number(values.port ?? 19222),
     relaunch: !values['no-relaunch'],
     reuseCurrentChat: Boolean(values.reuse),
+    stripWatermark: Boolean(values['strip-watermark']),
     timeoutMs: Number(values.timeout ?? 300) * 1000,
     log: (message) => console.log(`[doubao] ${message}`),
   })

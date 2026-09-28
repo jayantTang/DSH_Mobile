@@ -35,7 +35,13 @@ export function identity() {
 ///
 /// The relay is published under a path (`…/dsh-link`) so it can share an
 /// existing domain; every route is appended to that prefix, never replaces it.
-/// Mirrors `LinkConfiguration.normalizedRelayURL` + `appending(path:to:)`.
+///
+/// This is the fourth copy of the "join a relay-relative path onto a base"
+/// rule, alongside `LinkConfiguration.appending(path:to:)` (iOS),
+/// `dlp.js:joinRelayPath` (connector) and `relay.py:normalize_base_path`.
+/// `test/contract/relay-base-path-vectors.json` records what all four do —
+/// including where they disagree — and `test/tools/relaypair.test.mjs` pins
+/// this copy against it. Read that file before changing the join.
 export function httpBase(relayUrl) {
   const url = new URL(relayUrl)
   url.protocol = url.protocol === 'wss:' ? 'https:' : url.protocol === 'ws:' ? 'http:' : url.protocol
@@ -44,7 +50,8 @@ export function httpBase(relayUrl) {
   return url
 }
 
-function route(relayUrl, suffix) {
+/// One relay route as an absolute URL. Exported so the shared vectors can pin it.
+export function route(relayUrl, suffix) {
   const base = httpBase(relayUrl)
   const prefix = base.pathname.replace(/\/+$/, '')
   base.pathname = `${prefix}${suffix}`

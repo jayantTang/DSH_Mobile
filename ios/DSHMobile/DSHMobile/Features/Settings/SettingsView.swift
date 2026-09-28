@@ -63,6 +63,15 @@ struct SettingsView: View {
             model.attach(to: store)
             await model.start()
         }
+        .onChange(of: store.state.isConnected) { _, isConnected in
+            // 设置页可以在握手完成前打开（启动即直达设置页，或慢网下先点了齿轮），
+            // 那时 `start()` 读不到 client。`load()` 自己会等一段，但等待有上限：
+            // 握手比上限还慢、或先失败后被 store 的看护循环重连成功时，靠这里补读一次，
+            // 页面自己长齐，而不是让用户去点「刷新」。`readScreen()` 会合并在飞的那次，
+            // 所以这里不会重复取。
+            guard isConnected else { return }
+            Task { await model.start() }
+        }
         .onDisappear {
             Task { await model.flushPendingSaves() }
         }
@@ -139,11 +148,14 @@ struct SettingsView: View {
     }
 
     private func deviceRow(_ device: RelayDevice) -> some View {
-        HStack(alignment: .top, spacing: DSHTheme.Spacing.tight) {
+        AdaptiveRow {
+            // 图标列的固定宽度保留：它装的是 `Image(systemName:)` 而不是文本，
+            // 与语言无关（方案「不做什么」1）。
             Image(systemName: device.isCurrent ? "iphone.gen3" : "iphone")
                 .font(.system(size: 15))
                 .foregroundStyle(device.isCurrent ? DSHTheme.brand : DSHTheme.labelTertiary)
                 .frame(width: 20)
+        } content: {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: DSHTheme.Spacing.hairline) {
                     Text(device.displayName)
@@ -163,7 +175,8 @@ struct SettingsView: View {
                     .font(DSHTheme.Typography.micro)
                     .foregroundStyle(DSHTheme.labelTertiary)
             }
-            Spacer(minLength: 0)
+            .fixedSize(horizontal: false, vertical: true)
+        } trailing: {
             if model.revokingDeviceId == device.deviceId {
                 ProgressView().controlSize(.mini)
             } else {
@@ -205,15 +218,23 @@ struct SettingsView: View {
 
     private var statusSection: some View {
         Section {
-            LabeledContent("状态") {
+            AdaptivePair {
+                Text("状态")
+            } value: {
                 HStack(spacing: DSHTheme.Spacing.hairline) {
                     StatusDot(level: connectionLevel, size: 7)
                     Text(connectionLabel)
                 }
             }
-            LabeledContent("连接方式", value: model.about.transport.label)
+            AdaptivePair {
+                Text("连接方式")
+            } value: {
+                Text(model.about.transport.label)
+            }
             if let endpoint = model.about.endpoint {
-                LabeledContent("主机地址") {
+                AdaptivePair {
+                    Text("主机地址")
+                } value: {
                     Text(masked(endpoint))
                         .font(DSHTheme.Typography.caption)
                         .foregroundStyle(DSHTheme.labelSecondary)
@@ -221,6 +242,9 @@ struct SettingsView: View {
                 }
             }
             if let home = model.about.hostHome {
+                // 这一处**刻意**保留 `.lineLimit(1) + .truncationMode(.head)`：
+                // 路径首部省略是设计（长路径从中间省略读不出是什么目录），
+                // 行高恒定，且路径长度与语言无关。不要换成 AdaptivePair。
                 LabeledContent("主机主目录") {
                     Text(isDemoMode ? DemoMode.homePlaceholder : home)
                         .font(DSHTheme.Typography.caption)
@@ -249,9 +273,9 @@ struct SettingsView: View {
     private var connectionLabel: String {
         switch store.state {
         case .connected: return String(localized: "已连接")
-        case .connecting: return "连接中"
-        case .failed: return "连接失败"
-        case .disconnected: return "未连接"
+        case .connecting: return String(localized: "连接中")
+        case .failed: return String(localized: "连接失败")
+        case .disconnected: return String(localized: "未连接")
         }
     }
 
@@ -267,10 +291,11 @@ struct SettingsView: View {
                 Button {
                     selectPreset(preset.value)
                 } label: {
-                    HStack(alignment: .top, spacing: DSHTheme.Spacing.tight) {
+                    AdaptiveRow {
                         Image(systemName: currentPreset == preset.value ? "largecircle.fill.circle" : "circle")
                             .font(.system(size: 15))
                             .foregroundStyle(currentPreset == preset.value ? DSHTheme.brand : DSHTheme.labelDimmed)
+                    } content: {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(preset.name)
                                 .font(DSHTheme.Typography.body)
@@ -280,7 +305,7 @@ struct SettingsView: View {
                                 .foregroundStyle(DSHTheme.labelTertiary)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
-                        Spacer(minLength: 0)
+                    } trailing: {
                         if let label = model.saveState(for: "permission").label {
                             Text(label)
                                 .font(DSHTheme.Typography.micro)
@@ -345,10 +370,13 @@ struct SettingsView: View {
                         .foregroundStyle(DSHTheme.labelTertiary)
                 } else {
                     ForEach(model.credentialRows) { row in
-                        LabeledContent(row.ref) {
+                        AdaptivePair {
+                            Text(row.ref)
+                        } value: {
                             HStack(spacing: DSHTheme.Spacing.hairline) {
                                 if let source = row.source, !source.isEmpty {
-                                    Text(source)
+                                    // 宿主下发的文案：认识的词条翻，不认识的按原样显示。
+                                    Text(String(localized: String.LocalizationValue(source)))
                                         .font(DSHTheme.Typography.micro)
                                         .foregroundStyle(DSHTheme.labelTertiary)
                                 }
@@ -380,6 +408,7 @@ struct SettingsView: View {
                     Text("某个会话跑完一轮后收到通知")
                         .font(DSHTheme.Typography.micro)
                         .foregroundStyle(DSHTheme.labelSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             .accessibilityIdentifier("settings.alert.turnEnd")
@@ -390,6 +419,7 @@ struct SettingsView: View {
                     Text("会话等待授权或等待你回答时收到通知")
                         .font(DSHTheme.Typography.micro)
                         .foregroundStyle(DSHTheme.labelSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             .accessibilityIdentifier("settings.alert.attention")
@@ -438,8 +468,14 @@ struct SettingsView: View {
 
     private var aboutSection: some View {
         Section {
-            LabeledContent("App 版本", value: model.about.appVersion)
-            LabeledContent("DSH 主机版本") {
+            AdaptivePair {
+                Text("App 版本")
+            } value: {
+                Text(model.about.appVersion)
+            }
+            AdaptivePair {
+                Text("DSH 主机版本")
+            } value: {
                 if let version = model.about.hostVersion {
                     Text(version)
                 } else {
@@ -450,10 +486,18 @@ struct SettingsView: View {
                 }
             }
             if let name = model.about.connectorName {
-                LabeledContent("连接器", value: name)
+                AdaptivePair {
+                    Text("连接器")
+                } value: {
+                    Text(name)
+                }
             }
             if let port = model.about.connectorPort {
-                LabeledContent("连接器端口", value: String(port))
+                AdaptivePair {
+                    Text("连接器端口")
+                } value: {
+                    Text(String(port))
+                }
             }
         } header: {
             Text("关于")
@@ -471,6 +515,7 @@ struct SettingsView: View {
                         Text(namespace.title)
                             .font(DSHTheme.Typography.caption)
                             .foregroundStyle(DSHTheme.labelPrimary)
+                            .fixedSize(horizontal: false, vertical: true)
                         Text(Self.desktopOnlyReason(namespace.ns))
                             .font(DSHTheme.Typography.micro)
                             .foregroundStyle(DSHTheme.labelTertiary)
@@ -489,15 +534,18 @@ struct SettingsView: View {
                     Text("原始设置文档")
                         .font(DSHTheme.Typography.caption)
                         .foregroundStyle(DSHTheme.labelSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             } label: {
                 VStack(alignment: .leading, spacing: 1) {
                     Text("在电脑端配置")
                         .font(DSHTheme.Typography.body)
                         .foregroundStyle(DSHTheme.labelPrimary)
+                        .fixedSize(horizontal: false, vertical: true)
                     Text("\(model.namespaces.count - Self.mobileNamespaces.count) 项")
                         .font(DSHTheme.Typography.micro)
                         .foregroundStyle(DSHTheme.labelTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
         } footer: {
@@ -510,20 +558,20 @@ struct SettingsView: View {
 
     private static func desktopOnlyReason(_ ns: String) -> String {
         switch ns {
-        case "agent-default-model": return "新会话使用的默认模型"
-        case "subagent-model-selection": return "子代理使用的模型"
-        case "llm-deepseek": return "DeepSeek 接口地址、上下文窗口与图片限制"
-        case "llm-pi-ai": return "其他模型提供方"
-        case "web-search-deepseek": return "联网搜索"
-        case "agent-loop": return "Agent 循环、步数上限与超时"
-        case "agent-presets": return "Agent 预设"
-        case "shell": return "Shell 环境与超时"
-        case "ui-theme": return "电脑端主题与字号"
-        case "locale": return "电脑端语言"
-        case "ui-chat": return "电脑端聊天界面"
-        case "ui-conversation": return "电脑端会话界面"
-        case "ui-onboarding": return "电脑端引导状态"
-        default: return "电脑端配置"
+        case "agent-default-model": return String(localized: "新会话使用的默认模型")
+        case "subagent-model-selection": return String(localized: "子代理使用的模型")
+        case "llm-deepseek": return String(localized: "DeepSeek 接口地址、上下文窗口与图片限制")
+        case "llm-pi-ai": return String(localized: "其他模型提供方")
+        case "web-search-deepseek": return String(localized: "联网搜索")
+        case "agent-loop": return String(localized: "Agent 循环、步数上限与超时")
+        case "agent-presets": return String(localized: "Agent 预设")
+        case "shell": return String(localized: "Shell 环境与超时")
+        case "ui-theme": return String(localized: "电脑端主题与字号")
+        case "locale": return String(localized: "电脑端语言")
+        case "ui-chat": return String(localized: "电脑端聊天界面")
+        case "ui-conversation": return String(localized: "电脑端会话界面")
+        case "ui-onboarding": return String(localized: "电脑端引导状态")
+        default: return String(localized: "电脑端配置")
         }
     }
 }

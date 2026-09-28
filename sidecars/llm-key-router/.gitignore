@@ -1,0 +1,18 @@
+# —— 本机真值：绝不入库（owner 2026-09-25 决定）——
+# 上游 key 清单（一行一把）与任何私钥
+keys*.txt
+*.key
+*.pem
+*.p12
+# 变体名（备份 / 编辑器临时文件）同样挡住：keys.txt.bak、backup-keys.txt、keys.txt~
+*keys*.txt
+*keys*.txt.*
+*keys*.txt~
+*.bak
+*.orig
+*.swp
+*~
+# 运行态：本机配置与统计（config.json 里含本机令牌）
+config.json
+affinity.json
+stats.json

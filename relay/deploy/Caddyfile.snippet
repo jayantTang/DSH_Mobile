@@ -27,9 +27,11 @@
 #     here and is a risk not worth taking.
 #   * header_up X-Real-IP and X-Forwarded-For: the relay's per-client rate
 #     limiting needs to know who the caller really is, and behind this block
-#     every caller arrives from 127.0.0.1. The relay *only* believes these
-#     headers when the peer is loopback, so removing them degrades rate limiting
-#     to "one bucket for the whole internet" — it does not open a bypass.
+#     every caller arrives from 127.0.0.1. `header_up` **replaces** these
+#     headers (v2.11.4) rather than appending, so nothing a caller sent
+#     survives. The relay *only* believes them when the peer is loopback, so
+#     removing them degrades rate limiting to "one bucket for the whole
+#     internet" — it does not open a bypass.
 # ─────────────────────────────────────────────────────────────────────────────
 redir /dsh-link /dsh-link/ 308
 
@@ -96,10 +98,12 @@ handle_path /dsh-link/* {
 		}
 		flush_interval -1
 		# X-Forwarded-For is what the relay derives the rate-limit bucket from
-		# (relay/api.py:client_identifier). Caddy **appends** the real peer to
-		# whatever the client sent, so the header a non-loopback caller controls
-		# can never be the leftmost entry the relay would read — and the relay
-		# ignores the header entirely unless the peer is loopback anyway.
+		# (relay/api.py:client_identifier). `header_up` **replaces** the header
+		# with the real peer — measured on v2.11.4, it does *not* append — so the
+		# value the relay reads is ours and the client-supplied one is gone.
+		# The relay additionally ignores the header entirely unless the peer is
+		# loopback. Replace this with a gateway that *appends* and the relay
+		# would have to read the **last** entry (or X-Real-IP) instead.
 		header_up X-Real-IP {remote_host}
 		header_up X-Forwarded-For {remote_host}
 	}

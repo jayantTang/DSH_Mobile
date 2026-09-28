@@ -20,7 +20,7 @@ import json
 import pytest
 
 import dlp
-from hub import CLOSE_DEVICE_LIMIT, Limits
+from hub import CLOSE_DEVICE_LIMIT, Limits, RelayHub
 from conftest import agent_headers
 
 
@@ -120,3 +120,66 @@ async def test_the_daily_allowance_refusal_is_a_dlp_error_frame_and_a_clean_clos
 
     await device_ws.close()
     await agent_ws.close()
+
+
+async def test_the_attach_race_is_a_refusal_frame_not_a_bare_drop(
+        client, store, provisioned, monkeypatch):
+    """The narrow window between the pre-check and the attach.
+
+    `link_device` checks the budget *before* the upgrade, then awaits
+    `ws.prepare(request)` and only then calls `hub.attach_device`, which checks
+    the budget **again**. Another device can slip in during that await: the first
+    check said "go", the second one raises `DeviceLimitReached`.
+
+    That raise used to travel out of the handler uncaught, so the phone saw the
+    socket simply die — close code **1006**, no `error` frame, which is
+    indistinguishable from the relay having crashed. This test manufactures the
+    window (it can take six concurrent attempts to hit it by luck) by letting
+    only the *first* budget check pass, and pins the answer the protocol
+    promises: an `error` frame, then a clean 4012.
+    """
+    client.app["limits"].max_devices_per_agent = 1
+
+    first_code = store.mint_pair_code(provisioned["agent"]["agentId"], ttl_ms=60_000)
+    first = await (await client.post("/pair/claim", json={
+        "pairCode": first_code["code"], "deviceName": "first"})).json()
+    second_code = store.mint_pair_code(provisioned["agent"]["agentId"], ttl_ms=60_000)
+    second = await (await client.post("/pair/claim", json={
+        "pairCode": second_code["code"], "deviceName": "second"})).json()
+
+    agent_ws = await client.ws_connect(
+        f"/link/agent?agentId={provisioned['agent']['agentId']}",
+        headers=agent_headers(provisioned["agent"]))
+    one = await connect_device(client, first)
+    assert (await one.receive_json())["t"] == "hostStatus"
+
+    # Let the pre-upgrade check pass once and tell the truth from then on. The
+    # pre-check calls it first, `hub.attach_device` calls it second — so the
+    # second device gets through the door and is stopped inside.
+    real = RelayHub.device_budget_exceeded
+    calls = {"n": 0}
+
+    def flaky(self, agent, device_id):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return False
+        return real(self, agent, device_id)
+
+    monkeypatch.setattr(RelayHub, "device_budget_exceeded", flaky)
+
+    try:
+        raced = await connect_device(client, second)
+        frame = await asyncio.wait_for(raced.receive_json(), timeout=5)
+        assert frame["t"] == "error", frame
+        assert frame["code"] == "limit/devices", frame
+        assert frame["fatal"] is True, frame
+        assert frame["details"]["maxDevicesPerAgent"] == 1, frame
+        assert calls["n"] >= 2, "窗口没有被构造出来：第二次预算检查根本没跑到"
+
+        closing = await asyncio.wait_for(raced.receive(), timeout=5)
+        assert closing.type.name in ("CLOSE", "CLOSING"), closing
+        assert raced.close_code == CLOSE_DEVICE_LIMIT, raced.close_code
+        assert raced.close_code != 1006, "裸断：客户端看到的是 1006，不是 4012"
+    finally:
+        await one.close()
+        await agent_ws.close()

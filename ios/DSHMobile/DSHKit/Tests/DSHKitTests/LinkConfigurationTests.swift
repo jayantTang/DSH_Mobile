@@ -67,6 +67,71 @@ final class LinkConfigurationTests: XCTestCase {
         }
     }
 
+    /// The shared vectors — `<repo>/test/contract/relay-base-path-vectors.json`.
+    ///
+    /// `appending(path:to:)` is one of **four** copies of the "join a
+    /// relay-relative path onto a base" rule (the connector's
+    /// `dlp.js:joinRelayPath`, the relay's `relay.py:normalize_base_path`, and
+    /// the test harness's `test/tools/relaypair.mjs:route`). All four read the
+    /// same file, so a change to any one of them shows up here.
+    ///
+    /// **Depends on the repository layout**: six levels up from `#filePath` is
+    /// the repo root. Copying DSHKit out on its own makes this fail; the vectors
+    /// belong to the repository, not to the package.
+    private struct BasePathVector: Decodable {
+        let base: String
+        let suffix: String
+        let path: String
+        let ends: [String]
+        let swiftPath: String?
+        let knownDrift: String?
+    }
+
+    private struct BasePathVectors: Decodable {
+        let cases: [BasePathVector]
+    }
+
+    private static var repoRoot: URL {
+        var url = URL(fileURLWithPath: #filePath)
+        for _ in 0..<6 { url.deleteLastPathComponent() }
+        return url
+    }
+
+    func testAppendingMatchesTheSharedBasePathVectors() throws {
+        let file = Self.repoRoot.appendingPathComponent("test/contract/relay-base-path-vectors.json")
+        let vectors = try JSONDecoder().decode(BasePathVectors.self, from: Data(contentsOf: file))
+        let covered = vectors.cases.filter { $0.ends.contains("swift") }
+        XCTAssertFalse(covered.isEmpty, "向量里没有任何一行标了 swift")
+
+        for vector in covered {
+            let base = try XCTUnwrap(URL(string: vector.base), "base 解析失败：\(vector.base)")
+            let expected = try XCTUnwrap(vector.swiftPath, "\(vector.base)+\(vector.suffix) 缺 swiftPath")
+            XCTAssertEqual(
+                LinkConfiguration.appending(path: vector.suffix, to: base),
+                expected,
+                "base=\(vector.base) suffix=\(vector.suffix)"
+            )
+        }
+    }
+
+    /// The rows that record the disagreement are the point of the file: they
+    /// pin today's behaviour (a suffix without a leading slash is concatenated
+    /// verbatim) rather than an idealised one.
+    func testTheDocumentedJoinDriftIsStillWhatHappens() throws {
+        let file = Self.repoRoot.appendingPathComponent("test/contract/relay-base-path-vectors.json")
+        let vectors = try JSONDecoder().decode(BasePathVectors.self, from: Data(contentsOf: file))
+        let drifted = vectors.cases.filter { $0.knownDrift != nil && $0.ends.contains("swift") }
+        XCTAssertFalse(drifted.isEmpty, "向量里应当有标了 knownDrift 的 swift 行")
+        for vector in drifted {
+            let base = try XCTUnwrap(URL(string: vector.base))
+            XCTAssertEqual(
+                LinkConfiguration.appending(path: vector.suffix, to: base),
+                vector.swiftPath,
+                "\(vector.base)+\(vector.suffix) 的现状值变了：向量要跟着改，并重新判断生产是否可达"
+            )
+        }
+    }
+
     func testRelayOriginIsNormalisedToItsHTTPForm() throws {
         // A relay advertises `wss://` because that is what the connector dials,
         // but the phone also calls `/pair/claim` over HTTP. Both must derive

@@ -22,7 +22,7 @@ from aiohttp import WSMsgType, web
 
 import dlp
 from api import bearer_token, cors_preflight, register_http_routes
-from hub import CLOSE_DEVICE_LIMIT, Limits, RelayHub
+from hub import CLOSE_DEVICE_LIMIT, DeviceLimitReached, Limits, RelayHub
 from store import DEFAULT_DEVICE_TTL_MS, DEFAULT_PAIR_TTL_MS, Store
 
 LOGGER = logging.getLogger("relay")
@@ -118,6 +118,24 @@ async def link_agent(request: web.Request) -> web.WebSocketResponse:
     return ws
 
 
+async def _refuse_prepared(ws: web.WebSocketResponse, code: str, message: str, *,
+                           close_code: int, details: dict[str, Any] | None = None,
+                           ) -> web.WebSocketResponse:
+    """Send a refusal frame on an **already prepared** socket, then close cleanly.
+
+    Split out of :func:`_refuse_upgrade` so the attach race in :func:`link_device`
+    can reuse the *same* socket the client is holding. It cannot go through
+    ``_refuse_upgrade``: that one builds a fresh ``WebSocketResponse`` and calls
+    ``prepare()`` on it, and aiohttp's ``prepare()`` is only idempotent for the
+    same object — a second response on the same request is a protocol error.
+    """
+    await ws.send_str(dlp.encode_frame(
+        dlp.error_frame(code, message, fatal=True, details=details)))
+    await ws.close(code=close_code, message=message.encode("utf-8")[:120])
+    LOGGER.warning("relay: refused a device socket (%s): %s", code, message)
+    return ws
+
+
 async def _refuse_upgrade(request: web.Request, code: str, message: str, *,
                           close_code: int, details: dict[str, Any] | None = None,
                           ) -> web.WebSocketResponse:
@@ -137,11 +155,7 @@ async def _refuse_upgrade(request: web.Request, code: str, message: str, *,
     """
     ws = _make_socket(request, Limits())
     await ws.prepare(request)
-    await ws.send_str(dlp.encode_frame(
-        dlp.error_frame(code, message, fatal=True, details=details)))
-    await ws.close(code=close_code, message=message.encode("utf-8")[:120])
-    LOGGER.warning("relay: refused a device socket (%s): %s", code, message)
-    return ws
+    return await _refuse_prepared(ws, code, message, close_code=close_code, details=details)
 
 
 async def link_device(request: web.Request) -> web.WebSocketResponse:
@@ -165,7 +179,16 @@ async def link_device(request: web.Request) -> web.WebSocketResponse:
 
     ws = _make_socket(request, limits)
     await ws.prepare(request)
-    link = await hub.attach_device(device, ws)
+    try:
+        link = await hub.attach_device(device, ws)
+    except DeviceLimitReached:
+        # 最后防线：预检查放行之后、prepare 期间别人挤满了名额（见 hub.attach_device）。
+        # 这里必须用**同一个** ws 发帧——不能复用 _refuse_upgrade，它会新建 socket。
+        return await _refuse_prepared(
+            ws, "limit/devices",
+            "this host already has as many devices connected as it allows",
+            close_code=CLOSE_DEVICE_LIMIT,
+            details={"maxDevicesPerAgent": limits.max_devices_per_agent})
     link.start()
     await asyncio.to_thread(store.touch_device, device["deviceId"])
     try:
