@@ -151,21 +151,46 @@ fi
 # 能发布：2026-09 起 npm 明确收紧「bypass-2FA token 直接发布」，本机那个 token 就是
 # 被这条挡下的（真发布回 404 not found / no permission）。所以真正的发布权限只能靠
 # 交互式认证拿到：`npm login --auth-type=web`（Touch ID）之后再跑本脚本。
-if ! ( cd "$ROOT/plugins/${PACKAGES[0]}" && npm publish --registry="$NPM_REGISTRY" --dry-run >/dev/null 2>&1 ); then
-  die "打不出包（$NPM_REGISTRY）：先看 npm pack 的输出"
-fi
-printf '  打包检查通过（%s 的 dry-run）\n' "${PACKAGES[0]}"
-printf '  提醒：真发布需要交互式认证——npm 已收紧 bypass-2FA token；失败时先 npm login --auth-type=web\n' 
+# 三个包**各自**干跑一次。只验第一个包等于赌另外两个的 `files` 也写对了——而它们
+# 是不同的清单（比如 send-image 必须带上 lib/send-image.mjs，否则装出来跑不了）。
+# 打包都失败就没必要往下走，所以这里失败即 die。
+for name in "${PACKAGES[@]}"; do
+  [ -n "$ONLY" ] && [ "$ONLY" != "$name" ] && continue
+  if ! ( cd "$ROOT/plugins/$name" && npm publish --registry="$NPM_REGISTRY" --dry-run >/dev/null 2>&1 ); then
+    die "打不出包（$name）：先看 npm pack 的输出"
+  fi
+  printf '  打包检查通过（%s）\n' "$name"
+done
+printf '  提醒：真发布需要交互式认证——npm 已收紧 bypass-2FA token；失败时先 npm login --auth-type=web\n'
 
 say "发布"
+# 累积式：脚本头是 `set -euo pipefail`，一个包发失败会让整脚本当场退出，
+# 于是「谁已经发出去了」无从得知，剩下的也没机会发。三个包共用一个 30 秒 OTP
+# 窗口，这个失败模式是现实会碰到的，所以这里自己收着错误、跑完再一起报。
+published=()
+failed=()
 for name in "${PACKAGES[@]}"; do
   [ -n "$ONLY" ] && [ "$ONLY" != "$name" ] && continue
-  ( cd "$ROOT/plugins/$name" && npm publish --registry="$NPM_REGISTRY" --access public ${OTP:+--otp="$OTP"} )
+  if ( cd "$ROOT/plugins/$name" && npm publish --registry="$NPM_REGISTRY" --access public ${OTP:+--otp="$OTP"} ); then
+    published+=("$name")
+  else
+    failed+=("$name")
+  fi
 done
 
+if [ "${#failed[@]}" -gt 0 ]; then
+  printf '\n已发布：%s；未发布：%s\n' \
+    "$( [ "${#published[@]}" -gt 0 ] && (IFS=,; echo "${published[*]}") || echo '（无）' )" \
+    "$(IFS=,; echo "${failed[*]}")"
+  printf '未发布的多半是认证问题：npm login --auth-type=web 之后重跑本脚本（已发出去的包会被 npm 拒绝重发，属正常）。\n'
+  exit 1
+fi
+printf '已发布：全部（%s）\n' "$(IFS=,; echo "${published[*]}")"
+
 say "完成"
-for name in "${PACKAGES[@]}"; do
-  [ -n "$ONLY" ] && [ "$ONLY" != "$name" ] && continue
+# 只核对**已发布**的包：对没发出去的包 `npm view` 会给出旧版本，那会被误报成成功。
+# `${published[@]+…}` 是空数组的安全写法：`set -u` 下直接展开空数组在旧 bash 里算未定义。
+for name in ${published[@]+"${published[@]}"}; do
   pkg="$(node -p "require('$ROOT/plugins/$name/package.json').name")"
   printf '  %s → https://www.npmjs.com/package/%s\n' "$pkg" "$pkg"
 done
