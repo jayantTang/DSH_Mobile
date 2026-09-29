@@ -8,6 +8,13 @@ import Foundation
 /// what makes the cache self-invalidating: a file the agent rewrote has a new
 /// version, lands in a new directory, and the copy from yesterday can never be
 /// shown as today's content.
+///
+/// `#if DEBUG`-only directory override: the batch-4 unit tests for the resume
+/// path run on **macOS**, where `Caches` resolves to the developer's own
+/// `~/Library/Caches` — writing fixtures into the real one would be the same
+/// class of mistake as pointing a test at the real `~/.dsh`. The override is
+/// compiled out of every shipping configuration, so the product path cannot be
+/// moved by an environment variable.
 enum WorkspaceFileCache {
 
     /// What the whole cache may occupy before the oldest files are dropped.
@@ -18,7 +25,13 @@ enum WorkspaceFileCache {
     static let budgetBytes = 256 * 1024 * 1024
 
     private static var root: URL {
-        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        #if DEBUG
+        if let override = ProcessInfo.processInfo.environment["DSH_WORKSPACE_CACHE_DIR"],
+           !override.isEmpty {
+            return URL(fileURLWithPath: override, isDirectory: true)
+        }
+        #endif
+        return FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("workspace-files", isDirectory: true)
     }
 
@@ -114,6 +127,13 @@ enum WorkspaceFileCache {
     ///
     /// Called after a download rather than on a timer: the only moment the cache
     /// grows is the moment it is worth checking.
+    ///
+    /// **`.part` files are skipped.** A `.part` is a download someone is in the
+    /// middle of — possibly a second file the browser is fetching at the same
+    /// time as the one that just finished. Trimming it deleted a live prefix, and
+    /// the next `publish()` then failed because the `.part` it was about to
+    /// rename was gone. Left out of both the total and the delete list, so a
+    /// half-arrived file is never the reason a complete one survives either.
     static func trim(budget: Int = budgetBytes) {
         let manager = FileManager.default
         guard let directories = try? manager.contentsOfDirectory(
@@ -125,7 +145,7 @@ enum WorkspaceFileCache {
             let contents = (try? manager.contentsOfDirectory(
                 at: directory, includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey]
             )) ?? []
-            for file in contents {
+            for file in contents where file.pathExtension != "part" {
                 let values = try? file.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
                 files.append((file, values?.fileSize ?? 0, values?.contentModificationDate ?? .distantPast))
             }

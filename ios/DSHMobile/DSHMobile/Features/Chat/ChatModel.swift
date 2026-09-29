@@ -1,6 +1,7 @@
 import DSHKit
 import Foundation
 import Observation
+import RelayKit
 import UIKit
 
 /// Drives one session transcript: history, the live stream, and outbound input.
@@ -1078,40 +1079,37 @@ final class ChatModel {
 
     /// Uploads one file and tells the agent where it landed.
     ///
-    /// The Host cannot receive file bytes — `workspaceFiles/*` is read-only and
-    /// `uploadFile` is not served — so the link stages the file on the computer
-    /// and the prompt names the path. The agent then reads it with the ordinary
-    /// tools it already has.
-    ///
-    /// Two entry points on purpose. `data:` is what the composer already had and
-    /// what pictures-in-a-prompt go through. `fileURL:` is the background path: a
-    /// large file has to stay a *file* all the way down, because iOS only
-    /// continues file-based tasks after the app is suspended — handing `Data` to
-    /// the background session would quietly lose that property.
+    /// There is **one** route for file bytes now (the relay's HTTPS surface with
+    /// a background task), and it is a *file* route: iOS only continues
+    /// file-based tasks after the app is suspended, so a file has to stay a file
+    /// all the way down. This entry point therefore writes the bytes to disk
+    /// first and hands the URL to `sendFile(named:fileURL:)` — it is a
+    /// migration shim, not a second implementation. Its remaining caller is the
+    /// DEBUG automation hook `-DSHUploadFile`, which the next batch deletes
+    /// together with this method.
     func sendFile(named name: String, data: Data) async {
-        guard let session, let store else { return }
-        let owner = session.sessionId
-        isUploadingFile = name
-        defer { isUploadingFile = nil }
-
+        let scratch = FileManager.default.temporaryDirectory
+            .appendingPathComponent("incoming-staged", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
         do {
-            let staged = try await store.uploadFile(
-                data: data,
-                name: name,
-                sessionId: session.sessionId
-            )
-            await announceStagedFile(staged, name: name, owner: owner)
+            try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+            let url = scratch.appendingPathComponent(name.isEmpty ? "file" : name)
+            try data.write(to: url)
+            defer { try? FileManager.default.removeItem(at: scratch) }
+            await sendFile(named: name, fileURL: url)
         } catch {
-            lastError = ConnectionStore.describe(error)
+            lastError = String(
+                localized: "文件「\(name)」没发出去：\(ConnectionStore.describe(error))。可以再点一次发送。"
+            )
         }
     }
 
-    /// Uploads a file the caller already has as a URL on disk (R-1 C-18).
+    /// Uploads a file the caller already has as a URL on disk.
     ///
-    /// Whether that becomes a background HTTPS upload or the WSS path is
-    /// `ConnectionStore`'s decision (size, capability, and what the relay
-    /// accepts) — this end only has to hand over a file and then say the same
-    /// thing it always said.
+    /// There is **one** route for file bytes (the relay's HTTPS surface with a
+    /// background task); `ConnectionStore` decides whether that route exists at
+    /// all from here, and a "no" is an error, not another path. This end hands
+    /// over a file and, when it fails, says so in words the person can act on.
     func sendFile(named name: String, fileURL: URL) async {
         guard let session, let store else { return }
         let owner = session.sessionId
@@ -1126,8 +1124,26 @@ final class ChatModel {
             )
             await announceStagedFile(staged, name: name, owner: owner)
         } catch {
-            lastError = ConnectionStore.describe(error)
+            // 落盘日志：大文件走的是"用户看不见进度"的那条路（后台上传、中转桥接、
+            // 连接器落盘），失败只会体现在输入框没动静。没有这一行时，真机上
+            // 「发了没反应」与「后端没收到」无法区分。
+            DSHLog.push("file send failed: \(name) "
+                + "(\(RelayFileTransfer.fileSize(fileURL)) bytes) — \(ConnectionStore.describe(error))")
+            // 给用户的那句话：说清**哪个文件**、**为什么**、**能做什么**。
+            // 不再把内部错误原文丢出去（"中转没有返回落盘路径"就是反面样本）。
+            lastError = String(
+                localized: "文件「\(name)」没发出去：\(ConnectionStore.describe(error))。可以再点一次发送。"
+            )
         }
+    }
+
+    /// Dismisses the failure notice the chat screen shows.
+    ///
+    /// `lastError` used to have exactly one reader (`Composer`'s prompt sheet), so
+    /// a file that failed to send looked to the user like "the spinner stopped".
+    /// `ChatView` now renders it, and this is how its × clears it.
+    func clearLastError() {
+        lastError = nil
     }
 
     /// Writes the prompt that names where the file landed.
@@ -1138,7 +1154,7 @@ final class ChatModel {
     /// finishes — so a late completion goes to that session's draft instead.
     /// **The wording is unchanged**: this is plumbing, not a prompt change.
     private func announceStagedFile(
-        _ staged: FileUploader.Staged,
+        _ staged: StagedFile,
         name: String,
         owner: String
     ) async {

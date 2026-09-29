@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- 推送能力：没有这一项，`registerForRemoteNotifications()` 会走
+	     `didFailToRegisterForRemoteNotificationsWithError`（"no valid
+	     'aps-environment' entitlement string found"），App 永远拿不到令牌，
+	     中转里该设备就一直是 hasPush=0 —— 这正是 2026-09-28 真机验收看到的。
+
+	     值不是写死的：`$(APS_ENVIRONMENT)` 由 xcconfig 决定（Config.xcconfig），
+	     开发版（Xcode 直装 / OTA ad-hoc）走 sandbox，TestFlight 与 App Store
+	     走 production。令牌与环境绑定，送错主机 APNs 回 BadDeviceToken，
+	     从手机上看就是"推送不来"。App 侧的实际取值以代码签名里的这一项为准
+	     （见 Support/APNSRegistrar.swift 的 detectEnvironment()），
+	     所以这里改了、描述文件也要能签得出来，否则构建会失败而不是静默跑偏。 -->
+	<key>aps-environment</key>
+	<string>$(APS_ENVIRONMENT)</string>
+</dict>
+</plist>

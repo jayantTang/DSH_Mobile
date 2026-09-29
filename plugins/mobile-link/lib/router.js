@@ -13,6 +13,7 @@ import {
   StreamTable, WaterfallDedupe, deviceFrameError, deviceIdOf, nonEmptyString, resultFrame,
 } from './dlp.js'
 import { FileInbox, FILE_BEGIN, FILE_CHUNK, FILE_END, isFileMethod } from './files.js'
+import { FileFetcher } from './files-out.js'
 import { GitBridge, isGitMethod } from './git.js'
 import { isHelloMethod, helloPayload, parseClientInfo } from './hello.js'
 
@@ -23,6 +24,13 @@ import { isHelloMethod, helloPayload, parseClientInfo } from './hello.js'
 export const FSPUT_BEGIN = 'fsPutBegin'
 export const FSPUT_CHUNK = 'fsPutChunk'
 export const FSPUT_END = 'fsPutEnd'
+
+/**
+ * 后台大文件下载的桥接帧（relay → 连接器），同一族的另一半：relay 终结
+ * `GET /files/down` 并慢慢读，这里驱动 host 的 `workspaceFiles/readBytes`
+ * 一片一片回。实现体在 `lib/files-out.js`。
+ */
+export const FSGET_BEGIN = 'fsGetBegin'
 
 export const EVENTS_ENDPOINT = '$events'
 export const EVENTS_RESULT = '$events/result'
@@ -93,6 +101,13 @@ export class DeviceRouter {
     this.dedupe = new WaterfallDedupe({ now })
     this.lastError = undefined
     this.fileInbox = new FileInbox(logger)
+    // 下载桥（`fsGetBegin`）：它自己经 `this.dsh.rpc` 读 host，回复只带 bid。
+    // `send(undefined, frame)` 与 `fsPut*` 同路——relay 靠 bid 关联回 HTTP 请求。
+    this.fileFetcher = new FileFetcher({
+      send: (frame) => this.send(undefined, frame),
+      rpc: (method, args) => dsh.rpc(method, args),
+      logger,
+    })
     this.git = new GitBridge(logger)
   }
 
@@ -146,6 +161,9 @@ export class DeviceRouter {
       case FSPUT_END:
         this.handleFsPutEnd(frame)
         return
+      case FSGET_BEGIN:
+        this.handleFsGetBegin(frame)
+        return
       default:
         /* Unknown frame types are ignored by design (spec §3). */
         return
@@ -194,6 +212,14 @@ export class DeviceRouter {
     } catch (error) {
       this.sendFsError(frame.bid, error)
     }
+  }
+
+  /**
+   * 开一次下载。**不 await**：分片要在 relay 读响应体时陆续发出去，一个 await
+   * 会把这条 socket 上其它帧全挡住（与上传那条流水线的理由相同）。
+   */
+  handleFsGetBegin(frame) {
+    this.fileFetcher.start(frame)
   }
 
   /** One failure shape for the whole family; the relay turns it into an HTTP error. */

@@ -307,10 +307,7 @@ class DeviceLink(Link):
         """
         size = len(text.encode("utf-8"))
         if size <= _CHUNK_CHARS:
-            wait = self.bucket.take(size)
-            if wait > 0:
-                await asyncio.sleep(wait)
-                self.paced_seconds += wait
+            await self.pace(size)
             await self.ws.send_str(text)
             self._count_egress(size)
             return
@@ -323,12 +320,36 @@ class DeviceLink(Link):
         for start in range(0, len(text), _CHUNK_CHARS):
             chunk = text[start:start + _CHUNK_CHARS]
             chunk_bytes = len(chunk.encode("utf-8"))
-            step = self.bucket.take(chunk_bytes)
-            if step > 0:
-                await asyncio.sleep(step)
-                self.paced_seconds += step
+            await self.pace(chunk_bytes)
             await self.ws.send_str(chunk)
             self._count_egress(chunk_bytes)
+
+    async def pace(self, size: int) -> None:
+        """Wait out this device's rate allowance for ``size`` bytes.
+
+        **The one place pacing happens**, shared by the WebSocket writer above and
+        by the relay's streaming `GET /files/down` response (R-1 C-19). The
+        download path writes bytes into an HTTP body rather than a WebSocket
+        message, so it cannot reuse `_send` — but it must charge the *same*
+        bucket, or the new route would be a way around the per-device rate and
+        the daily allowance. Extracted rather than copied for exactly that
+        reason: two implementations would drift.
+        """
+        wait = self.bucket.take(size)
+        if wait > 0:
+            await asyncio.sleep(wait)
+            self.paced_seconds += wait
+
+    def charge_daily(self, size: int) -> bool:
+        """Account ``size`` bytes against the day's allowance; ``False`` = spent.
+
+        Callers decide what to do about it: the WebSocket path tells the device
+        and closes it, the HTTP download ends the response with an error. What
+        must not differ is the number.
+        """
+        if not self.quota.enabled:
+            return True
+        return self.quota.charge(size)
 
     def _count_egress(self, size: int) -> None:
         self.egress_bytes += size
@@ -469,6 +490,107 @@ class FileBridge:
             return True
         except asyncio.TimeoutError:
             return False
+
+
+class FileFetchBridge:
+    """One in-flight background download (`GET /files/down`), R-1 C-19.
+
+    Same join as :class:`FileBridge`, opposite direction, and one real
+    difference: an upload is *pushed* by the request loop and only needs a final
+    answer, while a download is *pulled* one window at a time and the HTTP
+    response has to write each window **as it arrives**. So this one carries a
+    queue of frames rather than a single future: the agent's socket handler
+    appends, the response loop awaits, and neither ever holds more than the
+    chunks already in flight.
+
+    The queue is bounded. A phone that stops reading (or an HTTP client that
+    walked away) must not let the connector fill the relay's memory with windows
+    nobody will ever write — the response loop stops draining, the queue fills,
+    and :meth:`deliver` reports it so the request can be abandoned.
+    """
+
+    #: How many `fsGetChunk` frames may sit un-consumed before the pull side is
+    #: declared gone. Two windows is enough to keep the pipe full over a slow
+    #: hop without letting a stalled reader accumulate a file.
+    QUEUE_DEPTH = 8
+
+    def __init__(self, *, bid: str, agent_id: str, logger: logging.Logger):
+        self.bid = bid
+        self.agent_id = agent_id
+        self.logger = logger
+        self.acknowledged = asyncio.Event()
+        self.frames: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue(
+            maxsize=self.QUEUE_DEPTH)
+        self.abandoned = False
+        self.error: str | None = None
+
+    def deliver(self, kind: str, frame: dict[str, Any]) -> bool:
+        """One reply from the connector; ``False`` means the reader is gone.
+
+        A ``False`` here is not an error to report — it means the HTTP request
+        already gave up (the phone hung up, or the quota cut it off), and the
+        connector's remaining windows have nowhere to go. The caller stops
+        feeding them.
+        """
+        if kind == "fsGetAck":
+            self.acknowledged.set()
+            return True
+        if self.abandoned:
+            return False
+        if kind == "fsErr":
+            # Same shape the upload bridge keeps: the phone must see the
+            # connector's own code (`workspace-file/not-found`) so it can tell
+            # "not worth retrying" from "the network hiccuped".
+            self.end({
+                "error": frame.get("code") or "file/rejected",
+                "message": frame.get("message") or "the connector refused the download",
+            })
+            return True
+        if kind == "fsGetChunk":
+            try:
+                self.frames.put_nowait(frame)
+            except asyncio.QueueFull:
+                self.logger.warning("relay: download %s is not being read; giving up", self.bid)
+                self.abandoned = True
+                return False
+            return True
+        if kind == "fsGetEnd":
+            self.end(frame)
+            return True
+        return True
+
+    def end(self, frame: dict[str, Any]) -> None:
+        """Put the terminal frame behind every chunk already queued."""
+        self.acknowledged.set()
+        try:
+            self.frames.put_nowait({**frame, "_terminal": True})
+        except asyncio.QueueFull:
+            # The reader is gone; dropping the terminal frame is fine, there is
+            # nobody to tell.
+            self.abandoned = True
+
+    def fail(self, reason: str) -> None:
+        """The agent went away (or the bridge was abandoned)."""
+        self.error = reason
+        self.end({"error": "host/offline", "message": reason})
+
+    async def wait_ack(self, timeout: float) -> bool:
+        """Wait for the connector to accept the fetch, same rule as uploads."""
+        try:
+            await asyncio.wait_for(self.acknowledged.wait(), timeout)
+            return True
+        except asyncio.TimeoutError:
+            return False
+
+    async def next_frame(self) -> dict[str, Any] | None:
+        """The next chunk, or ``None`` when the response loop should stop."""
+        if self.abandoned:
+            return None
+        return await self.frames.get()
+
+    def abandon(self) -> None:
+        """The reader stopped: stop accepting windows for this transfer."""
+        self.abandoned = True
 
 
 def _reconcile_interval_from_env() -> float:
@@ -770,7 +892,7 @@ class RelayHub:
         # the phone is told why it stopped instead of silently going quiet: a
         # client that keeps reconnecting into a spent quota is worse than one
         # that shows "today's traffic allowance is used up".
-        if device.quota.enabled and not device.quota.charge(len(text.encode("utf-8"))):
+        if not device.charge_daily(len(text.encode("utf-8"))):
             self.logger.warning("relay: device %s exceeded its daily allowance (%d bytes)",
                                 device_id, device.quota.limit)
             device.enqueue_frame(dlp.error_frame(
@@ -888,6 +1010,18 @@ class RelayHub:
         self._bridges[bid] = bridge
         return bridge
 
+    def open_fetch(self, bid: str, agent_id: str) -> "FileFetchBridge":
+        """Register one in-flight `GET /files/down`, same table and same rule.
+
+        Sharing ``_bridges`` is deliberate: ``bid`` is a UUID minted by the app
+        per attempt, and the two families never mix (a ``fsGetChunk`` can only
+        answer a fetch). One table means one place that has to be cleaned up when
+        an agent disconnects.
+        """
+        bridge = FileFetchBridge(bid=bid, agent_id=agent_id, logger=self.logger)
+        self._bridges[bid] = bridge
+        return bridge
+
     def close_bridge(self, bid: str) -> None:
         self._bridges.pop(bid, None)
 
@@ -906,11 +1040,13 @@ class RelayHub:
         return True
 
     async def _drop_agent_bridges(self, agent_id: str, reason: str) -> None:
-        """Fail every waiting upload of an agent that just went away.
+        """Fail every waiting transfer of an agent that just went away.
 
         Without this the HTTP request would sit until its own timeout with the
         connector gone — the phone would look like "uploading forever" instead of
-        "upload failed", and the user would wait on nothing.
+        "upload failed", and the user would wait on nothing. Applies to both
+        directions: an upload waiting for its acks and a download waiting for its
+        first window.
         """
         for bridge in list(self._bridges.values()):
             if bridge.agent_id == agent_id:

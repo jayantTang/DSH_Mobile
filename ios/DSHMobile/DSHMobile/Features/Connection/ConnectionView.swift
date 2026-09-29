@@ -329,6 +329,9 @@ struct ConnectionView: View {
             )
             store.addProfile(profile, secret: pairing.deviceToken)
             pairCode = ""
+            // 刚配上的这台电脑在中转上是一条全新的设备记录，`apnsToken` 必然是空的：
+            // 立刻把本机令牌报过去，否则用户要等到下一次启动才收得到推送。
+            await APNSRegistrar.shared.pairingChanged()
             await store.connect(to: profile)
             if case .failed(let message) = store.state { error = message }
         } catch {

@@ -13,6 +13,7 @@ import ipaddress
 import json
 import logging
 import time
+import uuid
 from typing import Any
 
 from aiohttp import web
@@ -35,7 +36,7 @@ _CLAIM_WINDOW_S = 300
 CORS_HEADERS = {
     "access-control-allow-origin": "*",
     "access-control-allow-methods": "GET, POST, OPTIONS",
-    "access-control-allow-headers": "authorization, content-type",
+    "access-control-allow-headers": "authorization, content-type, range",
     "access-control-max-age": "600",
 }
 
@@ -633,6 +634,184 @@ async def files_up(request: web.Request) -> web.Response:
         hub.close_bridge(bid)
 
 
+#: `fsGetChunk` 一片的原始字节上限，与连接器回片的大小对齐（`BRIDGE_CHUNK_BYTES`）。
+#: 这里只用它做**计费分段的粒度**：一个 32 MB 的帧不该一次性计入限速桶，
+#: 那样会让一次下载在桶里留一个负得离谱的数（`TokenBucket.take` 的注释）。
+DOWN_CHARGE_SLICE = BRIDGE_CHUNK_BYTES
+
+#: 一整个下载最多等多久没有下一片就放弃。连接器断线、家里断电、host 卡死都落在
+#: 这里。**不是**请求级超时（那会掐死一个正在慢慢传的大文件）——它是"两片之间
+#: 的静默上限"，只要还有字节在来就不会触发。
+DOWN_IDLE_TIMEOUT_S = 120.0
+
+
+def _parse_range(header: str | None, *, total: int | None = None) -> int | None:
+    """``Range: bytes=N-`` → ``N``; anything else → ``None`` (ignore the header).
+
+    Only the one form a resuming downloader needs is understood. Deliberately
+    narrow: RFC 7233 allows several forms (``bytes=-N``, ``bytes=A-B``, multiple
+    ranges), every one of them is a chance to answer a subtly wrong byte window,
+    and none of them is needed here. An unparsable header is *ignored* rather
+    than rejected — a proxy that rewrites it must not break a plain download —
+    which is also what the HTTP spec asks for.
+    """
+    if not header:
+        return None
+    value = header.strip()
+    if not value.lower().startswith("bytes="):
+        return None
+    spec = value[len("bytes="):].strip()
+    if "," in spec or not spec.endswith("-"):
+        return None
+    number = spec[:-1].strip()
+    if not number.isdigit():
+        return None
+    offset = int(number)
+    if total is not None and offset > total:
+        return None
+    return offset
+
+
+async def files_down(request: web.Request) -> web.StreamResponse:
+    """Stream one large download from the connector to a phone (R-1 C-19).
+
+    The mirror of :func:`files_up` in every respect that matters: the relay is
+    the HTTP endpoint (the phone cannot reach the computer), the bytes are
+    **pumped, never stored** — each `fsGetChunk` from the connector is written
+    straight into the response body — and the two cases that must answer fast
+    still do (no agent: 503; a connector too old to know `fsGetBegin`: 501 after
+    a short deadline, instead of a request that hangs forever).
+
+    What is *not* symmetric is the pacing. `files_up` reads a body the phone is
+    pushing, so the phone paces itself; here the relay is the sender, and these
+    are the bytes that count as egress. So every slice written is charged against
+    the **device's own** rate bucket and daily allowance — the same objects
+    `DeviceLink` uses — or this route would be a way to pull a whole library
+    through a metered host while WSS downloads stayed governed.
+
+    ``Range: bytes=N-`` resumes from ``N``. This is not an optimisation: a
+    background `URLSessionDownloadTask` hands back a system temp file and
+    `resumeData`, and the app's `.part` continuation (which the WSS path relies
+    on) does not apply to it. Without `Range` a dropped connection would restart
+    a 300 MB file from zero.
+    """
+    store: Store = request.app["store"]
+    hub = request.app["hub"]
+    token = bearer_token(request)
+    device = await asyncio.to_thread(store.device_by_token, token) if token else None
+    if device is None:
+        return json_error(401, "auth/invalid-token", "a valid device token is required")
+
+    scope_id = request.query.get("scopeId", "")
+    path = request.query.get("path", "")
+    if not scope_id or not path:
+        return json_error(400, "request/incomplete", "scopeId and path are both required")
+
+    offset = 0
+    try:
+        offset = int(request.query.get("offset", "0"))
+    except (TypeError, ValueError):
+        return json_error(400, "request/offset", "offset must be an integer")
+    if offset < 0:
+        return json_error(400, "request/offset", "offset must not be negative")
+    # `Range` wins when both are present: it is the header a resuming downloader
+    # actually sets, and it is the one whose absence/presence tells the caller
+    # which of the two it meant.
+    ranged = _parse_range(request.headers.get("Range"))
+    if ranged is not None:
+        offset = ranged
+
+    agent = hub.agents.get(device["agentId"])
+    if agent is None or agent.closed:
+        return json_error(503, "host/offline", "the PC connector is not connected")
+
+    link = hub._devices.get(device["deviceId"])  # noqa: SLF001 - the device's own bucket
+    bid = request.query.get("bid") or uuid.uuid4().hex
+    bridge = hub.open_fetch(bid, device["agentId"])
+    try:
+        agent.enqueue_frame({
+            "t": "fsGetBegin", "deviceId": device["deviceId"], "bid": bid,
+            "scopeId": scope_id, "path": path, "offset": offset,
+        })
+        if not await bridge.wait_ack(BRIDGE_ACK_TIMEOUT_S):
+            return json_error(501, "file/unsupported",
+                              "连接器版本过旧，不支持后台下载；请更新连接器")
+
+        # The response is prepared *after* the connector accepted, so a refusal
+        # (404 for a missing file, 501 for an old connector) can still be a clean
+        # JSON error rather than a 200 whose body turns out to be an error.
+        first = await asyncio.wait_for(bridge.next_frame(), DOWN_IDLE_TIMEOUT_S)
+        if first is None:
+            return json_error(503, "host/offline", "连接器没有开始传输")
+        if "error" in first:
+            return json_error(409, first["error"], first["message"])
+
+        response = web.StreamResponse(status=200)
+        response.content_type = "application/octet-stream"
+        # Nothing may sit between the connector and the phone: a buffering proxy
+        # would defeat the whole point of streaming (the Caddy snippet already
+        # sets `flush_interval -1` for this path).
+        response.headers["Cache-Control"] = "no-store"
+        if offset:
+            response.headers["X-DSH-Offset"] = str(offset)
+        await response.prepare(request)
+
+        frame: dict[str, Any] | None = first
+        try:
+            while frame is not None:
+                if "error" in frame:
+                    # Mid-stream failure: the status line is already sent, so the
+                    # only honest thing left is to stop writing. The app sees a
+                    # short body and treats it as an interrupted transfer — which
+                    # is exactly what it is.
+                    LOGGER.warning("relay: download %s failed mid-stream: %s",
+                                   bid, frame.get("error"))
+                    break
+                piece = base64.b64decode(frame.get("data") or "")
+                for start in range(0, len(piece), DOWN_CHARGE_SLICE):
+                    slice_bytes = piece[start:start + DOWN_CHARGE_SLICE]
+                    if link is not None:
+                        await link.pace(len(slice_bytes))
+                        if not link.charge_daily(len(slice_bytes)):
+                            LOGGER.warning("relay: device %s exceeded its daily allowance "
+                                           "during a download (%d bytes)",
+                                           device["deviceId"], link.quota.limit)
+                            return await _abort_download(response, link)
+                        link._count_egress(len(slice_bytes))  # noqa: SLF001 - one definition
+                    await response.write(slice_bytes)
+                if frame.get("_terminal") or frame.get("eof"):
+                    break
+                try:
+                    frame = await asyncio.wait_for(bridge.next_frame(), DOWN_IDLE_TIMEOUT_S)
+                except asyncio.TimeoutError:
+                    LOGGER.warning("relay: download %s stalled for %.0fs", bid, DOWN_IDLE_TIMEOUT_S)
+                    break
+        finally:
+            bridge.abandon()
+        await response.write_eof()
+        return response
+    finally:
+        hub.close_bridge(bid)
+
+
+async def _abort_download(response: web.StreamResponse,
+                          link: Any) -> web.StreamResponse:
+    """End an over-quota download by hanging up mid-body.
+
+    The status line is long gone, so there is no status code left to send. A
+    truncated body is the one signal a client cannot mistake for success — and it
+    is the same shape a network drop produces, which the app already handles by
+    resuming with `Range`. Telling the phone *why* in a WebSocket `error` frame
+    is not available here (this connection is HTTP), so the reason is logged and
+    the device will meet the quota again on its next socket frame.
+    """
+    try:
+        await response.write_eof()
+    except Exception as error:  # noqa: BLE001 - the peer may already be gone
+        LOGGER.debug("relay: closing an over-quota download failed: %s", error)
+    return response
+
+
 async def agents_enroll(request: web.Request) -> web.Response:
     """Redeem an invite code for a fresh ``agentId`` / ``agentSecret``.
 
@@ -738,6 +917,7 @@ def register_http_routes(app: web.Application, route: Any, base_path: str) -> No
     route("POST", "/devices/revoke", devices_revoke)
     route("POST", "/devices/push", devices_push)
     route("PUT", "/files/up", files_up)
+    route("GET", "/files/down", files_down)
     route("POST", "/agents/enroll", agents_enroll)
     app["claim_limiter"] = ClaimLimiter()
     app["enroll_limiter"] = ClaimLimiter(limit=_ENROLL_FAILURES, window_s=_ENROLL_WINDOW_S)

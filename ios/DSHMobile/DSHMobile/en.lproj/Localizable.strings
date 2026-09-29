@@ -592,3 +592,18 @@ It is registered as a workspace first, so a new group appears in the desktop sid
 
 /* 转写搜索页脚（原先硬编码） */
 "搜索只覆盖已经读到手机上的那段历史。" = "Search only covers the history already read onto this phone.";
+"这条连接方式不支持发送文件" = "This connection method cannot send files";
+"电脑上的连接器版本过旧，请更新后重发" = "The connector on your computer is too old. Update it, then send again";
+"这条连接的中转地址无效，请重新配对。" = "This connection's relay address is invalid. Pair again.";
+/* 上传的源文件在发起前就不在了 / 读不到：不这样报就是整机崩溃（不变量 6） */
+"文件已经不在了，请重新选择一次再发" = "That file is gone. Pick it again, then send.";
+"读不到这个文件，请重新选择一次再发" = "That file cannot be read. Pick it again, then send.";
+"中转没有从预期的位置续传（期望第 %lld 字节起）" = "The relay did not resume where expected (wanted byte %lld)";
+"中转没有从预期的位置续传（期望第 %lld 字节起，实际第 %lld 字节起）" = "The relay did not resume where expected (wanted byte %lld, got byte %lld)";
+
+/* 发文件失败的提示条：文件名 + 人话原因 + 可操作的一句话 */
+"文件「%@」没发出去：%@。可以再点一次发送。" = "“%@” was not sent: %@. You can send it again.";
+"电脑上的连接器不在线，请确认电脑开着 DSH 后再试" = "The connector on your computer is offline. Make sure DSH is running, then try again.";
+"这个连接的凭据已失效，请重新配对" = "This connection's credential is no longer valid. Pair again.";
+"网络超时，可以再点一次发送" = "The network timed out. You can send it again.";
+"网络中断，可以再点一次发送" = "The network dropped. You can send it again.";

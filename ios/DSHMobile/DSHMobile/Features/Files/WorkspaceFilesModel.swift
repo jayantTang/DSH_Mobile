@@ -1,6 +1,7 @@
 import DSHKit
 import Foundation
 import Observation
+import RelayKit
 
 /// Drives the workspace file browser: directory listing, file reads, search,
 /// and the working-tree change feed.
@@ -491,34 +492,90 @@ final class WorkspaceFilesModel {
         ) ?? 0
         transfers[key] = .running(received: offset, total: info.bytes)
 
-        let fetched = try await downloader.fetch(
+        // **There is one route and this is it.** Every file — 200 KB or 400 MB —
+        // is fetched through the relay's HTTPS surface with a background
+        // `URLSession` task, because that is the only shape the system finishes
+        // after the app is suspended. There used to be a size threshold with a
+        // WSS window path below it, and a `catch` that retreated to that path
+        // whenever HTTPS failed; both are gone. No size branch, no fallback:
+        // `downloadInBackground` throws and that is the outcome.
+        let target = try store?.fileTransferTarget() ?? { throw RelayFileTransfer.Unavailable.noRelay }()
+        return try await downloadInBackground(
+            target, scopeId: scopeId, key: key, path: path, info: info
+        )
+    }
+
+    // MARK: - Background download (R-1 C-21)
+
+    /// Downloads through the relay's HTTPS surface into the cache.
+    ///
+    /// **The landing place is the cache's `.part`, not the final name.** That is
+    /// the one shape which makes resume correct: a `downloadTask` hands back only
+    /// the *tail* the relay sent (it answered our `Range`), so appending it to a
+    /// prefix is the only honest thing to do with it, and a prefix only exists at
+    /// `.part`. The finished file then appears through `publish()`, which is the
+    /// same rename the WSS path always used — so "complete" stays atomic and a
+    /// half-arrived file can never be opened as the document.
+    ///
+    /// The previous shape passed the **final** name as the destination and then
+    /// called `discardPartial` at the end. On a resumed transfer that wrote the
+    /// tail to the final name and deleted the real prefix, so the user got a file
+    /// missing its first `offset` bytes, reported as complete.
+    ///
+    /// The `bid` is **new on every attempt** (see `attemptDownload`): an earlier
+    /// attempt's bridge may still be running, and reusing the id would let the new
+    /// HTTP request receive the old one's chunks. Upload is the opposite — there
+    /// the connector overwrites by `bid`, which is what makes a retry idempotent.
+    ///
+    /// `expectedBytes` is the host's own size, which is what makes a truncated
+    /// transfer a failure here instead of a cache hit later:
+    /// `WorkspaceFileCache.existing(…)` decides by size, so a short file that
+    /// landed at the final name would be published as if it were the document.
+    private func downloadInBackground(
+        _ target: (relayURL: URL, deviceToken: String),
+        scopeId: String,
+        key: String,
+        path: String,
+        info: WorkspaceFileDownloader.Info
+    ) async throws -> URL {
+        let offset = WorkspaceFileCache.partialBytes(
+            scopeId: scopeId, path: key, version: info.version
+        ) ?? 0
+        let destination = WorkspaceFileCache.partial(
+            scopeId: scopeId, path: key, version: info.version
+        )
+        let transfer = RelayFileTransfer(relayURL: target.relayURL,
+                                         deviceToken: target.deviceToken)
+        let fetched = try await transfer.download(
             scopeId: scopeId,
             path: path,
-            to: WorkspaceFileCache.partial(scopeId: scopeId, path: key, version: info.version),
-            from: offset
-        ) { [weak self] progress in
+            to: destination,
+            offset: offset,
+            expectedBytes: info.bytes,
+            bid: UUID().uuidString
+        ) { [weak self] received in
             Task { @MainActor in
                 guard let self else { return }
-                self.interruptForAutomationIfAsked(key: key, received: progress.received)
-                // Only ever updates a running transfer: a paused one must not be
-                // dragged back to life by a late window.
+                self.interruptForAutomationIfAsked(key: key, received: received)
                 guard case .running = self.transfers[key] else { return }
-                self.transfers[key] = .running(received: progress.received, total: progress.total)
-                self.noteProgress(key: key, received: progress.received)
+                self.transfers[key] = .running(received: received, total: info.bytes)
+                self.noteProgress(key: key, received: received)
             }
         }
 
-        let complete = try WorkspaceFileCache.publish(
+        // `.part` → final name. Nothing is discarded here: the bytes that just
+        // arrived **are** the file now, prefix and all.
+        let published = try WorkspaceFileCache.publish(
             scopeId: scopeId, path: key, version: info.version
         )
-        // The average the person actually experienced, frozen for the ready line.
         if let started = transferStarted[key], fetched.bytes > 0 {
             let seconds = max(0.001, Date().timeIntervalSince(started))
             transferRates[key] = Double(fetched.bytes) / seconds / 1_048_576
         }
         WorkspaceFileCache.trim()
-        transfers[key] = .ready(bytes: fetched.bytes, url: complete, version: info.version)
-        return complete
+        transfers[key] = .ready(bytes: fetched.bytes, url: published, version: info.version)
+        clearStaleMark(key: key)
+        return published
     }
 
     /// Stops a transfer in flight, keeping the bytes for the next attempt.

@@ -191,4 +191,83 @@ struct RelayDeviceAdminTests {
         #expect(admin.deviceToken == "dt_1")
         await carrier.close()
     }
+
+    // MARK: - APNs push registration
+
+    @Test("a sandbox token registers to /devices/push with the exact wire body")
+    func registerPushBody() async throws {
+        Stub.reset([.init(status: 200, body: Data(#"{"ok":true}"#.utf8))])
+        try await admin().registerPush(
+            token: String(repeating: "ab", count: 32),
+            env: .sandbox,
+            turnEnd: true,
+            attention: false
+        )
+
+        let request = try #require(Stub.requests.first)
+        #expect(request.url?.absoluteString == "https://relay.test/dsh-link/devices/push")
+        #expect(request.httpMethod == "POST")
+        #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer dt_phone")
+        // 关键：字段名必须与 relay 的 `devices_push` 逐字一致（apnsToken / env /
+        // turnEnd / attention）。两侧各自"看起来对"是不够的——这正是 2026-09-28
+        // 真机排查时无法一眼看出问题的地方。
+        let body = try #require(Stub.bodies.first)
+        let decoded = try #require(
+            try JSONSerialization.jsonObject(with: body) as? [String: Any]
+        )
+        #expect(decoded["apnsToken"] as? String == String(repeating: "ab", count: 32))
+        #expect(decoded["env"] as? String == "sandbox")
+        #expect(decoded["turnEnd"] as? Bool == true)
+        #expect(decoded["attention"] as? Bool == false)
+        #expect(decoded.count == 4)
+    }
+
+    @Test("an empty token clears the registration and omits env")
+    func registerPushClearsWithoutEnv() async throws {
+        Stub.reset([.init(status: 200, body: Data(#"{"ok":true}"#.utf8))])
+        // 权限被关掉时走这条路：relay 把空令牌当作"清除登记"，并且要求此时不带 env
+        // （它只接受 sandbox/production 两个字面量；带了非空 env 反而会被 400 挡下）。
+        try await admin().registerPush(token: "", env: .sandbox, turnEnd: true, attention: true)
+
+        let body = try #require(Stub.bodies.first)
+        let decoded = try #require(
+            try JSONSerialization.jsonObject(with: body) as? [String: Any]
+        )
+        #expect(decoded["apnsToken"] as? String == "")
+        #expect(decoded["env"] == nil, "空令牌绝不能带 env")
+        #expect(decoded["turnEnd"] as? Bool == true)
+        #expect(decoded["attention"] as? Bool == true)
+    }
+
+    @Test("a production token reports production")
+    func registerPushProductionEnv() async throws {
+        Stub.reset([.init(status: 200, body: Data(#"{"ok":true}"#.utf8))])
+        try await admin().registerPush(
+            token: String(repeating: "cd", count: 32),
+            env: .production,
+            turnEnd: true,
+            attention: true
+        )
+        let body = try #require(Stub.bodies.first)
+        let decoded = try #require(
+            try JSONSerialization.jsonObject(with: body) as? [String: Any]
+        )
+        #expect(decoded["env"] as? String == "production")
+    }
+
+    @Test("a rejected push registration surfaces the relay's error")
+    func registerPushRejected() async throws {
+        Stub.reset([.init(status: 400, body: Data(
+            #"{"ok":false,"error":{"code":"request/apns-env","message":"env must be sandbox or production"}}"#.utf8
+        ))])
+        do {
+            try await admin().registerPush(
+                token: String(repeating: "ab", count: 32),
+                env: .sandbox, turnEnd: true, attention: true
+            )
+            Issue.record("a 400 must not look like success")
+        } catch let failure as DSHRPCFailure {
+            #expect(failure.code == "request/apns-env")
+        }
+    }
 }

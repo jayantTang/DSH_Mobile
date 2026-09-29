@@ -47,11 +47,12 @@ function readManifestVersion() {
  * - `git`            git status / diff / log / show can be read from the work
  *                    tree on this computer (see git.js)
  * - `background-transfer`
- *                    this connector speaks the `fsPut*` bridge frames, so the app
- *                    may send large files over the relay's HTTPS surface with a
- *                    background URL session instead of the WebSocket. An app that
- *                    does not see this falls back to the WSS path — which is why
- *                    adding the capability is the *only* switch the client needs.
+ *                    this connector speaks the `fsPut*` / `fsGet*` bridge frames,
+ *                    so the app may **send and fetch** large files over the
+ *                    relay's HTTPS surface with a background URL session instead
+ *                    of the WebSocket. An app that does not see this falls back to
+ *                    the WSS path — which is why adding the capability is the
+ *                    *only* switch the client needs.
  */
 export const SERVER_CAPABILITIES = [
   'file-transfer', 'events', 'session-streams', 'pair-code', 'qr-pairing', 'self-enroll', 'git',

@@ -9,9 +9,20 @@
 DSH_RELAY_URL = https:/$()/relay.example.com/dsh-link
 DSH_UPDATE_FEED = https:/$()/relay.example.com/ios/version.json
 
-// 后台上传的阈值（MB）：≥ 它的文件走后台 URL 会话（经中转的 HTTPS），小于它的仍走 WSS。
-// 默认 8。设成很大的值（例如 100000）＝ 回到"只有 WSS"的今天，这是本项的回落手段之一。
-// **不是**用户可见的设置项。
-DSH_BACKGROUND_UPLOAD_MB = 8
+// 文件传输没有阈值了：上行下行都只有"中转 HTTPS + 系统后台传输"这一条路，
+// 1 KB 与 400 MB 走同一条。原先的 `DSH_BACKGROUND_UPLOAD_MB`（默认 8）已被删除——
+// 它同时是"小文件走 WSS 分片"这条第二套实现的唯一开关，而 owner 已明确否掉常驻回落开关。
+
+// APNs 环境：`sandbox` 还是 `production`，写进 entitlements 的 `aps-environment`。
+//
+// 默认 sandbox，因为本项目开发用的就是 sandbox——Xcode 直装与**开发者 OTA
+// （Apple Development / ad-hoc 描述文件）拿到的都是沙盒令牌**，只有 TestFlight
+// 与 App Store 那两条路才是 production。默认值给错会让开发版静默收不到推送
+// （APNs 回 BadDeviceToken，不报错）。
+//
+// 需要让某个构建走 production 时，在 Config.local.xcconfig 里覆盖这一行，
+// 或者用命令行 `xcodebuild ... APS_ENVIRONMENT=production`——**不要**改这里的默认值，
+// 那会让所有开发构建一起跑偏。
+APS_ENVIRONMENT = sandbox
 
 #include? "Config.local.xcconfig"

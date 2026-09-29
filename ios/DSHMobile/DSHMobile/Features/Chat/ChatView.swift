@@ -104,11 +104,27 @@ struct ChatView: View {
             await ViewportProbe.runTyping(into: model, focus: $isFocused)
         }
         .overlay(alignment: .top) {
-            if let completionBanner {
-                CompletionBanner(text: completionBanner)
-                    .padding(.top, DSHTheme.Spacing.hairline)
-                    .transition(.move(edge: .top).combined(with: .opacity))
+            // **Stacked, not two parallel overlays.** `CompletionBanner` already
+            // occupies the top layer; a second `.overlay(alignment: .top)` would
+            // draw the two on top of each other (the "two sibling views drawn
+            // overlapping" mistake from f3b0e91). A `VStack` inside the one
+            // overlay makes them share the space in order.
+            VStack(spacing: DSHTheme.Spacing.hairline) {
+                if let completionBanner {
+                    CompletionBanner(text: completionBanner)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
+                // **The failure has to be visible here.** `lastError` used to have
+                // exactly one reader in the whole app (`Composer`'s prompt sheet),
+                // so a file that failed to send looked like "the spinner stopped".
+                // With the fallback removed there is nothing else to see, so this
+                // banner is what makes "the send failed" a thing the user knows.
+                if let failure = model.lastError {
+                    ChatErrorBanner(text: failure) { model.clearLastError() }
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
             }
+            .padding(.top, DSHTheme.Spacing.hairline)
         }
         .onChange(of: model.completionSignal) {
             guard let finished = model.completion else { return }
@@ -1150,6 +1166,50 @@ private struct CompletionBanner: View {
                 lineWidth: 1
             )
         )
+        .shadow(color: .black.opacity(0.15), radius: 8, y: 2)
+    }
+}
+
+/// A dismissible notice that something the person asked for did not happen.
+///
+/// Its shape follows `CompletionBanner` (same capsule, same layer colour) so the
+/// two read as one family, and it uses `DSHTheme.brand` — the existing warning
+/// tint — rather than a new colour. The text is the whole message
+/// (`ChatModel` composes "what failed / why / what to do"), so nothing is
+/// truncated here with `.lineLimit(1)`; a two-line sentence is still readable.
+private struct ChatErrorBanner: View {
+    let text: String
+    let onDismiss: () -> Void
+
+    var body: some View {
+        HStack(spacing: DSHTheme.Spacing.tight) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 11))
+                .foregroundStyle(DSHTheme.brand)
+            Text(text)
+                .font(DSHTheme.Typography.micro)
+                .foregroundStyle(DSHTheme.labelPrimary)
+                .multilineTextAlignment(.leading)
+                // 标识放在**文本块**上而不是整个 HStack：给容器加标识会让 SwiftUI
+                // 把整条提示合成一个可访问元素，里面的关闭按钮就点不到了（实测，见
+                // `OutdatedConnectorBanner`）。
+                .accessibilityIdentifier("chat.error.banner")
+            Spacer(minLength: 0)
+            Button(action: onDismiss) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(DSHTheme.labelSecondary)
+                    .padding(DSHTheme.Spacing.tight)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("chat.error.dismiss")
+            .accessibilityLabel("关闭")
+        }
+        .padding(.horizontal, DSHTheme.Spacing.standard)
+        .padding(.vertical, 7)
+        .background(DSHTheme.layer3, in: Capsule())
+        .overlay(Capsule().stroke(DSHTheme.brand.opacity(0.5), lineWidth: 1))
         .shadow(color: .black.opacity(0.15), radius: 8, y: 2)
     }
 }

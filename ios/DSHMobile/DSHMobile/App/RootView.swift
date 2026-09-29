@@ -73,6 +73,18 @@ struct RootView: View {
                 await connectToBestAvailableProfile()
             }
             .task {
+                // 大文件走**文件**这条路（`fileURL:`），不是 `data:`：真实用户在
+                // 附件菜单里选一个 33 MB 的文件，走的就是 sendFile(fileURL:)。
+                // 老钩子把整个文件读成 Data 再送，永远验不到 R-1 的后台上传分支。
+                if let path = Self.automationUploadFilePath() {
+                    for _ in 0..<40 where chatModel.session == nil {
+                        try? await Task.sleep(for: .milliseconds(250))
+                    }
+                    await chatModel.sendFile(
+                        named: (path as NSString).lastPathComponent,
+                        fileURL: URL(fileURLWithPath: path))
+                    return
+                }
                 guard let path = Self.automationUploadFile(),
                       let data = try? Data(contentsOf: URL(fileURLWithPath: path))
                 else { return }
@@ -99,6 +111,22 @@ struct RootView: View {
             }
             .task {
                 await alerts.prepare()
+            }
+            .task {
+                // 仿真器复现「App 在后台时用户点了通知」（`-DSHProbeNotifyTap <sid>@<秒>`）。
+                // 走的完全是产品那条 `didReceive` → `SessionRouter` → `MainView` 的路，
+                // 探针只负责把这一下点出来。DEBUG-only，见 `NotificationProbe`。
+                await ViewportProbe.runNotifyTapProbe(delegate: alerts)
+            }
+            .task {
+                // 推送登记：把本机 APNs 令牌与环境报给 relay。
+                //
+                // 放在这里（而不是连接成功之后）是刻意的：手机"不在家"的时候
+                // 恰恰没有连接，而推送正是为那一刻存在的——若只有连着才上报，
+                // 会变成"只有不需要推送的时候才登记得上"。
+                // 令牌可能来自本次启动的回调，也可能早就落盘了，两条路都会调
+                // `reportToRelayIfNeeded`，未变化时是一次空操作。
+                await APNSRegistrar.shared.reportToRelayIfNeeded()
             }
             .task {
                 // 一启动就把落盘的列表装进 model，**不等连接**：屏幕立刻有行可看，
@@ -143,6 +171,16 @@ struct RootView: View {
                 // Re-checked on every return to the foreground: that is when a
                 // user who just installed an update comes back to look.
                 if phase == .active { Task { await updates.refresh() } }
+                // 回到前台是推送登记的自愈点：用户可能刚在 iOS 设置里允许了通知
+                // （此前从未拿到令牌），也可能换了网络后 Apple 才回过话来。
+                // 重新注册是幂等的，未变化时不会多打一次 relay。
+                if phase == .active {
+                    Task {
+                        await alerts.refreshAuthorization()
+                        await APNSRegistrar.shared.registerIfAuthorized()
+                        await APNSRegistrar.shared.reportToRelayIfNeeded()
+                    }
+                }
                 if phase == .active, store.state.isConnected {
                     // The feed is left running while backgrounded — that is what
                     // makes a notification possible at all — so coming back only
@@ -285,9 +323,23 @@ struct RootView: View {
         else { return nil }
         return arguments[index + 1]
     }
+
+    /// 与 `-DSHUploadFile` 相同，但走**文件 URL** 那条路（`sendFile(fileURL:)`）。
+    ///
+    /// 这是大文件真正走的分支：R-1 的后台上传只在 ≥ 阈值且连接器报了
+    /// `background-transfer` 时启用，而它要的输入是一个留在磁盘上的文件。
+    /// 老钩子先把整个文件读进 `Data`，那已经跨过了边界，验不到新路。
+    static func automationUploadFilePath() -> String? {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let index = arguments.firstIndex(of: "-DSHUploadFilePath"),
+              index + 1 < arguments.count
+        else { return nil }
+        return arguments[index + 1]
+    }
     #else
     static func automationDraftImage() -> String? { nil }
     static func automationUploadFile() -> String? { nil }
+    static func automationUploadFilePath() -> String? { nil }
     #endif
 
     #if DEBUG
@@ -384,6 +436,10 @@ struct RootView: View {
             // time it comes back: re-open the transcript so a blip cannot leave
             // a frozen conversation that looks live.
             Task { await chatModel.reopenAfterReconnect() }
+            // 连上是一次"补报"的机会，而且是必需的一次：令牌可能在还没有任何配对
+            // 的时候就到了（那时没地方可报），也可能这次的设备行是新的。上报本身
+            // 幂等，未变化时是一次空操作，所以每次都问一遍不花代价。
+            Task { await APNSRegistrar.shared.reportToRelayIfNeeded() }
         } else if store.activeProfile == nil {
             // A deliberate switch or disconnect: the old host's data must go —
             // every cache, not just the live streams. Cloning or forking a
@@ -478,6 +534,11 @@ private struct MainView: View {
     @State private var isShowingWebFallback = false
     /// Compact-width navigation: the list pushes the session it opens.
     @State private var paths = NavigationPath()
+    /// 栈顶那个会话 id，只为"这条通知要开的会话是否已经在栈上"服务。
+    ///
+    /// `NavigationPath` 不暴露元素读取，只有 `count`；而"已经推过它"与"栈是空的"
+    /// 不是一回事——用户从通知进来、又退到列表再点同一条通知，不能被推两次。
+    @State private var pushedSessionId: String?
     @State private var isShowingDiagnostics = false
     @State private var filesScope: WorkspaceFileScope?
     /// A file to open as soon as the browser appears, for the unattended run.
@@ -569,15 +630,26 @@ private struct MainView: View {
             // Back on the list, nothing is open — and on a phone the list is
             // only on screen when nothing is. Without this, the last session
             // opened stayed "current" for the rest of the run.
-            if count == 0 { listModel.currentSessionId = nil }
+            if count == 0 {
+                listModel.currentSessionId = nil
+                // 栈空了：记下的"已推送"也必须清掉，否则下次点同一条通知
+                // 会因为"推过了"而什么都不做。
+                pushedSessionId = nil
+            }
         }
         .onChange(of: alerts.requestedSessionId) { _, requested in
             // The split view owns navigation, so a tapped notification opens
             // its session by handing it to the transcript the detail column
             // already shows.
-            guard let requested, let summary = listModel.session(withId: requested) else { return }
-            Task { await chatModel.open(summary) }
-            alerts.requestedSessionId = nil
+            guard requested != nil else { return }
+            Task { await openRequestedSession() }
+        }
+        // 冷启动直达：通知被点击时若是**启动**了 App，那次点击发生在
+        // `MainView` 存在之前（`didReceive` 早于视图构建，连接与列表都还没有）。
+        // 请求被 `SessionRouter` 存着，这里在视图真正就位后取走并等待列表到达——
+        // 原来只有 `alerts.requestedSessionId` 一条路，冷启动那一次因此没人接。
+        .task(id: routingEpoch) {
+            await openRequestedSession()
         }
         .task(id: automationFile) {
             guard let automationFile, !didOpenAutomationFile else { return }
@@ -642,6 +714,55 @@ private struct MainView: View {
         }
     }
 
+    /// A value that changes when there is a new session to open.
+    ///
+    /// `.task(id:)` needs an `Equatable` id and the router only exposes the
+    /// request itself, so the request's own text is the id: a second tap on a
+    /// different notification re-runs the task, and re-running it for the same
+    /// session is harmless (the request is consumed on the way in).
+    private var routingEpoch: String {
+        SessionRouter.shared.requestedSessionId ?? alerts.requestedSessionId ?? ""
+    }
+
+    /// Opens the session a notification tap asked for, once there is one to open.
+    ///
+    /// The wait matters: a cold-start tap arrives before the session list does —
+    /// the app may not even have connected yet — so "not found" at first glance
+    /// means "not yet", not "no such session". Up to 20 seconds, the same budget
+    /// the automation surfaces use for the same reason. An id that still does not
+    /// resolve is dropped deliberately: retrying forever would open a session the
+    /// user has since navigated away from.
+    private func openRequestedSession() async {
+        let requested = SessionRouter.shared.requestedSessionId ?? alerts.requestedSessionId
+        guard let requested else { return }
+
+        for _ in 0..<80 {
+            if let summary = listModel.session(withId: requested) {
+                _ = SessionRouter.shared.consume()
+                alerts.requestedSessionId = nil
+                DSHLog.push("opening session \(requested) from a notification")
+                await chatModel.open(summary)
+                listModel.markViewed(requested)
+                // On a phone the list is a stack: without pushing, the opened
+                // session sits behind it and the tap looks like it did nothing.
+                // `NavigationPath` exposes no element access, so "is it already
+                // pushed" is tracked by hand (`paths.count` alone cannot say
+                // *which* session is on top).
+                if horizontalSizeClass == .compact, pushedSessionId != requested {
+                    pushedSessionId = requested
+                    paths.append(requested)
+                }
+                return
+            }
+            if Task.isCancelled { return }
+            try? await Task.sleep(for: .milliseconds(250))
+        }
+        // 20 秒都没等到：这条请求不再有意义（会话可能已被归档/删除）。
+        _ = SessionRouter.shared.consume()
+        alerts.requestedSessionId = nil
+        DSHLog.push("notification session \(requested) never appeared in the list")
+    }
+
     @ViewBuilder
     private func sessionDestination(_ sessionId: String) -> some View {
         if let summary = listModel.session(withId: sessionId) {
@@ -673,6 +794,7 @@ private struct MainView: View {
         guard let summary = listModel.session(withId: sessionId) else { return }
         Task { await chatModel.open(summary) }
         listModel.markViewed(sessionId)
+        pushedSessionId = sessionId
         paths.append(sessionId)
     }
 

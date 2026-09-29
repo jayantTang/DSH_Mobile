@@ -37,6 +37,10 @@ HOST="${DSH_OTA_HOST:-relay.example.com}"
 REMOTE_DIR="${DSH_OTA_DIR:-/opt/dsh-relay/public/ios}"
 PUBLIC_BASE="https://${HOST}/ios"
 
+# 手工签名用的开发描述文件名字。由 scripts/release/asc-dev-signing.mjs 创建并装入
+# Xcode 的描述文件目录，名字是固定契约：脚本按名字找它，两处改要一起改。
+OTA_PROFILE_NAME="${DSH_OTA_PROFILE:-DSH Mobile Development Push}"
+
 SKIP_BUILD=0
 [ "${1:-}" = "--no-build" ] && SKIP_BUILD=1
 
@@ -64,6 +68,17 @@ BUILD_NUMBER="$(date -u +%Y%m%d).$(date -u +%H%M)"
 step "构建号 $BUILD_NUMBER"
 
 if [ "$SKIP_BUILD" -eq 0 ]; then
+  # 推送描述文件先备好，再归档。
+  #
+  # 归档**不再依赖 Xcode 的自动签名**：自动签名要求"Xcode 里有登录过的 Apple ID"
+  # （本机没有，报 `No Accounts`），而且它现场生成的那张团队通配描述文件里没有
+  # `aps-environment`——App ID 上原本一个 capability 都没有。结果是加了推送之后
+  # 归档直接失败（"doesn't include the aps-environment entitlement"）。
+  # 现在改为：这一步用 ASC API Key 打开 capability 并签一张带推送的开发描述文件，
+  # 归档时按名字手工指定它（与 TestFlight 那条路同一套做法）。
+  step "准备开发描述文件（带 aps-environment）"
+  node "$ROOT/scripts/release/asc-dev-signing.mjs" profile
+
   # 归档这一步 xcodebuild 的输出经过 tail 折叠，所以「没有任何输出」是正常的，
   # 不是卡住：一次 Release 归档通常 1~3 分钟。中途 Ctrl-C 会留下半成品和
   # ibtoold 孤儿进程，看起来就像「停住了」，其实是被自己打断了。
@@ -71,14 +86,19 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
   rm -rf "$ARCHIVE" "$EXPORT_DIR"
   xcodebuild -project "$PROJECT_DIR/DSHMobile.xcodeproj" -scheme DSHMobile \
     -configuration Release -destination 'generic/platform=iOS' \
-    -archivePath "$ARCHIVE" -allowProvisioningUpdates \
+    -archivePath "$ARCHIVE" \
     CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
-    DEVELOPMENT_TEAM="$TEAM_ID" archive \
+    DEVELOPMENT_TEAM="$TEAM_ID" \
+    CODE_SIGN_STYLE=Manual \
+    CODE_SIGN_IDENTITY="Apple Development" \
+    PROVISIONING_PROFILE_SPECIFIER="$OTA_PROFILE_NAME" \
+    archive \
     | tail -3
 
   step "导出 .ipa —— 同样需要一两分钟，无输出属正常"
-  # 团队 ID 在这里落进导出选项的副本，仓库里那份留着占位符。
-  sed "s/<TEAM_ID>/${TEAM_ID}/" "$PROJECT_DIR/ExportOptions-ota.plist" \
+  # 团队 ID 与描述文件都落进导出选项的副本，仓库里那份留着占位符。
+  sed -e "s/<TEAM_ID>/${TEAM_ID}/" -e "s/<PROFILE_NAME>/${OTA_PROFILE_NAME}/" \
+    "$PROJECT_DIR/ExportOptions-ota.plist" \
     > "$BUILD_DIR/ExportOptions-ota.local.plist"
   xcodebuild -exportArchive -archivePath "$ARCHIVE" \
     -exportOptionsPlist "$BUILD_DIR/ExportOptions-ota.local.plist" \

@@ -36,7 +36,10 @@ RELAY_TO_AGENT = frozenset({"deviceAttach", "deviceDetach"})
 #: "a run finished / something needs you" ping the relay turns into an APNs push
 #: when the device is offline (R-1 C-02/C-06).
 AGENT_CONTROL = frozenset({
-    "notify", "fsPutBegin", "fsPutChunk", "fsPutEnd", "fsPutAck", "fsPutDone", "fsErr",
+    "notify",
+    "fsPutBegin", "fsPutChunk", "fsPutEnd", "fsPutAck", "fsPutDone",
+    "fsGetBegin", "fsGetChunk", "fsGetEnd", "fsGetAck",
+    "fsErr",
 })
 
 #: Frame types that carry a unary request and therefore need an ``id``.

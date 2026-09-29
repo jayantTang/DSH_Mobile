@@ -25,6 +25,11 @@
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>
+		<!-- 远程通知：中转发来的推送（relay/push.py）是"你不在的时候"唯一的到达方式。
+		     `audio` 那一条只在有活在跑时保活；这台手机被系统挂起、或用户几天没打开 App
+		     的时候，只有 APNs 能把人叫回来。缺这一项时前台提醒照旧，后台/冷启动的
+		     推送不会触发 App 的唤醒路径。 -->
+		<string>remote-notification</string>
 	</array>
 	<key>CFBundleURLTypes</key>
 	<array>
@@ -63,11 +68,12 @@
 	<string>$(DSH_RELAY_URL)</string>
 	<key>DSHUpdateFeed</key>
 	<string>$(DSH_UPDATE_FEED)</string>
-	<!-- 大于这个大小（MB）的文件走后台 URL 会话（经中转的 HTTPS），小文件仍走 WSS。
-	     它是**构建**配置而不是用户可见的设置项：它是个风险开关，设成很大的值就等于
-	     回到"只有 WSS"的今天。读取处见 Support/ConnectionStore.swift 的
-	     backgroundUploadThreshold。 -->
-	<key>DSHBackgroundUploadMB</key>
-	<string>$(DSH_BACKGROUND_UPLOAD_MB)</string>
+	<!-- 构建时确定的 APNs 环境（sandbox / production），值来自 Config.xcconfig。
+	     它同时被写进 DSHMobile.entitlements 的 aps-environment。
+	     读取处：Support/APNSRegistrar.swift。真机注册成功后，App 上报给中转的
+	     `env` 字段就以它为准（优先读描述文件里的同名权限），送错主机 APNs 会回
+	     BadDeviceToken，手机上表现为「推送不来」但不报错。 -->
+	<key>APSEnvironment</key>
+	<string>$(APS_ENVIRONMENT)</string>
 </dict>
 </plist>

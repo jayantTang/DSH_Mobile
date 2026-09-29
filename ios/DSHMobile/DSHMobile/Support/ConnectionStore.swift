@@ -191,6 +191,18 @@ public final class ConnectionStore {
         return (try? JSONDecoder().decode([ConnectionProfile].self, from: data)) ?? []
     }
 
+    /// The saved pairings, readable without an instance.
+    ///
+    /// Push registration needs to find "the relay this phone is paired to" at
+    /// moments when no `ConnectionStore` is in scope and no link is up — a
+    /// `didRegisterForRemoteNotifications` callback arrives whenever Apple feels
+    /// like it, including for a phone that has been offline for a day. Reading
+    /// the same store the live object persists to keeps the two in step without
+    /// a second copy of the profile list.
+    public static func persistedProfiles() -> [ConnectionProfile] {
+        loadProfiles()
+    }
+
     private func persist() {
         guard let data = try? JSONEncoder().encode(profiles) else { return }
         UserDefaults.standard.set(data, forKey: defaultsKey)
@@ -263,80 +275,63 @@ public final class ConnectionStore {
         persist()
     }
 
-    /// Stages a file already in memory (the WSS path, unchanged).
-    public func uploadFile(
-        data: Data,
-        name: String,
-        sessionId: String
-    ) async throws -> FileUploader.Staged {
-        guard let carrier else { throw DSHTransportError.notConnected }
-        return try await FileUploader(carrier: carrier).upload(
-            data: data,
-            name: name,
-            sessionId: sessionId
-        )
-    }
-
-    /// Stages a file the caller has as a URL, choosing the path by size (R-1).
+    /// Stages a file the caller has as a URL.
     ///
-    /// A file at or above `backgroundUploadThreshold` goes over the relay's HTTPS
-    /// surface with a **background** URL session, so the system finishes it after
-    /// the app is suspended; anything smaller stays on the WSS path it has always
-    /// used. The fallback is deliberate and total — no capability, below the
-    /// threshold, or a relay/connector that refuses the route all land on the WSS
-    /// path, so the new path can never become the only way to send a file.
+    /// **One route, one attempt, no fallback.** Every file — 1 KB or 400 MB —
+    /// goes over the relay's HTTPS surface as a file-based **background** task,
+    /// so the system finishes it after the app is suspended. There used to be a
+    /// size threshold with a WSS chunked path below it, and a `catch` that
+    /// re-sent the whole file over WSS whenever the HTTPS attempt failed; both
+    /// are gone. The `catch` was the direct cause of the R-1 incident: an upload
+    /// that had transferred every byte and been answered `200` was discarded as
+    /// `malformedResponse` and re-sent over the socket, so the phone showed an
+    /// upload that never ended for a file the computer already had.
+    ///
+    /// A failure here is reported as a failure. `fileTransferTarget()` says which
+    /// of the "there is no route from here" cases applies, and anything else
+    /// propagates untouched — the caller shows it and the person can send again.
     public func uploadFile(
         fileURL: URL,
         name: String,
         sessionId: String
-    ) async throws -> FileUploader.Staged {
-        guard let request = backgroundUploadRequest(fileURL: fileURL, name: name, sessionId: sessionId)
-        else {
-            // 回落：WSS 老路，行为与今天一致。
-            return try await uploadFile(data: try Data(contentsOf: fileURL), name: name, sessionId: sessionId)
-        }
-        do {
-            return try await RelayFileTransfer(
-                relayURL: request.relayURL, deviceToken: request.deviceToken
-            ).upload(fileURL: fileURL, name: name, sessionId: sessionId, bid: request.bid).asStaged
-        } catch let failure as DSHRPCFailure where !RelayFileTransfer.shouldFallBack(status: 0) {
-            throw failure
-        } catch {
-            // 被中转/连接器明确拒绝（501 老连接器、413 体积、404 无此路由）→ 回落，
-            // 别让用户的一次发送因为"这条路不被支持"而彻底失败。
-            return try await uploadFile(data: try Data(contentsOf: fileURL), name: name, sessionId: sessionId)
-        }
+    ) async throws -> StagedFile {
+        let target = try fileTransferTarget()
+        return try await RelayFileTransfer(
+            relayURL: target.relayURL, deviceToken: target.deviceToken
+        ).upload(fileURL: fileURL, name: name, sessionId: sessionId).asStaged
     }
 
-    /// The parts of a background upload, or `nil` when the WSS path should be used.
+    /// The target of a file transfer — relay origin plus device credential — or
+    /// the reason there is no route from here.
     ///
-    /// Split out so the decision is testable on its own — it is the whole
-    /// "which path" policy, and the three ways it can say no are the fallback.
-    public func backgroundUploadRequest(
-        fileURL: URL,
-        name: String,
-        sessionId: String
-    ) -> (relayURL: URL, deviceToken: String, bid: String)? {
-        _ = (name, sessionId)   // 由调用方组进请求；这里留着是为了签名对称
-        let size = RelayFileTransfer.fileSize(fileURL)
-        guard size >= Self.backgroundUploadThreshold else { return nil }
-        guard supports(RelayFileTransfer.capability) else { return nil }
-        guard case .relay(let relayURL, _)? = activeProfile?.transport else { return nil }
-        guard let httpRelay = ConnectLink.normalizedRelayURL(relayURL) else { return nil }
-        guard let profile = activeProfile, let secret = Keychain.get(profile.secretAccount) else { return nil }
-        return (httpRelay, secret, UUID().uuidString)
+    /// **Shared by both directions on purpose.** Upload and download must agree
+    /// on what "cannot transfer" means, and a second copy of this policy is
+    /// exactly how the two directions drifted apart before. The four ways it can
+    /// fail are statements about the *connection*, not a choice between
+    /// transports: none of them falls through to another route, because there
+    /// isn't one.
+    ///
+    /// `throws` rather than returning `nil`: a `nil` is what made the old code
+    /// silently take the WSS path.
+    public func fileTransferTarget() throws -> (relayURL: URL, deviceToken: String) {
+        guard case .relay(let relayURL, _)? = activeProfile?.transport else {
+            // `.direct` (`dsh://direct`) is the DEBUG-only test channel; the
+            // product has exactly one connection method. It stays usable, but it
+            // cannot carry file bytes — and saying so beats quietly using a
+            // different path than the product does.
+            throw RelayFileTransfer.Unavailable.noRelay
+        }
+        guard supports(RelayFileTransfer.capability) else {
+            throw RelayFileTransfer.Unavailable.connectorTooOld
+        }
+        guard let httpRelay = ConnectLink.normalizedRelayURL(relayURL) else {
+            throw RelayFileTransfer.Unavailable.relayAddressInvalid
+        }
+        guard let profile = activeProfile, let secret = Keychain.get(profile.secretAccount) else {
+            throw RelayFileTransfer.Unavailable.credentialMissing
+        }
+        return (httpRelay, secret)
     }
-
-    /// The size at or above which the background path is used.
-    ///
-    /// A **build** setting (`DSH_BACKGROUND_UPLOAD_MB`, injected through
-    /// Info.plist like the relay address), not a user-visible preference: it is a
-    /// risk switch, and setting it very high restores the WSS-only behaviour
-    /// exactly. Default 8 MB.
-    public static let backgroundUploadThreshold: Int = {
-        let raw = Bundle.main.object(forInfoDictionaryKey: "DSHBackgroundUploadMB") as? String
-        return RelayFileTransfer.thresholdBytes(value: raw)
-    }()
 
     /// Connects using a saved profile, reusing its stored secret.
     public func connect(to profile: ConnectionProfile) async {
@@ -785,7 +780,39 @@ public final class ConnectionStore {
 
     // MARK: - Diagnostics
 
+    /// Turns a transport failure into something a person can act on.
+    ///
+    /// The relay and connector already speak in codes; showing those raw is how
+    /// "DSh 响应格式异常：中转没有返回落盘路径" ended up in front of a user. Every
+    /// branch below answers "what happened, and what can I do" — and the last one
+    /// deliberately keeps the original wording rather than flattening an unknown
+    /// failure into a generic sentence.
     public static func describe(_ error: any Error) -> String {
+        if let failure = error as? DSHRPCFailure {
+            switch failure.code {
+            case "file/unsupported":
+                // 连接器没有桥接帧（版本旧）：relay 已经在给这个语义，这里与
+                // `RelayFileTransfer.Unavailable.connectorTooOld` 共用同一条文案键。
+                return String(localized: "电脑上的连接器版本过旧，请更新后重发")
+            case "host/offline":
+                return String(localized: "电脑上的连接器不在线，请确认电脑开着 DSH 后再试")
+            case "auth/invalid-token", "auth/unauthorized":
+                return String(localized: "这个连接的凭据已失效，请重新配对")
+            default:
+                break
+            }
+        }
+        if let url = error as? URLError {
+            switch url.code {
+            case .timedOut:
+                return String(localized: "网络超时，可以再点一次发送")
+            case .networkConnectionLost, .notConnectedToInternet, .cannotConnectToHost,
+                 .cannotFindHost, .dataNotAllowed:
+                return String(localized: "网络中断，可以再点一次发送")
+            default:
+                break
+            }
+        }
         if let error = error as? LocalizedError, let description = error.errorDescription {
             return description
         }

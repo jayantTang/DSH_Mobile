@@ -159,6 +159,16 @@ iOS `DSHKit/Tests/DSHKitTests/DLPContractTests.swift`）。它同时**记录已�
 | `t` | 字段 | 语义 |
 |---|---|---|
 | `notify` | `kind`, `sid`, `eid`? | 「这台电脑上有事发生」：`kind` 为 `turnEnd`（一轮跑完了）或 `attention`（有提问/审批在等人）；`sid` 是会话语义标识，`eid` 仅 `attention` 带。**不带 `deviceId`**——连接器不知道、也不需要知道这台电脑配了哪些手机 |
+| `fsPutBegin` / `fsPutChunk` / `fsPutEnd` | `deviceId`, `bid`, `seq`, `data`, … | 后台上传的桥接：中转的 `PUT /files/up` 把手机传来的字节泵给连接器，连接器落进 `~/.dsh/inbox/<sessionId>/`。分片**不回 ack**（流水线） |
+| `fsPutAck` / `fsPutDone` | `bid`, `received` / `path`, `bytes` | 上行的两个同步点。**不带 `deviceId`**：中转靠 `bid` 把它对回那条 HTTP 请求 |
+| `fsGetBegin` | `deviceId`, `bid`, `scopeId`, `path`, `offset` | 后台下载的桥接：中转的 `GET /files/down` 要连接器去读 host。`offset` 来自请求的 `Range: bytes=N-`，**这是续传能成立的唯一依据** |
+| `fsGetChunk` | `bid`, `data`（base64）, `eof` | 一片下载数据；中转**边收边写进 HTTP 响应体**，不落盘 |
+| `fsGetAck` / `fsGetEnd` | `bid` | 下行的两个同步点，同样**不带 `deviceId`** |
+| `fsErr` | `bid`, `code`, `message` | 这一族任一步失败。`code` 是**原错误码**（如 `workspace-file/not-found`），App 靠它分辨「不该重试」与「网络抖了一下」 |
+
+上传与下载这两族由中转的两个 HTTP 入口驱动，**relay 全程不落盘**：字节只在中转的内存里过
+一手，落点是连接器（上行）或手机的响应体（下行）。下行必须走**设备自己的**限速与日额度桶
+——否则新通道就成了绕过它们的一条后门。
 
 `notify` 的用法（R-1）：连接器在 `$events` 上认出这两类事件就发一条。中转手里有「这台设备
 此刻在不在线」——**在线就不推**（App 自己会弹本地通知，再推就是重复），不在线才转成一条

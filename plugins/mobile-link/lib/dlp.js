@@ -20,7 +20,11 @@ export const RELAY_CONTROL = new Set(['deviceAttach', 'deviceDetach'])
  * relay turns into an APNs push when the device is offline (R-1 C-02/C-06).
  */
 export const AGENT_CONTROL = new Set([
-  'notify', 'fsPutBegin', 'fsPutChunk', 'fsPutEnd', 'fsPutAck', 'fsPutDone', 'fsErr',
+  'notify',
+  // 后台大文件上传（`PUT /files/up`）与下载（`GET /files/down`）的桥接帧。
+  'fsPutBegin', 'fsPutChunk', 'fsPutEnd', 'fsPutAck', 'fsPutDone',
+  'fsGetBegin', 'fsGetChunk', 'fsGetEnd', 'fsGetAck',
+  'fsErr',
 ])
 
 const ID_FRAMES = new Set(['req', 'open', 'cancel', 'res', 'item', 'end', 'streamError', 'eventResult'])

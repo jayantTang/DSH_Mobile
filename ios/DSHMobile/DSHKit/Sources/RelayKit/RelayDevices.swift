@@ -5,6 +5,20 @@ import DSHKit
 import FoundationNetworking
 #endif
 
+/// Which of Apple's two push hosts a device token belongs to.
+///
+/// The relay refuses anything else (`request/apns-env`): a token is minted by one
+/// environment and rejected by the other with ``BadDeviceToken``, which from the
+/// phone looks like "push is simply broken". A TestFlight or App Store build
+/// gets a production token; a build installed straight from Xcode gets a sandbox
+/// one, and this app's development channel is an OTA/ad-hoc build — hence the
+/// default at the call site is read from the embedded provisioning profile
+/// rather than guessed.
+public enum RelayPushEnvironment: String, Sendable, CaseIterable {
+    case sandbox
+    case production
+}
+
 /// A phone paired to the same computer, as the relay knows it.
 ///
 /// This is *not* part of the DSH protocol: devices live on the relay, which is
@@ -127,6 +141,11 @@ public struct RelayDeviceAdmin: Sendable {
         let error: DSHRPCFailure?
     }
 
+    private struct PushEnvelope: Decodable {
+        let ok: Bool?
+        let error: DSHRPCFailure?
+    }
+
     /// Devices paired to the same computer as this phone.
     public func devices() async throws -> RelayDeviceList {
         let envelope: ListEnvelope = try await call(path: "/devices", method: "GET", body: nil)
@@ -149,6 +168,44 @@ public struct RelayDeviceAdmin: Sendable {
             throw envelope.error ?? DSHTransportError.malformedResponse("中转没有确认撤销")
         }
         return envelope.deviceId ?? id
+    }
+
+    /// Registers this phone's APNs token and reminder switches with the relay.
+    ///
+    /// The phone cannot reach the computer when it is away — that is the whole
+    /// reason push exists — so this goes to the relay, which already holds the
+    /// device ledger and the signing key. It is the same credential as the
+    /// device list: the phone manages its own row and nobody else's.
+    ///
+    /// An empty ``token`` **clears** the registration, which is what the app
+    /// sends when the user turns notification permission off. That is the only
+    /// thing that actually stops the pushes, so it must be as reliable as
+    /// registering.
+    ///
+    /// `env` is ``sandbox`` or ``production`` and is what tells the relay which
+    /// of Apple's two hosts to use. A token minted by one is rejected by the
+    /// other, so the pair travels together.
+    public func registerPush(
+        token: String,
+        env: RelayPushEnvironment?,
+        turnEnd: Bool,
+        attention: Bool
+    ) async throws {
+        var fields: [String: Any] = [
+            "apnsToken": token,
+            "turnEnd": turnEnd,
+            "attention": attention,
+        ]
+        // 空令牌＝清除登记；relay 此时忽略 env（它要求 env 只能是两个合法值之一），
+        // 所以不带比带一个对的更安全。
+        if !token.isEmpty, let env {
+            fields["env"] = env.rawValue
+        }
+        let body = try JSONSerialization.data(withJSONObject: fields)
+        let envelope: PushEnvelope = try await call(path: "/devices/push", method: "POST", body: body)
+        guard envelope.ok == true else {
+            throw envelope.error ?? DSHTransportError.malformedResponse("中转没有确认推送登记")
+        }
     }
 
     private func call<Envelope: Decodable>(

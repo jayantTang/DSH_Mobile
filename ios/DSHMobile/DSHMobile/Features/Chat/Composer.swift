@@ -1,5 +1,6 @@
 import DSHKit
 import PhotosUI
+import RelayKit
 import UniformTypeIdentifiers
 import SwiftUI
 
@@ -71,7 +72,9 @@ struct Composer: View {
         .alert("这个文件发不了", isPresented: .constant(unsupportedFile != nil)) {
             Button("好") { unsupportedFile = nil }
         } message: {
-            Text("DSH 目前只接受图片附件（Host 没有其它文件的上传通道）。\n\(unsupportedFile ?? "")")
+            // 这句话以前写的是「只接受图片附件」，在文件与视频都能发之后就已经是错的
+            // ——它会把一次真实的失败说成"这个类型不支持"，把人引到错误的方向。
+            Text("这个文件没能发送。图片、视频和其它文件都可以发，失败通常是文件读不到（例如 iCloud 还没下载完）。\n\(unsupportedFile ?? "")")
         }
     }
 
@@ -106,10 +109,36 @@ struct Composer: View {
     }
 
     /// Reads the picked items into memory for the next prompt.
+    ///
+    /// Images and videos take **different** routes, and the difference is the
+    /// whole reason this is not a one-liner:
+    ///
+    /// * an image becomes a `DraftImage` and rides the prompt inline — it is what
+    ///   the prompt understands, and the host keeps it as a durable attachment.
+    /// * a video is a *file*. It cannot be inlined (a 100 MB base64 blob in a
+    ///   prompt is not a thing the host accepts), so it is written into the app's
+    ///   own container and handed to the same file path the Files picker uses —
+    ///   which is also what puts it on the background upload route once it is
+    ///   large enough. See `ChatModel.sendFile(named:fileURL:)`.
+    ///
+    /// A video is staged **while the security scope is still open**: the
+    /// `loadTransferable` copy has to happen before the picker's access ends, so
+    /// the file handle is not held past the scope.
     private func load(_ items: [PhotosPickerItem]) async {
         var images: [UIImage] = []
         var names: [String] = []
         for (index, item) in items.enumerated() {
+            if let movie = item.supportedContentTypes.first(where: { $0.conforms(to: .movie) })
+                ?? (item.supportedContentTypes.first(where: { $0.conforms(to: .video) })) {
+                let ext = movie.preferredFilenameExtension ?? "mov"
+                let name = "video-\(index + 1).\(ext)"
+                if let staged = await Self.stageMovie(item, name: name) {
+                    await model.sendFile(named: name, fileURL: staged)
+                } else {
+                    unsupportedFile = name
+                }
+                continue
+            }
             guard let data = try? await item.loadTransferable(type: Data.self),
                   let image = UIImage(data: data)
             else { continue }
@@ -118,6 +147,35 @@ struct Composer: View {
         }
         model.addDraftImages(images, names: names)
         pickedPhotos = []
+    }
+
+    /// Copies one picked video into the app's container and returns where it is.
+    ///
+    /// `loadTransferable(type: Data.self)` is deliberately **not** used: a video
+    /// from the library is routinely tens to hundreds of megabytes, and reading
+    /// it into `Data` first would put the whole thing in memory for no reason —
+    /// the same mistake the file path exists to avoid. The transferable file
+    /// representation hands over a URL on disk instead, which is copied with
+    /// `FileManager` (a streamed copy) into a stable location the background
+    /// session can keep reading after this view is gone.
+    ///
+    /// Returns `nil` when the item cannot be materialised (an iCloud video that
+    /// will not download, a format the system will not export); the caller
+    /// reports that rather than dropping it silently.
+    private static func stageMovie(_ item: PhotosPickerItem, name: String) async -> URL? {
+        guard let movie = try? await item.loadTransferable(type: MovieFile.self) else { return nil }
+        defer { try? FileManager.default.removeItem(at: movie.url) }
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("outgoing-files", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let destination = directory.appendingPathComponent(name)
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try FileManager.default.copyItem(at: movie.url, to: destination)
+            return destination
+        } catch {
+            return nil
+        }
     }
 
     /// Reads files chosen from the Files app.
@@ -258,10 +316,14 @@ struct Composer: View {
             } label: {
                 Label("照片图库", systemImage: "photo.on.rectangle")
             }
-            // Hidden when the connector cannot stage files: offering it would
-            // produce a call the Host answers with 404, which reads as a bug
-            // rather than as "this computer's connector is older".
-            if store.supports(LinkHandshake.Capability.fileTransfer) {
+            // Hidden when the connector cannot carry file bytes at all. The gate
+            // is `background-transfer` — the capability that says the connector
+            // speaks the bridge frames — because that is now the **only** route a
+            // file can take: an older connector that lists `file-transfer` but not
+            // this one would answer the send with "connector too old", so the entry
+            // is not offered. (`file-transfer` stays on the wire for
+            // already-installed older app versions, which still gate on it.)
+            if store.supports(RelayFileTransfer.capability) {
                 Button {
                     isPickingFiles = true
                 } label: {
@@ -282,7 +344,11 @@ struct Composer: View {
             isPresented: $isPickingPhotos,
             selection: $pickedPhotos,
             maxSelectionCount: 8,
-            matching: .images,
+            // 图片**和视频**：只配 `.images` 时，选择器里根本看不到视频，用户想发一段
+            // 录像做大文件测试（或日常分享）时无从下手。视频走的是与图片**不同**的
+            // 那条路——它是文件（可能要几十上百 MB），不是内联进 prompt 的图片——
+            // 具体分流见 `load(_ items:)`。
+            matching: .any(of: [.images, .videos]),
             photoLibrary: .shared()
         )
     }
@@ -432,6 +498,33 @@ struct Composer: View {
             guard previous.isWhitespace || previous.isNewline else { return nil }
         }
         return String(token)
+    }
+}
+
+// MARK: - Picked video
+
+/// A video the photo picker handed over, as a **file** rather than bytes.
+///
+/// `PhotosPickerItem.loadTransferable(type:)` will happily give back `Data`, and
+/// for a picture that is right. For a video it is the one thing that must not
+/// happen: the item is a movie, routinely tens to hundreds of megabytes, and
+/// `Data` would hold all of it in memory before anything is even sent. A
+/// `Transferable` backed by a file URL lets the system export the movie to a
+/// temporary file and this type just carries the location, so the bytes are
+/// streamed and the background upload keeps the property it depends on.
+///
+/// The exported file is temporary and owned by the system's export: the caller
+/// must copy it somewhere stable and delete it before returning (see
+/// `Composer.stageMovie`), because it does not outlive the transfer.
+struct MovieFile: Transferable {
+    let url: URL
+
+    static var transferRepresentation: some TransferRepresentation {
+        FileRepresentation(contentType: .movie) { movie in
+            SentTransferredFile(movie.url)
+        } importing: { received in
+            MovieFile(url: received.file)
+        }
     }
 }
 

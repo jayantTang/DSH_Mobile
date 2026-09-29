@@ -35,6 +35,11 @@ test/runs/
 test/.build/
 test/.venv/
 
+# 多 agent 开发管线的运行记录（含真实会话 id、家目录、真机证据），只在本机保留。
+# 规范位置是 sidecars/agent-team/runs/（那里已有同一条规则），这里挡住的是
+# 误按「仓库根 runs/<run-id>/」写下来的那一份——它不在 sidecars 的规则覆盖内。
+/runs/
+
 # AI 协作约定：写给自己用的操作手册，不随开源仓库发布
 AGENTS.md
 

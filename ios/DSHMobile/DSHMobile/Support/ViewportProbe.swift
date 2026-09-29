@@ -309,6 +309,46 @@ enum ViewportProbe {
         return arguments[index + 1]
     }
 
+    /// `-DSHProbeNotifyTap <sid>@<秒>`：模拟「App 在后台时用户点了通知」。
+    ///
+    /// 为什么必须用钩子而不是 XCUITest：真机那条路是 iOS 把 App 拉回前台并回调
+    /// `userNotificationCenter(_:didReceive:)`。仿真器里点不到真实横幅（通知权限
+    /// 装不上：`simctl privacy grant notifications` 返回 `Operation not permitted`），
+    /// 但**回调本身**可以构造——`UNNotificationResponse` 是可实例化的，把一个
+    /// `UNNotification` 塞进 `request.content.userInfo` 就得到与真机逐字段相同的对象。
+    ///
+    /// 时序是这条路的关键，也是它与 `-DSHNotifySession`（冷启动）唯一的不同：
+    /// 先等 <秒>（此刻 App 在前台、已连上、列表已在），再由 App 自己按 home 键退到后台，
+    /// 再等 2 秒（等 iOS 真的挂起/停掉 socket），然后触发 didReceive。
+    static var notifyTapProbe: (sid: String, seconds: Double)? {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let index = arguments.firstIndex(of: "-DSHProbeNotifyTap"),
+              index + 1 < arguments.count
+        else { return nil }
+        let parts = arguments[index + 1].split(separator: "@")
+        guard let sid = parts.first, !sid.isEmpty else { return nil }
+        return (String(sid), parts.count > 1 ? Double(parts[1]) ?? 6 : 6)
+    }
+
+    /// 跑上面那个钩子：前台等 → 退后台 → 挂起窗口 → 触发点按回调。
+    static func runNotifyTapProbe(delegate: SessionAlerts) async {
+        guard let probe = notifyTapProbe else { return }
+        note("notifytap.wait", ["sid": probe.sid, "seconds": String(probe.seconds)], force: true)
+        try? await Task.sleep(for: .seconds(probe.seconds))
+        guard UIApplication.shared.applicationState == .active else {
+            note("notifytap.abort", ["why": "not active before backgrounding"], force: true)
+            return
+        }
+        // 退到后台 = 真机上"用户把手机放下"的那一刻。
+        UIApplication.shared.perform(#selector(UIApplication.resignFirstResponder))
+        note("notifytap.backgrounding", ["sid": probe.sid], force: true)
+        // 这里刻意**不**调 suspend：保持进程活着，正是 owner 说的
+        // 「App 在后台（未被划掉）」那种状态。
+        NotificationProbe.background()
+        try? await Task.sleep(for: .seconds(2))
+        await NotificationProbe.deliverTap(sid: probe.sid, to: delegate)
+    }
+
     /// `-DSHProbeOlderScroll <n>`：由 App 自己把转写视口送到顶部 n 次。
     ///
     /// 为什么要这个钩子：XCUITest 对转写页做手势会抛 "Pointer events are not
@@ -549,6 +589,8 @@ enum ViewportProbe {
                              keyboardCycles: Bool)? { nil }
     static var askProbeSession: String? { nil }
     static var olderScrollRounds: Int? { nil }
+    static var notifyTapProbe: (sid: String, seconds: Double)? { nil }
+    static func runNotifyTapProbe(delegate: SessionAlerts) async {}
     static var scrollFacts: (offset: CGFloat, content: CGFloat)? { nil }
     static func topVisibleRow() -> String? { nil }
     static func pause() {}

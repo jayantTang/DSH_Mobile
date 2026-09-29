@@ -9,10 +9,19 @@
   is gitignored) into a copy under .build/ota/ before exporting.
 
   `debugging` is the Xcode 15+ name for what used to be called `development`:
-  the build is signed with the team's Apple Development certificate and an
-  iOS Team Provisioning Profile, which lists the registered devices. That is
-  exactly what an ad-hoc OTA install needs — the profile is valid until
-  2027-02-11, and the phone is already in it.
+  the build is signed with the team's Apple Development certificate and a
+  development provisioning profile, which lists the registered devices. That is
+  exactly what an ad-hoc OTA install needs.
+
+  Signing is **manual**, against the profile `asc-dev-signing.mjs` creates.
+  Automatic signing used to be asked for here, and it cannot be: it requires an
+  Apple ID signed into Xcode (`No Accounts` on this build host), and the wildcard
+  profile it generates has no `aps-environment` — so the build that first added
+  push notifications would not archive at all. `<PROFILE_NAME>` is substituted by
+  `deploy-ota.sh` for the same reason `<TEAM_ID>` is: it is a local fact, not a
+  repository one. The profile carries `aps-environment: development`, which is
+  what makes this OTA build's tokens **sandbox** tokens — the app reports
+  `env=sandbox` to the relay to match.
 -->
 <plist version="1.0">
 <dict>
@@ -21,7 +30,14 @@
 	<key>teamID</key>
 	<string><TEAM_ID></string>
 	<key>signingStyle</key>
-	<string>automatic</string>
+	<string>manual</string>
+	<key>signingCertificate</key>
+	<string>Apple Development</string>
+	<key>provisioningProfiles</key>
+	<dict>
+		<key>com.jayanttang.dsh</key>
+		<string><PROFILE_NAME></string>
+	</dict>
 	<key>stripSwiftSymbols</key>
 	<true/>
 	<key>compileBitcode</key>
