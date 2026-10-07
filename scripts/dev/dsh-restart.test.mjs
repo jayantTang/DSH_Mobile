@@ -7,7 +7,7 @@ import {
   DEFAULT_RESUME, parseArgs, readEndpoint as readRequesterEndpoint, stateDir,
 } from './dsh-restart.mjs'
 import {
-  alive, hostFormOf, readEndpoint, resumePayload, stop, waitForNewBackend,
+  alive, appMainPids, hostFormOf, readEndpoint, resumePayload, stop, waitForNewBackend,
 } from './dsh-restart-worker.mjs'
 
 function fixtureHome() {
@@ -157,4 +157,19 @@ test('hostFormOf reads the process tree: the desktop app supervises its own back
   const broken = () => { throw new Error('ps: no such process') }
   assert.equal(hostFormOf(1, { run: broken }), 'unknown')
   assert.equal(hostFormOf(0, { run: broken }), 'unknown')
+})
+
+test('appMainPids excludes the host child that carries --expose-internals', () => {
+  // 实测踩过：整个应用包路径 pkill -f 会连宿主子进程一起命中，于是应用弹「宿主异常退出」。
+  const run = (cmd, args) => {
+    if (cmd === 'pgrep') return '8712\n8734\n'
+    const pid = args.at(-1)
+    return pid === '8734'
+      ? '/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness --expose-internals /Applications/DeepSeek Harness.app/Contents/Resources/app.asar/dsh/index.js\n'
+      : '/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness\n'
+  }
+  assert.deepEqual(appMainPids({ run }), ['8712'])
+
+  const none = () => { throw new Error('pgrep: no process found') }
+  assert.deepEqual(appMainPids({ run: none }), [], '应用不在时返回空数组，不抛')
 })

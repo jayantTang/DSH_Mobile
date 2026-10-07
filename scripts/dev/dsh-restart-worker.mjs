@@ -75,18 +75,66 @@ export function hostFormOf(pid, { run = execFileSync } = {}) {
   }
 }
 
-/** 官方桌面版：退出整个应用再打开（它的宿主是应用自己拉起的，杀了不会自己回来）。 */
-async function relaunchDesktopApp({ log = () => {} } = {}) {
-  const pattern = 'DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness'
-  const appAlive = () => {
-    try {
-      execFileSync('pgrep', ['-f', pattern], { stdio: 'ignore' })
-      return true
-    } catch {
-      return false
-    }
+/**
+ * 官方桌面版：让**应用主进程**自己退出（宿主子进程随它一起走），再重新打开。
+ *
+ * 三条实测教训：
+ *  ① 不能单独杀宿主子进程——那会让应用立刻弹「宿主异常退出」的恢复弹窗，用户还得手点一次；
+ *  ② 不能对整个应用包路径 `pkill -f`——宿主子进程的命令行是同一个二进制加了
+ *     `--expose-internals`，一样会被命中，于是又回到 ①；
+ *  ③ 有弹窗挂着的应用不会乖乖退出，此时 `open -a` 只会激活旧实例，不会拉起新实例。
+ *
+ * 所以这里只给"命令行里没有 `--expose-internals` 的那个进程"发 SIGTERM，并等它真的退出。
+ */
+const APP_BINARY = 'DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness'
+
+/** 应用主进程的 pid（排除宿主子进程）。 */
+export function appMainPids({ run = execFileSync, pattern = APP_BINARY } = {}) {
+  let out
+  try {
+    out = String(run('pgrep', ['-f', pattern], { encoding: 'utf8' }))
+  } catch {
+    return []
   }
-  const openApp = () => {
+  return out.split('\n').map((line) => line.trim()).filter(Boolean)
+    .filter((pid) => {
+      try {
+        const command = String(run('ps', ['-o', 'command=', '-p', pid], { encoding: 'utf8' }))
+        return !command.includes('--expose-internals')
+      } catch {
+        return false
+      }
+    })
+}
+
+async function quitDesktopApp({ log = () => {} } = {}) {
+  log('宿主是官方桌面版：让应用自己退出（不单独杀宿主子进程，避免恢复弹窗）')
+  let pids = appMainPids()
+  if (!pids.length) {
+    log('没找到应用主进程（可能已经退出）')
+    return 'gone'
+  }
+  for (const pid of pids) {
+    try {
+      process.kill(Number(pid), 'SIGTERM')
+    } catch { /* 已经没了 */ }
+  }
+  for (let waited = 0; waited < 30_000; waited += 500) {
+    if (!appMainPids().length) return 'term'
+    // 到 10 秒还不退，再补一次信号（有的版本会忽略第一次 TERM）
+    if (waited === 10_000) for (const pid of appMainPids()) {
+      try {
+        process.kill(Number(pid), 'SIGTERM')
+      } catch { /* 忽略 */ }
+    }
+    await sleep(500)
+  }
+  log('警告：30s 内应用主进程没有退出')
+  return 'timeout'
+}
+
+async function openDesktopApp({ log = () => {} } = {}) {
+  const open = () => {
     try {
       execFileSync('open', ['-a', 'DeepSeek Harness'], { stdio: 'ignore' })
       return true
@@ -95,35 +143,16 @@ async function relaunchDesktopApp({ log = () => {} } = {}) {
       return false
     }
   }
-
-  log('宿主是官方桌面版：退出应用再打开')
-  try {
-    execFileSync('osascript', ['-e', 'quit app "DeepSeek Harness"'], { stdio: 'ignore' })
-  } catch (error) {
-    log(`osascript 退出失败（改用信号）：${error.message}`)
+  open()
+  for (let waited = 0; !appMainPids().length && waited < 20_000; waited += 500) await sleep(500)
+  if (appMainPids().length) {
+    log('已重新打开官方桌面版，应用主进程已出现')
+    return true
   }
-
-  // 关键：**等它真的退出再 open**。应用正在退出的那几秒里，`open -a` 只会把旧实例激活、
-  // 不会拉起新实例——第一次实测就卡在这里，最后是人工点开的应用。
-  for (let waited = 0; appAlive() && waited < 40_000; waited += 500) {
-    if (waited === 8_000) {
-      try {
-        execFileSync('pkill', ['-TERM', '-f', pattern], { stdio: 'ignore' })
-      } catch { /* 已经没了 */ }
-    }
-    await sleep(500)
-  }
-  if (appAlive()) log('警告：40s 内没等到应用退出')
-
-  openApp()
-  // 再确认新实例真的起来了；没起来就再请求一次，别把"请求过"当成"已启动"。
-  for (let waited = 0; !appAlive() && waited < 15_000; waited += 500) await sleep(500)
-  if (appAlive()) {
-    log('已请求重新打开官方桌面版，应用进程已出现')
-  } else {
-    log('应用进程还没出现，再请求一次')
-    openApp()
-  }
+  log('应用主进程还没出现，再请求一次')
+  open()
+  for (let waited = 0; !appMainPids().length && waited < 15_000; waited += 500) await sleep(500)
+  return appMainPids().length > 0
 }
 
 
@@ -266,8 +295,16 @@ async function main() {
   const form = state.hostForm ?? hostFormOf(state.fromPid)
   log(`宿主形态：${form}${state.hostForm ? '（排程时判定）' : '（杀进程前判定）'}`)
 
-  const stopping = await stop(state.fromPid)
-  log(`backend ${state.fromPid} stopped (${stopping})`)
+  // 桌面形态**不单独停宿主**：宿主是被应用监督的子进程，单独杀它会让应用弹恢复弹窗。
+  // 让应用退出即可，宿主随应用一起走。
+  let stopping
+  if (form === 'desktop') {
+    stopping = await quitDesktopApp({ log })
+    log(`应用退出结果：${stopping}`)
+  } else {
+    stopping = await stop(state.fromPid)
+    log(`backend ${state.fromPid} stopped (${stopping})`)
+  }
   save({ status: 'stopped', stoppedAt: new Date().toISOString(), stop: stopping })
 
   // DSH.app is the parent of the backend it supervises, and it needs a moment to
@@ -281,9 +318,8 @@ async function main() {
   if (endpoint) {
     log(`宿主自己把后端拉回来了：pid=${endpoint.pid} port=${endpoint.port}`)
   } else if (form === 'desktop') {
-    // 官方桌面版：后端是它自己 spawn 的，杀了不会自己回来——退出应用再打开，
-    // 这与"人手动关了重开"等价，而且两个档案都不会串。
-    await relaunchDesktopApp({ log })
+    // 应用已经退出（宿主随之退出），现在把它重新打开。
+    await openDesktopApp({ log })
     endpoint = await waitForNewBackend({ previousPid: state.fromPid, timeoutMs: 180_000 })
   } else {
     // 命令行 web 宿主的后端可能由用户的终端持有：我们起一个自己的。
