@@ -81,7 +81,8 @@ HTML 里的 `src='media/…'` 保持不动即可。这样做是为了让用例�
 
 ## 怎么跑起来的
 
-1. `tools/context.mjs` 读本机 DSH 端点（`endpoint.json`，没有就退回 `dsh-shell.log`），
+1. `tools/context.mjs` 读本机 DSH 端点（`$DSH_HOME/mobile-link/endpoint.json`，由连接器写出；
+   自研外壳那条 `dsh-shell.log` 退路已随外壳删除），
    并在跑的时候采一份环境事实（仿真器名、设备型号、iOS 版本、Xcode、测试机）。
 2. `tools/case.mjs` 把用例翻译成计划 JSON（含 front matter 的 `通过判据`）。
 3. 计划经**仿真器容器**交给 XCUITest 引擎（测试进程看不到 Mac 的文件路径）。

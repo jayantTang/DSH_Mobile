@@ -72,5 +72,6 @@ prompt 直接提交，需要 `$DSH_SESSION_ID`，并且会以用户消息的身�
 - `screencapture`（macOS 自带）
 - `pngpaste`（仅剪贴板需要）：`brew install pngpaste`
 - 屏幕录制授权（仅截图需要）：macOS 把它给**应用**，不是给脚本。
-  若报 `could not create image from display`，是 DSH.app 没拿到授权 —— 在
-  「系统设置 → 隐私与安全性 → 屏幕录制」里勾选 DSH，然后**退出并重新打开 DSH.app**。
+  若报 `could not create image from display`，是运行 DSH 的那个程序没拿到授权 —— 在
+  「系统设置 → 隐私与安全性 → 屏幕录制」里勾选它（官方桌面版是「DeepSeek Harness」），
+  然后**完全退出并重新打开它**。

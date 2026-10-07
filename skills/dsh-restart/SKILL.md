@@ -31,7 +31,7 @@ npm run restart -- --resume "继续…"
    后端更久，否则没人把它拉起来。
 2. worker 等 `--delay` 秒 → `SIGTERM` 后端（8 秒不退就 `SIGKILL`）。
    当前回合在这里中断，**这是预期**。
-3. 等新后端：DSH.app 通常会自己把后端拉起来（它是父进程）；没起来就 `open -a DSH`；
+3. 等新后端：官方桌面版**不会**自己把宿主拉回来，脚本直接 spawn 应用二进制（不走 `open -a`）；
    还不起来就自己 `dsh web --no-open --port 0` 兜底。判据是 `endpoint.json` 出现了一个
    **新的 pid**，否则可能把刚杀掉的进程当成新的。
 4. 用 endpoint 里的 token 换 cookie，往记录的会话提交一条提示（`requestId` 以 `restart-`
@@ -52,5 +52,5 @@ npm run restart -- --resume "继续…"
 - **当前回合一定会断**：别在重启前做一半的事，把「下一步」写进 `--resume`。
 - 唤醒提示会以**用户消息**的形式出现在转写里——这是有意为之：那是 agent 唯一能被
   叫醒的通道。它带了 `restart-` 前缀，必要时可以在转写里区分。
-- worker 的兜底会自己起一个 `dsh web`；如果 DSH.app 随后又拉起一个，两者都会写
+- 命令行 web 宿主的兜底会自己起一个 `dsh web`；如果别的宿主随后又拉起一个，两者都会写
   `endpoint.json`，客户端按最后写入的那个走（日志里能看到这种情况）。

@@ -175,8 +175,9 @@ export function explainCaptureFailure(error) {
   const stderr = String(error?.stderr ?? '').trim()
   if (/could not create image from display|not authorized|denied|declined/i.test(stderr)) {
     return (
-      '屏幕录制权限没有生效。在「系统设置 → 隐私与安全性 → 屏幕录制」里勾选 DSH，' +
-      '然后退出并重新打开 DSH.app —— macOS 只把权限交给重新启动后的进程。' +
+      '屏幕录制权限没有生效。在「系统设置 → 隐私与安全性 → 屏幕录制」里勾选运行 DSH 的那个程序'
+      + '（官方桌面版是「DeepSeek Harness」），然后完全退出并重新打开它 —— '
+      + 'macOS 只把权限交给重新启动后的进程。' +
       `（原始错误：${stderr || 'screencapture 失败'}）`
     )
   }
