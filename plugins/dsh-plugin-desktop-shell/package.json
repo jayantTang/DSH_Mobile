@@ -1,0 +1,23 @@
+{
+  "name": "dsh-plugin-desktop-shell",
+  "version": "0.2.0",
+  "private": true,
+  "description": "DSH desktop shell: the macOS app half (WKWebView window + server/update management) plus the host plugin half (routes under /desktop-shell and the version chip inside the sidebar settings button).",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/index.js",
+    "cordis.patch.yml"
+  ],
+  "license": "MIT",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

@@ -1,0 +1,17 @@
+# Bundle patch for dsh-plugin-desktop-shell.
+#
+# This file is the official entry point: `dsh plugin --profile web add <this
+# directory>` installs the package into the profile and appends it to
+# dsh.profile.bundles, so the row below joins the tree on every boot with no
+# hand-edited block in the profile's own cordis.patch.yml.
+#
+# `name` is anchored relative to this file (DSH rewrites ./ paths to file URLs),
+# so the plugin keeps resolving wherever the profile lives.
+
+- insert:
+    - id: desktop-shell
+      name: './lib/index.js'
+      config:
+        registry: 'https://registry.npmmirror.com/@deepseek-ai/dsh'
+        tag: 'latest'
+        showPrereleases: false
