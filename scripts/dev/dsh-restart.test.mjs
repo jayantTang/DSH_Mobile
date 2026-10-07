@@ -7,7 +7,7 @@ import {
   DEFAULT_RESUME, parseArgs, readEndpoint as readRequesterEndpoint, stateDir,
 } from './dsh-restart.mjs'
 import {
-  alive, appMainPids, clearStaleSingleton, hostFormOf, readEndpoint, resumePayload, stop, waitForNewBackend,
+  alive, appMainPids, clearStaleSingleton, hostFormOf, launchAppDirect, readEndpoint, resumePayload, stop, waitForNewBackend,
 } from './dsh-restart-worker.mjs'
 
 function fixtureHome() {
@@ -196,4 +196,31 @@ test('clearStaleSingleton removes the lock only when the app is really gone', ()
 test('clearStaleSingleton tolerates a missing directory', () => {
   const cleared = clearStaleSingleton({ dir: '/tmp/definitely-not-here', appAlive: () => false, log: () => {} })
   assert.deepEqual(cleared, [])
+})
+
+test('launchAppDirect starts the app binary with a clean environment', () => {
+  const calls = []
+  const fakeSpawn = (bin, args, options) => {
+    calls.push({ bin, args, options })
+    return { pid: 4242, unref: () => {} }
+  }
+  const tmpHome = fixtureHome()
+  mkdirSync(join(tmpHome, 'restart'), { recursive: true })
+  const previous = process.env.ELECTRON_RUN_AS_NODE
+  process.env.ELECTRON_RUN_AS_NODE = '1'
+  process.env.NODE_OPTIONS = '--trace-warnings'
+  try {
+    const pid = launchAppDirect({ log: () => {}, home: tmpHome, spawnFn: fakeSpawn })
+    assert.equal(pid, 4242)
+    assert.equal(calls[0].bin, '/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness')
+    assert.equal(calls[0].options.detached, true, '必须 detach，宿主进程死掉不影响它')
+    assert.equal(calls[0].options.env.ELECTRON_RUN_AS_NODE, undefined, '不清掉它会被当成普通 Node 启动')
+    assert.equal(calls[0].options.env.NODE_OPTIONS, undefined)
+    assert.match(calls[0].options.env.DSH_DESKTOP_DIAGNOSTIC_FILE, /desktop-diagnostic\.json$/)
+  } finally {
+    if (previous === undefined) delete process.env.ELECTRON_RUN_AS_NODE
+    else process.env.ELECTRON_RUN_AS_NODE = previous
+    delete process.env.NODE_OPTIONS
+    rmSync(tmpHome, { recursive: true, force: true })
+  }
 })

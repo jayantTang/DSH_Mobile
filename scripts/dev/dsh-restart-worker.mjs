@@ -22,7 +22,7 @@
  */
 
 import { execFileSync, spawn } from 'node:child_process'
-import { appendFileSync, existsSync, readFileSync, readlinkSync, rmSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, openSync, readFileSync, readlinkSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -55,6 +55,37 @@ function save(patch) {
 }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+/** 应用二进制与这次启动的日志/诊断文件（诊断文件是应用自己写的）。 */
+const APP_BINARY_PATH = '/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness'
+export function appLogPaths(home = HOME) {
+  const dir = join(home, 'restart')
+  return { appLog: join(dir, 'desktop-app.log'), diagnostic: join(dir, 'desktop-diagnostic.json') }
+}
+
+/**
+ * 直接启动应用二进制（绕开 LaunchServices）。
+ *
+ * 为什么要绕：`open -a` 走 LaunchServices，而应用刚退出时新实例会被 spawn 出来又在 ~60ms 内
+ * 被回收（系统日志实测；重试还会把等待越拖越长，第六次 7 次请求共 93 秒）。直接起进程不经过
+ * 那套节流，同时能把 stdout/stderr 和应用自己的诊断文件抓下来。
+ *
+ * 环境必须**清干净**：我们跑在 Electron 宿主里，环境里有 `ELECTRON_RUN_AS_NODE=1`，
+ * 原样传给应用二进制会让它当成普通 Node 启动（不是应用）。
+ */
+export function launchAppDirect({ log = () => {}, home = HOME, spawnFn = spawn } = {}) {
+  const { appLog, diagnostic } = appLogPaths(home)
+  const env = { ...process.env, DSH_DESKTOP_DIAGNOSTIC_FILE: diagnostic }
+  delete env.ELECTRON_RUN_AS_NODE
+  delete env.NODE_OPTIONS
+  delete env.ELECTRON_NO_ATTACH_CONSOLE
+  const out = openSync(appLog, 'a')
+  const child = spawnFn(APP_BINARY_PATH, [], { detached: true, stdio: ['ignore', out, out], env })
+  child.unref()
+  log(`直接启动应用二进制 pid=${child.pid}（日志 ${appLog}，诊断 ${diagnostic}）`)
+  return child.pid
+}
+
 
 /** 官方桌面版的用户数据目录（单实例文件在这里）。 */
 export const APP_USER_DATA = join(homedir(), 'Library', 'Application Support', '@deepseek-ai', 'dsh-desktop')
@@ -203,10 +234,18 @@ async function relaunchUntilBackend({ log = () => {}, previousPid, timeoutMs = 1
     if (!appMainPids().length) {
       opens += 1
       clearStaleSingleton({ log })
-      try {
-        execFileSync('open', ['-a', 'DeepSeek Harness'], { stdio: 'ignore' })
-      } catch (error) {
-        log(`open -a 失败：${error.message}`)
+      if (opens === 1) {
+        try {
+          launchAppDirect({ log })
+        } catch (error) {
+          log(`直接启动失败：${error.message}`)
+        }
+      } else {
+        try {
+          execFileSync('open', ['-a', 'DeepSeek Harness'], { stdio: 'ignore' })
+        } catch (error) {
+          log(`open -a 失败：${error.message}`)
+        }
       }
       // 应用退出后有几十秒的「静默期」：此时 open 会被 launchd 拉起来又在 ~60ms 内杀掉
       // （2026-10-07 系统日志实测：连续四次都是 spawn 后 58–62ms 报 termination）。
@@ -214,7 +253,7 @@ async function relaunchUntilBackend({ log = () => {}, previousPid, timeoutMs = 1
       await sleep(3_000)
       if (!appMainPids().length) killedBySystem += 1
     }
-    for (let waited = 0; waited < 10_000 && Date.now() < deadline; waited += 500) {
+    for (let waited = 0; waited < 20_000 && Date.now() < deadline; waited += 500) {
       const endpoint = readEndpoint()
       if (endpoint?.pid && endpoint.pid !== previousPid && alive(endpoint.pid)) {
         log(`官方桌面版已起来：open 请求 ${opens} 次`
