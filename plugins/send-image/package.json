@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-send-image",
-  "version": "0.1.2",
+  "version": "0.1.4",
   "description": "Lets the agent put a picture into the conversation: a screenshot, the clipboard, or a file — every client renders it and the user can open it full screen.",
   "keywords": [
     "dsh",
