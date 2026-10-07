@@ -133,3 +133,37 @@ test('the fence is read from the injected scope property, not only from ctx.get'
   await routes[0].handler({ method: 'POST', [Symbol.asyncIterator]: async function* () { yield Buffer.from('{"sessionId":"s1"}') } }, res)
   assert.equal(res.statusCode, 200, '围栏放行后必须真的走到截屏，而不是 403')
 })
+
+test('an allowed request is one where the fence returns undefined, not a missing service', async () => {
+  // 实测行为（dsh-client-connection）：不信任回 403、未认证回 401、**通过则返回 undefined**。
+  const { registerScreenshotRoute } = await import('../lib/screenshot-route.js')
+  const routes = []
+  let captured = 0
+  const scope = {
+    connection: { requestRejection: () => undefined },
+    webServer: { register: (route) => { routes.push(route); return () => {} } },
+  }
+  registerScreenshotRoute(scope, {
+    logger: { warn() {} },
+    captureFn: async () => { captured += 1; return { kind: 'cancelled' } },
+  })
+  const res = { statusCode: 0, setHeader() {}, end() {} }
+  await routes[0].handler({ method: 'POST', [Symbol.asyncIterator]: async function* () { yield Buffer.from('{"sessionId":"s1"}') } }, res)
+  assert.equal(captured, 1, 'undefined 必须被当作放行')
+  assert.equal(res.statusCode, 200)
+})
+
+test('a missing fence service still fails closed', async () => {
+  const { registerScreenshotRoute } = await import('../lib/screenshot-route.js')
+  const routes = []
+  let captured = 0
+  const scope = { webServer: { register: (route) => { routes.push(route); return () => {} } } }
+  registerScreenshotRoute(scope, {
+    logger: { warn() {} },
+    captureFn: async () => { captured += 1; return { kind: 'cancelled' } },
+  })
+  const res = { statusCode: 0, setHeader() {}, end() {} }
+  await routes[0].handler({ method: 'POST' }, res)
+  assert.equal(captured, 0)
+  assert.equal(res.statusCode, 403)
+})

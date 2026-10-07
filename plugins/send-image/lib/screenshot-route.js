@@ -43,29 +43,31 @@ async function readJsonBody(req) {
 
 function makeGuard(ctx, logger) {
   // 注入进来的服务是作用域上的**属性**：`scope.connection`。
-  // `ctx.get('connection')` 在插件作用域里返回 undefined（001 实测过），只认它会把每个请求
-  // 都判成"围栏不可用"而 403——路由看着注册成功、实际全被拒。
+  // `ctx.get('connection')` 在插件作用域里返回 undefined（001 实测），只认它会把每个请求
+  // 都判成"围栏不可用"而 403。
   const connectionOf = () => ctx.connection
     ?? (typeof ctx.get === 'function' ? ctx.get('connection') : undefined)
+
   return function guard(req, res) {
+    const connection = connectionOf()
+    if (typeof connection?.requestRejection !== 'function') {
+      sendJson(res, 403, { kind: 'failed', message: 'DSH 的连接服务不可用，拒绝这次截屏请求' })
+      return true
+    }
     let rejection
     try {
-      rejection = connectionOf()?.requestRejection?.(req)
+      rejection = connection.requestRejection(req)
     } catch (error) {
       logger?.warn?.(`send-image: request fence failed: ${error}`)
       sendJson(res, 403, { kind: 'failed', message: '请求被 DSH 的围栏拒绝' })
       return true
     }
+    // 围栏服务**放行时返回 undefined**（`requestRejection` 的实测行为：不信任回 403、
+    // 未认证回 401、通过则 `void 0`）。所以 undefined 是"通过"，不是"不可用"——
+    // 把它当拒绝会让这条路由永远 403（mobile-link 的 /pair-code 就是这么坏的）。
     if (rejection !== undefined && rejection !== null) {
       res.statusCode = Number(rejection) || 403
       res.end()
-      return true
-    }
-    if (rejection === undefined) {
-      sendJson(res, 403, {
-        kind: 'failed',
-        message: 'DSH 的连接服务不可用，拒绝这次截屏请求',
-      })
       return true
     }
     return false
