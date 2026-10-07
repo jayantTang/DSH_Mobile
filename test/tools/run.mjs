@@ -27,6 +27,17 @@ import {
   installRunner, log, parseArgs, pickSession, readEvents, run, screens, stagePlan, stamp, warn,
 } from './context.mjs'
 
+/// The name this runner pairs under, and the reason it is not `DSH-Test`.
+///
+/// `DSH-Test` is the owner's **resident** simulator device, and
+/// `scripts/dev/relay-devices.mjs sweep` exempts exactly that name so a test run
+/// cannot revoke it. A runner that paired under the same name would be
+/// indistinguishable from that resident device: the pre-run sweep would leave
+/// it, and — worse — the by-name fallback used when a token will not revoke
+/// would find nothing to clean. `DSH-Runner` keeps "the row this runner made"
+/// addressable by name, which is the whole point of the fallback.
+const RUNNER_DEVICE_NAME = 'DSH-Runner'
+
 /// 把 App 内探针（`-DSHViewportProbe`，DEBUG-only）的日志取回来，并对
 /// "会话区有没有真的变白"下一条机器判定。
 ///
@@ -310,8 +321,14 @@ export async function execute(flags = {}, positional = []) {
   }
 
   log('配对仿真器设备（跑完撤销）')
-  const pairing = await pairDevice()
-  console.log(`    device=${pairing.deviceId} name=DSH-Test（${pairing.agentName}）`)
+  // **Not `DSH-Test`.** That name is the owner's resident simulator device, and
+  // `relay-devices.mjs sweep` now exempts it by exact name so a test run cannot
+  // revoke it. This runner's throwaway pairing must therefore use a name the
+  // sweep still recognises, or the by-name fallback below (the second net for a
+  // token that will not revoke) would quietly stop working — it would run, find
+  // nothing to sweep, and report success while the row stayed.
+  const pairing = await pairDevice({ deviceName: RUNNER_DEVICE_NAME })
+  console.log(`    device=${pairing.deviceId} name=${RUNNER_DEVICE_NAME}（${pairing.agentName}）`)
   try {
     return await runCase(flags, positional, pairing)
   } finally {
