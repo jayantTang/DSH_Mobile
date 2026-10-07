@@ -87,25 +87,36 @@ export function hostFormOf(pid, { run = execFileSync } = {}) {
  * 所以这里只给"命令行里没有 `--expose-internals` 的那个进程"发 SIGTERM，并等它真的退出。
  */
 const APP_BINARY = 'DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness'
+/** argv[0] 正好是应用二进制（后面可以跟参数，也可以没有）。 */
+const APP_ARGV0 = new RegExp(`^(/\\S*${APP_BINARY.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})(?:\\s|$)`)
 
-/** 应用主进程的 pid（排除宿主子进程）。 */
-export function appMainPids({ run = execFileSync, pattern = APP_BINARY } = {}) {
+/**
+ * 应用主进程的 pid（排除宿主子进程与各 Helper）。
+ *
+ * 用 `ps` 扫全量而不是 `pgrep -f`：这台机器上 pgrep 只列得出 Helper 进程，
+ * 应用主进程与宿主子进程都不出现（实测），照着它过滤会得到空集、什么都退不掉。
+ */
+export function appMainPids({ run = execFileSync } = {}) {
   let out
   try {
-    out = String(run('pgrep', ['-f', pattern], { encoding: 'utf8' }))
+    out = String(run('ps', ['-eo', 'pid=,command='], { encoding: 'utf8' }))
   } catch {
     return []
   }
-  return out.split('\n').map((line) => line.trim()).filter(Boolean)
-    .filter((pid) => {
-      try {
-        const command = String(run('ps', ['-o', 'command=', '-p', pid], { encoding: 'utf8' }))
-        return !command.includes('--expose-internals')
-      } catch {
-        return false
-      }
+  return out.split('\n')
+    .map((line) => line.trim())
+    .map((line) => {
+      const match = /^(\d+)\s+(.*)$/.exec(line)
+      return match ? { pid: match[1], command: match[2] } : undefined
     })
+    .filter(Boolean)
+    // argv[0] 必须是应用二进制本身——Helper 在 Frameworks 下、grep/bash 那些行也不匹配，
+    // 一次性排掉它们，不必逐个判断进程名。
+    .filter((row) => APP_ARGV0.test(row.command))
+    .filter((row) => !row.command.includes('--expose-internals')) // 宿主子进程：不能单独杀
+    .map((row) => row.pid)
 }
+
 
 async function quitDesktopApp({ log = () => {} } = {}) {
   log('宿主是官方桌面版：让应用自己退出（不单独杀宿主子进程，避免恢复弹窗）')

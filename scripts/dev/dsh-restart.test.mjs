@@ -159,17 +159,17 @@ test('hostFormOf reads the process tree: the desktop app supervises its own back
   assert.equal(hostFormOf(0, { run: broken }), 'unknown')
 })
 
-test('appMainPids excludes the host child that carries --expose-internals', () => {
-  // 实测踩过：整个应用包路径 pkill -f 会连宿主子进程一起命中，于是应用弹「宿主异常退出」。
-  const run = (cmd, args) => {
-    if (cmd === 'pgrep') return '8712\n8734\n'
-    const pid = args.at(-1)
-    return pid === '8734'
-      ? '/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness --expose-internals /Applications/DeepSeek Harness.app/Contents/Resources/app.asar/dsh/index.js\n'
-      : '/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness\n'
-  }
-  assert.deepEqual(appMainPids({ run }), ['8712'])
+test('appMainPids picks the app main process, never the host child', () => {
+  // 实测踩过两件事：① 整个应用包路径 pkill -f 会连宿主子进程一起命中，应用随即弹
+  // 「宿主异常退出」；② pgrep -f 在这台机器上只列得出 Helper，主进程看不到。
+  const psOutput = [
+    '11032 /Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness',
+    '11054 /Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness --expose-internals /Applications/DeepSeek Harness.app/Contents/Resources/app.asar/dsh/index.js',
+    '11039 /Applications/DeepSeek Harness.app/Contents/Frameworks/DeepSeek Harness Helper.app/Contents/MacOS/DeepSeek Harness Helper --type=gpu-process',
+    '12764 grep -F DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness',
+  ].join('\n')
+  assert.deepEqual(appMainPids({ run: () => psOutput }), ['11032'])
 
-  const none = () => { throw new Error('pgrep: no process found') }
-  assert.deepEqual(appMainPids({ run: none }), [], '应用不在时返回空数组，不抛')
+  const none = () => { throw new Error('ps: failed') }
+  assert.deepEqual(appMainPids({ run: none }), [], '取不到进程列表时返回空数组，不抛')
 })
