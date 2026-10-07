@@ -234,6 +234,11 @@ async function main() {
 
   await sleep(state.delayMs ?? 3000)
 
+  // 形态要在**杀之前**看清楚：进程一死，父进程就查不到了，实测因此把桌面版判成 unknown，
+  // 走成"自己起一个 dsh web"，把桌面版的宿主进程留在了死状态。
+  const form = state.hostForm ?? hostFormOf(state.fromPid)
+  log(`宿主形态：${form}${state.hostForm ? '（排程时判定）' : '（杀进程前判定）'}`)
+
   const stopping = await stop(state.fromPid)
   log(`backend ${state.fromPid} stopped (${stopping})`)
   save({ status: 'stopped', stoppedAt: new Date().toISOString(), stop: stopping })
@@ -242,8 +247,6 @@ async function main() {
   // notice the child is gone (the first real restart took ~30 s end to end). A
   // short wait here would start a second backend next to the app's own.
   let startedByUs
-  const form = hostFormOf(state.fromPid)
-  log(`宿主形态：${form}`)
   let endpoint = await waitForNewBackend({ previousPid: state.fromPid, timeoutMs: 25_000 })
   if (endpoint) {
     log(`宿主自己把后端拉回来了：pid=${endpoint.pid} port=${endpoint.port}`)

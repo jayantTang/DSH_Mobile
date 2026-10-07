@@ -52,6 +52,7 @@ export function parseArgs(argv) {
     else if (token === '--resume') args.resume = String(argv[++index] ?? '')
     else if (token === '--delay') args.delayMs = Math.max(0, Number(argv[++index] ?? 3) * 1000)
     else if (token === '--session') args.session = String(argv[++index] ?? '')
+    else if (token === '--host') args.host = String(argv[++index] ?? 'auto')
     else if (token === '--help') args.help = true
   }
   return args
@@ -116,6 +117,9 @@ async function main() {
     sessionId,
     resume: args.resume,
     delayMs: args.delayMs,
+    // 形态在这里就定下来（`auto` = 按当前后端的父进程判断）。放到 worker 里现判会在
+    // "已经杀掉后端"之后发生，那时 ps 已经查不到父进程。
+    hostForm: (args.host && args.host !== 'auto') ? args.host : hostFormOf(endpoint.pid),
     logPath,
     status: 'scheduled',
   }
