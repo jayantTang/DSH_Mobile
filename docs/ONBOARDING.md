@@ -41,7 +41,7 @@
 |---|---|---|
 | 双击图标打开的桌面应用（DeepSeek Harness） | **官方桌面版** | 见下方「安装：官方桌面版」 |
 | 在终端敲 `dsh web`（或 `npx @deepseek-ai/dsh web`） | **命令行 web 版** | 见下方「安装：命令行 web 版」 |
-| 以前用我们自己的 `DSH.app`（自研外壳） | **已不再支持** | 见下方「从自研外壳迁移」 |
+| 以前用过一个叫 `DSH.app` 的窗口外壳（本项目旧版本提供的） | **已不再支持** | 见下方「从自研外壳迁移」 |
 
 一句话判据：**双击图标 = 官方桌面版；敲命令 = 命令行 web 版。** 两种宿主各自有独立的插件档案，
 装插件要装进你实际在用的那一个；装错了不会报错，只是连接器不会被加载（表现是手机一直连不上）。
@@ -52,17 +52,19 @@
 （普通 npm 安装的 `dsh` 会拒绝这个档案，这是官方设计）：
 
 ```bash
-"<DeepSeek Harness.app>/Contents/Resources/runtime/cli/bin/dsh" \
+"/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh" \
   plugin --profile desktop add dsh-plugin-mobile-link
 ```
+
+（应用装在别处就换掉前半段路径；这条命令就是应用自带的那个 `dsh`。）
 
 两个前置条件（不满足会失败）：
 
 1. 应用**先启动过一次**，让它初始化自己的档案；
 2. 装插件前**完全退出应用**（否则档案被占用，命令会被挡住）。
 
-装完重新打开应用即可。**另一条安装命令（`--profile web`）在这台电脑上不适用**：那条是给
-命令行 web 版用的。
+装完重新打开应用即可，然后按「排查：连不上时看这里」确认：状态里 `host` 应为 `desktop`。
+**另一条安装命令（`--profile web`）在这台电脑上不适用**：那条是给命令行 web 版用的。
 
 ## 安装：命令行 web 版
 
@@ -89,7 +91,7 @@ dsh plugin --profile web add dsh-plugin-mobile-link
 | 宿主 | 档案 | 装插件的入口 |
 |---|---|---|
 | 官方桌面版 | `desktop`（应用独占，npm 版 `dsh` 拒绝管理） | 应用内插件页，或应用自带的 `dsh` 命令 |
-| 命令行 web 版 | `web` | `dsh plugin --profile web add …` |
+| 命令行 web 版 | `web` | `dsh plugin --profile web add dsh-plugin-mobile-link` |
 
 判断"装没装对"最直接的方法：看状态里的 `host` 字段（见下方「排查：连不上时看这里」）。
 `host` 是 `desktop` 还是 `web`，取决于**当前正在运行的**宿主，而不是你曾经装过哪里。
@@ -102,8 +104,10 @@ dsh plugin --profile web add dsh-plugin-mobile-link
 dsh-mobile-link --dsh-url "http://127.0.0.1:<端口>/?token=<令牌>"
 ```
 
-注意：带令牌的地址**只在宿主本次运行期间有效**，宿主重启后必须换新的；它的来源是宿主启动时
-打印的那一行，或状态里的 `dsh.endpoint`。
+注意：带令牌的地址**只在宿主本次运行期间有效**，宿主重启后必须换新的。它的来源：
+
+- 命令行 web 版：`dsh web` 启动时打印的那一行；
+- 官方桌面版：没有用户可见的打印，看状态里的 `dsh.endpoint`。
 
 ## 排查：连不上时看这里
 
