@@ -77,26 +77,53 @@ export function hostFormOf(pid, { run = execFileSync } = {}) {
 
 /** 官方桌面版：退出整个应用再打开（它的宿主是应用自己拉起的，杀了不会自己回来）。 */
 async function relaunchDesktopApp({ log = () => {} } = {}) {
+  const pattern = 'DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness'
+  const appAlive = () => {
+    try {
+      execFileSync('pgrep', ['-f', pattern], { stdio: 'ignore' })
+      return true
+    } catch {
+      return false
+    }
+  }
+  const openApp = () => {
+    try {
+      execFileSync('open', ['-a', 'DeepSeek Harness'], { stdio: 'ignore' })
+      return true
+    } catch (error) {
+      log(`open -a 失败：${error.message}`)
+      return false
+    }
+  }
+
   log('宿主是官方桌面版：退出应用再打开')
   try {
     execFileSync('osascript', ['-e', 'quit app "DeepSeek Harness"'], { stdio: 'ignore' })
   } catch (error) {
     log(`osascript 退出失败（改用信号）：${error.message}`)
   }
-  for (let waited = 0; waited < 8000; waited += 500) {
-    try {
-      execFileSync('pgrep', ['-f', 'DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness'], { stdio: 'ignore' })
-    } catch {
-      break // 已经退出
+
+  // 关键：**等它真的退出再 open**。应用正在退出的那几秒里，`open -a` 只会把旧实例激活、
+  // 不会拉起新实例——第一次实测就卡在这里，最后是人工点开的应用。
+  for (let waited = 0; appAlive() && waited < 20_000; waited += 500) {
+    if (waited === 8_000) {
+      try {
+        execFileSync('pkill', ['-TERM', '-f', pattern], { stdio: 'ignore' })
+      } catch { /* 已经没了 */ }
     }
     await sleep(500)
   }
-  try {
-    execFileSync('pkill', ['-TERM', '-f', 'DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness'], { stdio: 'ignore' })
-  } catch { /* 已经没了 */ }
-  await sleep(1500)
-  execFileSync('open', ['-a', 'DeepSeek Harness'], { stdio: 'ignore' })
-  log('已请求重新打开官方桌面版')
+  if (appAlive()) log('警告：20s 内没等到应用退出')
+
+  openApp()
+  // 再确认新实例真的起来了；没起来就再请求一次，别把"请求过"当成"已启动"。
+  for (let waited = 0; !appAlive() && waited < 15_000; waited += 500) await sleep(500)
+  if (appAlive()) {
+    log('已请求重新打开官方桌面版，应用进程已出现')
+  } else {
+    log('应用进程还没出现，再请求一次')
+    openApp()
+  }
 }
 
 
@@ -254,7 +281,7 @@ async function main() {
     // 官方桌面版：后端是它自己 spawn 的，杀了不会自己回来——退出应用再打开，
     // 这与"人手动关了重开"等价，而且两个档案都不会串。
     await relaunchDesktopApp({ log })
-    endpoint = await waitForNewBackend({ previousPid: state.fromPid, timeoutMs: 90_000 })
+    endpoint = await waitForNewBackend({ previousPid: state.fromPid, timeoutMs: 180_000 })
   } else {
     // 命令行 web 宿主的后端可能由用户的终端持有：我们起一个自己的。
     log('没有自动恢复；自己起一个 `dsh web --no-open --port 0`')
@@ -270,7 +297,7 @@ async function main() {
 
   if (!endpoint) {
     log(form === 'desktop'
-      ? 'FAILED: 官方桌面版没能在 90s 内起来；需要人到电脑前打开它'
+      ? 'FAILED: 官方桌面版没能在 180s 内起来；需要人到电脑前打开它'
       : 'FAILED: 没有后端起来；需要人打开 DSH')
     save({ status: 'failed', failedAt: new Date().toISOString() })
     return
