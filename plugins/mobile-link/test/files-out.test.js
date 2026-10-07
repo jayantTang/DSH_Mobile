@@ -63,10 +63,26 @@ class FakeSocket {
  */
 class FakeDsh extends EventEmitter {
   constructor(body, { clamp = DEFAULT_WINDOW_BYTES, failure = null, stallAt = null,
-                       stat = null } = {}) {
+                       stat = null, shape = 'options', binaryData = false } = {}) {
     super()
     this.body = body
     this.clamp = clamp
+    /**
+     * Whether `readBytes` hands the window back as a `Uint8Array` rather than a
+     * base64 string. A Host that can carry binary answers does exactly that
+     * (after the multipart decode in `dsh-client.js`); an older one puts base64
+     * in the JSON. The connector has to speak both, so the stub can be either.
+     */
+    this.binaryData = binaryData
+    /**
+     * Which `workspaceFiles/readBytes` argument shape this Host takes.
+     *
+     * `options` is what Host 0.2.0-rc.2 wants (the byte window lives inside
+     * `options.range`); `range` is the older top-level field. It belongs to the
+     * Host generation, and the stub enforces it the way the gateway does —
+     * accepting both would hide the very break the shape tests are about.
+     */
+    this.shape = shape
     /**
      * What `workspaceFiles/stat` answers (P-13b). `null` = the default, a
      * `{version, bytes}` derived from the body — which is what the real Host
@@ -93,7 +109,14 @@ class FakeDsh extends EventEmitter {
   cancelStream() {}
 
   async rpc(method, args) {
-    this.calls.push({ method, args })
+    this.calls.push({
+      method,
+      args,
+      // Recorded so a test can assert *which* shape went out, not just that a
+      // read happened: the probe's whole point is the sequence of shapes.
+      shape: args?.options !== undefined ? 'options' : args?.range !== undefined ? 'range' : null,
+      range: args?.options?.range ?? args?.range ?? {},
+    })
     if (this.failure) return { ok: false, error: this.failure }
     if (method === 'workspaceFiles/stat') {
       if (this.stat?.fail) return { ok: false, error: { code: 'workspace-file/not-found', message: 'gone' } }
@@ -101,7 +124,20 @@ class FakeDsh extends EventEmitter {
       return { ok: true, value: { absolutePath: '/w/f.bin', version: 'v-test', bytes: this.body.length } }
     }
     if (method !== 'workspaceFiles/readBytes') return { ok: true, value: {} }
-    const range = args?.range ?? {}
+    // The gateway checks the descriptor field for field *before* the call reaches
+    // the file, so a call in the other generation's shape is refused outright.
+    const range = this.shape === 'options' ? args?.options?.range : args?.range
+    if (range === undefined) {
+      return {
+        ok: false,
+        error: {
+          code: 'gateway/arguments-invalid',
+          message: this.shape === 'options'
+            ? 'typert gateway: workspaceFiles/readBytes: args fields do not match the descriptor: missing "options"; unexpected "range"'
+            : 'typert gateway: workspaceFiles/readBytes: args fields do not match the descriptor: missing "range"; unexpected "options"',
+        },
+      }
+    }
     const offset = Number(range.offset ?? 0)
     const length = Math.min(Number(range.length ?? this.clamp), this.clamp)
     if (this.stallAt !== null && offset === this.stallAt) {
@@ -111,7 +147,7 @@ class FakeDsh extends EventEmitter {
     return {
       ok: true,
       value: {
-        data: piece.toString('base64'),
+        data: this.binaryData ? new Uint8Array(piece) : piece.toString('base64'),
         eof: offset + piece.length >= this.body.length,
       },
     }
@@ -167,7 +203,7 @@ test('a download arrives byte-for-byte, in window order, under one bid', async (
 
   assert.ok(received(socket, 'g1').equals(body), '字节在途中变了')
   // 依次要了正确的 offset，且每次都没超过 host 的 clamp。
-  const offsets = reads(dsh).map((call) => call.args.range.offset)
+  const offsets = reads(dsh).map((call) => call.range.offset)
   assert.deepEqual(offsets, [0, 64 * 1024, 128 * 1024, 192 * 1024, 256 * 1024, 320 * 1024, 384 * 1024, 448 * 1024])
   assert.ok(reads(dsh).every((call) => call.args.workspaceFileScopeId === 's1'))
   assert.ok(reads(dsh).every((call) => call.args.path === 'report.pdf'))
@@ -232,7 +268,7 @@ test('a non-zero offset makes the very first read start there', async () => {
   })
   await until(() => socket.frames('fsGetEnd').length === 1, '没有收到 fsGetEnd')
 
-  assert.equal(reads(dsh)[0].args.range.offset, 1500, '第一片没有从 offset 开始')
+  assert.equal(reads(dsh)[0].range.offset, 1500, '第一片没有从 offset 开始')
   assert.deepEqual(received(socket, 'g5'), body.subarray(1500))
 })
 
@@ -301,7 +337,7 @@ test('an empty window that is not eof is reported instead of spinning forever', 
   await until(() => socket.frames('fsErr').length === 1, '空窗口没有报错')
   assert.equal(socket.last('fsErr').code, 'workspace-file/stalled')
   // 只读了一次那个 offset：不重试、不打转。
-  assert.equal(reads(dsh).filter((call) => call.args.range.offset === 4).length, 1)
+  assert.equal(reads(dsh).filter((call) => call.range.offset === 4).length, 1)
 })
 
 test('a missing bid or a missing path is refused without touching the Host', async () => {
@@ -318,7 +354,77 @@ test('a missing bid or a missing path is refused without touching the Host', asy
   assert.equal(dsh.calls.length, 0, '参数不全还是打了 host')
 })
 
+// ── readBytes argument shape ────────────────────────────────────────────────
+
+test('a Host that only knows the older readBytes shape is probed once, then remembered', async () => {
+  // 宿主 0.2.0-rc.2 把字节窗口从顶层 `range` 挪进了 `options.range`，而网关按
+  // 描述符**逐字段**校验（多一个字段就 409），所以两种形状不能同时发。连接器
+  // 必须两种都会说：先试当前形状，被描述符拒绝就换老形状，并把答案记住。
+  const body = Buffer.from(Array.from({ length: 3000 }, (_, i) => i % 256))
+  const { agent, dsh, socket } = makeAgent(body, { clamp: 1000, shape: 'range' })
+  await agent.handleRelayFrame(attach('dev_1'))
+  await agent.handleRelayFrame({
+    t: 'fsGetBegin', deviceId: 'dev_1', bid: 'g8', scopeId: 's1', path: 'old.bin',
+  })
+  await until(() => socket.frames('fsGetEnd').length === 1, '老形状宿主没有传完')
+
+  assert.deepEqual(received(socket, 'g8'), body, '老形状宿主字节不对')
+  assert.equal(socket.frames('fsErr').length, 0, '探测过程被当成了硬失败')
+  assert.equal(reads(dsh).filter((call) => call.shape === 'options').length, 1,
+    '当前形状只该试一次')
+
+  // 第二次下载：形状已知，不该再拿错形状去试。
+  const before = reads(dsh).length
+  await agent.handleRelayFrame({
+    t: 'fsGetBegin', deviceId: 'dev_1', bid: 'g9', scopeId: 's1', path: 'old.bin',
+  })
+  await until(() => socket.frames('fsGetEnd').length === 2, '第二次下载没有完成')
+  assert.equal(
+    reads(dsh).slice(before).filter((call) => call.shape === 'options').length, 0,
+    '形状已经探明，还在试错')
+  assert.deepEqual(received(socket, 'g9'), body)
+})
+
+test('a Host that refuses both shapes fails the download instead of probing forever', async () => {
+  const body = Buffer.from(Array.from({ length: 10 }, (_, i) => i))
+  const { agent, dsh, socket } = makeAgent(body, {})
+  // 两种形状都被描述符拒绝：探测必须停下来如实报错，不能换着形状一直试。
+  const inner = dsh.rpc.bind(dsh)
+  dsh.rpc = async (method, args) => {
+    if (method !== 'workspaceFiles/readBytes') return inner(method, args)
+    dsh.calls.push({ method, args })
+    return { ok: false, error: { code: 'gateway/arguments-invalid', message: 'no shape fits' } }
+  }
+
+  await agent.handleRelayFrame(attach('dev_1'))
+  await agent.handleRelayFrame({
+    t: 'fsGetBegin', deviceId: 'dev_1', bid: 'g10', scopeId: 's1', path: 'x.bin',
+  })
+  await until(() => socket.frames('fsErr').length === 1, '两种形状都被拒却没有报错')
+
+  assert.equal(socket.last('fsErr').code, 'gateway/arguments-invalid')
+  assert.equal(
+    dsh.calls.filter((call) => call.method === 'workspaceFiles/readBytes').length, 2,
+    '探测没有停在两种形状上')
+})
+
 // ── window adaptation ───────────────────────────────────────────────────────
+
+test('bytes that arrive as a Uint8Array still leave as base64', async () => {
+  // 能装二进制的宿主在 multipart 解码之后把 `data` 交回来时是字节，老宿主是
+  // JSON 里的 base64。中转那一帧只认 base64，所以这里必须归一——归错了不是
+  // 报错，是内容静默变样。
+  const body = Buffer.from(Array.from({ length: 3000 }, (_, i) => i % 256))
+  const { agent, socket } = makeAgent(body, { clamp: 1000, binaryData: true })
+  await agent.handleRelayFrame(attach('dev_1'))
+  await agent.handleRelayFrame({
+    t: 'fsGetBegin', deviceId: 'dev_1', bid: 'g11', scopeId: 's1', path: 'bin.bin',
+  })
+  await until(() => socket.frames('fsGetEnd').length === 1, '字节形状的宿主没有传完')
+
+  assert.equal(socket.frames('fsErr').length, 0, '字节形状被当成了失败')
+  assert.deepEqual(received(socket, 'g11'), body, '归一成 base64 时内容不对')
+})
 
 test('a too-large refusal halves the window instead of failing the download', async () => {
   // host 的上限是部署值，这一侧读不到，只能试出来（照 App 侧 downloader 的做法）。
@@ -328,7 +434,7 @@ test('a too-large refusal halves the window instead of failing the download', as
   const inner = dsh.rpc.bind(dsh)
   let refused = false
   dsh.rpc = async (method, args) => {
-    if (!refused && Number(args?.range?.length) > dsh.clamp) {
+    if (!refused && Number((args?.options?.range ?? args?.range)?.length) > dsh.clamp) {
       refused = true
       dsh.calls.push({ method, args })
       return { ok: false, error: { code: 'workspace-file/too-large', message: 'window too big' } }
@@ -352,7 +458,7 @@ test('a too-large refusal halves the window instead of failing the download', as
 
   assert.equal(socket.frames('fsErr').length, 0, 'too-large 被当成了硬失败')
   assert.ok(received(socket, 'g12').equals(body), '缩窗口之后字节不对')
-  assert.equal(reads(dsh)[1].args.range.length, DEFAULT_WINDOW_BYTES / 2)
+  assert.equal(reads(dsh)[1].range.length, DEFAULT_WINDOW_BYTES / 2)
 })
 
 test('the window never shrinks below the floor, and gives up rather than looping', async () => {

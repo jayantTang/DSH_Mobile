@@ -125,6 +125,20 @@ function failureOf(error) {
 }
 
 /**
+ * Whether the gateway refused a call over its argument **shape**.
+ *
+ * The Host checks every Remote call against the method's descriptor and rejects
+ * anything that does not match it field for field — a renamed or relocated
+ * argument comes back as `gateway/arguments-invalid`, never as a silent default.
+ * That refusal is the only thing a connector can learn one Host generation's
+ * signature from another by, which is why the probe in `#callReadBytes` keys on
+ * it rather than on a version number.
+ */
+function isShapeRefusal(result) {
+  return result?.ok === false && result?.error?.code === 'gateway/arguments-invalid'
+}
+
+/**
  * One fetch, as this connector runs it.
  *
  * Not stateful beyond one run: it opens no file (the Host does the reading), so
@@ -148,6 +162,14 @@ export class FileFetcher {
   #logger
   #sends
   #rpc
+  /**
+   * Which argument shape this Host's `workspaceFiles/readBytes` accepts.
+   *
+   * `null` until the first read has taught us which one. Per fetcher, so per
+   * connector process: the probe below costs one extra round trip, once.
+   * @type {'options'|'range'|null}
+   */
+  #byteWindowShape = null
 
   /**
    * @param {object} options
@@ -300,7 +322,15 @@ export class FileFetcher {
         // relay has already stopped listening for this bid, and appending more
         // chunks would interleave into whatever run owns the bid now.
         if (run.cancelled) return
-        const data = typeof answer?.data === 'string' ? answer.data : ''
+        // The bytes arrive in one of two shapes: base64 inside the JSON answer
+        // (a Host whose results are all JSON), or a `Uint8Array` (a Host that
+        // answers binary results as form parts — see `dsh-client.js`). The
+        // relay's frame carries base64 either way, so this is where the two
+        // converge.
+        const raw = answer?.data
+        const data = typeof raw === 'string'
+          ? raw
+          : raw instanceof Uint8Array ? Buffer.from(raw).toString('base64') : ''
         const eof = answer?.eof === true
         const piece = Buffer.from(data, 'base64')
         if (piece.length > 0) {
@@ -339,11 +369,7 @@ export class FileFetcher {
 
   /** One `workspaceFiles/readBytes`, unwrapped to `{data, eof}`. */
   async #readWindow(scopeId, path, offset, length) {
-    const result = await this.#rpc('workspaceFiles/readBytes', {
-      workspaceFileScopeId: scopeId,
-      path,
-      range: { offset, length },
-    })
+    const result = await this.#callReadBytes(scopeId, path, offset, length)
     if (result && result.ok === false) {
       // The DSH client returns failures as values (`{ok:false, error}`) rather
       // than throwing; the code has to survive into the `fsErr`.
@@ -351,6 +377,40 @@ export class FileFetcher {
         { code: result.error?.code })
     }
     return result?.value ?? result
+  }
+
+  /**
+   * The read, in whichever argument shape this Host takes.
+   *
+   * Host 0.2.0-rc.2 moved the byte window from a top-level `range` into
+   * `options.range`, and the gateway validates field for field — so the two
+   * shapes cannot be sent at once, and a connector that speaks only one of them
+   * breaks the whole download path on the other Host generation. Which shape
+   * this Host wants is therefore **probed, not version-compared**, the same way
+   * `hello.js` treats capabilities: try the current shape, and if the descriptor
+   * refuses it, try the older one and remember the answer.
+   */
+  async #callReadBytes(scopeId, path, offset, length) {
+    const attempt = (shape) => this.#rpc('workspaceFiles/readBytes', {
+      workspaceFileScopeId: scopeId,
+      path,
+      ...shape === 'options'
+        ? { options: { range: { offset, length } } }
+        : { range: { offset, length } },
+    })
+
+    if (this.#byteWindowShape) return attempt(this.#byteWindowShape)
+
+    const current = await attempt('options')
+    if (!isShapeRefusal(current)) {
+      this.#byteWindowShape = 'options'
+      return current
+    }
+    // The older shape's own answer is the one that counts now: if that is refused
+    // too, the failure is the caller's to report, exactly as it stands.
+    const older = await attempt('range')
+    if (!isShapeRefusal(older)) this.#byteWindowShape = 'range'
+    return older
   }
 
   #sendError(bid, failure) {

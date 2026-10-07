@@ -42,6 +42,54 @@ function parseBase(raw, { forceLoopback = true } = {}) {
 }
 
 /**
+ * Whether this answer is the binary form of an RPC result.
+ *
+ * A result that carries bytes **cannot** be JSON, so a Host that supports them
+ * answers `multipart/form-data` instead. A client that only reads JSON sees an
+ * unparsable body and reports `bad-response` — which is exactly how a Host
+ * generation that started doing this broke every file read at once.
+ */
+function isBinaryAnswer(response) {
+  const type = response.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase()
+  return type === 'multipart/form-data'
+}
+
+/**
+ * Decode that form into the envelope shape the JSON path also produces.
+ *
+ * Field for field the same contract the Host's own client implements: a
+ * `metadata` part holds the envelope — with `null` wherever the bytes were —
+ * plus one attachment per binary field, naming the part that carries it and the
+ * path to walk from `result.value` to that `null`.
+ */
+async function decodeBinaryAnswer(response) {
+  const body = await response.formData()
+  const metadata = body.get('metadata')
+  if (typeof metadata !== 'string') throw new TypeError('binary answer without metadata')
+  const envelope = JSON.parse(metadata)
+  const root = { value: envelope?.result?.value }
+  for (const attachment of envelope?.attachments ?? []) {
+    const part = attachment?.part
+    const bytes = typeof part === 'string' ? body.get(part) : null
+    if (!bytes || typeof bytes.arrayBuffer !== 'function') {
+      throw new TypeError('binary answer with an unreadable part')
+    }
+    let parent = root
+    let key = 'value'
+    for (const segment of attachment?.path ?? []) {
+      const value = parent[key]
+      if (typeof value !== 'object' || value === null) {
+        throw new TypeError('binary answer with an unreachable path')
+      }
+      parent = value
+      key = segment
+    }
+    parent[key] = new Uint8Array(await bytes.arrayBuffer())
+  }
+  return envelope
+}
+
+/**
  * Resolve where the local DSH web server lives.
  * @returns {Promise<{base: string, wsBase: string, port: number, token: string, source: string}>}
  */
@@ -189,7 +237,7 @@ export class DshClient extends EventEmitter {
     }
     let json
     try {
-      json = await response.json()
+      json = isBinaryAnswer(response) ? await decodeBinaryAnswer(response) : await response.json()
     } catch {
       return { ok: false, error: { code: 'gateway/bad-response', message: `DSH returned HTTP ${response.status}`, details: {} } }
     }

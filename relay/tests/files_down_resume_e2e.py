@@ -269,10 +269,18 @@ def pick_session_scope() -> str | None:
 
 
 async def main() -> int:
+    diagnostics: deque[str] = deque(maxlen=400)
     try:
-        result = await run_resume_e2e()
+        result = await run_resume_e2e(diagnostics)
     except StepFailure as failure:
         print(f"FAIL: {failure}")
+        # The connector is the only witness to *why* the link refused a step —
+        # the Host's own words (which field, which shape, which code) reach
+        # nobody else. Without this, a failure is one opaque status line.
+        if diagnostics:
+            print("--- connector log (tail) ---")
+            for line in diagnostics:
+                print(line)
         return 1
     print("PASS")
     for key, value in result.items():
