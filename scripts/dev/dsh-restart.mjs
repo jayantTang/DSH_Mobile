@@ -30,6 +30,11 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { hostFormOf } from './dsh-restart-worker.mjs'
+
+// 复用 worker 的形态判定：它按进程树判断（父进程是不是应用包里的可执行文件），
+// 比环境变量可靠。worker 有直接运行保护，import 不会触发它的 main()。
+export { hostFormOf }
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 export const WORKER = join(HERE, 'dsh-restart-worker.mjs')
