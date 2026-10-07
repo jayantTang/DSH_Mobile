@@ -12,7 +12,7 @@
  *
  * 也可以不开脚本，直接在浏览器里打开 DSH 自己的这个路由（需已登录 DSH）：
  *   http://127.0.0.1:<port>/mobile-link/qr
- * 端口见 ~/.dsh/desktop-shell/endpoint.json。
+ * 端口看宿主启动时打印的那一行，或状态里的 dsh.port。
  */
 
 import { execFileSync } from 'node:child_process'

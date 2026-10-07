@@ -196,7 +196,7 @@ const parameters = {
 /**
  * The result the script reports, in both outcomes. A tool that returns a value
  * without declaring this shape is refused at registration time, which fails the
- * whole plugin tree — and with it every DSH boot, DSH.app included.
+ * whole plugin tree — and with it every DSH boot, the desktop app included.
  */
 const outputSchema = {
   type: 'object',

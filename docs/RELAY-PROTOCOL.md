@@ -196,11 +196,13 @@ APNs 提醒。所以它是一条**尽力而为**的帧：中转没连上就丢�
 
 ### 4.1 与本地 DSH 的对接
 
-1. **发现端点**：读取 `$DSH_HOME/desktop-shell/endpoint.json` 的 `url`/`port`；
-   若不可用则回退 `$DSH_WEB_URL`、再回退 `http://127.0.0.1:54499`。
-   端点可能因 DSH 重启而变化，**每次重连都要重读**。
+1. **发现端点**：按顺序取候选——显式配置 → **宿主进程内注入**（`ctx.inject(['webServer',
+   'connection'])` 拿 `authenticatedUrl`）→ `DSH_WEB_URL` → 兜底 `http://127.0.0.1:54499`；
+   **认证成功的那一个才算命中**。token 每次宿主启动都会变，**每次重连都要重新解析**，不得缓存。
+   连接器另外把带令牌地址写进 `$DSH_HOME/mobile-link/endpoint.json`（0600）供宿主进程之外的工具读取，
+   但**自己不读回它**。
 2. **认证换取**：`GET <base>/?token=<token>`，**不要跟随重定向**，从 `Set-Cookie` 取
-   `dsh-auth-*`，后续所有请求带该 Cookie。token 失效（401）时重读 endpoint.json 并重试一次。
+   `dsh-auth-*`，后续所有请求带该 Cookie。token 失效（401）时重新解析一次并重试。
    - 注意：DSH 的认证 Cookie **绑定 authority（host:port）**，因此 agent 必须始终以
      `127.0.0.1:<port>` 这个 authority 访问，不得改写 Host。
 3. **一元 RPC**：`POST <base>/api/<method>`，

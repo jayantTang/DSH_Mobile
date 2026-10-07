@@ -79,7 +79,7 @@ def pick_session_scope() -> str | None:
 def local_dsh_port() -> int:
     home = pathlib.Path(os.environ.get("DSH_HOME", pathlib.Path.home() / ".dsh"))
     try:
-        return int(json.loads((home / "desktop-shell" / "endpoint.json").read_text())["port"])
+        return int(json.loads((home / "mobile-link" / "endpoint.json").read_text())["port"])
     except (OSError, ValueError, KeyError, json.JSONDecodeError):
         return 54499
 

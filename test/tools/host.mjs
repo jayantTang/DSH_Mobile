@@ -3,8 +3,8 @@
 //
 // One source: the connector writes `$DSH_HOME/mobile-link/endpoint.json` with the
 // authenticated loopback address, and it does so in every supported host (the official
-// desktop app and the command-line web host). The old desktop-shell files are gone with
-// that shell — see specs/001-connector-host-compat/.
+// desktop app and the command-line web host). The handoff files our old self-built shell
+// used are gone with it — see specs/001-connector-host-compat/.
 
 import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'

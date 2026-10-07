@@ -99,8 +99,8 @@ function usage() {
  *
  * One source: the connector writes `$DSH_HOME/mobile-link/endpoint.json` with the
  * authenticated loopback address, in every supported host (official desktop app and
- * command-line web host). The old desktop-shell handoff and its log are gone with that
- * shell — see specs/001-connector-host-compat/.
+ * command-line web host). The handoff our old self-built shell used is gone with it
+ * — see specs/001-connector-host-compat/.
  */
 function endpoint() {
   const home = process.env.DSH_HOME || join(homedir(), '.dsh')

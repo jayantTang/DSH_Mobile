@@ -55,8 +55,8 @@ fi
 
 # The listening port, which is NOT necessarily what argv said: an instance
 # started with `--port 0` gets an OS-assigned port, and relaunching on 0 would
-# land somewhere new. Ask the socket first, then the endpoint handoff file the
-# desktop-shell plugin writes (which also covers a non-loopback bind).
+# land somewhere new. Ask the socket first, then the handoff file the connector
+# writes (which also covers a non-loopback bind).
 OLD_PORT=""
 for _ in $(seq 1 10); do
   OLD_PORT=$(lsof -nP -iTCP -sTCP:LISTEN -a -p "${OLD_PID}" 2>/dev/null \

@@ -67,7 +67,7 @@ The findings each step depends on, all established by probing the running app:
 `dsh-doctor`-style checks live in the unit tests: the output schema must stay in
 sync with `execute`, because a tool that returns a value without a declared
 schema is refused at registration and takes the **whole plugin tree — and every
-DSH boot, DSH.app included — down with it**.
+DSH boot, the desktop app included — down with it**.
 
 ## The watermark
 

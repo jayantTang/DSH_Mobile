@@ -1,3 +1,0 @@
-# Build products and local backups of the DSH.app half stay out of the repo.
-macos/build/
-*.bak-*

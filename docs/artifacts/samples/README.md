@@ -22,7 +22,7 @@ was actively using this DSH instance throughout; it was treated as production.
 
 ### 0. Preconditions
 
-- DSH is running and has written `/Users/<you>/.dsh/desktop-shell/endpoint.json`.
+- DSH is running and has written `<your-home>/.dsh/mobile-link/endpoint.json`.
 - The `ws` package that ships with DSH is resolvable. `capture.mjs` locates the
   DSH installation by derivation — `DSH_INSTALL_DIR`, then `$DSH_HOME`, then the
   `dsh` executable on `PATH`, then `npm root -g` — so nothing is hardcoded to a
@@ -33,8 +33,8 @@ was actively using this DSH instance throughout; it was treated as production.
 ### 1. Token → cookie (`curl`)
 
 ```bash
-TOKEN=$(python3 -c "import json;print(json.load(open('$HOME/.dsh/desktop-shell/endpoint.json'))['url'].split('token=')[1])")
-PORT=$(python3 -c "import json;print(json.load(open('$HOME/.dsh/desktop-shell/endpoint.json'))['port'])")
+TOKEN=$(python3 -c "import json;print(json.load(open('$HOME/.dsh/mobile-link/endpoint.json'))['url'].split('token=')[1])")
+PORT=$(python3 -c "import json;print(json.load(open('$HOME/.dsh/mobile-link/endpoint.json'))['port'])")
 
 # 303 with Set-Cookie. Do NOT follow the redirect; capture only name=value.
 curl -s -i -o /dev/null -D - "http://127.0.0.1:$PORT/?token=$TOKEN" \
@@ -49,7 +49,7 @@ The cookie is **authority-bound** to `127.0.0.1:$PORT`. Requesting through
 ### 2. A unary call (`curl`)
 
 ```bash
-PORT=$(python3 -c "import json;print(json.load(open('$HOME/.dsh/desktop-shell/endpoint.json'))['port'])")
+PORT=$(python3 -c "import json;print(json.load(open('$HOME/.dsh/mobile-link/endpoint.json'))['port'])")
 
 curl -s -X POST "http://127.0.0.1:$PORT/api/session/list" \
   -H "content-type: application/json" \

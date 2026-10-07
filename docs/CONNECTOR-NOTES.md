@@ -9,9 +9,8 @@ choices.
 
 ## 1. The plugin requires no DSH services (`inject` is empty)
 
-`dsh-plugin-desktop-shell` declares `inject = ['webServer', 'connection']`, which
-makes those services hard requirements for the plugin to load at all. This plugin
-deliberately does not: the DLP link must keep working if a future DSH renames or
+A plugin may declare `inject = ['webServer', 'connection']`, which makes those
+services hard requirements for it to load at all. This plugin deliberately does not: the DLP link must keep working if a future DSH renames or
 drops a host service. Only `ctx.logger`, `ctx.effect` and `ctx.get` are used, all
 optional-chained, and the HTTP routes are attached with
 
@@ -23,8 +22,8 @@ so the link starts regardless and only the routes depend on `webServer`.
 
 ## 2. The request fence fails closed for `/pair-code`
 
-`GET /mobile-link/status` mirrors the desktop-shell helper exactly: if
-`ctx.get('connection')` is missing it stays readable (it is diagnostic).
+`GET /mobile-link/status` is diagnostic and stays readable: if the `connection`
+service is missing it still answers.
 `POST /mobile-link/pair-code` mints a credential, so when the `connection`
 service cannot be reached it answers `403` instead of allowing the request.
 No extra per-process header token is used, because DSH's own fence already
@@ -69,8 +68,8 @@ authority it was issued for. An explicit `dshUrl` override is honoured verbatim
 
 ## 5. Deliberately no client bundle and no UI
 
-The plugin ships no browser code and no `tapIndex` injection, unlike the
-desktop-shell plugin. The desktop UI is expected to change; a JSON status route
+The plugin ships no browser code and no `tapIndex` injection: the desktop UI is
+expected to change; a JSON status route
 plus the QR payload string lets any UI (or a future iOS "pair from desktop"
 flow) consume it without pinning the plugin to a DOM shape.
 

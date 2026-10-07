@@ -102,7 +102,7 @@ curl -s http://127.0.0.1:54499/mobile-link/status -H "cookie: <your dsh-auth coo
 
 Both routes sit behind DSH's own request fence
 (`ctx.get('connection')?.requestRejection?.(req)`: Host/Origin check + browser
-auth), exactly like `dsh-plugin-desktop-shell`.
+auth), like every other plugin route.
 
 ### `GET /mobile-link/status`
 
@@ -141,8 +141,7 @@ profile's own patch layer, which is applied after it):
 | `agentId` | — | overrides `agent.json` |
 | `agentSecret` | — | overrides `agent.json` |
 | `stateFile` | `~/.dsh/mobile-link/agent.json` | identity file |
-| `dshUrl` | — | explicit local DSH base URL; skips `endpoint.json` discovery |
-| `endpointFile` | `$DSH_HOME/desktop-shell/endpoint.json` | discovery file |
+| `dshUrl` | — | explicit local DSH base URL (usually unnecessary: the host hands the connector its own authenticated address) |
 | `heartbeatMs` | `20000` | DLP `ping` cadence to the relay |
 | `pongTimeoutMs` | `60000` | no `pong` for this long ⇒ reconnect |
 | `maxBackoffMs` | `30000` | reconnect backoff ceiling (1s → 2s → … with ±20 % jitter) |

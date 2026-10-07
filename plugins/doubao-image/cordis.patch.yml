@@ -6,7 +6,7 @@
 #
 # A bundle without this file (and the dsh.bundle.patch pointer to it) cannot be
 # listed in dsh.profile.bundles: boot fails loud with "declares no dsh.bundle in
-# its package.json", which takes the whole harness down — including DSH.app.
+# its package.json", which takes the whole harness down — the desktop app included.
 #
 # The tool needs no configuration: the app path and the CDP port both have
 # working defaults, and `name` is anchored relative to this file (DSH rewrites

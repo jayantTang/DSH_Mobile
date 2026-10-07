@@ -16,7 +16,7 @@ import { readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
-const raw = JSON.parse(readFileSync(join(homedir(), '.dsh', 'desktop-shell', 'endpoint.json'), 'utf8'))
+const raw = JSON.parse(readFileSync(join(homedir(), '.dsh', 'mobile-link', 'endpoint.json'), 'utf8'))
 const token = /token=([^&]+)/.exec(raw.url)?.[1]
 if (!raw.port || !token) throw new Error('endpoint.json 里没有 port/token')
 

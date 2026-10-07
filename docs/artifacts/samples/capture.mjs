@@ -88,7 +88,7 @@ const { WebSocket } = wsPkg;
 /** Where the running DSH desktop shell publishes its rotating launch token. */
 const ENDPOINT_JSON = path.join(
   process.env.HOME ?? '/Users/example',
-  '.dsh/desktop-shell/endpoint.json',
+  '.dsh/mobile-link/endpoint.json',
 );
 
 const OUT = path.resolve(process.argv[2] ?? '/tmp/dsh-samples-repro');

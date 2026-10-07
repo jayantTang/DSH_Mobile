@@ -21,7 +21,7 @@ iOS 客户端这一天的改动（TestFlight 构建 `20260922.1913` 起）：
   （`ctx.inject(['webServer','connection'])`），因此**官方桌面版**（desktop 档案）与
   **命令行 web 版**（web 档案）用同一个 npm 包即可工作，不再需要任何交接文件。
   本机地址与凭据每次宿主启动都变，连接器每次重连都重新获知——宿主重启后无需任何人工操作。
-- **自研 macOS 外壳不再支持**：`DSH.app` 与 `dsh-plugin-desktop-shell` 已从仓库与本机移除。
+- **自研 macOS 外壳不再支持**：我们自己的 `DSH.app` 与配套插件已从仓库与本机移除。
   受影响的使用者改用官方桌面版或命令行 web 版即可，**没有数据要迁移**（会话/凭据/工作区
   仍在同一份 `~/.dsh` 下）。迁移说明见 `docs/ONBOARDING.md`。
 - **状态接口只增字段**：`/mobile-link/status` 新增 `host`（`web`/`desktop`/`unknown`）与

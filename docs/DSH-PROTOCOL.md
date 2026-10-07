@@ -20,19 +20,22 @@ Authoritative, implementation-oriented reference for the **DeepSeek Harness (DSH
 
 ### 1.1 Discovery
 
-A running DSH desktop shell writes a JSON endpoint file:
+The connector learns the local endpoint **inside the host process** (`ctx.inject(['webServer',
+'connection'])` → `connection.authenticatedUrl(...)`), because the launch token only ever exists in
+that process's memory. For tools that run *outside* it, the connector writes a JSON handoff file:
 
 ```jsonc
-// /Users/<user>/.dsh/desktop-shell/endpoint.json
+// ~/.dsh/mobile-link/endpoint.json   (mode 0600)
 {
   "url": "http://127.0.0.1:54499/?token=<launch-token>",
   "port": 54499,
   "pid": 43814,
-  "version": "0.1.5-rc.1",
-  "desktopShell": true,
-  "updatedAt": "2026-09-12T09:06:58.959Z"
+  "source": "host-service",
+  "updatedAt": "2026-10-07T12:00:21.016Z"
 }
 ```
+
+The token rotates on every host start, so the file is refreshed whenever the connector re-resolves it.
 
 - The **base URL** is `http://127.0.0.1:<port>`.
 - The **launch token** is the `token` query parameter of `url`.
