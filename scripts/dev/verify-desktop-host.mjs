@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
- * 官方桌面版验收助手：断言"装进 desktop 档案的连接器能在宿主进程内拿到本机访问方式"。
+ * 宿主验收助手：断言"连接器在宿主进程内拿到了本机访问方式"。
+ * 默认按官方桌面版断言（`host=desktop`）；web 宿主加 `--expect-host web`。
  *
  *   node scripts/dev/verify-desktop-host.mjs                 # 用 $DSH_HOME/mobile-link/endpoint.json 里的地址
  *   node scripts/dev/verify-desktop-host.mjs --url 'http://127.0.0.1:19387/?token=...'
@@ -25,6 +26,7 @@ function value(name) {
 }
 
 const home = value('home') ?? process.env.DSH_HOME ?? join(homedir(), '.dsh')
+const expectHost = value('expect-host') ?? 'desktop'
 const handoffPath = join(home, 'mobile-link', 'endpoint.json')
 
 function tokenizedUrl() {
@@ -66,12 +68,12 @@ async function main() {
   const response = await fetch(`${base.origin}/mobile-link/status`, { headers: { cookie } })
   const status = await response.json()
 
-  process.stdout.write(`\n官方桌面版状态（${base.origin}）：\n`)
+  process.stdout.write(`\n宿主状态（${base.origin}，按 ${expectHost} 断言）：\n`)
   if (!status.ok) {
     process.stdout.write(`✖ /mobile-link/status 不可用：${JSON.stringify(status)}\n`)
     failures.push('status endpoint')
   } else {
-    check('host', status.host, 'desktop')
+    check('host', status.host, expectHost)
     check('dsh.source', status.dsh?.source, 'host-service')
     check('dsh.authenticated', status.dsh?.authenticated, true)
     check('dsh.error', status.dsh?.error, null)
@@ -79,7 +81,7 @@ async function main() {
   }
 
   process.stdout.write(failures.length === 0
-    ? '\n结论：通过——连接器在官方桌面版里用宿主内注入拿到了本机访问方式。\n'
+    ? `\n结论：通过——连接器在 ${expectHost} 宿主里用宿主内注入拿到了本机访问方式。\n`
     : `\n结论：失败——${failures.length} 项不符（${failures.join(', ')}）。\n`)
   return failures.length === 0 ? 0 : 1
 }

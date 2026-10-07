@@ -277,13 +277,20 @@ test('GET /mobile-link/qr rejects other methods', async () => {
   assert.equal(res.headers.allow, 'GET')
 })
 
-test('detectHostForm reads evidence, never guesses', () => {
-  // 官方桌面版：Electron 当 Node 跑私有宿主进程。
-  assert.equal(plugin.detectHostForm({ env: { ELECTRON_RUN_AS_NODE: '1' }, argv: [] }), 'desktop')
-  // 入口脚本是 dsh-desktop-host 时同样判为桌面版（环境变量缺失时的第二条证据）。
-  assert.equal(plugin.detectHostForm({ env: {}, argv: ['node', '/x/@deepseek-ai/dsh-desktop-host/lib/index.js'] }), 'desktop')
-  // 其余把插件加载进宿主进程的情况都是命令行 web 版。
-  assert.equal(plugin.detectHostForm({ env: {}, argv: ['node', '/x/bin/dsh', 'web'] }), 'web')
+test('detectHostForm reads evidence from the process, never from inherited env', () => {
+  // 官方桌面版：入口脚本是私有的 dsh-desktop-host，或可执行文件在应用包里。
+  assert.equal(plugin.detectHostForm({ argv: ['node', '/x/@deepseek-ai/dsh-desktop-host/lib/index.js'], execPath: '/usr/bin/node' }), 'desktop')
+  assert.equal(plugin.detectHostForm({ argv: ['node', '/x/bin/dsh', 'web'], execPath: '/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness' }), 'desktop')
+  // 命令行 web 版：普通 node + dsh 入口。
+  assert.equal(plugin.detectHostForm({ argv: ['node', '/x/bin/dsh', 'web'], execPath: '/opt/homebrew/bin/node' }), 'web')
+})
+
+test('a web host started from inside the desktop app is NOT misdetected as desktop', () => {
+  // 回归：从桌面版宿主里敲 `dsh web` 会继承 ELECTRON_RUN_AS_NODE 之类的环境变量；
+  // 早期实现据此判断，结果把 web 宿主报成 desktop（慢闸实测抓到）。
+  const inherited = { ELECTRON_RUN_AS_NODE: '1', DSH_HOME: '/tmp/x' }
+  const form = plugin.detectHostForm({ ...inherited, argv: ['node', '/opt/homebrew/bin/dsh', 'web'], execPath: '/opt/homebrew/Cellar/node/25.5.0/bin/node' })
+  assert.equal(form, 'web', '不能因为继承来的环境变量就判定成桌面版')
 })
 
 test('setHostService wires (and clears) the in-process resolver', () => {

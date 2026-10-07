@@ -56,18 +56,23 @@ function asRecord(value) {
 }
 
 /**
- * 当前宿主属于哪一种形态。**按证据判断，不猜**：
- *   - 官方桌面版：它用 Electron 当 Node 跑私有宿主进程（`ELECTRON_RUN_AS_NODE=1`，
- *     入口脚本是 `dsh-desktop-host`）；
- *   - 其余把本插件加载进宿主进程的情况都是命令行 web 版（含 `dsh web --port 0`）。
+ * 当前宿主属于哪一种形态。**只看进程自己的证据，不看继承来的环境变量**：
+ *   - 官方桌面版：入口脚本是私有的 `dsh-desktop-host`，可执行文件在应用包里
+ *     （它用 Electron 当 Node 跑）；
+ *   - 其余把本插件加载进宿主进程的情况都是命令行 web 版。
+ *
+ * 为什么不能用 `ELECTRON_RUN_AS_NODE` 这类环境变量：从桌面版里启动的 `dsh web`
+ * （例如 agent 在桌面版宿主下敲命令）会**继承**它，于是把一个 web 宿主误判成桌面版。
+ * 这个错误由 2026-10-07 的慢闸实测抓到。
+ *
  * 形状契约见 `specs/001-connector-host-compat/data-model.md` §1。
  *
- * @param {{env?: NodeJS.ProcessEnv, argv?: string[]}} [context]
+ * @param {{argv?: string[], execPath?: string}} [context]
  * @returns {'desktop' | 'web'}
  */
-export function detectHostForm({ env = process.env, argv = process.argv } = {}) {
-  if (env.ELECTRON_RUN_AS_NODE === '1') return 'desktop'
+export function detectHostForm({ argv = process.argv, execPath = process.execPath } = {}) {
   if (/dsh-desktop-host/.test(argv[1] ?? '')) return 'desktop'
+  if (/DeepSeek Harness\.app|dsh-desktop-host/.test(execPath)) return 'desktop'
   return 'web'
 }
 
