@@ -33,7 +33,9 @@ async function loadClient({ fetchImpl } = {}) {
   await import(`../lib/client.js?case=${(loadCount += 1)}`)
   const spec = state.specs[0]
   const fakeReact = { createElement: (type, props, children) => ({ type, props, children }) }
+  // 官方形状：factory 返回 CJS 命名空间（module.exports），不是普通对象
   const api = spec.factory((name) => (name === 'react' ? fakeReact : {}))
+  assert.equal(api[Symbol.toStringTag], 'Module', 'bundle 必须导出 CJS 命名空间')
   return { spec, api, state }
 }
 
@@ -61,8 +63,12 @@ test('⌃⌘A is registered in both page and editable regions, never inside moda
   api.apply(makeCtx(state))
   const command = state.shortcuts[0]
   assert.equal(command.id, 'send-image.screenshot')
-  assert.deepEqual(command.defaults['web:macos'], { code: 'KeyA', modifiers: ['control', 'meta'] })
-  assert.deepEqual(command.defaults['desktop:macos'], { code: 'KeyA', modifiers: ['control', 'meta'] })
+  // 四个档案统一 ⌥⌘A：浏览器白名单只允许「primary + alt/shift」这类组合，
+  // 原来那种 ⌃⌘A 在 web 上非法，会让整个客户端插件激活失败。
+  for (const profile of ['desktop:macos', 'desktop:windows', 'web:macos', 'web:windows']) {
+    assert.deepEqual(command.defaults[profile], { code: 'KeyA', modifiers: ['primary', 'alt'] })
+  }
+  assert.ok(command.defaults['web:macos'].modifiers.includes('alt'), 'web 白名单要求带 alt 或 shift')
   assert.deepEqual(command.regions, ['page', 'editable'])
   assert.deepEqual(command.modals, [])
   assert.equal(command.resolve().status, 'handled')
@@ -77,9 +83,9 @@ test('the composer gets a button that names the shortcut', async () => {
   assert.equal(slotSpec.id, 'send-image-screenshot')
   const element = component({ sessionId: 'session-1' })
   assert.equal(element.type, 'button')
-  assert.match(element.props.title, /⌃⌘A/)
+  assert.match(element.props.title, /⌥⌘A/)
   assert.match(element.props.title, /拖拽选择矩形范围/)
-  assert.equal(element.props['aria-label'], '截图并附上（⌃⌘A）')
+  assert.equal(element.props['aria-label'], '截图并附上（⌥⌘A）')
 })
 
 test('a cancelled capture says nothing and attaches nothing', async () => {

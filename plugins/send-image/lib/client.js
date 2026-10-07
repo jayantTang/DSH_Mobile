@@ -1,5 +1,5 @@
 /**
- * 客户端半边：窗口内 `⌃⌘A` 截图 → 附到当前会话。
+ * 客户端半边：窗口内 `⌥⌘A` 截图 → 附到当前会话。
  *
  * 为什么要有这一半：截图能力在宿主（见 `lib/capture.js` 与 `lib/screenshot-route.js`），但
  * "哪个会话""只附加不发送"都是网页侧的事。自研外壳删掉后，旧实现在它自己的窗口里注入了
@@ -12,15 +12,25 @@
  *      `dataTransfer.files`。合成一次 drop 是唯一既走官方校验、又只进草稿不发送的路径。
  *   3. 输入区按钮用 `conversation.input.left`（官方 list 槽，追加式，不替换官方控件）。
  *
- * bundle 必须是 `window.__ModuleLoader__.load({ id, factory })` 形状：官方没有发布构建 preset，
- * 这里手写包装；只能 require 客户端 baseline（react / cordis / slots / primitives 等）。
+ * 形状必须抄官方 bundle：`window.__ModuleLoader__.load` 的 factory 返回 **CJS 命名空间**
+ * （`module.exports` + `Symbol.toStringTag: 'Module'`），而不是普通对象——加载器对认不出的
+ * 导出是 loud throw，表现为「web boot: 1 entry did not activate / <包名>: failed」。
  */
 
 /** 文档相对路径：宿主把插件路由挂在同一个源上。 */
 const ROUTE = 'send-image/screenshot'
-const HOTKEY = { code: 'KeyA', modifiers: ['control', 'meta'] }
-const HOTKEY_OTHER = { code: 'KeyA', modifiers: ['control', 'shift'] }
-const TITLE = '截图并附上：拖拽选择矩形范围（⌃⌘A）'
+/**
+ * 统一快捷键：`⌥⌘A`（macOS）/ `Alt+Ctrl+A`（Windows）。四种档案（desktop/web × macos/windows）
+ * 用**同一个**绑定。
+ *
+ * 为什么不是原来的 `⌃⌘A`：快捷键注册表对 **web 运行时**有白名单（`isWebBindingAllowed`）——
+ * macos 上两修饰键必须含 primary 且带 alt 或 shift，而 `KeyA` 在 primary 下属保留键，
+ * 所以 `⌃⌘A` 在浏览器里非法。给了非法的默认绑定会让整个客户端插件激活失败，而且只报
+ * 「web boot: 1 entry did not activate / <包名>: failed」。`⌥⌘A` 两个运行时都合法，
+ * 官方应用菜单与 Chrome/Safari 也都没占用它（`⇧⌘A` 被 Chrome 的「搜索标签页」占着）。
+ */
+const HOTKEY = { code: 'KeyA', modifiers: ['primary', 'alt'] }
+const TITLE = '截图并附上：拖拽选择矩形范围（⌥⌘A）'
 const LABEL = '截图并附上'
 const BUTTON_STYLE = {
   display: 'inline-flex', alignItems: 'center', height: '28px', padding: '0 8px',
@@ -91,17 +101,17 @@ function makeCaptureRunner() {
   return state
 }
 
-/** 注册 ⌃⌘A：页面空白处与输入框里都生效，模态打开时不抢键。 */
+/** 注册 ⌥⌘A：页面空白处与输入框里都生效，模态打开时不抢键。 */
 function registerShortcut(ctx, state) {
   ctx.effect(() => ctx.shortcuts.register({
     id: 'send-image.screenshot',
     label: () => LABEL,
     aliases: ['screenshot'],
     defaults: {
-      'web:macos': HOTKEY,
       'desktop:macos': HOTKEY,
-      'web:windows': HOTKEY_OTHER,
-      'desktop:windows': HOTKEY_OTHER,
+      'desktop:windows': HOTKEY,
+      'web:macos': HOTKEY,
+      'web:windows': HOTKEY,
     },
     regions: ['page', 'editable'],
     modals: [],
@@ -118,25 +128,29 @@ function registerButton(ctx, state, React) {
       return React.createElement('button', {
         type: 'button',
         title: TITLE,
-        'aria-label': '截图并附上（⌃⌘A）',
+        'aria-label': '截图并附上（⌥⌘A）',
         onClick: state.runCapture,
         style: BUTTON_STYLE,
-      }, '⌃⌘A')
+      }, '⌥⌘A')
     },
   ))
 }
 
 window.__ModuleLoader__.load({
   id: 'dsh-plugin-send-image',
-  factory(require) {
+  factory: (require) => {
+    const module = { exports: {} }
+    const exports = module.exports
+    Object.defineProperty(exports, Symbol.toStringTag, { value: 'Module' })
     const React = require('react')
-    return {
-      inject: ['shortcuts', 'slots'],
-      apply(ctx) {
-        const state = makeCaptureRunner()
-        registerShortcut(ctx, state)
-        registerButton(ctx, state, React)
-      },
+
+    exports.inject = ['shortcuts', 'slots']
+    exports.apply = (ctx) => {
+      const state = makeCaptureRunner()
+      registerShortcut(ctx, state)
+      registerButton(ctx, state, React)
     }
+
+    return module.exports
   },
 })
