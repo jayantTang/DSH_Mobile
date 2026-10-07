@@ -424,9 +424,10 @@ async function main() {
   // notice the child is gone (the first real restart took ~30 s end to end). A
   // short wait here would start a second backend next to the app's own.
   let startedByUs
-  // 官方桌面版不会自己把宿主进程拉回来（实测三次都没有），所以只做 5 秒探测就走重启流程；
-  // 命令行 web 宿主可能由别人的终端持有，仍给它 25 秒。
-  const respawnWindow = form === 'desktop' ? 5_000 : 25_000
+  // 官方桌面版不会自己把宿主进程拉回来（实测五次都没有），直接走"退出应用→重开"，
+  // 不做无用探测：探测那 5 秒是白等的停机时间。命令行 web 宿主可能由别人的终端持有，
+  // 仍给它 25 秒。
+  const respawnWindow = form === 'desktop' ? 0 : 25_000
   let endpoint = await waitForNewBackend({ previousPid: state.fromPid, timeoutMs: respawnWindow })
   if (endpoint) {
     log(`宿主自己把后端拉回来了：pid=${endpoint.pid} port=${endpoint.port}`)
