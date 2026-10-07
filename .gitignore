@@ -49,6 +49,16 @@ AGENTS.md
 maintainers/
 test/cases/
 
+# Spec Kit（SDD 流程）的本机产物：三处都是"过程记录 + 第三方套件骨架"，不是产品。
+#   .specify/    流程骨架（官方模板/脚本/宪法/本机指针），由 `specify init` 生成
+#   .dsh/        10 个 /speckit-* 技能文件（DSH 发现项目技能的固定位置）
+#   specs/       每个变更的 spec/plan/tasks 产物
+# 结论与实现细节要发布时，落到 docs/（面向使用者）、CHANGELOG.md 或 maintainers/。
+# 换机器/换人想再跑流程：`uv tool install specify-cli && specify init --here --force --integration dsh`。
+.specify/
+.dsh/
+specs/
+
 # 含真实设备名 / 家目录 / 会话画面的演示与证据素材。
 # 这些是从真机与真实会话截的图，只在本机保留（博客渲染、本地跑测照常可用），
 # 不进仓库。需要随仓库发布时，请用合成数据的截图替换后重新入库。
