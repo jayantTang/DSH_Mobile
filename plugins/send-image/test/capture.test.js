@@ -115,3 +115,21 @@ test('the screenshot route registers on the host web server and fails closed wit
   assert.equal(captured, 0, '围栏拒绝后不许去截图')
   assert.equal(res.statusCode, 403)
 })
+
+test('the fence is read from the injected scope property, not only from ctx.get', async () => {
+  const { registerScreenshotRoute } = await import('../lib/screenshot-route.js')
+  const routes = []
+  const scope = {
+    // 注入后的服务是属性；get() 在插件作用域里取不到它（001 实测）
+    connection: { requestRejection: () => null },
+    get: () => undefined,
+    webServer: { register: (route) => { routes.push(route); return () => {} } },
+  }
+  registerScreenshotRoute(scope, {
+    logger: { warn() {} },
+    captureFn: async () => ({ kind: 'cancelled' }),
+  })
+  const res = { statusCode: 0, headers: {}, setHeader(k, v) { this.headers[k] = v }, end() { this.ended = true } }
+  await routes[0].handler({ method: 'POST', [Symbol.asyncIterator]: async function* () { yield Buffer.from('{"sessionId":"s1"}') } }, res)
+  assert.equal(res.statusCode, 200, '围栏放行后必须真的走到截屏，而不是 403')
+})

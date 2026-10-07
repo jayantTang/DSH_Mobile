@@ -42,7 +42,11 @@ async function readJsonBody(req) {
 }
 
 function makeGuard(ctx, logger) {
-  const connectionOf = () => (typeof ctx.get === 'function' ? ctx.get('connection') : undefined)
+  // 注入进来的服务是作用域上的**属性**：`scope.connection`。
+  // `ctx.get('connection')` 在插件作用域里返回 undefined（001 实测过），只认它会把每个请求
+  // 都判成"围栏不可用"而 403——路由看着注册成功、实际全被拒。
+  const connectionOf = () => ctx.connection
+    ?? (typeof ctx.get === 'function' ? ctx.get('connection') : undefined)
   return function guard(req, res) {
     let rejection
     try {
