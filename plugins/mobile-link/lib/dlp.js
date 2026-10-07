@@ -26,6 +26,13 @@ export const AGENT_CONTROL = new Set([
   'fsGetBegin', 'fsGetChunk', 'fsGetEnd', 'fsGetAck',
   'fsErr',
 ])
+/**
+ * Control frames the relay sends **to** the connector. Same family as
+ * `AGENT_CONTROL` but the opposite direction, which is why it is its own set:
+ * that one is what this end *produces*, and a router that switched on the union
+ * of the two would dispatch its own outgoing frames if they ever came back.
+ */
+export const RELAY_TO_AGENT_CONTROL = new Set(['fsGetCancel'])
 
 const ID_FRAMES = new Set(['req', 'open', 'cancel', 'res', 'item', 'end', 'streamError', 'eventResult'])
 

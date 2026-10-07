@@ -13,7 +13,7 @@ import {
   StreamTable, WaterfallDedupe, deviceFrameError, deviceIdOf, nonEmptyString, resultFrame,
 } from './dlp.js'
 import { FileInbox, FILE_BEGIN, FILE_CHUNK, FILE_END, isFileMethod } from './files.js'
-import { FileFetcher } from './files-out.js'
+import { FileFetcher, FSGET_CANCEL } from './files-out.js'
 import { GitBridge, isGitMethod } from './git.js'
 import { isHelloMethod, helloPayload, parseClientInfo } from './hello.js'
 
@@ -133,6 +133,18 @@ export class DeviceRouter {
       await this.detachDevice(deviceId, frame.reason)
       return
     }
+    // **Before the `deviceId` guard, not after it.** The download bridge family
+    // is addressed by `bid` alone — the relay is the one that terminates the
+    // HTTP request and it knows which device it is for; putting a `deviceId` on
+    // these frames would break the correlation the whole family rests on. So a
+    // cancel legitimately arrives with no `deviceId`, and the guard below would
+    // have dropped it silently: the connector would read the whole file for a
+    // reader that left. Found by probe (the run kept pumping past the cancel),
+    // which is why this is a test and not a comment.
+    if (frame.t === FSGET_CANCEL) {
+      this.handleFsGetCancel(frame)
+      return
+    }
     if (!deviceId) return
     const problem = deviceFrameError(frame)
     if (problem) {
@@ -220,6 +232,19 @@ export class DeviceRouter {
    */
   handleFsGetBegin(frame) {
     this.fileFetcher.start(frame)
+  }
+
+  /**
+   * relay 叫停一次下载读取（手机挂断 / 额度截断）。
+   *
+   * 只置 `cancelled`，**不回任何帧**：这不是一次请求，取消一个已经没人要的
+   * 传输也没有可报的错。`#drive` 在每次窗口返回后检查这个标志，所以最多再
+   * 多读一个窗口就停——不是立刻，但也不是读完整个文件。
+   */
+  handleFsGetCancel(frame) {
+    const bid = String(frame?.bid ?? '')
+    if (!bid) return
+    this.fileFetcher.cancel(bid)
   }
 
   /** One failure shape for the whole family; the relay turns it into an HTTP error. */

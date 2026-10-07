@@ -19,7 +19,10 @@ from aiohttp import WSMsgType
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 RELAY_DIR = ROOT / "relay"
-AGENT_DIR = ROOT / "agent" / "dsh-plugin-mobile-link"
+#: The connector. It used to live in a sibling `agent/` checkout; it is part of
+#: this repository now, and the old path made the whole e2e harness fail at
+#: `spawn` before it could test anything.
+AGENT_DIR = ROOT / "plugins" / "mobile-link"
 
 STEP_TIMEOUT = 25.0
 DEVICE_NAME = "E2E iPhone"

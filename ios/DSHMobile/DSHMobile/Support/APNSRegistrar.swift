@@ -94,6 +94,19 @@ final class APNSRegistrar: NSObject, UIApplicationDelegate {
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
+        // **后台传输会话在这里重建。** `sessionSendsLaunchEvents` 为真时，系统会在
+        // 一个传输结束、而 App 不在前台的情况下把 App 唤醒（或冷启动）到后台，用来
+        // 交付这个结果；事件只发给会话的 delegate，而此刻进程里还没有会话 —— 不在这里
+        // 建一次，系统的唤醒就没人接，传输静默丢掉（"我以为发出去了，其实没有"）。
+        // 它只建会话、不发起任何请求（验收里有"启动不产生请求"这一条）。
+        RelayFileTransfer.reassociate()
+        // The session delegate's own lines (background delivery finished, or a
+        // foreign session's events) go through the app's logger: RelayKit has no
+        // logger of its own on purpose, so the app injects one here — once, before
+        // any event can arrive.
+        RelayFileTransfer.BackgroundEvents.setLogger { DSHLog.push($0) }
+        DSHLog.push("background session re-associated: \(RelayFileTransfer.sessionIdentifier)")
+
         // A tap that launched the app: the payload is in `launchOptions`, not in
         // a delegate callback (the system only delivers `didReceive` for a tap
         // while the app is already running), so it has to be picked up here or
@@ -103,6 +116,42 @@ final class APNSRegistrar: NSObject, UIApplicationDelegate {
             SessionRouter.shared.request(sessionId: sessionId)
         }
         return true
+    }
+
+    /// The system's announcement that this app was (re)launched to serve
+    /// background session events.
+    ///
+    /// This is the **app delegate's** half: the handler is the app's promise that
+    /// it will call it once it has finished handling the events, and the system
+    /// keeps the app alive until then. Dropping it (the state before P-2) means
+    /// the process is suspended mid-way through delivering a finished transfer —
+    /// the transfer that the user is waiting to hear about.
+    ///
+    /// The handler is **not** stored here. Its other half,
+    /// `urlSessionDidFinishEvents(forBackgroundURLSession:)`, is a *session*
+    /// delegate callback — the SDK header says "the session delegate will receive
+    /// this message", and `UIApplicationDelegate` does not declare it at all. So
+    /// the handler is handed straight to `RelaySessionDelegate`, which is the type
+    /// the system actually calls. Holding it here (the state P-2′ fixes)
+    /// compiled but was unreachable: the callback never arrived, the handler was
+    /// never released, and each background wake burned its budget until the
+    /// system gave up on the app.
+    func application(
+        _ application: UIApplication,
+        handleEventsForBackgroundURLSession identifier: String,
+        completionHandler: @escaping () -> Void
+    ) {
+        // Not only our session: the app may have others in principle, and
+        // answering for one we do not own would cut someone else's delivery
+        // short. Ours is the only background session today, which is why this
+        // does not need a map.
+        guard identifier == RelayFileTransfer.sessionIdentifier else {
+            DSHLog.push("background events for an unknown session: \(identifier)")
+            completionHandler()
+            return
+        }
+        DSHLog.push("handleEventsForBackgroundURLSession \(identifier)")
+        RelayFileTransfer.BackgroundEvents.setHandler(completionHandler)
     }
 
     /// Apple's answer to `registerForRemoteNotifications()`: the device token.

@@ -485,12 +485,17 @@ final class WorkspaceFilesModel {
         }
 
         // The version is part of the directory name, so a file the agent has
-        // rewritten since the last attempt lands somewhere else entirely and
-        // yesterday's half-download can never be resumed as today's content.
-        let offset = WorkspaceFileCache.partialBytes(
-            scopeId: scopeId, path: key, version: info.version
-        ) ?? 0
-        transfers[key] = .running(received: offset, total: info.bytes)
+        // rewritten since the last attempt lands somewhere else entirely — and
+        // the system's resume data is keyed by that same version, so a half
+        // download can never be resumed as today's content.
+        //
+        // Nothing here reads an offset off disk any more (P-13c): what has been
+        // received is the system's business now, and it is kept as opaque
+        // `resumeData` rather than as a `.part` prefix this app has to reason
+        // about. A `.part` cannot be right in the cases that matter — the app may
+        // not have been running at all — which is why the offset lived at 0
+        // forever.
+        transfers[key] = .running(received: 0, total: info.bytes)
 
         // **There is one route and this is it.** Every file — 200 KB or 400 MB —
         // is fetched through the relay's HTTPS surface with a background
@@ -509,23 +514,27 @@ final class WorkspaceFilesModel {
 
     /// Downloads through the relay's HTTPS surface into the cache.
     ///
-    /// **The landing place is the cache's `.part`, not the final name.** That is
-    /// the one shape which makes resume correct: a `downloadTask` hands back only
-    /// the *tail* the relay sent (it answered our `Range`), so appending it to a
-    /// prefix is the only honest thing to do with it, and a prefix only exists at
-    /// `.part`. The finished file then appears through `publish()`, which is the
-    /// same rename the WSS path always used — so "complete" stays atomic and a
-    /// half-arrived file can never be opened as the document.
+    /// **The landing place is the cache's `.part`, not the final name**, and what
+    /// that buys is *atomicity*, not resumption: a half-arrived file must never be
+    /// openable as the document, so the finished bytes appear through `publish()`,
+    /// the same rename the WSS path always used. The file is **replaced** on each
+    /// attempt rather than appended to — the system resumes from its own opaque
+    /// `resumeData`, so the bytes it hands back are a whole file, not the tail of
+    /// one. Nothing here tracks an offset any more (P-13c removed that mechanism);
+    /// `.part` is only a name that means "not the document yet".
     ///
     /// The previous shape passed the **final** name as the destination and then
     /// called `discardPartial` at the end. On a resumed transfer that wrote the
     /// tail to the final name and deleted the real prefix, so the user got a file
     /// missing its first `offset` bytes, reported as complete.
     ///
-    /// The `bid` is **new on every attempt** (see `attemptDownload`): an earlier
-    /// attempt's bridge may still be running, and reusing the id would let the new
-    /// HTTP request receive the old one's chunks. Upload is the opposite — there
-    /// the connector overwrites by `bid`, which is what makes a retry idempotent.
+    /// The `bid` is **frozen inside the system's resume data** on a resumed
+    /// attempt, so it is *not* new on every attempt and the app cannot make it so:
+    /// the request that goes out is the interrupted one replayed. What keeps two
+    /// runs apart is therefore the relay's side, which mints its own identifier
+    /// per HTTP request and tells the connector which run the new one supersedes
+    /// (`fsGetBegin.replaces`). Upload is the opposite — there the connector
+    /// overwrites by `bid`, which is what makes a retry idempotent.
     ///
     /// `expectedBytes` is the host's own size, which is what makes a truncated
     /// transfer a failure here instead of a cache hit later:
@@ -538,19 +547,25 @@ final class WorkspaceFilesModel {
         path: String,
         info: WorkspaceFileDownloader.Info
     ) async throws -> URL {
-        let offset = WorkspaceFileCache.partialBytes(
-            scopeId: scopeId, path: key, version: info.version
-        ) ?? 0
+        // The `.part` is still the landing place, and still what makes
+        // "complete" atomic: a half-arrived file must never be openable as the
+        // document. What changed is that it is **replaced** on each attempt
+        // rather than appended to — the system resumes from its own data, so the
+        // tail it hands back is a whole file, not a continuation of a prefix this
+        // app kept.
         let destination = WorkspaceFileCache.partial(
             scopeId: scopeId, path: key, version: info.version
         )
+        // `session:` 不传：拿的是进程里那**一个**共享后台会话（P-2），不再各自
+        // 建一个 —— 同一 identifier 建两个只是同一个会话，两个对象都以为自己是
+        // 主人是 `ownsSession` 当年要盖住的那个歧义。
         let transfer = RelayFileTransfer(relayURL: target.relayURL,
                                          deviceToken: target.deviceToken)
         let fetched = try await transfer.download(
             scopeId: scopeId,
             path: path,
             to: destination,
-            offset: offset,
+            version: info.version,
             expectedBytes: info.bytes,
             bid: UUID().uuidString
         ) { [weak self] received in

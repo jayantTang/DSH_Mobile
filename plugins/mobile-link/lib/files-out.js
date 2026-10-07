@@ -28,6 +28,36 @@
 export const FSGET_BEGIN = 'fsGetBegin'
 export const FSGET_CHUNK = 'fsGetChunk'
 export const FSGET_END = 'fsGetEnd'
+/**
+ * The relay's "stop reading for this run" frame.
+ *
+ * The pull side can end without the connector ever noticing: the phone hangs up,
+ * or the daily allowance cuts the response off mid-body. The relay sees that
+ * immediately (`deliver` reports a full queue), this side does not — the reads
+ * are driven here, so nothing would stop a run whose reader has left until the
+ * whole file had been read and every window thrown away at the relay.
+ *
+ * Cancelling an unknown `bid` is a no-op, exactly like `fsGetCancel`'s sibling
+ * `deviceDetach`: the relay is free to send one per dead bridge without tracking
+ * which runs are live, and a duplicate cannot hurt a run that is already gone.
+ */
+export const FSGET_CANCEL = 'fsGetCancel'
+/**
+ * The connector's "I have the file, start reading" answer.
+ *
+ * Carries `size` and `version` when the Host could tell us (P-13b). The relay
+ * needs the size to answer `Content-Length` and a full
+ * `Content-Range: bytes N-M/TOTAL`, which is what makes an interrupted download
+ * resumable by the system rather than restarted: a background
+ * `URLSessionDownloadTask` only produces resume data when the response states
+ * the total. The version becomes the `ETag`, so a `If-Range` on the retry can
+ * tell "same file, keep going" from "the file changed under me, start over".
+ *
+ * Both fields are **optional on purpose**: a Host that cannot stat the file
+ * still gets its download, just without the resume guarantee. A missing field
+ * must degrade to the old behaviour, never to an error — that is what keeps
+ * this a compatible addition rather than a protocol break.
+ */
 export const FSGET_ACK = 'fsGetAck'
 export const FSERR = 'fsErr'
 
@@ -154,21 +184,81 @@ export class FileFetcher {
       this.#sendError(bid, { code: 'file/rejected', message: 'scopeId and path are required' })
       return false
     }
-    // A retried `bid` replaces the previous run: the app reuses its id across
-    // attempts of the same fetch, and two runs writing the same bid would
-    // interleave their chunks into one nonsense stream.
+    // A retried `bid` replaces the previous run: the connector reuses the id
+    // across attempts of the same fetch, and two runs writing the same bid
+    // would interleave their chunks into one nonsense stream.
     this.cancel(bid)
+    // **`replaces` is how the superseded run is named now that the relay mints
+    // its own ids.** Each HTTP request gets a fresh `bid`, so the run left over
+    // from an interrupted attempt is not reachable by this request's identifier —
+    // and on a resumed download it is very much still there: the system's resume
+    // data freezes the *original* request, so what arrives is the old identifier
+    // replayed. Without this the old run would keep reading until the new
+    // `fsGetBegin` reached it, and its windows are exactly the ones the relay
+    // cannot recall. Advisory by construction: a name we do not know stops
+    // nothing, which is what an older relay (which never sends it) relies on.
+    const replaced = String(frame?.replaces ?? '')
+    if (replaced && replaced !== bid) this.cancel(replaced)
     const run = new FetchRun({
       bid, scopeId, path,
       offset: Number(frame?.offset ?? 0),
       windowBytes: Number(frame?.window) > 0 ? Number(frame.window) : DEFAULT_WINDOW_BYTES,
     })
     this.#runs.set(bid, run)
-    this.#sends({ t: FSGET_ACK, bid })
+    // The stat has to happen **before** the ack: the relay builds the response
+    // (status, `Content-Length`, `Content-Range`, `ETag`) from this answer, and
+    // it can only prepare a resumable response once it is told what it is
+    // resuming. Statting after the ack would mean the headers were already sent.
+    this.#ackNow(run)
     this.#drive(run).catch((error) => {
       this.#logger.warn?.(`mobile-link: download ${bid} failed: ${error?.message ?? error}`)
     })
     return true
+  }
+
+  /**
+   * Answer the relay's `fsGetBegin`, with the file's size and version if the
+   * Host can supply them.
+   *
+   * Never fails the transfer: `stat` is an enhancement (it is what makes the
+   * download resumable), and a Host that refuses it — an older DSH, a file that
+   * vanished between the request and the stat — must still get its bytes. The
+   * ack goes out either way, just without the fields the relay would have used
+   * to build a resumable response.
+   */
+  async #ackNow(run) {
+    const extra = await this.#statFor(run)
+    // A run superseded while the stat was in flight must not ack: the relay has
+    // already opened a new bridge for that bid, and a late ack would be
+    // answering the request it just replaced.
+    if (run.cancelled) return
+    this.#sends({ t: FSGET_ACK, bid: run.bid, ...extra })
+  }
+
+  /**
+   * One `workspaceFiles/stat`, reduced to the two fields the relay uses.
+   *
+   * Returns `{}` rather than throwing: see `#ackNow`. A sized response is worth
+   * a round trip, but never worth the transfer.
+   */
+  async #statFor(run) {
+    try {
+      const result = await this.#rpc('workspaceFiles/stat', {
+        workspaceFileScopeId: run.scopeId,
+        path: run.path,
+      })
+      if (result && result.ok === false) return {}
+      const value = result?.value ?? result
+      const size = Number.isFinite(value?.bytes) ? Number(value.bytes) : undefined
+      const version = typeof value?.version === 'string' && value.version ? value.version : undefined
+      if (size === undefined && version === undefined) return {}
+      return {
+        ...size === undefined ? {} : { size },
+        ...version === undefined ? {} : { version },
+      }
+    } catch {
+      return {}
+    }
   }
 
   /** Stop one run. Safe for an unknown bid (a late cancel is not an error). */

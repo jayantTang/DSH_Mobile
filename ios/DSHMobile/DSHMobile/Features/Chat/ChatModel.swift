@@ -1110,11 +1110,23 @@ final class ChatModel {
     /// background task); `ConnectionStore` decides whether that route exists at
     /// all from here, and a "no" is an error, not another path. This end hands
     /// over a file and, when it fails, says so in words the person can act on.
+    ///
+    /// **The staged copy is deleted when this returns, whichever way it went**
+    /// (P-3). Only a copy this app made is deletable — `OutgoingFiles.remove`
+    /// checks the path against the staging root, so the file behind
+    /// `-DSHUploadFilePath` or a path the user picked in Files is never
+    /// touched. Leaving it behind was a disk leak that only grew, because
+    /// nothing else ever deleted one.
     func sendFile(named name: String, fileURL: URL) async {
         guard let session, let store else { return }
         let owner = session.sessionId
         isUploadingFile = name
-        defer { isUploadingFile = nil }
+        defer {
+            isUploadingFile = nil
+            // After the await, never before: the background task reads this
+            // file, and a delete that beat it would be the F-2 crash face.
+            OutgoingFiles.remove(fileURL)
+        }
 
         do {
             let staged = try await store.uploadFile(

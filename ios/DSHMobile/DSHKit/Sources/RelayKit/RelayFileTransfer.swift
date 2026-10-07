@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import DSHKit
 
@@ -41,7 +42,6 @@ public struct RelayFileTransfer: Sendable {
     public let deviceToken: String
 
     private let session: URLSession
-    private let ownsSession: Bool
 
     /// The background session identifier.
     ///
@@ -59,6 +59,83 @@ public struct RelayFileTransfer: Sendable {
     /// the callbacks have nowhere to go and the upload waits forever rather than
     /// failing, which is a hang, not a red test.
     public static var sessionDelegate: any URLSessionDelegate { RelaySessionDelegate.shared }
+
+    /// The session delegate's release-the-system callback, for tests.
+    ///
+    /// The architect's fix for P-2 requires a test that calls
+    /// `urlSessionDidFinishEvents(forBackgroundURLSession:)` **directly** — it is
+    /// an ordinary method on the delegate, so no real background delivery is
+    /// needed to exercise it. `RelaySessionDelegate` is internal to this package,
+    /// and the test target imports it non-`@testable` (the same reason
+    /// `sessionDelegate` above exists), so the two pieces a test needs are
+    /// published here rather than making the whole delegate public.
+    ///
+    /// Deliberately **not** a way to bypass the callback: a test that calls this
+    /// to release a handler is testing nothing, and the API shape makes that
+    /// obvious by naming the delegate it belongs to.
+    /// The download bookkeeping a test needs to drive, published for the same
+    /// reason `Sink` is: `RelayDownloadSink` and `RelayDownloadWaiter` are
+    /// internal, and the test target imports this package without `@testable`.
+    ///
+    /// What this exists for is the **interruption** path — a blob in a failure's
+    /// `userInfo` reaching the waiter that stores it. That hop is invisible from
+    /// outside (the download still succeeds on retry, just from zero), so it
+    /// needs a test that can stand exactly where the delegate stands.
+    public enum DownloadSink {
+        /// `NSURLSessionDownloadTaskResumeData`, the key the system uses.
+        public static var resumeDataKey: String { RelayDownloadWaiter.resumeDataKey }
+
+        /// Register a waiter for `task`, as `download` does before it resumes.
+        public static func register(_ task: URLSessionTask) -> RelayDownloadWaiter {
+            RelayDownloadSink.register(task)
+        }
+
+        /// Deliver a task's completion to the **shipped** delegate.
+        ///
+        /// This is the whole point of the seam: the blob only ever appears inside
+        /// `didCompleteWithError`, and whether it reaches the waiter is a property
+        /// of *this* delegate (`RelaySessionDelegate` is internal). Driving it
+        /// from a test is the only way to catch the hop going missing — the
+        /// download still succeeds without it, so nothing else notices.
+        public static func complete(_ session: URLSession, task: URLSessionTask,
+                                    error: (any Error)?) {
+            RelaySessionDelegate.shared.urlSession(session, task: task,
+                                                   didCompleteWithError: error)
+        }
+    }
+
+    public enum BackgroundEvents {
+        /// Register the action the session delegate runs when delivery finishes.
+        ///
+        /// This is the **product** entry point as well as the test one: the app's
+        /// `handleEventsForBackgroundURLSession` calls it with the system's
+        /// handler, because the delegate that will run it is internal to this
+        /// package. Pass `nil` to clear it (what a test's teardown does).
+        public static func setHandler(_ action: (() -> Void)?) {
+            RelaySessionDelegate.setDidFinishEvents(action)
+        }
+
+        /// Point the session delegate's log lines at the app's logger.
+        ///
+        /// `RelayKit` has no logger of its own on purpose (see `reassociate()`);
+        /// the app injects one at launch. Left unset the delegate is silent.
+        public static func setLogger(_ sink: (@Sendable (String) -> Void)?) {
+            RelaySessionDelegate.log = sink
+        }
+
+        /// Deliver "every event for this session has arrived" to the delegate.
+        ///
+        /// `identifier` defaults to the product background session; a test can
+        /// pass another to check that a foreign session's events are ignored.
+        public static func finishEvents(sessionIdentifier identifier: String) {
+            let configuration = URLSessionConfiguration.background(withIdentifier: identifier)
+            let session = URLSession(configuration: configuration)
+            RelaySessionDelegate.shared.urlSessionDidFinishEvents(
+                forBackgroundURLSession: session
+            )
+            session.invalidateAndCancel()
+        }
+    }
 
     /// The sink's two task hooks, for a delegate a test supplies itself.
     ///
@@ -101,36 +178,111 @@ public struct RelayFileTransfer: Sendable {
     }
 
     /// - Parameter session: injected for tests. Production callers pass `nil` and
-    ///   get the background session; the unit tests must not open one (macOS can
-    ///   not exercise iOS background semantics, so a test that opened one would
-    ///   be proving nothing about the real behaviour).
+    ///   get **the one shared background session**; the unit tests must not open
+    ///   one (macOS cannot exercise iOS background semantics, so a test that
+    ///   opened one would be proving nothing about the real behaviour).
     public init(relayURL: URL, deviceToken: String, session: URLSession? = nil) {
         self.relayURL = relayURL
         self.deviceToken = deviceToken
-        if let session {
-            self.session = session
-            self.ownsSession = false
-        } else if let configuration = Self.backgroundConfiguration() {
-            // 后台会话**必须**带自己的 delegate 建出来：一个后台任务不接受
-            // per-task 的 `task.delegate`（`NSGenericException: 'Task delegate is
-            // not supported on background session task'`），回调只走会话的
-            // delegate。见 `RelaySessionDelegate`。
-            self.session = URLSession(
-                configuration: configuration,
-                delegate: RelaySessionDelegate.shared,
-                delegateQueue: nil
-            )
-            self.ownsSession = true
-        } else {
+        self.session = session ?? Self.backgroundSession()
+    }
+
+    /// The one background session this process uses for file bytes.
+    ///
+    /// **One instance, held for the life of the app.** iOS keeps exactly one
+    /// session per identifier, so building a second `URLSession` with the same
+    /// identifier does not give a second session — it returns (effectively) the
+    /// same one, and the *last* delegate a caller installs is the one whose
+    /// callbacks arrive. Two objects each believing they owned "their" session
+    /// therefore end up sharing a delegate and neither owns the lifetime; that
+    /// ambiguity is what `ownsSession` used to paper over, and it is why the
+    /// accessor is a single stored instance rather than a factory.
+    ///
+    /// `reassociate()` is what makes this correct across a **cold start**: the
+    /// system relaunches the app to deliver a finished transfer, and a session
+    /// that nobody built would never hand those events to the delegate. It is
+    /// deliberately built at launch, before (and without) any transfer.
+    private static let shared = SharedSession()
+
+    /// Holds the session strongly so it is not deallocated between transfers.
+    ///
+    /// A `URLSession` with no strong reference goes away along with its pending
+    /// callbacks, which is precisely the state a background launch starts in.
+    private final class SharedSession: @unchecked Sendable {
+        private let lock = NSLock()
+        private var session: URLSession?
+
+        /// The session, built on first use — on macOS this is the plain fallback
+        /// below, and on iOS the real background one.
+        func current() -> URLSession {
+            lock.lock()
+            defer { lock.unlock() }
+            if let session { return session }
+            let built = Self.build()
+            session = built
+            return built
+        }
+
+        /// Builds the session for this platform.
+        ///
+        /// 后台会话**必须**带自己的 delegate 建出来：一个后台任务不接受
+        /// per-task 的 `task.delegate`（`NSGenericException: 'Task delegate is
+        /// not supported on background session task'`），回调只走会话的
+        /// delegate。见 `RelaySessionDelegate`。
+        private static func build() -> URLSession {
+            if let configuration = RelayFileTransfer.backgroundConfiguration() {
+                configuration.sessionSendsLaunchEvents = true
+                return URLSession(
+                    configuration: configuration,
+                    delegate: RelaySessionDelegate.shared,
+                    delegateQueue: nil
+                )
+            }
             // 仅 macOS 单测可达，不是产品回落：macOS 上没有后台会话
             // （`backgroundConfiguration()` 返回 nil），而单测跑在 macOS。普通会话
             // 一样能把请求做对，只是它不会在 App 被挂起后继续。
             let configuration = URLSessionConfiguration.default
             configuration.waitsForConnectivity = false
             configuration.httpShouldSetCookies = false
-            self.session = URLSession(configuration: configuration)
-            self.ownsSession = true
+            return URLSession(configuration: configuration)
         }
+    }
+
+    /// The production session, for a caller that only needs the transport.
+    public static func backgroundSession() -> URLSession { shared.current() }
+
+    /// The session this value will use, for the tests that pin session identity.
+    ///
+    /// Public only because the test target imports `RelayKit` (not `@testable` —
+    /// it is a separate module from the app's own code). The name says what it is
+    /// for; the only question it answers is "did a transfer built without an
+    /// injected session attach itself to the one shared instance?".
+    public var backgroundSessionForTesting: URLSession { session }
+
+    /// Rebuilds (or re-reaches) the background session at **launch**, and holds it.
+    ///
+    /// Why this exists: `sessionSendsLaunchEvents` is true, so iOS relaunches the
+    /// app in the background to deliver the outcome of a transfer that finished
+    /// while it was away. Those events are delivered to the **session's delegate**
+    /// — and the app has just started, so no session exists yet. Without this,
+    /// the system's launch event reaches nobody: the transfer completes, the app
+    /// is woken into the background, and nothing is recorded, which is the shape
+    /// of "I thought I had sent it and it never arrived".
+    ///
+    /// Answering the question a reader will have: **reaching the session for an
+    /// identifier that already exists does not create a second one.** iOS keeps
+    /// one session per identifier for the life of the process; what this call
+    /// guarantees is that the object is alive (and so its delegate is reachable)
+    /// before any event can be routed to it. It is idempotent and safe to call
+    /// on every launch. It is **not** a transfer and must never start one — the
+    /// acceptance for P-2 includes "a launch makes no requests".
+    ///
+    /// No logging here on purpose: `DSHLog` lives in the app target and this
+    /// package has no opinion about it. The caller (`APNSRegistrar`) writes the
+    /// "background session re-associated" line.
+    @discardableResult
+    public static func reassociate() -> URLSession {
+        shared.current()
     }
 
     /// The connector capability that turns this path on.
@@ -185,32 +337,6 @@ public struct RelayFileTransfer: Sendable {
             case .sourceFileUnreadable:
                 return String(localized: "读不到这个文件，请重新选择一次再发")
             }
-        }
-    }
-
-    /// Why a resumed download cannot be trusted.
-    ///
-    /// The relay answers a `Range` request with the offset it actually started
-    /// from in `X-DSH-Offset`. When that disagrees with the offset the caller
-    /// asked for, the bytes on the wire are **not** the continuation of the
-    /// prefix on disk: appending them would publish a file with a hole in it, so
-    /// the transfer stops instead.
-    public struct ResumeMismatch: LocalizedError, Sendable {
-        /// The offset the caller asked for (= bytes already on disk).
-        public let expected: Int
-        /// The offset the relay reported, or `nil` when it reported none.
-        public let reported: Int?
-
-        public init(expected: Int, reported: Int?) {
-            self.expected = expected
-            self.reported = reported
-        }
-
-        public var errorDescription: String? {
-            guard let reported else {
-                return String(localized: "中转没有从预期的位置续传（期望第 \(expected) 字节起）")
-            }
-            return String(localized: "中转没有从预期的位置续传（期望第 \(expected) 字节起，实际第 \(reported) 字节起）")
         }
     }
 
@@ -297,76 +423,183 @@ public struct RelayFileTransfer: Sendable {
         return request
     }
 
-    /// The relay's answer to a `Range` request: the byte it actually started at.
+    /// Downloads `destination`, continuing from the system's own resume data
+    /// when there is any for this version.
     ///
-    /// The relay answers 200 rather than 206 and puts the start offset in
-    /// `X-DSH-Offset`, because it streams from the connector rather than from a
-    /// file it can seek in. A caller that assumed 206 would have to guess; this
-    /// reads what the relay actually says.
+    /// **This is plan A.** The bytes an interruption saved are not tracked by the
+    /// app at all: the system keeps them, hands back a `resumeData` blob, and
+    /// `downloadTask(withResumeData:)` picks them up. That is what makes the
+    /// guarantee hold even when the app was suspended or killed through the
+    /// interruption — there is no app-side bookkeeping that could have missed it,
+    /// which is exactly why the old `.part` + offset mechanism could not deliver
+    /// it (the offset was always 0 in the cases that mattered).
     ///
-    /// **Read by `download` on every resumed transfer** — it is the check that
-    /// turns "the relay ignored my `Range`" from a silently corrupt file into a
-    /// loud failure. Nothing else may depend on it.
-    public static func resumedOffset(status: Int, headers: [AnyHashable: Any]) -> Int? {
-        _ = status
-        guard let raw = headers["X-DSH-Offset"] as? String else { return nil }
-        return Int(raw)
-    }
-
-    /// Downloads the file and leaves it at `destination`, resuming from `offset`.
+    /// The blob is stored per `(scopeId, path, version)`. The version is the
+    /// file's freshness token, so a blob from before a change can never be
+    /// resumed into the changed file; if the version moved, this simply starts
+    /// over, which is the correct answer rather than a compromise.
     ///
-    /// The move is the whole point of using a `downloadTask`: the system hands
-    /// back a temporary file it wrote **while the app was suspended**, and that
-    /// file has to be moved before the delegate callback returns or the system
-    /// deletes it. Production callers therefore pass the cache's own **`.part`**
-    /// path (`WorkspaceFileCache.partial`), never the final name — a resumed
-    /// transfer concatenates onto the prefix there, and `publish()` is what turns
-    /// the finished `.part` into the file.
-    ///
-    /// The resumed prefix is *not* re-verified against `expectedBytes` here: the
-    /// caller (the cache, keyed by the host's version token) is the one that knows
-    /// whether those bytes belong to this file. What this does check is
-    ///   1. that the relay's own `X-DSH-Offset` agrees with `offset` — otherwise
-    ///      the reply is a different window than the caller asked for, and
-    ///   2. that `offset + arrived == expectedBytes` when the host declared a size
-    ///      — a truncated transfer must not be published as whole.
+    /// `expectedBytes` is checked when the host declared a size: a short transfer
+    /// must fail here rather than be published as the document.
     public func download(
         scopeId: String,
         path: String,
         to destination: URL,
-        offset: Int = 0,
+        version: String,
         expectedBytes: Int? = nil,
         bid: String = UUID().uuidString,
-        onProgress: (@Sendable (Int) -> Void)? = nil
+        onProgress: (@Sendable (Int) -> Void)? = nil,
+        resumeRoot: URL? = nil
     ) async throws -> Fetched {
-        guard let request = downloadRequest(scopeId: scopeId, path: path, offset: offset, bid: bid)
-        else {
-            throw DSHTransportError.unreachable("中转地址无效")
-        }
+        try await download(scopeId: scopeId, path: path, to: destination, version: version,
+                           expectedBytes: expectedBytes, bid: bid, onProgress: onProgress,
+                           cancelStandIn: nil, resumeRoot: resumeRoot)
+    }
 
-        // **Delegate task, not `session.download(for:)`.** The async convenience is
-        // built on a completion-handler block, and a background session refuses
-        // those outright: `NSGenericException: 'Completion handler blocks are not
-        // supported in background sessions. Use a delegate instead.'` — raised
-        // inside CFNetwork on a dispatch queue, so no `catch` can see it and the
-        // whole app dies. That is exactly what a ≥ 8 MB download did on device;
-        // the upload half had already crashed the same way (OTA 0412) and was
-        // moved to a delegate. The task below hands the file to the system and
-        // lets `RelaySessionDelegate` report where it landed.
-        let task = session.downloadTask(with: request)
+    /// `download`, with the task's cancel replaced by a stand-in.
+    ///
+    /// Exists for one test: whether a resume blob delivered **after** the waiter
+    /// has already finished still reaches the store. That ordering is the whole
+    /// bug (`p13c…storedBlob=-1` on the simulator), and it cannot be produced
+    /// through `URLProtocol` — the suite's stub — because a resume blob only ever
+    /// comes from a real download task. Injecting the callback is the only way to
+    /// hold the timing still and assert on it.
+    ///
+    /// `public` for the same reason `DownloadSink` is: the test target imports
+    /// this package without `@testable`. Shipping code has no reason to call it —
+    /// the name says so, and `download` below is what it delegates to.
+    public func downloadForTesting(
+        scopeId: String,
+        path: String,
+        to destination: URL,
+        version: String,
+        expectedBytes: Int? = nil,
+        bid: String = UUID().uuidString,
+        lateBlob: Data?,
+        lateBlobDelay: Duration,
+        resumeRoot: URL? = nil
+    ) async throws -> Fetched {
+        try await download(scopeId: scopeId, path: path, to: destination, version: version,
+                           expectedBytes: expectedBytes, bid: bid, onProgress: nil,
+                           cancelStandIn: (blob: lateBlob, delay: lateBlobDelay),
+                           resumeRoot: resumeRoot)
+    }
+
+    private func download(
+        scopeId: String,
+        path: String,
+        to destination: URL,
+        version: String,
+        expectedBytes: Int?,
+        bid: String,
+        onProgress: (@Sendable (Int) -> Void)?,
+        cancelStandIn: (blob: Data?, delay: Duration)?,
+        resumeRoot: URL? = nil
+    ) async throws -> Fetched {
+        // `resumeRoot` exists so a test can point the store at its own
+        // directory without touching the process-wide environment variable that
+        // two parallel suites would otherwise race on (see the note on
+        // `RelayResumeStore.root`). Production passes `nil`, which is exactly
+        // the shipping behaviour.
+        let stored = RelayResumeStore.load(scopeId: scopeId, path: path, version: version,
+                                           root: resumeRoot)
+        let task: URLSessionDownloadTask
+        if let resumeData = stored {
+            // The bid inside the blob is frozen from the interrupted attempt. That
+            // is deliberate and safe: the connector cancels a superseded run when
+            // the same bid reappears (`files-out.js`), and `expectedBytes` is the
+            // final judge if a stale window ever slipped through.
+            task = session.downloadTask(withResumeData: resumeData)
+        } else {
+            guard let request = downloadRequest(scopeId: scopeId, path: path, offset: 0, bid: bid)
+            else { throw DSHTransportError.unreachable("中转地址无效") }
+            task = session.downloadTask(with: request)
+        }
         let waiter = RelayDownloadSink.register(task)
+        // Where a `cancel(byProducingResumeData:)` callback leaves its blob.
+        //
+        // It cannot be a plain `save` inside the closure: the system is free to
+        // run that callback **after** `didCompleteWithError` has already released
+        // the waiter, and `download` used to throw the moment the waiter finished.
+        // The blob then arrived at a closure whose work had already been skipped,
+        // the store stayed empty, and the next attempt downloaded the whole file
+        // again — silently, because a retry from zero still succeeds.
+        //
+        // A box rather than an `AsyncStream` on purpose: the stream's only writer
+        // lived in `onCancel`, so a cancellation the handler did not observe meant
+        // no blob could ever be produced, and the reader below then saw an empty
+        // stream and concluded "nothing to resume from". The box is written by
+        // whichever path actually produces a blob, and read afterwards.
+        let lateBlob = BlobBox()
         task.resume()
 
         let outcome = await withTaskCancellationHandler {
+            // Waited without a clock, exactly as before this fix. The
+            // simulator proved this always resolves — `didCompleteWithError`
+            // fires for a cancel as well as for a drop — and putting a clock on
+            // it would fail slow-but-fine downloads.
+            //
+            // An earlier attempt raced this against a cancellation signal and
+            // hung every ordinary transfer: the signal branch parks on a
+            // `CheckedContinuation`, which `TaskGroup.cancelAll()` cannot end, so
+            // the group's scope never closed. The bound belongs where the
+            // cancellation is, not around the healthy wait — see `onCancel`.
             await waiter.value()
         } onCancel: {
-            // 与上传同形：取消只取消这一个 task。**不用**
-            // `cancel(byProducingResumeData:)`——续传由我们自己的 `.part` +
-            // offset 负责，resumeData 是另一套语义，混用就是第二条路。
-            task.cancel()
+            // Cancelling must **ask for the resume data**, not just drop the
+            // task: a plain `cancel()` throws away every byte the system had
+            // already fetched, which is precisely the loss this path exists to
+            // prevent.
+            //
+            // Nothing here finishes the waiter. An earlier version did
+            // (`waiter.finish(error: CancellationError())`) to guarantee the wait
+            // ended — and that is the worst possible place for it: the *real*
+            // failure, which is the one carrying the resume blob in its
+            // `userInfo`, then arrives at a waiter that has already been finished
+            // and is discarded. The simulator showed it exactly:
+            // `NSURLSessionDownloadTaskResumeData={length = 9955 …}` in the log
+            // while the app reported `storedBlob=-1`.
+            if let cancelStandIn {
+                // Test-only: deliver the blob late, the way the real callback
+                // does. See `downloadForTesting`.
+                Task {
+                    try? await Task.sleep(for: cancelStandIn.delay)
+                    if let blob = cancelStandIn.blob, !blob.isEmpty {
+                        lateBlob.put(blob)
+                    }
+                    lateBlob.close()
+                }
+                return
+            }
+            task.cancel(byProducingResumeData: { data in
+                if let data, !data.isEmpty { lateBlob.put(data) }
+                lateBlob.close()
+            })
         }
 
-        if let error = outcome.error { throw error }
+        if let error = outcome.error {
+            // An interrupted attempt is not a failure to report and forget: the
+            // blob is what makes the next attempt cost only the difference. Two
+            // sources, and either can be the only one that fires — the waiter's
+            // `userInfo` (a network drop) or the cancel callback (a deliberate
+            // cancel). Waiting on the box closes the race where the waiter
+            // finished first and the blob was still on its way.
+            //
+            // **Bounded**, because the callback is not promised: when the system
+            // has nothing to resume from it never calls back, and waiting forever
+            // would turn "no resume data" — which the retry path already handles —
+            // into a download that never returns. A second is far longer than the
+            // callback takes when it does come.
+            var blob = outcome.resumeData
+            if blob == nil {
+                blob = await lateBlob.wait(within: .seconds(1))
+            }
+            if let blob {
+                RelayResumeStore.save(blob, scopeId: scopeId, path: path, version: version,
+                                      root: resumeRoot)
+            }
+            throw error
+        }
         guard let http = outcome.response as? HTTPURLResponse else {
             throw DSHTransportError.malformedResponse("中转响应无效")
         }
@@ -382,66 +615,140 @@ public struct RelayFileTransfer: Sendable {
             throw Self.failure(status: http.statusCode, body: body)
         }
 
-        // **The resume check.** `offset > 0` means the caller has a prefix on disk
-        // and asked the relay to continue from it. If the relay says it started
-        // somewhere else — it ignored the `Range` (a proxy rewrote it), or it
-        // answered a fresh full body — the bytes in hand are not the continuation
-        // of that prefix. Appending them would publish a file with a hole in it,
-        // and the size check below would not catch it (it measures the *tail*).
-        if offset > 0, let reported = Self.resumedOffset(
-            status: http.statusCode, headers: http.allHeaderFields
-        ), reported != offset {
-            try? FileManager.default.removeItem(at: temporary)
-            throw ResumeMismatch(expected: offset, reported: reported)
-        }
-
         let arrived = Self.fileSize(temporary)
-        onProgress?(offset + arrived)
-        if let expectedBytes, offset + arrived != expectedBytes {
+        onProgress?(arrived)
+        if let expectedBytes, arrived != expectedBytes {
             try? FileManager.default.removeItem(at: temporary)
             throw DSHTransportError.malformedResponse(
-                "文件没有完整传完（应有 \(expectedBytes) 字节，收到 \(offset + arrived) 字节）"
+                "文件没有完整传完（应有 \(expectedBytes) 字节，收到 \(arrived) 字节）"
             )
         }
 
         let manager = FileManager.default
-        let complete = destination
-        try manager.createDirectory(at: complete.deletingLastPathComponent(),
+        try manager.createDirectory(at: destination.deletingLastPathComponent(),
                                     withIntermediateDirectories: true)
-
-        // A resumed transfer appends the tail onto the prefix already at
-        // `destination`; a fresh one simply takes the temp file's place. Doing
-        // this through one handle keeps a 300 MB resume from ever holding the
-        // whole file in memory.
-        if offset > 0 {
-            try Self.append(temporary, to: complete)
-            try? manager.removeItem(at: temporary)
-        } else {
-            try? manager.removeItem(at: complete)
-            try manager.moveItem(at: temporary, to: complete)
-        }
-        return Fetched(url: complete, bytes: offset + arrived)
+        try? manager.removeItem(at: destination)
+        try manager.moveItem(at: temporary, to: destination)
+        // The download is over, so its blob is worthless: keeping it would let a
+        // later attempt "resume" into a file that already exists.
+        RelayResumeStore.discard(scopeId: scopeId, path: path, version: version, root: resumeRoot)
+        return Fetched(url: destination, bytes: arrived)
     }
 
-    /// Appends `source`'s bytes onto `destination`, creating it when absent.
+
+    /// The seam a test needs to drive `BlobBox`, published for the same reason
+    /// `DownloadSink` is: the test target imports this package without
+    /// `@testable`.
     ///
-    /// Streamed in chunks rather than `Data(contentsOf:) + write`: the file is
-    /// by definition a large one (that is why it is on this path), and building
-    /// it in memory to concatenate would undo the point of a background task.
-    private static func append(_ source: URL, to destination: URL) throws {
-        let manager = FileManager.default
-        if !manager.fileExists(atPath: destination.path) {
-            manager.createFile(atPath: destination.path, contents: nil)
+    /// What it exists for is the **timing** the resume blob depends on. The blob
+    /// is produced on another queue and may land after the wait for the transfer
+    /// has ended; the box is what makes "read it anyway" possible, and a
+    /// regression shows up only as a download that silently restarts from zero —
+    /// which is why it needs a test that can hold the timing still.
+    public enum LateBlobBox {
+        public final class Box: @unchecked Sendable {
+            private let box = BlobBox()
+            public init() {}
+            public func put(_ data: Data) { box.put(data) }
+            public func close() { box.close() }
+            public func wait(within timeout: Duration) async -> Data? {
+                await box.wait(within: timeout)
+            }
         }
-        let input = try FileHandle(forReadingFrom: source)
-        defer { try? input.close() }
-        let output = try FileHandle(forWritingTo: destination)
-        defer { try? output.close() }
-        try output.seekToEnd()
-        while true {
-            let chunk = try input.read(upToCount: 1 << 20) ?? Data()
-            if chunk.isEmpty { break }
-            try output.write(contentsOf: chunk)
+    }
+
+    /// Where a resume blob lands when it is produced on another queue.
+    ///
+    /// The cancel callback and the delegate's `didCompleteWithError` run on
+    /// queues the caller does not control, and either may arrive after the wait
+    /// for the task has already ended. A box that can be **polled with a
+    /// deadline** lets `download` ask "did a blob turn up" without depending on
+    /// the callback landing before some other event — which is exactly the
+    /// dependency that lost the blob in the first version.
+    ///
+    /// A plain lock and a continuation rather than an `AsyncStream`: the writer
+    /// must be callable from a non-async callback (`cancel(byProducingResumeData:)`
+    /// takes a plain closure), and the reader must be able to give up.
+    final class BlobBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var blob: Data?
+        private var closed = false
+        private var waiting: CheckedContinuation<Data?, Never>?
+
+        func put(_ data: Data) {
+            lock.lock()
+            if blob == nil { blob = data }
+            let continuation = waiting
+            waiting = nil
+            lock.unlock()
+            continuation?.resume(returning: data)
+        }
+
+        /// No further blob will arrive; a waiter should stop early.
+        func close() {
+            lock.lock()
+            closed = true
+            let continuation = waiting
+            waiting = nil
+            lock.unlock()
+            continuation?.resume(returning: blob)
+        }
+
+        /// The blob, or `nil` once it is closed or `timeout` passes.
+        ///
+        /// The timeout has to **release the waiter**, not merely stop observing
+        /// it: a `CheckedContinuation` parked in `waiting` cannot be cancelled, so
+        /// a task group that simply stops waiting leaves the box holding a
+        /// continuation nobody will ever resume — and the next caller's `put`
+        /// would resume a dead one. Taking the continuation out under the lock and
+        /// resuming it with `nil` is what makes the bound real.
+        func wait(within timeout: Duration) async -> Data? {
+            await withTaskGroup(of: Data?.self) { group in
+                group.addTask { await self.take() }
+                group.addTask {
+                    try? await Task.sleep(for: timeout)
+                    return nil
+                }
+                let first = await group.next() ?? nil
+                group.cancelAll()
+                self.abandon()
+                // A blob that landed while the timeout branch was returning is
+                // still read here, so the race cannot lose it.
+                return self.settled() ?? first
+            }
+        }
+
+        /// Releases a parked waiter with `nil` — the timeout's half of `put`.
+        private func abandon() {
+            lock.lock()
+            let continuation = waiting
+            waiting = nil
+            lock.unlock()
+            continuation?.resume(returning: nil)
+        }
+
+        private func take() async -> Data? {
+            await withCheckedContinuation { continuation in
+                lock.lock()
+                if let blob {
+                    lock.unlock()
+                    continuation.resume(returning: blob)
+                    return
+                }
+                if closed {
+                    lock.unlock()
+                    continuation.resume(returning: nil)
+                    return
+                }
+                waiting = continuation
+                lock.unlock()
+            }
+        }
+
+        private func settled() -> Data? {
+            lock.lock()
+            defer { lock.unlock() }
+            return blob
         }
     }
 
@@ -671,7 +978,7 @@ final class RelayTaskWaiter: @unchecked Sendable {
     private var body = Data()
     private var finished: Outcome?
 
-    func value() async -> Outcome {
+    public func value() async -> Outcome {
         await withCheckedContinuation { continuation in
             lock.lock()
             if let finished {
@@ -799,20 +1106,39 @@ enum RelayDownloadSink {
 /// `finish` is guarded so the continuation is resumed **exactly once**:
 /// `didCompleteWithError` arrives after `didFinishDownloadingTo`, and resuming
 /// twice traps.
-final class RelayDownloadWaiter: @unchecked Sendable {
-    struct Outcome: @unchecked Sendable {
-        let temporaryURL: URL?
-        let response: URLResponse?
-        let error: (any Error)?
+public final class RelayDownloadWaiter: @unchecked Sendable {
+    public struct Outcome: @unchecked Sendable {
+        public let temporaryURL: URL?
+        public let response: URLResponse?
+        public let error: (any Error)?
+        /// The system's resume blob, when this attempt ended in a way that
+        /// produced one.
+        ///
+        /// Read off `didCompleteWithError`'s `userInfo` — the second of the two
+        /// places it appears, and the one a *network drop* uses (a deliberate
+        /// cancel delivers it to the `cancel(byProducingResumeData:)` callback
+        /// instead). A caller that only watched one of them would conclude "the
+        /// system gave nothing" from a callback that simply is not the one this
+        /// failure used.
+        public let resumeData: Data?
     }
+
+    /// `NSURLSessionDownloadTaskResumeData` by its literal name.
+    ///
+    /// Spelled out rather than referenced through a constant: the SDK exposes no
+    /// Swift symbol for it, and the string is the documented contract (it is what
+    /// appears in the failure's `userInfo`). A typo here would silently disable
+    /// every network-drop resume, so it is stated once, in one place.
+    public static let resumeDataKey = "NSURLSessionDownloadTaskResumeData"
 
     private let lock = NSLock()
     private var continuation: CheckedContinuation<Outcome, Never>?
     private var response: URLResponse?
     private var temporaryURL: URL?
+    private var resumeData: Data?
     private var finished: Outcome?
 
-    func value() async -> Outcome {
+    public func value() async -> Outcome {
         await withCheckedContinuation { continuation in
             lock.lock()
             if let finished {
@@ -838,10 +1164,29 @@ final class RelayDownloadWaiter: @unchecked Sendable {
         lock.unlock()
     }
 
+    /// Keep the blob the system handed back, when it handed one over.
+    func record(resumeData data: Data?) {
+        guard let data, !data.isEmpty else { return }
+        lock.lock()
+        // First one wins: only one failure ends the transfer, and a later
+        // `finish` must not overwrite what that failure already produced.
+        if resumeData == nil { resumeData = data }
+        lock.unlock()
+    }
+
     func finish(error: (any Error)?) {
         lock.lock()
         guard finished == nil else { lock.unlock(); return }
-        let outcome = Outcome(temporaryURL: temporaryURL, response: response, error: error)
+        // The error's `userInfo` is the other source, and for a network drop it
+        // is the *only* one. Read here rather than in the delegate so both paths
+        // converge on one stored value.
+        var blob = resumeData
+        if blob == nil, let error,
+           let fromError = (error as NSError).userInfo[Self.resumeDataKey] as? Data {
+            blob = fromError
+        }
+        let outcome = Outcome(temporaryURL: temporaryURL, response: response, error: error,
+                              resumeData: blob)
         finished = outcome
         let waiting = continuation
         continuation = nil
@@ -859,9 +1204,200 @@ final class RelayDownloadWaiter: @unchecked Sendable {
 /// is a hard crash (R-1 真机 OTA 0412 hit both). Only
 /// `URLSession(configuration:delegate:delegateQueue:)` with the callbacks on the
 /// delegate works, which is what this is.
+/// Where the system's resume data for an interrupted download is kept.
+///
+/// **This is the whole of plan A's persistence.** A background
+/// `URLSessionDownloadTask` that is cancelled or dropped can hand back a
+/// `resumeData` blob; feeding it to `downloadTask(withResumeData:)` lets the
+/// system continue from the bytes it already has, without the app tracking an
+/// offset or keeping a `.part` prefix of its own. That is what makes "an
+/// interruption loses nothing" true even when the app was never running to
+/// observe it.
+///
+/// Keyed by `(scopeId, path, version)`, exactly like the file cache, and for the
+/// same reason: the version is the file's freshness token, so a blob written for
+/// the previous contents can never be resumed into the current ones. A resume
+/// that crossed a version change would splice two different files together —
+/// which is why the version is part of the key rather than something checked
+/// afterwards.
+///
+/// On disk under `Caches` (the same reclamable, un-backed-up area the file cache
+/// uses); nothing here is worth keeping the way a document is.
+public enum RelayResumeStore {
+    /// `#if DEBUG`-only relocation, compiled out of shipping builds — the same
+    /// isolation hook `OutgoingFiles` and `WorkspaceFileCache` have, so a test on
+    /// macOS cannot write into the developer's real `~/Library/Caches`.
+    ///
+    /// **Prefer the `root:` parameter on the calls below when testing.** This
+    /// environment hook is process-global, and Swift Testing runs suites in
+    /// parallel: two suites that each `setenv` a different root race on a value
+    /// `root` reads fresh every time, so a `save` and the `load` that should see
+    /// it can land on different directories. That is not a product defect (no
+    /// shipping build has the variable) but it made "single suite green, whole
+    /// run red" the normal outcome. A parameter cannot race.
+    public static var root: URL {
+        defaultRoot
+    }
+
+    /// The root used when a caller passes none: the environment override, or
+    /// `Caches/relay-resume`.
+    static var defaultRoot: URL {
+        #if DEBUG
+        if let override = ProcessInfo.processInfo.environment["DSH_RELAY_RESUME_DIR"],
+           !override.isEmpty {
+            return URL(fileURLWithPath: override, isDirectory: true)
+        }
+        #endif
+        return FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("relay-resume", isDirectory: true)
+    }
+
+    /// A filename that identifies one file's one version without leaking the
+    /// path into the directory tree.
+    ///
+    /// Hashed rather than nested: a workspace path contains slashes and can be
+    /// arbitrarily deep, and mirroring it here would mean creating (and later
+    /// pruning) a tree for a single blob.
+    public static func key(scopeId: String, path: String, version: String) -> String {
+        var hasher = SHA256()
+        for piece in [scopeId, path, version] {
+            hasher.update(data: Data(piece.utf8))
+            hasher.update(data: Data([0]))
+        }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+
+    public static func url(scopeId: String, path: String, version: String,
+                           root: URL? = nil) -> URL {
+        (root ?? defaultRoot)
+            .appendingPathComponent(key(scopeId: scopeId, path: path, version: version))
+    }
+
+    /// Keep a blob the system handed back, replacing any earlier one for the
+    /// same version.
+    ///
+    /// The **newest blob wins**: a later interruption knows about more bytes than
+    /// an earlier one, and keeping both would mean choosing on read with no way
+    /// to tell which is which.
+    public static func save(_ data: Data, scopeId: String, path: String, version: String,
+                            root: URL? = nil) {
+        let base = root ?? defaultRoot
+        let target = url(scopeId: scopeId, path: path, version: version, root: base)
+        let manager = FileManager.default
+        try? manager.createDirectory(at: base, withIntermediateDirectories: true)
+        try? manager.removeItem(at: target)
+        try? data.write(to: target, options: .atomic)
+    }
+
+    /// The blob for this exact version, if one was kept.
+    public static func load(scopeId: String, path: String, version: String,
+                            root: URL? = nil) -> Data? {
+        try? Data(contentsOf: url(scopeId: scopeId, path: path, version: version, root: root))
+    }
+
+    /// Forget one file's blob — called once the file is complete, because a blob
+    /// that outlived its download would be resumed into a file that already
+    /// exists.
+    public static func discard(scopeId: String, path: String, version: String,
+                               root: URL? = nil) {
+        try? FileManager.default.removeItem(
+            at: url(scopeId: scopeId, path: path, version: version, root: root)
+        )
+    }
+
+    /// Drop blobs older than `age`, swept at launch.
+    ///
+    /// Same bargain as the outgoing-file staging area: a download abandoned
+    /// mid-interruption leaves a blob nothing will ever claim, and the system
+    /// cannot know that. Age rather than "unreferenced" because the blob's owner
+    /// (the file cache entry) may itself have been trimmed.
+    @discardableResult
+    public static func sweep(olderThan age: TimeInterval = 24 * 60 * 60,
+                             now: Date = Date(), root: URL? = nil) -> Int {
+        let manager = FileManager.default
+        guard let entries = try? manager.contentsOfDirectory(
+            at: root ?? defaultRoot, includingPropertiesForKeys: [.contentModificationDateKey]
+        ) else { return 0 }
+        var removed = 0
+        for entry in entries {
+            let modified = (try? entry.resourceValues(forKeys: [.contentModificationDateKey]))?
+                .contentModificationDate
+            guard let modified, now.timeIntervalSince(modified) > age else { continue }
+            if (try? manager.removeItem(at: entry)) != nil { removed += 1 }
+        }
+        return removed
+    }
+}
+
 final class RelaySessionDelegate: NSObject, URLSessionTaskDelegate, URLSessionDataDelegate,
-                                  URLSessionDownloadDelegate, @unchecked Sendable {
+                                  URLSessionDownloadDelegate, URLSessionDelegate, @unchecked Sendable {
     static let shared = RelaySessionDelegate()
+
+    /// What to run when the system says every background event for our session
+    /// has been delivered.
+    ///
+    /// **This is the shell the app hands its completion handler to.** The system
+    /// sends `urlSessionDidFinishEvents(forBackgroundURLSession:)` to the
+    /// **session's delegate**, never to the app delegate — so a handler stored on
+    /// the app delegate is stored in a place the callback will never reach, and
+    /// is therefore never released (`UIApplicationDelegate` has no such method to
+    /// be called through). Keeping the closure here, next to the callback that
+    /// invokes it, is what makes the two impossible to separate again: the
+    /// delegate has no way to hold a handler it cannot release.
+    ///
+    /// Set by the app layer at launch (`APNSRegistrar`) and taken when it fires:
+    /// the callback nils it out before running it, so a duplicate delivery is a
+    /// no-op rather than a second call to a system handler that must run exactly
+    /// once.
+    ///
+    /// Not `@Sendable`: the closure is the **system's own** completion handler
+    /// (`handleEventsForBackgroundURLSession`), which UIKit does not declare as
+    /// sendable. The mutable storage is guarded by `didFinishLock` and the value
+    /// is only ever invoked on the main queue, which is what the type system
+    /// would otherwise be standing in for.
+    nonisolated(unsafe) static var onDidFinishEvents: (() -> Void)?
+
+    /// Where the delegate's lines go, if the app wants them.
+    ///
+    /// A closure rather than a call into `DSHLog`: this package deliberately has
+    /// no opinion about logging (see `reassociate()`), and linking the app's
+    /// logger in would make the package depend on the app. The app sets this at
+    /// launch; left unset, the delegate is silent.
+    nonisolated(unsafe) static var log: (@Sendable (String) -> Void)?
+
+    /// The lock around `onDidFinishEvents`.
+    ///
+    /// The callback arrives on the delegate queue (not the main thread), while
+    /// registration happens at launch on the main thread; an unsynchronised
+    /// read-modify-write across those two is exactly the kind of race that shows
+    /// up once in a thousand background wakes and never in a test.
+    private static let didFinishLock = NSLock()
+
+    /// Register the action to run when background delivery finishes.
+    ///
+    /// Idempotent: registering twice replaces the previous action, which is what
+    /// a relaunch wants (the old process's closure would reference a dead
+    /// handler). Passing `nil` clears it.
+    static func setDidFinishEvents(_ action: (() -> Void)?) {
+        didFinishLock.lock()
+        onDidFinishEvents = action
+        didFinishLock.unlock()
+    }
+
+    /// Take the registered action, leaving nothing behind.
+    ///
+    /// **Take, not read**: the system's completion handler must be called exactly
+    /// once — calling it twice crashes on some iOS versions and leaves the app
+    /// suspended in the background on others. Clearing before returning makes a
+    /// repeated delivery structurally inert instead of relying on the caller to
+    /// remember.
+    static func takeDidFinishEvents() -> (() -> Void)? {
+        didFinishLock.lock()
+        defer { didFinishLock.unlock() }
+        let action = onDidFinishEvents
+        onDidFinishEvents = nil
+        return action
+    }
 
     /// The sink a given session's callbacks should land in.
     ///
@@ -872,6 +1408,44 @@ final class RelaySessionDelegate: NSObject, URLSessionTaskDelegate, URLSessionDa
     /// would simply wait forever.
     static func sink(for session: URLSession) -> RelaySessionDelegate {
         (session.delegate as? RelaySessionDelegate) ?? shared
+    }
+
+    /// Every background event for our session has been delivered — release the
+    /// system.
+    ///
+    /// **This is the only place the app's stored completion handler is
+    /// released**, and the reason this method lives here rather than on the app
+    /// delegate: the SDK's own header says "the session delegate will receive
+    /// this message" (`NSURLSession.h`), and `UIApplicationDelegate` does not
+    /// declare it at all. Implementing it on the app delegate compiled — because
+    /// it is a plain method once a `URLSessionDelegate` conformance is added —
+    /// but the system never sent it there and the handler was never called.
+    ///
+    /// The `identifier` check is deliberate: answering on behalf of a session we
+    /// do not own would cut someone else's delivery short. Today there is one
+    /// background session, but a second one would otherwise silently release the
+    /// wrong handler — the check costs a string compare and removes that.
+    func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
+        let identifier = session.configuration.identifier
+        guard identifier == RelayFileTransfer.sessionIdentifier else {
+            Self.log?("didFinishEvents ignored for a foreign session: \(identifier ?? "(none)")")
+            return
+        }
+        // Taken inside the static helper, under the same lock registration uses:
+        // a duplicate delivery finds `nil` and does nothing.
+        guard let action = Self.takeDidFinishEvents() else { return }
+        Self.log?("urlSessionDidFinishEventsForBackgroundURLSession")
+        // The system's handler is a main-queue callback (UIKit's rule for it), and
+        // the delegate queue is not the main queue, so hop before calling.
+        //
+        // `assumeIsolated` rather than a plain `async`: the hop is already the
+        // guarantee (both this call and the handler's own contract are
+        // main-thread), and passing the handler across a `@Sendable` boundary
+        // would demand a conformance UIKit does not give it. The jump is real
+        // either way — this only states what is already true at the destination.
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated { action() }
+        }
     }
 
     func urlSession(
@@ -893,7 +1467,8 @@ final class RelaySessionDelegate: NSObject, URLSessionTaskDelegate, URLSessionDa
         // Reading the response off the task here is the backstop that makes that
         // mistake unrepeatable rather than merely fixed: an upload's own answer
         // always reaches its waiter.
-        // 回复由 `finish` 兜底补上（见那里的注释），这里只负责结束这一步。
+        // 回复与中断留下的 resume data 都由 `finish` 兜底补上（见那里的注释），
+        // 这里只负责结束这一步。
         RelayTransferSink.finish(task, error: error)
         RelayDownloadSink.finish(task, error: error)
     }

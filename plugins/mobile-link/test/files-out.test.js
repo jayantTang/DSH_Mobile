@@ -17,6 +17,19 @@ import { EventEmitter } from 'node:events'
 import { MobileLinkAgent } from '../lib/link.js'
 import { FileFetcher, DEFAULT_WINDOW_BYTES, NON_RETRYABLE_CODES, isPermanent } from '../lib/files-out.js'
 
+/**
+ * Only the byte reads a Host saw.
+ *
+ * P-13b added one `workspaceFiles/stat` per fetch (it is what lets the relay
+ * announce the total and the version), so "every call the Host saw" is no longer
+ * the same set as "every window the Host read". Assertions about offsets,
+ * windows and clamps mean the latter, and silently including the stat would make
+ * them describe calls that have no `range` at all.
+ */
+function reads(dsh) {
+  return dsh.calls.filter((call) => call.method === 'workspaceFiles/readBytes')
+}
+
 class FakeSocket {
   constructor() {
     this.sent = []
@@ -49,10 +62,18 @@ class FakeSocket {
  * that reaches the end.
  */
 class FakeDsh extends EventEmitter {
-  constructor(body, { clamp = DEFAULT_WINDOW_BYTES, failure = null, stallAt = null } = {}) {
+  constructor(body, { clamp = DEFAULT_WINDOW_BYTES, failure = null, stallAt = null,
+                       stat = null } = {}) {
     super()
     this.body = body
     this.clamp = clamp
+    /**
+     * What `workspaceFiles/stat` answers (P-13b). `null` = the default, a
+     * `{version, bytes}` derived from the body — which is what the real Host
+     * does. Pass `{ fail: true }` for a Host that refuses to stat, and
+     * `{ value: {} }` for one that answers with neither field.
+     */
+    this.stat = stat
     /** Thrown (as `{ok:false, error}`) for every call, when set. */
     this.failure = failure
     /** Answer an empty, non-`eof` window at this offset (a Host that lost the file). */
@@ -74,6 +95,11 @@ class FakeDsh extends EventEmitter {
   async rpc(method, args) {
     this.calls.push({ method, args })
     if (this.failure) return { ok: false, error: this.failure }
+    if (method === 'workspaceFiles/stat') {
+      if (this.stat?.fail) return { ok: false, error: { code: 'workspace-file/not-found', message: 'gone' } }
+      if (this.stat?.value) return { ok: true, value: this.stat.value }
+      return { ok: true, value: { absolutePath: '/w/f.bin', version: 'v-test', bytes: this.body.length } }
+    }
     if (method !== 'workspaceFiles/readBytes') return { ok: true, value: {} }
     const range = args?.range ?? {}
     const offset = Number(range.offset ?? 0)
@@ -141,11 +167,10 @@ test('a download arrives byte-for-byte, in window order, under one bid', async (
 
   assert.ok(received(socket, 'g1').equals(body), '字节在途中变了')
   // 依次要了正确的 offset，且每次都没超过 host 的 clamp。
-  const offsets = dsh.calls.map((call) => call.args.range.offset)
+  const offsets = reads(dsh).map((call) => call.args.range.offset)
   assert.deepEqual(offsets, [0, 64 * 1024, 128 * 1024, 192 * 1024, 256 * 1024, 320 * 1024, 384 * 1024, 448 * 1024])
-  assert.ok(dsh.calls.every((call) => call.args.workspaceFileScopeId === 's1'))
-  assert.ok(dsh.calls.every((call) => call.args.path === 'report.pdf'))
-  assert.equal(dsh.calls.length, offsets.length, '有非 readBytes 的调用')
+  assert.ok(reads(dsh).every((call) => call.args.workspaceFileScopeId === 's1'))
+  assert.ok(reads(dsh).every((call) => call.args.path === 'report.pdf'))
 })
 
 test('the ack goes out before any chunk, and every reply carries only the bid', async () => {
@@ -180,7 +205,7 @@ test('the last window is marked eof, and no extra read is made after it', async 
 
   const chunks = socket.frames('fsGetChunk')
   assert.deepEqual(chunks.map((frame) => frame.eof), [false, false, true])
-  assert.equal(dsh.calls.length, 3, 'eof 之后又多读了一次')
+  assert.equal(reads(dsh).length, 3, 'eof 之后又多读了一次')
 })
 
 test('an empty file is a complete download, not a stall', async () => {
@@ -207,7 +232,7 @@ test('a non-zero offset makes the very first read start there', async () => {
   })
   await until(() => socket.frames('fsGetEnd').length === 1, '没有收到 fsGetEnd')
 
-  assert.equal(dsh.calls[0].args.range.offset, 1500, '第一片没有从 offset 开始')
+  assert.equal(reads(dsh)[0].args.range.offset, 1500, '第一片没有从 offset 开始')
   assert.deepEqual(received(socket, 'g5'), body.subarray(1500))
 })
 
@@ -276,7 +301,7 @@ test('an empty window that is not eof is reported instead of spinning forever', 
   await until(() => socket.frames('fsErr').length === 1, '空窗口没有报错')
   assert.equal(socket.last('fsErr').code, 'workspace-file/stalled')
   // 只读了一次那个 offset：不重试、不打转。
-  assert.equal(dsh.calls.filter((call) => call.args.range.offset === 4).length, 1)
+  assert.equal(reads(dsh).filter((call) => call.args.range.offset === 4).length, 1)
 })
 
 test('a missing bid or a missing path is refused without touching the Host', async () => {
@@ -327,7 +352,7 @@ test('a too-large refusal halves the window instead of failing the download', as
 
   assert.equal(socket.frames('fsErr').length, 0, 'too-large 被当成了硬失败')
   assert.ok(received(socket, 'g12').equals(body), '缩窗口之后字节不对')
-  assert.equal(dsh.calls[1].args.range.length, DEFAULT_WINDOW_BYTES / 2)
+  assert.equal(reads(dsh)[1].args.range.length, DEFAULT_WINDOW_BYTES / 2)
 })
 
 test('the window never shrinks below the floor, and gives up rather than looping', async () => {
@@ -351,7 +376,7 @@ test('the window never shrinks below the floor, and gives up rather than looping
   })
   await until(() => socket.frames('fsErr').length === 1, '一直 too-large 却没有放弃')
   assert.equal(socket.last('fsErr').code, 'workspace-file/too-large')
-  assert.ok(dsh.calls.length < 40, `缩窗口循环了 ${dsh.calls.length} 次`)
+  assert.ok(reads(dsh).length < 40, `缩窗口循环了 ${reads(dsh).length} 次`)
 })
 
 // ── cancellation ────────────────────────────────────────────────────────────
@@ -362,12 +387,16 @@ test('a retried bid cancels the run it replaces, and clear() stops every run', a
   const body = Buffer.from('y'.repeat(400_000))
   const dsh = new FakeDsh(body, { clamp: 64 * 1024 })
   const inner = dsh.rpc.bind(dsh)
-  let reads = 0
+  let byteReads = 0
   let release
   const gate = new Promise((resolve) => { release = resolve })
   dsh.rpc = async (method, args) => {
-    reads += 1
-    if (reads === 2) await gate          // 第一次停在这里
+    // P-13b 起每次 fetch 先有一次 `stat`，所以「第几个 rpc」不再等于「第几片」。
+    // 这里要卡住的是**第一路的第一片**，就按方法数数。
+    if (method === 'workspaceFiles/readBytes') {
+      byteReads += 1
+      if (byteReads === 2) await gate      // 第一次停在这里
+    }
     return inner(method, args)
   }
 
@@ -422,4 +451,215 @@ test('FileFetcher.send is injected, so a frame with no relay socket is dropped q
   const fetcher = new FileFetcher({ send: () => false, rpc: async () => ({ ok: true, value: {} }) })
   assert.equal(fetcher.start({ bid: '', scopeId: 's', path: 'p' }), false)
   assert.equal(fetcher.start({ bid: 'b', scopeId: '', path: 'p' }), false)
+})
+
+// ── the stat that makes a download resumable (P-13b) ────────────────────────
+
+test('the ack reports the file size and version the relay needs to answer resumably', async () => {
+  // 中转要拿到总长才能回 `Content-Length` 与完整 `Content-Range`——那是系统
+  // 产出 resume data 的硬前提；version 则成为 `ETag`，供续传时的 `If-Range`
+  // 判断"还是同一个文件吗"。都没有的话，中断就只能从头下。
+  const body = Buffer.from('resumable bytes')
+  const { agent, socket } = makeAgent(body)
+  await agent.handleRelayFrame(attach('dev_1'))
+
+  await agent.handleRelayFrame({
+    t: 'fsGetBegin', deviceId: 'dev_1', bid: 'g20', scopeId: 's1', path: 'a.bin',
+  })
+  await until(() => socket.frames('fsGetEnd').length === 1, '没有收到 fsGetEnd')
+
+  const ack = socket.frames('fsGetAck')[0]
+  assert.equal(ack.size, body.length, 'ack 没带总长')
+  assert.equal(ack.version, 'v-test', 'ack 没带版本')
+  // ack 仍必须只带 bid（relay 靠 bid 对回响应，多一个 deviceId 会破坏约定）。
+  assert.deepEqual(Object.keys(ack).sort(), ['bid', 'size', 't', 'version'])
+})
+
+test('a Host that cannot stat still gets its download, just not a resumable one', async () => {
+  // 向后兼容是加字段的前提：stat 失败（老 Host、文件在请求与 stat 之间被删）
+  // 必须退化成改造前的行为，而不是把下载也一起弄失败。
+  const body = Buffer.from('no stat for you')
+  const { agent, socket } = makeAgent(body, { stat: { fail: true } })
+  await agent.handleRelayFrame(attach('dev_1'))
+
+  await agent.handleRelayFrame({
+    t: 'fsGetBegin', deviceId: 'dev_1', bid: 'g21', scopeId: 's1', path: 'a.bin',
+  })
+  await until(() => socket.frames('fsGetEnd').length === 1, 'stat 失败把下载也弄挂了')
+
+  const ack = socket.frames('fsGetAck')[0]
+  assert.equal(ack.size, undefined, 'stat 失败却报了总长')
+  assert.equal(ack.version, undefined)
+  assert.ok(received(socket, 'g21').equals(body), '字节没传完')
+})
+
+test('a stat that answers with neither field is not treated as a size of zero', async () => {
+  // `{value:{}}` 是"Host 答了但没说"——它必须和"没答"一样退化成不带字段，
+  // 而不是变成 size=0（那会让 relay 回一个 `Content-Length: 0` 的空文件）。
+  const body = Buffer.from('empty stat answer')
+  const { agent, socket } = makeAgent(body, { stat: { value: {} } })
+  await agent.handleRelayFrame(attach('dev_1'))
+
+  await agent.handleRelayFrame({
+    t: 'fsGetBegin', deviceId: 'dev_1', bid: 'g22', scopeId: 's1', path: 'a.bin',
+  })
+  await until(() => socket.frames('fsGetEnd').length === 1, '没有收到 fsGetEnd')
+
+  const ack = socket.frames('fsGetAck')[0]
+  assert.equal(ack.size, undefined)
+  assert.equal(ack.version, undefined)
+  assert.ok(received(socket, 'g22').equals(body))
+})
+
+// ── relay-driven cancellation (P-13b′) ──────────────────────────────────────
+
+test('fsGetCancel stops a run whose reader has gone', async () => {
+  // 读是连接器这一侧驱动的，所以"读的人走了"这里看不见：手机挂断或日额度截断
+  // 响应时，relay 立刻知道、连接器不知道。没有这一帧，它会把整个文件读完，
+  // 每一片都在 relay 那边被丢掉。
+  const body = Buffer.from('c'.repeat(400_000))
+  const dsh = new FakeDsh(body, { clamp: 64 * 1024 })
+  const inner = dsh.rpc.bind(dsh)
+  let byteReads = 0
+  let release
+  const gate = new Promise((resolve) => { release = resolve })
+  dsh.rpc = async (method, args) => {
+    if (method === 'workspaceFiles/readBytes') {
+      byteReads += 1
+      if (byteReads === 2) await gate
+    }
+    return inner(method, args)
+  }
+
+  const logger = { debug() {}, info() {}, warn() {}, error() {} }
+  const agent = new MobileLinkAgent({
+    dshClient: dsh, logger, relayUrl: 'ws://relay.test', agentId: 'agt_1',
+  })
+  agent.identity = { agentId: 'agt_1', agentSecret: 'as_1', relayUrl: 'ws://relay.test' }
+  const socket = new FakeSocket()
+  agent.socket = socket
+
+  await agent.handleRelayFrame(attach('dev_1'))
+  await agent.handleRelayFrame({
+    t: 'fsGetBegin', deviceId: 'dev_1', bid: 'g30', scopeId: 's1', path: 'a.bin',
+  })
+  await until(() => socket.frames('fsGetChunk').length >= 1, '这一路没有开始发片')
+  const beforeCancel = socket.frames('fsGetChunk').length
+
+  await agent.handleRelayFrame({ t: 'fsGetCancel', bid: 'g30' })
+  // 放行那片取消到达时**已经在路上**的回复。它必须被丢掉：读了但不再发，
+  // 这正是取消要买的那个效果。被闸门卡住的这一次读取也顺带说明"停止发生
+  // 在下一次检查处"——`#drive` 每片返回后看标志，所以闸门放开之前它不会停。
+  release()
+  await new Promise((resolve) => setTimeout(resolve, 80))
+
+  assert.equal(socket.frames('fsGetEnd').length, 0, '被叫停的 run 不该报完成')
+  assert.equal(socket.frames('fsErr').length, 0, '取消不是错误，不该回 fsErr')
+  // 关键判据在**过网字节**：取消之后不许再发出任何一片。relay 那边丢掉的是
+  // 已经发出去的；这里保证的是它不再生产新的。
+  assert.equal(socket.frames('fsGetChunk').length, beforeCancel,
+    '被叫停之后还在发片')
+  // 闸门放开的那一次读取已经完成了，但它的字节必须被丢掉：读了不发正是取消
+  // 要买的效果，也说明停止发生在 `#drive` 的下一处检查，而不是打断在读中间。
+  assert.equal(byteReads, 2, `被叫停后还在继续读（${byteReads} 次）`)
+  assert.ok(received(socket, 'g30').length < body.length, '整个文件还是发完了')
+})
+
+test('a cancel for a run that does not exist is a no-op, and a real one still runs', async () => {
+  // relay 不必跟踪哪些 run 还活着：它每个死桥接都发一次取消，未知 bid 必须
+  // 静默忽略（和 deviceDetach 同一约定），且**不许**误伤别的 run。
+  const body = Buffer.from('d'.repeat(200_000))
+  const { agent, socket } = makeAgent(body, { clamp: 64 * 1024 })
+  await agent.handleRelayFrame(attach('dev_1'))
+
+  await agent.handleRelayFrame({ t: 'fsGetCancel', bid: 'nobody' })
+  await agent.handleRelayFrame({ t: 'fsGetBegin', deviceId: 'dev_1', bid: 'g31', scopeId: 's1', path: 'a.bin' })
+  await until(() => socket.frames('fsGetEnd').length === 1, '未知 bid 的取消误伤了这次下载')
+
+  assert.ok(received(socket, 'g31').equals(body), '字节不完整')
+  assert.equal(socket.frames('fsErr').length, 0)
+})
+
+test('a cancel without a bid is ignored rather than cancelling everything', async () => {
+  // `String(undefined)` 会变成 "undefined"——真去取消它倒是无害，但"没有 bid 的
+  // 取消"等于一条坏帧，必须什么都不做，绝不能退化成 clear()。
+  const body = Buffer.from('e'.repeat(200_000))
+  const { agent, socket } = makeAgent(body, { clamp: 64 * 1024 })
+  await agent.handleRelayFrame(attach('dev_1'))
+
+  await agent.handleRelayFrame({
+    t: 'fsGetBegin', deviceId: 'dev_1', bid: 'g32', scopeId: 's1', path: 'a.bin',
+  })
+  await agent.handleRelayFrame({ t: 'fsGetCancel' })
+  await until(() => socket.frames('fsGetEnd').length === 1, '没有 bid 的取消把这次下载停了')
+
+  assert.ok(received(socket, 'g32').equals(body))
+})
+
+test('`replaces` stops the run a fresh identifier supersedes', async () => {
+  // relay 每个 HTTP 请求铸新 bid，所以中断那次留下的 run 用**本次**的 bid 是
+  // 够不着的——而它还在：系统 resume data 冻结的是最初那条请求，续传时回来的
+  // 正是旧 id。没有 `replaces`，旧 run 会一直读到新 fsGetBegin 抵达为止。
+  const body = Buffer.from('r'.repeat(400_000))
+  const dsh = new FakeDsh(body, { clamp: 64 * 1024 })
+  const inner = dsh.rpc.bind(dsh)
+  let byteReads = 0
+  let release
+  const gate = new Promise((resolve) => { release = resolve })
+  dsh.rpc = async (method, args) => {
+    if (method === 'workspaceFiles/readBytes') {
+      byteReads += 1
+      if (byteReads === 2) await gate
+    }
+    return inner(method, args)
+  }
+
+  const logger = { debug() {}, info() {}, warn() {}, error() {} }
+  const agent = new MobileLinkAgent({
+    dshClient: dsh, logger, relayUrl: 'ws://relay.test', agentId: 'agt_1',
+  })
+  agent.identity = { agentId: 'agt_1', agentSecret: 'as_1', relayUrl: 'ws://relay.test' }
+  const socket = new FakeSocket()
+  agent.socket = socket
+
+  await agent.handleRelayFrame(attach('dev_1'))
+  // 第一次尝试：App 的 bid（会被冻结进 resume data）。
+  await agent.handleRelayFrame({
+    t: 'fsGetBegin', deviceId: 'dev_1', bid: 'frozen', scopeId: 's1', path: 'a.bin',
+  })
+  await until(() => socket.frames('fsGetChunk').length >= 1, '旧 run 没有开始发片')
+  const staleChunks = socket.frames('fsGetChunk').length
+
+  // 续传：中转发来的是**新** bid，外加"我取代的是 frozen"。
+  await agent.handleRelayFrame({
+    t: 'fsGetBegin', deviceId: 'dev_1', bid: 'fresh', scopeId: 's1', path: 'a.bin',
+    replaces: 'frozen',
+  })
+  release()
+  await until(() => socket.frames('fsGetEnd').length === 1, '新 run 没有传完')
+  await new Promise((resolve) => setTimeout(resolve, 60))
+
+  const frozenChunks = socket.frames('fsGetChunk').filter((f) => f.bid === 'frozen')
+  assert.equal(frozenChunks.length, staleChunks,
+    '被取代的 run 还在发片——它的窗口正是 relay 收不回来的那些')
+  assert.equal(socket.frames('fsGetEnd').filter((f) => f.bid === 'frozen').length, 0,
+    '被取代的 run 不该报完成')
+  assert.ok(received(socket, 'fresh').equals(body), '新 run 的字节不完整')
+})
+
+test('a `replaces` naming an unknown run is ignored', async () => {
+  // 老 relay 不发这个字段；发了但名字不认识也必须什么都不做，绝不能顺手停掉
+  // 正在跑的这一路。
+  const body = Buffer.from('s'.repeat(200_000))
+  const { agent, socket } = makeAgent(body, { clamp: 64 * 1024 })
+  await agent.handleRelayFrame(attach('dev_1'))
+
+  await agent.handleRelayFrame({
+    t: 'fsGetBegin', deviceId: 'dev_1', bid: 'g40', scopeId: 's1', path: 'a.bin',
+    replaces: 'never-existed',
+  })
+  await until(() => socket.frames('fsGetEnd').length === 1, '未知 replaces 误伤了这次下载')
+
+  assert.ok(received(socket, 'g40').equals(body))
+  assert.equal(socket.frames('fsErr').length, 0)
 })

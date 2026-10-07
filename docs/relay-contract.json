@@ -6,6 +6,11 @@
   "agentToDevice": ["res", "item", "end", "streamError", "event", "hostStatus", "pong", "error"],
   "relayControl": ["deviceAttach", "deviceDetach"],
   "agentControl": ["notify", "fsPutBegin", "fsPutChunk", "fsPutEnd", "fsPutAck", "fsPutDone", "fsGetBegin", "fsGetChunk", "fsGetEnd", "fsGetAck", "fsErr"],
+  "relayToAgentControl": ["fsGetCancel"],
+  "fetchBeginFields": {
+    "required": ["deviceId", "bid", "scopeId", "path", "offset"],
+    "optional": ["window", "replaces"]
+  },
   "idFrames": ["req", "open", "cancel", "res", "item", "end", "streamError", "eventResult"],
   "errorFrame": {
     "shape": {

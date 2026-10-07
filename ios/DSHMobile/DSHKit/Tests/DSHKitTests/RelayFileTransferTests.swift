@@ -33,10 +33,18 @@ struct RelayFileTransferTests {
         /// 建出来的会话，用例结束时要失效掉（见 `session()`）。
         nonisolated(unsafe) static var sessions: [URLSession] = []
 
+        /// When set, the transfer fails with this error instead of finishing.
+        ///
+        /// A dropped connection is not an HTTP status: it arrives as a task-level
+        /// error, and it is the only way a `userInfo`-carried resume blob can be
+        /// produced in a test — which is exactly the path that was broken.
+        nonisolated(unsafe) static var failWith: (any Error)?
+
         static func reset(_ list: [Exchange], headers: [String: String] = [:]) {
             exchanges = list
             requests = []
             extraHeaders = headers
+            failWith = nil
         }
 
         override class func canInit(with request: URLRequest) -> Bool { true }
@@ -59,6 +67,10 @@ struct RelayFileTransferTests {
                 headerFields: fields
             )!
             client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            if let failure = Self.failWith {
+                client?.urlProtocol(self, didFailWithError: failure)
+                return
+            }
             client?.urlProtocol(self, didLoad: exchange.body)
             client?.urlProtocolDidFinishLoading(self)
         }
@@ -474,16 +486,6 @@ struct RelayFileTransferTests {
             .contains("重新配对") == true)
     }
 
-    /// The resume-mismatch error must name both offsets: it is the message a
-    /// person sees when a proxy rewrote their `Range` header.
-    @Test("the resume mismatch names the offset that was expected and the one that came back")
-    func resumeMismatchExplainsItself() {
-        let withBoth = RelayFileTransfer.ResumeMismatch(expected: 700, reported: 0)
-        #expect(withBoth.errorDescription?.contains("700") == true)
-        let withNeither = RelayFileTransfer.ResumeMismatch(expected: 700, reported: nil)
-        #expect(withNeither.errorDescription?.contains("700") == true)
-    }
-
     @Test("a file's size comes from the filesystem, not from the caller")
     func fileSize() throws {
         let file = try makeFile(bytes: 12345)
@@ -541,18 +543,6 @@ struct RelayFileTransferTests {
         #expect(fields["offset"] == "7000000")
     }
 
-    /// The relay streams from the connector rather than seeking in a file, so it
-    /// answers 200 with `X-DSH-Offset` instead of 206 + `Content-Range`.
-    @Test("the relay's resumed offset is read from its own header")
-    func resumedOffsetHeader() {
-        #expect(RelayFileTransfer.resumedOffset(
-            status: 200, headers: ["X-DSH-Offset": "4096"]) == 4096)
-        // 没有这个头就是从头开始的完整响应。
-        #expect(RelayFileTransfer.resumedOffset(status: 200, headers: [:]) == nil)
-        #expect(RelayFileTransfer.resumedOffset(
-            status: 200, headers: ["X-DSH-Offset": "not-a-number"]) == nil)
-    }
-
     @Test("a finished download lands at the destination with the bytes intact")
     func downloadLands() async throws {
         let payload = Data((0..<5000).map { UInt8($0 % 251) })
@@ -562,51 +552,14 @@ struct RelayFileTransferTests {
         let destination = directory.appendingPathComponent("big.bin")
 
         let fetched = try await transfer().download(
-            scopeId: "s", path: "big.bin", to: destination, expectedBytes: payload.count)
+            scopeId: "s", path: "big.bin", to: destination, version: "v1",
+            expectedBytes: payload.count)
 
         #expect(fetched.url == destination)
         #expect(fetched.bytes == payload.count)
         #expect(try Data(contentsOf: destination) == payload)
         // 是移动而不是留在系统临时文件里：后台任务结束后系统会把它删掉。
         #expect(FileManager.default.fileExists(atPath: destination.path))
-    }
-
-    /// A short transfer must not be published as the file: the cache decides
-    /// "already have it" by size, so a truncated copy landing at the final name
-    /// would be served as the document forever.
-    @Test("a truncated download is refused instead of written to the destination")
-    func downloadRefusesATruncatedBody() async throws {
-        Stub.reset([.init(status: 200, body: Data(repeating: 0x41, count: 100))])
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("relay-download-\(UUID().uuidString)", isDirectory: true)
-        let destination = directory.appendingPathComponent("big.bin")
-
-        await #expect(throws: (any Error).self) {
-            try await transfer().download(
-                scopeId: "s", path: "big.bin", to: destination, expectedBytes: 4096)
-        }
-        #expect(!FileManager.default.fileExists(atPath: destination.path))
-    }
-
-    @Test("a resumed download appends to what is already there, and counts it")
-    func downloadResumesOntoAnExistingPrefix() async throws {
-        let tail = Data(repeating: 0x42, count: 300)
-        Stub.reset([.init(status: 200, body: tail)], headers: ["X-DSH-Offset": "700"])
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("relay-download-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let destination = directory.appendingPathComponent("big.bin")
-        try Data(repeating: 0x41, count: 700).write(to: destination)
-
-        let fetched = try await transfer().download(
-            scopeId: "s", path: "big.bin", to: destination, offset: 700, expectedBytes: 1000)
-
-        let whole = try Data(contentsOf: destination)
-        #expect(whole.count == 1000)
-        // 前缀没被覆盖：0x41 那 700 字节原样还在，尾巴是这次收到的。
-        #expect(whole.prefix(700).allSatisfy { $0 == 0x41 })
-        #expect(whole.suffix(300).allSatisfy { $0 == 0x42 })
-        #expect(fetched.bytes == 1000)
     }
 
     /// **The download is a delegate task, not `session.download(for:)`.**
@@ -634,7 +587,8 @@ struct RelayFileTransferTests {
         let destination = directory.appendingPathComponent("big.bin")
 
         let fetched = try await transfer().download(
-            scopeId: "s", path: "big.bin", to: destination, expectedBytes: payload.count)
+            scopeId: "s", path: "big.bin", to: destination, version: "v1",
+            expectedBytes: payload.count)
         #expect(fetched.bytes == payload.count)
         #expect(try Data(contentsOf: destination) == payload)
 
@@ -646,53 +600,37 @@ struct RelayFileTransferTests {
         #expect(leftovers.isEmpty, "staging still holds \(leftovers)")
     }
 
-    /// **The resume check: a relay that did not honour the offset must not be
-    /// appended to the prefix.**
+    /// **The system's resume data is what continues a transfer, not a prefix we
+    /// kept** (P-13c).
     ///
-    /// This is the failure mode that produced a file missing its first 700 bytes
-    /// and reported it as complete. `X-DSH-Offset: 0` means the relay sent the
-    /// whole file from the start (it ignored the `Range`); appending that to a 700
-    /// byte prefix writes a file of `700 + whole` bytes whose first 700 bytes are
-    /// duplicated content. The transfer therefore stops, and — the part that
-    /// matters — **the prefix on disk is untouched**, so the next attempt can
-    /// still resume honestly.
-    @Test("a relay that resumed from a different offset is refused, and the prefix is left alone")
-    func downloadRefusesAMismatchedResume() async throws {
-        Stub.reset([.init(status: 200, body: Data(repeating: 0x42, count: 300))],
-                   headers: ["X-DSH-Offset": "0"])
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("relay-download-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let destination = directory.appendingPathComponent("big.bin")
-        try Data(repeating: 0x41, count: 700).write(to: destination)
-
-        await #expect(throws: RelayFileTransfer.ResumeMismatch.self) {
-            _ = try await transfer().download(
-                scopeId: "s", path: "big.bin", to: destination, offset: 700, expectedBytes: 1000)
-        }
-        // 前缀一个字节都没被追加。
-        #expect(RelayFileTransfer.fileSize(destination) == 700)
-    }
-
-    /// The counterpart: when the relay reports the offset the caller asked for,
-    /// the transfer proceeds. Without this half, the check above could be satisfied
-    /// by refusing everything.
-    @Test("a matching resumed offset proceeds")
-    func downloadAcceptsAMatchingResume() async throws {
-        Stub.reset([.init(status: 200, body: Data(repeating: 0x42, count: 300))],
-                   headers: ["X-DSH-Offset": "700"])
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("relay-download-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let destination = directory.appendingPathComponent("big.bin")
-        try Data(repeating: 0x41, count: 700).write(to: destination)
-
-        let fetched = try await transfer().download(
-            scopeId: "s", path: "big.bin", to: destination, offset: 700, expectedBytes: 1000)
-        #expect(fetched.bytes == 1000)
-        let whole = try Data(contentsOf: destination)
-        #expect(whole.prefix(700).allSatisfy { $0 == 0x41 })
-        #expect(whole.suffix(300).allSatisfy { $0 == 0x42 })
+    /// The old mechanism appended the relay's tail onto a `.part` prefix and
+    /// verified the relay's `X-DSH-Offset` matched. Both are gone: the app cannot
+    /// observe an interruption that happened while it was suspended, so an
+    /// offset it tracked was always 0 in the cases that matter. What replaces
+    /// them is a blob the system owns, stored per version, and replayed into
+    /// `downloadTask(withResumeData:)`.
+    ///
+    /// A blob from a **different version** must be ignored — that is the boundary
+    /// the whole design rests on, because resuming across a change would splice
+    /// two different files together. This asserts the store's key, which is what
+    /// makes that impossible rather than merely unlikely.
+    @Test("a resume blob is only ever replayed for the version that produced it")
+    func resumeIsScopedToTheVersion() {
+        // A `root:` argument, not `setenv`. Swift Testing runs suites in
+        // parallel and this suite declares no ordering against the store's own,
+        // so a process-wide variable let the two overwrite each other's root
+        // mid-test — green alone, red together.
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("relay-resume-scope-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let blob = Data("blob".utf8)
+        RelayResumeStore.save(blob, scopeId: "s", path: "big.bin", version: "v1", root: root)
+        #expect(RelayResumeStore.load(scopeId: "s", path: "big.bin", version: "v1",
+                                     root: root) == blob)
+        // The file changed under the interrupted attempt. Starting over is the
+        // only correct answer.
+        #expect(RelayResumeStore.load(scopeId: "s", path: "big.bin", version: "v2",
+                                     root: root) == nil)
     }
 
     @Test("the connector's own error code survives into the thrown failure")
@@ -704,14 +642,156 @@ struct RelayFileTransferTests {
 
         do {
             _ = try await transfer().download(
-                scopeId: "s", path: "gone.bin", to: directory.appendingPathComponent("gone.bin"))
+                scopeId: "s", path: "gone.bin",
+                to: directory.appendingPathComponent("gone.bin"), version: "v1")
             Issue.record("a 409 should have thrown")
         } catch let failure as DSHRPCFailure {
             #expect(failure.code == "workspace-file/not-found")
         }
     }
 
-    @Test("a download reports progress with the resumed prefix included")
+    /// Progress is reported for the bytes that arrived (P-13c).
+    ///
+    /// It used to report `offset + arrived`, because the relay sent only a tail
+    /// the app appended to a prefix of its own. With the system owning the
+    /// resume, what a download task delivers **is** the whole file — the prefix
+    /// is inside the system's resume data, not on our disk — so the arrived
+    /// count is the file's size and the offset is not ours to add.
+    /// **A dropped download must hand its resume blob to the waiter.**
+    ///
+    /// This is the hop that was missing when the path was first written, and it
+    /// is the worst kind of missing: the download still *succeeds* when retried
+    /// from scratch, so nothing failed visibly — the guarantee that "an
+    /// interruption loses nothing" was simply not in effect for network drops.
+    ///
+    /// The blob lives in the failure's `userInfo` and only the session delegate
+    /// sees it, so this drives the shipped delegate's
+    /// `didCompleteWithError` directly. The sink has to hand it to the waiter
+    /// **before** `finish` takes the waiter out of the registry.
+    @Test("the delegate passes a drop's resume data through to the waiter")
+    func dropCarriesResumeData() async throws {
+        let blob = Data("system-resume-blob".utf8)
+        let error = NSError(
+            domain: NSURLErrorDomain, code: NSURLErrorNetworkConnectionLost,
+            userInfo: [RelayFileTransfer.DownloadSink.resumeDataKey: blob]
+        )
+        let session = Stub.session()
+        let task = session.downloadTask(with: URL(string: "https://relay.test/x")!)
+        let waiter = RelayFileTransfer.DownloadSink.register(task)
+
+        // The shipped delegate, the shipped sink, the shipped key.
+        RelayFileTransfer.DownloadSink.complete(session, task: task, error: error)
+
+        let outcome = await waiter.value()
+        #expect(outcome.resumeData == blob,
+                "the blob never reached the waiter, so a retry would start over")
+        #expect(outcome.error != nil)
+    }
+
+    /// The counterpart: a **clean** finish carries no blob, and the waiter must
+    /// not invent one — a resume blob replayed against a completed file would
+    /// corrupt it.
+    @Test("a clean finish leaves the waiter without resume data")
+    func successCarriesNoResumeData() async throws {
+        let session = Stub.session()
+        let task = session.downloadTask(with: URL(string: "https://relay.test/x")!)
+        let waiter = RelayFileTransfer.DownloadSink.register(task)
+
+        RelayFileTransfer.DownloadSink.complete(session, task: task, error: nil)
+
+        let outcome = await waiter.value()
+        #expect(outcome.resumeData == nil)
+        #expect(outcome.error == nil)
+    }
+
+    /// An interrupted download stores what the system gave it, keyed by version.
+    ///
+    /// End to end through `download` itself: the stub fails the transfer with a
+    /// blob in `userInfo`, and the store must hold it afterwards under this exact
+    /// version. Reading it back under a *different* version is the boundary that
+    /// keeps a resume from splicing two different files together.
+    @Test("an interrupted download keeps the blob under its own version")
+    func interruptedDownloadStoresBlob() async throws {
+        // One root for this test alone, handed to the call itself. No process
+        // state is touched, so the store's suite cannot be affected however the
+        // two are scheduled.
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("relay-resume-keep-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let blob = Data("kept-blob".utf8)
+        Stub.reset([.init(status: 200, body: Data(repeating: 0, count: 10))])
+        Stub.failWith = NSError(
+            domain: NSURLErrorDomain, code: NSURLErrorNetworkConnectionLost,
+            userInfo: [RelayFileTransfer.DownloadSink.resumeDataKey: blob]
+        )
+        defer { Stub.failWith = nil }
+
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("relay-download-\(UUID().uuidString)", isDirectory: true)
+        await #expect(throws: (any Error).self) {
+            _ = try await transfer().download(
+                scopeId: "s", path: "big.bin",
+                to: directory.appendingPathComponent("big.bin"), version: "v1",
+                resumeRoot: root
+            )
+        }
+        #expect(RelayResumeStore.load(scopeId: "s", path: "big.bin", version: "v1",
+                                     root: root) == blob,
+                "the interruption's blob was not kept, so the next attempt restarts")
+        #expect(RelayResumeStore.load(scopeId: "s", path: "big.bin", version: "v2",
+                                     root: root) == nil,
+                "a blob must not be offered to a different version")
+    }
+
+    /// **A resume blob that arrives late must still be readable.**
+    ///
+    /// The blob is produced on the queue `cancel(byProducingResumeData:)` calls
+    /// back on, and that may be *after* the wait for the transfer has ended —
+    /// `didCompleteWithError` and the cancel callback are not ordered against each
+    /// other. The first version of `download` stored the blob in a plain closure,
+    /// so when the waiter won the race the store stayed empty and the next attempt
+    /// downloaded the whole file again. The simulator showed the cost on the real
+    /// relay: the system produced a 9955-byte blob (`NSURLSessionDownloadTaskResumeData={length = 9955 …}`
+    /// in the device log) while the app reported `storedBlob=-1`.
+    ///
+    /// `LateBlobBox` is the piece that makes the late blob readable; a regression
+    /// here is silent, which is why it is pinned directly.
+    @Test("a blob that arrives after the wait began is still read")
+    func lateBlobIsStillRead() async throws {
+        let box = RelayFileTransfer.LateBlobBox.Box()
+        let blob = Data("late-blob".utf8)
+        // Delivered **while the wait is timing out**, which is the ordering that
+        // actually loses a blob: a callback that lands comfortably inside the
+        // budget proves nothing about the race. Landing it right at the deadline
+        // is what a slow cancel callback does on a real device.
+        Task {
+            try? await Task.sleep(for: .milliseconds(200))
+            box.put(blob)
+            box.close()
+        }
+        let read = await box.wait(within: .milliseconds(200))
+        #expect(read == blob, "a blob that landed as the wait expired was dropped")
+    }
+
+    /// The counterpart: **no read may outlive its budget.**
+    ///
+    /// The system only produces resume data when it has something to resume from,
+    /// and when it does not the callback never runs. Reading it without a bound
+    /// would turn "nothing to resume from" — which the retry path already handles
+    /// — into a download that never returns. That is not hypothetical: it is the
+    /// shape the simulator showed after the first attempt at the fix.
+    @Test("a box that is never filled still returns")
+    func emptyBoxDoesNotHang() async throws {
+        let box = RelayFileTransfer.LateBlobBox.Box()
+        let started = Date()
+        let read = await box.wait(within: .milliseconds(200))
+        #expect(read == nil)
+        #expect(Date().timeIntervalSince(started) < 5,
+                "waiting for a blob that never comes must be bounded")
+    }
+
+    @Test("a download reports the bytes that arrived")
     func downloadReportsProgress() async throws {
         let payload = Data(repeating: 0x43, count: 250)
         Stub.reset([.init(status: 200, body: payload)])
@@ -721,11 +801,148 @@ struct RelayFileTransferTests {
 
         _ = try await transfer().download(
             scopeId: "s", path: "big.bin", to: directory.appendingPathComponent("big.bin"),
-            offset: 100, expectedBytes: 350
+            version: "v1", expectedBytes: 250
         ) { received in seen.record(received) }
 
-        #expect(seen.values == [350])
+        #expect(seen.values == [250])
     }
+
+    // MARK: - the shared session (P-2)
+
+    /// There is **one** transport session, not one per transfer.
+    ///
+    /// The property the acceptance asks for is `===`: two lookups give the same
+    /// object. It matters because iOS keeps one session per identifier anyway —
+    /// so two objects would mean one real session with two owners, and whichever
+    /// built the delegate last is the one whose callbacks arrive. That is the
+    /// ambiguity `ownsSession` used to hide; the accessor is a single stored
+    /// instance so it cannot come back.
+    @Test("the transfer session is one shared instance, not one per caller")
+    func theSessionIsShared() {
+        let first = RelayFileTransfer.backgroundSession()
+        let second = RelayFileTransfer.backgroundSession()
+        #expect(first === second)
+        #expect(first === RelayFileTransfer.reassociate())
+    }
+
+    /// Re-associating at launch must not send anything.
+    ///
+    /// The system relaunches the app to hand it a finished transfer's events, and
+    /// `reassociate()` is what makes the delegate reachable for them. The trap it
+    /// must not fall into is "launch also retries the transfer": the acceptance
+    /// for P-2 is a launch with **zero** requests, and this is that measurement —
+    /// the stub counts every request that leaves, and the count has to stay at
+    /// zero across a full re-association.
+    @Test("re-associating at launch sends no request")
+    func reassociateSendsNothing() {
+        Stub.reset([])
+        _ = RelayFileTransfer.reassociate()
+        _ = RelayFileTransfer.backgroundSession()
+        #expect(Stub.requests.isEmpty)
+    }
+
+    /// The production session must be reachable for a caller that never names one.
+    ///
+    /// `RelayFileTransfer(relayURL:deviceToken:)` is what both production call
+    /// sites use; if the no-session initialiser ever stopped resolving to the
+    /// shared session, a fresh session per transfer would appear — invisible in
+    /// tests that always inject one, and on device it is the orphaned-callback
+    /// bug. Checking identity against `backgroundSession()` pins the wiring.
+    @Test("a transfer built without a session rides the shared one")
+    func productionInitUsesTheSharedSession() {
+        let transfer = RelayFileTransfer(
+            relayURL: URL(string: "https://relay.test/dsh-link")!, deviceToken: "dt"
+        )
+        #expect(transfer.backgroundSessionForTesting === RelayFileTransfer.backgroundSession())
+    }
+
+    // MARK: - the background delivery callback (P-2′)
+
+    /// The completion handler is released **by the session delegate**, and only
+    /// there.
+    ///
+    /// P-2 implemented `urlSessionDidFinishEvents` on the *app* delegate. The SDK
+    /// sends that message to the **session's** delegate, and `UIApplicationDelegate`
+    /// does not declare the method at all, so the handler was stored somewhere no
+    /// callback could ever reach and was never released — invisible in every
+    /// runtime test, because nothing about a transfer's outcome changes.
+    ///
+    /// This test is possible precisely because the fix moved the method to the
+    /// delegate: it is an ordinary instance method there, so it can be called
+    /// directly instead of waiting for a system background delivery that neither
+    /// the simulator nor the unit tests can produce.
+    @Test("the session delegate releases the stored background handler exactly once",
+          .timeLimit(.minutes(1)))
+    func backgroundDeliveryReleasesTheHandler() async {
+        let calls = Counter()
+
+        RelayFileTransfer.BackgroundEvents.setHandler { calls.increment() }
+        RelayFileTransfer.BackgroundEvents.finishEvents(
+            sessionIdentifier: RelayFileTransfer.sessionIdentifier
+        )
+
+        // The hop to the main queue inside the delegate is asynchronous by design,
+        // so the assertion has to let it run — with a deadline, so a regression
+        // that stops calling the handler shows up as a failure and not a hang.
+        let released = await waitUntil { calls.value == 1 }
+        #expect(released, "the handler was never released")
+        #expect(calls.value == 1)
+
+        // A second delivery of the same events is a no-op: the handler was taken,
+        // not read. Calling a system completion handler twice crashes on some iOS
+        // versions and leaves the app suspended in the background on others.
+        RelayFileTransfer.BackgroundEvents.finishEvents(
+            sessionIdentifier: RelayFileTransfer.sessionIdentifier
+        )
+        try? await Task.sleep(for: .milliseconds(100))
+        #expect(calls.value == 1)
+    }
+
+    /// Events for a session we do not own must not release **our** handler.
+    ///
+    /// The handler belongs to one delivery of one session's events; answering on
+    /// behalf of another session would tell the system we are done while our own
+    /// events are still arriving.
+    @Test("a foreign session's events do not release our handler",
+          .timeLimit(.minutes(1)))
+    func foreignSessionEventsAreIgnored() async {
+        let calls = Counter()
+
+        RelayFileTransfer.BackgroundEvents.setHandler { calls.increment() }
+        RelayFileTransfer.BackgroundEvents.finishEvents(
+            sessionIdentifier: "com.jayanttang.dsh.tests.foreign-session"
+        )
+
+        try? await Task.sleep(for: .milliseconds(100))
+        #expect(calls.value == 0)
+
+        // Leave nothing registered for the next test in the suite.
+        RelayFileTransfer.BackgroundEvents.setHandler(nil)
+    }
+}
+
+/// A counter the delegate's `@Sendable` closure and the test can share.
+private final class Counter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+    func increment() { lock.withLock { count += 1 } }
+    var value: Int { lock.withLock { count } }
+}
+
+/// Polls `condition` until it holds or the deadline passes.
+///
+/// A fixed sleep would be either flaky (too short) or slow (too long); polling
+/// with a ceiling makes "the handler was never called" a bounded failure.
+private func waitUntil(
+    timeout: Duration = .seconds(5),
+    _ condition: @Sendable () -> Bool
+) async -> Bool {
+    let deadline = ContinuousClock.now + timeout
+    while ContinuousClock.now < deadline {
+        if condition() { return true }
+        try? await Task.sleep(for: .milliseconds(20))
+    }
+    return condition()
 }
 
 /// Collects progress callbacks from a `@Sendable` closure (the download's own

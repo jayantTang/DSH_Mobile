@@ -165,15 +165,17 @@ struct Composer: View {
     private static func stageMovie(_ item: PhotosPickerItem, name: String) async -> URL? {
         guard let movie = try? await item.loadTransferable(type: MovieFile.self) else { return nil }
         defer { try? FileManager.default.removeItem(at: movie.url) }
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("outgoing-files", isDirectory: true)
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        // The system's export is temporary and does not outlive the transfer;
+        // the copy under `Caches/outgoing-files/` does, and is what the
+        // background session reads after this view is gone (P-3).
+        let directory = OutgoingFiles.directory()
         let destination = directory.appendingPathComponent(name)
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             try FileManager.default.copyItem(at: movie.url, to: destination)
             return destination
         } catch {
+            try? FileManager.default.removeItem(at: directory)
             return nil
         }
     }
@@ -213,25 +215,32 @@ struct Composer: View {
         model.addDraftImages(images, names: names)
     }
 
-    /// Copies one picked file into the app's temporary directory.
+    /// Copies one picked file into the app's own container.
     ///
     /// Returns `nil` when it cannot be read (a file provider that vanished, a
     /// format iOS will not open); the caller reports that the way it always has.
-    /// The copy is deliberately left on disk: the background session needs a
-    /// stable URL, and the system may finish the upload after this view is gone.
+    ///
+    /// The copy lands under **`Caches/outgoing-files/`**, not `tmp/`: the
+    /// background session needs a URL that is still there when the system gets
+    /// around to reading it, which may be after the app was suspended, and
+    /// `tmp/` carries no such promise. `ChatModel.sendFile` deletes the copy
+    /// once the upload has an outcome, and a launch sweeps what an interrupted
+    /// one left behind — see `OutgoingFiles`.
     private static func copyIntoContainer(_ url: URL) -> URL? {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("outgoing-files", isDirectory: true)
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        let destination = directory.appendingPathComponent(url.lastPathComponent)
-        do {
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            try FileManager.default.copyItem(at: url, to: destination)
-            return destination
-        } catch {
-            return nil
-        }
+        OutgoingFiles.stage(url)
     }
+
+    #if DEBUG
+    /// The same staging the attachment menu does, for the automation hook.
+    ///
+    /// Exposed rather than duplicated: a case that re-implemented the copy would
+    /// be testing the case, not the product. `-DSHStageFile` calls this and then
+    /// `ChatModel.sendFile`, which is exactly what `load(_:)` does for a picked
+    /// file — minus the cross-process file picker that XCUITest cannot drive.
+    static func stageForAutomation(_ path: String) -> URL? {
+        copyIntoContainer(URL(fileURLWithPath: path))
+    }
+    #endif
 
     private var field: some View {
         TextField(placeholder, text: $model.draft, axis: .vertical)

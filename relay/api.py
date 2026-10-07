@@ -689,11 +689,11 @@ async def files_down(request: web.Request) -> web.StreamResponse:
     `DeviceLink` uses — or this route would be a way to pull a whole library
     through a metered host while WSS downloads stayed governed.
 
-    ``Range: bytes=N-`` resumes from ``N``. This is not an optimisation: a
-    background `URLSessionDownloadTask` hands back a system temp file and
-    `resumeData`, and the app's `.part` continuation (which the WSS path relies
-    on) does not apply to it. Without `Range` a dropped connection would restart
-    a 300 MB file from zero.
+    ``Range: bytes=N-`` resumes from ``N``. This is not an optimisation: the
+    background download hands back a system temp file and an opaque `resumeData`
+    blob, and a partial file the app keeps itself no longer exists on this path
+    (P-13c moved the continuation into that blob). Without `Range` a dropped
+    connection would restart a 300 MB file from zero.
     """
     store: Store = request.app["store"]
     hub = request.app["hub"]
@@ -726,13 +726,42 @@ async def files_down(request: web.Request) -> web.StreamResponse:
         return json_error(503, "host/offline", "the PC connector is not connected")
 
     link = hub._devices.get(device["deviceId"])  # noqa: SLF001 - the device's own bucket
-    bid = request.query.get("bid") or uuid.uuid4().hex
+    # **The relay mints the bridge identifier; it does not forward the app's.**
+    #
+    # A resumed download carries the previous attempt's `bid` frozen inside the
+    # system's opaquely-owned resume data, so the same `bid` arrives for a run
+    # that is *not* the same run. Correlating on it means a new bridge is opened
+    # under the old one's name, the connector supersedes the old run only when
+    # the new `fsGetBegin` reaches it, and the old run's windows — already on
+    # their way and unrecallable — land in the new bridge. Those bytes are the
+    # old run's, from a different offset; spliced into a fresh body and truncated
+    # to the declared length, they produce a file whose **size is right and whose
+    # contents are wrong**, which is worse than a failure because it is cached
+    # and never fetched again.
+    #
+    # A fresh identifier per request removes the collision at its root: no two
+    # runs can ever share one. The app's own `bid` is **dropped**, not aliased —
+    # an alias back to this bridge would restore exactly the collision, since
+    # that is the name a previous attempt's windows are still carrying.
+    #
+    # `replaced` is the app's identifier passed along for one purpose only: to
+    # tell the connector which run this request supersedes. On a resumed
+    # download the connector has a run open under that name (the identifier is
+    # frozen inside the system's resume data, so the request that arrives is the
+    # old one replayed, app-side unchangeable), and the connector stops it
+    # immediately instead of reading on until the new `fsGetBegin` reaches it.
+    # It is advisory: a connector that does not know the name does nothing.
+    replaced = request.query.get("bid") or None
+    bid = uuid.uuid4().hex
     bridge = hub.open_fetch(bid, device["agentId"])
     try:
-        agent.enqueue_frame({
+        begin = {
             "t": "fsGetBegin", "deviceId": device["deviceId"], "bid": bid,
             "scopeId": scope_id, "path": path, "offset": offset,
-        })
+        }
+        if replaced:
+            begin["replaces"] = replaced
+        agent.enqueue_frame(begin)
         if not await bridge.wait_ack(BRIDGE_ACK_TIMEOUT_S):
             return json_error(501, "file/unsupported",
                               "连接器版本过旧，不支持后台下载；请更新连接器")
@@ -746,19 +775,124 @@ async def files_down(request: web.Request) -> web.StreamResponse:
         if "error" in first:
             return json_error(409, first["error"], first["message"])
 
-        response = web.StreamResponse(status=200)
+        # Everything the connector's stat bought us (P-13b). `size`/`version` are
+        # `None` for a connector too old to report them, and every use below has
+        # to tolerate that: a missing total means "answer as before", not "fail".
+        total = bridge.size
+        # An offset past the end is refused rather than answered with an empty
+        # body: the phone would take the empty body as a complete file.
+        #
+        # `>=`, not `>`: `offset == total` is equally unsatisfiable, and answering
+        # it was worse than useless — the range response's last byte position is
+        # `total - 1`, so the header came out as `bytes 40000000-39999999/40000000`,
+        # a first position past its own last one. RFC 7233 §4.4 makes that a 416.
+        # The window is narrow (a resume whose range begins exactly where the file
+        # ends) but the shape it produced was malformed rather than merely empty,
+        # so it is refused rather than special-cased.
+        if total is not None and offset >= total:
+            return json_error(416, "request/offset", "offset is past the end of the file")
+
+        etag = f'"dsh-{bridge.version}-{total}"' if bridge.version and total is not None else None
+
+        # `If-Range` is the safety check that makes resuming *correct* rather than
+        # merely cheap. The resuming client sends the `ETag` it was given, and if
+        # the file has changed since, the only safe answer is the whole file from
+        # zero — otherwise the bytes before the offset (old content) and after it
+        # (new content) would be spliced into a file that never existed. A mismatch
+        # is not an error; it is the case the header exists for.
+        #
+        # Only checked when we have both a version and the header: without a
+        # version there is nothing to compare, and without the header the client
+        # never asked for the check.
+        #
+        # The restart is a **re-issued `fsGetBegin`**, not just a header change:
+        # the connector is already reading from `offset`, and rewriting the status
+        # line while its chunks still start mid-file would answer `200` with a
+        # body that is missing its own first `offset` bytes — worse than not
+        # checking at all. Demanding a fresh run is the only way the body and the
+        # headers agree.
+        if_range = request.headers.get("If-Range")
+        if if_range is not None and etag is not None and if_range != etag and offset:
+            offset = 0
+            # Moving to a *second* bridge is what makes the restart safe. The
+            # first run is still pumping — it was acked moments ago and is
+            # sending windows it cannot take back — so it is abandoned **and
+            # told to stop**. Reusing the identifier would drop those windows
+            # into the restart's body; abandoning alone would leave the connector
+            # reading a whole file for nobody, which is the waste
+            # `_route_bridge_frame` now reports.
+            #
+            # The new run gets a new identifier and, deliberately, **no alias**:
+            # the reply it needs comes from the connector answering the
+            # identifier it was just handed, and leaving the app's own identifier
+            # pointing at it would re-open the very collision this method exists
+            # to close.
+            hub._cancel_fetch(agent, bridge)  # noqa: SLF001 - routing owns the frame shape
+            bridge.abandon()
+            hub.close_bridge(bid)
+            bid = uuid.uuid4().hex
+            bridge = hub.open_fetch(bid, device["agentId"])
+            agent.enqueue_frame({
+                "t": "fsGetBegin", "deviceId": device["deviceId"], "bid": bid,
+                "scopeId": scope_id, "path": path, "offset": 0,
+            })
+            if not await bridge.wait_ack(BRIDGE_ACK_TIMEOUT_S):
+                return json_error(501, "file/unsupported",
+                                  "连接器版本过旧，不支持后台下载；请更新连接器")
+            first = await asyncio.wait_for(bridge.next_frame(), DOWN_IDLE_TIMEOUT_S)
+            if first is None:
+                return json_error(503, "host/offline", "连接器没有开始传输")
+            if "error" in first:
+                return json_error(409, first["error"], first["message"])
+
+        # `None` means the connector announced no total, so the response is
+        # chunked and there is no declared length to honour.
+        declared: int | None = None
+        status = 206 if offset else 200
+        response = web.StreamResponse(status=status)
         response.content_type = "application/octet-stream"
         # Nothing may sit between the connector and the phone: a buffering proxy
         # would defeat the whole point of streaming (the Caddy snippet already
         # sets `flush_interval -1` for this path).
         response.headers["Cache-Control"] = "no-store"
+        response.headers["Accept-Ranges"] = "bytes"
+        if etag is not None:
+            response.headers["ETag"] = etag
+        if total is not None:
+            # The **full** interval, not `bytes N-*/*`: the system only produces
+            # resume data when the response states the total, and only resumes
+            # against a well-formed range response. This is the difference between
+            # a background download that can be interrupted and one that has to
+            # start over.
+            #
+            # Capped by what the device may still receive today. `Content-Length`
+            # is a promise, and a promise the quota is about to break would leave
+            # the client waiting for bytes that never come (the pre-P-13b shape
+            # could just stop writing and hang up; a declared length cannot). The
+            # cap is honest rather than lossy: the answer is a complete range,
+            # just a shorter one, and the client resumes from its end.
+            deliverable = total - offset
+            if link is not None and link.quota.enabled:
+                deliverable = min(deliverable, link.quota.remaining())
+            declared = deliverable
+            response.headers["Content-Length"] = str(deliverable)
+            if offset:
+                response.headers["Content-Range"] = f"bytes {offset}-{total - 1}/{total}"
         if offset:
             response.headers["X-DSH-Offset"] = str(offset)
         await response.prepare(request)
 
         frame: dict[str, Any] | None = first
+        # Every byte written is bounded by the length the response announced. The
+        # two used to be computed separately (`Content-Length` from the total,
+        # truncation from `charge_daily` tripping a slice later), which is how a
+        # body could end up shorter than its own header — and a client waiting on
+        # a declared length for bytes that were silently dropped does not fail,
+        # it *hangs*. One counter, decremented here, is what keeps the promise
+        # and the body the same thing.
+        remaining_declared = declared
         try:
-            while frame is not None:
+            while frame is not None and (remaining_declared is None or remaining_declared > 0):
                 if "error" in frame:
                     # Mid-stream failure: the status line is already sent, so the
                     # only honest thing left is to stop writing. The app sees a
@@ -770,6 +904,10 @@ async def files_down(request: web.Request) -> web.StreamResponse:
                 piece = base64.b64decode(frame.get("data") or "")
                 for start in range(0, len(piece), DOWN_CHARGE_SLICE):
                     slice_bytes = piece[start:start + DOWN_CHARGE_SLICE]
+                    if remaining_declared is not None:
+                        slice_bytes = slice_bytes[:remaining_declared]
+                        if not slice_bytes:
+                            break
                     if link is not None:
                         await link.pace(len(slice_bytes))
                         if not link.charge_daily(len(slice_bytes)):
@@ -779,6 +917,12 @@ async def files_down(request: web.Request) -> web.StreamResponse:
                             return await _abort_download(response, link)
                         link._count_egress(len(slice_bytes))  # noqa: SLF001 - one definition
                     await response.write(slice_bytes)
+                    if remaining_declared is not None:
+                        remaining_declared -= len(slice_bytes)
+                        if remaining_declared == 0:
+                            break
+                if remaining_declared is not None and remaining_declared == 0:
+                    break
                 if frame.get("_terminal") or frame.get("eof"):
                     break
                 try:
@@ -787,7 +931,14 @@ async def files_down(request: web.Request) -> web.StreamResponse:
                     LOGGER.warning("relay: download %s stalled for %.0fs", bid, DOWN_IDLE_TIMEOUT_S)
                     break
         finally:
+            # Every exit from the loop means nobody is reading any more — the
+            # declared length was reached, the connector ended, the phone hung
+            # up, or the idle clock ran out. `abandon` stops the relay accepting
+            # windows; the cancel is what stops the **connector reading them**.
+            # Without it a run for a departed phone read to the end of the file
+            # and threw every window away at `deliver`.
             bridge.abandon()
+            hub._cancel_fetch(agent, bridge)  # noqa: SLF001 - routing owns the frame shape
         await response.write_eof()
         return response
     finally:
@@ -804,6 +955,14 @@ async def _abort_download(response: web.StreamResponse,
     resuming with `Range`. Telling the phone *why* in a WebSocket `error` frame
     is not available here (this connection is HTTP), so the reason is logged and
     the device will meet the quota again on its next socket frame.
+
+    Reached only when the quota ran out **between** the response being prepared
+    and the body being written. The declared `Content-Length` never promised
+    these bytes (see the allowance cap where the response is built), so ending
+    the body here is a complete answer for the length that was announced: the
+    client gets a short-but-consistent range, counts the bytes it has, and its
+    next attempt resumes from there. That is what keeps a quota cut from being
+    either a silent success or an unexplained hang.
     """
     try:
         await response.write_eof()

@@ -42,6 +42,12 @@ AGENT_CONTROL = frozenset({
     "fsErr",
 })
 
+#: Control frames the **relay sends to the agent** for a download bridge. Same
+#: family as ``AGENT_CONTROL`` but the other direction, so it cannot live in
+#: that set: that one is what the relay accepts *from* a connector. Not part of
+#: DLP either — a phone neither sends nor receives these.
+RELAY_TO_AGENT_CONTROL = frozenset({"fsGetCancel"})
+
 #: Frame types that carry a unary request and therefore need an ``id``.
 _ID_FRAMES = frozenset({"req", "open", "cancel", "res", "item", "end", "streamError", "eventResult"})
 

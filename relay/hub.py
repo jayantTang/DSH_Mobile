@@ -445,17 +445,25 @@ class FileBridge:
         self.done: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
         self.error: str | None = None
 
-    def deliver(self, kind: str, frame: dict[str, Any]) -> None:
-        """One reply from the connector."""
+    def deliver(self, kind: str, frame: dict[str, Any]) -> bool:
+        """One reply from the connector.
+
+        Always ``True``: an upload bridge has no reader that can walk away
+        mid-transfer — the request body is pushed by the caller and every reply
+        lands in the same future, so no frame here is worth cancelling. The
+        boolean exists so the shared routing layer can call both bridge kinds
+        the same way; only :class:`FileFetchBridge` can report a reader that is
+        gone.
+        """
         if kind == "fsPutAck":
             self.acknowledged.set()
-            return
+            return True
         if self.done.done():
-            return
+            return True
         if kind == "fsPutDone":
             self.done.set_result(frame)
             self.acknowledged.set()
-            return
+            return True
         if kind == "fsErr":
             # The connector answers with the same `{code, message}` shape it uses
             # for everything else; carry it through so the phone's error text is
@@ -469,6 +477,7 @@ class FileBridge:
             # out the full ack deadline and report "connector too old" for what is
             # really "the connector said no".
             self.acknowledged.set()
+        return True
 
     def fail(self, reason: str) -> None:
         """The agent went away (or the bridge was abandoned)."""
@@ -523,6 +532,27 @@ class FileFetchBridge:
             maxsize=self.QUEUE_DEPTH)
         self.abandoned = False
         self.error: str | None = None
+        #: Whether an `fsGetCancel` has already been sent for this bridge. Set
+        #: once and never cleared: the connector ignores a cancel for a run it
+        #: does not know, so a repeat is harmless, but sending one per stale
+        #: frame would turn a superseded run into a burst of frames.
+        self.cancel_requested = False
+        #: The file's total size, from the connector's stat. `None` means the
+        #: connector could not tell us — the response then has no total, exactly
+        #: as before P-13b.
+        self.size: int | None = None
+        #: The file's version, from the same stat. `None` means no `ETag`, and so
+        #: no `If-Range` check on a resume.
+        self.version: str | None = None
+        #: What the connector's `fsGetAck` said about the file: `size` and
+        #: `version` when it could stat it, `{}` when it could not (P-13b).
+        #:
+        #: Read by the response loop to build a **resumable** answer: the total
+        #: becomes `Content-Length` and a full `Content-Range`, and the version
+        #: becomes the `ETag` an `If-Range` on a retry is checked against. A
+        #: connector too old to send either leaves this empty and the route falls
+        #: back to the streaming answer it has always given — the download still
+        #: works, it just cannot be resumed by the system.
 
     def deliver(self, kind: str, frame: dict[str, Any]) -> bool:
         """One reply from the connector; ``False`` means the reader is gone.
@@ -533,6 +563,21 @@ class FileFetchBridge:
         feeding them.
         """
         if kind == "fsGetAck":
+            # `size`/`version` are what make the response resumable; both are
+            # optional and a connector that omits them must not fail here.
+            #
+            # The ack is also the one reply a bridge accepts **after** being
+            # abandoned. That is not laxness: the `If-Range` restart abandons a
+            # run whose ack may still be in flight, and an ack carries only
+            # metadata — it cannot corrupt the body the way a stale window can.
+            # Data frames get no such grace, because a chunk from a superseded
+            # run is exactly the corruption this class exists to refuse.
+            size = frame.get("size")
+            if isinstance(size, int) and size >= 0 and not isinstance(size, bool):
+                self.size = size
+            version = frame.get("version")
+            if isinstance(version, str) and version:
+                self.version = version
             self.acknowledged.set()
             return True
         if self.abandoned:
@@ -1013,10 +1058,10 @@ class RelayHub:
     def open_fetch(self, bid: str, agent_id: str) -> "FileFetchBridge":
         """Register one in-flight `GET /files/down`, same table and same rule.
 
-        Sharing ``_bridges`` is deliberate: ``bid`` is a UUID minted by the app
-        per attempt, and the two families never mix (a ``fsGetChunk`` can only
-        answer a fetch). One table means one place that has to be cleaned up when
-        an agent disconnects.
+        Sharing ``_bridges`` is deliberate: a bridge id is minted by whoever
+        drives the transfer, and the two families never mix (a ``fsGetChunk`` can
+        only answer a fetch). One table means one place that has to be cleaned up
+        when an agent disconnects.
         """
         bridge = FileFetchBridge(bid=bid, agent_id=agent_id, logger=self.logger)
         self._bridges[bid] = bridge
@@ -1036,8 +1081,34 @@ class RelayHub:
             # 5-second ack deadline already fired). Nothing to do but say so.
             self.logger.debug("relay: no bridge waiting for %s (bid=%r)", kind, bid)
             return True
-        bridge.deliver(kind, frame)
+        # **The return value is the entire point of this method existing in the
+        # routing layer.** `deliver` answers `False` for a frame that reached a
+        # bridge nobody is reading any more — the queue full because the phone
+        # hung up, or a bridge already abandoned. That is the only signal the
+        # relay has that a run should stop, and dropping it on the floor meant a
+        # connector kept reading a whole file for a reader that was gone. The
+        # `fsGetCancel` is what acts on it.
+        if not bridge.deliver(kind, frame):
+            self._cancel_fetch(link, bridge)
         return True
+
+    def _cancel_fetch(self, link: AgentLink, bridge: "FileFetchBridge") -> None:
+        """Tell the connector to stop reading for a bridge that is no longer read.
+
+        Sent on every path that discovers a dead bridge: the queue filled, the
+        reader left, a newer request superseded this one. The connector answers a
+        cancel for a run it does not know by doing nothing, so a duplicate is
+        harmless — which is what makes it safe to send from more than one place.
+
+        Written into the same per-connection queue as every other frame, so it
+        cannot overtake the ``fsGetBegin`` whose run it means to stop.
+        """
+        if bridge.cancel_requested:
+            return
+        bridge.cancel_requested = True
+        sent = link.enqueue_frame({"t": "fsGetCancel", "bid": bridge.bid})
+        self.logger.debug("relay: cancelling download %s (delivered=%s)",
+                          bridge.bid, sent)
 
     async def _drop_agent_bridges(self, agent_id: str, reason: str) -> None:
         """Fail every waiting transfer of an agent that just went away.

@@ -73,9 +73,19 @@ struct RootView: View {
                 await connectToBestAvailableProfile()
             }
             .task {
-                // 大文件走**文件**这条路（`fileURL:`），不是 `data:`：真实用户在
-                // 附件菜单里选一个 33 MB 的文件，走的就是 sendFile(fileURL:)。
-                // 老钩子把整个文件读成 Data 再送，永远验不到 R-1 的后台上传分支。
+                // P-3 尾巴的复现钩子：把 `-DSHStageFile <路径>` 走**附件菜单那条路**
+                // —— `Composer.copyIntoContainer`（现在是 `OutgoingFiles.stage`），
+                // 再交给同一个 `sendFile(fileURL:)`。`-DSHUploadFilePath` 直接用调用方
+                // 给的路径，**不经过**暂存，验不到"发完把自己那份删掉"这件事；
+                // 系统文件选择器是跨进程的、XCUITest 点不到（见 19a 用例的备注）。
+                // 这条钩子是唯一能自动验到 P-3 改的那段代码的入口。
+                if let path = Self.automationStageFile() {
+                    for _ in 0..<40 where chatModel.session == nil {
+                        try? await Task.sleep(for: .milliseconds(250))
+                    }
+                    await Self.stageAndSend(path: path, model: chatModel)
+                    return
+                }
                 if let path = Self.automationUploadFilePath() {
                     for _ in 0..<40 where chatModel.session == nil {
                         try? await Task.sleep(for: .milliseconds(250))
@@ -112,6 +122,26 @@ struct RootView: View {
             .task {
                 await alerts.prepare()
             }
+            #if DEBUG
+            // P-13 步骤 0 的探针（`-DSHP13ResumeProbe`）：连接就绪后，按中转通道
+            // 真实下载一个文件、中途按"暂停"的语义取消，看系统给不给 resume data、
+            // 第二次请求发不发 `Range`。只在带那个参数启动时工作，见 `P13ResumeProbe`。
+            .task(id: store.state.isConnected) {
+                guard P13ResumeProbe.isOn else { return }
+                // The control run fetches a direct URL and must not depend on a
+                // live connection: it measures what iOS does with a given response
+                // shape, and a relay in the picture would be a second variable.
+                if P13ResumeProbe.isControlRun {
+                    P13ResumeProbe.run(
+                        relayURL: URL(string: "http://127.0.0.1/")!, deviceToken: "control"
+                    )
+                    return
+                }
+                guard store.state.isConnected, let target = try? store.fileTransferTarget()
+                else { return }
+                P13ResumeProbe.run(relayURL: target.relayURL, deviceToken: target.deviceToken)
+            }
+            #endif
             .task {
                 // 仿真器复现「App 在后台时用户点了通知」（`-DSHProbeNotifyTap <sid>@<秒>`）。
                 // 走的完全是产品那条 `didReceive` → `SessionRouter` → `MainView` 的路，
@@ -336,6 +366,34 @@ struct RootView: View {
         else { return nil }
         return arguments[index + 1]
     }
+
+    /// 走**暂存**那条路发一个文件（P-3 尾巴的复现钩子）。
+    ///
+    /// 与 `-DSHUploadFilePath` 的差别就是这条用例要问的那件事：那个钩子把调用方给的
+    /// 路径直接交给上传，**不产生** App 自己的拷贝，所以"发完把拷贝删掉"在它下面
+    /// 根本不会发生。这里先走 `Composer` 的 `copyIntoContainer`
+    /// （= `OutgoingFiles.stage`），再发 —— 与用户在附件菜单里选一个文件完全相同。
+    static func automationStageFile() -> String? {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let index = arguments.firstIndex(of: "-DSHStageFile"),
+              index + 1 < arguments.count
+        else { return nil }
+        return arguments[index + 1]
+    }
+
+    /// Stages `path` the way the composer does and sends the copy.
+    ///
+    /// Returns silently on a staging failure: the case then sees no prompt and
+    /// fails on its own assertion, rather than on a retry loop here that would
+    /// hide which half broke.
+    static func stageAndSend(path: String, model: ChatModel) async {
+        guard let staged = Composer.stageForAutomation(path) else {
+            DSHLog.push("stage-file: staging failed for \(path)")
+            return
+        }
+        DSHLog.push("stage-file: staged \(path) -> \(staged.path)")
+        await model.sendFile(named: staged.lastPathComponent, fileURL: staged)
+    }
     #else
     static func automationDraftImage() -> String? { nil }
     static func automationUploadFile() -> String? { nil }
@@ -416,6 +474,8 @@ struct RootView: View {
     static func automationFilesDir() -> String? { nil }
     static func automationShowsOnboarding() -> Bool { false }
     static func automationDropLinkAfter() -> Double? { nil }
+    static func automationStageFile() -> String? { nil }
+    static func stageAndSend(path: String, model: ChatModel) async {}
     #endif
 
     /// What identifies "the computer we are talking to", for caches that must

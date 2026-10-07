@@ -41,23 +41,17 @@ enum WorkspaceFileCache {
             .appendingPathComponent(name(for: path))
     }
 
-    /// Where a download in progress accumulates.
+    /// Where a download lands before it is the file.
     ///
     /// A half-arrived file is not the file: it gets its own name so nothing can
-    /// open it as if it were complete, and it outlives the attempt that wrote it
-    /// — that is what makes the next attempt resumable rather than a restart.
+    /// open it as if it were complete. What it is **not** any more is a resume
+    /// point — since P-13c the system owns the partially-fetched bytes as opaque
+    /// `resumeData`, and this file is replaced outright on each attempt rather
+    /// than appended to. The name is kept because "complete is a rename" is still
+    /// what makes publishing atomic.
     static func partial(scopeId: String, path: String, version: String) -> URL {
         let complete = destination(scopeId: scopeId, path: path, version: version)
         return complete.appendingPathExtension("part")
-    }
-
-    /// The bytes already downloaded for this version, when there are any.
-    static func partialBytes(scopeId: String, path: String, version: String) -> Int? {
-        let url = partial(scopeId: scopeId, path: path, version: version)
-        guard let size = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? Int,
-              size > 0
-        else { return nil }
-        return size
     }
 
     /// Publishes a finished partial as the file itself.
