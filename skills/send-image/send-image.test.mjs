@@ -18,7 +18,11 @@ test('a denied capture points at the permission and the restart, not at stderr',
     stderr: Buffer.from('could not create image from display\n'),
   })
   assert.match(message, /屏幕录制/)
-  assert.match(message, /重新打开 DSH\.app/)
+  // 只指路到"运行 DSH 的那个程序"，不再点名某个具体应用：自研外壳已删除，
+  // 名字写死会让用户去找一个不存在的 App（官方桌面版是 DeepSeek Harness）。
+  assert.match(message, /运行 DSH 的那个程序/)
+  assert.match(message, /完全退出并重新打开/)
+  assert.doesNotMatch(message, /DSH\.app/)
   // The original text stays, so a different cause is still diagnosable.
   assert.match(message, /could not create image from display/)
 })

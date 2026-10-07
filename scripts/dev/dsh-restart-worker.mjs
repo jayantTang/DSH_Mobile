@@ -8,7 +8,7 @@
  *
  *   1. wait a moment, so the tool result reaches the client before the socket dies
  *   2. SIGTERM the backend, SIGKILL if it will not go
- *   3. wait for DSH.app to respawn its own backend (it supervises one);
+ *   3. (no longer) wait for the app to respawn its own backend — it does not;
  *      if it does not, `open -a DSH`; if that does not either, launch
  *      `dsh web --no-open --port 0` ourselves, which is what writes endpoint.json
  *   4. submit the resume prompt into the recorded session
@@ -420,7 +420,7 @@ async function main() {
   }
   save({ status: 'stopped', stoppedAt: new Date().toISOString(), stop: stopping })
 
-  // DSH.app is the parent of the backend it supervises, and it needs a moment to
+  // The desktop app is the parent of the backend it supervises, and it needs a moment to
   // notice the child is gone (the first real restart took ~30 s end to end). A
   // short wait here would start a second backend next to the app's own.
   let startedByUs
@@ -465,7 +465,7 @@ async function main() {
 
   // The endpoint file appears before the plugin tree has settled, and a prompt
   // sent too early is refused as an unknown session. It is also re-read on every
-  // attempt: DSH.app may replace the backend we found, and the file is the only
+  // attempt: the app may replace the backend we found, and the file is the only
   // place that says so — with a new port and a new token.
   for (let attempt = 1; attempt <= 20; attempt += 1) {
     const freshest = readEndpoint() ?? endpoint

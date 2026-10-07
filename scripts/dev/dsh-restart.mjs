@@ -4,13 +4,13 @@
  * very turn.
  *
  * Why it exists: plugins, skills and the connector are read at startup, so every
- * change to them needs a restart. That used to mean "quit DSH.app and open it
+ * change to them needs a restart. That used to mean "quit the desktop app and open it
  * again", i.e. a human at the computer. This turns it into one command the agent
  * can run itself.
  *
  * How it survives its own restart: the work is handed to a **detached** worker
  * (`dsh-restart-worker.mjs`) that outlives the process it is about to kill. The
- * worker kills the backend, waits for a new one (DSH.app respawns its own, and
+ * worker ends the backend, waits for a new one (the desktop app does not respawn
  * the worker falls back to launching one if it does not), and then submits a
  * resume prompt into the same session — which is how the agent is woken up again
  * with its conversation intact.
