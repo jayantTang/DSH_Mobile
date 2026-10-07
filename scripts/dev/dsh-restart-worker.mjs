@@ -105,7 +105,7 @@ async function relaunchDesktopApp({ log = () => {} } = {}) {
 
   // 关键：**等它真的退出再 open**。应用正在退出的那几秒里，`open -a` 只会把旧实例激活、
   // 不会拉起新实例——第一次实测就卡在这里，最后是人工点开的应用。
-  for (let waited = 0; appAlive() && waited < 20_000; waited += 500) {
+  for (let waited = 0; appAlive() && waited < 40_000; waited += 500) {
     if (waited === 8_000) {
       try {
         execFileSync('pkill', ['-TERM', '-f', pattern], { stdio: 'ignore' })
@@ -113,7 +113,7 @@ async function relaunchDesktopApp({ log = () => {} } = {}) {
     }
     await sleep(500)
   }
-  if (appAlive()) log('警告：20s 内没等到应用退出')
+  if (appAlive()) log('警告：40s 内没等到应用退出')
 
   openApp()
   // 再确认新实例真的起来了；没起来就再请求一次，别把"请求过"当成"已启动"。
@@ -274,7 +274,10 @@ async function main() {
   // notice the child is gone (the first real restart took ~30 s end to end). A
   // short wait here would start a second backend next to the app's own.
   let startedByUs
-  let endpoint = await waitForNewBackend({ previousPid: state.fromPid, timeoutMs: 25_000 })
+  // 官方桌面版不会自己把宿主进程拉回来（实测三次都没有），所以只做 5 秒探测就走重启流程；
+  // 命令行 web 宿主可能由别人的终端持有，仍给它 25 秒。
+  const respawnWindow = form === 'desktop' ? 5_000 : 25_000
+  let endpoint = await waitForNewBackend({ previousPid: state.fromPid, timeoutMs: respawnWindow })
   if (endpoint) {
     log(`宿主自己把后端拉回来了：pid=${endpoint.pid} port=${endpoint.port}`)
   } else if (form === 'desktop') {
