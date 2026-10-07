@@ -118,7 +118,7 @@ export function appMainPids({ run = execFileSync } = {}) {
 }
 
 
-async function quitDesktopApp({ log = () => {} } = {}) {
+async function quitDesktopApp({ log = () => {}, hostPid } = {}) {
   log('宿主是官方桌面版：让应用自己退出（不单独杀宿主子进程，避免恢复弹窗）')
   let pids = appMainPids()
   if (!pids.length) {
@@ -131,7 +131,13 @@ async function quitDesktopApp({ log = () => {} } = {}) {
     } catch { /* 已经没了 */ }
   }
   for (let waited = 0; waited < 30_000; waited += 500) {
-    if (!appMainPids().length) return 'term'
+    if (!appMainPids().length) {
+      // 应用主进程没了不等于退干净：宿主子进程还在收尾时，新实例起来后会因单实例锁
+      // 立刻自行退出（launchd 实测：spawn 后 70ms 报 termination）。等它也没了再开。
+      for (let extra = 0; hostPid && alive(hostPid) && extra < 30_000; extra += 500) await sleep(500)
+      if (hostPid && alive(hostPid)) log('警告：30s 内旧宿主子进程仍未退出')
+      return 'term'
+    }
     // 到 10 秒还不退，再补一次信号（有的版本会忽略第一次 TERM）
     if (waited === 10_000) for (const pid of appMainPids()) {
       try {
@@ -144,25 +150,35 @@ async function quitDesktopApp({ log = () => {} } = {}) {
   return 'timeout'
 }
 
-async function openDesktopApp({ log = () => {}, attempts = 6, gapMs = 5_000 } = {}) {
-  for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    try {
-      execFileSync('open', ['-a', 'DeepSeek Harness'], { stdio: 'ignore' })
-    } catch (error) {
-      log(`open -a 失败：${error.message}`)
+/**
+ * 反复轻推直到**新的交接文件**出现。
+ *
+ * 不以"应用进程出现"为准：实测新实例可能被 launchd spawn 出来、70ms 后又自行退出
+ * （旧实例还在收尾时会发生），按进程判断会以为成功、然后干等 180 秒。
+ */
+async function relaunchUntilBackend({ log = () => {}, previousPid, timeoutMs = 180_000 } = {}) {
+  const deadline = Date.now() + timeoutMs
+  let attempt = 0
+  while (Date.now() < deadline) {
+    attempt += 1
+    if (!appMainPids().length) {
+      try {
+        execFileSync('open', ['-a', 'DeepSeek Harness'], { stdio: 'ignore' })
+      } catch (error) {
+        log(`open -a 失败：${error.message}`)
+      }
     }
-    // 每次请求后只等 5 秒：LaunchServices 有时第一次请求不落地（实测第一次 20 秒都没起来，
-    // 第二次才拉起），与其干等，不如隔一会儿再请求一次。
-    for (let waited = 0; waited < gapMs; waited += 500) {
-      if (appMainPids().length) {
-        log(`官方桌面版已启动（第 ${attempt} 次请求后）`)
-        return true
+    for (let waited = 0; waited < 10_000 && Date.now() < deadline; waited += 500) {
+      const endpoint = readEndpoint()
+      if (endpoint?.pid && endpoint.pid !== previousPid && alive(endpoint.pid)) {
+        log(`官方桌面版已起来（第 ${attempt} 次请求后）：pid=${endpoint.pid} port=${endpoint.port}`)
+        return endpoint
       }
       await sleep(500)
     }
   }
-  log(`请求 ${attempts} 次后应用主进程仍未出现`)
-  return false
+  log(`请求 ${attempt} 次后仍没有新后端`)
+  return undefined
 }
 
 
@@ -309,7 +325,7 @@ async function main() {
   // 让应用退出即可，宿主随应用一起走。
   let stopping
   if (form === 'desktop') {
-    stopping = await quitDesktopApp({ log })
+    stopping = await quitDesktopApp({ log, hostPid: state.fromPid })
     log(`应用退出结果：${stopping}`)
   } else {
     stopping = await stop(state.fromPid)
@@ -328,9 +344,8 @@ async function main() {
   if (endpoint) {
     log(`宿主自己把后端拉回来了：pid=${endpoint.pid} port=${endpoint.port}`)
   } else if (form === 'desktop') {
-    // 应用已经退出（宿主随之退出），现在把它重新打开。
-    await openDesktopApp({ log })
-    endpoint = await waitForNewBackend({ previousPid: state.fromPid, timeoutMs: 180_000 })
+    // 应用与旧宿主都已经退干净，现在反复轻推直到新交接文件出现。
+    endpoint = await relaunchUntilBackend({ log, previousPid: state.fromPid })
   } else {
     // 命令行 web 宿主的后端可能由用户的终端持有：我们起一个自己的。
     log('没有自动恢复；自己起一个 `dsh web --no-open --port 0`')
