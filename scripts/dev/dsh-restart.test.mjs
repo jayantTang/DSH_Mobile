@@ -7,7 +7,7 @@ import {
   DEFAULT_RESUME, parseArgs, readEndpoint as readRequesterEndpoint, stateDir,
 } from './dsh-restart.mjs'
 import {
-  alive, readEndpoint, resumePayload, stop, waitForNewBackend,
+  alive, hostFormOf, readEndpoint, resumePayload, stop, waitForNewBackend,
 } from './dsh-restart-worker.mjs'
 
 function fixtureHome() {
@@ -142,4 +142,19 @@ test('the resume prompt is a normal session prompt with a marked request id', ()
   // Marked so the transcript can be read back: an unattended restart should be
   // identifiable, not look like the user typed something at 3am.
   assert.match(payload.request.requestId, /^restart-/)
+})
+
+test('hostFormOf reads the process tree: the desktop app supervises its own backend', () => {
+  const desktop = (args) => {
+    if (args[0] === '-o' && args[1] === 'ppid=') return '79301\n'
+    return '/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness --expose-internals /x/dsh-desktop-host/lib/index.js\n'
+  }
+  assert.equal(hostFormOf(79322, { run: desktop }), 'desktop')
+
+  const web = (args) => (args[1] === 'ppid=' ? '1\n' : '/opt/homebrew/bin/node /opt/homebrew/bin/dsh web --no-open --port 0\n')
+  assert.equal(hostFormOf(28480, { run: web }), 'web', '终端里的 dsh web 不能判成桌面版')
+
+  const broken = () => { throw new Error('ps: no such process') }
+  assert.equal(hostFormOf(1, { run: broken }), 'unknown')
+  assert.equal(hostFormOf(0, { run: broken }), 'unknown')
 })

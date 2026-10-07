@@ -57,6 +57,50 @@ function save(patch) {
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
 /**
+ * 后端跑在哪种宿主里：官方桌面版（Electron 管的私有宿主进程）还是命令行 `dsh web`。
+ *
+ * 判断依据是**进程树**：看后端进程的父进程是不是应用包里的可执行文件。这比环境变量可靠
+ * （从桌面版里敲 `dsh web` 会继承 `ELECTRON_RUN_AS_NODE`，早期实现因此在慢闸里误判过）。
+ */
+export function hostFormOf(pid, { run = execFileSync } = {}) {
+  if (!pid) return 'unknown'
+  try {
+    const ppid = String(run('ps', ['-o', 'ppid=', '-p', String(pid)], { encoding: 'utf8' })).trim()
+    if (!ppid) return 'unknown'
+    const parent = String(run('ps', ['-o', 'command=', '-p', ppid], { encoding: 'utf8' })).trim()
+    if (/DeepSeek Harness\.app|dsh-desktop-host/.test(parent)) return 'desktop'
+    return 'web'
+  } catch {
+    return 'unknown'
+  }
+}
+
+/** 官方桌面版：退出整个应用再打开（它的宿主是应用自己拉起的，杀了不会自己回来）。 */
+async function relaunchDesktopApp({ log = () => {} } = {}) {
+  log('宿主是官方桌面版：退出应用再打开')
+  try {
+    execFileSync('osascript', ['-e', 'quit app "DeepSeek Harness"'], { stdio: 'ignore' })
+  } catch (error) {
+    log(`osascript 退出失败（改用信号）：${error.message}`)
+  }
+  for (let waited = 0; waited < 8000; waited += 500) {
+    try {
+      execFileSync('pgrep', ['-f', 'DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness'], { stdio: 'ignore' })
+    } catch {
+      break // 已经退出
+    }
+    await sleep(500)
+  }
+  try {
+    execFileSync('pkill', ['-TERM', '-f', 'DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness'], { stdio: 'ignore' })
+  } catch { /* 已经没了 */ }
+  await sleep(1500)
+  execFileSync('open', ['-a', 'DeepSeek Harness'], { stdio: 'ignore' })
+  log('已请求重新打开官方桌面版')
+}
+
+
+/**
  * What the backend last handed out: port, pid, and the authenticated URL.
  *
  * The URL carries the launch token, and the token is the whole reason the
@@ -198,26 +242,19 @@ async function main() {
   // notice the child is gone (the first real restart took ~30 s end to end). A
   // short wait here would start a second backend next to the app's own.
   let startedByUs
+  const form = hostFormOf(state.fromPid)
+  log(`宿主形态：${form}`)
   let endpoint = await waitForNewBackend({ previousPid: state.fromPid, timeoutMs: 25_000 })
   if (endpoint) {
-    log(`DSH.app respawned the backend: pid=${endpoint.pid} port=${endpoint.port}`)
+    log(`宿主自己把后端拉回来了：pid=${endpoint.pid} port=${endpoint.port}`)
+  } else if (form === 'desktop') {
+    // 官方桌面版：后端是它自己 spawn 的，杀了不会自己回来——退出应用再打开，
+    // 这与"人手动关了重开"等价，而且两个档案都不会串。
+    await relaunchDesktopApp({ log })
+    endpoint = await waitForNewBackend({ previousPid: state.fromPid, timeoutMs: 90_000 })
   } else {
-    // The app did not bring it back on its own. Asking the app to open is the
-    // closest thing to the user quitting and reopening it.
-    log('no respawn yet; asking DSH.app to open')
-    try {
-      execFileSync('open', ['-a', 'DSH'], { stdio: 'ignore' })
-    } catch (error) {
-      log(`open -a DSH failed: ${error.message}`)
-    }
-    endpoint = await waitForNewBackend({ previousPid: state.fromPid, timeoutMs: 20_000 })
-  }
-
-  if (!endpoint) {
-    // Last resort: become the backend ourselves. DSH.app may later spawn its own;
-    // endpoint.json is the handoff every client follows, so whichever is written
-    // last is the one the phone talks to.
-    log('still nothing; starting `dsh web --no-open --port 0` ourselves')
+    // 命令行 web 宿主的后端可能由用户的终端持有：我们起一个自己的。
+    log('没有自动恢复；自己起一个 `dsh web --no-open --port 0`')
     const child = spawn('dsh', ['web', '--no-open', '--port', '0'], {
       detached: true,
       stdio: 'ignore',
@@ -229,7 +266,9 @@ async function main() {
   }
 
   if (!endpoint) {
-    log('FAILED: no backend came up; a human has to open DSH')
+    log(form === 'desktop'
+      ? 'FAILED: 官方桌面版没能在 90s 内起来；需要人到电脑前打开它'
+      : 'FAILED: 没有后端起来；需要人打开 DSH')
     save({ status: 'failed', failedAt: new Date().toISOString() })
     return
   }
