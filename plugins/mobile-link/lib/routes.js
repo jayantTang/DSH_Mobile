@@ -5,7 +5,7 @@
  *   POST /mobile-link/pair-code  mint a pairing code (and its QR payload)
  *   GET  /mobile-link/qr         mint a pairing code and render it as a QR SVG
  *
- * All sit behind DSH's own request fence, exactly like dsh-plugin-desktop-shell:
+ * All sit behind DSH's own request fence, like every other plugin route:
  * `ctx.get('connection')?.requestRejection?.(req)` performs the Host/Origin check
  * and browser authentication. `/status` stays readable when the fence service is
  * missing (it is diagnostic); the other two mint a credential, so they fail

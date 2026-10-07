@@ -249,7 +249,7 @@ cat > "$STAGE_DIR/index.html" <<HTML
       <code>dsh-mobile-link enroll --invite &lt;邀请码&gt; --relay &lt;中转地址&gt;</code></li>
     <li>重启 DSH，让连接器加载；然后在这台电脑的浏览器里打开二维码页：
       <code>http://127.0.0.1:&lt;端口&gt;/mobile-link/qr</code>（端口启动时会打印，也在
-      <code>~/.dsh/desktop-shell/endpoint.json</code> 里）。</li>
+      <code>~/.dsh/mobile-link/endpoint.json</code> 里）。</li>
     <li>手机 App 底部 <strong>扫码配对</strong> → 扫它。连上之后就能看到电脑上的会话。</li>
   </ol>
 </div>

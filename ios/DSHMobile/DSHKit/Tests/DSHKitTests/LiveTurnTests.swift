@@ -30,7 +30,7 @@ final class LiveTurnTests: XCTestCase {
             throw XCTSkip("set DSH_LIVE_TURN=1 to run the live turn test")
         }
         let path = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".dsh/desktop-shell/endpoint.json")
+            .appendingPathComponent(".dsh/mobile-link/endpoint.json")
         guard let data = try? Data(contentsOf: path) else {
             throw XCTSkip("no DSH endpoint.json; skipping live turn test")
         }

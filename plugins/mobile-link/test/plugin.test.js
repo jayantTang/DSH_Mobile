@@ -68,6 +68,7 @@ function fakeContext({ fence = 'allow', injectable = true } = {}) {
   const injected = []
   const logger = { debug() {}, info() {}, warn() {}, error() {} }
   const webServer = {
+    port: 52430,
     register(route) {
       routes.set(route.path, route)
       return () => routes.delete(route.path)
@@ -75,11 +76,14 @@ function fakeContext({ fence = 'allow', injectable = true } = {}) {
   }
   const connection = fence === 'missing'
     ? undefined
-    : { requestRejection: () => (fence === 'allow' ? null : fence) }
+    : {
+      requestRejection: () => (fence === 'allow' ? null : fence),
+      authenticatedUrl: (base) => `${base}/?token=test-token`,
+    }
   const get = (service) => (service === 'connection'
     ? connection
     : service === 'webServer' ? webServer : undefined)
-  const scope = { webServer, get, effect: (fn, label) => effects.push([label, fn()]) }
+  const scope = { webServer, connection, get, effect: (fn, label) => effects.push([label, fn()]) }
   const ctx = {
     logger,
     get,
@@ -102,7 +106,7 @@ test('apply registers every route through ctx.inject and starts the agent', () =
   const { ctx, routes, effects, injected } = fakeContext()
   plugin.apply(ctx, BASE_CONFIG)
   assert.deepEqual([...routes.keys()].sort(), ['/mobile-link/pair-code', '/mobile-link/qr', '/mobile-link/status'])
-  assert.deepEqual(injected, [['webServer']])
+  assert.deepEqual(injected, [['webServer'], ['webServer', 'connection']])
   assert.ok(effects.some(([label]) => label.includes('DLP agent')))
 })
 
@@ -271,4 +275,46 @@ test('GET /mobile-link/qr rejects other methods', async () => {
   await routes.get('/mobile-link/qr').handler(fakeRequest('POST', {}), res)
   assert.equal(res.statusCode, 405)
   assert.equal(res.headers.allow, 'GET')
+})
+
+test('detectHostForm reads evidence, never guesses', () => {
+  // 官方桌面版：Electron 当 Node 跑私有宿主进程。
+  assert.equal(plugin.detectHostForm({ env: { ELECTRON_RUN_AS_NODE: '1' }, argv: [] }), 'desktop')
+  // 入口脚本是 dsh-desktop-host 时同样判为桌面版（环境变量缺失时的第二条证据）。
+  assert.equal(plugin.detectHostForm({ env: {}, argv: ['node', '/x/@deepseek-ai/dsh-desktop-host/lib/index.js'] }), 'desktop')
+  // 其余把插件加载进宿主进程的情况都是命令行 web 版。
+  assert.equal(plugin.detectHostForm({ env: {}, argv: ['node', '/x/bin/dsh', 'web'] }), 'web')
+})
+
+test('setHostService wires (and clears) the in-process resolver', () => {
+  const agent = new plugin.MobileLinkAgent({ enabled: false, relayUrl: 'ws://127.0.0.1:9', logger: console })
+  const resolver = () => 'http://127.0.0.1:19387/?token=t'
+  agent.setHostService(resolver)
+  assert.equal(agent.dsh.hostService, resolver)
+  assert.equal(agent.dsh.hostService(), 'http://127.0.0.1:19387/?token=t')
+  agent.setHostService(undefined)
+  assert.equal(agent.dsh.hostService, undefined)
+})
+
+test('the status snapshot carries the host form the plugin set', () => {
+  const agent = new plugin.MobileLinkAgent({ enabled: false, relayUrl: 'ws://127.0.0.1:9', logger: console })
+  agent.setHostForm('desktop')
+  assert.equal(agent.status().host, 'desktop')
+  agent.setHostForm('nonsense')
+  assert.equal(agent.status().host, 'unknown', '认不出的形态必须落到 unknown，而不是照抄')
+})
+
+test('with no connection service the routes stay registered and the privileged ones fail closed', async () => {
+  const { ctx, routes } = fakeContext({ fence: 'missing' })
+  assert.doesNotThrow(() => plugin.apply(ctx, BASE_CONFIG))
+  assert.equal(routes.size, 3, 'connection 缺失不该让路由消失')
+
+  const status = fakeResponse()
+  await routes.get('/mobile-link/status').handler(fakeRequest('GET'), status)
+  assert.equal(status.statusCode, 200, '/status 是诊断用的，栅栏缺失时仍要能读')
+
+  const qr = fakeResponse()
+  await routes.get('/mobile-link/qr').handler(fakeRequest('GET'), qr)
+  assert.equal(qr.statusCode, 403, '铸造凭据的路由必须失败关闭')
+  assert.match(qr.body, /connection service is unavailable/)
 })

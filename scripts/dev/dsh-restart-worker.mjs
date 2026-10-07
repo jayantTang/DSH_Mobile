@@ -27,7 +27,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 const HOME = process.env.DSH_RESTART_HOME || process.env.DSH_HOME || join(homedir(), '.dsh')
-const ENDPOINT = join(HOME, 'desktop-shell', 'endpoint.json')
+const ENDPOINT = join(HOME, 'mobile-link', 'endpoint.json')
 
 /**
  * Read once, at the start of `main` — not at module load: importing this file

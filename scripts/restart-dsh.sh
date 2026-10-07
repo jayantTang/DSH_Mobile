@@ -65,7 +65,7 @@ for _ in $(seq 1 10); do
   sleep 0.3
 done
 if [ -z "${OLD_PORT}" ]; then
-  ENDPOINT_FILE="${HOME}/.dsh/desktop-shell/endpoint.json"
+  ENDPOINT_FILE="${HOME}/.dsh/mobile-link/endpoint.json"
   if [ -f "${ENDPOINT_FILE}" ]; then
     OLD_PORT=$(sed -n 's/.*"port" *: *\([0-9]\+\).*/\1/p' "${ENDPOINT_FILE}" | head -1)
     [ -n "${OLD_PORT}" ] && log "port recovered from endpoint.json"

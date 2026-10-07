@@ -1,12 +1,18 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync, existsSync, rmSync } from 'node:fs'
-import { homedir } from 'node:os'
+import { mkdtempSync, readFileSync, existsSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { FileInbox, FILE_BEGIN, FILE_CHUNK, FILE_END, isFileMethod } from '../lib/files.js'
 
+// 隔离：收件箱在 `$DSH_HOME/inbox`。这条用例以前直接写真实 `~/.dsh/inbox`，
+// 换到临时目录后既不会污染本机数据，也真的能验证隔离本身（宪法第 III 条）。
+const TEST_HOME = mkdtempSync(join(tmpdir(), 'mobile-link-files-test-'))
+process.env.DSH_HOME = TEST_HOME
+process.on('exit', () => rmSync(TEST_HOME, { recursive: true, force: true }))
+
 const sessionId = `test-${process.pid}`
-const directory = join(homedir(), '.dsh', 'inbox', sessionId)
+const directory = join(TEST_HOME, 'inbox', sessionId)
 
 function cleanup() {
   rmSync(directory, { recursive: true, force: true })

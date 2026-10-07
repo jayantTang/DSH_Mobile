@@ -21,7 +21,6 @@
 #   agentSecret    overrides ~/.dsh/mobile-link/agent.json
 #   stateFile      agent identity file (default ~/.dsh/mobile-link/agent.json)
 #   dshUrl         explicit local DSH base URL override (default: discovery)
-#   endpointFile   DSH endpoint handoff file (default $DSH_HOME/desktop-shell/endpoint.json)
 #
 # Address resolution order: this config block, then DSH_RELAY_URL (or
 # DSH_MOBILE_LINK_RELAY), then the enrolled identity file, then the repository

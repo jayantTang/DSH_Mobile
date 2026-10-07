@@ -1,37 +1,26 @@
 #!/usr/bin/env node
 // Reads the machine's live DSH endpoint and prints it as JSON.
 //
-// Two sources, because the host is started in two different ways: the DSH
-// desktop shell writes endpoint.json, while a bare `dsh web` only ever prints
-// its URL on stdout, which the shell log keeps. The current machine switched
-// from the first to the second, and a harness that reads only endpoint.json
-// fails before it can report anything useful.
+// One source: the connector writes `$DSH_HOME/mobile-link/endpoint.json` with the
+// authenticated loopback address, and it does so in every supported host (the official
+// desktop app and the command-line web host). The old desktop-shell files are gone with
+// that shell — see specs/001-connector-host-compat/.
 
 import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
-const HOME = homedir()
-const ENDPOINT = join(HOME, '.dsh', 'desktop-shell', 'endpoint.json')
-const SHELL_LOG = join(HOME, '.dsh', 'desktop-shell', 'dsh-shell.log')
-const AGENT = join(HOME, '.dsh', 'mobile-link', 'agent.json')
+const HOME = process.env.DSH_HOME || join(homedir(), '.dsh')
+const ENDPOINT = join(HOME, 'mobile-link', 'endpoint.json')
+const AGENT = join(HOME, 'mobile-link', 'agent.json')
 
 function fromEndpointFile() {
   if (!existsSync(ENDPOINT)) return null
   const raw = JSON.parse(readFileSync(ENDPOINT, 'utf8'))
   const token = /token=([^&]+)/.exec(raw.url ?? '')?.[1]
   if (!raw.port || !token) return null
-  return { port: raw.port, token, source: 'endpoint.json' }
-}
-
-function fromShellLog() {
-  if (!existsSync(SHELL_LOG)) return null
-  const matches = readFileSync(SHELL_LOG, 'utf8')
-    .match(/http:\/\/127\.0\.0\.1:(\d+)\/\?token=([A-Za-z0-9_-]+)/g)
-  if (!matches) return null
-  const last = /http:\/\/127\.0\.0\.1:(\d+)\/\?token=([A-Za-z0-9_-]+)/.exec(matches.at(-1))
-  return { port: Number(last[1]), token: last[2], source: 'dsh-shell.log' }
+  return { port: raw.port, token, source: 'mobile-link/endpoint.json' }
 }
 
 /// True when something on the port answers like DSH.
@@ -46,9 +35,9 @@ function alive(port) {
   return code === 200 || code === 401 || code === 302
 }
 
-const endpoint = fromEndpointFile() ?? fromShellLog()
+const endpoint = fromEndpointFile()
 if (!endpoint || !alive(endpoint.port)) {
-  console.error('没有找到运行中的 DSH：先启动 DSH（桌面 App 或 `dsh web`），再跑测试')
+  console.error(`没有找到运行中的 DSH：先启动宿主（官方桌面版或 \`dsh web\`）并确认连接器已加载，${ENDPOINT} 会由连接器写出`)
   process.exit(1)
 }
 

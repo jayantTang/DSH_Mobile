@@ -26,7 +26,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const HOME = homedir()
-const ENDPOINT = join(HOME, '.dsh', 'desktop-shell', 'endpoint.json')
+const ENDPOINT = join(HOME, '.dsh', 'mobile-link', 'endpoint.json')
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 
 function endpoint() {

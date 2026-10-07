@@ -45,23 +45,14 @@ export function defaultStatePath() {
   return join(dshHome(), 'mobile-link', 'agent.json')
 }
 
-export function defaultEndpointFile() {
-  return join(dshHome(), 'desktop-shell', 'endpoint.json')
-}
-
 /**
- * The desktop shell's log, which is the *second* place the live endpoint can be
- * read from.
+ * 连接器**自己写出**的交接文件：给跑在宿主进程之外的脚本用（它们没有进程内上下文，
+ * 拿不到注入的服务）。消费者与格式见 `contracts/out-of-process-handoff.md`。
  *
- * The shell writes `endpoint.json` as a handoff, but it also removes it again
- * (observed after the shell quit and re-attached to an already running `dsh
- * web`), and a machine whose host was started as a bare `dsh web --port 0` only
- * ever sees the URL printed into this log. Both spellings appear here, so the
- * log is a usable last resort — without it the connector sits at the default
- * port with no launch token and every phone request fails.
+ * 注意：这不是连接器自己的发现来源——发现走宿主进程内的注入（见 `dsh-client.js`）。
  */
-export function defaultShellLogFile() {
-  return join(dshHome(), 'desktop-shell', 'dsh-shell.log')
+export function defaultHandoffFile() {
+  return join(dshHome(), 'mobile-link', 'endpoint.json')
 }
 
 /** @returns {Promise<Record<string, unknown> | undefined>} */

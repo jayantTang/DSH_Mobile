@@ -60,13 +60,13 @@ export function parseArgs(argv) {
 /**
  * What the worker needs to know, from the files the backend itself writes.
  *
- * `endpoint.json` is the harness's own handoff: it names the port and the pid of
- * the backend DSH.app is supervising. Reading it rather than guessing the port
- * is what lets this work on a machine where the backend was started with
- * `--port 0`.
+ * `mobile-link/endpoint.json` is the connector's handoff: it names the port and the pid
+ * of the host process it is running in (official desktop app or `dsh web`). Reading it
+ * rather than guessing the port is what lets this work on a machine where the host was
+ * started with `--port 0`.
  */
 export function readEndpoint(home = process.env.DSH_HOME || join(homedir(), '.dsh')) {
-  const path = join(home, 'desktop-shell', 'endpoint.json')
+  const path = join(home, 'mobile-link', 'endpoint.json')
   if (!existsSync(path)) return undefined
   try {
     const parsed = JSON.parse(readFileSync(path, 'utf8'))
@@ -75,7 +75,7 @@ export function readEndpoint(home = process.env.DSH_HOME || join(homedir(), '.ds
       path,
       port: Number(parsed.port),
       pid: Number(parsed.pid) || undefined,
-      desktopShell: parsed.desktopShell === true,
+      source: typeof parsed.source === 'string' ? parsed.source : undefined,
       url: typeof parsed.url === 'string' ? parsed.url : undefined,
     }
   } catch {
@@ -101,7 +101,7 @@ async function main() {
   const home = process.env.DSH_HOME || join(homedir(), '.dsh')
   const endpoint = readEndpoint(home)
   if (!endpoint) {
-    throw new Error(`读不到 DSH 的 endpoint.json（${join(home, 'desktop-shell', 'endpoint.json')}）`)
+    throw new Error(`读不到 DSH 的 endpoint.json（${join(home, 'mobile-link', 'endpoint.json')}）`)
   }
 
   const sessionId = args.session || process.env.DSH_SESSION_ID || ''
@@ -112,7 +112,7 @@ async function main() {
     requestedAt: new Date().toISOString(),
     fromPid: endpoint.pid,
     port: endpoint.port,
-    desktopShell: endpoint.desktopShell,
+    source: endpoint.source,
     sessionId,
     resume: args.resume,
     delayMs: args.delayMs,

@@ -5,10 +5,16 @@
 
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
-import { readFileSync, rmSync } from 'node:fs'
-import { homedir } from 'node:os'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
+
+// 隔离：收件箱落在 `$DSH_HOME/inbox`（`lib/files.js` 认这个变量）。不隔离的话
+// 用例会往真实 `~/.dsh/inbox` 写文件——既是脏数据，也违反宪法第 III 条。
+const TEST_HOME = mkdtempSync(join(tmpdir(), 'mobile-link-link-test-'))
+process.env.DSH_HOME = TEST_HOME
+process.on('exit', () => rmSync(TEST_HOME, { recursive: true, force: true }))
 
 import { MobileLinkAgent } from '../lib/link.js'
 
@@ -603,7 +609,7 @@ test('file transfers are answered locally and never reach the Host', async () =>
     'a file call was forwarded to the Host',
   )
 
-  rmSync(join(homedir(), '.dsh', 'inbox', sessionId), { recursive: true, force: true })
+  rmSync(join(TEST_HOME, 'inbox', sessionId), { recursive: true, force: true })
 })
 
 test('_link/hello reports what this connector can do, without asking the Host', async () => {
@@ -682,7 +688,7 @@ test('桥接回复不带 deviceId：relay 靠 bid 关联回那个 HTTP 请求', 
   assert.equal('deviceId' in done, false, `fsPutDone 带了 deviceId：${JSON.stringify(done)}`)
   assert.ok(readFileSync(done.path).equals(body))
 
-  rmSync(join(homedir(), '.dsh', 'inbox', sessionId), { recursive: true, force: true })
+  rmSync(join(TEST_HOME, 'inbox', sessionId), { recursive: true, force: true })
 })
 
 test('unknown frame types with a deviceId still produce nothing (bridge 帧不跨到设备)', async () => {

@@ -45,11 +45,15 @@
 ### A. 使用公共中转
 
 1. 手机上安装 App：先装 Apple 的 TestFlight，再用 <https://testflight.apple.com/join/tHKQsbCk> 加入测试。
-2. 电脑上安装连接器：`dsh plugin --profile web add dsh-plugin-mobile-link`
+2. 电脑上安装连接器——**按宿主装**（两种宿主档案独立，装错不会报错，只是连接器不会被加载）：
+   - 命令行 web 版（终端里跑 `dsh web`）：`dsh plugin --profile web add dsh-plugin-mobile-link`
+   - 官方桌面版（双击图标打开的应用）：用应用内的插件页，或应用自带的 `dsh` 命令装进 `desktop` 档案
+     （普通 npm 版 `dsh` 会拒绝该档案，这是官方设计）。宿主形态的识别判据（双击图标启动还是敲命令启动）见
+     [`docs/ONBOARDING.md`](docs/ONBOARDING.md)。
 3. 登记到中转：`dsh-mobile-link enroll --invite <邀请码> --relay wss://<中转地址>/dsh-link`
 4. 重启 DSH：`dsh web`
 5. 手机 App →「扫码配对」，扫描电脑上的二维码。二维码可在 DSH 界面的「移动端连接」打开，或访问
-   `http://127.0.0.1:<端口>/mobile-link/qr`（端口见 `~/.dsh/desktop-shell/endpoint.json`）。
+   `http://127.0.0.1:<端口>/mobile-link/qr`（端口看宿主启动时打印的那一行，或状态里的 `dsh.port`）。
 
 邀请码为一次性、绑定一台电脑，在 [issue #1](https://github.com/jayantTang/DSH_Mobile/issues/1) 领取；
 中转地址与邀请码写在同一行。登录后确认手机顶部显示「已连接」，即为成功。故障排查见

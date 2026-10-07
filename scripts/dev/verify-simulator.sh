@@ -43,7 +43,7 @@ mkdir -p "$OUT_DIR"
 step() { printf '\n\033[1;36m>>>\033[0m %s\n' "$*"; }
 
 step "读取本机 DSH 端点"
-ENDPOINT="$HOME/.dsh/desktop-shell/endpoint.json"
+ENDPOINT="$HOME/.dsh/mobile-link/endpoint.json"
 [ -f "$ENDPOINT" ] || { echo "找不到 $ENDPOINT —— 本机没有运行中的 DSH"; exit 1; }
 PORT=$(python3 -c "import json;print(json.load(open('$ENDPOINT')).get('port') or 54499)")
 TOKEN=$(python3 -c "

@@ -13,8 +13,9 @@
  */
 
 import { mkdirSync, openSync, closeSync, writeSync, renameSync, rmSync, statSync } from 'node:fs'
-import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
+
+import { dshHome } from './state.js'
 
 /** Reserved method names this module answers; never forwarded to the Host. */
 export const FILE_BEGIN = '_link/fileBegin'
@@ -45,7 +46,9 @@ class Transfer {
     this.bytes = Number.isFinite(bytes) ? bytes : undefined
     this.received = 0
     this.expectedSeq = 0
-    this.directory = join(homedir(), '.dsh', 'inbox', sessionId)
+    // 认 `DSH_HOME`（不是写死 `~/.dsh`）：测试与验证都靠它隔离，
+    // 混用两种口径会让隔离失效（宪法第 III 条）。
+    this.directory = join(dshHome(), 'inbox', sessionId)
     mkdirSync(this.directory, { recursive: true, mode: 0o700 })
     this.staging = join(this.directory, `.${this.name}.part`)
     // Opened once and kept: reopening per chunk would be a syscall per chunk for

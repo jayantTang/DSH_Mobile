@@ -1,48 +1,73 @@
-// The connector must find the live host even when the desktop shell's handoff
-// file is missing — that file is deleted when the shell quits, and a bare
-// `dsh web --port 0` never writes one.
+/**
+ * 端点发现：候选顺序、降级与"谁最接近成功"的分类。
+ *
+ * 旧的"读外壳交接文件 / 读外壳日志"两级已随自研外壳一起删除（本特性 FR-009），
+ * 所以这里既要断言新顺序，也要断言旧来源**不再出现**。
+ */
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { mkdtemp, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 
-import { discoverEndpoint } from '../lib/dsh-client.js'
+import { discoverCandidates, discoverEndpoint } from '../lib/dsh-client.js'
 
-test('endpoint.json wins when it is there', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'dlp-discover-'))
-  const file = join(dir, 'endpoint.json')
-  await writeFile(file, JSON.stringify({ url: 'http://127.0.0.1:5555/?token=aaa', port: 5555 }))
-  const found = await discoverEndpoint({ endpointFile: file, shellLogFile: join(dir, 'none.log') })
-  assert.equal(found.port, 5555)
-  assert.equal(found.token, 'aaa')
-  assert.match(found.source, /endpoint\.json/)
+const sources = (list) => list.map((item) => item.source)
+
+test('explicit config always comes first', () => {
+  const list = discoverCandidates({
+    explicitUrl: 'http://127.0.0.1:5555/?token=abc',
+    hostService: () => 'http://127.0.0.1:6666/?token=def',
+    env: { DSH_WEB_URL: 'http://127.0.0.1:7777' },
+  })
+  assert.equal(list[0].source, 'config')
+  assert.equal(list[0].port, 5555)
+  assert.equal(list[0].token, 'abc')
+  assert.equal(list[1].source, 'host-service')
 })
 
-test('the shell log answers when the handoff file is gone', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'dlp-discover-'))
-  const log = join(dir, 'dsh-shell.log')
-  await writeFile(log, [
-    '[2026-01-01T00:00:00Z] attached to running dsh (pid 1) at http://127.0.0.1:1111/?token=old',
-    '[2026-01-02T00:00:00Z] ---- DSH.app launch ----',
-    '[2026-01-02T00:00:01Z] attached to running dsh (pid 2) at http://127.0.0.1:65137/?token=sampleLaunchTokenForTheTestOnly',
-  ].join('\n'))
-  const found = await discoverEndpoint({ endpointFile: join(dir, 'missing.json'), shellLogFile: log })
-  assert.equal(found.port, 65137, 'the last launch wins')
-  assert.equal(found.token, 'sampleLaunchTokenForTheTestOnly')
-  assert.match(found.source, /dsh-shell\.log/)
+test('the in-process resolver beats the environment variable', () => {
+  const list = discoverCandidates({
+    hostService: () => 'http://127.0.0.1:19387/?token=hosttok',
+    env: { DSH_WEB_URL: 'http://127.0.0.1:52430' },
+  })
+  assert.deepEqual(sources(list), ['host-service', 'DSH_WEB_URL', 'default'])
+  assert.equal(list[0].port, 19387)
+  assert.equal(list[0].token, 'hosttok')
 })
 
-test('with neither source it falls back to the default port and reports that', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'dlp-discover-'))
-  const saved = process.env.DSH_WEB_URL
-  delete process.env.DSH_WEB_URL // the harness runs inside a host that sets it
-  try {
-    const found = await discoverEndpoint({ endpointFile: join(dir, 'missing.json'),
-                                          shellLogFile: join(dir, 'missing.log') })
-    assert.equal(found.source, 'default')
-    assert.equal(found.token, '')
-  } finally {
-    if (saved !== undefined) process.env.DSH_WEB_URL = saved
+test('a resolver that throws is skipped, not fatal', () => {
+  const list = discoverCandidates({
+    hostService: () => { throw new Error('no ctx') },
+    env: {},
+  })
+  assert.deepEqual(sources(list), ['default'])
+})
+
+test('a resolver returning a non-string is skipped', () => {
+  const list = discoverCandidates({ hostService: () => undefined, env: {} })
+  assert.deepEqual(sources(list), ['default'])
+})
+
+test('DSH_WEB_URL is used when there is no resolver, and forces loopback', () => {
+  const list = discoverCandidates({ env: { DSH_WEB_URL: 'http://192.168.1.9:52430' } })
+  assert.equal(list[0].source, 'DSH_WEB_URL')
+  assert.equal(list[0].base, 'http://127.0.0.1:52430')
+})
+
+test('with nothing at all the default port is the last resort', () => {
+  const list = discoverCandidates({ env: {} })
+  assert.deepEqual(sources(list), ['default'])
+  assert.equal(list[0].port, 54499)
+  assert.equal(list[0].token, '')
+})
+
+test('the removed shell sources never appear again', () => {
+  const list = discoverCandidates({ env: { DSH_WEB_URL: 'http://127.0.0.1:1' } })
+  for (const candidate of list) {
+    assert.doesNotMatch(String(candidate.source), /endpoint\.json|dsh-shell\.log/)
   }
+})
+
+test('discoverEndpoint stays as the first-candidate helper', async () => {
+  const first = await discoverEndpoint({ env: { DSH_WEB_URL: 'http://127.0.0.1:4321' } })
+  assert.equal(first.source, 'DSH_WEB_URL')
+  assert.equal(first.port, 4321)
 })

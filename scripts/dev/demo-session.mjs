@@ -29,7 +29,7 @@ import { fileURLToPath } from 'node:url'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const HOME = homedir()
-const ENDPOINT = join(HOME, '.dsh', 'desktop-shell', 'endpoint.json')
+const ENDPOINT = join(HOME, '.dsh', 'mobile-link', 'endpoint.json')
 
 /// Where the invented project lives.
 ///

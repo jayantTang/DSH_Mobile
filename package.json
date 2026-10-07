@@ -48,6 +48,7 @@
     "gen:connector-baseline": "node scripts/dev/gen-connector-baseline.mjs",
     "sync:send-image-script": "node scripts/dev/sync-send-image-script.mjs",
     "restart": "node scripts/dev/dsh-restart.mjs",
-    "test:scripts": "node --test scripts/dev/dsh-restart.test.mjs scripts/dev/check-contracts.test.mjs scripts/dev/relay-devices.test.mjs test/tools/relaypair.test.mjs skills/send-image/send-image.test.mjs"
+    "test:scripts": "node --test scripts/dev/dsh-restart.test.mjs scripts/dev/check-contracts.test.mjs scripts/dev/relay-devices.test.mjs test/tools/relaypair.test.mjs skills/send-image/send-image.test.mjs",
+    "check:structure": "node scripts/dev/check-structure.mjs"
   }
 }

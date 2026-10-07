@@ -17,7 +17,7 @@ import { execFileSync } from 'node:child_process'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
-const raw = JSON.parse(readFileSync(join(homedir(), '.dsh', 'desktop-shell', 'endpoint.json'), 'utf8'))
+const raw = JSON.parse(readFileSync(join(homedir(), '.dsh', 'mobile-link', 'endpoint.json'), 'utf8'))
 const token = /token=([^&]+)/.exec(raw.url)?.[1]
 const res = await fetch(`http://127.0.0.1:${raw.port}/?token=${token}`, { redirect: 'manual' })
 const cookie = (res.headers.getSetCookie?.()[0] ?? res.headers.get('set-cookie')).split(';')[0]

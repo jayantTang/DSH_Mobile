@@ -43,7 +43,6 @@ const DEFAULTS = {
   agentSecret: '',
   stateFile: '',
   dshUrl: '',
-  endpointFile: '',
   inviteCode: '',
   heartbeatMs: 20000,
   pongTimeoutMs: 60000,
@@ -57,14 +56,28 @@ function asRecord(value) {
 }
 
 /**
+ * 当前宿主属于哪一种形态。**按证据判断，不猜**：
+ *   - 官方桌面版：它用 Electron 当 Node 跑私有宿主进程（`ELECTRON_RUN_AS_NODE=1`，
+ *     入口脚本是 `dsh-desktop-host`）；
+ *   - 其余把本插件加载进宿主进程的情况都是命令行 web 版（含 `dsh web --port 0`）。
+ * 形状契约见 `specs/001-connector-host-compat/data-model.md` §1。
+ *
+ * @param {{env?: NodeJS.ProcessEnv, argv?: string[]}} [context]
+ * @returns {'desktop' | 'web'}
+ */
+export function detectHostForm({ env = process.env, argv = process.argv } = {}) {
+  if (env.ELECTRON_RUN_AS_NODE === '1') return 'desktop'
+  if (/dsh-desktop-host/.test(argv[1] ?? '')) return 'desktop'
+  return 'web'
+}
+
+/**
  * @param {import('@deepseek-ai/cordis').Context} ctx
  * @param {Record<string, unknown>} rawConfig
  */
-export function apply(ctx, rawConfig) {
-  const config = { ...DEFAULTS, ...asRecord(rawConfig) }
-  const logger = ctx.logger ?? console
-
-  const agent = new MobileLinkAgent({
+/** 构造 agent：把配置逐字段钳制成 agent 认的类型。 */
+function buildAgent(config, logger) {
+  return new MobileLinkAgent({
     enabled: config.enabled !== false,
     relayUrl: typeof config.relayUrl === 'string' ? config.relayUrl : DEFAULTS.relayUrl,
     agentId: typeof config.agentId === 'string' ? config.agentId : '',
@@ -74,15 +87,18 @@ export function apply(ctx, rawConfig) {
     // otherwise the agent reads DSH_MOBILE_LINK_INVITE (see enroll.js).
     inviteCode: typeof config.inviteCode === 'string' && config.inviteCode ? config.inviteCode : undefined,
     dshUrl: typeof config.dshUrl === 'string' && config.dshUrl ? config.dshUrl : undefined,
-    endpointFile: typeof config.endpointFile === 'string' && config.endpointFile ? config.endpointFile : undefined,
     heartbeatMs: Number(config.heartbeatMs) || DEFAULTS.heartbeatMs,
     pongTimeoutMs: Number(config.pongTimeoutMs) || DEFAULTS.pongTimeoutMs,
     maxBackoffMs: Number(config.maxBackoffMs) || DEFAULTS.maxBackoffMs,
     logger,
   })
+}
 
+/** 启动/停止 agent 的生命周期 effect。 */
+function startAgent(ctx, agent, logger) {
   ctx.effect(() => {
     let disposed = false
+    agent.setHostForm(detectHostForm())
     agent.emit('status')
     agent.start().catch((error) => {
       if (!disposed) logger.warn?.(`mobile-link: start failed: ${error}`)
@@ -92,9 +108,10 @@ export function apply(ctx, rawConfig) {
       void agent.stop().catch(() => {})
     }
   }, 'mobile-link: DLP agent')
+}
 
-  // Routes ride on DSH's web server when that service exists. `ctx.inject`
-  // scopes them without making the service a hard requirement for the agent.
+/** 三条本机 HTTP 路由；只依赖 `webServer`，缺了也不影响链路。 */
+function registerRoutes(ctx, agent, logger, config) {
   try {
     ctx.inject(['webServer'], (scope) => {
       const disposers = registerMobileLinkRoutes(scope, { agent, logger, config })
@@ -112,17 +129,49 @@ export function apply(ctx, rawConfig) {
   } catch (error) {
     logger.warn?.(`mobile-link: routes unavailable (the link itself keeps running): ${error}`)
   }
+}
 
+/**
+ * 进程内发现（本特性的核心）：宿主把"当前带凭据的回环地址"交给我们。
+ *
+ * 必须声明注入（`ctx.inject(['webServer','connection'])`）——`ctx.get('connection')` 在插件
+ * 作用域里取不到，官方桌面版与 web 版都一样（实测）。与路由分开注入：`connection` 缺失时
+ * 路由照常注册，agent 也照常跑。
+ */
+function wireEndpointResolver(ctx, agent, logger) {
+  try {
+    ctx.inject(['webServer', 'connection'], (scope) => {
+      agent.setHostService(() => scope.connection.authenticatedUrl(`http://127.0.0.1:${scope.webServer.port}`))
+      logger.info?.('mobile-link: in-process endpoint resolver ready')
+    })
+  } catch (error) {
+    logger.warn?.(`mobile-link: in-process endpoint resolver unavailable: ${error}`)
+  }
+}
+
+/**
+ * @param {import('@deepseek-ai/cordis').Context} ctx
+ * @param {Record<string, unknown>} rawConfig
+ */
+export function apply(ctx, rawConfig) {
+  const config = { ...DEFAULTS, ...asRecord(rawConfig) }
+  const logger = ctx.logger ?? console
+  const agent = buildAgent(config, logger)
+
+  startAgent(ctx, agent, logger)
+  registerRoutes(ctx, agent, logger, config)
+  wireEndpointResolver(ctx, agent, logger)
   logger.info?.(`mobile-link: ready (relay ${config.relayUrl})`)
 }
 
 export { MobileLinkAgent } from './link.js'
-export { DshClient, discoverEndpoint, DshUnavailable } from './dsh-client.js'
+export { DshClient, discoverEndpoint, discoverCandidates, DshUnavailable } from './dsh-client.js'
+export { writeHandoff, handoffFromEndpoint } from './handoff.js'
 export {
   MAX_FRAME_BYTES, StreamTable, WaterfallDedupe, agentEndpoint, decodeFrame, encodeFrame,
   joinRelayPath, nextBackoff, normalizeRelayUrl, pairCodeEndpoint, qrPayload,
 } from './dlp.js'
-export { resolveIdentity, defaultStatePath, defaultEndpointFile, MissingIdentity } from './state.js'
+export { resolveIdentity, defaultStatePath, defaultHandoffFile, MissingIdentity } from './state.js'
 export { enrollAgent, enrollPlan, enrollCommand, describeEnrollFailure } from './enroll.js'
 export { INVITE_ENV, DEFAULT_AGENT_NAME } from './state.js'
 export { qrMatrix, qrSvg, versionFor } from './qr.js'

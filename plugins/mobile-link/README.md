@@ -38,11 +38,32 @@ plugins/mobile-link/
 
 ## Install
 
+The connector runs in whichever host runs your DSH. There are two supported hosts today —
+**the official desktop app** and **the command-line web host** — and each keeps its own
+profile, so you install the plugin into the one you actually use. The connector discovers
+the local DSH by itself in both (the host hands it the authenticated loopback address);
+you never type an address or a token.
+
+**Command-line web host**
+
 ```bash
 dsh plugin --profile web add dsh-plugin-mobile-link
 ```
 
-Then restart DSH (or reload the profile). From a checkout the same command takes
+**Official desktop app** — install through the app's own plugin page, or with the CLI that
+the app ships (`…/Resources/runtime/cli/bin/dsh`, installable from its settings). The npm
+`dsh` refuses this profile on purpose (`profile "desktop" is managed exclusively by the
+Electron application`). Two prerequisites matter in practice: let the app start once so it
+initializes its profile, and **quit it completely** before installing — otherwise the
+profile is locked.
+
+```bash
+# quoting the app's bundled CLI; see docs/ONBOARDING.md for the section titles
+"<DeepSeek Harness.app>/Contents/Resources/runtime/cli/bin/dsh" \
+  plugin --profile desktop add dsh-plugin-mobile-link
+```
+
+Then restart the host (or reload the profile). From a checkout the same command takes
 a path — the leading `./` matters, because DSH anchors a relative spec against
 your current directory instead of resolving it inside the profile:
 
@@ -86,9 +107,14 @@ plugin's config block (`cordis.patch.yml`), not by editing this file.
 | `relayUrl` | from `agent.json` | Relay base URL; a bare deployment dials `<relay>/link/agent` |
 | `agentId` / `agentSecret` | from `agent.json` | Override the enrolled identity |
 | `stateFile` | `~/.dsh/mobile-link/agent.json` | Where the identity lives |
-| `dshUrl` | discovery | Explicit local DSH base URL |
-| `endpointFile` | `$DSH_HOME/desktop-shell/endpoint.json` | DSH endpoint handoff file |
+| `dshUrl` | discovery | Explicit local DSH base URL (usually unnecessary — the host hands the connector its own address) |
 | `heartbeatMs` | `20000` | DLP ping interval |
+
+The connector does **not** read an endpoint handoff file any more: discovery happens inside
+the host process (`ctx.inject(['webServer','connection'])`), which is what makes one npm
+package work on both the desktop app and the command-line host. It **writes** one instead —
+`$DSH_HOME/mobile-link/endpoint.json`, mode 0600 — for tools that run *outside* the host
+(our dev/test scripts and the iOS integration helpers).
 
 Address resolution order: this config block, then `DSH_RELAY_URL` (or
 `DSH_MOBILE_LINK_RELAY`), then the enrolled identity file, then the repository

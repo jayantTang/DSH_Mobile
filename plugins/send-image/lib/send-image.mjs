@@ -97,15 +97,14 @@ function usage() {
 /**
  * The live DSH endpoint and its launch token.
  *
- * Two sources, because `endpoint.json` is not always there: the desktop shell
- * writes it as a handoff and **deletes it again when its host exits**, and a
- * bare `dsh web --port 0` never writes one. The shell's log keeps every launch
- * line, so its last entry is the fallback — the same second source
- * `test/tools/host.mjs` reads for the same reason.
+ * One source: the connector writes `$DSH_HOME/mobile-link/endpoint.json` with the
+ * authenticated loopback address, in every supported host (official desktop app and
+ * command-line web host). The old desktop-shell handoff and its log are gone with that
+ * shell — see specs/001-connector-host-compat/.
  */
 function endpoint() {
   const home = process.env.DSH_HOME || join(homedir(), '.dsh')
-  const handoff = join(home, 'desktop-shell', 'endpoint.json')
+  const handoff = join(home, 'mobile-link', 'endpoint.json')
   try {
     const raw = JSON.parse(readFileSync(handoff, 'utf8'))
     const url = new URL(raw.url)
@@ -113,19 +112,12 @@ function endpoint() {
     const port = url.port || raw.port
     if (token && port) return { base: `http://127.0.0.1:${port}`, token }
   } catch {
-    /* fall through to the shell log */
+    /* fall through to the actionable error below */
   }
-  const log = join(home, 'desktop-shell', 'dsh-shell.log')
-  try {
-    const matches = readFileSync(log, 'utf8')
-      .match(/http:\/\/127\.0\.0\.1:(\d+)\/\?token=([A-Za-z0-9_-]+)/g)
-    const last = matches && matches[matches.length - 1]
-    const parsed = last && /http:\/\/127\.0\.0\.1:(\d+)\/\?token=([A-Za-z0-9_-]+)/.exec(last)
-    if (parsed) return { base: `http://127.0.0.1:${parsed[1]}`, token: parsed[2] }
-  } catch {
-    /* fall through to the error below */
-  }
-  throw new Error(`找不到运行中的 DSH：${handoff} 不存在，${log} 里也没有启动地址`)
+  throw new Error(
+    `找不到运行中的 DSH：${handoff} 不存在。请确认宿主（官方桌面版或 \`dsh web\`）正在运行、`
+    + '且连接器已加载——这份交接文件由连接器写出。',
+  )
 }
 
 class Client {

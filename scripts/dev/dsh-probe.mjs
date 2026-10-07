@@ -3,7 +3,7 @@
  * Small DSH helper for the UI-test harness.
  *
  * The UI tests run inside the simulator and cannot read this Mac's
- * ~/.dsh/desktop-shell/endpoint.json, so anything that needs the live host —
+ * ~/.dsh/mobile-link/endpoint.json, so anything that needs the live host —
  * picking a session with real history, creating a throwaway one, cleaning it up
  * again — is done here and handed to the tests as environment variables.
  *
@@ -22,7 +22,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 const HOME = homedir()
-const ENDPOINT = join(HOME, '.dsh', 'desktop-shell', 'endpoint.json')
+const ENDPOINT = join(HOME, '.dsh', 'mobile-link', 'endpoint.json')
 
 // 仓库里只有占位符地址（relay.example.com），真值放仓库根的 .env.local（不入库）。
 // 这里补一层最小加载：只填没设过的变量，不覆盖调用方显式传进来的值。

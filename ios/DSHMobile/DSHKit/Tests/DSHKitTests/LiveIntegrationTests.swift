@@ -26,7 +26,7 @@ final class LiveIntegrationTests: XCTestCase {
 
     override func setUpWithError() throws {
         let path = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".dsh/desktop-shell/endpoint.json")
+            .appendingPathComponent(".dsh/mobile-link/endpoint.json")
         guard let data = try? Data(contentsOf: path) else {
             throw XCTSkip("no DSH endpoint.json at \(path.path)")
         }

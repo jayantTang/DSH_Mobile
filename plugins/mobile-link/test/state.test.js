@@ -10,7 +10,7 @@ import test from 'node:test'
 
 import { mintPairCode } from '../lib/pairing.js'
 import { PLACEHOLDER_RELAY_URL } from '../lib/dlp.js'
-import { defaultEndpointFile, defaultStatePath, readState, resolveIdentity, writeState } from '../lib/state.js'
+import { defaultHandoffFile, defaultStatePath, readState, resolveIdentity, writeState } from '../lib/state.js'
 
 async function tempPath(name = 'agent.json') {
   return join(await mkdtemp(join(tmpdir(), 'mobile-link-state-')), name)
@@ -22,9 +22,9 @@ test('the default paths live under $DSH_HOME', () => {
   const home = process.env.DSH_HOME || ''
   const relative = (path) => (home ? path.startsWith(home) : /\.dsh[/\\]/.test(path))
   assert.ok(relative(defaultStatePath()), `agent.json under ${home || '~/.dsh'}`)
-  assert.ok(relative(defaultEndpointFile()), `endpoint.json under ${home || '~/.dsh'}`)
+  assert.ok(relative(defaultHandoffFile()), `endpoint.json under ${home || '~/.dsh'}`)
   assert.match(defaultStatePath(), /mobile-link[/\\]agent\.json$/)
-  assert.match(defaultEndpointFile(), /desktop-shell[/\\]endpoint\.json$/)
+  assert.match(defaultHandoffFile(), /mobile-link[/\\]endpoint\.json$/)
 })
 
 test('writeState is atomic, 0600, and readable again', async () => {

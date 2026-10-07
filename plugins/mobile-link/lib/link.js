@@ -9,6 +9,8 @@ import { EventEmitter } from 'node:events'
 import { DshClient } from './dsh-client.js'
 import { agentEndpoint, decodeFrame, encodeFrame, nextBackoff, normalizeRelayUrl, pongFor } from './dlp.js'
 import { enrollAgent, enrollCommand, inviteFrom } from './enroll.js'
+import { handoffFromEndpoint, writeHandoff } from './handoff.js'
+import { statusSnapshot } from './status.js'
 import { mintPairCode } from './pairing.js'
 import {
   DEFAULT_EVENTS_BACKLOG,
@@ -19,6 +21,7 @@ import { MissingIdentity, resolveIdentity } from './state.js'
 import { connect as wsConnect } from './ws.js'
 
 const PROTOCOL_VERSION = 1
+
 
 function sleep(ms, signal) {
   return new Promise((resolve) => {
@@ -40,7 +43,7 @@ function numberFromEnv(raw, fallback) {
 
 export class MobileLinkAgent extends EventEmitter {
   constructor({
-    relayUrl, agentId, agentSecret, agentName, stateFile, dshUrl, endpointFile,
+    relayUrl, agentId, agentSecret, agentName, stateFile, dshUrl,
     logger = console, heartbeatMs = 20000, pongTimeoutMs = 60000, maxBackoffMs = 30000,
     random = Math.random, now = Date.now, dshClient, connectImpl = wsConnect, enabled = true,
     inviteCode, fetchImpl = fetch, env = process.env,
@@ -49,7 +52,7 @@ export class MobileLinkAgent extends EventEmitter {
     eventsBacklog = numberFromEnv(env.DSH_MOBILE_LINK_EVENTS_BACKLOG, DEFAULT_EVENTS_BACKLOG),
   } = {}) {
     super()
-    this.config = { relayUrl, agentId, agentSecret, agentName, stateFile, dshUrl, endpointFile, inviteCode }
+    this.config = { relayUrl, agentId, agentSecret, agentName, stateFile, dshUrl, inviteCode }
     this.logger = logger
     this.heartbeatMs = heartbeatMs
     this.pongTimeoutMs = pongTimeoutMs
@@ -63,7 +66,7 @@ export class MobileLinkAgent extends EventEmitter {
     //: Set when this computer has no identity yet: a setup problem for a person
     //: to fix, not a transport problem to retry.
     this.needsEnroll = false
-    this.dsh = dshClient ?? new DshClient({ endpointFile, explicitUrl: dshUrl, logger })
+    this.dsh = dshClient ?? new DshClient({ explicitUrl: dshUrl, logger })
     this.router = new DeviceRouter({
       dsh: this.dsh,
       logger,
@@ -80,6 +83,8 @@ export class MobileLinkAgent extends EventEmitter {
     })
 
     this.identity = undefined
+    /** Which host form we are running in (`desktop` / `web` / `unknown`); set by the plugin. */
+    this.hostForm = 'unknown'
     this.relay = undefined
     this.socket = undefined
     this.state = 'idle'
@@ -122,6 +127,70 @@ export class MobileLinkAgent extends EventEmitter {
     return this.lastError ?? this.router.lastError
   }
 
+  /**
+   * Wire the in-process resolver the plugin learned from `ctx.inject`.
+   *
+   * Only the plugin can obtain it (it needs `webServer` + `connection`), and it
+   * arrives asynchronously, so this is a setter rather than a constructor option.
+   *
+   * @param {(() => string | undefined) | undefined} resolver
+   */
+  setHostService(resolver) {
+    if (typeof this.dsh?.setHostService === 'function') this.dsh.setHostService(resolver)
+    // 解析器一到就试一次本机发现：交接文件服务的是"进程外工具"，**与中转链路无关**，
+    // 因此不能只在连上中转之后才写（未登记的机器上那样永远写不出来）。
+    if (typeof resolver === 'function') void this.refreshLocal()
+    return this
+  }
+
+  /**
+   * 与中转无关的本机发现：拿到带凭据地址就刷新交接文件。
+   *
+   * 这是 `/mobile-link/status` 与"进程外工具能不能工作"的共同前提，所以它在
+   * 链路还没建立（甚至没登记）时也要跑。失败只记进 `dshError`，不影响链路。
+   */
+  async refreshLocal() {
+    try {
+      await this.dsh.refresh()
+      this.dshError = undefined
+      await this.#writeHandoff()
+      this.emit('status')
+      return this.dsh.endpoint
+    } catch (error) {
+      this.dshError = messageOf(error)
+      this.emit('status')
+      return undefined
+    }
+  }
+
+  /**
+   * Record which host form we are in, so the status payload can tell the user
+   * which installation instructions apply to this machine.
+   *
+   * @param {'desktop' | 'web' | 'unknown'} form
+   */
+  setHostForm(form) {
+    this.hostForm = form === 'desktop' || form === 'web' ? form : 'unknown'
+    this.emit('status')
+    return this
+  }
+
+  /**
+   * Publish the current authenticated loopback address for out-of-process tools
+   * (our dev/test scripts and the iOS test helpers).
+   *
+   * Best effort: a failed write must never take the link down.
+   */
+  async #writeHandoff() {
+    const payload = handoffFromEndpoint(this.dsh?.endpoint)
+    if (!payload) return
+    try {
+      await writeHandoff(payload)
+    } catch (error) {
+      this.logger.debug?.(`mobile-link: handoff file not written: ${messageOf(error)}`)
+    }
+  }
+
   // ── lifecycle ───────────────────────────────────────────────────────────
 
   async start() {
@@ -135,6 +204,8 @@ export class MobileLinkAgent extends EventEmitter {
     this._abort = new AbortController()
     this.startedAt = this.now()
     this.state = 'connecting'
+    // 解析器可能在上一次会话里就已经装好；这里补一次本机发现（失败无妨）。
+    void this.refreshLocal()
     this._loop = this.#run().catch((error) => {
       this.lastError = messageOf(error)
       this.state = 'failed'
@@ -275,6 +346,9 @@ export class MobileLinkAgent extends EventEmitter {
     try {
       await this.dsh.refresh()
       this.dshError = undefined
+      // 进程外工具（本机脚本、iOS 集成测试辅助）靠这份交接文件拿带凭据地址；
+      // 写入失败不影响链路（`#writeHandoff` 自己吞异常）。
+      await this.#writeHandoff()
     } catch (error) {
       this.dshError = messageOf(error)
       this.lastError = this.dshError
@@ -410,51 +484,9 @@ export class MobileLinkAgent extends EventEmitter {
     return mintPairCode({ identity, ttlMs, fetchImpl })
   }
 
-  /** Snapshot for `GET /mobile-link/status`. */
+  /** Snapshot for `GET /mobile-link/status`（载荷本身在 status.js，便于守住"只增不改"）。 */
   status() {
-    return {
-      ok: true,
-      enabled: this.enabled !== false,
-      protocolVersion: PROTOCOL_VERSION,
-      // Same facts as `_link/hello`, which is the channel the app actually
-      // uses: this route only exists on the direct path.
-      serverVersion: SERVER_VERSION,
-      capabilities: SERVER_CAPABILITIES,
-      enroll: {
-        // A phone (or the user's browser) can read this to find out that the
-        // computer half is installed but not yet registered, and what to run.
-        registered: !this.needsEnroll,
-        needsEnroll: this.needsEnroll,
-        stateFile: this.identity?.stateFile ?? this.config.stateFile ?? null,
-        relayUrl: this.config.relayUrl ?? null,
-        command: this.needsEnroll ? this.enrollHint() : null,
-        hint: this.needsEnroll
-          ? '这台电脑还没有登记到中转。请带上邀请码运行一次登记命令，然后重启 DSH。'
-          : null,
-      },
-      state: this.state,
-      connected: this.state === 'connected',
-      relayUrl: this.identity?.relayUrl ?? this.config.relayUrl ?? null,
-      agentId: this.identity?.agentId ?? this.config.agentId ?? null,
-      agentName: this.identity?.agentName ?? null,
-      stateFile: this.identity?.stateFile ?? this.config.stateFile ?? null,
-      dsh: {
-        endpoint: this.dsh?.endpoint?.base ?? null,
-        source: this.dsh?.endpoint?.source ?? null,
-        port: this.dsh?.endpoint?.port ?? null,
-        authenticated: Boolean(this.dsh?.cookie),
-        muxUp: Boolean(this.dsh?.muxReady),
-        error: this.dshError ?? null,
-      },
-      devices: this.router.snapshot(),
-      deviceCount: this.devices.size,
-      openStreams: this.streams.size,
-      pendingWaterfalls: this.dedupe.size,
-      lastError: this.failure ?? null,
-      startedAt: this.startedAt ?? null,
-      connectedAt: this.connectedAt ?? null,
-      reconnectAttempts: this.reconnectAttempts,
-    }
+    return statusSnapshot(this)
   }
 }
 

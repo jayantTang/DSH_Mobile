@@ -23,7 +23,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 const HOME = homedir()
-const ENDPOINT = join(HOME, '.dsh', 'desktop-shell', 'endpoint.json')
+const ENDPOINT = join(HOME, '.dsh', 'mobile-link', 'endpoint.json')
 
 function endpoint() {
   const raw = JSON.parse(readFileSync(ENDPOINT, 'utf8'))

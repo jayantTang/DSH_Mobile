@@ -1,18 +1,15 @@
 /**
- * The two shapes one `POST /api/<method>` answer can arrive in.
+ * 两种答案形状（JSON / multipart 二进制），以及**候选顺序上的认证行为**。
  *
- * A result that carries bytes cannot be JSON, so a Host that supports them
- * answers `multipart/form-data`: a `metadata` part holds the envelope with
- * `null` standing where the bytes were, and one `bytes-N` part carries each of
- * them. A client that only reads JSON sees an unparsable body and reports
- * `gateway/bad-response` — which is how a Host generation that started doing
- * this broke every file read at once. Both shapes are pinned here.
+ * 前者是既有契约：带字节的结果不可能是 JSON，支持字节的宿主改回
+ * `multipart/form-data`；只读 JSON 的客户端会报 `gateway/bad-response`。
+ * 后者是本特性新增：发现层按顺序给候选，"认证成功"的那个才算命中。
  */
 
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { DshClient } from '../lib/dsh-client.js'
+import { DshClient, DshUnavailable } from '../lib/dsh-client.js'
 
 /** A client whose transport, endpoint and cookie are all already settled. */
 function clientWith(fetchImpl) {
@@ -68,4 +65,97 @@ test('a binary answer whose part is missing is a bad response, not a crash', asy
   const result = await instance.rpc('workspaceFiles/readBytes', {})
   assert.equal(result.ok, false)
   assert.equal(result.error.code, 'gateway/bad-response')
+})
+
+/** 只对带正确令牌的 URL 发 cookie；其余一律 401。 */
+function authBy(fetchImpl) {
+  return async (url, init) => {
+    const parsed = new URL(typeof url === 'string' ? url : url.url)
+    if (parsed.searchParams.get('token') !== 'good') return new Response('', { status: 401 })
+    return new Response('', {
+      status: 303,
+      headers: { 'set-cookie': 'dsh-auth-test=v1; Path=/; HttpOnly' },
+    })
+  }
+}
+
+test('refresh takes the first candidate that actually authenticates', async () => {
+  const client = new DshClient({
+    logger: { debug() {}, warn() {} },
+    env: {},
+    hostService: () => 'http://127.0.0.1:19387/?token=good',
+    fetchImpl: authBy(),
+  })
+  const endpoint = await client.refresh()
+  assert.equal(endpoint.source, 'host-service')
+  assert.equal(endpoint.port, 19387)
+  assert.match(client.cookie, /dsh-auth-test/)
+  assert.equal(client.errorKind, undefined)
+})
+
+test('refresh falls back to the older source when the new one cannot authenticate', async () => {
+  const client = new DshClient({
+    logger: { debug() {}, warn() {} },
+    env: { DSH_WEB_URL: 'http://127.0.0.1:52430/?token=good' },
+    hostService: () => 'http://127.0.0.1:19387/?token=bad',
+    fetchImpl: authBy(),
+  })
+  const endpoint = await client.refresh()
+  assert.equal(endpoint.source, 'DSH_WEB_URL', '第 2 级认证失败后必须继续用第 3 级')
+  assert.match(client.cookie, /dsh-auth-test/)
+})
+
+test('a wrong explicit config does not wedge discovery: later candidates are still tried', async () => {
+  const client = new DshClient({
+    logger: { debug() {}, warn() {} },
+    env: {},
+    explicitUrl: 'http://127.0.0.1:9/?token=bad',
+    hostService: () => 'http://127.0.0.1:19387/?token=good',
+    fetchImpl: authBy(),
+  })
+  const endpoint = await client.refresh()
+  assert.equal(endpoint.source, 'host-service')
+})
+
+test('when every candidate fails the error kind names the one that got furthest', async () => {
+  const client = new DshClient({
+    logger: { debug() {}, warn() {} },
+    env: {},
+    hostService: () => 'http://127.0.0.1:19387/?token=bad',
+    fetchImpl: authBy(),
+  })
+  await assert.rejects(() => client.refresh(), DshUnavailable)
+  assert.equal(client.errorKind, 'host-service')
+  assert.equal(client.cookie, '')
+})
+
+test('with no token anywhere the failure is "unreachable", not a service name', async () => {
+  const client = new DshClient({
+    logger: { debug() {}, warn() {} },
+    env: {},
+    fetchImpl: authBy(),
+  })
+  await assert.rejects(() => client.refresh(), DshUnavailable)
+  assert.equal(client.errorKind, 'unreachable')
+})
+
+test('the resolver can be wired after construction (that is how ctx.inject arrives)', async () => {
+  const client = new DshClient({ logger: { debug() {}, warn() {} }, env: {}, fetchImpl: authBy() })
+  assert.equal(client.hostService, undefined)
+  client.setHostService(() => 'http://127.0.0.1:19387/?token=good')
+  const endpoint = await client.refresh()
+  assert.equal(endpoint.source, 'host-service')
+})
+
+test('outside a host (no resolver) the older sources still work exactly as before', async () => {
+  // 进程外运行（独立命令行）拿不到宿主内注入：第 1、3、4 级必须照旧可用。
+  const client = new DshClient({
+    logger: { debug() {}, warn() {} },
+    env: { DSH_WEB_URL: 'http://127.0.0.1:52430/?token=good' },
+    fetchImpl: authBy(),
+  })
+  assert.equal(client.hostService, undefined)
+  const endpoint = await client.refresh()
+  assert.equal(endpoint.source, 'DSH_WEB_URL')
+  assert.equal(endpoint.port, 52430)
 })

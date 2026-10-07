@@ -12,7 +12,7 @@ import {
 
 function fixtureHome() {
   const home = mkdtempSync(join(tmpdir(), 'dsh-restart-'))
-  mkdirSync(join(home, 'desktop-shell'), { recursive: true })
+  mkdirSync(join(home, 'mobile-link'), { recursive: true })
   return home
 }
 
@@ -27,17 +27,17 @@ function withHome(body) {
 
 test('reads the harness endpoint, port and supervising pid', () => {
   withHome((home) => {
-    const directory = join(home, 'desktop-shell')
+    const directory = join(home, 'mobile-link')
     writeFileSync(join(directory, 'endpoint.json'), JSON.stringify({
       url: 'http://127.0.0.1:58334/?token=abc',
       port: 58334,
       pid: 4321,
-      desktopShell: true,
+      source: 'host-service',
     }))
     const endpoint = readRequesterEndpoint(home)
     assert.equal(endpoint.port, 58334)
     assert.equal(endpoint.pid, 4321)
-    assert.equal(endpoint.desktopShell, true)
+    assert.equal(endpoint.source, 'host-service')
     // The worker must keep the token-carrying url: dropping it turns the cookie
     // exchange into an unauthenticated GET, which answers 401 and leaves the
     // agent asleep after a restart that otherwise worked.

@@ -20,7 +20,7 @@ npm run restart -- --resume "继续…"
 
 - `--delay <秒>`：重启前等多久，默认 3 秒。**把工具结果送回客户端需要时间**，
   所以要让 agent 的最后一条消息先落地，就给大一点（例如 `--delay 20`）。
-- `--dry-run`：只打印计划（从 `~/.dsh/desktop-shell/endpoint.json` 读到的 pid/端口、
+- `--dry-run`：只打印计划（从 `~/.dsh/mobile-link/endpoint.json` 读到的 pid/端口、
   要唤醒的会话、worker 路径），不真的重启。
 - `--session <id>`：默认取 `$DSH_SESSION_ID`（工具进程里通常都有）。
 

@@ -26,7 +26,7 @@ const HERE = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(HERE, '../..')
 const BUNDLE = 'com.jayanttang.dsh'
 const APP = join(ROOT, 'ios/DSHMobile/.build/sim/Build/Products/Debug-iphonesimulator/DSHMobile.app')
-const ENDPOINT = join(homedir(), '.dsh', 'desktop-shell', 'endpoint.json')
+const ENDPOINT = join(homedir(), '.dsh', 'mobile-link', 'endpoint.json')
 
 const argv = process.argv.slice(2)
 const flag = (name, fallback = null) => {

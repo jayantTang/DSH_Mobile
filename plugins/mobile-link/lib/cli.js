@@ -66,8 +66,13 @@ async function main() {
   The invite may also arrive as ${INVITE_ENV}. Exits non-zero on failure.
 
   cli.js --relay <ws url> --agent-id <id> --agent-secret <secret>
-  [--state-file <path>] [--dsh-url <url>] [--endpoint-file <path>]
+  [--state-file <path>] [--dsh-url <url>]
   [--status-file <path>] [--heartbeat-ms <n>] [--log-level debug|info|warn]
+
+  Note: run this inside a DSH host (plugin) when you can. A standalone process has no
+  in-process context, so on the official desktop app it cannot learn the local address by
+  itself — pass one explicitly with --dsh-url (a tokenized URL only stays valid until the
+  host restarts). Supported hosts: the official desktop app and the command-line web host.
 
   cli.js --mint-pair-code --relay <ws url> --agent-id <id> --agent-secret <secret>
   [--ttl-ms <n>]     print one pairing code as JSON and exit
@@ -106,7 +111,7 @@ async function main() {
       process.stdout.write('\n' + qrTerminal(minted.qrPayload) + '\n')
       process.stdout.write(`配对码 ${minted.code}（约 ${minutes} 分钟有效，一次性）\n`)
       process.stdout.write('也可以在这台电脑上打开 http://127.0.0.1:<DSH 端口>/mobile-link/qr 取新码；\n'
-        + '端口在 DSH 启动时打印，也在 ~/.dsh/desktop-shell/endpoint.json 里。\n')
+        + '端口在 DSH 启动时打印；连接器还会把带令牌地址写进 ~/.dsh/mobile-link/endpoint.json。\n')
     } catch (error) {
       process.stdout.write('（这次没能预先申请配对码：' + (error?.message ?? error) + '）\n'
         + '重启 DSH 后，在这台电脑的浏览器里打开 http://127.0.0.1:<DSH 端口>/mobile-link/qr，'
@@ -148,7 +153,6 @@ async function main() {
     agentSecret: args.agentSecret,
     stateFile: typeof args.stateFile === 'string' ? args.stateFile : undefined,
     dshUrl: typeof args.dshUrl === 'string' ? args.dshUrl : undefined,
-    endpointFile: typeof args.endpointFile === 'string' ? args.endpointFile : undefined,
     heartbeatMs: Number(args.heartbeatMs) || 20000,
     logger,
   })

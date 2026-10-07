@@ -366,7 +366,7 @@ async function status() {
 
 /// 本机 DSH 的客户端会话（与探针脚本同一套：endpoint.json → 换 cookie → /api/<method>）。
 async function hostRPC() {
-  const endpoint = JSON.parse(readFileSync(join(homedir(), '.dsh', 'desktop-shell', 'endpoint.json'), 'utf8'))
+  const endpoint = JSON.parse(readFileSync(join(homedir(), '.dsh', 'mobile-link', 'endpoint.json'), 'utf8'))
   const token = /token=([^&]+)/.exec(endpoint.url)?.[1]
   const port = endpoint.port ?? 54499
   const exchange = await fetch(`http://127.0.0.1:${port}/?token=${token}`, { redirect: 'manual' })

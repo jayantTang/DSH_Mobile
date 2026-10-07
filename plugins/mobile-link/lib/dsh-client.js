@@ -2,9 +2,10 @@
  * Client for the *local* DSH instance.
  *
  * Responsibilities (spec §4.1):
- *   1. Discover the endpoint: `$DSH_HOME/desktop-shell/endpoint.json`, then
- *      `$DSH_WEB_URL`, then `http://127.0.0.1:54499`. The file changes on every
- *      DSH restart, so it is re-read on every (re)connect.
+ *   1. Discover the endpoint as an ordered candidate list: explicit config, then the
+ *      host's own in-process resolver, then `DSH_WEB_URL`, then `http://127.0.0.1:54499`.
+ *      The authenticated value changes on every host restart, so it is re-resolved on
+ *      every (re)connect.
  *   2. Exchange `?token=` for a `dsh-auth-*` cookie without following the 303.
  *      The cookie is bound to the authority, so the client always dials
  *      `127.0.0.1:<port>` and never rewrites `Host` (see NOTES.md on spec §7).
@@ -13,9 +14,7 @@
  */
 
 import { EventEmitter } from 'node:events'
-import { readFile } from 'node:fs/promises'
 
-import { defaultEndpointFile, defaultShellLogFile } from './state.js'
 import { connect as wsConnect } from './ws.js'
 
 export class DshUnavailable extends Error {}
@@ -90,56 +89,75 @@ async function decodeBinaryAnswer(response) {
 }
 
 /**
- * Resolve where the local DSH web server lives.
- * @returns {Promise<{base: string, wsBase: string, port: number, token: string, source: string}>}
+ * Resolve **all** ways this process might reach the local DSH, in the order they
+ * must be tried (contract: `contracts/endpoint-discovery.md` §1).
+ *
+ * Pure and injectable on purpose: it only *produces candidates*. Authentication
+ * happens in `DshClient`, because "this candidate works" must be decided by an
+ * actual token → cookie exchange, not by the shape of the value.
+ *
+ * @param {object} [options]
+ * @param {string} [options.explicitUrl] user-configured address (may carry a token)
+ * @param {() => string | undefined} [options.hostService] in-process resolver: the host
+ *   process hands us its current authenticated loopback URL (desktop + web hosts)
+ * @param {NodeJS.ProcessEnv} [options.env]
+ * @returns {Array<{base: string, wsBase: string, port: number, token: string, source: string}>}
  */
-export async function discoverEndpoint({
-  endpointFile = defaultEndpointFile(),
-  shellLogFile = defaultShellLogFile(),
-  explicitUrl,
-} = {}) {
+export function discoverCandidates({ explicitUrl, hostService, env = process.env } = {}) {
+  const candidates = []
   if (explicitUrl) {
     const parsed = parseBase(explicitUrl, { forceLoopback: false })
     parsed.source = 'config'
-    return parsed
+    candidates.push(parsed)
   }
-  try {
-    const raw = JSON.parse(await readFile(endpointFile, 'utf8'))
-    const url = typeof raw?.url === 'string' && raw.url ? raw.url : `http://127.0.0.1:${raw?.port ?? FALLBACK_PORT}`
-    const parsed = parseBase(url)
-    if (!parsed.port) parsed.port = Number(raw?.port) || FALLBACK_PORT
-    parsed.base = `http://127.0.0.1:${parsed.port}`
-    parsed.wsBase = `ws://127.0.0.1:${parsed.port}`
-    parsed.token = parsed.token || url.searchParams?.get?.('token') || ''
-    parsed.source = `endpoint.json:${endpointFile}`
-    return parsed
-  } catch {
-    /* fall through to the log, the environment and the built-in default */
-  }
-  // The handoff file can be missing while the host is very much alive: the
-  // desktop shell deletes it when it quits, and a bare `dsh web --port 0` never
-  // writes one at all. The shell's own log keeps every launch line, so the last
-  // one that still answers is the live endpoint. This is the same second source
-  // `test/tools/host.mjs` reads for the same reason.
-  try {
-    const log = await readFile(shellLogFile, 'utf8')
-    const matches = log.match(/http:\/\/127\.0\.0\.1:(\d+)\/\?token=([A-Za-z0-9_-]+)/g)
-    if (matches && matches.length) {
-      const parsed = parseBase(matches[matches.length - 1])
-      parsed.source = `dsh-shell.log:${shellLogFile}`
-      return parsed
+  if (typeof hostService === 'function') {
+    try {
+      const raw = hostService()
+      if (typeof raw === 'string' && raw !== '') {
+        const parsed = parseBase(raw)
+        parsed.source = 'host-service'
+        candidates.push(parsed)
+      }
+    } catch {
+      /* the service is not usable in this host; fall through to the older sources */
     }
-  } catch {
-    /* fall through to the environment and the built-in default */
   }
-  if (process.env.DSH_WEB_URL) {
-    const parsed = parseBase(process.env.DSH_WEB_URL)
+  if (env.DSH_WEB_URL) {
+    const parsed = parseBase(env.DSH_WEB_URL)
     parsed.source = 'DSH_WEB_URL'
-    return parsed
+    candidates.push(parsed)
   }
-  const parsed = parseBase(`http://127.0.0.1:${FALLBACK_PORT}`)
-  parsed.source = 'default'
-  return parsed
+  const fallback = parseBase(`http://127.0.0.1:${FALLBACK_PORT}`)
+  fallback.source = 'default'
+  candidates.push(fallback)
+  return candidates
+}
+
+/**
+ * The first candidate, for callers that only need one address.
+ * @returns {Promise<{base: string, wsBase: string, port: number, token: string, source: string}>}
+ */
+export async function discoverEndpoint(options = {}) {
+  return discoverCandidates(options)[0]
+}
+
+/**
+ * Classify why discovery/authentication failed, for the status payload and the
+ * user-facing hint table (`contracts/status-endpoint.md` §3).
+ *
+ * The rule is "the candidate that got furthest": one that carried a token and
+ * still failed says more about the situation than the bare fallback port.
+ *
+ * @param {{source?: string} | undefined} endpoint
+ * @returns {'config' | 'host-service' | 'DSH_WEB_URL' | 'unreachable'}
+ */
+function kindFor(endpoint) {
+  switch (endpoint?.source) {
+    case 'config': return 'config'
+    case 'host-service': return 'host-service'
+    case 'DSH_WEB_URL': return 'DSH_WEB_URL'
+    default: return 'unreachable'
+  }
 }
 
 function cookieFrom(response) {
@@ -153,10 +171,11 @@ function cookieFrom(response) {
 }
 
 export class DshClient extends EventEmitter {
-  constructor({ endpointFile, explicitUrl, logger = console, fetchImpl = fetch, connectImpl = wsConnect } = {}) {
+  constructor({ explicitUrl, hostService, logger = console, fetchImpl = fetch, connectImpl = wsConnect, env = process.env } = {}) {
     super()
-    this.endpointFile = endpointFile || defaultEndpointFile()
     this.explicitUrl = explicitUrl
+    this.hostService = typeof hostService === 'function' ? hostService : undefined
+    this.env = env
     this.logger = logger
     this.fetchImpl = fetchImpl
     this.connectImpl = connectImpl
@@ -167,25 +186,59 @@ export class DshClient extends EventEmitter {
     this.muxReady = false
     this.pendingOpens = []
     this.lastError = undefined
+    /** Failure classification for the status payload; see contracts/status-endpoint.md §3. */
+    this.errorKind = undefined
   }
 
-  /** Re-read endpoint discovery and re-do the token -> cookie exchange. */
+  /**
+   * Wire (or replace) the in-process resolver after construction.
+   *
+   * The plugin learns about the host's services asynchronously — `ctx.inject`
+   * callbacks fire once the service exists — so the agent cannot pass this in
+   * the constructor.
+   *
+   * @param {(() => string | undefined) | undefined} resolver
+   */
+  setHostService(resolver) {
+    this.hostService = typeof resolver === 'function' ? resolver : undefined
+    return this
+  }
+
+  /**
+   * Re-read endpoint discovery and re-do the token -> cookie exchange.
+   *
+   * Candidates are tried in order and the first one that *authenticates* wins:
+   * a host that can hand us its current URL beats the environment variable and
+   * the built-in default, while an older source is still used if the new one
+   * turns out not to work (constitution §IV).
+   */
   async refresh({ force = false } = {}) {
-    const endpoint = await discoverEndpoint({ endpointFile: this.endpointFile, explicitUrl: this.explicitUrl })
-    if (force || !this.endpoint || this.endpoint.base !== endpoint.base) this.cookie = ''
-    this.endpoint = endpoint
-    if (!this.cookie) await this.authenticate()
-    return this.endpoint
+    const candidates = discoverCandidates({ explicitUrl: this.explicitUrl, hostService: this.hostService, env: this.env })
+    let lastError
+    let attemptedWithToken
+    for (const candidate of candidates) {
+      if (force || !this.endpoint || this.endpoint.base !== candidate.base) this.cookie = ''
+      this.endpoint = candidate
+      try {
+        await this.authenticate()
+        this.errorKind = undefined
+        return this.endpoint
+      } catch (error) {
+        lastError = error
+        if (candidate.token) attemptedWithToken = candidate
+      }
+    }
+    this.cookie = ''
+    this.errorKind = kindFor(attemptedWithToken ?? this.endpoint)
+    throw lastError ?? new DshUnavailable('DSH is not reachable (no candidate answered)')
   }
 
   async authenticate() {
-    const endpoint = this.endpoint ?? await discoverEndpoint({
-      endpointFile: this.endpointFile, explicitUrl: this.explicitUrl,
-    })
-    this.endpoint = endpoint
+    const endpoint = this.endpoint
+    if (!endpoint) throw new DshUnavailable('no DSH endpoint discovered yet')
     if (!endpoint.token) {
       throw new DshUnavailable(
-        `no DSH launch token found (looked at ${this.endpoint.source}); restart DSH or set dshUrl in the plugin config`,
+        `no DSH launch token found (looked at ${endpoint.source}); restart the host or set dshUrl in the plugin config`,
       )
     }
     const url = `${endpoint.base}/?token=${encodeURIComponent(endpoint.token)}`
@@ -200,7 +253,7 @@ export class DshClient extends EventEmitter {
       throw new DshUnavailable(`DSH auth handshake returned HTTP ${response.status} without a dsh-auth cookie`)
     }
     this.cookie = cookie
-    this.logger.debug?.(`mobile-link: authenticated with DSH at ${endpoint.base}`)
+    this.logger.debug?.(`mobile-link: authenticated with DSH at ${endpoint.base} (source: ${endpoint.source})`)
     return cookie
   }
 
