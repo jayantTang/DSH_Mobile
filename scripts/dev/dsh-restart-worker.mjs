@@ -22,7 +22,7 @@
  */
 
 import { execFileSync, spawn } from 'node:child_process'
-import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, readFileSync, readlinkSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -55,6 +55,45 @@ function save(patch) {
 }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+/** 官方桌面版的用户数据目录（单实例文件在这里）。 */
+export const APP_USER_DATA = join(homedir(), 'Library', 'Application Support', '@deepseek-ai', 'dsh-desktop')
+
+/**
+ * 清掉上一次运行留下的**陈旧单实例文件**。
+ *
+ * 不清理会怎样：应用被 SIGTERM 后，`SingletonLock` 里仍指着已经死掉的旧 pid；新实例启动时据此
+ * 认为"已有一个实例在跑"，于是**干净退出**（系统日志实测：spawn 后约 60ms 报 termination 0,0,0），
+ * 这段时间约 30 秒——用户看到的就是"关掉了但一直不自己起来"。
+ *
+ * 只在该应用确实没有主进程时清理；应用在跑时绝不动它（会破坏它的单实例保证）。
+ */
+export function clearStaleSingleton({
+  dir = APP_USER_DATA, log = () => {}, remove = rmSync, exists = existsSync, appAlive = () => appMainPids().length > 0,
+} = {}) {
+  if (appAlive()) {
+    log('应用仍在运行，跳过单实例文件清理')
+    return []
+  }
+  const cleared = []
+  for (const name of ['SingletonLock', 'SingletonCookie', 'SingletonSocket']) {
+    const target = join(dir, name)
+    if (!exists(target)) continue
+    try {
+      let points = ''
+      try {
+        points = ` → ${readlinkSync(target)}`
+      } catch { /* 不是符号链接就算 */ }
+      remove(target, { force: true })
+      cleared.push(name)
+      log(`清理陈旧单实例文件：${name}${points}`)
+    } catch (error) {
+      log(`清理 ${name} 失败：${error.message}`)
+    }
+  }
+  return cleared
+}
+
 
 /**
  * 后端跑在哪种宿主里：官方桌面版（Electron 管的私有宿主进程）还是命令行 `dsh web`。
@@ -163,6 +202,7 @@ async function relaunchUntilBackend({ log = () => {}, previousPid, timeoutMs = 1
   while (Date.now() < deadline) {
     if (!appMainPids().length) {
       opens += 1
+      clearStaleSingleton({ log })
       try {
         execFileSync('open', ['-a', 'DeepSeek Harness'], { stdio: 'ignore' })
       } catch (error) {

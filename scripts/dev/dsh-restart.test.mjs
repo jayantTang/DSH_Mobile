@@ -7,7 +7,7 @@ import {
   DEFAULT_RESUME, parseArgs, readEndpoint as readRequesterEndpoint, stateDir,
 } from './dsh-restart.mjs'
 import {
-  alive, appMainPids, hostFormOf, readEndpoint, resumePayload, stop, waitForNewBackend,
+  alive, appMainPids, clearStaleSingleton, hostFormOf, readEndpoint, resumePayload, stop, waitForNewBackend,
 } from './dsh-restart-worker.mjs'
 
 function fixtureHome() {
@@ -172,4 +172,28 @@ test('appMainPids picks the app main process, never the host child', () => {
 
   const none = () => { throw new Error('ps: failed') }
   assert.deepEqual(appMainPids({ run: none }), [], '取不到进程列表时返回空数组，不抛')
+})
+
+test('clearStaleSingleton removes the lock only when the app is really gone', () => {
+  const removed = []
+  const fakeFs = {
+    dir: '/tmp/whatever',
+    log: () => {},
+    exists: () => true,
+    remove: (path) => removed.push(path),
+    removeMissing: () => {},
+  }
+  const gone = clearStaleSingleton({ ...fakeFs, appAlive: () => false })
+  assert.equal(gone.length, 3, '应用不在时才清三个文件')
+  assert.ok(removed.every((path) => path.includes('Singleton')))
+
+  removed.length = 0
+  const running = clearStaleSingleton({ ...fakeFs, appAlive: () => true })
+  assert.deepEqual(running, [], '应用在跑时一个都不动')
+  assert.deepEqual(removed, [])
+})
+
+test('clearStaleSingleton tolerates a missing directory', () => {
+  const cleared = clearStaleSingleton({ dir: '/tmp/definitely-not-here', appAlive: () => false, log: () => {} })
+  assert.deepEqual(cleared, [])
 })
