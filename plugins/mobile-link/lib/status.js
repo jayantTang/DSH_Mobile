@@ -22,6 +22,17 @@ export const DSH_HINTS = {
   unreachable: { hint: '本机 DSH 不可达；请确认宿主正在运行', docAnchor: '排查：连不上时看这里' },
 }
 
+/**
+ * 宿主形态 → 用户可读的一句话 + 文档锚点（FR-012：分类必须可行动，不能只给分类名）。
+ *
+ * 锚点标题与 `docs/ONBOARDING.md` 的小节标题逐字一致，`test/status.test.js` 会核对。
+ */
+export const HOST_HINTS = {
+  desktop: { hint: '你正在用官方桌面版（连接器已装进它的档案）', docAnchor: '安装：官方桌面版' },
+  web: { hint: '你正在用命令行 web 版', docAnchor: '安装：命令行 web 版' },
+  unknown: { hint: '无法识别当前宿主；若连不上，请按"排查"一节处理', docAnchor: '排查：连不上时看这里' },
+}
+
 /** 本机 DSH 侧的诊断块（老字段一个不少，新字段只增）。 */
 function dshBlock(agent) {
   const errorKind = agent.dshError ? (agent.dsh?.errorKind ?? 'unreachable') : null
@@ -45,11 +56,15 @@ function dshBlock(agent) {
  * @returns {Record<string, unknown>} 可直接序列化给 `/status` 的对象
  */
 export function statusSnapshot(agent) {
+  const hostEntry = HOST_HINTS[agent.hostForm] ?? HOST_HINTS.unknown
   return {
     ok: true,
     enabled: agent.enabled !== false,
-    // 新增（只增不改）：宿主形态，决定用户该按哪条说明安装/排障。
+    // 新增（只增不改）：宿主形态 + 它对应的一句话与文档锚点，
+    // 决定用户该按哪条说明安装/排障（FR-012）。
     host: agent.hostForm,
+    hostHint: hostEntry.hint,
+    hostDocAnchor: hostEntry.docAnchor,
     protocolVersion: PROTOCOL_VERSION,
     // Same facts as `_link/hello`, which is the channel the app actually uses:
     // this route only exists on the direct path.

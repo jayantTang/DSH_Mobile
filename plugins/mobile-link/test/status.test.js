@@ -96,3 +96,36 @@ test('the enrollment hint only appears while enrollment is pending', () => {
   assert.equal(done.enroll.hint, null)
   assert.equal(done.enroll.command, null)
 })
+
+test('the host form carries its own sentence and doc anchor (FR-012)', async () => {
+  const { HOST_HINTS } = await import('../lib/status.js')
+  for (const [form, entry] of Object.entries(HOST_HINTS)) {
+    const status = statusSnapshot(fakeAgent({ hostForm: form }))
+    assert.equal(status.host, form)
+    assert.equal(status.hostHint, entry.hint)
+    assert.equal(status.hostDocAnchor, entry.docAnchor)
+    assert.ok(status.hostHint && status.hostDocAnchor, `${form} 缺少提示或锚点`)
+  }
+})
+
+test('an unrecognised host form still gets the "unknown" sentence, never undefined', () => {
+  const status = statusSnapshot(fakeAgent({ hostForm: 'something-new' }))
+  assert.equal(status.host, 'something-new', '原始取值照实上报，不篡改')
+  assert.match(status.hostHint, /无法识别当前宿主/)
+  assert.equal(status.hostDocAnchor, '排查：连不上时看这里')
+})
+
+test('the doc anchors this payload promises really exist in ONBOARDING', async () => {
+  // 契约说锚点标题"逐字存在"，这里真的去核对一次，避免改了文档名而状态接口没跟上。
+  const { readFileSync } = await import('node:fs')
+  const { join } = await import('node:path')
+  const doc = readFileSync(join(import.meta.dirname, '..', '..', '..', 'docs', 'ONBOARDING.md'), 'utf8')
+  const titles = new Set([...statusSnapshot(fakeAgent({ dshError: 'x' })).hostDocAnchor
+    ? [statusSnapshot(fakeAgent({ hostForm: 'desktop' })).hostDocAnchor,
+       statusSnapshot(fakeAgent({ hostForm: 'web' })).hostDocAnchor,
+       statusSnapshot(fakeAgent({ hostForm: 'unknown' })).hostDocAnchor]
+    : []])
+  for (const title of titles) {
+    assert.ok(doc.includes(`## ${title}`), `ONBOARDING 里没有小节「${title}」`)
+  }
+})
