@@ -297,10 +297,12 @@ function registerTool(ctx) {
 
 function apply(ctx) {
   registerTool(ctx)
-  // 用户侧的截图入口（⌃⌘A / 输入区按钮）走这条路由。分开注入 webServer：
-  // 没有 web server 的宿主里，上面的 agent 工具照常可用；注入能力本身也用可选调用，
-  // 这样最小化的测试上下文不会因为缺 inject 而整体失败。
-  ctx.inject?.(['webServer'], (scope) => {
+  // 用户侧的截图入口（⌃⌘A / 输入区按钮）走这条路由。
+  //
+  // 必须**同时**注入 `connection`：围栏服务只在被注入的作用域里取得到（`ctx.get('connection')`
+  // 在插件作用域返回 undefined，001 记过这个坑）。分开注入的写法会让围栏永远取不到、把每个
+  // 请求都判成"不可用"而 403——路由看起来注册成功，实际不可用。
+  ctx.inject?.(['webServer', 'connection'], (scope) => {
     const dispose = registerScreenshotRoute(scope, { logger: ctx.logger })
     scope.effect?.(() => () => {
       try {
