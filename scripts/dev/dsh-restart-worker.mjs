@@ -144,26 +144,25 @@ async function quitDesktopApp({ log = () => {} } = {}) {
   return 'timeout'
 }
 
-async function openDesktopApp({ log = () => {} } = {}) {
-  const open = () => {
+async function openDesktopApp({ log = () => {}, attempts = 6, gapMs = 5_000 } = {}) {
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
       execFileSync('open', ['-a', 'DeepSeek Harness'], { stdio: 'ignore' })
-      return true
     } catch (error) {
       log(`open -a 失败：${error.message}`)
-      return false
+    }
+    // 每次请求后只等 5 秒：LaunchServices 有时第一次请求不落地（实测第一次 20 秒都没起来，
+    // 第二次才拉起），与其干等，不如隔一会儿再请求一次。
+    for (let waited = 0; waited < gapMs; waited += 500) {
+      if (appMainPids().length) {
+        log(`官方桌面版已启动（第 ${attempt} 次请求后）`)
+        return true
+      }
+      await sleep(500)
     }
   }
-  open()
-  for (let waited = 0; !appMainPids().length && waited < 20_000; waited += 500) await sleep(500)
-  if (appMainPids().length) {
-    log('已重新打开官方桌面版，应用主进程已出现')
-    return true
-  }
-  log('应用主进程还没出现，再请求一次')
-  open()
-  for (let waited = 0; !appMainPids().length && waited < 15_000; waited += 500) await sleep(500)
-  return appMainPids().length > 0
+  log(`请求 ${attempts} 次后应用主进程仍未出现`)
+  return false
 }
 
 
