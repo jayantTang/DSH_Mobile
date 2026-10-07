@@ -158,26 +158,34 @@ async function quitDesktopApp({ log = () => {}, hostPid } = {}) {
  */
 async function relaunchUntilBackend({ log = () => {}, previousPid, timeoutMs = 180_000 } = {}) {
   const deadline = Date.now() + timeoutMs
-  let attempt = 0
+  let opens = 0
+  let killedBySystem = 0
   while (Date.now() < deadline) {
-    attempt += 1
     if (!appMainPids().length) {
+      opens += 1
       try {
         execFileSync('open', ['-a', 'DeepSeek Harness'], { stdio: 'ignore' })
       } catch (error) {
         log(`open -a 失败：${error.message}`)
       }
+      // 应用退出后有几十秒的「静默期」：此时 open 会被 launchd 拉起来又在 ~60ms 内杀掉
+      // （2026-10-07 系统日志实测：连续四次都是 spawn 后 58–62ms 报 termination）。
+      // 这不是失败，只是还没到时候——记一笔，继续轻推。
+      await sleep(3_000)
+      if (!appMainPids().length) killedBySystem += 1
     }
     for (let waited = 0; waited < 10_000 && Date.now() < deadline; waited += 500) {
       const endpoint = readEndpoint()
       if (endpoint?.pid && endpoint.pid !== previousPid && alive(endpoint.pid)) {
-        log(`官方桌面版已起来（第 ${attempt} 次请求后）：pid=${endpoint.pid} port=${endpoint.port}`)
+        log(`官方桌面版已起来：open 请求 ${opens} 次`
+          + `${killedBySystem ? `（其中 ${killedBySystem} 次被系统静默期立刻回收）` : ''}`
+          + `，新后端 pid=${endpoint.pid} port=${endpoint.port}`)
         return endpoint
       }
       await sleep(500)
     }
   }
-  log(`请求 ${attempt} 次后仍没有新后端`)
+  log(`请求 ${opens} 次后仍没有新后端`)
   return undefined
 }
 
