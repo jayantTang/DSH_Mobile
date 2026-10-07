@@ -1,7 +1,7 @@
 {
   "name": "dsh-plugin-send-image",
-  "version": "0.2.0",
-  "description": "Lets a picture into the conversation both ways: the agent can send one, and you can drag-select a screen region with ⌃⌘A and attach it to the current conversation.",
+  "version": "0.1.5",
+  "description": "Lets the agent put a picture into the conversation: a screenshot, the clipboard, or a file — every client renders it and the user can open it full screen.",
   "keywords": [
     "dsh",
     "dsh-plugin",
@@ -25,7 +25,6 @@
   "main": "lib/index.js",
   "exports": {
     ".": "./lib/index.js",
-    "./client": "./lib/client.js",
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
   },
@@ -43,9 +42,6 @@
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
-    },
-    "client": {
-      "platform": "web"
     }
   }
 }

@@ -67,15 +67,6 @@ The agent calls `send_image`. Exactly one source per call:
 Passing none or several is a readable tool error rather than a schema failure:
 source exclusivity is a runtime rule here, so the model is told what to fix.
 
-### You can also take the screenshot yourself
-
-Inside the DSH window, `⌃⌘A` (or the camera button at the left of the composer) starts a drag-select;
-the selected rectangle is **attached to the current conversation as a draft** — you decide whether to
-send it. The shortcut only works while the DSH window has focus (no system-wide hotkey), `Esc` cancels
-without leaving a file, and a missing Screen Recording grant prints where to enable it and which
-program to restart. Both supported hosts (the official desktop app and the command-line web host) run
-the same client half, shipped in this package.
-
 ## Test
 
 ```bash
