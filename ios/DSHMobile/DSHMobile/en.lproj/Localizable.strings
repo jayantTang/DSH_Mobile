@@ -653,8 +653,6 @@ It is registered as a workspace first, so a new group appears in the desktop sid
 /* 014 反馈通道：记录页与线程详情（T022/T031/T046/T047/T059/T060/T063） */
 "我发出的" = "Sent by me";
 "收到的" = "Received";
-"待回复" = "Awaiting reply";
-"已回复" = "Replied";
 "未读" = "Unread";
 "已提交，正在同步" = "Submitted, syncing";
 "这台手机还没有反馈记录；取件凭据丢失后历史无法恢复，重新配对也换不回匿名提交的那部分。" = "This phone has no feedback records yet; once the pickup credential is lost the history cannot be recovered, and pairing again does not bring back what was sent anonymously.";
@@ -666,11 +664,7 @@ It is registered as a workspace first, so a new group appears in the desktop sid
 "服务通知" = "Service notice";
 "通知" = "Notice";
 "这条通知已经不在了。" = "This notice is gone.";
-"反馈详情" = "Feedback thread";
-"补充一句…" = "Add a follow-up…";
-"追加" = "Add";
-"补充的内容不能为空，也不能超过 4000 字。" = "The follow-up cannot be empty or longer than 4000 characters.";
-"提交没有成功，内容还在，可以再试。" = "The submission did not go through. Your text is still here — try again.";
+"反馈详情" = "Feedback";
 "从这台手机移除" = "Remove from this phone";
 "移除本机记录？" = "Remove records from this phone?";
 "移除后这台手机再也取不回这些记录；服务器上的副本要另行联系我们删除。" = "After removing them, this phone can never read these records again; to delete the copies on our server, contact us.";
@@ -691,6 +685,10 @@ It is registered as a workspace first, so a new group appears in the desktop sid
 "已发送" = "Sent";
 "还没有发出过反馈。点右上角的笔，写下第一条。" = "You have not sent any feedback yet. Tap the pen at the top right to write the first one.";
 "从这台手机移除记录…" = "Remove records from this phone…";
-"写回复" = "Write a reply";
 /* 回信行没有主题时的兜底标题（拿用户自己那句话，像邮件的「关于：…」） */
 "关于你的反馈：%@" = "About your feedback: %@";
+
+/* 014 反馈通道：单封信模型（T073/T074/T075，2026-10-12 第二次改口径） */
+"发给 DSH Mobile 团队" = "To the DSH Mobile team";
+"想补充或再说一句，请再发一封新的反馈。" = "Want to add something? Send a new feedback.";
+"如果收到回复，会出现在「收件箱」。" = "If we reply, it shows up in your Inbox.";

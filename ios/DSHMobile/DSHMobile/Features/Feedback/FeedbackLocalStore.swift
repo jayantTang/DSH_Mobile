@@ -230,19 +230,6 @@ extension FeedbackMirror {
                               lastMessageAt: createdAt, messages: []), at: 0)
     }
 
-    /// 用户追加成功后把这条留言放进镜像：刚写完的内容不该等下一次网络往返。
-    mutating func append(messageId: String, threadId: String, body: String, createdAt: Date) {
-        guard let index = threads.firstIndex(where: { $0.threadId == threadId }) else { return }
-        threads[index].messages.append(Message(
-            messageId: messageId,
-            author: FeedbackMessage.Author.user.rawValue,
-            body: body,
-            createdAt: createdAt
-        ))
-        threads[index].status = "open"
-        threads[index].lastMessageAt = createdAt
-    }
-
     /// 用户真正看过之后才追加已读标记。
     mutating func markRead(threadIds: [String], noticeIds: [String]) {
         for index in threads.indices where threadIds.contains(threads[index].threadId) {

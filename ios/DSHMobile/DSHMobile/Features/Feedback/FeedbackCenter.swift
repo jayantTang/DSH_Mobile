@@ -107,7 +107,7 @@ final class FeedbackCenter {
         #endif
     }
 
-    // MARK: - 提交与追加
+    // MARK: - 提交
 
     /// 提交一条反馈。网络超时后**重复调用是安全的**：同一条草稿复用同一个 `clientRef`，
     /// 服务端按它幂等，重试只产生一条反馈。失败即抛错，绝不假装成功。
@@ -143,22 +143,6 @@ final class FeedbackCenter {
         persistMirror()
         lastError = nil
         return ticket
-    }
-
-    /// 在已有线程下补一句。成功后立刻更新镜像与未读口径，不额外打一次网络。
-    func append(threadId: String, text: String) async throws {
-        guard let endpoint = endpointProvider() else {
-            throw FeedbackClientError.network("no-relay-endpoint")
-        }
-        let result = try await client(endpoint).append(
-            threadId: threadId,
-            ticketKey: store.ticket(for: threadId)?.ticketKey,
-            text: text
-        )
-        mirror.append(messageId: result.messageId, threadId: result.threadId,
-                      body: text, createdAt: result.createdAt ?? Date())
-        persistMirror()
-        lastError = nil
     }
 
     /// 重试用的幂等键。草稿在被用户放弃前（或提交成功前）保持不变；界面层不需要
