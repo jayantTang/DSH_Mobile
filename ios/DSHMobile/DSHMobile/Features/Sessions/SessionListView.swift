@@ -21,6 +21,8 @@ struct SessionListView: View {
     @State private var isLooseExpanded = false
     @State private var isArchivedExpanded = false
     @State private var isCreatingSession = false
+    /// 反馈记录页那张 sheet。
+    @State private var isShowingFeedback = false
     /// The session just archived, so the swipe can be taken back.
     @State private var justArchived: SessionSummary?
     @State private var archiveFailure: String?
@@ -57,6 +59,8 @@ struct SessionListView: View {
         }
         // 不等连接：离线冷启动也要先把上次的列表画出来（否则就是空白+转圈）。
         .task { model.loadCachedList() }
+        // 反馈未读：冷启动不会触发 `ScenePhase` 变化事件，所以列表出现时就拉一次（SC-003）。
+        .task { await FeedbackCenter.shared.applicationBecameActive() }
         // 待答集合的唯一来源是 `$events` 的 waterfall（host 的会话摘要里没有这个
         // 信息：等回答时它照样报 running）。把它同步进 model，行状态与计数才看得见它；
         // hub 是 @Observable，这里读一下就等于订阅了变化。
@@ -85,6 +89,9 @@ struct SessionListView: View {
                 onOpenSession(sessionId)
             }
         }
+        .sheet(isPresented: $isShowingFeedback) {
+            FeedbackCenterView()
+        }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if let archived = justArchived { archivedNotice(archived) }
         }
@@ -103,13 +110,27 @@ struct SessionListView: View {
                 .accessibilityLabel("设置")
             }
             // 反馈入口就放在设置按钮旁边：用户找"哪里能提意见"时，第一反应是看这一排图标。
-            // 点开是一个 GitHub 表单（问题都在那里公开讨论），预填了版本与设备，
-            // 不采集任何对话内容；不想发的人什么都不会发生。
+            // 2026-10-12 起不再跳 GitHub 表单，而是在 App 内打开记录页；有新回信或通知时
+            // 图标右上角带未读数，看过之后归零（FR-011）。
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
-                    openURL(FeedbackLink.issueURL)
+                    isShowingFeedback = true
                 } label: {
                     Image(systemName: "text.bubble")
+                        .overlay(alignment: .topTrailing) {
+                            if FeedbackCenter.shared.unreadCount > 0 {
+                                Text(unreadBadgeText)
+                                    .font(DSHTheme.Typography.micro)
+                                    .foregroundStyle(.white)
+                                    .padding(.horizontal, 3)
+                                    .frame(minWidth: 14, minHeight: 14)
+                                    .background(DSHTheme.attention, in: Capsule())
+                                    .offset(x: 8, y: -6)
+                                    // 用例要断言"有未读 / 已读完"，给它一个稳定标识
+                                    // （`test/cases/current/43-回信与未读角标.steps`）。
+                                    .accessibilityIdentifier("feedback.badge")
+                            }
+                        }
                 }
                 .accessibilityLabel("反馈")
                 .accessibilityIdentifier("session.feedback")
@@ -127,6 +148,12 @@ struct SessionListView: View {
     }
 
     // MARK: - Header
+
+    /// 角标上的数字：超过两位数显示 `99+`。没数字就没角标（`unreadCount == 0` 时不占位）。
+    private var unreadBadgeText: String {
+        let count = FeedbackCenter.shared.unreadCount
+        return count > 99 ? "99+" : "\(count)"
+    }
 
     private var header: some View {
         HStack(spacing: DSHTheme.Spacing.tight) {

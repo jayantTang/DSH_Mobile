@@ -208,6 +208,8 @@ struct RootView: View {
                 // Re-checked on every return to the foreground: that is when a
                 // user who just installed an update comes back to look.
                 if phase == .active { Task { await updates.refresh() } }
+                // 反馈通道同理：回到前台拉一次未读，用户不必手动刷新（SC-003）。
+                if phase == .active { Task { await FeedbackCenter.shared.applicationBecameActive() } }
                 // 回到前台是推送登记的自愈点：用户可能刚在 iOS 设置里允许了通知
                 // （此前从未拿到令牌），也可能换了网络后 Apple 才回过话来。
                 // 重新注册是幂等的，未变化时不会多打一次 relay。

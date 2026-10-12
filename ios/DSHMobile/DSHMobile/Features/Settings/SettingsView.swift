@@ -448,6 +448,8 @@ struct SettingsView: View {
                 AttachmentDiskCache().clearAll()
                 // 内存里那一份也要放掉，否则下一次落盘会把刚清掉的文件写回来。
                 NotificationCenter.default.post(name: .localCachesCleared, object: nil)
+                // 反馈镜像与已读标记一起清；Keychain 里的取件凭据**保留**，记录下次会重新拉回来。
+                FeedbackCenter.shared.clearLocalMirror()
                 cacheClearedAt = Date()
             } label: {
                 HStack {
@@ -463,7 +465,7 @@ struct SettingsView: View {
         } header: {
             Text("缓存")
         } footer: {
-            Text("本机留两份缓存：会话列表（标题、时间、用量这类元数据）和每个会话的对话尾部（最近 200 条，用来冷启动先显示再增量更新）。都在 Caches 里、不进备份，30 天后自动失效，总占用有上限（转写 40 MB、图片 100 MB），这里可以随时一键清掉。")
+            Text("本机留两份缓存：会话列表（标题、时间、用量这类元数据）和每个会话的对话尾部（最近 200 条，用来冷启动先显示再增量更新）。都在 Caches 里、不进备份，30 天后自动失效，总占用有上限（转写 40 MB、图片 100 MB），这里可以随时一键清掉。反馈记录（我发出的与收到的）也会一起清掉、下次打开重新拉取；取件凭据保留在钥匙串里，不会被这一步删除。")
         }
     }
 

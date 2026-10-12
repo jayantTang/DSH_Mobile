@@ -601,7 +601,7 @@ It is registered as a workspace first, so a new group appears in the desktop sid
 "最后在线 %@" = "Last seen %@";
 
 /* 缓存页脚（全页最长文案，原先硬编码） */
-"本机留两份缓存：会话列表（标题、时间、用量这类元数据）和每个会话的对话尾部（最近 200 条，用来冷启动先显示再增量更新）。都在 Caches 里、不进备份，30 天后自动失效，总占用有上限（转写 40 MB、图片 100 MB），这里可以随时一键清掉。" = "Two caches live on this phone: the session list (titles, times, usage metadata) and the tail of each conversation (the last 200 messages, so a cold start shows something before it catches up). Both are in Caches, excluded from backups, expire after 30 days, and are capped (40 MB transcripts, 100 MB images) — this clears them any time.";
+"本机留两份缓存：会话列表（标题、时间、用量这类元数据）和每个会话的对话尾部（最近 200 条，用来冷启动先显示再增量更新）。都在 Caches 里、不进备份，30 天后自动失效，总占用有上限（转写 40 MB、图片 100 MB），这里可以随时一键清掉。反馈记录（我发出的与收到的）也会一起清掉、下次打开重新拉取；取件凭据保留在钥匙串里，不会被这一步删除。" = "Two caches live on this phone: the session list (titles, times, usage metadata) and the tail of each conversation (the last 200 messages, so a cold start shows something before it catches up). Both are in Caches, excluded from backups, expire after 30 days, and are capped (40 MB transcripts, 100 MB images) — this clears them any time. Feedback records (sent and received) are cleared too and are fetched again next time you open them; the pickup credential stays in the keychain and is not removed by this step.";
 
 /* 转写搜索页脚（原先硬编码） */
 "搜索只覆盖已经读到手机上的那段历史。" = "Search only covers the history already read onto this phone.";
@@ -631,3 +631,46 @@ It is registered as a workspace first, so a new group appears in the desktop sid
 "读取更早的记录失败，点按重试" = "Could not read earlier messages — tap to retry";
 "要搜索整个会话，需要把电脑上的连接器升级到 %@ 及以上" = "Searching the whole conversation needs connector %@ or newer on your computer.";
 "正在读取更早的记录" = "Reading earlier messages";
+
+/* 014 反馈通道：发送窗口（T021/T024） */
+"发送反馈" = "Send feedback";
+"说说遇到的问题，或者你希望增加的功能…" = "Describe the problem you hit, or the feature you would like…";
+"还可以输入 %lld 字" = "%lld characters left";
+"已超出 4000 字上限，请精简后再发" = "Over the 4000-character limit — please trim it before sending";
+"会一并提交的技术信息" = "Technical details sent along";
+"机型" = "Device";
+"iOS 版本" = "iOS version";
+"内容会存到我们的服务器，不公开；只用来看问题和回信给你，不会附带你的对话内容。" = "Your text is stored on our server and is not public. We read it to understand the report and to reply to you; nothing from your conversations is attached.";
+"查看隐私说明" = "Read the privacy note";
+"网络不通，正文还在，可以再点一次发送。" = "No network. Your text is still here — tap send again.";
+"提交太频繁了，稍等一会儿再试。" = "Too many submissions. Wait a moment and try again.";
+"正文太长了，请精简到 4000 字以内。" = "That is too long. Please trim it to 4000 characters or fewer.";
+"这条反馈在服务器上已经不在了。" = "This feedback is no longer on the server.";
+"服务器没能保存这条反馈（错误码 %lld），正文还在，可以再试。" = "The server could not save this feedback (error %lld). Your text is still here — try again.";
+"服务器返回了看不懂的内容，正文还在，可以再试。" = "The server answered with something unexpected. Your text is still here — try again.";
+"提交没有成功，正文还在，可以再试。" = "The submission did not go through. Your text is still here — try again.";
+
+/* 014 反馈通道：记录页与线程详情（T022/T031/T046/T047/T059/T060/T063） */
+"我发出的" = "Sent by me";
+"收到的" = "Received";
+"待回复" = "Awaiting reply";
+"已回复" = "Replied";
+"未读" = "Unread";
+"已提交，正在同步" = "Submitted, syncing";
+"这台手机还没有反馈记录；取件凭据丢失后历史无法恢复，重新配对也换不回匿名提交的那部分。" = "This phone has no feedback records yet; once the pickup credential is lost the history cannot be recovered, and pairing again does not bring back what was sent anonymously.";
+"还没有发出过反馈。" = "You have not sent any feedback yet.";
+"现在连不上服务器，这里只显示已经拉到这台手机上的内容。" = "The server cannot be reached right now; only what has already been fetched to this phone is shown here.";
+"还没有收到消息。我们回信或发通知时，都会出现在这里。" = "No messages yet. Replies and notices from us show up here.";
+"这条记录在服务器上已不存在，可能已被删除。" = "This record is no longer on the server; it may have been deleted.";
+"DSH Mobile 团队" = "The DSH Mobile team";
+"服务通知" = "Service notice";
+"通知" = "Notice";
+"这条通知已经不在了。" = "This notice is gone.";
+"反馈详情" = "Feedback thread";
+"补充一句…" = "Add a follow-up…";
+"追加" = "Add";
+"补充的内容不能为空，也不能超过 4000 字。" = "The follow-up cannot be empty or longer than 4000 characters.";
+"提交没有成功，内容还在，可以再试。" = "The submission did not go through. Your text is still here — try again.";
+"从这台手机移除" = "Remove from this phone";
+"移除本机记录？" = "Remove records from this phone?";
+"移除后这台手机再也取不回这些记录；服务器上的副本要另行联系我们删除。" = "After removing them, this phone can never read these records again; to delete the copies on our server, contact us.";
