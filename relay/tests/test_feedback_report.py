@@ -9,9 +9,11 @@
 
 from __future__ import annotations
 
+import datetime
 import json
 
 import admin
+import pytest
 from store import Store, local_day, now_ms, sha256_hex
 
 
@@ -482,3 +484,115 @@ def test_the_digest_read_method_gives_the_excerpt_and_the_first_reply_time(tmp_p
         assert store.feedback_digest([]) == {}
     finally:
         store.close()
+
+
+def test_resolve_as_of_maps_now_yesterday_and_a_date_to_an_anchor():
+    """`--as-of` 的三种取值 → 锚点：`now` 是不给锚点，其余两种锚到那一整天最后一毫秒。
+
+    日报改到每天 00:00 跑（owner 2026-10-12 要求："发刚过去的一整天"）：那一刻若按
+    "今天"算，新的一天刚开头，「今日」板块全是 0。锚点必须落在刚结束的那一天。
+    """
+    assert admin._resolve_as_of("now") is None and admin._resolve_as_of(None) is None
+
+    today = local_day()
+    anchor = admin._resolve_as_of("yesterday")
+    assert datetime.datetime.fromtimestamp(anchor / 1000).strftime("%Y%m%d") == \
+        str(admin._day_shift(today, -1))
+    assert admin._resolve_as_of("2026-10-12") == admin._day_start_ms(20261012) + 86_400_000 - 1
+    # 跨月跨年由 `_day_shift` 负责，不能用整数加减（20261030 + 7 ≠ 20261037）。
+    assert admin._resolve_as_of("2026-10-31") == admin._day_start_ms(20261101) - 1
+
+    with pytest.raises(admin.StoreError) as caught:
+        admin._resolve_as_of("2026-13-01")
+    assert "--as-of" in str(caught.value)
+
+
+def yesterday_and_today_usage(tmp_path) -> tuple[str, dict]:
+    """昨天与今天各一条用量（数字可区分）+ 各一条反馈，用来验锚点选对了哪一天。"""
+    db = str(tmp_path / "state.db")
+    store = Store(db)
+    account = store.create_account("ops")
+    agent = store.register_agent(account["accountId"], "mac")
+    device = store.claim_pair_code(
+        store.mint_pair_code(agent["agentId"], ttl_ms=60_000)["code"], device_name="iPhone")
+    today = local_day()
+    yesterday = admin._day_shift(today, -1)
+    for day, egress, connections in ((yesterday, 3000, 2), (today, 7000, 5)):
+        store.add_usage([{"day": day, "deviceId": device["deviceId"], "agentId": agent["agentId"],
+                          "accountId": account["accountId"], "egressBytes": egress,
+                          "connections": connections, "at": now_ms(), "lastBuild": "1.2.3"}])
+    old = store.create_feedback_thread(ticket_hash=sha256_hex("fk_old"), text="昨天提的",
+                                       at=now_ms() - 86_400_000)
+    fresh = store.create_feedback_thread(ticket_hash=sha256_hex("fk_new"), text="今天提的")
+    store.close()
+    return db, {"device": device, "today": today, "yesterday": yesterday,
+                "old": old, "fresh": fresh}
+
+
+def test_ops_report_as_of_yesterday_is_the_whole_previous_day(tmp_path, capsys):
+    """`--as-of yesterday`：日报覆盖刚过去的一整天，窗口也以那一天为界。"""
+    db, made = yesterday_and_today_usage(tmp_path)
+
+    code, report = run_cli(db, "ops-report", "--days", "3", "--as-of", "yesterday",
+                           capsys=capsys)
+    assert code == 0
+    assert report["today"]["day"] == made["yesterday"]
+    assert report["today"]["usage"]["egressBytes"] == 3000, "今日板块要的是昨天那一整天"
+    assert report["today"]["usage"]["connections"] == 2
+    # 今天的流量不在窗口里，也不在昨日板块里。
+    assert [entry["day"] for entry in report["usage"]["perDay"]][-1] == made["yesterday"]
+    assert made["today"] not in [entry["day"] for entry in report["usage"]["perDay"]]
+    assert report["usage"]["perDay"][-1]["egressBytes"] == 3000
+    assert report["devices"]["newPerDay"][-1]["day"] == made["yesterday"]
+    # 反馈同口径：锚点之后（今天）新建的线程不算进来。
+    assert [row["threadId"] for row in report["feedback"]["threads"]] == [made["old"]["threadId"]]
+    assert report["today"]["feedback"]["new"] == 1
+
+    # 锚点在过去，`generatedAt` 仍是真实的生成时刻（渲染层靠它写"生成时间"）。
+    assert report["asOf"] == admin._resolve_as_of("yesterday")
+    assert report["generatedAt"] >= report["asOf"]
+
+
+def test_ops_report_as_of_a_date_covers_that_day(tmp_path, capsys):
+    """`--as-of YYYY-MM-DD`：补跑历史日报用，窗口最后一天就是那一天。"""
+    db = str(tmp_path / "state.db")
+    store = Store(db)
+    account = store.create_account("ops")
+    agent = store.register_agent(account["accountId"], "mac")
+    device = store.claim_pair_code(
+        store.mint_pair_code(agent["agentId"], ttl_ms=60_000)["code"], device_name="iPhone")
+    store.add_usage([{"day": 20261012, "deviceId": device["deviceId"], "agentId": agent["agentId"],
+                      "accountId": account["accountId"], "egressBytes": 1234, "connections": 7,
+                      "at": now_ms(), "lastBuild": "1.2.3"}])
+    store.close()
+
+    code, report = run_cli(db, "ops-report", "--days", "5", "--as-of", "2026-10-12", capsys=capsys)
+    assert code == 0
+    assert report["today"]["day"] == 20261012
+    assert report["today"]["usage"]["egressBytes"] == 1234
+    assert [entry["day"] for entry in report["usage"]["perDay"]] == \
+        [20261008, 20261009, 20261010, 20261011, 20261012]
+    assert report["usage"]["perDay"][-1]["egressBytes"] == 1234
+    assert report["usage"]["peakDay"] == {"day": 20261012, "egressBytes": 1234}
+
+
+def test_ops_report_rejects_an_unparsable_as_of(tmp_path, capsys):
+    """写错的日期是业务失败（退出码 1）并把取值原样带出来，不静默当成今天。"""
+    db = str(tmp_path / "state.db")
+    Store(db).close()
+
+    code, out = run_cli(db, "ops-report", "--as-of", "2026-13-01", capsys=capsys)
+    assert code == 1, "业务失败（不是用法错误 2，也不是静默成功）"
+    assert "ok" not in out and "--as-of" in out["stderr"] and "2026-13-01" in out["stderr"]
+
+
+def test_ops_report_without_as_of_still_covers_today_to_now(tmp_path, capsys):
+    """不给 `--as-of` 时口径不变：锚点就是此刻（白天手工看日报的那条路）。"""
+    db, made = yesterday_and_today_usage(tmp_path)
+
+    code, report = run_cli(db, "ops-report", "--days", "3", capsys=capsys)
+    assert code == 0
+    assert report["today"]["day"] == made["today"]
+    assert report["today"]["usage"]["egressBytes"] == 7000
+    assert report["asOf"] == report["generatedAt"]
+    assert report["usage"]["perDay"][-1]["day"] == made["today"]

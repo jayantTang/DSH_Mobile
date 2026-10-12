@@ -249,6 +249,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     ops_report = subs.add_parser("ops-report", help="raw data for the daily operations report")
     ops_report.add_argument("--days", type=int, default=30)
+    ops_report.add_argument("--as-of", dest="as_of", default="now",
+                            help="now (default) | yesterday | YYYY-MM-DD；后两者按那一整天算")
     return parser
 
 
@@ -454,7 +456,7 @@ def run(args: argparse.Namespace, store: Store) -> int:
         return 0
 
     if command == "ops-report":
-        _emit(_ops_report(store, max(1, int(args.days))))
+        _emit(_ops_report(store, max(1, int(args.days)), as_of=_resolve_as_of(args.as_of)))
         return 0
 
     if command == "device-revoke":
@@ -659,10 +661,36 @@ def _notify_targets(store: Store, args: argparse.Namespace) -> list[str]:
     return wanted
 
 
-def _recent_days(days: int) -> list[int]:
-    """最近 N 天的本地日序号（含今天），从早到晚。"""
-    now = now_ms() / 1000
-    return sorted({local_day(now - offset * 86_400) for offset in range(max(1, int(days)))})
+def _recent_days(days: int, *, end: int | None = None) -> list[int]:
+    """最近 N 天的本地日序号（含 `end` 所在的那一天），从早到晚。`end` 默认此刻。"""
+    at = (now_ms() if end is None else int(end)) / 1000
+    return sorted({local_day(at - offset * 86_400) for offset in range(max(1, int(days)))})
+
+
+def _resolve_as_of(value: str | None, *, now: int | None = None) -> int | None:
+    """`ops-report --as-of` 的取值 → 锚点毫秒时间戳（`None` = 就用此刻）。
+
+    三种取值：
+
+    - `now`（默认）：到此刻为止的部分数据，白天手工看用这个；
+    - `yesterday`：**刚过去的一整天**。日报在 00:00 跑，若按"今天"算，此刻新的一天刚开头，
+      「今日」板块全是 0；锚到昨天 23:59:59.999 才是刚结束那天的完整数据；
+    - `YYYY-MM-DD`：指定那一天的一整天（补跑历史日报用）。
+
+    锚点取当天最后一毫秒：`today` 板块与 `--days` 窗口都以锚点所在的本地日为界，
+    所以「今日出口」与「最近 N 天」表里同一行的数字必然一致。
+    """
+    text = str(value if value is not None else "now").strip()
+    if text in ("", "now"):
+        return None
+    if text == "yesterday":
+        at = now_ms() if now is None else int(now)
+        return _day_start_ms(local_day(at / 1000)) - 1
+    try:
+        day = int(datetime.datetime.strptime(text, "%Y-%m-%d").strftime("%Y%m%d"))
+    except ValueError:
+        raise StoreError(f"--as-of 只能是 now / yesterday / YYYY-MM-DD，收到 {value!r}") from None
+    return _day_start_ms(_day_shift(day, 1)) - 1
 
 
 def _device_report_row(row: dict[str, Any]) -> dict[str, Any]:
@@ -732,9 +760,10 @@ def _is_test_enrollment(row: dict[str, Any]) -> bool:
 
 
 def _usage_scan(store: Store, days: int, debug_ids: set[str],
-                names: dict[str, str | None]) -> tuple[list[dict[str, Any]],
-                                                       list[dict[str, Any]],
-                                                       dict[int, set[str]]]:
+                names: dict[str, str | None],
+                *, end: int | None = None) -> tuple[list[dict[str, Any]],
+                                                    list[dict[str, Any]],
+                                                    dict[int, set[str]]]:
     """窗口内按天读一遍 `usageDaily`，同时给出三样东西（读一次，三个板块共用）。
 
     - `series`：每日出口字节/连接数/设备数；
@@ -747,7 +776,7 @@ def _usage_scan(store: Store, days: int, debug_ids: set[str],
     DSH-* 设备）。`usage` 命令保持全量记账不动——那是账本，日报是给人看的视图。
     """
     per_day: dict[int, dict[str, int]] = {
-        day: {"egressBytes": 0, "connections": 0, "devices": 0} for day in _recent_days(days)}
+        day: {"egressBytes": 0, "connections": 0, "devices": 0} for day in _recent_days(days, end=end)}
     active_by_day: dict[int, set[str]] = {day: set() for day in per_day}
     merged: dict[str, dict[str, Any]] = {}
     seen_devices: dict[str, set[str]] = {}
@@ -926,10 +955,13 @@ def _day_start_ms(day: int) -> int:
 def _today_report(store: Store, *, stamp: int, threads: list[dict[str, Any]],
                   real_devices: list[dict[str, Any]], debug_ids: set[str],
                   names: dict[str, str | None]) -> dict[str, Any]:
-    """「今日」板块：服务器本地自然日 00:00 起（含刚才这一刻）的部分数据。
+    """「今日」板块：`stamp` 所在服务器本地自然日 00:00 起（到 `stamp` 为止）的数据。
 
     为什么要有这一块：30 天窗口把当天埋在一堆历史里，看不出"今天有没有事"。今日的口径
     全部落在本地日上，与 `usage --days 1`、日额度一致。
+
+    `stamp` 是报告锚点：默认是此刻（当天到现在的部分数据），`--as-of yesterday` 时是
+    昨天 23:59:59.999，这一块就是刚过去那一整天的完整数据。
 
     调试设备（`_is_debug_device`）的流量、设备、账号一并剔除——这一块是给 owner 看用户的；
     被剔掉的设备 id 与账号名由调用方算好传进来（`usageDaily` 里只有 deviceId）。
@@ -986,9 +1018,10 @@ def _today_report(store: Store, *, stamp: int, threads: list[dict[str, Any]],
     by_device.sort(key=lambda row: (int(row["egressBytes"]), int(row["connections"])), reverse=True)
     ranked = sorted(by_account.values(), key=lambda row: int(row["egressBytes"]), reverse=True)
     live = [row for row in real_devices if not row.get("revokedAt")]
-    fresh = [row for row in threads if int(row["createdAt"]) >= start]
+    fresh = [row for row in threads if start <= int(row["createdAt"]) <= stamp]
     enrollments = [row for row in store.list_enrollments()
-                   if int(row.get("usedAt") or 0) >= start and not _is_test_enrollment(row)]
+                   if start <= int(row.get("usedAt") or 0) <= stamp
+                   and not _is_test_enrollment(row)]
     return {
         "day": day,
         "dayStartAt": start,
@@ -1006,10 +1039,12 @@ def _today_report(store: Store, *, stamp: int, threads: list[dict[str, Any]],
         "topAccounts": ranked[:REPORT_TODAY_LIMIT],
         "devices": {
             "list": by_device[:REPORT_TODAY_LIMIT],
-            "new": len([row for row in real_devices if int(row["createdAt"]) >= start]),
-            "active": len([row for row in live if int(row.get("lastSeenAt") or 0) >= start]),
+            "new": len([row for row in real_devices
+                        if start <= int(row["createdAt"]) <= stamp]),
+            "active": len([row for row in live
+                           if start <= int(row.get("lastSeenAt") or 0) <= stamp]),
             "revoked": len([row for row in real_devices
-                            if int(row.get("revokedAt") or 0) >= start]),
+                            if start <= int(row.get("revokedAt") or 0) <= stamp]),
             "live": len(live),
         },
         "feedback": {
@@ -1043,21 +1078,29 @@ def _first_seen_days(store: Store, *, debug_ids: set[str],
     return first
 
 
-def _ops_report(store: Store, days: int) -> dict[str, Any]:
+def _ops_report(store: Store, days: int, *, as_of: int | None = None) -> dict[str, Any]:
     """日报的板块：**今日** + 反馈 / 设备 / 用量 / 留存 / 邀请码（最近 `--days` 天）。
 
-    `--days` 是窗口（本地日，含今天）：反馈只数窗口内**新建**的线程，用量与每日新增
+    `--days` 是窗口（本地日，含 `as_of` 那天）：反馈只数窗口内**新建**的线程，用量与每日新增
     设备也只覆盖窗口；邀请码的账是全量（码用没用完跟窗口无关）。空库照样每个板块
     齐全、计数为 0——日报每天都会跑。
+
+    `as_of`（`--as-of`）是报告的时间锚点：默认 `None` = 此刻（部分数据）；给了锚点就按
+    锚点所在的本地日算，`generatedAt` 仍是真实的生成时刻——日报改到每天 00:00 跑之后，
+    传的是 `yesterday`，出来的就是刚过去那一整天的完整数据（见 `_resolve_as_of`）。
 
     设备板块只统计**真实设备**（剔除 `_is_debug_device`），被剔除的行数放在 `debug` 里，
     这样"图上是用户、库里有多少调试行"两件事都看得见；反馈板块同样剔除模拟器/调试设备
     提的验收单（`_is_test_thread`），被剔的条数放在 `feedback.test`。`today` 板块是同一批
     数据的单日切片，见 `_today_report`；留存只算用邀请码登记的外部账号，见 `_retention_report`。
     """
-    stamp = now_ms()
+    now = now_ms()
+    stamp = now if as_of is None else int(as_of)
     listed = _feedback_rows(store, status=None, since_ms=stamp - days * 86_400_000,
                             limit=REPORT_THREAD_LIMIT)
+    # `since_ms` 只有下界：锚点在过去时（00:00 跑、报刚过去那一天），锚点之后新建的线程
+    # 不属于这份报告——不加这一刀，00:00–00:02 之间收到的新反馈会被算进"昨天"。
+    listed = [row for row in listed if int(row["createdAt"]) <= stamp]
     devices = store.list_devices(include_revoked=True)
     debug_ids = {row["deviceId"] for row in devices if _is_debug_device(row)}
     names = {row["accountId"]: row.get("name") for row in store.list_accounts()}
@@ -1068,15 +1111,17 @@ def _ops_report(store: Store, days: int) -> dict[str, Any]:
     for row in real:
         day = local_day(int(row["createdAt"]) / 1000)
         created_per_day[day] = created_per_day.get(day, 0) + 1
-    new_per_day = [{"day": day, "count": created_per_day.get(day, 0)} for day in _recent_days(days)]
-    series, ranked, active_by_day = _usage_scan(store, days, debug_ids, names)
+    new_per_day = [{"day": day, "count": created_per_day.get(day, 0)}
+                   for day in _recent_days(days, end=stamp)]
+    series, ranked, active_by_day = _usage_scan(store, days, debug_ids, names, end=stamp)
     enrollments = store.list_enrollments()
     real_enrollments = [row for row in enrollments if not _is_test_enrollment(row)]
     external = {row["accountId"] for row in real_enrollments if row.get("accountId")}
     owners = {row["deviceId"]: row.get("accountId") for row in devices}
     return {
         "ok": True,
-        "generatedAt": stamp,
+        "generatedAt": now,
+        "asOf": stamp,
         "days": days,
         "today": _today_report(store, stamp=stamp, threads=threads, real_devices=real,
                                debug_ids=debug_ids, names=names),
@@ -1084,9 +1129,10 @@ def _ops_report(store: Store, days: int) -> dict[str, Any]:
         "devices": {
             "paired": len(live),
             "active7d": len([row for row in live
-                             if int(row.get("lastSeenAt") or 0) >= stamp - 7 * 86_400_000]),
+                             if stamp - 7 * 86_400_000 <= int(row.get("lastSeenAt") or 0) <= stamp]),
             "activeWindow": len([row for row in live
-                                 if int(row.get("lastSeenAt") or 0) >= stamp - days * 86_400_000]),
+                                 if stamp - days * 86_400_000
+                                 <= int(row.get("lastSeenAt") or 0) <= stamp]),
             "newInWindow": sum(int(entry["count"]) for entry in new_per_day),
             "windowDays": days,
             "revoked": len(real) - len(live),

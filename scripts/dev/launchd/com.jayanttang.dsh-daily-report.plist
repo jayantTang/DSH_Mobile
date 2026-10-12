@@ -10,6 +10,11 @@
       __REPO__   → 仓库根（ProgramArguments 与 WorkingDirectory 都用它）
       ~/…        → 真实家目录（launchd 不展开 ~，模板里保留 ~ 只为可读）
   卸载：node scripts/dev/feedback.mjs report --uninstall-agent
+
+  触发时刻：每天 **00:02**（owner 2026-10-12 要求改成"晚上 12 点、发刚过去的一整天"）。
+  为什么不是 00:00 整点：中转的用量记账是攒在内存里、每 30 秒冲一次盘（`hub.py` 的
+  `usage_flush_interval`），整点那一刻上一天的尾巴还没落库，日报会少最后一小段；
+  过了跨日那一跳（≤30 秒）再跑就是完整一天。`--full-day` 让报告覆盖昨天 00:00–23:59。
 -->
 <plist version="1.0">
 <dict>
@@ -21,7 +26,8 @@
     <string>__REPO__/scripts/dev/feedback.mjs</string>
     <string>report</string>
     <string>--days</string>
-    <string>30</string>__SEND_ARGS__
+    <string>30</string>
+    <string>--full-day</string>__SEND_ARGS__
   </array>
   <key>WorkingDirectory</key>
   <string>__REPO__</string>
@@ -30,9 +36,9 @@
   <key>StartCalendarInterval</key>
   <dict>
     <key>Hour</key>
-    <integer>9</integer>
-    <key>Minute</key>
     <integer>0</integer>
+    <key>Minute</key>
+    <integer>2</integer>
   </dict>
   <key>StandardOutPath</key>
   <string>~/Library/Logs/dsh-daily-report.log</string>

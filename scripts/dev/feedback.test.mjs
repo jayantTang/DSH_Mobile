@@ -7,7 +7,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { buildInvocation, main, renderAgentPlist, reportPath, resolveSshTarget } from './feedback.mjs'
@@ -97,6 +97,17 @@ function fixture() {
 function spy(reply = '{"ok":true}') {
   const calls = []
   return { calls, runner: (argv) => { calls.push(argv); return reply } }
+}
+
+/// 00:02 自动日报的那一份：生成时刻是 10-13 00:05，`today` 板块覆盖的是已经过完的 10-12
+/// （服务端按 `--as-of yesterday` 给的 `today.day` / `dayStartAt` / `asOf`）。
+function completedDayFixture() {
+  const data = fixture()
+  const dayStartAt = new Date(2026, 9, 12, 0, 0, 0).getTime()
+  data.generatedAt = new Date(2026, 9, 13, 0, 5, 0).getTime()
+  data.asOf = dayStartAt + 86_400_000 - 1
+  data.today = { ...data.today, day: 20261012, dayStartAt }
+  return data
 }
 
 function run(argv, { runner, env = { DSH_OTA_HOST: HOST } } = {}) {
@@ -285,20 +296,20 @@ test('日报分「今日」与「最近 30 天」两段，正文被转义', () =
   // 两段的板块标题与图：今日有对比条，30 天有两张折线/柱状图。
   assert.ok(html.includes('<span class="tag ">今日</span>概览'), '今日板块')
   assert.ok(html.includes('<span class="tag range">最近 30 天</span>趋势与明细'), '30 天板块')
-  assert.equal((html.match(/<svg /g) ?? []).length, 2, '只有每日出口与每日新增设备两张图')
-  assert.ok(html.includes('每日出口流量') && html.includes('每日新增设备'))
+  assert.equal((html.match(/<svg /g) ?? []).length, 2, '只有每日出口与每日新增手机两张图')
+  assert.ok(html.includes('每日出口流量') && html.includes('每日新增手机'))
   assert.ok(html.includes('今日出口流量') && html.includes('较昨日') && html.includes('近 7 日均值'))
   assert.ok(html.includes('3.0 MB'), '出口字节应换算成 MB')
-  assert.ok(html.includes('今日账号') && html.includes('今日设备') && html.includes('今日反馈'))
-  assert.ok(html.includes('账号排名') && html.includes('邀请码登记'))
-  // 留存：外部账号口径、D1/D7 与分周队列、登记激活都要在页面上。
-  assert.ok(html.includes('外部账号 · 活跃=当天有中转连接'))
-  for (const label of ['今日活跃用户', '近 7 天活跃', '近 30 天活跃', '次日留存', '7 日留存', '登记激活']) {
+  assert.ok(html.includes('今日电脑') && html.includes('今日手机') && html.includes('今日反馈'))
+  assert.ok(html.includes('电脑排名') && html.includes('邀请码登记'))
+  // 留存：外部账号（页面写「电脑」）口径、D1/D7 与分周队列、登记激活都要在页面上。
+  assert.ok(html.includes('外部电脑 · 活跃=当天有中转连接'))
+  for (const label of ['今日活跃电脑', '近 7 天活跃', '近 30 天活跃', '次日留存', '7 日留存', '登记激活']) {
     assert.ok(html.includes(label), `留存缺 ${label}`)
   }
   assert.ok(html.includes('62%') && html.includes('n=13'), '留存率要带队列人数')
   assert.ok(html.includes('2026-W40') && html.includes('60%'), '分周队列')
-  // 今日版本分布：版本 / 设备 / 账号 三列。
+  // 今日版本分布：版本 / 手机 / 电脑 三列。
   assert.ok(html.includes('今日版本分布') && html.includes('20261012.1056'))
   assert.ok(html.includes('已剔除测试提交 3 条'))
   assert.ok(!html.includes('<script>'), '正文里的 script 必须被转义')
@@ -315,8 +326,8 @@ test('手机上不写死宽表：长清单有上限，且提示"前几条"', () 
     usedAt: GENERATED_AT, inviteNote: '试用', accountId: `acc_${i}`, accountName: `用户 ${i}`,
     agentId: `agt_${i}`, agentName: 'MacBook', devices: 1 }))
   const html = renderReport(many)
-  // 每一类清单只渲染前几条：设备 8、登记 6——正文长度因此不随库里的历史行数增长。
-  assert.ok(html.includes('iPhone 7') && !html.includes('iPhone 39'), '设备清单只列前 8 台')
+  // 每一类清单只渲染前几条：手机 8、登记 6——正文长度因此不随库里的历史行数增长。
+  assert.ok(html.includes('iPhone 7') && !html.includes('iPhone 39'), '手机清单只列前 8 台')
   assert.ok(html.includes('最近在线前 8 台'), '清单要说明只列了前几条')
   assert.ok(html.includes('用户 5') && !html.includes('用户 39'), '登记清单只列前 6 条')
   assert.ok(html.includes('最近 6 条'), '登记清单同理')
@@ -337,15 +348,59 @@ test('escapeHtml 覆盖五个字符', () => {
   assert.equal(escapeHtml(null), '')
 })
 
-test('LaunchAgent 模板含 label、09:00 与日志路径', () => {
+test('LaunchAgent 模板每天 00:02 跑、带 --full-day 与日志路径', () => {
   const template = readFileSync(PLIST, 'utf8')
   assert.match(template, /<string>com\.jayanttang\.dsh-daily-report<\/string>/)
   assert.match(template, /<key>StartCalendarInterval<\/key>/)
-  assert.match(template, /<key>Hour<\/key>\s*<integer>9<\/integer>/)
-  assert.match(template, /<key>Minute<\/key>\s*<integer>0<\/integer>/)
+  // owner 2026-10-12：改成晚上 12 点、发刚过去的一整天。00:02 不是整点——中转每 30 秒
+  // 才把用量冲一次盘，整点跑会少最后一小段（理由写在模板注释里）。
+  assert.match(template, /<key>Hour<\/key>\s*<integer>0<\/integer>/)
+  assert.match(template, /<key>Minute<\/key>\s*<integer>2<\/integer>/)
   assert.ok((template.match(/dsh-daily-report\.log/g) ?? []).length >= 2, 'stdout/stderr 都要日志')
   assert.match(template, /--days<\/string>\s*<string>30<\/string>/)
+  assert.match(template, /--full-day<\/string>/, '定时任务报的是刚过去的一整天')
   assert.match(template, /feedback\.mjs<\/string>/)
+})
+
+test('report --full-day 让 ops-report 锚到刚过去的一整天', () => {
+  const outDir = mkdtempSync(join(tmpdir(), 'feedback-fullday-'))
+  const full = spy(JSON.stringify(fixture()))
+  const { code } = run(['report', '--out', outDir, '--full-day'], { runner: full.runner })
+  assert.equal(code, 0)
+  assert.match(full.calls[0].at(-1), /ops-report --days 30 --as-of yesterday/)
+
+  const plain = spy(JSON.stringify(fixture()))
+  run(['report', '--out', outDir], { runner: plain.runner })
+  assert.ok(!plain.calls[0].at(-1).includes('--as-of'), '不给 --full-day 就是当天到此刻')
+})
+
+test('reportPath 按覆盖日命名：00:02 生成的那份叫前一天', () => {
+  const nextDay = new Date(2026, 9, 13, 0, 2, 0).getTime()
+  assert.equal(basename(reportPath({ outDir: '/tmp', day: 20261012, generatedAt: nextDay })),
+    '2026-10-12.html')
+  assert.equal(basename(reportPath({ outDir: '/tmp', generatedAt: nextDay })), '2026-10-13.html',
+    '老服务端没有 today.day 时退回按生成时刻命名')
+})
+
+test('覆盖整天的日报按覆盖日写日期、标题与「全天」标签', () => {
+  const completed = completedDayFixture()
+  // 跨零点的连接会被中转记在前一天的行上（lastSeenAt 落在覆盖日之后）：夹回 23:59。
+  const dayEnd = completed.today.dayStartAt + 86_400_000
+  completed.today.usage.firstSeenAt = completed.today.dayStartAt + 5 * 3600_000
+  completed.today.usage.lastSeenAt = dayEnd + 13_000
+  completed.today.devices.list[0].lastSeenAt = dayEnd + 13_000
+  const html = renderReport(completed)
+  assert.ok(html.includes('<title>DSH Mobile 运营日报 · 2026-10-12</title>'), '标题是覆盖日')
+  assert.ok(html.includes('2026-10-12 周一'), '周几也要按覆盖日算')
+  assert.ok(html.includes('<span class="tag ">全天</span>概览'), '过完的那一天叫「整天」')
+  assert.ok(html.includes('10-12 自然日 00:00–23:59（已过完）'))
+  assert.ok(html.includes('全天出口流量') && html.includes('较前一日'))
+  assert.ok(html.includes('本地日窗口（含 10-12）'))
+  assert.ok(html.includes('本报告覆盖 2026-10-12 一整个服务器本地自然日'))
+  assert.ok(html.includes('活跃时段 05:00–23:59'), '跨零点的时间要夹到 23:59')
+  assert.ok(!/23:59–00:00/.test(html), '不能出现回到 00:00 的时段')
+  assert.ok(!html.includes('今日出口流量') && !html.includes('较昨日'),
+    '10-13 生成的页面上不能把 10-12 写成"今日"')
 })
 
 test('reply / notify 的 --format 透传；不传就不出现在 argv 里', () => {

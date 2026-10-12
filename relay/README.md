@@ -184,12 +184,18 @@ $A admin.py --db $DB feedback-notify --body-file /tmp/notice.txt --all        # 
 $A admin.py --db $DB feedback-notify --body-file /tmp/notice.txt --all --yes  # 真正落库
 $A admin.py --db $DB feedback-delete --thread th_x --yes                      # 响应删除请求
 $A admin.py --db $DB ops-report --days 30                                     # 日报原始数据（JSON）
+$A admin.py --db $DB ops-report --days 30 --as-of yesterday                   # 刚过去的一整天
 ```
 
 `feedback-notify` **默认只预演**：不加 `--yes` 不写库，先给出收件设备数与清单；
 一台设备都不匹配时即使加了 `--yes` 也不写库，退出码 1。本机侧还有一层薄包装
 （`scripts/dev/feedback.mjs`）走 SSH 调这些命令，并负责把 `ops-report` 渲染成带图表的日报；
 写操作在那里同样默认预演，要 `--send`/`--yes` 才落库。
+
+`ops-report --as-of` 是报告的时间锚点，取值 `now`（默认，当天 00:00 到此刻的部分数据）、
+`yesterday`（刚过去的一整天）或 `YYYY-MM-DD`（指定那一天）；后两者把「今日」板块与
+`--days` 窗口都锚到那一整天，`generatedAt` 仍是真实的生成时刻。本机包装对应
+`feedback.mjs report --full-day`——每天 00:02 的自动日报用它报刚结束的那一天。
 
 ### Deploying to the relay host
 

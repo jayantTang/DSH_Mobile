@@ -12,7 +12,7 @@
 //   node scripts/dev/feedback.mjs notify --body-file /tmp/notice.txt [--subject S]
 //                                  [--format text|html] [--all] [--yes]
 //   node scripts/dev/feedback.mjs delete --thread th_x [--yes]
-//   node scripts/dev/feedback.mjs report [--days 30] [--out maintainers/reports]
+//   node scripts/dev/feedback.mjs report [--days 30] [--full-day] [--out maintainers/reports]
 //   node scripts/dev/feedback.mjs report --send --device dvc_a [--device dvc_b] [--subject S]
 //   node scripts/dev/feedback.mjs report-data [--days 30]
 //   node scripts/dev/feedback.mjs report --install-agent | --uninstall-agent
@@ -67,13 +67,15 @@ const USAGE = `用法：
   feedback.mjs reply --thread th_x (--body-file PATH | --body TEXT) [--subject S] [--format text|html] [--send]
   feedback.mjs notify (--body-file PATH | --body TEXT) [--subject S] [--format text|html] [--device ID]... [--all] [--yes]
   feedback.mjs delete --thread th_x [--yes]
-  feedback.mjs report [--days 30] [--out DIR] [--send --device ID]...
+  feedback.mjs report [--days 30] [--full-day] [--out DIR] [--send --device ID]...
   feedback.mjs report [--install-agent [--device ID]... | --uninstall-agent]
-  feedback.mjs report --send --device ID [--device ID]... [--subject S] [--days 30] [--out DIR]
+  feedback.mjs report [--full-day] --send --device ID [--device ID]... [--subject S] [--days 30] [--out DIR]
   feedback.mjs report-data [--days 30]
   （加 --local 跑本机 relay/.local/state.db；写操作默认预演）
+  （--full-day 覆盖刚过去的一整天，默认是当天到此刻）
   （--format 默认 text；report --send 把 HTML 报告按 html 投给 --device 指定的设备，报告里的
-    默认标题是「DSH Mobile 运营日报 YYYY-MM-DD」，--subject 可覆盖；不带 --device 是用法错误）`
+    默认标题是「DSH Mobile 运营日报 YYYY-MM-DD」（日期取覆盖日），--subject 可覆盖；
+    不带 --device 是用法错误）`
 
 /// 用法错误（退出码 2）与业务失败（1）分开。
 class UsageError extends Error {}
@@ -136,7 +138,7 @@ export function parseArgs(argv) {
   if (!sub) throw new UsageError('缺少子命令')
   if (!SUBCOMMANDS.has(sub)) throw new UsageError(`未知子命令 ${sub}`)
   const opts = { local: false, dryRun: false, send: false, yes: false, all: false, devices: [], days: 30,
-    installAgent: false, uninstallAgent: false }
+    installAgent: false, uninstallAgent: false, fullDay: false }
   for (let i = 1; i < argv.length; i += 1) {
     const flag = argv[i]
     switch (flag) {
@@ -147,6 +149,7 @@ export function parseArgs(argv) {
       case '--all': opts.all = true; break
       case '--install-agent': opts.installAgent = true; break
       case '--uninstall-agent': opts.uninstallAgent = true; break
+      case '--full-day': opts.fullDay = true; break
       case '--thread': opts.thread = need(argv, ++i, flag); break
       case '--status': opts.status = need(argv, ++i, flag); break
       case '--body': opts.body = need(argv, ++i, flag); break
@@ -215,7 +218,11 @@ export function adminArgs({ sub, opts }, db) {
     }
     case 'delete':
       return [...head, 'feedback-delete', '--thread', opts.thread, ...(opts.yes && !opts.dryRun ? ['--yes'] : [])]
-    default: return [...head, 'ops-report', '--days', String(opts.days)]
+    // `report` 拉的是 `ops-report`；`--full-day` 时锚到**刚过去的一整天**
+    // （服务器自己算"昨天"，不靠本机时钟）：00:00 的自动日报要的是昨天 00:00–23:59 的完整
+    // 数据，按"今天"算的话新的一天刚开头，每个数字都是 0。
+    default: return [...head, 'ops-report', '--days', String(opts.days),
+      ...(opts.fullDay ? ['--as-of', 'yesterday'] : [])]
   }
 }
 
@@ -254,7 +261,15 @@ function previewReply(invocation, opts, io) {
   return 0
 }
 
-export function reportPath({ outDir = DEFAULT_OUT, generatedAt, now = Date.now() } = {}) {
+/// 报告文件名 = **覆盖日**的日期（`2026-10-12.html`），不是生成时刻的日期。
+///
+/// 自动日报在 00:00 跑、报的是刚过去的那一天：用生成时刻命名的话，10-13 00:02 生成的文件
+/// 会叫 `2026-10-13.html`，而里面的数据全是 10-12 的——文件名、通知标题、手机上的报告日期
+/// 三处都会指向错的那一天。`day` 是服务端给的本地日 `YYYYMMDD`；老服务端没这个字段时
+/// （没有 `today.day`）退回按生成时刻命名。
+export function reportPath({ outDir = DEFAULT_OUT, generatedAt, day = 0, now = Date.now() } = {}) {
+  const raw = String(day ?? '')
+  if (/^\d{8}$/.test(raw)) return join(outDir, `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}.html`)
   const at = new Date(Number(generatedAt) || now)
   const pad = (value) => String(value).padStart(2, '0')
   return join(outDir, `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}.html`)
@@ -267,7 +282,8 @@ function writeReport(raw, opts, io) {
   } catch {
     throw new Error(`ops-report 返回的不是 JSON：${String(raw).slice(0, 200)}`)
   }
-  const file = reportPath({ outDir: opts.out ? resolve(ROOT, opts.out) : DEFAULT_OUT, generatedAt: data?.generatedAt })
+  const file = reportPath({ outDir: opts.out ? resolve(ROOT, opts.out) : DEFAULT_OUT,
+    generatedAt: data?.generatedAt, day: data?.today?.day })
   mkdirSync(dirname(file), { recursive: true })
   writeFileSync(file, renderReport(data), 'utf8')
   io.out(file)
@@ -377,7 +393,8 @@ function installAgent(io, opts = {}) {
   const path = agentPath()
   mkdirSync(dirname(path), { recursive: true })
   mkdirSync(join(homedir(), 'Library', 'Logs'), { recursive: true })
-  writeFileSync(path, renderAgentPlist({ deviceIds: opts.devices ?? [] }), { mode: 0o644 })
+  const rendered = renderAgentPlist({ deviceIds: opts.devices ?? [] })
+  writeFileSync(path, rendered, { mode: 0o644 })
   const uid = process.getuid()
   try {
     execFileSync('launchctl', ['bootout', `gui/${uid}/${AGENT_LABEL}`], { stdio: 'ignore' })
@@ -386,7 +403,13 @@ function installAgent(io, opts = {}) {
   const devices = opts.devices ?? []
   const where = devices.length === 0 ? '只在本机落盘'
     : `并且发给 ${devices.join('、')}`
-  io.out(`已装 LaunchAgent ${AGENT_LABEL}（每天 09:00 生成日报，${where}；日志 ~/${AGENT_LOG}）`)
+  // 触发时刻从**装下去的 plist** 里读，不写死在提示里（改过模板后提示跟着变）。
+  const at = (key) => new RegExp(`<key>${key}</key>\\s*<integer>(\\d+)</integer>`).exec(rendered)?.[1]
+  const hour = at('Hour')
+  const minute = at('Minute')
+  const when = hour === undefined ? '按 plist 里的日程'
+    : `每天 ${String(hour).padStart(2, '0')}:${String(minute ?? 0).padStart(2, '0')} 生成日报`
+  io.out(`已装 LaunchAgent ${AGENT_LABEL}（${when}，${where}；日志 ~/${AGENT_LOG}）`)
   return 0
 }
 
