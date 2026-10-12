@@ -16,8 +16,6 @@ from __future__ import annotations
 
 import sqlite3
 
-import pytest
-
 from store import SCHEMA_VERSION, Store
 
 
@@ -190,7 +188,7 @@ def test_v1_gains_the_push_columns_without_losing_rows(tmp_path):
 
     store = Store(path)
     try:
-        assert user_version(path) == SCHEMA_VERSION == 2
+        assert user_version(path) == SCHEMA_VERSION == 3
         columns = {row[1] for row in store._rows("PRAGMA table_info(devices)")}
         assert PUSH_COLUMNS <= columns, f"缺列：{PUSH_COLUMNS - columns}"
 
@@ -222,7 +220,7 @@ def test_the_push_migration_is_idempotent(tmp_path):
     write_v1_database(path)
     Store(path).close()
     for _ in range(3):
-        store = Store(path)   # 版本已是 2，这一步实际不会再跑迁移
+        store = Store(path)   # 版本已是最新，这几步实际不会再跑迁移
         store.close()
     assert user_version(path) == SCHEMA_VERSION
 
@@ -235,6 +233,135 @@ def test_the_push_migration_is_idempotent(tmp_path):
         conn.commit()
     finally:
         conn.close()
+
+
+#: v2 时代的 feedbackThreads（界面重做加 `subject` 之前）：13 列，没有 subject。
+#: 手工建，不用 `Store`——store 建出来的库已经带版本号与新列，证明不了迁移。
+_FEEDBACK_V2 = """
+CREATE TABLE feedbackThreads (
+  threadId       TEXT PRIMARY KEY,
+  ticketHash     TEXT NOT NULL UNIQUE,
+  accountId      TEXT,
+  deviceId       TEXT,
+  appVersion     TEXT,
+  deviceModel    TEXT,
+  systemVersion  TEXT,
+  createdAt      INTEGER NOT NULL,
+  lastMessageAt  INTEGER NOT NULL,
+  ownerReadAt    INTEGER,
+  userReadAt     INTEGER,
+  status         TEXT NOT NULL DEFAULT 'open',
+  clientRef      TEXT UNIQUE
+);
+CREATE TABLE feedbackMessages (
+  messageId  TEXT PRIMARY KEY,
+  threadId   TEXT NOT NULL,
+  author     TEXT NOT NULL,
+  body       TEXT NOT NULL,
+  createdAt  INTEGER NOT NULL,
+  clientRef  TEXT UNIQUE
+);
+"""
+
+#: v2 的线程行（13 列）。用来核对迁移之后**整行**没被动过。
+_V2_THREAD = ("th_old", "hash_old", "acc_old", "dev_old", "1.0", "iPhone17,1", "18.2",
+              1700000000000, 1700000005000, None, None, "open", None)
+
+V2_THREAD_COLUMNS = ("threadId", "ticketHash", "accountId", "deviceId", "appVersion",
+                     "deviceModel", "systemVersion", "createdAt", "lastMessageAt",
+                     "ownerReadAt", "userReadAt", "status", "clientRef")
+
+
+def write_v2_database(path: str) -> None:
+    """A database at generation 2, with a feedback thread (and its message) already in it."""
+    conn = sqlite3.connect(path)
+    conn.executescript(_FEEDBACK_V2)
+    conn.execute(f"INSERT INTO feedbackThreads VALUES ({','.join('?' * len(_V2_THREAD))})",
+                 _V2_THREAD)
+    conn.execute("INSERT INTO feedbackMessages VALUES ('fm_old', 'th_old', 'user', '老反馈',"
+                 " 1700000000000, NULL)")
+    conn.execute("PRAGMA user_version = 2")
+    conn.commit()
+    conn.close()
+
+
+def test_v2_gains_the_subject_column_without_touching_the_old_rows(tmp_path):
+    """界面重做（2026-10-12）：v2→v3 迁移。
+
+    这是本项目**第一次给一张已经有数据的表加列**：生产库上的反馈线程已经存在，
+    `CREATE TABLE IF NOT EXISTS` 对"加一列"是静默无效的，所以升级后的部署会带着一张
+    缺 `subject` 的表起来——中转报告自己健康，直到第一次写那一列才在运行时报
+    "no such column"。核心断言是**旧行数据不丢**。
+    """
+    path = str(tmp_path / "v2.db")
+    write_v2_database(path)
+    assert user_version(path) == 2, "前提：这个库是 v2"
+    before = sqlite3.connect(path).execute("SELECT * FROM feedbackThreads").fetchone()
+
+    store = Store(path)
+    try:
+        assert user_version(path) == SCHEMA_VERSION == 3
+        columns = {row[1] for row in store._rows("PRAGMA table_info(feedbackThreads)")}
+        assert "subject" in columns, "缺列：subject"
+
+        # 旧行整行不动（含每一个旧列的值），新列是 NULL。
+        row = store.feedback_thread("th_old", None, messages_per_thread=1)
+        assert row["subject"] is None, "旧行没有主题，不是空串"
+        assert tuple(row[column] for column in V2_THREAD_COLUMNS) == before
+        assert [message["body"] for message in row["messages"]] == ["老反馈"]
+
+        # 迁移后的表立刻可用：写主题、读回来、按设备查也带得出这一列。
+        assert store.set_feedback_subject("th_old", "  升级之后能写主题  ") is True
+        assert store.feedback_thread("th_old", None)["subject"] == "升级之后能写主题"
+        assert store.feedback_threads_by_device("dev_old", "acc_old")[0]["subject"] \
+            == "升级之后能写主题"
+    finally:
+        store.close()
+
+
+def test_the_subject_migration_is_idempotent(tmp_path):
+    """v2→v3 的 `ADD COLUMN` 同样不是幂等的：重复跑必须自己发现列已存在。"""
+    path = str(tmp_path / "v2.db")
+    write_v2_database(path)
+    Store(path).close()
+    for _ in range(3):
+        Store(path).close()
+    assert user_version(path) == SCHEMA_VERSION
+
+    import store as store_module
+    conn = sqlite3.connect(path)
+    try:
+        store_module._migrate_to_3(conn)  # noqa: SLF001 - 就是这个幂等性要在测
+        store_module._migrate_to_3(conn)  # noqa: SLF001
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_the_migrated_feedback_table_matches_a_fresh_one_column_for_column(tmp_path):
+    """迁移过来的 feedbackThreads 与新库逐列一致（列序也要一致）。
+
+    `ALTER TABLE … ADD COLUMN` 把新列追加在末尾，所以 `subject` 在 `SCHEMA` 里也必须
+    写在最后；写在中间会让两个部署的行形状分叉。
+    """
+    migrated = str(tmp_path / "migrated.db")
+    write_v2_database(migrated)
+    Store(migrated).close()
+
+    fresh = str(tmp_path / "fresh.db")
+    Store(fresh).close()
+
+    conn = sqlite3.connect(migrated)
+    try:
+        migrated_columns = [tuple(row) for row in conn.execute("PRAGMA table_info(feedbackThreads)")]
+    finally:
+        conn.close()
+    conn = sqlite3.connect(fresh)
+    try:
+        fresh_columns = [tuple(row) for row in conn.execute("PRAGMA table_info(feedbackThreads)")]
+    finally:
+        conn.close()
+    assert migrated_columns == fresh_columns
 
 
 def test_a_migrated_database_matches_a_fresh_one_column_for_column(tmp_path):

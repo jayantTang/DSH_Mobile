@@ -131,7 +131,12 @@ CREATE TABLE IF NOT EXISTS feedbackThreads (
   ownerReadAt    INTEGER,
   userReadAt     INTEGER,
   status         TEXT NOT NULL DEFAULT 'open',
-  clientRef      TEXT UNIQUE
+  clientRef      TEXT UNIQUE,
+  -- 可选的一句话主题（界面重做 2026-10-12）。**必须留在表的最后**：老库是靠
+  -- `_migrate_to_3` 的 `ALTER TABLE … ADD COLUMN` 补上它的，SQLite 把新列追加在
+  -- 末尾，写在中间会让"新建的库"与"迁移过来的库"列序不一致
+  -- （`test_a_migrated_database_matches_a_fresh_one_column_for_column` 会红）。
+  subject        TEXT
 );
 CREATE INDEX IF NOT EXISTS feedbackThreadsByDevice ON feedbackThreads(deviceId);
 CREATE INDEX IF NOT EXISTS feedbackThreadsByAccount ON feedbackThreads(accountId);
@@ -182,6 +187,11 @@ _PAIR_REJECT_LIMIT = 50
 #: codes which live for minutes.
 DEFAULT_INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000
 
+#: 线程主题（`feedbackThreads.subject`）的字符上限，与
+#: `specs/014-feedback-channel/contracts/feedback-http.md` 的 `subject` 一致。
+#: 两处各有一份：接口层（`feedback.py`）按契约回 400，这里给 owner 侧命令把关。
+MAX_SUBJECT_CHARS = 80
+
 #: The schema generation this code expects, tracked in SQLite's own
 #: ``PRAGMA user_version``.
 #:
@@ -193,7 +203,7 @@ DEFAULT_INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000
 #: "no such column" — on a relay that had otherwise reported itself healthy.
 #: Bumping this number and adding a step to ``_MIGRATIONS`` is what turns that
 #: into a startup migration.
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 def _migrate_to_1(conn: sqlite3.Connection) -> None:
@@ -236,11 +246,28 @@ def _migrate_to_2(conn: sqlite3.Connection) -> None:
         conn.execute(f"ALTER TABLE devices ADD COLUMN {column} {declaration}")
 
 
+def _migrate_to_3(conn: sqlite3.Connection) -> None:
+    """界面重做：``feedbackThreads`` 加 ``subject``（可选的一句话主题）。
+
+    这是本项目**第一次给一张已经有数据的表加列**：生产库上的反馈线程已经存在，
+    ``CREATE TABLE IF NOT EXISTS`` 不会补列，所以必须走 ``ALTER TABLE``。幂等性照
+    ``_migrate_to_2`` 的口径：``ADD COLUMN`` 在 SQLite 里没有 ``IF NOT EXISTS``，
+    所以先查列；旧行只是多一个 NULL，不动任何一个已有值。
+
+    ``subject`` 在 ``SCHEMA`` 里也是最后一列——迁移过来的库与新建的库列序必须相同
+    （见 ``SCHEMA`` 里那条注释）。
+    """
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(feedbackThreads)")}
+    if "subject" not in existing:
+        conn.execute("ALTER TABLE feedbackThreads ADD COLUMN subject TEXT")
+
+
 #: ``generation → function``, applied in order. Each step must be idempotent:
 #: a migration that fails after a partial commit is retried on the next start.
 _MIGRATIONS: dict[int, Any] = {
     1: _migrate_to_1,
     2: _migrate_to_2,
+    3: _migrate_to_3,
 }
 
 _SCRYPT_N = 1 << 14
@@ -298,6 +325,24 @@ class PairCodeClaimRejected(NotFound):
         super().__init__(message)
         self.reason = reason
         self.details = details
+
+
+def clean_feedback_subject(subject: Any) -> str | None:
+    """线程主题：去首尾空白，空（或全空白）按"没填"存 NULL，超长抛 :class:`StoreError`。
+
+    接口层（`feedback.py`）先按契约给 400；这里是落到库前的最后一道，owner 侧的
+    `feedback-reply --subject` 只有这一道。非字符串按类型错误拒绝，而不是静默丢掉
+    调用方写的东西。
+    """
+    if subject is None:
+        return None
+    if not isinstance(subject, str):
+        raise StoreError("subject must be a string")
+    trimmed = subject.strip()
+    if len(trimmed) > MAX_SUBJECT_CHARS:
+        raise StoreError(f"subject may be at most {MAX_SUBJECT_CHARS} characters")
+    return trimmed or None
+
 
 def local_day(stamp: float | None = None) -> int:
     """服务器本地日的序号，形如 20260921。
@@ -1091,8 +1136,12 @@ class Store:
                                account_id: str | None = None, device_id: str | None = None,
                                app_version: str | None = None, device_model: str | None = None,
                                system_version: str | None = None, client_ref: str | None = None,
+                               subject: str | None = None,
                                at: int | None = None) -> dict[str, Any]:
         """建一条线程，并把用户原文作为线程里的第一条留言。
+
+        `subject` 可选（≤80 字符）：去首尾空白，空白按未填存 NULL——展示层用正文首句
+        兜底，服务端不替用户补一句话（`data-model.md` 的 `subject`）。
 
         `clientRef` 命中唯一索引时**不新建**：返回既有那条（`created` 为 False），
         并把 `ticketHash` 换成这一次带来的哈希——重试发生在"上一条响应丢了"之后，
@@ -1114,15 +1163,29 @@ class Store:
             thread_id = new_id("th")
             self._conn.execute(
                 "INSERT INTO feedbackThreads(threadId, ticketHash, accountId, deviceId, appVersion,"
-                " deviceModel, systemVersion, createdAt, lastMessageAt, status, clientRef)"
-                " VALUES(?,?,?,?,?,?,?,?,?,'open',?)",
+                " deviceModel, systemVersion, createdAt, lastMessageAt, status, clientRef, subject)"
+                " VALUES(?,?,?,?,?,?,?,?,?,'open',?,?)",
                 (thread_id, ticket_hash, account_id, device_id, app_version, device_model,
-                 system_version, stamp, stamp, client_ref))
+                 system_version, stamp, stamp, client_ref, clean_feedback_subject(subject)))
             self._conn.execute(
                 "INSERT INTO feedbackMessages(messageId, threadId, author, body, createdAt)"
                 " VALUES(?,?,'user',?,?)", (new_id("fm"), thread_id, text, stamp))
             self._conn.commit()
         return {"threadId": thread_id, "createdAt": stamp, "lastMessageAt": stamp, "created": True}
+
+    def set_feedback_subject(self, thread_id: str, subject: str | None) -> bool:
+        """改一条线程的主题（`feedback-reply --subject`）；线程不存在返回 False。
+
+        规范化与上限走 :func:`clean_feedback_subject`，与 :meth:`create_feedback_thread`
+        同一个口径：空白存 NULL（等于把主题清掉），超 80 字符抛 :class:`StoreError`。
+        只动这一列，不碰 `lastMessageAt`/`status`——改标题不是一次往返。
+        """
+        cleaned = clean_feedback_subject(subject)
+        with self._lock:
+            cursor = self._conn.execute(
+                "UPDATE feedbackThreads SET subject=? WHERE threadId=?", (cleaned, thread_id))
+            self._conn.commit()
+            return bool(cursor.rowcount)
 
     def append_feedback_message(self, thread_id: str, body: str, *, author: str = "user",
                                 client_ref: str | None = None, bind_device_id: str | None = None,
@@ -1328,22 +1391,26 @@ class Store:
 
     def feedback_digest(self, thread_ids: Iterable[str], *, excerpt_chars: int = 80
                         ) -> dict[str, dict[str, Any]]:
-        """每条线程的**首条**留言摘要与**首条** owner 回信时间；只读。
+        """每条线程的**首条**留言摘要、主题与**首条** owner 回信时间；只读。
 
         `list_feedback_threads` 默认不带留言（清单只要摘要），而 owner 要的两个数都在
         消息表里：用户先说了什么（前 `excerpt_chars` 字）、我们隔了多久回第一句。一次
-        查完，不逐线程再查一遍；不存在的 id 直接跳过。
+        查完，不逐线程再查一遍；不存在的 id 直接跳过。`subject` 在另一张表上，所以
+        清单里那几行的主题也一并取回（为空仍是 NULL，由展示层用摘要兜底）。
         """
         ids = list(dict.fromkeys(thread_id for thread_id in thread_ids if thread_id))
         if not ids:
             return {}
         marks = ",".join("?" * len(ids))
+        subjects = {row["threadId"]: row["subject"] for row in self._rows(
+            f"SELECT threadId, subject FROM feedbackThreads WHERE threadId IN ({marks})", ids)}
         digest: dict[str, dict[str, Any]] = {}
         for row in self._rows(
                 "SELECT threadId, author, body, createdAt FROM feedbackMessages"
                 f" WHERE threadId IN ({marks}) ORDER BY threadId, createdAt, rowid", ids):
             entry = digest.setdefault(row["threadId"],
-                                      {"excerpt": row["body"][:excerpt_chars],
+                                      {"subject": subjects.get(row["threadId"]),
+                                       "excerpt": row["body"][:excerpt_chars],
                                        "firstReplyAt": None})
             if row["author"] == "owner" and entry["firstReplyAt"] is None:
                 entry["firstReplyAt"] = int(row["createdAt"])
@@ -1368,7 +1435,8 @@ class Store:
         return bool(account_id) and row["accountId"] == account_id
 
     def _feedback_payload(self, row: sqlite3.Row, messages_per_thread: int = 50) -> dict[str, Any]:
-        """一行线程 + 最近 N 条留言（按时间升序）+ 用户侧未读 + 留言总数。"""
+        """一行线程（含 `subject`，可为 None）+ 最近 N 条留言（按时间升序）
+        + 用户侧未读 + 留言总数。"""
         thread_id = row["threadId"]
         messages: list[dict[str, Any]] = []
         if messages_per_thread > 0:

@@ -61,6 +61,7 @@ def relay(tmp_path) -> dict:
     store.revoke_device(gone["deviceId"])
     thread = store.create_feedback_thread(
         ticket_hash=sha256_hex("fk_one"), text="点了新建会话之后一直转圈",
+        subject="新建会话一直转圈",
         account_id=account["accountId"], device_id=device["deviceId"],
         device_model="iPhone17,1", app_version="1.2.3 (20261013)", system_version="iOS 18.2")
     store.close()
@@ -77,6 +78,7 @@ def test_feedback_list_reports_the_fields_the_owner_reads(relay, capsys):
     assert code == 0
     (row,) = rows
     assert row["threadId"] == relay["threadId"]
+    assert row["subject"] == "新建会话一直转圈", "清单里的那一行标题"
     assert row["status"] == "open" and row["ownerUnread"] == 1 and row["messages"] == 1
     assert row["createdAt"] == row["lastMessageAt"] > 0
     assert row["source"] == {"kind": "device", "deviceId": relay["deviceId"],
@@ -208,6 +210,87 @@ def test_feedback_reply_takes_a_body_file_and_refuses_a_missing_thread(relay, tm
     assert code == 1 and "stderr" in report
     assert int(query(relay["db"],
                      "SELECT COUNT(*) AS n FROM feedbackMessages WHERE TRIM(body)=''")[0]["n"]) == 0
+
+
+# ── T064/T066：主题 subject ─────────────────────────────────────────────────
+
+
+def test_feedback_show_carries_the_subject(relay, capsys):
+    code, thread = run_cli(relay["db"], "feedback-show", "--thread", relay["threadId"],
+                           capsys=capsys)
+    assert code == 0
+    assert thread["subject"] == "新建会话一直转圈"
+
+
+def test_feedback_list_subject_is_null_when_the_user_did_not_write_one(relay, capsys):
+    """没填主题的线程 `subject` 是 null（不是空串），展示层据此用摘要兜底。"""
+    store = Store(relay["db"])
+    try:
+        store.create_feedback_thread(ticket_hash=sha256_hex("fk_two"), text="没写标题")
+        store.create_feedback_thread(ticket_hash=sha256_hex("fk_three"), text="只敲了空格",
+                                     subject="   ")
+    finally:
+        store.close()
+
+    code, rows = run_cli(relay["db"], "feedback-list", capsys=capsys)
+    assert code == 0
+    without = [row for row in rows if row["threadId"] != relay["threadId"]]
+    assert len(without) == 2
+    assert all(row["subject"] is None for row in without)
+
+
+def test_feedback_reply_subject_replaces_the_thread_subject(relay, capsys):
+    """`--subject` 给出时改线程主题；这一串往返在清单里就有一个像邮件标题的行。"""
+    code, report = run_cli(relay["db"], "feedback-reply", "--thread", relay["threadId"],
+                           "--body", "称呼：你好\n\n已经修好了。\n", "--subject",
+                           "  新建会话一直转圈（已定位）  ", capsys=capsys)
+    assert code == 0 and report["ok"] is True
+    assert query(relay["db"], "SELECT subject FROM feedbackThreads WHERE threadId=?",
+                 (relay["threadId"],))[0]["subject"] == "新建会话一直转圈（已定位）", \
+        "存的是去过首尾空白的那一句"
+
+    code, rows = run_cli(relay["db"], "feedback-list", capsys=capsys)
+    assert code == 0 and rows[0]["subject"] == "新建会话一直转圈（已定位）"
+    code, thread = run_cli(relay["db"], "feedback-show", "--thread", relay["threadId"],
+                           capsys=capsys)
+    assert code == 0 and thread["subject"] == "新建会话一直转圈（已定位）"
+
+
+def test_feedback_reply_without_subject_keeps_the_users_own_subject(relay, capsys):
+    code, report = run_cli(relay["db"], "feedback-reply", "--thread", relay["threadId"],
+                           "--body", "称呼：你好\n\n已经修好了。\n", capsys=capsys)
+    assert code == 0 and report["ok"] is True
+    assert query(relay["db"], "SELECT subject FROM feedbackThreads WHERE threadId=?",
+                 (relay["threadId"],))[0]["subject"] == "新建会话一直转圈", "不给就沿用原主题"
+
+
+def test_feedback_reply_with_a_blank_subject_clears_it(relay, capsys):
+    """空白主题与提交时同一个口径：按"没填"存 NULL，不留一个空串在列表里。"""
+    code, report = run_cli(relay["db"], "feedback-reply", "--thread", relay["threadId"],
+                           "--body", "称呼：你好\n\n已经修好了。\n", "--subject", "   \n",
+                           capsys=capsys)
+    assert code == 0 and report["ok"] is True
+    assert query(relay["db"], "SELECT subject FROM feedbackThreads WHERE threadId=?",
+                 (relay["threadId"],))[0]["subject"] is None
+
+
+def test_feedback_reply_subject_over_the_limit_writes_nothing(relay, capsys):
+    """主题被拒时**连那封信也不许进库**：校验在写回信之前，不能留半封信。"""
+    before = count(relay["db"], "feedbackMessages")
+    code, report = run_cli(relay["db"], "feedback-reply", "--thread", relay["threadId"],
+                           "--body", "称呼：你好\n\n正文。\n", "--subject", "长" * 81,
+                           capsys=capsys)
+    assert code == 1 and "stderr" in report
+    assert "at most" in report["stderr"], report["stderr"]
+    assert count(relay["db"], "feedbackMessages") == before
+    assert query(relay["db"], "SELECT subject FROM feedbackThreads WHERE threadId=?",
+                 (relay["threadId"],))[0]["subject"] == "新建会话一直转圈", "越界不改库"
+
+
+def test_feedback_reply_subject_on_a_missing_thread_still_reports_not_found(relay, capsys):
+    code, report = run_cli(relay["db"], "feedback-reply", "--thread", "th_nope",
+                           "--body", "写给不存在的线程", "--subject", "主题", capsys=capsys)
+    assert code == 1 and report == {"ok": False, "error": "thread not found"}
 
 
 def test_feedback_reply_template_has_the_four_parts_and_writes_nothing(relay, capsys):

@@ -11,17 +11,18 @@ import sqlite3
 
 import pytest
 
-from store import SCHEMA_VERSION, NotFound, Store, sha256_hex
+from store import SCHEMA_VERSION, NotFound, Store, StoreError, sha256_hex
 
 NEW_TABLES = ("feedbackThreads", "feedbackMessages", "notices", "noticeDeliveries")
 
 OLD_TABLES = {"accounts", "agents", "devices", "pairCodes", "usageDaily", "invites"}
 
-#: 逐字照 data-model.md 的四张表（列名与顺序）。
+#: 逐字照 data-model.md 的四张表（列名与顺序）。`subject` 在最后：它是界面重做时用
+#: `ALTER TABLE … ADD COLUMN` 补上的，SQLite 把新列追加在末尾，`SCHEMA` 必须与之一致。
 EXPECTED_COLUMNS = {
     "feedbackThreads": ["threadId", "ticketHash", "accountId", "deviceId", "appVersion",
                         "deviceModel", "systemVersion", "createdAt", "lastMessageAt",
-                        "ownerReadAt", "userReadAt", "status", "clientRef"],
+                        "ownerReadAt", "userReadAt", "status", "clientRef", "subject"],
     "feedbackMessages": ["messageId", "threadId", "author", "body", "createdAt", "clientRef"],
     "notices": ["noticeId", "subject", "body", "createdAt", "createdBy"],
     "noticeDeliveries": ["noticeId", "deviceId", "createdAt", "readAt"],
@@ -64,8 +65,8 @@ def test_a_fresh_database_creates_the_four_feedback_tables(tmp_path):
     Store(path).close()
     for table, expected in EXPECTED_COLUMNS.items():
         assert columns(path, table) == expected, table
-    # R3：只追加 `SCHEMA`，不 bump 版本号（bump 会让 test_store_schema_version 变红）。
-    assert user_version(path) == SCHEMA_VERSION == 2
+    # 版本号是 3（界面重做加 `subject` 那一列时 bump 的，见 test_store_schema_version.py）。
+    assert user_version(path) == SCHEMA_VERSION == 3
 
 
 def test_indexes_the_readers_rely_on_exist(tmp_path):
@@ -325,5 +326,83 @@ def test_delete_feedback_thread_takes_its_messages_with_it(tmp_path):
         assert count(store, "SELECT COUNT(*) FROM feedbackMessages") == 0
         with pytest.raises(NotFound):
             store.delete_feedback_thread(thread["threadId"])
+    finally:
+        store.close()
+
+
+# ── 主题 subject（T064/T065：界面重做 2026-10-12）────────────────────────────
+
+
+def test_a_thread_carries_its_subject_through_every_read_path(tmp_path):
+    """主题要在**每一条**线程 payload 里出来（清单/凭据/设备/日报摘要）。"""
+    store = Store(str(tmp_path / "state.db"))
+    try:
+        thread = store.create_feedback_thread(ticket_hash=sha256_hex("fk_one"), text="点了没反应",
+                                              subject="  新建会话一直转圈  ", device_id="dev_1",
+                                              account_id="acc_1", at=1_000)
+        # 存的是去过首尾空白的那一句，不是用户敲进来的原样。
+        assert store.feedback_thread(thread["threadId"], None)["subject"] == "新建会话一直转圈"
+        assert store.feedback_thread(thread["threadId"], sha256_hex("fk_one"))["subject"] \
+            == "新建会话一直转圈"
+        assert store.feedback_threads_by_tickets([(thread["threadId"], sha256_hex("fk_one"))])[0][
+            "subject"] == "新建会话一直转圈"
+        assert store.feedback_threads_by_device("dev_1", "acc_1")[0]["subject"] == "新建会话一直转圈"
+        assert store.list_feedback_threads()[0]["subject"] == "新建会话一直转圈"
+        assert store.feedback_digest([thread["threadId"]])[thread["threadId"]]["subject"] \
+            == "新建会话一直转圈"
+    finally:
+        store.close()
+
+
+def test_a_blank_subject_is_stored_as_null_not_as_an_empty_string(tmp_path):
+    """没填 / 只敲了空格：一律 NULL——展示层才知道该拿正文首句兜底。"""
+    store = Store(str(tmp_path / "state.db"))
+    try:
+        for index, subject in enumerate((None, "", "   ", "\n\t ")):
+            thread = store.create_feedback_thread(ticket_hash=sha256_hex(f"fk_{index}"),
+                                                  text=f"第 {index} 条", subject=subject, at=1_000)
+            row = store._row("SELECT subject FROM feedbackThreads WHERE threadId=?",
+                             (thread["threadId"],))
+            assert row["subject"] is None, subject
+            assert store.list_feedback_threads()[0]["subject"] is None
+    finally:
+        store.close()
+
+
+def test_set_feedback_subject_edits_only_that_column(tmp_path):
+    """`feedback-reply --subject` 的落点：改标题不是一次往返，别的列都不许动。"""
+    store = Store(str(tmp_path / "state.db"))
+    try:
+        thread = store.create_feedback_thread(ticket_hash=sha256_hex("fk_one"), text="原文",
+                                              subject="用户写的主题", at=1_000)
+        store.append_feedback_message(thread["threadId"], "回信", author="owner", at=2_000)
+        before = dict(store.feedback_thread(thread["threadId"], None))
+
+        assert store.set_feedback_subject(thread["threadId"], "  我们改的主题  ") is True
+        after = store.feedback_thread(thread["threadId"], None)
+        assert after["subject"] == "我们改的主题"
+        for column in ("status", "lastMessageAt", "ownerReadAt", "userReadAt", "createdAt"):
+            assert after[column] == before[column], column
+        assert after["status"] == "replied" and after["lastMessageAt"] == 2_000
+
+        # 线程不存在：False，不静默新建。
+        assert store.set_feedback_subject("th_nope", "主题") is False
+    finally:
+        store.close()
+
+
+def test_set_feedback_subject_accepts_the_80_char_limit_and_refuses_beyond_it(tmp_path):
+    """上限是 80 字符：正好 80 通过，81 抛 StoreError（owner 侧命令据此非零退出）。"""
+    store = Store(str(tmp_path / "state.db"))
+    try:
+        thread = store.create_feedback_thread(ticket_hash=sha256_hex("fk_one"), text="原文")
+        assert store.set_feedback_subject(thread["threadId"], "字" * 80) is True
+        assert store.feedback_thread(thread["threadId"], None)["subject"] == "字" * 80
+
+        with pytest.raises(StoreError):
+            store.set_feedback_subject(thread["threadId"], "字" * 81)
+        assert store.feedback_thread(thread["threadId"], None)["subject"] == "字" * 80, "越界不改库"
+        with pytest.raises(StoreError):
+            store.set_feedback_subject(thread["threadId"], 12)
     finally:
         store.close()

@@ -135,6 +135,54 @@ async def test_submit_with_an_invalid_device_token_is_anonymous(client, store):
     assert thread["deviceId"] is None and thread["accountId"] is None
 
 
+# ── 可选主题 subject（T065：界面重做 2026-10-12）─────────────────────────────
+
+
+async def test_submit_takes_an_optional_subject_and_inbox_returns_it(client, store):
+    """主题是「写反馈」里的那一行标题：提交时给进去，列表/详情读回来。"""
+    submitted = await client.post("/feedback/submit", json={
+        "text": "点了新建会话之后一直转圈", "subject": "  新建会话一直转圈  "})
+    assert submitted.status == 200, await submitted.text()
+    body = await submitted.json()
+
+    thread = (await inbox(client, [{"threadId": body["threadId"],
+                                    "ticketKey": body["ticketKey"]}]))["threads"][0]
+    assert thread["subject"] == "新建会话一直转圈", "存的是去过首尾空白的那一句"
+    assert store.feedback_thread(body["threadId"], None)["subject"] == "新建会话一直转圈"
+
+
+async def test_submit_without_a_subject_stores_null_and_the_field_is_still_there(client, store):
+    """不填时服务端**不替用户补**正文首句：字段在，值是 null（展示层兜底）。"""
+    ticket = await feedback_ticket(client)
+    thread = (await inbox(client, [ticket_pair(ticket)]))["threads"][0]
+    assert thread["subject"] is None
+    assert store.feedback_thread(ticket["threadId"], None)["subject"] is None
+
+
+async def test_submit_accepts_the_80_char_subject_limit_and_rejects_81(client):
+    exact = await client.post("/feedback/submit", json={"text": "正文", "subject": "字" * 80})
+    assert exact.status == 200, await exact.text()
+
+    too_long = await client.post("/feedback/submit", json={"text": "正文", "subject": "字" * 81})
+    assert too_long.status == 400
+    assert (await too_long.json())["error"]["code"] == "feedback/too-long"
+
+
+@pytest.mark.parametrize("subject", ["   ", "", "\n\t "])
+async def test_a_blank_subject_is_the_same_as_not_sending_one(client, subject):
+    """空白按未填处理——不是 400，也不是空串入库。"""
+    ticket = await feedback_ticket(client, subject=subject)
+    thread = (await inbox(client, [ticket_pair(ticket)]))["threads"][0]
+    assert thread["subject"] is None
+
+
+@pytest.mark.parametrize("subject", [12, ["标题"], {"text": "标题"}, True])
+async def test_submit_rejects_a_non_string_subject(client, subject):
+    response = await client.post("/feedback/submit", json={"text": "正文", "subject": subject})
+    assert response.status == 400
+    assert (await response.json())["error"]["code"] == "feedback/bad-request"
+
+
 # ── POST /feedback/inbox（T010）─────────────────────────────────────────────
 
 
@@ -151,7 +199,8 @@ async def test_inbox_returns_the_thread_behind_a_valid_ticket(client):
     assert [m["author"] for m in thread["messages"]] == ["user"]
     assert thread["messages"][0]["body"] == "第一条"
     # 字段集合就是契约里那一组：内部的 ticketHash/来源信息一个都不出网。
-    assert set(thread) == {"threadId", "status", "createdAt", "lastMessageAt", "unread", "messages"}
+    assert set(thread) == {"threadId", "subject", "status", "createdAt", "lastMessageAt",
+                           "unread", "messages"}
     assert set(thread["messages"][0]) == {"messageId", "author", "body", "createdAt"}
     assert body["notices"] == [] and body["unreadCount"] == 0
 

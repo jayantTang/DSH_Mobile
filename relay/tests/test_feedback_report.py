@@ -152,7 +152,7 @@ def test_ops_report_counts_feedback_and_the_median_first_reply(tmp_path, capsys)
     store.append_feedback_message(answered["threadId"], "回信", author="owner",
                                   at=now - 10 * 86_400_000 + 6 * 3_600_000 + 1_800_000)
     fresh = store.create_feedback_thread(ticket_hash=sha256_hex("fk_2"), text="第二个问题",
-                                         at=now - 2 * 86_400_000)
+                                         subject="新建会话一直转圈", at=now - 2 * 86_400_000)
     store.create_feedback_thread(ticket_hash=sha256_hex("fk_3"), text="40 天前的老问题",
                                  at=now - 40 * 86_400_000)
     store.close()
@@ -165,6 +165,9 @@ def test_ops_report_counts_feedback_and_the_median_first_reply(tmp_path, capsys)
     assert [row["threadId"] for row in report["feedback"]["threads"]] == [
         fresh["threadId"], answered["threadId"]], "最近的在前"
     assert report["feedback"]["threads"][0]["excerpt"] == "第二个问题"
+    assert report["feedback"]["threads"][0]["subject"] == "新建会话一直转圈", \
+        "日报的线程行与 feedback-list 同形（含 subject）"
+    assert report["feedback"]["threads"][1]["subject"] is None, "没填主题就是 null"
     assert report["feedback"]["threads"][0]["source"]["kind"] == "anonymous"
     # 回信过但没人 `feedback-show` 过：用户原文在 owner 侧仍是"没看过"的一条。
     assert report["feedback"]["threads"][1]["ownerUnread"] == 1
@@ -198,17 +201,22 @@ def test_ops_report_merges_top_accounts_across_days(tmp_path, capsys):
 
 
 def test_the_digest_read_method_gives_the_excerpt_and_the_first_reply_time(tmp_path):
-    """`ops-report` 与 `feedback-list` 共用它取"用户先说了什么"和"隔了多久回第一句"。"""
+    """`ops-report` 与 `feedback-list` 共用它取"用户先说了什么"和"隔了多久回第一句"。
+
+    主题（`subject`）也在这一份摘要里——它落在 `feedbackThreads` 上，而摘要在
+    `feedbackMessages` 上，所以这一次要一起取回来。
+    """
     store = Store(str(tmp_path / "state.db"))
     try:
         thread = store.create_feedback_thread(ticket_hash=sha256_hex("fk_1"), text="x" * 100,
-                                              at=1_000)
+                                              subject="点了没反应", at=1_000)
         store.append_feedback_message(thread["threadId"], "回信", author="owner", at=2_000)
         store.append_feedback_message(thread["threadId"], "再回一句", author="owner", at=3_000)
 
         digest = store.feedback_digest([thread["threadId"], "th_nope", thread["threadId"]])
         assert set(digest) == {thread["threadId"]}, "重复的 id 只算一次，不存在的跳过"
-        assert digest[thread["threadId"]] == {"excerpt": "x" * 80, "firstReplyAt": 2_000}
+        assert digest[thread["threadId"]] == {"subject": "点了没反应", "excerpt": "x" * 80,
+                                              "firstReplyAt": 2_000}
         assert store.feedback_digest([]) == {}
     finally:
         store.close()

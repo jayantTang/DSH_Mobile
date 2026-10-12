@@ -1,6 +1,7 @@
 """Feedback channel: the four append-only HTTP endpoints (014).
 
-``POST /feedback/submit`` — 新建线程，返回一次性的取件凭据（`ticketKey` 只在这里出现）。
+``POST /feedback/submit`` — 新建线程（另收可选的 ``subject``，≤80 字符，界面重做后
+「写反馈」里的那一行标题），返回一次性的取件凭据（`ticketKey` 只在这里出现）。
 ``POST /feedback/inbox``  — 拉取线程与通知，**不改任何已读状态**。
 ``POST /feedback/append`` — 用户在已有线程下补充，线程回到 ``open``。
 ``POST /feedback/read``   — 标记已读；线程按凭据或设备授权，通知只按设备。
@@ -27,7 +28,7 @@ from typing import Any
 from aiohttp import web
 
 from api import ClaimLimiter, bearer_token, client_identifier, json_error, read_json
-from store import Conflict, Store, StoreError, sha256_hex
+from store import MAX_SUBJECT_CHARS, Conflict, Store, StoreError, sha256_hex
 
 LOGGER = logging.getLogger("relay.feedback")
 
@@ -36,6 +37,8 @@ _MAX_TEXT_CHARS = 4000
 _MAX_TEXT_BYTES = 8000
 _MAX_BODY_BYTES = 16 * 1024
 _MAX_TECH_CHARS = 64
+# 主题的上限只有一处定义（`store.MAX_SUBJECT_CHARS`）：接口层与 owner 侧命令
+# （`feedback-reply --subject`）必须同一条线，这里 import 而不是再写一个 80。
 _MAX_CLIENT_REF_CHARS = 64
 _MAX_TICKETS = 50
 _MAX_IDS = 200
@@ -125,6 +128,26 @@ def _text_of(body: dict[str, Any]) -> tuple[str | None, web.Response | None]:
     return trimmed, None
 
 
+def _subject_of(body: dict[str, Any]) -> tuple[str | None, web.Response | None]:
+    """可选主题（≤80 字符）：去首尾空白，空白按未填处理（不是错误）。
+
+    类型不对按契约回 `feedback/bad-request`，超长回 `feedback/too-long`——与 `text`
+    分开判定：主题超长不该把整封反馈说成"正文太长"。
+    """
+    value = body.get("subject")
+    if value is None:
+        return None, None
+    if not isinstance(value, str):
+        return None, json_error(400, "feedback/bad-request", "subject must be a string")
+    trimmed = value.strip()
+    if not trimmed:
+        return None, None
+    if len(trimmed) > MAX_SUBJECT_CHARS:
+        return None, json_error(400, "feedback/too-long",
+                                f"subject may be at most {MAX_SUBJECT_CHARS} characters")
+    return trimmed, None
+
+
 def _tech_of(body: dict[str, Any], key: str) -> tuple[str | None, web.Response | None]:
     """自动附带的技术信息（版本/机型/iOS）；各 64 字符上限。"""
     value = body.get(key)
@@ -202,9 +225,13 @@ async def _caller(request: web.Request) -> dict[str, Any] | None:
 
 
 def _public_thread(thread: dict[str, Any]) -> dict[str, Any]:
-    """只留契约里的字段：``ticketHash`` 与来源信息这类内部列不得出网。"""
+    """只留契约里的字段：``ticketHash`` 与来源信息这类内部列不得出网。
+
+    ``subject`` 是可选主题，没填就是 ``null``——服务端不替客户端补正文首句。
+    """
     return {
         "threadId": thread["threadId"],
+        "subject": thread.get("subject"),
         "status": thread["status"],
         "createdAt": thread["createdAt"],
         "lastMessageAt": thread["lastMessageAt"],
@@ -269,6 +296,9 @@ async def feedback_submit(request: web.Request) -> web.Response:
     text, error = _text_of(body)
     if error is not None:
         return error
+    subject, error = _subject_of(body)
+    if error is not None:
+        return error
     fields: dict[str, str | None] = {}
     for key, column in (("appVersion", "app_version"), ("deviceModel", "device_model"),
                         ("systemVersion", "system_version")):
@@ -287,7 +317,7 @@ async def feedback_submit(request: web.Request) -> web.Response:
     try:
         thread = await asyncio.to_thread(
             store.create_feedback_thread,
-            ticket_hash=sha256_hex(ticket), text=text, client_ref=client_ref,
+            ticket_hash=sha256_hex(ticket), text=text, client_ref=client_ref, subject=subject,
             device_id=device["deviceId"] if device else None,
             account_id=device["accountId"] if device else None, **fields)
     except Conflict:

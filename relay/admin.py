@@ -203,6 +203,9 @@ def build_parser() -> argparse.ArgumentParser:
     feedback_reply.add_argument("--thread")
     feedback_reply.add_argument("--body", help="the letter, stored verbatim")
     feedback_reply.add_argument("--body-file", help="read the letter from a file instead")
+    feedback_reply.add_argument("--subject",
+                                help="replace the thread subject (≤80 chars; blank clears it);"
+                                     " omit to keep the user's own")
     feedback_reply.add_argument("--template", action="store_true",
                                 help="print the official skeleton and write nothing")
     feedback_reply.add_argument("--signature", default=DEFAULT_SIGNATURE,
@@ -384,7 +387,14 @@ def run(args: argparse.Namespace, store: Store) -> int:
             return 0
         if not args.thread:
             raise StoreError("feedback-reply 需要 --thread（或者 --template）")
-        written = store.append_feedback_message(args.thread, _read_body(args), author="owner")
+        # 两个入参都先校验再动库：正文缺/空白、主题超长都在写信之前拒绝，
+        # 不能写完半封才报错（那封信已经进库了）。主题不给就沿用用户写的那句。
+        letter = _read_body(args)
+        if args.subject is not None:
+            # 线程不存在时这里返回 False；下面的 append 同样返回 None，
+            # 报的还是"thread not found"。
+            store.set_feedback_subject(args.thread, args.subject)
+        written = store.append_feedback_message(args.thread, letter, author="owner")
         if written is None:
             _emit({"ok": False, "error": "thread not found"})
             return 1
@@ -558,13 +568,18 @@ def _show_thread(store: Store, thread_id: str) -> dict[str, Any] | None:
 
 def _feedback_rows(store: Store, *, status: str | None, since_ms: int | None,
                    limit: int) -> list[dict[str, Any]]:
-    """owner 清单的每一行（`feedback-list` 与 `ops-report` 用同一个形状）。"""
+    """owner 清单的每一行（`feedback-list` 与 `ops-report` 用同一个形状）。
+
+    `subject` 是可选主题，用户没填就是 None（展示层用 `excerpt` 兜底）；
+    `ops-report` 的 `feedback.threads[]` 照抄这一份，所以两处永远同形。
+    """
     unread = store.owner_unread_counts()
     rows = store.list_feedback_threads(status=status, since_ms=since_ms, limit=limit)
     digest = store.feedback_digest([row["threadId"] for row in rows])
     return [
         {
             "threadId": row["threadId"],
+            "subject": row["subject"],
             "createdAt": int(row["createdAt"]),
             "lastMessageAt": int(row["lastMessageAt"]),
             "status": row["status"],
