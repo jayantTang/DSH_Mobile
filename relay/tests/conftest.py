@@ -49,3 +49,17 @@ def agent_headers(agent: dict) -> dict[str, str]:
 
 def device_headers(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
+
+
+async def feedback_ticket(client, text: str = "点了新建会话之后一直转圈", **fields) -> dict:
+    """提交一条反馈并返回它的 `threadId`/`ticketKey`（014 的测试共用）。
+
+    走的就是 App 的匿名提交路径（不带 Authorization），所以取件凭据是唯一的
+    读取手段——三个反馈测试文件都从这里起步。
+    """
+    payload = {"text": text, **fields}
+    response = await client.post("/feedback/submit", json=payload)
+    assert response.status == 200, await response.text()
+    body = await response.json()
+    return {"threadId": body["threadId"], "ticketKey": body["ticketKey"],
+            "createdAt": body["createdAt"]}

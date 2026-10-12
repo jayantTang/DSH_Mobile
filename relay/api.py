@@ -1128,6 +1128,9 @@ async def agents_enroll(request: web.Request) -> web.Response:
 
 def register_http_routes(app: web.Application, route: Any, base_path: str) -> None:
     """Attach the plain-HTTP routes (``route`` registers both path forms)."""
+    # 延迟导入：`feedback` 复用本模块的名字，顶层互相 import 会炸。
+    from feedback import feedback_append, feedback_inbox, feedback_read, feedback_submit
+
     route("GET", "/healthz", healthz)
     route("GET", "/stats", stats)
     route("POST", "/pair/claim", pair_claim)
@@ -1139,6 +1142,10 @@ def register_http_routes(app: web.Application, route: Any, base_path: str) -> No
     route("PUT", "/files/up", files_up)
     route("GET", "/files/down", files_down)
     route("POST", "/agents/enroll", agents_enroll)
+    route("POST", "/feedback/submit", feedback_submit)
+    route("POST", "/feedback/inbox", feedback_inbox)
+    route("POST", "/feedback/append", feedback_append)
+    route("POST", "/feedback/read", feedback_read)
     app["claim_limiter"] = ClaimLimiter()
     app["enroll_limiter"] = ClaimLimiter(limit=_ENROLL_FAILURES, window_s=_ENROLL_WINDOW_S)
     app["base_path"] = base_path

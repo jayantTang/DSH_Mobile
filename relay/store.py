@@ -110,6 +110,59 @@ CREATE TABLE IF NOT EXISTS invites (
   usedByAgentId   TEXT,
   note            TEXT
 );
+
+-- 反馈通道（014）。一条用户反馈 = 一个线程，线程里是往返的留言；通知与线程无关，
+-- 投给每台设备各一行未读。列名、类型与上限逐字照
+-- `specs/014-feedback-channel/data-model.md`。
+--
+-- 取件凭据（`ticketKey`）只存 SHA-256：原文只在创建响应里出现一次，与
+-- `agentSecret`/`deviceToken` 同一套口径。没有外键约束——设备撤销与生命周期
+-- 都不该让一条反馈消失（数据模型的明确决定）。
+CREATE TABLE IF NOT EXISTS feedbackThreads (
+  threadId       TEXT PRIMARY KEY,
+  ticketHash     TEXT NOT NULL UNIQUE,
+  accountId      TEXT,
+  deviceId       TEXT,
+  appVersion     TEXT,
+  deviceModel    TEXT,
+  systemVersion  TEXT,
+  createdAt      INTEGER NOT NULL,
+  lastMessageAt  INTEGER NOT NULL,
+  ownerReadAt    INTEGER,
+  userReadAt     INTEGER,
+  status         TEXT NOT NULL DEFAULT 'open',
+  clientRef      TEXT UNIQUE
+);
+CREATE INDEX IF NOT EXISTS feedbackThreadsByDevice ON feedbackThreads(deviceId);
+CREATE INDEX IF NOT EXISTS feedbackThreadsByAccount ON feedbackThreads(accountId);
+CREATE INDEX IF NOT EXISTS feedbackThreadsByStatus ON feedbackThreads(status, lastMessageAt);
+
+CREATE TABLE IF NOT EXISTS feedbackMessages (
+  messageId  TEXT PRIMARY KEY,
+  threadId   TEXT NOT NULL,
+  author     TEXT NOT NULL,
+  body       TEXT NOT NULL,
+  createdAt  INTEGER NOT NULL,
+  clientRef  TEXT UNIQUE
+);
+CREATE INDEX IF NOT EXISTS feedbackMessagesByThread ON feedbackMessages(threadId, createdAt);
+
+CREATE TABLE IF NOT EXISTS notices (
+  noticeId   TEXT PRIMARY KEY,
+  subject    TEXT,
+  body       TEXT NOT NULL,
+  createdAt  INTEGER NOT NULL,
+  createdBy  TEXT
+);
+
+CREATE TABLE IF NOT EXISTS noticeDeliveries (
+  noticeId   TEXT NOT NULL,
+  deviceId   TEXT NOT NULL,
+  createdAt  INTEGER NOT NULL,
+  readAt     INTEGER,
+  PRIMARY KEY (noticeId, deviceId)
+);
+CREATE INDEX IF NOT EXISTS noticeDeliveriesByDevice ON noticeDeliveries(deviceId, readAt);
 """
 
 DEFAULT_PAIR_TTL_MS = 10 * 60 * 1000
@@ -1027,3 +1080,308 @@ class Store:
 
     def touch_device(self, device_id: str, at: int | None = None) -> None:
         self._write("UPDATE devices SET lastSeenAt=? WHERE deviceId=?", (at or now_ms(), device_id))
+
+    # ── feedback channel (014) ──────────────────────────────────────────────
+    #
+    # 四个 HTTP 接口（`relay/feedback.py`）与 owner 侧命令（`admin.py`）共用的读写。
+    # 凭据在调用方就已经哈希好（与 `agentSecret`/`deviceToken` 同一套口径），这里
+    # 只做比对。线程永远不因设备撤销而消失——所以没有外键。
+
+    def create_feedback_thread(self, *, ticket_hash: str, text: str,
+                               account_id: str | None = None, device_id: str | None = None,
+                               app_version: str | None = None, device_model: str | None = None,
+                               system_version: str | None = None, client_ref: str | None = None,
+                               at: int | None = None) -> dict[str, Any]:
+        """建一条线程，并把用户原文作为线程里的第一条留言。
+
+        `clientRef` 命中唯一索引时**不新建**：返回既有那条（`created` 为 False），
+        并把 `ticketHash` 换成这一次带来的哈希——重试发生在"上一条响应丢了"之后，
+        所以重试必须拿到一把能用的凭据。同一个 `clientRef` 来自别的来源时抛
+        :class:`Conflict`，不把线程交出去。
+        """
+        stamp = at or now_ms()
+        with self._lock:
+            if client_ref:
+                existing = self._feedback_row_by("clientRef", client_ref)
+                if existing is not None:
+                    if not self._feedback_source_matches(existing, device_id, account_id):
+                        raise Conflict(f"clientRef {client_ref} belongs to another source")
+                    self._conn.execute("UPDATE feedbackThreads SET ticketHash=? WHERE threadId=?",
+                                       (ticket_hash, existing["threadId"]))
+                    self._conn.commit()
+                    return {"threadId": existing["threadId"], "createdAt": int(existing["createdAt"]),
+                            "lastMessageAt": int(existing["lastMessageAt"]), "created": False}
+            thread_id = new_id("th")
+            self._conn.execute(
+                "INSERT INTO feedbackThreads(threadId, ticketHash, accountId, deviceId, appVersion,"
+                " deviceModel, systemVersion, createdAt, lastMessageAt, status, clientRef)"
+                " VALUES(?,?,?,?,?,?,?,?,?,'open',?)",
+                (thread_id, ticket_hash, account_id, device_id, app_version, device_model,
+                 system_version, stamp, stamp, client_ref))
+            self._conn.execute(
+                "INSERT INTO feedbackMessages(messageId, threadId, author, body, createdAt)"
+                " VALUES(?,?,'user',?,?)", (new_id("fm"), thread_id, text, stamp))
+            self._conn.commit()
+        return {"threadId": thread_id, "createdAt": stamp, "lastMessageAt": stamp, "created": True}
+
+    def append_feedback_message(self, thread_id: str, body: str, *, author: str = "user",
+                                client_ref: str | None = None, bind_device_id: str | None = None,
+                                bind_account_id: str | None = None,
+                                at: int | None = None) -> dict[str, Any] | None:
+        """线程里加一条留言；线程不存在返回 None。
+
+        `author='user'`（手机补充）把线程拨回 `open`，`author='owner'`（回信）置
+        `replied`。`clientRef` 命中唯一索引时返回既有那条、不重复写。带设备时顺带
+        补上匿名线程的绑定：匿名提交后来配对了，这台设备也能找回来。
+        """
+        stamp = at or now_ms()
+        with self._lock:
+            thread = self._conn.execute("SELECT * FROM feedbackThreads WHERE threadId=?",
+                                        (thread_id,)).fetchone()
+            if thread is None:
+                return None
+            if bind_device_id and thread["deviceId"] is None:
+                self._conn.execute("UPDATE feedbackThreads SET deviceId=?, accountId=? WHERE threadId=?",
+                                   (bind_device_id, bind_account_id, thread_id))
+            if client_ref:
+                existing = self._conn.execute("SELECT * FROM feedbackMessages WHERE clientRef=?",
+                                              (client_ref,)).fetchone()
+                if existing is not None:
+                    self._conn.commit()
+                    return {"messageId": existing["messageId"], "threadId": existing["threadId"],
+                            "createdAt": int(existing["createdAt"]), "created": False}
+            message_id = new_id("fm")
+            self._conn.execute(
+                "INSERT INTO feedbackMessages(messageId, threadId, author, body, createdAt, clientRef)"
+                " VALUES(?,?,?,?,?,?)", (message_id, thread_id, author, body, stamp, client_ref))
+            self._conn.execute(
+                "UPDATE feedbackThreads SET lastMessageAt=?, status=? WHERE threadId=?",
+                (stamp, "replied" if author == "owner" else "open", thread_id))
+            self._conn.commit()
+        return {"messageId": message_id, "threadId": thread_id, "createdAt": stamp, "created": True}
+
+    def create_notice(self, body: str, subject: str | None, device_ids: Iterable[str], *,
+                      created_by: str | None = None, at: int | None = None) -> dict[str, Any]:
+        """发一条通知，并给每台收件设备写一行未读投递（发送记录就在这两张表里）。
+
+        收件人由调用方定（`admin.py` 的 `--all` 是全部未撤销设备）；这里只去重，
+        不核对设备是否存在——投给一台刚被撤销的手机是调度问题，不是存储问题。
+        """
+        stamp = at or now_ms()
+        notice_id = new_id("nt")
+        targets = list(dict.fromkeys(target for target in device_ids if target))
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO notices(noticeId, subject, body, createdAt, createdBy) VALUES(?,?,?,?,?)",
+                (notice_id, subject, body, stamp, created_by))
+            self._conn.executemany(
+                "INSERT OR IGNORE INTO noticeDeliveries(noticeId, deviceId, createdAt) VALUES(?,?,?)",
+                [(notice_id, device_id, stamp) for device_id in targets])
+            self._conn.commit()
+        return {"noticeId": notice_id, "createdAt": stamp, "recipients": len(targets)}
+
+    def feedback_thread(self, thread_id: str, ticket_hash: str | None = None, *,
+                        messages_per_thread: int = 50) -> dict[str, Any] | None:
+        """一条线程（最近 N 条留言 + 用户侧未读 + 留言总数）；取不到返回 None。
+
+        `ticket_hash` 给了就必须匹配，否则和"线程不存在"一样返回 None——调用方对
+        这两种情况给同一个答复，不泄露线程是否存在。传 None 是内部/owner 路径。
+        """
+        row = self._row("SELECT * FROM feedbackThreads WHERE threadId=?", (thread_id,))
+        if row is None:
+            return None
+        if ticket_hash is not None and not secrets.compare_digest(row["ticketHash"], ticket_hash):
+            return None
+        return self._feedback_payload(row, messages_per_thread)
+
+    def feedback_threads_by_tickets(self, pairs: Iterable[tuple[str, str]], *,
+                                    messages_per_thread: int = 50) -> list[dict[str, Any]]:
+        """凭据命中的线程；对子里是 `(threadId, ticketHash)`。
+
+        逐个按主键取，因为每行的凭据哈希各不相同，没法用一条 `IN` 查完；调用方
+        （`feedback.py`）已经把对子数限制在 50 以内。同一个线程只出现一次。
+        """
+        found: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for thread_id, ticket_hash in pairs:
+            if not thread_id or not ticket_hash or thread_id in seen:
+                continue
+            thread = self.feedback_thread(thread_id, ticket_hash,
+                                          messages_per_thread=messages_per_thread)
+            if thread is None:
+                continue
+            seen.add(thread_id)
+            found.append(thread)
+        return found
+
+    def feedback_threads_by_device(self, device_id: str, account_id: str | None = None, *,
+                                   messages_per_thread: int = 50) -> list[dict[str, Any]]:
+        """绑定到这台设备**或它所属账号**的线程，最近的在前。
+
+        账号也算命中：重装后重新配对换来一个新的 `deviceId`，只有账号还是同一个，
+        "重装后重新配对即可找回"（spec US1）靠的就是这一条。
+        """
+        rows = self._rows(
+            "SELECT * FROM feedbackThreads WHERE deviceId=?"
+            " OR (accountId IS NOT NULL AND accountId=?) ORDER BY lastMessageAt DESC",
+            (device_id, account_id))
+        return [self._feedback_payload(row, messages_per_thread) for row in rows]
+
+    def mark_thread_read(self, thread_id: str, upto_ms: int | None = None) -> bool:
+        """把这台手机的 `userReadAt` 推到 `upto_ms`；默认推到最后一条 owner 消息。
+
+        只前进不后退，所以重复调用结果不变（幂等）：`read` 接口可以放心重试。
+        线程不存在返回 False；还没有 owner 消息时不动——那时未读本来就是 0。
+        """
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM feedbackThreads WHERE threadId=?",
+                                     (thread_id,)).fetchone()
+            if row is None:
+                return False
+            stamp = upto_ms
+            if stamp is None:
+                latest = self._conn.execute(
+                    "SELECT MAX(createdAt) FROM feedbackMessages WHERE threadId=? AND author='owner'",
+                    (thread_id,)).fetchone()[0]
+                stamp = int(latest) if latest is not None else None
+            if stamp is not None and (row["userReadAt"] is None or int(stamp) > int(row["userReadAt"])):
+                self._conn.execute("UPDATE feedbackThreads SET userReadAt=? WHERE threadId=?",
+                                   (int(stamp), thread_id))
+            self._conn.commit()
+        return True
+
+    def notices_for_device(self, device_id: str, *, limit: int = 200) -> list[dict[str, Any]]:
+        """投给这台设备的通知，最近的在前；`read` 是**这台设备自己**的已读状态。"""
+        rows = self._rows(
+            "SELECT n.noticeId AS noticeId, n.subject AS subject, n.body AS body,"
+            " n.createdAt AS createdAt, n.createdBy AS createdBy, d.readAt AS readAt"
+            " FROM notices n JOIN noticeDeliveries d ON d.noticeId = n.noticeId"
+            " WHERE d.deviceId=? ORDER BY n.createdAt DESC, n.noticeId DESC LIMIT ?",
+            (device_id, limit))
+        return [{**dict(row), "read": row["readAt"] is not None} for row in rows]
+
+    def mark_notices_read(self, device_id: str, notice_ids: Iterable[str],
+                          at: int | None = None) -> int:
+        """把这几条通知在本设备上的投递行标已读；返回被改的行数（幂等）。"""
+        ids = list(dict.fromkeys(notice_id for notice_id in notice_ids if notice_id))
+        if not ids:
+            return 0
+        marks = ",".join("?" * len(ids))
+        with self._lock:
+            cursor = self._conn.execute(
+                f"UPDATE noticeDeliveries SET readAt=? WHERE deviceId=? AND readAt IS NULL"
+                f" AND noticeId IN ({marks})", [at or now_ms(), device_id, *ids])
+            self._conn.commit()
+            return cursor.rowcount or 0
+
+    def owner_unread_counts(self) -> dict[str, int]:
+        """owner 还没看过的用户消息数，按线程。清单里标"新"用。"""
+        rows = self._rows(
+            "SELECT m.threadId AS threadId, COUNT(*) AS unread FROM feedbackMessages m"
+            " JOIN feedbackThreads t ON t.threadId = m.threadId"
+            " WHERE m.author='user' AND (t.ownerReadAt IS NULL OR m.createdAt > t.ownerReadAt)"
+            " GROUP BY m.threadId")
+        return {row["threadId"]: int(row["unread"]) for row in rows}
+
+    def touch_owner_read(self, thread_id: str, at: int | None = None) -> bool:
+        """记下 owner 读过这条线程；线程不存在返回 False。"""
+        with self._lock:
+            cursor = self._conn.execute("UPDATE feedbackThreads SET ownerReadAt=? WHERE threadId=?",
+                                        (at or now_ms(), thread_id))
+            self._conn.commit()
+            return bool(cursor.rowcount)
+
+    def list_feedback_threads(self, *, status: str | None = None, since_ms: int | None = None,
+                              limit: int = 50, messages_per_thread: int = 0) -> list[dict[str, Any]]:
+        """owner 清单：按最近活动倒序的线程。
+
+        `status` 只认 `open`/`replied`（不给就是全部），`since_ms` 卡 `createdAt`。
+        默认不带留言——清单只要摘要，完整往返走 :meth:`feedback_thread`。
+        """
+        clauses: list[str] = []
+        params: list[Any] = []
+        if status:
+            clauses.append("status=?")
+            params.append(status)
+        if since_ms is not None:
+            clauses.append("createdAt >= ?")
+            params.append(int(since_ms))
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        params.append(int(limit))
+        rows = self._rows(
+            f"SELECT * FROM feedbackThreads{where} ORDER BY lastMessageAt DESC LIMIT ?", params)
+        return [self._feedback_payload(row, messages_per_thread) for row in rows]
+
+    def delete_feedback_thread(self, thread_id: str) -> int:
+        """连线程带它的留言一起删（响应隐私删除请求）；返回删掉的留言数。
+
+        线程不存在抛 :class:`NotFound`，调用方据此报错而不是默默成功。
+        """
+        with self._lock:
+            if self._conn.execute("SELECT threadId FROM feedbackThreads WHERE threadId=?",
+                                  (thread_id,)).fetchone() is None:
+                raise NotFound(f"feedback thread {thread_id} does not exist")
+            cursor = self._conn.execute("DELETE FROM feedbackMessages WHERE threadId=?", (thread_id,))
+            self._conn.execute("DELETE FROM feedbackThreads WHERE threadId=?", (thread_id,))
+            self._conn.commit()
+            return cursor.rowcount or 0
+
+    def feedback_digest(self, thread_ids: Iterable[str], *, excerpt_chars: int = 80
+                        ) -> dict[str, dict[str, Any]]:
+        """每条线程的**首条**留言摘要与**首条** owner 回信时间；只读。
+
+        `list_feedback_threads` 默认不带留言（清单只要摘要），而 owner 要的两个数都在
+        消息表里：用户先说了什么（前 `excerpt_chars` 字）、我们隔了多久回第一句。一次
+        查完，不逐线程再查一遍；不存在的 id 直接跳过。
+        """
+        ids = list(dict.fromkeys(thread_id for thread_id in thread_ids if thread_id))
+        if not ids:
+            return {}
+        marks = ",".join("?" * len(ids))
+        digest: dict[str, dict[str, Any]] = {}
+        for row in self._rows(
+                "SELECT threadId, author, body, createdAt FROM feedbackMessages"
+                f" WHERE threadId IN ({marks}) ORDER BY threadId, createdAt, rowid", ids):
+            entry = digest.setdefault(row["threadId"],
+                                      {"excerpt": row["body"][:excerpt_chars],
+                                       "firstReplyAt": None})
+            if row["author"] == "owner" and entry["firstReplyAt"] is None:
+                entry["firstReplyAt"] = int(row["createdAt"])
+        return digest
+
+    def _feedback_row_by(self, column: str, value: str) -> sqlite3.Row | None:
+        """按线程表上的**固定列名**取一行；列名只由本模块的字面量给出，不是用户输入。"""
+        return self._row(f"SELECT * FROM feedbackThreads WHERE {column}=?", (value,))
+
+    @staticmethod
+    def _feedback_source_matches(row: sqlite3.Row, device_id: str | None,
+                                 account_id: str | None) -> bool:
+        """这次提交是不是这条线程原来的来源（幂等重试的判据）。
+
+        匿名线程（两个字段都空）没有任何可核对的来源，只认 `clientRef` 本身；
+        绑定过的线程要求设备或账号对得上，否则不把线程交出去。
+        """
+        if row["deviceId"] is None and row["accountId"] is None:
+            return True
+        if device_id and row["deviceId"] == device_id:
+            return True
+        return bool(account_id) and row["accountId"] == account_id
+
+    def _feedback_payload(self, row: sqlite3.Row, messages_per_thread: int = 50) -> dict[str, Any]:
+        """一行线程 + 最近 N 条留言（按时间升序）+ 用户侧未读 + 留言总数。"""
+        thread_id = row["threadId"]
+        messages: list[dict[str, Any]] = []
+        if messages_per_thread > 0:
+            # `rowid` 兜同一毫秒内的插入顺序：`messageId` 是随机串，用它排序等于乱排。
+            recent = self._rows(
+                "SELECT * FROM feedbackMessages WHERE threadId=?"
+                " ORDER BY createdAt DESC, rowid DESC LIMIT ?",
+                (thread_id, int(messages_per_thread)))
+            messages = [dict(message) for message in reversed(recent)]
+        read_at = row["userReadAt"]
+        unread = self._row(
+            "SELECT COUNT(*) AS n FROM feedbackMessages WHERE threadId=? AND author='owner'"
+            " AND (? IS NULL OR createdAt > ?)", (thread_id, read_at, read_at))
+        count = self._row("SELECT COUNT(*) AS n FROM feedbackMessages WHERE threadId=?", (thread_id,))
+        return {**dict(row), "messages": messages, "messageCount": int(count["n"]),
+                "unread": int(unread["n"])}

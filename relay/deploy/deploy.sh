@@ -105,7 +105,7 @@ install -d -m 0750 -o root -g "$SERVICE_USER" /etc/dsh-relay/apns
 # ── 2. sources and venv ─────────────────────────────────────────────────────
 
 say "installing relay sources into $APP_DIR"
-for module in relay.py api.py dlp.py store.py hub.py admin.py push.py; do
+for module in relay.py api.py dlp.py store.py hub.py admin.py push.py feedback.py; do
   [ -f "$SRC_DIR/$module" ] || die "$SRC_DIR/$module is missing"
   install -m 0644 -o root -g root "$SRC_DIR/$module" "$APP_DIR/$module"
 done

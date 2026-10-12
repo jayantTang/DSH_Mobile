@@ -55,6 +55,10 @@ front end.
 | `POST` | `/agents/enroll` | invite code | redeems a one-time invite for `agentId`/`agentSecret` (closed: no valid invite, no identity) |
 | `GET` | `/devices` | device token | the caller's own pairings |
 | `POST` | `/devices/revoke` | device token | revokes one of the caller's own pairings |
+| `POST` | `/feedback/submit` | optional device token | `{text, appVersion, deviceModel, systemVersion, clientRef}` → `{threadId, ticketKey}`; anonymous works, the ticket key is the capability |
+| `POST` | `/feedback/inbox` | optional device token | `{tickets:[{threadId, ticketKey}], messagesPerThread}` → threads, notices, `unreadCount`; **does not mark anything read** |
+| `POST` | `/feedback/append` | optional device token | `{threadId, ticketKey, text, clientRef}` → a follow-up on the same thread |
+| `POST` | `/feedback/read` | optional device token | `{threadIds, noticeIds}` → marks them read for this device/ticket |
 | `OPTIONS` | `*` | — | CORS preflight |
 
 Every path above is served **both** as `/healthz` and as `/dsh-link/healthz`
@@ -162,6 +166,30 @@ curl -s localhost:8787/stats | python3 -m json.tool | head -40   # 今天的汇�
 `agent-register --write-config` writes `agent.json` with mode `0600`. Run it as
 *your* desktop user so the file lands in your own home directory. The pairing
 code is shown as `XXXX-XXXX` plus a `dsh://pair?relay=…&code=…` QR payload.
+
+### Feedback and notices
+
+In-app feedback lands in `feedbackThreads`/`feedbackMessages`; broadcast notices
+land in `notices`/`noticeDeliveries` (one row per recipient device, each with its
+own read mark). The phone's pickup key is never stored — only its SHA-256, like
+an agent secret — so a thread is readable with that key, with the device token it
+was submitted from, or by the operator.
+
+```bash
+$A admin.py --db $DB feedback-list --status open      # 待回复的反馈（也可以 --limit/--since）
+$A admin.py --db $DB feedback-show --thread th_x      # 完整往返；顺带把 ownerReadAt 推到最新一条
+$A admin.py --db $DB feedback-reply --template        # 打印官方邮件式骨架（称呼/正文/署名/日期）
+$A admin.py --db $DB feedback-reply --thread th_x --body-file /tmp/reply.txt
+$A admin.py --db $DB feedback-notify --body-file /tmp/notice.txt --all        # 预演：只打印收件人数
+$A admin.py --db $DB feedback-notify --body-file /tmp/notice.txt --all --yes  # 真正落库
+$A admin.py --db $DB feedback-delete --thread th_x --yes                      # 响应删除请求
+$A admin.py --db $DB ops-report --days 30                                     # 日报原始数据（JSON）
+```
+
+`feedback-notify` **默认只预演**：不加 `--yes` 不写库，先给出收件设备数与清单；
+一台设备都不匹配时即使加了 `--yes` 也不写库，退出码 1。本机侧还有一层薄包装
+（`scripts/dev/feedback.mjs`）走 SSH 调这些命令，并负责把 `ops-report` 渲染成带图表的日报；
+写操作在那里同样默认预演，要 `--send`/`--yes` 才落库。
 
 ### Deploying to the relay host
 
@@ -309,6 +337,12 @@ pairCodes(codeHash, agentId, accountId, createdAt, expiresAt, usedAt, deviceId)
 usageDaily(day, deviceId, agentId, accountId, egressBytes, connections,
            firstSeenAt, lastSeenAt, lastBuild)
 invites(codeHash, createdAt, expiresAt, usedAt, usedByAgentId, note)
+feedbackThreads(threadId, ticketHash, accountId, deviceId, appVersion, deviceModel,
+                systemVersion, createdAt, lastMessageAt, ownerReadAt, userReadAt,
+                status, clientRef)
+feedbackMessages(messageId, threadId, author, body, createdAt, clientRef)
+notices(noticeId, subject, body, createdAt, createdBy)
+noticeDeliveries(noticeId, deviceId, createdAt, readAt)
 ```
 
 Back up by copying `state.db` (plus `-wal`/`-shm`) with the service stopped, or
