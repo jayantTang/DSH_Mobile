@@ -51,7 +51,7 @@ def test_ops_report_has_all_four_sections_on_an_empty_database(tmp_path, capsys)
     assert code == 0 and report["ok"] is True
     assert report["days"] == 3 and report["generatedAt"] > 0
     assert report["feedback"] == {"new": 0, "open": 0, "replied": 0,
-                                  "medianFirstReplyHours": None, "threads": []}
+                                  "medianFirstReplyHours": None, "test": 0, "threads": []}
     assert report["devices"]["paired"] == 0 and report["devices"]["active7d"] == 0
     assert report["devices"]["revoked"] == 0 and report["devices"]["list"] == []
     assert 0 < len(report["devices"]["newPerDay"]) <= 3
@@ -61,7 +61,15 @@ def test_ops_report_has_all_four_sections_on_an_empty_database(tmp_path, capsys)
     assert report["usage"]["perDay"][-1]["day"] == local_day()
     assert report["usage"]["topAccounts"] == []
     assert report["usage"]["totals"] == {"egressBytes": 0, "connections": 0}
-    assert report["invites"] == {"minted": 0, "used": 0, "remaining": 0, "enrollments": []}
+    assert report["invites"] == {"minted": 0, "used": 0, "remaining": 0, "test": 0,
+                                 "enrollments": []}
+    # 留存板块：空库也要有形状（渲染层靠它画空态），没有账号时所有比例是 None。
+    assert report["retention"]["scope"] == "external"
+    assert report["retention"]["users"] == {"dau": 0, "wau": 0, "mau": 0,
+                                            "stickiness": None, "external": 0}
+    assert report["retention"]["d1"] is None and report["retention"]["d7"] is None
+    assert report["retention"]["activation"] == {"rate": None, "cohort": 0, "active": 0}
+    assert report["retention"]["weeks"] == []
 
 
 def test_ops_report_keeps_the_field_names_the_other_commands_own(tmp_path, capsys):
@@ -84,11 +92,18 @@ def test_ops_report_keeps_the_field_names_the_other_commands_own(tmp_path, capsy
     code, usage = run_cli(db, "usage", "--days", "3", capsys=capsys)
     assert code == 0 and usage
     assert set(usage[0]) >= set(report["usage"]["topAccounts"][0]), "topAccounts 照 usage 的行"
-    assert report["usage"]["topAccounts"][0] == {
-        "accountId": made["account"]["accountId"], "name": "ops", "egressBytes": 4096}
+    # 合并之后除了出口字节，还要带上连接数与最近一次的构建（日报的账号排名要显示它们）。
+    assert {key: report["usage"]["topAccounts"][0][key]
+            for key in ("accountId", "name", "egressBytes", "connections")} == {
+        "accountId": made["account"]["accountId"], "name": "ops", "egressBytes": 4096,
+        "connections": 3}
     assert report["usage"]["totals"] == {
         "egressBytes": sum(int(entry["egressBytes"]) for entry in usage),
         "connections": sum(int(entry["connections"]) for entry in usage)}
+    # 派生指标：日均、峰值日、有流量的天数（渲染层只显示，不自己算）。
+    assert report["usage"]["averagePerDay"] == round(4096 / 3)
+    assert report["usage"]["peakDay"] == {"day": local_day(), "egressBytes": 4096}
+    assert report["usage"]["activeDays"] == 1
 
     code, enrolls = run_cli(db, "enrollments", capsys=capsys)
     assert code == 0
@@ -200,6 +215,249 @@ def test_ops_report_merges_top_accounts_across_days(tmp_path, capsys):
     assert len(ranked) == 1, "同一个账号两天要合并成一行"
     assert ranked[0]["accountId"] == account["accountId"]
     assert ranked[0]["egressBytes"] == 4000
+
+
+def test_ops_report_keeps_simulator_and_debug_feedback_out(tmp_path, capsys):
+    """验收单不进"用户反馈"：模拟器来源（机型 arm64）与调试设备提的只计数、不进清单。
+
+    2026-10-12 的生产日报里 16 条反馈有 15 条是这么来的——真问题会被它们盖住。
+    """
+    db = str(tmp_path / "state.db")
+    store = Store(db)
+    account = store.create_account("ops")
+    agent = store.register_agent(account["accountId"], "mac")
+    debug = store.claim_pair_code(
+        store.mint_pair_code(agent["agentId"], ttl_ms=60_000)["code"], device_name="DSH-Test")
+    real = store.claim_pair_code(
+        store.mint_pair_code(agent["agentId"], ttl_ms=60_000)["code"], device_name="iPhone")
+    store.create_feedback_thread(ticket_hash=sha256_hex("fk_sim"), text="验收：重做后的界面",
+                                 subject="验收：重做后的界面", device_model="arm64",
+                                 app_version="1.0 (1)")
+    store.create_feedback_thread(ticket_hash=sha256_hex("fk_deploy"), text="部署演练",
+                                 device_model="deploy-check")
+    store.create_feedback_thread(ticket_hash=sha256_hex("fk_debug"), text="调试设备提的",
+                                 device_id=debug["deviceId"])
+    real_thread = store.create_feedback_thread(ticket_hash=sha256_hex("fk_real"), text="真机提的",
+                                               device_id=real["deviceId"],
+                                               device_model="iPhone15,4")
+    store.close()
+
+    code, report = run_cli(db, "ops-report", "--days", "3", capsys=capsys)
+    assert code == 0
+    assert [row["threadId"] for row in report["feedback"]["threads"]] == [real_thread["threadId"]]
+    assert report["feedback"]["new"] == 1, "计数也只算真实来源"
+    assert report["feedback"]["test"] == 3, "被剔除的测试提交要单独报出来"
+    assert [row["threadId"] for row in report["today"]["feedback"]["threads"]] == [
+        real_thread["threadId"]]
+
+
+def test_ops_report_retention_only_counts_external_accounts(tmp_path, capsys):
+    """留存只算用邀请码登记的外部账号：owner 自用账号天天在连，混进来会把留存抬平。"""
+    db = str(tmp_path / "state.db")
+    store = Store(db)
+    owner = store.create_account("Jayant")
+    owner_agent = store.register_agent(owner["accountId"], "mac")
+    owner_device = store.claim_pair_code(
+        store.mint_pair_code(owner_agent["agentId"], ttl_ms=60_000)["code"], device_name="iPhone")
+    for offset in range(0, 12):
+        store.add_usage([{"day": local_day(now_ms() / 1000 - offset * 86_400),
+                          "deviceId": owner_device["deviceId"], "agentId": owner_agent["agentId"],
+                          "accountId": owner["accountId"], "egressBytes": 1000, "connections": 1,
+                          "at": now_ms() - offset * 86_400_000, "lastBuild": "1.2.3"}])
+    # 一个外部账号：登记后连着两天活跃（第 5 天与第 4 天，即隔天又来了）。
+    invite = store.mint_invite(note="公开试用")
+    enrolled = store.claim_invite(invite["code"], "Sam 的 MacBook")
+    device = store.claim_pair_code(
+        store.mint_pair_code(enrolled["agentId"], ttl_ms=60_000)["code"], device_name="iPhone")
+    for offset in (5, 4):
+        store.add_usage([{"day": local_day(now_ms() / 1000 - offset * 86_400),
+                          "deviceId": device["deviceId"], "agentId": enrolled["agentId"],
+                          "accountId": enrolled["accountId"], "egressBytes": 2000,
+                          "connections": 2, "at": now_ms() - offset * 86_400_000,
+                          "lastBuild": "1.2.3"}])
+    store.close()
+
+    code, report = run_cli(db, "ops-report", "--days", "30", capsys=capsys)
+    assert code == 0
+    retention = report["retention"]
+    assert retention["scope"] == "external"
+    assert retention["users"]["external"] == 1, "外部账号只有一个"
+    assert retention["users"]["mau"] == 1, "owner 的账号不算进来"
+    assert retention["users"]["dau"] == 0, "外部账号上次活跃是 4 天前，今天没来"
+    assert retention["users"]["wau"] == 1 and retention["users"]["stickiness"] == 1.0
+    assert retention["d1"] == {"rate": 1.0, "cohort": 1, "active": 1}, "隔天又活跃"
+    # 留存量的是"第一次活跃"那天起算，窗口外的历史也要看到（owner 那 12 天不参与）。
+    assert retention["d7"] is None, "首次活跃才 5 天前，7 日留存还没有可观察的队列"
+
+
+def test_retention_report_computes_d1_d7_and_activation():
+    """留存四个口径的算法本身：只喂一张活动表，断言 D1/D7、粘性、登记激活、分周队列。"""
+    today = local_day()
+    day = lambda offset: local_day(now_ms() / 1000 - offset * 86_400)  # noqa: E731
+    window = {day(offset): set() for offset in range(30)}
+    for offset, active in ((10, {"acc_a", "acc_b"}), (9, {"acc_a"}), (3, {"acc_a"}),
+                           (2, {"acc_c"}), (1, {"acc_c"}), (0, {"acc_a"})):
+        window[day(offset)] = active
+    external = {"acc_a", "acc_b", "acc_c"}
+    first_seen = {"acc_a": day(10), "acc_b": day(10), "acc_c": day(2)}
+    enrollments = [
+        {"accountId": "acc_a", "usedAt": now_ms() - 12 * 86_400_000, "accountName": "a",
+         "agentName": "a"},
+        {"accountId": "acc_c", "usedAt": now_ms() - 3 * 86_400_000, "accountName": "c",
+         "agentName": "c"},
+    ]
+
+    class FakeStore:
+        def list_enrollments(self):
+            return enrollments
+
+    report = admin._retention_report(FakeStore(), days=30, stamp=now_ms(), external=external,
+                                     active_by_day=window, first_seen=first_seen)
+    assert report["users"] == {"dau": 1, "wau": 2, "mau": 3, "stickiness": 0.667, "external": 3}
+    assert report["d1"] == {"rate": 0.667, "cohort": 3, "active": 2}, "a 与 c 隔天回来，b 没有"
+    assert report["d7"] == {"rate": 0.5, "cohort": 2, "active": 1}, "只有 a 在第 7 天回来"
+    assert report["activation"] == {"rate": 1.0, "cohort": 1, "active": 1}, \
+        "c 登记才 3 天，还进不了 7 天激活的分母；a 登记后两天就连上了"
+    assert report["users"]["external"] == 3 and today == day(0)
+    for entry in report["weeks"]:
+        assert entry["week"].startswith("20") and entry["size"] >= 1
+        assert entry["rate"] is None or 0 <= entry["rate"] <= 1
+
+
+def test_ops_report_excludes_debug_devices_from_the_window_usage(tmp_path, capsys):
+    """调试设备的流量不进日报的用量板块：否则同一天会在「今日」和 30 天表里给出两个数字。
+
+    2026-10-12 实测到的正是这个：今日 4.0 GB，同一天在 30 天表里 4.4 GB，差的 400 MB
+    是历次用例的 DSH-Test。`usage` 命令保持全量（它是账本），日报是给人看的视图。
+    """
+    db = str(tmp_path / "state.db")
+    store = Store(db)
+    account = store.create_account("ops")
+    agent = store.register_agent(account["accountId"], "mac")
+    real = store.claim_pair_code(
+        store.mint_pair_code(agent["agentId"], ttl_ms=60_000)["code"], device_name="iPhone")
+    tester = store.claim_pair_code(
+        store.mint_pair_code(agent["agentId"], ttl_ms=60_000)["code"], device_name="DSH-Test")
+    node = store.claim_pair_code(
+        store.mint_pair_code(agent["agentId"], ttl_ms=60_000)["code"], device_name="headless",
+        model="Node")
+    store.add_usage([
+        {"day": local_day(), "deviceId": real["deviceId"], "agentId": agent["agentId"],
+         "accountId": account["accountId"], "egressBytes": 1000, "connections": 2,
+         "at": now_ms(), "lastBuild": "1.2.3"},
+        {"day": local_day(), "deviceId": tester["deviceId"], "agentId": agent["agentId"],
+         "accountId": account["accountId"], "egressBytes": 9000, "connections": 9,
+         "at": now_ms(), "lastBuild": "9.9.9"},
+        {"day": local_day(), "deviceId": node["deviceId"], "agentId": agent["agentId"],
+         "accountId": account["accountId"], "egressBytes": 5000, "connections": 5,
+         "at": now_ms(), "lastBuild": "8.8.8"},
+    ])
+    store.close()
+
+    code, report = run_cli(db, "ops-report", "--days", "3", capsys=capsys)
+    assert code == 0
+    assert report["usage"]["totals"]["egressBytes"] == 1000, "只算真实设备"
+    assert report["usage"]["perDay"][-1]["egressBytes"] == 1000
+    assert report["usage"]["perDay"][-1]["connections"] == 2
+    assert report["usage"]["perDay"][-1]["devices"] == 1
+    assert report["usage"]["averagePerDay"] == round(1000 / 3)
+    assert report["usage"]["peakDay"] == {"day": local_day(), "egressBytes": 1000}
+    assert [row["egressBytes"] for row in report["usage"]["topAccounts"]] == [1000]
+    assert report["usage"]["topAccounts"][0]["devices"] == 1
+    # 「今日」与 30 天窗口的同一天必须给出同一个数字（这就是这次改口径要解决的问题）。
+    assert report["today"]["usage"]["egressBytes"] == report["usage"]["perDay"][-1]["egressBytes"]
+
+
+def test_ops_report_today_block_is_a_local_day_slice(tmp_path, capsys):
+    """「今日」= 服务器本地自然日 00:00 起：昨天与调试设备的量都不进这一块。
+
+    这一块是日报第一屏（"今天有没有事"），口径错了整页都在骗人，所以三件事都要钉住：
+    跨日不算、调试设备不算、账号/设备/用量三处合计一致。
+    """
+    db = str(tmp_path / "state.db")
+    store = Store(db)
+    account = store.create_account("ops")
+    agent = store.register_agent(account["accountId"], "mac")
+    phone = store.claim_pair_code(
+        store.mint_pair_code(agent["agentId"], ttl_ms=60_000)["code"], device_name="iPhone")
+    debug = store.claim_pair_code(
+        store.mint_pair_code(agent["agentId"], ttl_ms=60_000)["code"], device_name="DSH-Test")
+    other = store.claim_pair_code(
+        store.mint_pair_code(agent["agentId"], ttl_ms=60_000)["code"], device_name="iPad")
+    store.touch_device(phone["deviceId"])
+    yesterday = local_day(now_ms() / 1000 - 86_400)
+    store.add_usage([
+        {"day": local_day(), "deviceId": phone["deviceId"], "agentId": agent["agentId"],
+         "accountId": account["accountId"], "egressBytes": 1000, "connections": 2,
+         "at": now_ms(), "lastBuild": "1.2.3"},
+        # 调试设备：今日的流量、设备、账号一并剔除。
+        {"day": local_day(), "deviceId": debug["deviceId"], "agentId": agent["agentId"],
+         "accountId": account["accountId"], "egressBytes": 999_000, "connections": 90,
+         "at": now_ms(), "lastBuild": "9.9.9"},
+        # 昨天：不进「今日」。
+        {"day": yesterday, "deviceId": phone["deviceId"], "agentId": agent["agentId"],
+         "accountId": account["accountId"], "egressBytes": 5000, "connections": 5,
+         "at": now_ms() - 86_400_000, "lastBuild": "1.2.2"},
+    ])
+    fresh = store.create_feedback_thread(ticket_hash=sha256_hex("fk_today"), text="今天的问题")
+    store.create_feedback_thread(ticket_hash=sha256_hex("fk_old"), text="三天前的问题",
+                                 at=now_ms() - 3 * 86_400_000)
+    invite = store.mint_invite(note="今天登记的")
+    store.claim_invite(invite["code"], "Sam 的 MacBook")
+    store.close()
+
+    code, report = run_cli(db, "ops-report", "--days", "30", capsys=capsys)
+    assert code == 0
+    today = report["today"]
+    assert today["day"] == local_day()
+    assert today["usage"]["egressBytes"] == 1000, "调试设备与昨天的量都不进今日"
+    assert today["usage"]["connections"] == 2
+    assert today["usage"]["devices"] == 1
+    assert [row["deviceId"] for row in today["devices"]["list"]] == [phone["deviceId"]]
+    assert today["devices"]["list"][0]["name"] == "iPhone"
+    # 今日版本分布：每个构建挂多少台设备、多少个账号（同账号多设备只算一次）。
+    assert today["usage"]["builds"] == [{"build": "1.2.3", "devices": 1, "accounts": 1}]
+    assert [row["accountId"] for row in today["topAccounts"]] == [account["accountId"]]
+    assert today["topAccounts"][0]["egressBytes"] == 1000
+    # 设备三态：今日新增只算真实设备（iPhone / iPad），今日活跃是连过中转的那些。
+    assert today["devices"]["new"] == 2 and today["devices"]["active"] == 1
+    assert today["devices"]["live"] == 2, "在线设备数也只数真实设备（iPhone / iPad）"
+    assert [row["threadId"] for row in today["feedback"]["threads"]] == [fresh["threadId"]]
+    assert today["feedback"]["new"] == 1 and today["feedback"]["open"] == 1
+    assert today["invites"]["used"] == 1
+    assert [row["inviteNote"] for row in today["invites"]["enrollments"]] == ["今天登记的"]
+    assert other["deviceId"] not in [row["deviceId"] for row in today["devices"]["list"]]
+
+    # 今日的数字必须与 `usage --days 1`（同一口径的那条命令）对得上。
+    code, usage = run_cli(db, "usage", "--days", "1", capsys=capsys)
+    assert code == 0
+    assert sum(int(row["egressBytes"]) for row in usage) >= today["usage"]["egressBytes"]
+
+
+def test_ops_report_today_is_empty_on_a_quiet_day(tmp_path, capsys):
+    """今天没有任何活动时，今日板块照样齐全、计数为 0（渲染层靠它画空态）。"""
+    db = str(tmp_path / "state.db")
+    store = Store(db)
+    account = store.create_account("ops")
+    agent = store.register_agent(account["accountId"], "mac")
+    device = store.claim_pair_code(
+        store.mint_pair_code(agent["agentId"], ttl_ms=60_000)["code"], device_name="iPhone")
+    store.add_usage([{"day": local_day(now_ms() / 1000 - 86_400), "deviceId": device["deviceId"],
+                      "agentId": agent["agentId"], "accountId": account["accountId"],
+                      "egressBytes": 4096, "connections": 1, "at": now_ms() - 86_400_000,
+                      "lastBuild": "1.2.3"}])
+    store.close()
+
+    code, report = run_cli(db, "ops-report", "--days", "30", capsys=capsys)
+    assert code == 0
+    today = report["today"]
+    assert today["usage"] == {"egressBytes": 0, "connections": 0, "devices": 0,
+                              "firstSeenAt": None, "lastSeenAt": None, "builds": []}
+    assert today["topAccounts"] == [] and today["devices"]["list"] == []
+    # 设备是今天刚配的，所以「今日新增」是 1；流量、活跃、反馈、登记仍是 0。
+    assert today["devices"]["new"] == 1 and today["devices"]["active"] == 0
+    assert today["feedback"] == {"new": 0, "open": 0, "replied": 0, "threads": []}
+    assert today["invites"] == {"used": 0, "enrollments": []}
 
 
 def test_the_digest_read_method_gives_the_excerpt_and_the_first_reply_time(tmp_path):

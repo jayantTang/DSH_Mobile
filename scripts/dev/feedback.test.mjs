@@ -28,8 +28,31 @@ function fixture() {
     ok: true,
     generatedAt: GENERATED_AT,
     days: 30,
+    today: {
+      day: 20261012, dayStartAt: GENERATED_AT - 9 * 3600_000,
+      usage: { egressBytes: 2 * 1024 * 1024, connections: 9, devices: 2,
+        firstSeenAt: GENERATED_AT - 5 * 3600_000, lastSeenAt: GENERATED_AT,
+        builds: [{ build: '1.0 20261012.1056', devices: 2, accounts: 2 },
+          { build: '1.0 20260924.1925', devices: 1, accounts: 1 }] },
+      topAccounts: [{ accountId: 'acc_a', name: 'jayant', egressBytes: 2 * 1024 * 1024,
+        connections: 9, devices: 2 }],
+      devices: { new: 1, active: 2, revoked: 0, live: 3,
+        list: [{ deviceId: 'dvc_a', name: 'iPhone 17 Pro', model: 'iPhone 17 Pro',
+          appVersion: '1.2.3', accountId: 'acc_a', accountName: 'jayant',
+          egressBytes: 2 * 1024 * 1024, connections: 9,
+          firstSeenAt: GENERATED_AT - 5 * 3600_000, lastSeenAt: GENERATED_AT,
+          lastBuild: '1.0 20261012.1056', revoked: false }] },
+      feedback: { new: 1, open: 1, replied: 0, threads: [
+        { threadId: 'th_a', createdAt: GENERATED_AT - 3600_000, status: 'open',
+          subject: '新建会话转圈', ownerUnread: 1,
+          source: { kind: 'device', deviceModel: 'iPhone 17 Pro', appVersion: '1.2.3' },
+          excerpt: THREAD }] },
+      invites: { used: 1, enrollments: [
+        { usedAt: GENERATED_AT - 1800_000, inviteNote: '试用 <A>', accountId: 'acc_b',
+          accountName: 'Sam', agentId: 'agt_b', agentName: 'Sam 的 MacBook', devices: 0 }] },
+    },
     feedback: {
-      new: 4, open: 2, replied: 2, medianFirstReplyHours: 6.5,
+      new: 4, open: 2, replied: 2, medianFirstReplyHours: 6.5, test: 3,
       threads: [
         { threadId: 'th_a', createdAt: GENERATED_AT - 3600_000, status: 'open',
           source: { kind: 'device', deviceModel: 'iPhone 17 Pro', appVersion: '1.2.3' }, excerpt: THREAD },
@@ -38,19 +61,32 @@ function fixture() {
       ],
     },
     devices: {
-      paired: 12, active7d: 5, revoked: 1,
+      paired: 12, active7d: 5, activeWindow: 6, newInWindow: 3, revoked: 1,
       newPerDay: [{ day: '2026-10-11', count: 2 }, { day: '2026-10-12', count: 1 }],
       list: [{ deviceId: 'dvc_a', name: 'DSH-Test', model: 'iPhone 17 Pro', appVersion: '1.2.3',
-        createdAt: GENERATED_AT, lastSeenAt: GENERATED_AT, revoked: 0 }],
+        createdAt: GENERATED_AT, lastSeenAt: GENERATED_AT, revoked: 0,
+        push: { registered: true } }],
     },
     usage: {
       perDay: [{ day: '2026-10-11', egressBytes: 1024 * 1024, connections: 3, devices: 1 },
         { day: '2026-10-12', egressBytes: 2 * 1024 * 1024, connections: 9, devices: 2 }],
-      topAccounts: [{ accountId: 'acc_a', name: 'jayant', egressBytes: 3 * 1024 * 1024 }],
+      topAccounts: [{ accountId: 'acc_a', name: 'jayant', egressBytes: 3 * 1024 * 1024,
+        connections: 12, lastSeenAt: GENERATED_AT, lastBuild: '1.0 20261012.1056' }],
       totals: { egressBytes: 3 * 1024 * 1024, connections: 12 },
+      averagePerDay: 1024 * 1024, peakDay: { day: '2026-10-12', egressBytes: 2 * 1024 * 1024 },
+      activeDays: 2,
+    },
+    retention: {
+      scope: 'external',
+      users: { dau: 3, wau: 7, mau: 11, stickiness: 0.636, external: 21 },
+      d1: { rate: 0.615, cohort: 13, active: 8 },
+      d7: { rate: 0.4, cohort: 10, active: 4 },
+      activation: { rate: 0.75, cohort: 8, active: 6 },
+      weeks: [{ week: '2026-W40', size: 5, active: 3, rate: 0.6 },
+        { week: '2026-W41', size: 4, active: 1, rate: 0.25 }],
     },
     invites: {
-      minted: 30, used: 21, remaining: 9,
+      minted: 30, used: 21, remaining: 9, test: 0,
       enrollments: [{ usedAt: GENERATED_AT, inviteNote: '试用 <A>', accountId: 'acc_a', accountName: 'jayant',
         agentId: 'agt_a', agentName: 'MacBook', devices: 1, lastSeenAt: GENERATED_AT }],
     },
@@ -244,24 +280,56 @@ test('buildInvocation 的远端命令按 POSIX 引号化', () => {
   assert.match(invocation.remote, /'it'\\''s a test'/)
 })
 
-test('日报含三张内联 SVG 与四个板块标题，正文被转义', () => {
+test('日报分「今日」与「最近 30 天」两段，正文被转义', () => {
   const html = renderReport(fixture())
-  assert.ok((html.match(/<svg /g) ?? []).length >= 3)
-  for (const title of ['反馈', '设备', '流量', '邀请码']) {
-    assert.ok(html.includes(`<h2>${title}</h2>`), `缺板块 ${title}`)
-  }
-  assert.ok(html.includes('每日出口字节') && html.includes('每日新增设备') && html.includes('反馈状态占比'))
+  // 两段的板块标题与图：今日有对比条，30 天有两张折线/柱状图。
+  assert.ok(html.includes('<span class="tag ">今日</span>概览'), '今日板块')
+  assert.ok(html.includes('<span class="tag range">最近 30 天</span>趋势与明细'), '30 天板块')
+  assert.equal((html.match(/<svg /g) ?? []).length, 2, '只有每日出口与每日新增设备两张图')
+  assert.ok(html.includes('每日出口流量') && html.includes('每日新增设备'))
+  assert.ok(html.includes('今日出口流量') && html.includes('较昨日') && html.includes('近 7 日均值'))
   assert.ok(html.includes('3.0 MB'), '出口字节应换算成 MB')
+  assert.ok(html.includes('今日账号') && html.includes('今日设备') && html.includes('今日反馈'))
+  assert.ok(html.includes('账号排名') && html.includes('邀请码登记'))
+  // 留存：外部账号口径、D1/D7 与分周队列、登记激活都要在页面上。
+  assert.ok(html.includes('外部账号 · 活跃=当天有中转连接'))
+  for (const label of ['今日活跃用户', '近 7 天活跃', '近 30 天活跃', '次日留存', '7 日留存', '登记激活']) {
+    assert.ok(html.includes(label), `留存缺 ${label}`)
+  }
+  assert.ok(html.includes('62%') && html.includes('n=13'), '留存率要带队列人数')
+  assert.ok(html.includes('2026-W40') && html.includes('60%'), '分周队列')
+  // 今日版本分布：版本 / 设备 / 账号 三列。
+  assert.ok(html.includes('今日版本分布') && html.includes('20261012.1056'))
+  assert.ok(html.includes('已剔除测试提交 3 条'))
   assert.ok(!html.includes('<script>'), '正文里的 script 必须被转义')
   assert.ok(html.includes('&lt;script&gt;'))
   assert.ok(html.includes('&lt;A&gt;'), '邀请码备注同样要转义')
 })
 
+test('手机上不写死宽表：长清单有上限，且提示"前几条"', () => {
+  const many = fixture()
+  many.devices.list = Array.from({ length: 40 }, (_, i) => ({
+    deviceId: `dvc_${i}`, name: `iPhone ${i}`, model: 'iPhone 17 Pro', appVersion: '1.2.3',
+    createdAt: GENERATED_AT, lastSeenAt: GENERATED_AT, revoked: 0, push: { registered: true } }))
+  many.invites.enrollments = Array.from({ length: 40 }, (_, i) => ({
+    usedAt: GENERATED_AT, inviteNote: '试用', accountId: `acc_${i}`, accountName: `用户 ${i}`,
+    agentId: `agt_${i}`, agentName: 'MacBook', devices: 1 }))
+  const html = renderReport(many)
+  // 每一类清单只渲染前几条：设备 8、登记 6——正文长度因此不随库里的历史行数增长。
+  assert.ok(html.includes('iPhone 7') && !html.includes('iPhone 39'), '设备清单只列前 8 台')
+  assert.ok(html.includes('最近在线前 8 台'), '清单要说明只列了前几条')
+  assert.ok(html.includes('用户 5') && !html.includes('用户 39'), '登记清单只列前 6 条')
+  assert.ok(html.includes('最近 6 条'), '登记清单同理')
+})
+
 test('空数据也能渲染出可看的整页', () => {
   const html = renderReport({ ok: true, generatedAt: GENERATED_AT, days: 30 })
-  assert.match(html, /<h2>图表<\/h2>/)
+  assert.match(html, /<span class="tag ">今日<\/span>概览/)
+  assert.match(html, /今天还没有中转流量/)
   assert.match(html, /窗口内没有数据/)
-  assert.match(html, /窗口内没有反馈/)
+  assert.match(html, /今天没有新反馈/)
+  assert.match(html, /还没有人用邀请码登记/)
+  assert.ok(!html.includes('NaN') && !html.includes('undefined'), '缺字段不能漏成 NaN/undefined')
 })
 
 test('escapeHtml 覆盖五个字符', () => {

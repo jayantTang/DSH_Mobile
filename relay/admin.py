@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import datetime
 import json
 import os
 import sys
@@ -42,6 +43,17 @@ REPORT_THREAD_LIMIT = 1000
 #: 生产库上历史设备有 1900+ 行，全量会把日报撑到几百 KB 且全是调试设备。
 REPORT_DEVICE_LIMIT = 200
 REPORT_TOP_ACCOUNTS = 20
+
+#: 日报「今日」板块里每类明细最多这么多条。服务端先给个界（正文是要塞进通知投到手机上的，
+#: 报告本身越短越好）；渲染层还会再截到手机上看得完的条数。
+REPORT_TODAY_LIMIT = 20
+
+#: 模拟器 / 测试台来源上报的"机型"：日报的反馈板块按它把验收单剔出去
+#: （`arm64` 是 iOS 模拟器，`deploy-check` 是部署演练脚本用的名字）。
+TEST_DEVICE_MODELS = {"arm64", "x86_64", "deploy-check", "Node", "simulator", "test-harness"}
+
+#: 留存要按"账号第一次活跃"分队列，得读窗口以前的历史用量；这是查询上界（天）。
+RETENTION_HISTORY_DAYS = 400
 
 
 def qr_payload(relay: str, code: str, agent_id: str) -> str:
@@ -673,8 +685,13 @@ def _device_report_row(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _feedback_report(store: Store, threads: list[dict[str, Any]]) -> dict[str, Any]:
-    """反馈板块：窗口内的新增/待回复/已回复、首复中位小时数、线程清单。"""
+def _feedback_report(store: Store, threads: list[dict[str, Any]],
+                     test_count: int = 0) -> dict[str, Any]:
+    """反馈板块：窗口内的新增/待回复/已回复、首复中位小时数、线程清单。
+
+    `test_count` 是被剔除的测试提交条数（模拟器来源或调试设备提的），只报个数不进清单：
+    日报要回答"用户遇到了什么"，用例自己造的验收单不是用户反馈。
+    """
     digest = store.feedback_digest([row["threadId"] for row in threads])
     spans = sorted((digest[row["threadId"]]["firstReplyAt"] - row["createdAt"]) / 3_600_000.0
                    for row in threads
@@ -689,38 +706,199 @@ def _feedback_report(store: Store, threads: list[dict[str, Any]]) -> dict[str, A
         "open": len([row for row in threads if row["status"] == "open"]),
         "replied": len([row for row in threads if row["status"] == "replied"]),
         "medianFirstReplyHours": median,
+        "test": test_count,
         "threads": threads,
     }
 
 
-def _usage_report(store: Store, days: int) -> dict[str, Any]:
-    """用量板块：每日出口字节/连接数/设备数、按账号（降序）、窗口内的总计。
+def _is_test_thread(row: dict[str, Any], debug_ids: set[str]) -> bool:
+    """测试提交：调试设备提的，或来自模拟器/测试台（机型是 `arm64`、`deploy-check` 这类）。
 
-    `usage_totals(by="account")` 是**按天**一行，同一个账号在窗口里会出现多次；日报要的是
-    「这个窗口里谁用得最多」，所以先按 `accountId` 合并再排序（2026-10-12 第一次跑生产日报时
-    看到「Jayant：4.7 GB / Jayant：3.1 GB / …」一长串同名条目之后改的），并且只留前
+    为什么要单独判来源：多数验收单是模拟器提的，deviceId 不在调试设备表里（设备早就撤了
+    或换了），只有 `source.deviceModel` 认得出。2026-10-12 的日报里 16 条反馈有 15 条是
+    这么来的，混在"用户反馈"里看不出真问题。
+    """
+    device = row.get("deviceId") or (row.get("source") or {}).get("deviceId")
+    if device and device in debug_ids:
+        return True
+    model = str((row.get("source") or {}).get("deviceModel") or "")
+    return model in TEST_DEVICE_MODELS
+
+
+def _is_test_enrollment(row: dict[str, Any]) -> bool:
+    """用仓库自己的调试命名（`DSH-` 前缀）登记的账号——历次用例跑的邀请码流程。"""
+    return (str(row.get("accountName") or "").startswith("DSH-")
+            or str(row.get("agentName") or "").startswith("DSH-"))
+
+
+def _usage_scan(store: Store, days: int, debug_ids: set[str],
+                names: dict[str, str | None]) -> tuple[list[dict[str, Any]],
+                                                       list[dict[str, Any]],
+                                                       dict[int, set[str]]]:
+    """窗口内按天读一遍 `usageDaily`，同时给出三样东西（读一次，三个板块共用）。
+
+    - `series`：每日出口字节/连接数/设备数；
+    - `ranked`：按账号合并排名（出口、连接、设备数、最近一次构建）；
+    - `active_by_day`：每天活跃的账号集合（留存用它，不重复查库）。
+
+    只统计**真实设备**（剔除 `_is_debug_device`）。设备板块从 2026-10-12 起就这么做了，
+    流量这里必须同口径：不然同一天会在「今日」和「最近 N 天」里给出两个不同的数字
+    （2026-10-12 实测：今日 4.0 GB，同一天在 30 天表里 4.4 GB，差的正是历次用例的
+    DSH-* 设备）。`usage` 命令保持全量记账不动——那是账本，日报是给人看的视图。
+    """
+    per_day: dict[int, dict[str, int]] = {
+        day: {"egressBytes": 0, "connections": 0, "devices": 0} for day in _recent_days(days)}
+    active_by_day: dict[int, set[str]] = {day: set() for day in per_day}
+    merged: dict[str, dict[str, Any]] = {}
+    seen_devices: dict[str, set[str]] = {}
+    for day in per_day:
+        for row in store.usage_rows(day):
+            if row["deviceId"] in debug_ids:
+                continue
+            entry = per_day[day]
+            entry["egressBytes"] += int(row["egressBytes"])
+            entry["connections"] += int(row["connections"])
+            entry["devices"] += 1
+            account_id = row["accountId"]
+            if account_id:
+                active_by_day[day].add(account_id)
+            account = merged.setdefault(account_id, {"accountId": account_id,
+                                                     "name": names.get(account_id),
+                                                     "egressBytes": 0, "connections": 0,
+                                                     "lastSeenAt": None, "lastBuild": None})
+            account["egressBytes"] += int(row["egressBytes"])
+            account["connections"] += int(row["connections"])
+            seen_devices.setdefault(account_id, set()).add(row["deviceId"])
+            # `lastSeenAt`/`lastBuild` 取窗口内最后出现过的那次（求和没意义）。
+            seen = int(row["lastSeenAt"] or 0)
+            if seen > int(account["lastSeenAt"] or 0):
+                account["lastSeenAt"] = seen or None
+                account["lastBuild"] = row.get("lastBuild") or account["lastBuild"]
+    for account_id, account in merged.items():
+        account["devices"] = len(seen_devices.get(account_id, ()))
+    ranked = sorted(merged.values(), key=lambda entry: entry["egressBytes"], reverse=True)
+    return ([{"day": day, **per_day[day]} for day in sorted(per_day)], ranked, active_by_day)
+
+
+def _usage_report(series: list[dict[str, Any]],
+                  ranked: list[dict[str, Any]]) -> dict[str, Any]:
+    """用量板块的 JSON：每日用量、账号排名（合并到一行）、窗口总计与派生指标。
+
+    合并与剔除都在 `_usage_scan` 里做过：同一个账号在窗口里出现多次要并成一行再排名
+    （2026-10-12 第一版日报的"出口流量前几名"是一长串同名条目），并且只留前
     `REPORT_TOP_ACCOUNTS` 名——原始数据是给人看的，不是导库。
     """
-    accounts = store.usage_totals(days=days, by="account")
-    per_day: dict[int, dict[str, int]] = {}
-    for row in store.usage_totals(days=days, by="device"):
-        entry = per_day.setdefault(int(row["day"]),
-                                   {"egressBytes": 0, "connections": 0, "devices": 0})
-        entry["egressBytes"] += int(row["egressBytes"])
-        entry["connections"] += int(row["connections"])
-        entry["devices"] += int(row["devices"])
-    empty = {"egressBytes": 0, "connections": 0, "devices": 0}
-    merged: dict[str, dict[str, Any]] = {}
-    for row in accounts:
-        account = merged.setdefault(row["accountId"], {"accountId": row["accountId"],
-                                                       "name": row["name"], "egressBytes": 0})
-        account["egressBytes"] += int(row["egressBytes"])
-    ranked = sorted(merged.values(), key=lambda entry: entry["egressBytes"], reverse=True)
+    peak = max(series, key=lambda entry: int(entry["egressBytes"])) if series else None
+    total = sum(int(entry["egressBytes"]) for entry in series)
     return {
-        "perDay": [{"day": day, **per_day.get(day, empty)} for day in _recent_days(days)],
+        "perDay": series,
         "topAccounts": ranked[:REPORT_TOP_ACCOUNTS],
-        "totals": {"egressBytes": sum(int(row["egressBytes"]) for row in accounts),
-                   "connections": sum(int(row["connections"]) for row in accounts)},
+        "totals": {"egressBytes": total,
+                   "connections": sum(int(entry["connections"]) for entry in series)},
+        # 派生指标在服务端算：口径只有一处，渲染层只负责显示（也免得本机脚本各算一套）。
+        "averagePerDay": round(total / len(series)) if series else 0,
+        "peakDay": ({"day": peak["day"], "egressBytes": int(peak["egressBytes"])} if peak else None),
+        "activeDays": len([entry for entry in series if int(entry["egressBytes"]) > 0]),
+    }
+
+
+def _ratio(active: int, cohort: int) -> float | None:
+    return round(active / cohort, 3) if cohort else None
+
+
+def _day_shift(day: int, offset: int) -> int:
+    """本地日序号加减天数。跨月跨年都要对：`20261030 + 7` 是 `20261106`，不是 `20261037`。"""
+    date = datetime.datetime.strptime(str(day), "%Y%m%d").date() + datetime.timedelta(days=offset)
+    return int(date.strftime("%Y%m%d"))
+
+
+def _day_gap(later: int, earlier: int) -> int:
+    """两个本地日序号之间差几天（`later - earlier`）。同理不能用整数相减。"""
+    fmt = "%Y%m%d"
+    return (datetime.datetime.strptime(str(later), fmt).date()
+            - datetime.datetime.strptime(str(earlier), fmt).date()).days
+
+
+def _iso_week(day: int) -> tuple[int, int]:
+    """本地日序号 → (ISO 年, ISO 周)。留存按自然周分队列，跨年也分得开。"""
+    date = datetime.datetime.strptime(str(day), "%Y%m%d").date()
+    year, week, _ = date.isocalendar()
+    return year, week
+
+
+def _retention_report(store: Store, *, days: int, stamp: int, external: set[str],
+                      active_by_day: dict[int, set[str]],
+                      first_seen: dict[str, int]) -> dict[str, Any]:
+    """留存板块：只算**用邀请码登记的外部账号**（口径与 maintainers 里的活跃/新增一致）。
+
+    owner 自用账号与历次用例账号都不算——它们天天在用，混进来会把留存率抬成一条平线。
+
+    四个口径：
+    - `users`：今日 / 近 7 天 / 近 30 天活跃的外部账号数，外加"近 7 天 ÷ 近 30 天"的粘性；
+    - `d1` / `d7`：按**首次活跃日**分队列，次日 / 第 7 天是否又活跃。只统计留得下完整观察
+      期的队列（首次活跃日 ≤ 今天-1 / 今天-7），队列大小与活跃数一起给出，避免只看到一个
+      百分比却不知道分母；
+    - `activation`：近 30 天用邀请码登记的账号里，登记后 7 天内连过中转的比例；
+    - `weeks`：最近几个自然周的分周队列，次周留存（只给已经过完次周的队列）。
+
+    活跃 = 当天在 `usageDaily` 里出现过（即当天有过中转连接），与 `usage` 的口径一致。
+    """
+    window = sorted(active_by_day)
+    if not window:
+        return {"scope": "external", "users": {}, "d1": None, "d7": None,
+                "activation": None, "weeks": []}
+    today = window[-1]
+    start = window[0]
+    today_set = active_by_day.get(today, set()) & external
+    week = set().union(*[active_by_day[day] for day in window[-7:]]) & external
+    month = set().union(*[active_by_day[day] for day in window]) & external
+
+    def cohort(gap: int) -> dict[str, Any] | None:
+        members = [account for account in external
+                   if first_seen.get(account) is not None
+                   and start <= first_seen[account] <= today - gap]
+        if not members:
+            return None
+        again = [account for account in members
+                 if account in active_by_day.get(_day_shift(first_seen[account], gap), set())]
+        return {"rate": _ratio(len(again), len(members)),
+                "cohort": len(members), "active": len(again)}
+
+    enrollments = [row for row in store.list_enrollments()
+                   if not _is_test_enrollment(row)
+                   and row.get("accountId") in external]
+    recent = [row for row in enrollments if int(row.get("usedAt") or 0) >= _day_start_ms(start)]
+    observable = [row for row in recent
+                  if _day_shift(local_day(int(row["usedAt"]) / 1000), 7) <= today]
+    activated = [row for row in observable
+                 if first_seen.get(row["accountId"]) is not None
+                 and 0 <= _day_gap(first_seen[row["accountId"]],
+                                   local_day(int(row["usedAt"]) / 1000)) <= 7]
+
+    buckets: dict[tuple[int, int], set[str]] = {}
+    for account in external:
+        day = first_seen.get(account)
+        if day is not None and day >= start:
+            buckets.setdefault(_iso_week(day), set()).add(account)
+    weeks = []
+    for (year, number), members in sorted(buckets.items()):
+        followers = {day for day in window if _iso_week(day) == (year, number + 1)}
+        # 次周还没过完就不给留存率：那一周只走到一半，数字只会虚低。
+        if not followers or max(followers) >= today:
+            continue
+        again = set().union(*[active_by_day[day] for day in followers]) & members
+        weeks.append({"week": f"{year}-W{number:02d}", "size": len(members),
+                      "active": len(again), "rate": _ratio(len(again), len(members))})
+    return {
+        "scope": "external",
+        "users": {"dau": len(today_set), "wau": len(week), "mau": len(month),
+                  "stickiness": _ratio(len(week), len(month)),
+                  "external": len(external)},
+        "d1": cohort(1),
+        "d7": cohort(7),
+        "activation": {"rate": _ratio(len(activated), len(observable)),
+                       "cohort": len(observable), "active": len(activated)},
+        "weeks": weeks[-4:],
     }
 
 
@@ -736,48 +914,200 @@ def _is_debug_device(row: dict[str, Any]) -> bool:
     return name.startswith("DSH-") or model in {"Node", "test-harness", "simulator"}
 
 
+def _day_start_ms(day: int) -> int:
+    """本地日 `YYYYMMDD` 的 00:00（服务器时区）对应的毫秒时间戳。
+
+    日界必须与 `store.local_day` 同一条：中转记账、日额度判定都按本地日切，
+    「今日」要是自己另算一套（比如滑动 24 小时），同一个数字在两个地方会对不上。
+    """
+    return int(datetime.datetime.strptime(str(day), "%Y%m%d").timestamp() * 1000)
+
+
+def _today_report(store: Store, *, stamp: int, threads: list[dict[str, Any]],
+                  real_devices: list[dict[str, Any]], debug_ids: set[str],
+                  names: dict[str, str | None]) -> dict[str, Any]:
+    """「今日」板块：服务器本地自然日 00:00 起（含刚才这一刻）的部分数据。
+
+    为什么要有这一块：30 天窗口把当天埋在一堆历史里，看不出"今天有没有事"。今日的口径
+    全部落在本地日上，与 `usage --days 1`、日额度一致。
+
+    调试设备（`_is_debug_device`）的流量、设备、账号一并剔除——这一块是给 owner 看用户的；
+    被剔掉的设备 id 与账号名由调用方算好传进来（`usageDaily` 里只有 deviceId）。
+    """
+    day = local_day(stamp / 1000)
+    start = _day_start_ms(day)
+    known = {row["deviceId"]: row for row in real_devices}
+    by_device: list[dict[str, Any]] = []
+    by_account: dict[str, dict[str, Any]] = {}
+    builds: dict[str, dict[str, Any]] = {}
+    egress = connections = 0
+    first_seen: int | None = None
+    last_seen: int | None = None
+    for row in store.usage_rows(day):
+        if row["deviceId"] in debug_ids:
+            continue
+        device = known.get(row["deviceId"]) or {}
+        size = int(row["egressBytes"])
+        count = int(row["connections"])
+        seen_from = int(row["firstSeenAt"] or 0)
+        seen_to = int(row["lastSeenAt"] or 0)
+        account_id = row.get("accountId")
+        egress += size
+        connections += count
+        first_seen = seen_from if first_seen is None else min(first_seen, seen_from)
+        last_seen = seen_to if last_seen is None else max(last_seen, seen_to)
+        if row.get("lastBuild"):
+            # 今日版本分布：一个构建后面挂多少台设备、多少个账号（同账号多设备只算一次）。
+            build = builds.setdefault(row["lastBuild"], {"devices": 0, "accounts": set()})
+            build["devices"] += 1
+            if account_id:
+                build["accounts"].add(account_id)
+        account = by_account.setdefault(account_id, {"accountId": account_id,
+                                                     "name": names.get(account_id),
+                                                     "egressBytes": 0, "connections": 0,
+                                                     "devices": 0})
+        account["egressBytes"] += size
+        account["connections"] += count
+        account["devices"] += 1
+        by_device.append({
+            "deviceId": row["deviceId"],
+            "name": device.get("name"),
+            "model": device.get("model"),
+            "appVersion": device.get("appVersion"),
+            "accountId": account_id,
+            "accountName": names.get(account_id),
+            "egressBytes": size,
+            "connections": count,
+            "firstSeenAt": seen_from or None,
+            "lastSeenAt": seen_to or None,
+            "lastBuild": row.get("lastBuild"),
+            "revoked": bool(device.get("revokedAt")),
+        })
+    by_device.sort(key=lambda row: (int(row["egressBytes"]), int(row["connections"])), reverse=True)
+    ranked = sorted(by_account.values(), key=lambda row: int(row["egressBytes"]), reverse=True)
+    live = [row for row in real_devices if not row.get("revokedAt")]
+    fresh = [row for row in threads if int(row["createdAt"]) >= start]
+    enrollments = [row for row in store.list_enrollments()
+                   if int(row.get("usedAt") or 0) >= start and not _is_test_enrollment(row)]
+    return {
+        "day": day,
+        "dayStartAt": start,
+        "usage": {
+            "egressBytes": egress,
+            "connections": connections,
+            "devices": len(by_device),
+            "firstSeenAt": first_seen or None,
+            "lastSeenAt": last_seen or None,
+            "builds": sorted(({"build": build, "devices": entry["devices"],
+                               "accounts": len(entry["accounts"])}
+                              for build, entry in builds.items()),
+                             key=lambda item: (-item["devices"], item["build"])),
+        },
+        "topAccounts": ranked[:REPORT_TODAY_LIMIT],
+        "devices": {
+            "list": by_device[:REPORT_TODAY_LIMIT],
+            "new": len([row for row in real_devices if int(row["createdAt"]) >= start]),
+            "active": len([row for row in live if int(row.get("lastSeenAt") or 0) >= start]),
+            "revoked": len([row for row in real_devices
+                            if int(row.get("revokedAt") or 0) >= start]),
+            "live": len(live),
+        },
+        "feedback": {
+            "new": len(fresh),
+            "open": len([row for row in fresh if row["status"] == "open"]),
+            "replied": len([row for row in fresh if row["status"] == "replied"]),
+            "threads": fresh[:REPORT_TODAY_LIMIT],
+        },
+        "invites": {"used": len(enrollments), "enrollments": enrollments[:REPORT_TODAY_LIMIT]},
+    }
+
+
+def _first_seen_days(store: Store, *, debug_ids: set[str],
+                     owners: dict[str, str | None]) -> dict[str, int]:
+    """每个账号**第一次**有用量记录的那天（本地日）——留存的队列起点。
+
+    窗口只有 N 天，而"新用户"必须按历史上第一次活跃来定，所以这里单独读一次更长的历史
+    （`RETENTION_HISTORY_DAYS`）：按设备分组拿到 (day, deviceId)，再用设备→账号的映射归到
+    账号上，顺带用同一套规则剔掉调试设备。项目规模是几千行以内，一次读完不影响日报耗时。
+    """
+    first: dict[str, int] = {}
+    for row in store.usage_totals(days=RETENTION_HISTORY_DAYS, by="device"):
+        if row["deviceId"] in debug_ids:
+            continue
+        account = owners.get(row["deviceId"])
+        if not account:
+            continue
+        day = int(row["day"])
+        if account not in first or day < first[account]:
+            first[account] = day
+    return first
+
+
 def _ops_report(store: Store, days: int) -> dict[str, Any]:
-    """日报的四个板块：反馈 / 设备 / 用量 / 邀请码（本机渲染，服务器上不画图）。
+    """日报的板块：**今日** + 反馈 / 设备 / 用量 / 留存 / 邀请码（最近 `--days` 天）。
 
     `--days` 是窗口（本地日，含今天）：反馈只数窗口内**新建**的线程，用量与每日新增
-    设备也只覆盖窗口；邀请码的账是全量（码用没用完跟窗口无关）。空库照样四个板块
+    设备也只覆盖窗口；邀请码的账是全量（码用没用完跟窗口无关）。空库照样每个板块
     齐全、计数为 0——日报每天都会跑。
 
     设备板块只统计**真实设备**（剔除 `_is_debug_device`），被剔除的行数放在 `debug` 里，
-    这样"图上是用户、库里有多少调试行"两件事都看得见。
+    这样"图上是用户、库里有多少调试行"两件事都看得见；反馈板块同样剔除模拟器/调试设备
+    提的验收单（`_is_test_thread`），被剔的条数放在 `feedback.test`。`today` 板块是同一批
+    数据的单日切片，见 `_today_report`；留存只算用邀请码登记的外部账号，见 `_retention_report`。
     """
     stamp = now_ms()
-    threads = _feedback_rows(store, status=None, since_ms=stamp - days * 86_400_000,
-                             limit=REPORT_THREAD_LIMIT)
+    listed = _feedback_rows(store, status=None, since_ms=stamp - days * 86_400_000,
+                            limit=REPORT_THREAD_LIMIT)
     devices = store.list_devices(include_revoked=True)
-    real = [row for row in devices if not _is_debug_device(row)]
+    debug_ids = {row["deviceId"] for row in devices if _is_debug_device(row)}
+    names = {row["accountId"]: row.get("name") for row in store.list_accounts()}
+    real = [row for row in devices if row["deviceId"] not in debug_ids]
     live = [row for row in real if not row.get("revokedAt")]
+    threads = [row for row in listed if not _is_test_thread(row, debug_ids)]
     created_per_day: dict[int, int] = {}
     for row in real:
         day = local_day(int(row["createdAt"]) / 1000)
         created_per_day[day] = created_per_day.get(day, 0) + 1
+    new_per_day = [{"day": day, "count": created_per_day.get(day, 0)} for day in _recent_days(days)]
+    series, ranked, active_by_day = _usage_scan(store, days, debug_ids, names)
+    enrollments = store.list_enrollments()
+    real_enrollments = [row for row in enrollments if not _is_test_enrollment(row)]
+    external = {row["accountId"] for row in real_enrollments if row.get("accountId")}
+    owners = {row["deviceId"]: row.get("accountId") for row in devices}
     return {
         "ok": True,
         "generatedAt": stamp,
         "days": days,
-        "feedback": _feedback_report(store, threads),
+        "today": _today_report(store, stamp=stamp, threads=threads, real_devices=real,
+                               debug_ids=debug_ids, names=names),
+        "feedback": _feedback_report(store, threads, test_count=len(listed) - len(threads)),
         "devices": {
             "paired": len(live),
             "active7d": len([row for row in live
                              if int(row.get("lastSeenAt") or 0) >= stamp - 7 * 86_400_000]),
+            "activeWindow": len([row for row in live
+                                 if int(row.get("lastSeenAt") or 0) >= stamp - days * 86_400_000]),
+            "newInWindow": sum(int(entry["count"]) for entry in new_per_day),
+            "windowDays": days,
             "revoked": len(real) - len(live),
             "debug": len(devices) - len(real),
-            "newPerDay": [{"day": day, "count": created_per_day.get(day, 0)}
-                          for day in _recent_days(days)],
+            "newPerDay": new_per_day,
             # 只列**未撤销的真实设备**，按最近在线倒序取前 `REPORT_DEVICE_LIMIT` 台：
             # 全量列表在生产库上是 1900+ 行（历次调试配对都还在），日报会被它撑爆
             # （2026-10-12 第一版 327 KB，正文里 90% 是 DSH-Test/DSH-Sweep 的历史行）。
-            "list": [_device_report_row(row) for row in
+            # `accountName` 是日报自己加的：手机上设备名常常全是「iPhone」，得靠账号名区分。
+            "list": [{**_device_report_row(row), "accountName": names.get(row["accountId"])}
+                     for row in
                      sorted(live, key=lambda row: int(row.get("lastSeenAt") or row["createdAt"]),
                             reverse=True)[:REPORT_DEVICE_LIMIT]],
         },
-        "usage": _usage_report(store, days),
-        "invites": {**store.invite_totals(), "enrollments": store.list_enrollments()},
+        "usage": _usage_report(series, ranked),
+        "retention": _retention_report(store, days=days, stamp=stamp, external=external,
+                                       active_by_day=active_by_day,
+                                       first_seen=_first_seen_days(store, debug_ids=debug_ids,
+                                                                   owners=owners)),
+        "invites": {**store.invite_totals(), "test": len(enrollments) - len(real_enrollments),
+                    "enrollments": real_enrollments},
     }
 
 
