@@ -33,6 +33,13 @@ struct DSHMobileApp: App {
         if let sid = SessionRouter.automationRequestedSession() {
             SessionRouter.shared.request(sessionId: sid)
         }
+        // 015：冷启动点通知的**第一条**来源，等价真机
+        // `launchOptions[.remoteNotification]` 那条（`APNSRegistrar` 里同一句话）。
+        // 第二条来源由主界面出现后触发（`ViewportProbe.runNotifyColdTapProbe`）：
+        // 两条同时存在、且被点会话还没进列表，才是真机冷启动的形态。
+        if let sid = ViewportProbe.notifyColdTapSid {
+            SessionRouter.shared.request(sessionId: sid)
+        }
         #endif
     }
 

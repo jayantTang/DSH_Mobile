@@ -329,7 +329,7 @@ enum ViewportProbe {
         return (String(sessionId), delay)
     }
 
-    /// `-DSHProbeNotifyTap <sid>@<秒>`：模拟「App 在后台时用户点了通知」。
+    /// `-DSHProbeNotifyTap <sid>@<秒>[+<秒>…]`：模拟「App 在后台时用户点了通知」。
     ///
     /// 为什么必须用钩子而不是 XCUITest：真机那条路是 iOS 把 App 拉回前台并回调
     /// `userNotificationCenter(_:didReceive:)`。仿真器里点不到真实横幅（通知权限
@@ -340,33 +340,94 @@ enum ViewportProbe {
     /// 时序是这条路的关键，也是它与 `-DSHNotifySession`（冷启动）唯一的不同：
     /// 先等 <秒>（此刻 App 在前台、已连上、列表已在），再由 App 自己按 home 键退到后台，
     /// 再等 2 秒（等 iOS 真的挂起/停掉 socket），然后触发 didReceive。
-    static var notifyTapProbe: (sid: String, seconds: Double)? {
+    ///
+    /// `@<秒>+<秒>` 可以给多个时刻（分隔符用 `+`：用例台的 `args=` 是按逗号切参数的）（015 的 FR-006 要"已经在该会话里，再点它的同一条
+    /// 通知"）：每个时刻各点一次，点与点之间仍是"退后台 → 挂起窗口 → 收回前台"那一套。
+    static var notifyTapProbe: (sid: String, seconds: [Double])? {
         let arguments = ProcessInfo.processInfo.arguments
         guard let index = arguments.firstIndex(of: "-DSHProbeNotifyTap"),
               index + 1 < arguments.count
         else { return nil }
         let parts = arguments[index + 1].split(separator: "@")
         guard let sid = parts.first, !sid.isEmpty else { return nil }
-        return (String(sid), parts.count > 1 ? Double(parts[1]) ?? 6 : 6)
+        let times = parts.count > 1
+            ? parts[1].split(whereSeparator: { $0 == "," || $0 == "+" })
+                .compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
+            : []
+        return (String(sid), times.isEmpty ? [6] : times.sorted())
     }
 
-    /// 跑上面那个钩子：前台等 → 退后台 → 挂起窗口 → 触发点按回调。
+    /// 跑上面那个钩子：前台等 → 退后台 → 挂起窗口 → 触发点按回调；多个时刻就重复一遍。
     static func runNotifyTapProbe(delegate: SessionAlerts) async {
         guard let probe = notifyTapProbe else { return }
-        note("notifytap.wait", ["sid": probe.sid, "seconds": String(probe.seconds)], force: true)
-        try? await Task.sleep(for: .seconds(probe.seconds))
-        guard UIApplication.shared.applicationState == .active else {
-            note("notifytap.abort", ["why": "not active before backgrounding"], force: true)
+        note("notifytap.wait", [
+            "sid": probe.sid,
+            "seconds": probe.seconds.map { String($0) }.joined(separator: ","),
+        ], force: true)
+        var clock: Double = 0
+        for target in probe.seconds {
+            if target > clock { try? await Task.sleep(for: .seconds(target - clock)) }
+            clock = target
+            guard UIApplication.shared.applicationState == .active else {
+                note("notifytap.abort", ["why": "not active before backgrounding", "at": String(target)],
+                     force: true)
+                return
+            }
+            // 退到后台 = 真机上"用户把手机放下"的那一刻。
+            UIApplication.shared.perform(#selector(UIApplication.resignFirstResponder))
+            note("notifytap.backgrounding", ["sid": probe.sid, "at": String(target)], force: true)
+            // 这里刻意**不**调 suspend：保持进程活着，正是 owner 说的
+            // 「App 在后台（未被划掉）」那种状态。
+            NotificationProbe.background()
+            try? await Task.sleep(for: .seconds(2))
+            clock = target + 2
+            await NotificationProbe.deliverTap(sid: probe.sid, to: delegate)
+            // `deliverTap` 末尾会把模拟态收回前台，并再等 0.3 秒。
+            clock += 0.3
+        }
+    }
+
+    /// `-DSHProbeNotifyColdTap <sid>`：复现真机**冷启动点通知**的形态（015）。
+    ///
+    /// 真机冷启动点通知会在两个时刻各写一次同一个意图：
+    ///   ① `application(_:didFinishLaunchingWithOptions:)` 的 `launchOptions[.remoteNotification]`
+    ///      （`APNSRegistrar`）；
+    ///   ② 随后的 `userNotificationCenter(_:didReceive:)`（`SessionAlerts.handleTap`）。
+    ///
+    /// 现有两个钩子各自只覆盖一半：`-DSHNotifySession` 只有 ①（单消费者），
+    /// `-DSHProbeNotifyTap` 有 ②但触发时列表已就绪。缺陷要的是"两处都写到了 +
+    /// 被点会话还没进列表"：015 之前那两处写的是**两个不同的位**，视图因此有两个
+    /// 消费者，各自停在"等列表到达"里，最后各入栈一次。所以这里：
+    /// sid 由启动期那条来源先写（见 `DSHMobileApp.init`），主界面出现后（此刻还没
+    /// 拿到 host 的列表）再由下面的方法走 ②。
+    ///
+    /// 钩子只负责"把这一下点出来"；从 `handleTap` 往下全是产品代码。
+    static var notifyColdTapSid: String? {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let index = arguments.firstIndex(of: "-DSHProbeNotifyColdTap"),
+              index + 1 < arguments.count
+        else { return nil }
+        let value = arguments[index + 1].trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? nil : value
+    }
+
+    /// 主界面出现后触发 ②。目标会话必须**还没进列表**，否则窗口不成立——
+    /// 那时如实记一条 `notifyctap.abort` 并放弃，让这一轮呈现为"没复现"而不是
+    /// "莫名其妙绿了"。
+    static func runNotifyColdTapProbe(
+        delegate: SessionAlerts,
+        isListed: @MainActor (String) -> Bool
+    ) async {
+        guard let sid = notifyColdTapSid else { return }
+        // 让主界面这一帧先落地：请求的消费者（`.task(id: routingToken)`）由这次
+        // 出现启动，②要写在它已经跑起来之后。
+        try? await Task.sleep(for: .milliseconds(300))
+        guard !isListed(sid) else {
+            note("notifyctap.abort", ["sid": sid, "why": "session already listed"], force: true)
             return
         }
-        // 退到后台 = 真机上"用户把手机放下"的那一刻。
-        UIApplication.shared.perform(#selector(UIApplication.resignFirstResponder))
-        note("notifytap.backgrounding", ["sid": probe.sid], force: true)
-        // 这里刻意**不**调 suspend：保持进程活着，正是 owner 说的
-        // 「App 在后台（未被划掉）」那种状态。
-        NotificationProbe.background()
-        try? await Task.sleep(for: .seconds(2))
-        await NotificationProbe.deliverTap(sid: probe.sid, to: delegate)
+        note("notifyctap.fire", ["sid": sid, "listed": "0"], force: true)
+        await delegate.handleTap(sessionId: sid)
     }
 
     /// `-DSHProbeOlderScroll <n>`：由 App 自己把转写视口送到顶部 n 次。
@@ -754,8 +815,12 @@ enum ViewportProbe {
     static var askProbe: (sessionId: String, delay: Double)? { nil }
     static var olderScrollRounds: Int? { nil }
     static var olderDriveSkipsReclaimed: Bool { false }
-    static var notifyTapProbe: (sid: String, seconds: Double)? { nil }
+    static var notifyTapProbe: (sid: String, seconds: [Double])? { nil }
     static func runNotifyTapProbe(delegate: SessionAlerts) async {}
+    static var notifyColdTapSid: String? { nil }
+    static func runNotifyColdTapProbe(
+        delegate: SessionAlerts, isListed: @MainActor (String) -> Bool
+    ) async {}
     static var scrollFacts: (offset: CGFloat, content: CGFloat)? { nil }
     static func topVisibleRow() -> String? { nil }
     static func visibleRowIds() -> [String] { [] }

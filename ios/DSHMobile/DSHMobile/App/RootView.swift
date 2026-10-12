@@ -605,12 +605,13 @@ private struct MainView: View {
     @State private var isShowingSettings = false
     @State private var isShowingWebFallback = false
     /// Compact-width navigation: the list pushes the session it opens.
-    @State private var paths = NavigationPath()
-    /// 栈顶那个会话 id，只为"这条通知要开的会话是否已经在栈上"服务。
     ///
-    /// `NavigationPath` 不暴露元素读取，只有 `count`；而"已经推过它"与"栈是空的"
-    /// 不是一回事——用户从通知进来、又退到列表再点同一条通知，不能被推两次。
-    @State private var pushedSessionId: String?
+    /// A typed array rather than `NavigationPath` (015): "which session is on
+    /// top" is read straight off it (`paths.last`), so the notification path no
+    /// longer has to keep its own copy in a `@State` — that copy was what the
+    /// user's back gesture cleared, which let a second, slower consumer push the
+    /// same session again.
+    @State private var paths: [String] = []
     @State private var isShowingDiagnostics = false
     @State private var filesScope: WorkspaceFileScope?
     /// A file to open as soon as the browser appears, for the unattended run.
@@ -704,24 +705,31 @@ private struct MainView: View {
             // opened stayed "current" for the rest of the run.
             if count == 0 {
                 listModel.currentSessionId = nil
-                // 栈空了：记下的"已推送"也必须清掉，否则下次点同一条通知
-                // 会因为"推过了"而什么都不做。
-                pushedSessionId = nil
             }
-        }
-        .onChange(of: alerts.requestedSessionId) { _, requested in
-            // The split view owns navigation, so a tapped notification opens
-            // its session by handing it to the transcript the detail column
-            // already shows.
-            guard requested != nil else { return }
-            Task { await openRequestedSession() }
         }
         // 冷启动直达：通知被点击时若是**启动**了 App，那次点击发生在
         // `MainView` 存在之前（`didReceive` 早于视图构建，连接与列表都还没有）。
-        // 请求被 `SessionRouter` 存着，这里在视图真正就位后取走并等待列表到达——
-        // 原来只有 `alerts.requestedSessionId` 一条路，冷启动那一次因此没人接。
-        .task(id: routingEpoch) {
+        // 请求被 `SessionRouter` 存着，这里在视图真正就位后取走并等待列表到达。
+        //
+        // **只有一个消费者**（015）：以前这里还有一条 `.onChange(of:
+        // alerts.requestedSessionId)`，与这条 `.task(id:)` 各自处理同一个请求；
+        // 会话还没进列表时两者会同时攥着它，谁先等到列表谁先入栈，另一个随后
+        // 又入栈一次——用户就得返回两次。触发源收敛成 `routingToken` 一处，
+        // 而取走本身是原子的（`SessionRouter.take()`），所以多一个触发点也不会
+        // 变成第二个消费者。
+        .task(id: SessionRouter.shared.routingToken) {
             await openRequestedSession()
+        }
+        .task {
+            // 015：仿真器复现「App 被通知**冷启动**」（`-DSHProbeNotifyColdTap <sid>`）。
+            // 与 `-DSHProbeNotifyTap` 的差别是时序：这里由 `MainView` 出现来触发第二条来源
+            // （`handleTap`），此刻 host 的列表通常还没到，目标会话因此不在列表里——
+            // 两条来源同时存在 + 目标会话尚未进列表，正是"两个消费者各攥着同一个请求"的窗口，
+            // 也就是真机冷启动点通知的形态。DEBUG-only，见 `ViewportProbe.runNotifyColdTapProbe`。
+            await ViewportProbe.runNotifyColdTapProbe(
+                delegate: alerts,
+                isListed: { listModel.session(withId: $0) != nil }
+            )
         }
         .task(id: automationFile) {
             guard let automationFile, !didOpenAutomationFile else { return }
@@ -786,53 +794,58 @@ private struct MainView: View {
         }
     }
 
-    /// A value that changes when there is a new session to open.
-    ///
-    /// `.task(id:)` needs an `Equatable` id and the router only exposes the
-    /// request itself, so the request's own text is the id: a second tap on a
-    /// different notification re-runs the task, and re-running it for the same
-    /// session is harmless (the request is consumed on the way in).
-    private var routingEpoch: String {
-        SessionRouter.shared.requestedSessionId ?? alerts.requestedSessionId ?? ""
-    }
-
     /// Opens the session a notification tap asked for, once there is one to open.
     ///
-    /// The wait matters: a cold-start tap arrives before the session list does —
-    /// the app may not even have connected yet — so "not found" at first glance
-    /// means "not yet", not "no such session". Up to 20 seconds, the same budget
-    /// the automation surfaces use for the same reason. An id that still does not
-    /// resolve is dropped deliberately: retrying forever would open a session the
-    /// user has since navigated away from.
+    /// **取走即拥有**（015）：一进来就把请求取走，第二个调用者拿不到任何东西，
+    /// 所以同一次点按只可能走到入栈一次。等待仍然是必要的——冷启动点通知会早于列表
+    /// 到达，"第一眼找不到"是"还没到"，不是"没有这个会话"——但等待期间只有一个等待者，
+    /// 且入栈发生在"等到会话"的那一刻**同步**完成，慢 I/O（`chatModel.open`）排在入栈
+    /// 之后。所有权与入栈之间因此没有可被用户返回动作清空的窗口。
+    ///
+    /// 20 秒仍没等到就放弃：请求不再有意义（会话可能已被归档或删除），
+    /// 也不该在第 21 秒把用户拽进任何会话。
     private func openRequestedSession() async {
-        let requested = SessionRouter.shared.requestedSessionId ?? alerts.requestedSessionId
-        guard let requested else { return }
+        guard let request = SessionRouter.shared.take() else { return }
+        guard let summary = await awaitListed(request.sessionId) else {
+            DSHLog.push("notification session \(request.sessionId) never appeared in the list")
+            return
+        }
+        DSHLog.push("opening session \(request.sessionId) from a notification")
+        commitRoute(request.sessionId)
+        ViewportProbe.note("route.open", [
+            "sid": request.sessionId,
+            "generation": "\(request.generation)",
+        ], force: true)
+        await chatModel.open(summary)
+        listModel.markViewed(request.sessionId)
+    }
 
+    /// Waits for `sessionId` to appear in the list, up to the 20-second budget
+    /// the automation surfaces use for the same reason.
+    ///
+    /// `nil` means "gave up" — either the budget ran out, or the task was
+    /// cancelled because a newer request arrived (the newest tap wins).
+    private func awaitListed(_ sessionId: String) async -> SessionSummary? {
         for _ in 0..<80 {
-            if let summary = listModel.session(withId: requested) {
-                _ = SessionRouter.shared.consume()
-                alerts.requestedSessionId = nil
-                DSHLog.push("opening session \(requested) from a notification")
-                await chatModel.open(summary)
-                listModel.markViewed(requested)
-                // On a phone the list is a stack: without pushing, the opened
-                // session sits behind it and the tap looks like it did nothing.
-                // `NavigationPath` exposes no element access, so "is it already
-                // pushed" is tracked by hand (`paths.count` alone cannot say
-                // *which* session is on top).
-                if horizontalSizeClass == .compact, pushedSessionId != requested {
-                    pushedSessionId = requested
-                    paths.append(requested)
-                }
-                return
-            }
-            if Task.isCancelled { return }
+            if let summary = listModel.session(withId: sessionId) { return summary }
+            if Task.isCancelled { return nil }
             try? await Task.sleep(for: .milliseconds(250))
         }
-        // 20 秒都没等到：这条请求不再有意义（会话可能已被归档/删除）。
-        _ = SessionRouter.shared.consume()
-        alerts.requestedSessionId = nil
-        DSHLog.push("notification session \(requested) never appeared in the list")
+        return nil
+    }
+
+    /// Pushes `sessionId` onto the stack — synchronously, and only on a phone.
+    ///
+    /// Reading `paths.last` is what makes this idempotent, and it covers every
+    /// way a session can already be on top (a row tap, a created session, an
+    /// earlier notification).
+    private func commitRoute(_ sessionId: String) {
+        guard horizontalSizeClass == .compact, paths.last != sessionId else { return }
+        paths.append(sessionId)
+        ViewportProbe.note("route.push", [
+            "sid": sessionId,
+            "stack": "\(paths.count)",
+        ], force: true)
     }
 
     @ViewBuilder
@@ -866,7 +879,6 @@ private struct MainView: View {
         guard let summary = listModel.session(withId: sessionId) else { return }
         Task { await chatModel.open(summary) }
         listModel.markViewed(sessionId)
-        pushedSessionId = sessionId
         paths.append(sessionId)
     }
 

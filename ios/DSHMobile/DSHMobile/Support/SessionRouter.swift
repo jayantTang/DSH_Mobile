@@ -1,3 +1,4 @@
+import DSHKit
 import Foundation
 import Observation
 
@@ -7,7 +8,7 @@ import Observation
 /// **before** the view that can honour it exists:
 ///
 /// - A tap on a notification while the app is running; the transcript is on
-///   screen within a frame, so the request is consumed almost immediately.
+///   screen within a frame, so the request is taken almost immediately.
 /// - A tap on a notification that **launches** the app. `didReceive` fires
 ///   during `application(_:didFinishLaunchingWithOptions:)`, long before
 ///   `RootView` has a session list — or even a connection. Setting a flag on a
@@ -15,13 +16,16 @@ import Observation
 ///   defect this type removes.
 ///
 /// So the request lives in a process-wide object the delegate can always reach,
-/// and the view consumes it when it is ready. It is deliberately *not* the
+/// and the view takes it when it is ready. It is deliberately *not* the
 /// notification centre's `didReceive` alone: a launch happens once, and a
 /// request that has nowhere to land has no second chance.
 ///
-/// `SessionAlerts.requestedSessionId` keeps existing and keeps working — the
-/// foreground path writes both, so nothing that already observed it changes
-/// behaviour.
+/// **取走即拥有（015）**：请求本体住在 ``SessionRequestBox`` 里，那里"读"与"清空"
+/// 是同一个调用。以前这里有两个可读可写的位（`SessionRouter` 与
+/// `SessionAlerts.requestedSessionId`），视图也有两个消费者，于是同一次点按能被处理
+/// 两遍——第一个消费者入栈后用户左划返回、第二个消费者随后又入栈一次，用户就得返回
+/// 两次。现在只有一处可写（``request(sessionId:)``）、一处可取（``take()``），
+/// 上面两个属性只是给视图观察用的镜像。
 @MainActor
 @Observable
 final class SessionRouter {
@@ -29,11 +33,20 @@ final class SessionRouter {
     /// which has no reference to any view, so this cannot be per-view.
     static let shared = SessionRouter()
 
-    /// The session a tap asked for, until someone opens it.
+    /// The session a tap asked for, until someone takes it — **read-only**.
     ///
-    /// Held as `String?` rather than a `Bool` + payload so "nothing pending" has
-    /// one spelling. Consuming it is an explicit step — see ``consume()``.
+    /// Nothing may decide to act on this value: that is the shape that produced
+    /// the double push. Take the request with ``take()`` instead.
     private(set) var requestedSessionId: String?
+
+    /// Changes on every new request; the view drives its handler on it.
+    ///
+    /// An id rather than the session id itself: two taps on the same session are
+    /// still two events, and `.task(id:)` must re-run for the second one.
+    private(set) var routingToken = "0"
+
+    /// The take-once rule lives here, where it can be unit tested (015).
+    private let box = SessionRequestBox()
 
     /// The relay's push payload calls the session id `sid`; everything else in
     /// the app calls it `sessionId`. Both are accepted so a change of transport
@@ -52,8 +65,32 @@ final class SessionRouter {
     }
 
     /// Notes that the user asked for `sessionId`.
+    ///
+    /// The only writer there is: the notification delegate, the launch payload
+    /// and the automation hooks all come through here (FR-007).
     func request(sessionId: String) {
-        requestedSessionId = sessionId
+        let request = box.put(sessionId: sessionId)
+        requestedSessionId = request.sessionId
+        routingToken = "\(request.generation)"
+        ViewportProbe.note("route.request", [
+            "sid": request.sessionId,
+            "generation": "\(request.generation)",
+        ], force: true)
+    }
+
+    /// Takes the pending request, clearing it in the same call (015).
+    ///
+    /// `nil` means "someone else owns it, or nothing is pending". A caller that
+    /// gets `nil` does nothing at all — it must not look for the same intent in
+    /// another property, which is how one tap used to become two pushes.
+    func take() -> SessionRequest? {
+        guard let request = box.take() else { return nil }
+        requestedSessionId = nil
+        ViewportProbe.note("route.take", [
+            "sid": request.sessionId,
+            "generation": "\(request.generation)",
+        ], force: true)
+        return request
     }
 
     #if DEBUG
@@ -79,13 +116,10 @@ final class SessionRouter {
     }
     #endif
 
-    /// Takes the pending request, if any, and clears it.
+    /// 兼容保留：老调用点按"取走会话 id"的语义用它（用例台与诊断）。
     ///
-    /// Called by whoever actually opens the session: leaving it set would make
-    /// every later re-render try to open the same session again, which is how a
-    /// user who navigated away gets dragged back.
+    /// 与 ``take()`` 是同一个动作，只是丢掉代次。
     func consume() -> String? {
-        defer { requestedSessionId = nil }
-        return requestedSessionId
+        take()?.sessionId
     }
 }

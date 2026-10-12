@@ -392,9 +392,16 @@ export function buildPlan({ casePath, caseText, stepsText, runId, bundleId, sess
           // A value with a comma in it has to be quoted for `splitActions` to
           // keep it whole, which leaves the quotes on the token here: strip them
           // per argument, not per field.
+          //
+          // Each argument also goes through `substitute`, so a hook that needs
+          // the session under test can be written as a placeholder like
+          // `-DSHProbeNotifyColdTap {{session}}` instead of hard-coding an id —
+          // a hard-coded one would be either a real session (forbidden) or a
+          // stale scratch id (impossible to know before the run).
           args.push(...String(values.args).split(',')
             .map((token) => token.trim().replace(/^["']|["']$/g, ''))
-            .filter(Boolean))
+            .filter(Boolean)
+            .map(substitute))
         }
         current = { id: keys[0] ?? (values.file ? 'report' : (values.connect === 'none' ? 'onboarding' : 'sessions')),
                     note: title, launch: args, steps: [], root: pendingRoot }

@@ -42,9 +42,6 @@ final class SessionAlerts: NSObject, UNUserNotificationCenterDelegate {
         }
     }
 
-    /// Set when the user taps a notification, so the app can open that session.
-    var requestedSessionId: String?
-
     private(set) var isAuthorized = false
 
     private let center = UNUserNotificationCenter.current()
@@ -243,10 +240,10 @@ final class SessionAlerts: NSObject, UNUserNotificationCenterDelegate {
 
     /// Tapping a notification opens the session it came from.
     ///
-    /// The request is handed to `SessionRouter` as well as kept here: this
-    /// callback also fires for a tap that **launched** the app, at a moment when
-    /// no view exists to observe `requestedSessionId`. The router holds it until
-    /// there is something that can open it.
+    /// The request is handed to `SessionRouter`, which is the only place that
+    /// holds it: this callback also fires for a tap that **launched** the app, at
+    /// a moment when no view exists yet, and the router keeps it until there is
+    /// something that can open it.
     nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         didReceive response: UNNotificationResponse
@@ -269,11 +266,12 @@ final class SessionAlerts: NSObject, UNUserNotificationCenterDelegate {
 
     /// 处理一次「通知被点按」——真机回调与仿真器复现走的都是这里。
     ///
-    /// 拿到会话 id 之后把它放进进程级 `SessionRouter`（视图还不存在时也接得住），
-    /// 同时留在 `requestedSessionId` 上给正在观察它的视图。
+    /// 拿到会话 id 之后把它交给进程级 `SessionRouter`（视图还不存在时也接得住）。
+    /// **只有这一条写入路径**（015）：以前这里还会再写一个 `requestedSessionId`，
+    /// 于是视图侧出现两个消费者，同一次点按能把同一个会话推上栈两次。
     ///
     /// **必须在主线程**：方法体读 `UIApplication.shared.applicationState` /
-    /// `connectedScenes`，并写 `@Observable` 的 `requestedSessionId`（驱动 SwiftUI 刷新）。
+    /// `connectedScenes`，并写 `@Observable` 状态（驱动 SwiftUI 刷新）。
     /// `didReceive` 从后台线程 await 进来，所以这里显式钉在 `@MainActor`；
     /// 调用点（`NotificationProbe` / `ViewportProbe` 的仿真器复现）同样在主线程 await 它。
     @MainActor
@@ -286,7 +284,6 @@ final class SessionAlerts: NSObject, UNUserNotificationCenterDelegate {
         guard let sessionId = resolved else { return }
         DSHLog.push("notification tapped → session \(sessionId)")
         SessionRouter.shared.request(sessionId: sessionId)
-        self.requestedSessionId = sessionId
     }
 
     /// Whether the app is currently in front.
