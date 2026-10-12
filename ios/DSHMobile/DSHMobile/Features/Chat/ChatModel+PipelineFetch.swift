@@ -39,7 +39,9 @@ extension ChatPipelineBridge {
             model.notePipelineLoadingOlder(false)
             refold(messagesChanged: false, gapsChanged: true)
         }
-        let lower = max(1, oldest - Self.pageSize)
+        // 017：一次向上翻不是要一页，而是要**接下来几屏**——一页一次往返就是
+        // "每屏等一次"的来源。请求区间仍从最老已加载记录往上算，页边界不变。
+        let lower = max(1, oldest - Self.pageSize * Self.pagesPerFetch)
         do {
             _ = try await session.records(in: lower...(oldest - 1), priority: .userVisible)
             didAutoRetry = false
@@ -47,6 +49,7 @@ extension ChatPipelineBridge {
             // 失败语义不可观测。按同一名字补回（用例按「逐页落地、首尾相接」验收）。
             ViewportProbe.note("pager.page", [
                 "start": String(lower), "end": String(oldest - 1),
+                "pages": String(Self.pagesPerFetch),
                 "oldest": String(records.keys.min() ?? -1),
             ], force: true)
         } catch {
@@ -123,7 +126,9 @@ extension ChatPipelineBridge {
                 await noteEarliestReached(session, model)
                 return
             }
-            let lower = max(1, oldest - Self.pageSize)
+            // 017：重试与向上翻同口径——一次要的也是接下来几屏，否则点一次只回一页，
+            // 读者马上又撞到同一段等待。
+            let lower = max(1, oldest - Self.pageSize * Self.pagesPerFetch)
             try? await session.retry(range: lower...(oldest - 1))
             // 顶部行的恢复不走 loadOlder，pager.page 打不到；恢复动作要可观测（用例 48）。
             ViewportProbe.note("pager.retry", ["start": String(lower), "end": String(oldest - 1)],

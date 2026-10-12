@@ -18,6 +18,15 @@ public struct InFlightPageTable<Key: Hashable & Sendable>: Sendable {
         case userVisible = 10  // 用户翻到的位置
         case jump = 20         // 点开/跳转（队首语义）
         public static func < (lhs: Self, rhs: Self) -> Bool { lhs.rawValue < rhs.rawValue }
+
+        /// 诊断用的短名（017 `pager.fetch` 的 `source`）：预取 / 读者 / 跳转。
+        public var name: String {
+            switch self {
+            case .prefetch: return "prefetch"
+            case .userVisible: return "user"
+            case .jump: return "jump"
+            }
+        }
     }
 
     public enum Decision: Equatable, Sendable {

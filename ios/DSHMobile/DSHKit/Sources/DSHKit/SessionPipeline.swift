@@ -48,6 +48,7 @@ public actor SessionPipeline {
     /// 注意只覆盖「更新方向」——更早方向拉空是异常，按 T038 计失败。
     private var tailProbeEmpty = false
 
+
     /// 拉取优先级（沿用 InFlightPageTable：prefetch < userVisible < jump）。
     public typealias FetchPriority = InFlightPageTable<Int>.Priority
 
@@ -152,6 +153,15 @@ public actor SessionPipeline {
 
     static let maxRetries = 3 // internal：gap 派生（+Paging 扩展）要读
 
+    /// 缺页集合内的取页并发上限（017）。为什么是 2 而不是更大：一页 200–400ms 里大头是
+    /// 往返与宿主读取，压到 2 路就能把"一次取 3 页"的等待从 3×往返降到约 1.5×往返；
+    /// 再往上只是把一个读者的取数铺开，会挤占同一宿主上别的会话。预取与读者触发共用它。
+    static let fetchConcurrency = 2
+
+    /// 预取窗口：沿读取方向提前备好的页数（017）。读者停住时最多就是这几页，
+    /// 不会把剩余历史一次拉下来。
+    static let prefetchDepth = 1
+
     public init(
         scope: String,
         sessionId: String,
@@ -245,6 +255,7 @@ public actor SessionPipeline {
         //    区间集仍声称覆盖、读盘合并了却不广播，订阅方永远看不到——
         //        静默空白带的根因）。
         let hydrated = await hydrateCoveredSpans(of: range, missing: &missing)
+        let hydratedFromDisk = !hydrated.isEmpty
         if !hydrated.isEmpty {
             var diff = Diff(inserted: hydrated)
             _ = evictIfNeeded(anchor: Self.anchor(of: range))
@@ -254,31 +265,91 @@ public actor SessionPipeline {
 
         // ③ 缺口按对齐页拉网络（含整段缺失/跳转型完全不命中）。
         if !missing.isEmpty {
-            try await fetchMissing(missing, priority: priority)
+            try await fetchMissing(missing, priority: priority, direction: direction(of: range))
         }
 
-        // ④ 组装结果 + 预取瀑布（spec §7：距边界约 1 页提前水合下一页）。
+        // ④ 组装结果 + 预取瀑布（spec §7；017 起按方向提前 `prefetchDepth` 页）。
+        //
+        // 只有"这一段真是缺的"才预取：整段命中磁盘（区间集声称覆盖 + 热窗口淘汰后水合）
+        // 时读者根本没碰网络，预取就成了凭空多出来的请求——既有用例
+        // `testDiskHydrationAfterEvictionEmitsDiff` 钉着"全程零网络"这条。
         let result = range.compactMap { hotWindow[$0] }
-        triggerPrefetch(around: range)
+        // 预取自己触发的读不再触发预取（否则自我放大）；刚做完**磁盘水合**的整段回看也不触发
+        // ——那一段是缓存读、读者没在推边缘，预取只会凭空多出网络请求
+        //（`testDiskHydrationAfterEvictionEmitsDiff` 钉着"全程零网络"）。
+        if priority != .prefetch, !hydratedFromDisk {
+            triggerPrefetch(around: range)
+        }
         return result
     }
 
     /// 区间集声称覆盖、但热窗口已淘汰的段：读盘补回热窗口。
     /// 实现在 SessionPipeline+Hydration.swift（主文件 500 行上限）。
 
-    /// 缺口 → 对齐页集合，逐页拉取并合并。某页失败不阻塞其它页。
-    private func fetchMissing(_ missing: [RangeIndex.Span], priority: FetchPriority) async throws {
+    /// 缺口 → 对齐页集合，按方向排序后**小并发**取回并合并（017）。某页失败不阻塞其它页。
+    ///
+    /// 为什么不再逐页 await：一页要等一次完整往返（实测 200–400ms），读者一次要三页时
+    /// 串行就是三次等待。并发封顶在 `fetchConcurrency`，读者触发的页排在预取之前
+    /// （`pageOrder` 保证），同页仍由 in-flight 页表合并成一次请求。
+    private func fetchMissing(
+        _ missing: [RangeIndex.Span], priority: FetchPriority, direction: ReadingDirection
+    ) async throws {
+        let pages = pageOrder(for: missing, priority: priority, direction: direction)
+        guard !pages.isEmpty else { return }
         var firstError: Error?
-        for span in missing {
-            for page in alignedPages(covering: span) {
-                do {
-                    try await fetchPage(page, priority: priority)
-                } catch {
-                    if firstError == nil { firstError = error }
+        await withTaskGroup(of: Error?.self) { group in
+            var next = 0
+            let width = max(1, min(Self.fetchConcurrency, pages.count))
+            for _ in 0..<width {
+                let page = pages[next]
+                next += 1
+                group.addTask { [weak self] in
+                    guard let self else { return nil }
+                    do { try await self.fetchPage(page, priority: priority); return nil }
+                    catch { return error }
+                }
+            }
+            while let error = await group.next() {
+                if let error, firstError == nil { firstError = error }
+                guard next < pages.count else { continue }
+                let page = pages[next]
+                next += 1
+                group.addTask { [weak self] in
+                    guard let self else { return nil }
+                    do { try await self.fetchPage(page, priority: priority); return nil }
+                    catch { return error }
                 }
             }
         }
         if let firstError { throw firstError }
+    }
+
+    /// 读者这次是往哪个方向读。由请求区间与已加载窗口的关系判定
+    /// （`records(in:)` 在取数**之前**算一次，因为取完 ranges 就变了）。
+    enum ReadingDirection { case older, newer, unspecified }
+
+    private func direction(of range: ClosedRange<Int>) -> ReadingDirection {
+        if let oldest = ranges.oldest, range.upperBound < oldest { return .older }
+        if let newest = ranges.newest, range.lowerBound > newest { return .newer }
+        return .unspecified
+    }
+
+    /// 一次取多页时的发送顺序（017）：读者眼前那一段先发，然后沿读取方向往外扩。
+    ///
+    /// - 更早方向：页码从大到小——紧挨已加载窗口的那一页先发；
+    /// - 更新方向：页码从小到大；
+    /// - 说不清方向或 `.jump`（读者点名要的区间）：保持区间顺序（左到右）。
+    private func pageOrder(
+        for missing: [RangeIndex.Span], priority: FetchPriority, direction: ReadingDirection
+    ) -> [ClosedRange<Int>] {
+        var pages: [ClosedRange<Int>] = []
+        for span in missing { pages.append(contentsOf: alignedPages(covering: span)) }
+        guard priority != .jump, pages.count > 1 else { return pages }
+        switch direction {
+        case .older: return pages.sorted { $0.lowerBound > $1.lowerBound }
+        case .newer: return pages.sorted { $0.lowerBound < $1.lowerBound }
+        case .unspecified: return pages
+        }
     }
 
     /// 单页拉取：in-flight 页表同页合并/可抢占，回包按代数核销。
@@ -479,15 +550,49 @@ public actor SessionPipeline {
 
     // MARK: - 预取瀑布（spec §7）
 
-    /// 窗口滑动带提前量：距热窗口/本地区间边缘约 1 页时，以 .prefetch 触发
-    /// 向下一页的水合（与用户主动请求同一路径、可被 .jump 抢占）。
+    /// 窗口滑动带提前量（017：从"提前一页"改成"按方向提前 `prefetchDepth` 页"）。
+    ///
+    /// 为什么：读者到达边缘才补一页，就是每屏等一次往返。这里沿读取方向把接下来几页
+    /// **提前**取好（并发上限由 `fetchMissing` 管），读者到达时通常已在本地。
+    /// 方向由本次请求与已加载窗口的关系判定——按请求区间算，不按边缘距离算，
+    /// 否则往回翻时新旧两侧同时满足条件，会把反方向的页也拖进来。
     private func triggerPrefetch(around range: ClosedRange<Int>) {
-        guard let oldest = ranges.oldest, let newest = ranges.newest else { return }
-        if !topExhausted, oldest > 1, range.lowerBound - oldest < pageSize {
-            prefetch(alignedPage(containing: oldest - 1))
+        // 基准用**热窗口**两沿（不是区间集）：follow 下行刚到的记录还没写进区间集，
+        // 但窗口上沿已经抬高了，用区间集会把它当成"已经备过"而探不到新内容。
+        guard let hotOldest = hotWindow.keys.min(), let hotNewest = hotWindow.keys.max() else { return }
+        // 范围门槛沿用 007 的既有语义：读者靠近（或越过）某一沿才备那一侧，别在中间乱拉。
+        if !topExhausted, hotOldest > 1, range.lowerBound - hotOldest < pageSize {
+            prefetchOlder(cursor: hotOldest, depth: Self.prefetchDepth)
         }
-        if newest - range.upperBound < pageSize {
-            prefetch(alignedPage(containing: newest + 1))
+        if hotNewest - range.upperBound < pageSize {
+            prefetchNewer(cursor: hotNewest, depth: Self.prefetchDepth)
+        }
+    }
+
+    /// 沿更早方向提前备最多 `depth` 页（017）。
+    ///
+    /// `cursor` 传热窗口下沿（半开）：备的第一页是含 `cursor - 1` 的那一页。
+    /// 深度从 `cursor` 起算，所以"每落一页又备两页"不会发生——落下的页落在
+    /// `[cursor - depth×pageSize, cursor)` 这个固定窗口里，窗口整体只随读者前进而前进
+    /// （第一版没有这个基准，一个 5000 事件的会话 10 秒里预取了 43 次、扫到 seq 51）。
+    private func prefetchOlder(cursor: Int, depth: Int) {
+        guard depth > 0 else { return }
+        var next = cursor
+        for _ in 0..<depth where next > 1 {
+            let page = alignedPage(containing: next - 1)
+            prefetch(page)
+            next = page.lowerBound
+        }
+    }
+
+    /// 沿更新方向提前备最多 `depth` 页；`cursor` 传热窗口上沿。
+    private func prefetchNewer(cursor: Int, depth: Int) {
+        guard depth > 0 else { return }
+        var next = cursor
+        for _ in 0..<depth {
+            let page = alignedPage(containing: next + 1)
+            prefetch(page)
+            next = page.upperBound
         }
     }
 

@@ -101,13 +101,36 @@ final class MessageLayer {
                     guard let address = addresses.address(for: ref.sessionId) else {
                         throw FetchFailure.noAddress
                     }
-                    // `before` 是开区间上界：页必须结束在 before-1，正好盖住 range。
-                    let value = try await client.historyWindow(HistoryWindowRequest(
-                        address: address, before: range.upperBound + 1, through: nil,
-                        limit: range.count, maxBytes: 256 * 1024))
-                    return SessionPipeline.FetchPage(
-                        records: value.records, hasMore: value.hasMore,
-                        clamped: value.clamped ?? false)
+                    // 017：每一页都留一条可核诊断——是预取还是读者触发、这次网络花了多久。
+                    // SC-001（读者到达前本地已有内容）与 SC-003（预取有界）都靠它判。
+                    let started = Date()
+                    do {
+                        // `before` 是开区间上界：页必须结束在 before-1，正好盖住 range。
+                        let value = try await client.historyWindow(HistoryWindowRequest(
+                            address: address, before: range.upperBound + 1, through: nil,
+                            limit: range.count, maxBytes: 256 * 1024))
+                        await ViewportProbe.note("pager.fetch", [
+                            "source": priority.name,
+                            "start": String(range.lowerBound),
+                            "end": String(range.upperBound),
+                            "records": String(value.records.count),
+                            "ms": String(Int(Date().timeIntervalSince(started) * 1000)),
+                            "ok": "1",
+                        ])
+                        return SessionPipeline.FetchPage(
+                            records: value.records, hasMore: value.hasMore,
+                            clamped: value.clamped ?? false)
+                    } catch {
+                        await ViewportProbe.note("pager.fetch", [
+                            "source": priority.name,
+                            "start": String(range.lowerBound),
+                            "end": String(range.upperBound),
+                            "ms": String(Int(Date().timeIntervalSince(started) * 1000)),
+                            "ok": "0",
+                            "reason": String(describing: error),
+                        ])
+                        throw error
+                    }
                 }
             },
             // T022 上行：requestId 就是管道给的 clientId（同一套稳定 UUID，

@@ -106,6 +106,10 @@ final class ChatPipelineBridge {
 
     /// 一次「向上翻页」拉多少条（与管道页大小一致）。
     static let pageSize = 50 // internal：+PipelineFetch / 尾部追平预算要用
+
+    /// 017：一次向上翻要几页。一页一次往返就是"每屏等一次"的来源，所以一次多要几屏；
+    /// 上限同时受连接器 `MAX_CHUNKS_PER_CALL`（12 块）与单帧字节预算约束，3 页留有余量。
+    static let pagesPerFetch = 3
     /// 点胶囊直跳最新的降级阈值（页）：超过就丢中间段（spec 场景 7）。
     static let catchUpPageBudget = 5 // internal：+PipelineFetch 要用
 

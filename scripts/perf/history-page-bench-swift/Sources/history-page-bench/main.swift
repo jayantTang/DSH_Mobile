@@ -40,6 +40,22 @@ let viaJSONValue = milliseconds {
         _ = try? JSONDecoder().decode([SessionRecord].self, from: encoded)
     }
 }
+// App 收到一页之后要做的三件事，拆开量：
+//   project  逐条把宿主事件投影成可渲染事件（含 reasoning/工具块解析）
+//   reset    把一页记录折进时间线（行、分组、gap）
+let projectCost = milliseconds {
+    for _ in 0..<iterations {
+        guard let records = try? JSONDecoder().decode([SessionRecord].self, from: data) else { continue }
+        for record in records { _ = ChatEventDecoder.decode(record.event) }
+    }
+}
+let resetCost = milliseconds {
+    for _ in 0..<iterations {
+        guard let records = try? JSONDecoder().decode([SessionRecord].self, from: data) else { continue }
+        var timeline = ChatTimeline()
+        timeline.reset(with: records)
+    }
+}
 let viaSerialization = milliseconds {
     for _ in 0..<iterations {
         guard let object = try? JSONSerialization.jsonObject(with: data),
@@ -50,6 +66,6 @@ let viaSerialization = milliseconds {
 
 // 机器可读一行，便于脚本汇总。
 print(String(
-    format: "PAGEBENCH\t%@\tbytes=%d\tdecode=%.2f\tjsonValue=%.2f\tviaJSONValue=%.2f\tviaSerialization=%.2f",
-    label, data.count, decode, jsonValue, viaJSONValue, viaSerialization
+    format: "PAGEBENCH\t%@\tbytes=%d\tdecode=%.2f\tproject=%.2f\treset=%.2f\tjsonValue=%.2f\tviaJSONValue=%.2f\tviaSerialization=%.2f",
+    label, data.count, decode, projectCost, resetCost, jsonValue, viaJSONValue, viaSerialization
 ))
