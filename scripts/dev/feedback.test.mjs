@@ -410,4 +410,14 @@ test('renderAgentPlist 把占位符换成绝对路径', () => {
   assert.match(plist, /<string>\/srv\/dsh\/scripts\/dev\/feedback\.mjs<\/string>/)
   assert.match(plist, /<key>WorkingDirectory<\/key>\s*<string>\/srv\/dsh<\/string>/)
   assert.ok(!plist.includes('<string>~/'), 'launchd 不展开 ~，安装时必须绝对化')
+  assert.ok(!plist.includes('--send'), '不给 --device 时定时任务只落盘，不发送')
+})
+
+test('renderAgentPlist 给了设备就带上 --send --device', () => {
+  const plist = renderAgentPlist({ nodePath: '/opt/node/bin/node', repoRoot: '/srv/dsh',
+    deviceIds: ['dev_test1', 'dev_test2'] })
+  assert.ok(!plist.includes('__'), '不能留下占位符')
+  assert.match(plist, /<string>--send<\/string>/)
+  assert.match(plist, /<string>--device<\/string>\s*<string>dev_test1<\/string>/)
+  assert.match(plist, /<string>--device<\/string>\s*<string>dev_test2<\/string>/)
 })

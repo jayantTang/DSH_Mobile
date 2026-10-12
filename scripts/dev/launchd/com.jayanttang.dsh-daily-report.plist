@@ -21,7 +21,7 @@
     <string>__REPO__/scripts/dev/feedback.mjs</string>
     <string>report</string>
     <string>--days</string>
-    <string>30</string>
+    <string>30</string>__SEND_ARGS__
   </array>
   <key>WorkingDirectory</key>
   <string>__REPO__</string>

@@ -67,7 +67,8 @@ const USAGE = `用法：
   feedback.mjs reply --thread th_x (--body-file PATH | --body TEXT) [--subject S] [--format text|html] [--send]
   feedback.mjs notify (--body-file PATH | --body TEXT) [--subject S] [--format text|html] [--device ID]... [--all] [--yes]
   feedback.mjs delete --thread th_x [--yes]
-  feedback.mjs report [--days 30] [--out DIR] [--install-agent | --uninstall-agent]
+  feedback.mjs report [--days 30] [--out DIR] [--send --device ID]...
+  feedback.mjs report [--install-agent [--device ID]... | --uninstall-agent]
   feedback.mjs report --send --device ID [--device ID]... [--subject S] [--days 30] [--out DIR]
   feedback.mjs report-data [--days 30]
   （加 --local 跑本机 relay/.local/state.db；写操作默认预演）
@@ -350,10 +351,17 @@ export function renderAgentPlist({
   nodePath = process.execPath,
   repoRoot = ROOT,
   logPath,
+  deviceIds = [],
   template = readFileSync(AGENT_TEMPLATE, 'utf8'),
 } = {}) {
   const home = homedir()
+  // 定时任务默认只落盘；给了 `--device` 就顺带把日报作为一条 HTML 通知投过去
+  // （owner 2026-10-12：每天那份直接进他手机收件箱）。
+  const sendArgs = deviceIds.length === 0 ? ''
+    : ['--send', ...deviceIds.flatMap((id) => ['--device', id])]
+      .map((arg) => `\n    <string>${arg}</string>`).join('')
   const rendered = template
+    .replace('__SEND_ARGS__', sendArgs)
     .replaceAll('__NODE__', nodePath)
     .replaceAll('__REPO__', repoRoot)
     .replace(/(?<=<string>)~\//g, `${home}/`)
@@ -365,17 +373,20 @@ function agentPath() {
   return join(homedir(), 'Library', 'LaunchAgents', `${AGENT_LABEL}.plist`)
 }
 
-function installAgent(io) {
+function installAgent(io, opts = {}) {
   const path = agentPath()
   mkdirSync(dirname(path), { recursive: true })
   mkdirSync(join(homedir(), 'Library', 'Logs'), { recursive: true })
-  writeFileSync(path, renderAgentPlist(), { mode: 0o644 })
+  writeFileSync(path, renderAgentPlist({ deviceIds: opts.devices ?? [] }), { mode: 0o644 })
   const uid = process.getuid()
   try {
     execFileSync('launchctl', ['bootout', `gui/${uid}/${AGENT_LABEL}`], { stdio: 'ignore' })
   } catch { /* 还没装过：bootout 回非零是正常的 */ }
   execFileSync('launchctl', ['bootstrap', `gui/${uid}`, path])
-  io.out(`已装 LaunchAgent ${AGENT_LABEL}（每天 09:00 生成日报；日志 ~/${AGENT_LOG}）`)
+  const devices = opts.devices ?? []
+  const where = devices.length === 0 ? '只在本机落盘'
+    : `并且发给 ${devices.join('、')}`
+  io.out(`已装 LaunchAgent ${AGENT_LABEL}（每天 09:00 生成日报，${where}；日志 ~/${AGENT_LOG}）`)
   return 0
 }
 
@@ -399,7 +410,7 @@ export function main(argv, deps = {}) {
     const parsed = parseArgs(argv)
     const { sub, opts } = parsed
     if (sub === 'report' && (opts.installAgent || opts.uninstallAgent)) {
-      return opts.installAgent ? installAgent(io) : uninstallAgent(io)
+      return opts.installAgent ? installAgent(io, opts) : uninstallAgent(io)
     }
     if (NEEDS_BODY.has(sub)) opts.bodyText = readBody(opts)
     const env = deps.env ?? { ...localEnv(), ...process.env }
