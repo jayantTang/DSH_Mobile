@@ -84,6 +84,29 @@ public struct LinkConfiguration: Sendable, Hashable {
     }
 }
 
+/// 这条 carrier 真正用到的那几个 socket 能力。
+///
+/// 抽出来只为一件事：**"断开时必须 cancel" 得能被单测钉住**。
+/// `URLSessionWebSocketTask` 在单测里造不出真连接，而 2026-10-12 线上那个问题
+/// 恰恰出在"丢引用 ≠ 关连接"——引用没了，URLSession 仍替它回 Pong，中转那边这条
+/// 设备链路就一直挂着（实测：丢引用后 46 秒没死，跨过 3 个心跳）。断开一次留一条
+/// 僵尸链路，重连一次再多一条，中转到设备的下行帧按 deviceId 归到最后一条，
+/// 于是就出现"一个 deviceId 十几条 socket、同毫秒一起被关"。
+protocol RelaySocketTask: AnyObject, Sendable {
+    /// 是否已经可以收发（`URLSessionWebSocketTask.state == .running`）。
+    var isRunning: Bool { get }
+    var maximumMessageSize: Int { get set }
+    func resume()
+    func cancel(with closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?)
+    func send(_ message: URLSessionWebSocketTask.Message) async throws
+    func receive() async throws -> URLSessionWebSocketTask.Message
+    func sendPing(pongReceiveHandler: @escaping @Sendable (Error?) -> Void)
+}
+
+extension URLSessionWebSocketTask: RelaySocketTask {
+    var isRunning: Bool { state == .running }
+}
+
 /// Carrier that tunnels the DSH protocol through a relay.
 ///
 /// This is the path that makes a machine without a public IP reachable: the
@@ -144,8 +167,11 @@ public actor LinkCarrier: DSHCarrier {
     private let session: URLSession
     private let timeout: Duration
     private let reconnect: ReconnectPolicy
+    /// 造 socket 的工厂。线上是 `session.webSocketTask(with:)`；单测注入替身，
+    /// 这样"断开时有没有 cancel"可以被断言（见 `RelaySocketTask`）。
+    private let makeSocket: @Sendable (URLRequest) -> any RelaySocketTask
 
-    private var socket: URLSessionWebSocketTask?
+    private var socket: (any RelaySocketTask)?
     /// Puts back a frame the relay wrote as several WebSocket messages.
     private var assembler = FrameAssembler()
     private var receiveLoop: Task<Void, Never>?
@@ -182,6 +208,25 @@ public actor LinkCarrier: DSHCarrier {
             configuration.httpShouldSetCookies = false
             self.session = URLSession(configuration: configuration)
         }
+        let session = self.session
+        self.makeSocket = { session.webSocketTask(with: $0) }
+    }
+
+    /// 单测入口：注入 socket 工厂（`@testable import DSHKit` 可见）。
+    ///
+    /// 存在的理由见 `RelaySocketTask`：断开路径是否真的 cancel 了 socket，
+    /// 只有把 socket 换成可观测的替身才断言得了。
+    init(
+        configuration: LinkConfiguration,
+        timeout: Duration = .seconds(60),
+        reconnect: ReconnectPolicy = .default,
+        makeSocket: @escaping @Sendable (URLRequest) -> any RelaySocketTask
+    ) {
+        self.configuration = configuration
+        self.timeout = timeout
+        self.reconnect = reconnect
+        self.session = URLSession(configuration: .ephemeral)
+        self.makeSocket = makeSocket
     }
 
     /// Starts connecting without waiting, so the UI can render immediately.
@@ -382,7 +427,7 @@ public actor LinkCarrier: DSHCarrier {
 
     private func ensureConnected() async throws {
         if isClosed { throw DSHTransportError.carrierClosed }
-        if let socket, socket.state == .running { return }
+        if let socket, socket.isRunning { return }
         try await openSocket()
     }
 
@@ -392,7 +437,11 @@ public actor LinkCarrier: DSHCarrier {
         }
         var request = URLRequest(url: url)
         request.setValue("Bearer \(configuration.deviceToken)", forHTTPHeaderField: "Authorization")
-        let task = session.webSocketTask(with: request)
+        // 换 socket 之前先把旧的退掉。**丢引用不等于关连接**：`URLSessionWebSocketTask`
+        // 只被丢引用时会一直活着（并继续替我们回 Pong），中转会把同一个 deviceId 记成
+        // 又一条 attach，旧的那条就变成僵尸链路——2026-10-12 线上一个 deviceId 攒到 14 条。
+        socket?.cancel(with: .goingAway, reason: nil)
+        let task = makeSocket(request)
         // Session history snapshots arrive as one large frame; the 1 MiB
         // default would drop them with an opaque "Message too long".
         task.maximumMessageSize = MuxConnection.maximumMessageSize
@@ -403,7 +452,7 @@ public actor LinkCarrier: DSHCarrier {
         startHeartbeat(on: task)
     }
 
-    private func startReceiveLoop(on task: URLSessionWebSocketTask) {
+    private func startReceiveLoop(on task: any RelaySocketTask) {
         receiveLoop?.cancel()
         receiveLoop = Task { [weak self] in
             while !Task.isCancelled {
@@ -424,14 +473,20 @@ public actor LinkCarrier: DSHCarrier {
                 } catch {
                     guard let self else { return }
                     if await self.isClosed { return }
-                    await self.handleDisconnect(reason: error.localizedDescription)
+                    // 这条 loop 守的 socket 已经不是当前那条了（比如它已经被
+                    // `handleDisconnect` 退掉、新 socket 也建起来了）。这只是旧
+                    // socket 的残响，拿它去动链路状态会把刚建好的新连接一起拆掉，
+                    // 还会再拉一条重连循环——两条重连循环各自开一条 socket，正是
+                    // 这次要修的那种泄漏。
+                    if await !self.isCurrent(task) { return }
+                    await self.handleDisconnect(reason: error.localizedDescription, from: task)
                     return
                 }
             }
         }
     }
 
-    private func startHeartbeat(on task: URLSessionWebSocketTask) {
+    private func startHeartbeat(on task: any RelaySocketTask) {
         heartbeatLoop?.cancel()
         heartbeatLoop = Task { [weak self] in
             guard let interval = self?.reconnect.heartbeat else { return }
@@ -457,11 +512,25 @@ public actor LinkCarrier: DSHCarrier {
         let ts: TimeInterval
     }
 
-    private func handleDisconnect(reason: String) async {
+    /// 这条 loop 守的 socket 还是当前那条吗。
+    private func isCurrent(_ task: any RelaySocketTask) -> Bool {
+        socket === task
+    }
+
+    /// 收掉一条链路并安排重连。
+    ///
+    /// `from` 是"谁报告自己断了"：只有当前那条 socket 的断开才算数，旧 socket 迟到的
+    /// 错误（它的 `receive()` 在 `cancel` 之后才抛）必须被忽略，否则会把新连接拆掉
+    /// 并叠加出第二条重连循环。`nil` 表示调用方是当前 socket 自己的收发路径。
+    private func handleDisconnect(reason: String, from task: (any RelaySocketTask)? = nil) async {
+        if let task, socket !== task { return }
         assembler.reset()
         receiveLoop = nil
         heartbeatLoop?.cancel()
         heartbeatLoop = nil
+        // **必须 cancel**：只置 nil 的话这条 `URLSessionWebSocketTask` 会继续活着，
+        // 中转那边同 deviceId 的旧链路就一直挂着（丢引用实测能活过 46 秒、跨 3 个心跳）。
+        socket?.cancel(with: .goingAway, reason: nil)
         socket = nil
         updateStatus(HostStatus(online: false, info: nil))
 
