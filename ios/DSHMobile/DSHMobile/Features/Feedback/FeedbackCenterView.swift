@@ -38,8 +38,8 @@ private enum FeedbackTab: Hashable {
 
 /// 记录页：一栏「收件箱」（回信与通知混排，未读标蓝点），一栏「已发送」。
 ///
-/// 两栏是同一套邮件式排版，差别只在首行——收件箱是发件人，已发送是收件人（FR-032）；
-/// 都不写"我们回没回"（FR-032 后半）。两栏读的都是 ``FeedbackCenter/shared``，
+/// 两栏是同一套邮件式排版、同一个发件人名，靠"你在哪个箱子"区分（FR-032）；都不写
+/// "我们回没回"（FR-032 后半）。两栏读的都是 ``FeedbackCenter/shared``，
 /// 所以离线时显示的是上次拉到的镜像，而不是空白。
 struct FeedbackCenterView: View {
 
@@ -136,18 +136,10 @@ struct FeedbackCenterView: View {
     private var sentRows: some View {
         Section {
             if center.threads.isEmpty {
-                VStack(alignment: .leading, spacing: DSHTheme.Spacing.hairline) {
-                    Text(sentEmptyText)
-                        .font(DSHTheme.Typography.caption)
-                        .foregroundStyle(DSHTheme.labelSecondary)
-                        .accessibilityIdentifier("feedback.center.emptySent")
-                    // 空列表加上"这次没拉到"才不是假话：镜像里没有，不代表服务器上没有。
-                    if center.lastError != nil {
-                        Text("现在连不上服务器，这里只显示已经拉到这台手机上的内容。")
-                            .font(DSHTheme.Typography.micro)
-                            .foregroundStyle(DSHTheme.labelTertiary)
-                    }
-                }
+                Text(emptyLine("还没有发过反馈"))
+                    .font(DSHTheme.Typography.caption)
+                    .foregroundStyle(DSHTheme.labelSecondary)
+                    .accessibilityIdentifier("feedback.center.emptySent")
             }
             ForEach(sentThreads) { thread in
                 NavigationLink(value: FeedbackDestination.thread(thread.threadId, .sent)) {
@@ -164,16 +156,16 @@ struct FeedbackCenterView: View {
         center.threads.sorted { sentAt($0) > sentAt($1) }
     }
 
-    private func sentAt(_ thread: FeedbackThread) -> Date {
-        thread.messages.last { $0.author == .user }?.createdAt ?? thread.createdAt ?? .distantPast
+    /// 空态**只留一行**（owner：参考一般邮箱，无谓的小字不要有）。
+    ///
+    /// 拉不到内容时把这一行换成"连不上服务器"：离线且镜像为空时，否则看不出是没拉到还是真没有，
+    /// 而多写一行说明就又不是邮箱的样子了。
+    private func emptyLine(_ normal: LocalizedStringKey) -> LocalizedStringKey {
+        center.lastError == nil ? normal : "现在连不上服务器"
     }
 
-    /// 没有记录时要说清"为什么没有"：凭据丢了就是丢了，这台手机不是某个账号的客户端
-    /// （spec 边界情况）。没凭据但有设备身份时是另一种来源，文案也不一样。
-    private var sentEmptyText: LocalizedStringKey {
-        center.storedTicketCount == 0
-            ? "这台手机还没有反馈记录；取件凭据丢失后历史无法恢复，重新配对也换不回匿名提交的那部分。"
-            : "还没有发出过反馈。点右上角的笔，写下第一条。"
+    private func sentAt(_ thread: FeedbackThread) -> Date {
+        thread.messages.last { $0.author == .user }?.createdAt ?? thread.createdAt ?? .distantPast
     }
 
     // MARK: - 收件箱
@@ -181,17 +173,10 @@ struct FeedbackCenterView: View {
     private var inboxRows: some View {
         Section {
             if inboxItems.isEmpty {
-                VStack(alignment: .leading, spacing: DSHTheme.Spacing.hairline) {
-                    Text("还没有收到消息。我们回信或发通知时，都会出现在这里。")
-                        .font(DSHTheme.Typography.caption)
-                        .foregroundStyle(DSHTheme.labelSecondary)
-                        .accessibilityIdentifier("feedback.center.emptyReceived")
-                    if center.lastError != nil {
-                        Text("现在连不上服务器，这里只显示已经拉到这台手机上的内容。")
-                            .font(DSHTheme.Typography.micro)
-                            .foregroundStyle(DSHTheme.labelTertiary)
-                    }
-                }
+                Text(emptyLine("没有新消息"))
+                    .font(DSHTheme.Typography.caption)
+                    .foregroundStyle(DSHTheme.labelSecondary)
+                    .accessibilityIdentifier("feedback.center.emptyReceived")
             }
             ForEach(inboxItems) { item in
                 switch item {
@@ -236,7 +221,7 @@ struct FeedbackCenterView: View {
 
     // MARK: - 本机记录
 
-    /// 「从这台手机移除」降到页脚：它是清理，不是日常动作，不该占着列表中间一行。
+    /// 「移除本机记录」降到页脚：它是清理，不是日常动作，不该占着列表中间一行。
     private var hasLocalRecords: Bool {
         center.storedTicketCount > 0 || !center.threads.isEmpty || !center.notices.isEmpty
     }
@@ -246,7 +231,7 @@ struct FeedbackCenterView: View {
             Button {
                 isConfirmingRemove = true
             } label: {
-                Text("从这台手机移除记录…")
+                Text("移除本机记录")
                     .font(DSHTheme.Typography.caption)
                     .foregroundStyle(DSHTheme.labelTertiary)
                     .frame(maxWidth: .infinity, alignment: .center)
@@ -260,7 +245,8 @@ struct FeedbackCenterView: View {
 
 /// 记录页里的一行（收件箱与已发送共用）：首行 + 主题 + 一行摘要 + 时间 [+ 未读蓝点]。
 ///
-/// 首行是"这封信对着谁"：收件箱里是发件人（我们），已发送里是收件人（DSH Mobile 团队）。
+/// 首行两栏都写「DSH Mobile 团队」——收件箱里它是发件人，已发送里它是收件人，同一份
+/// 排版、同一个字，靠你在哪个箱子区分（FR-032）。
 /// 回信与通知也共用这一行——它们都是"我们发给你的"，分开排只会让人来回找。
 private struct FeedbackMailRow: View {
 
@@ -308,7 +294,7 @@ private struct FeedbackMailRow: View {
     }
 }
 
-/// 已发送的一条：与收件箱同一套排版，只是首行写收件人（FR-032）。
+/// 已发送的一条：与收件箱**同一个组件、同一个首行**（FR-032）。
 ///
 /// 不写"我们回没回"：不一定会逐封回复，这一栏不该看起来像待办列表。
 private struct FeedbackSentRow: View {
@@ -317,7 +303,7 @@ private struct FeedbackSentRow: View {
 
     var body: some View {
         FeedbackMailRow(
-            firstLine: String(localized: "发给 DSH Mobile 团队"),
+            firstLine: String(localized: "DSH Mobile 团队"),
             subject: subject,
             snippet: summary,
             // 发件箱里显示的是**我发信那一刻**：`lastMessageAt` 在收到回信之后会变成回信时间，

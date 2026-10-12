@@ -635,13 +635,14 @@ It is registered as a workspace first, so a new group appears in the desktop sid
 /* 014 反馈通道：发送窗口（T021/T024） */
 "发送反馈" = "Send feedback";
 "说说遇到的问题，或者你希望增加的功能…" = "Describe the problem you hit, or the feature you would like…";
-"还可以输入 %lld 字" = "%lld characters left";
+/* 字数提示只在剩余 ≤500 字时出现，平时不显示 */
+"还能输入 %lld 字" = "%lld characters left";
 "已超出 4000 字上限，请精简后再发" = "Over the 4000-character limit — please trim it before sending";
 "会一并提交的技术信息" = "Technical details sent along";
 "机型" = "Device";
 "iOS 版本" = "iOS version";
 "内容会存到我们的服务器，不公开；只用来看问题和回信给你，不会附带你的对话内容。" = "Your text is stored on our server and is not public. We read it to understand the report and to reply to you; nothing from your conversations is attached.";
-"查看隐私说明" = "Read the privacy note";
+"隐私说明" = "Privacy note";
 "网络不通，正文还在，可以再点一次发送。" = "No network. Your text is still here — tap send again.";
 "提交太频繁了，稍等一会儿再试。" = "Too many submissions. Wait a moment and try again.";
 "正文太长了，请精简到 4000 字以内。" = "That is too long. Please trim it to 4000 characters or fewer.";
@@ -651,14 +652,13 @@ It is registered as a workspace first, so a new group appears in the desktop sid
 "提交没有成功，正文还在，可以再试。" = "The submission did not go through. Your text is still here — try again.";
 
 /* 014 反馈通道：记录页与线程详情（T022/T031/T046/T047/T059/T060/T063） */
-"我发出的" = "Sent by me";
+"我发出的" = "Me";
 "收到的" = "Received";
 "未读" = "Unread";
 "已提交，正在同步" = "Submitted, syncing";
-"这台手机还没有反馈记录；取件凭据丢失后历史无法恢复，重新配对也换不回匿名提交的那部分。" = "This phone has no feedback records yet; once the pickup credential is lost the history cannot be recovered, and pairing again does not bring back what was sent anonymously.";
-"还没有发出过反馈。" = "You have not sent any feedback yet.";
-"现在连不上服务器，这里只显示已经拉到这台手机上的内容。" = "The server cannot be reached right now; only what has already been fetched to this phone is shown here.";
-"还没有收到消息。我们回信或发通知时，都会出现在这里。" = "No messages yet. Replies and notices from us show up here.";
+/* 两个箱子的空态各只一句（照一般邮箱，不写说明性小字） */
+"还没有发过反馈" = "Nothing sent yet";
+"没有新消息" = "No messages";
 "这条记录在服务器上已不存在，可能已被删除。" = "This record is no longer on the server; it may have been deleted.";
 "DSH Mobile 团队" = "The DSH Mobile team";
 "服务通知" = "Service notice";
@@ -672,23 +672,18 @@ It is registered as a workspace first, so a new group appears in the desktop sid
 /* 014 反馈通道：界面重做（T068/T069/T070，2026-10-12 设计稿） */
 "写反馈" = "New feedback";
 "收件人" = "To";
-"只发给我们，不公开" = "Only we see this";
 "主题" = "Subject";
 "一句话标题（可选）" = "One-line title (optional)";
 "描述你遇到的问题，或者你想要的功能…" = "Describe the problem you hit, or the feature you would like…";
 "随信附带" = "Attached";
 "展开" = "Show";
-"App 版本、机型、iOS 这三项是排障需要的，不包含任何会话内容。正文会存到我们的服务器，用来回复你。" = "The app version, device model and iOS version help us diagnose the problem; nothing from your conversations is included. Your text is stored on our server so we can reply.";
+"正文与随信附带的信息会存到我们的服务器，不含会话内容。" = "Your text and the attached details are stored on our server; nothing from your conversations is included.";
 "栏目" = "Section";
 "收件箱" = "Inbox";
 "收件箱 %lld" = "Inbox %lld";
 "已发送" = "Sent";
-"还没有发出过反馈。点右上角的笔，写下第一条。" = "You have not sent any feedback yet. Tap the pen at the top right to write the first one.";
-"从这台手机移除记录…" = "Remove records from this phone…";
+"移除本机记录" = "Remove local records";
 /* 回信行没有主题时的兜底标题（拿用户自己那句话，像邮件的「关于：…」） */
 "关于你的反馈：%@" = "About your feedback: %@";
-
-/* 014 反馈通道：单封信模型（T073/T074/T075，2026-10-12 第二次改口径） */
-"发给 DSH Mobile 团队" = "To the DSH Mobile team";
-"想补充或再说一句，请再发一封新的反馈。" = "Want to add something? Send a new feedback.";
-"如果收到回复，会出现在「收件箱」。" = "If we reply, it shows up in your Inbox.";
+/* 空态在拉不到内容时替换成这一行（只留一行，不额外加说明） */
+"现在连不上服务器" = "Cannot reach the server";

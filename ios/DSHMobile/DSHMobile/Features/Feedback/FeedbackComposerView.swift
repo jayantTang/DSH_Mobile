@@ -110,10 +110,6 @@ struct FeedbackComposerView: View {
                 Text("DSH Mobile 团队")
                     .font(DSHTheme.Typography.body)
                     .foregroundStyle(DSHTheme.labelPrimary)
-                Spacer(minLength: DSHTheme.Spacing.tight)
-                Text("只发给我们，不公开")
-                    .font(DSHTheme.Typography.caption)
-                    .foregroundStyle(DSHTheme.labelTertiary)
             }
             .padding(.vertical, 10)
             Hairline()
@@ -171,7 +167,8 @@ struct FeedbackComposerView: View {
         }
     }
 
-    /// 剩余字数。超了就变色并说"精简"，不是等提交被服务器拒了才说。
+    /// 剩余字数：只剩 500 字以内才出现，平时不占地方；超了就变色并说"精简"，
+    /// 不是等提交被服务器拒了才说。
     @ViewBuilder
     private var counter: some View {
         if remaining < 0 {
@@ -179,8 +176,8 @@ struct FeedbackComposerView: View {
                 .font(DSHTheme.Typography.micro)
                 .foregroundStyle(DSHTheme.labelError)
                 .frame(maxWidth: .infinity, alignment: .trailing)
-        } else {
-            Text("还可以输入 \(remaining) 字")
+        } else if remaining <= 500 {
+            Text("还能输入 \(remaining) 字")
                 .font(DSHTheme.Typography.micro)
                 .foregroundStyle(DSHTheme.labelTertiary)
                 .frame(maxWidth: .infinity, alignment: .trailing)
@@ -261,7 +258,7 @@ struct FeedbackComposerView: View {
 
     private var privacy: some View {
         VStack(alignment: .leading, spacing: DSHTheme.Spacing.tight) {
-            Text("App 版本、机型、iOS 这三项是排障需要的，不包含任何会话内容。正文会存到我们的服务器，用来回复你。")
+            Text("正文与随信附带的信息会存到我们的服务器，不含会话内容。")
                 .font(DSHTheme.Typography.caption)
                 .foregroundStyle(DSHTheme.labelTertiary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -272,7 +269,7 @@ struct FeedbackComposerView: View {
             } label: {
                 HStack(spacing: DSHTheme.Spacing.hairline) {
                     Image(systemName: "lock.shield")
-                    Text("查看隐私说明")
+                    Text("隐私说明")
                 }
                 .font(DSHTheme.Typography.caption)
                 .foregroundStyle(DSHTheme.brand)

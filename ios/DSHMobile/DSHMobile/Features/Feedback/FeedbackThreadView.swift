@@ -105,8 +105,8 @@ enum FeedbackThreadSide: Hashable {
 /// 多封堆在一页。
 ///
 /// 因此这里没有任何输入区：想补充就在发送窗口再发一封新的（FR-010 / FR-013）。
-/// 我方那封是灰底「我发出的」卡，对方那封是白底描边的信件卡——我们回的是正式答复，
-/// 不是即时消息（FR-015，也是 spec 明确的非目标）。
+/// 收发两封是**同一张信件卡**（``LetterCard``），只有署名与头像字符不同——邮件里我方
+/// 那封也长成信的样子，不是聊天气泡（FR-015，也是 spec 明确的非目标）。
 struct FeedbackThreadView: View {
 
     let threadId: String
@@ -126,7 +126,6 @@ struct FeedbackThreadView: View {
                             .font(DSHTheme.Typography.caption)
                             .foregroundStyle(DSHTheme.labelSecondary)
                     }
-                    if side == .sent { sentHint }
                 } else {
                     Text("这条记录在服务器上已不存在，可能已被删除。")
                         .font(DSHTheme.Typography.caption)
@@ -161,8 +160,9 @@ struct FeedbackThreadView: View {
     private func letterCard(_ message: FeedbackMessage, in thread: FeedbackThread) -> some View {
         switch side {
         case .inbox:
-            OwnerLetterCard(
+            LetterCard(
                 sender: String(localized: "DSH Mobile 团队"),
+                isMine: false,
                 // 与收件箱那一行用同一个函数：没有主题时退到「关于你的反馈：…」，
                 // 而不是把回信开头的「你好：」当成标题。
                 subject: FeedbackSubject.replyLine(
@@ -174,24 +174,13 @@ struct FeedbackThreadView: View {
         case .sent:
             // 主题只写用户真填过的那句；没填就不写抬头行——列表里的兜底标题是列表的需要，
             // 在这里会与正文第一句重复。
-            UserLetterCard(text: message.body,
-                           createdAt: message.createdAt,
-                           subject: writtenSubject(of: thread))
+            LetterCard(
+                sender: String(localized: "我发出的"),
+                isMine: true,
+                subject: writtenSubject(of: thread),
+                text: message.body,
+                createdAt: message.createdAt)
         }
-    }
-
-    /// 发件箱这一封下面的说明：这封信已经发出去、独立成篇了，想补充就再发一封；
-    /// 而我们回信时，那封回信落在收件箱里（FR-010）。
-    private var sentHint: some View {
-        VStack(alignment: .leading, spacing: DSHTheme.Spacing.hairline) {
-            Text("想补充或再说一句，请再发一封新的反馈。")
-            Text("如果收到回复，会出现在「收件箱」。")
-        }
-        .font(DSHTheme.Typography.caption)
-        .foregroundStyle(DSHTheme.labelTertiary)
-        .fixedSize(horizontal: false, vertical: true)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .accessibilityIdentifier("feedback.thread.hint")
     }
 
     private func writtenSubject(of thread: FeedbackThread) -> String? {
@@ -233,35 +222,25 @@ private struct LetterHeader: View {
     }
 }
 
-/// owner 的回信：发件人 + 主题行 + 分隔线 + 正文。
+/// 一封信：头像圈 + 署名 + 时间、主题行、分隔线、正文。
 ///
-/// 通知用同一张卡片（发件人换成「服务通知」），两种"我们发给用户的东西"外观一致。
-struct OwnerLetterCard: View {
+/// 收件与发件**共用这一个组件**，所以边距、圆角、描边、字号只在这里定一次；两张卡
+/// 除了署名与头像字符之外没有差别（FR-032）。通知也用它（署名换成「服务通知」）。
+struct LetterCard: View {
 
     let sender: String
-    let subject: String
+    /// 我发出的用灰头像，对方用品牌色。
+    let isMine: Bool
+    /// 抬头行下面那句主题；为空就不写这一行。
+    let subject: String?
     /// 正文。不能叫 `body`：那是 `View` 的要求，同名会撞成重复声明。
     let text: String
     let createdAt: Date?
 
-    init(message: FeedbackMessage) {
-        self.sender = String(localized: "DSH Mobile 团队")
-        self.subject = FeedbackSubject.line(subject: nil, body: message.body)
-        self.text = message.body
-        self.createdAt = message.createdAt
-    }
-
-    init(sender: String, subject: String, text: String, createdAt: Date?) {
-        self.sender = sender
-        self.subject = subject
-        self.text = text
-        self.createdAt = createdAt
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: DSHTheme.Spacing.tight) {
-            LetterHeader(sender: sender, createdAt: createdAt, isMine: false)
-            if !subject.isEmpty {
+            LetterHeader(sender: sender, createdAt: createdAt, isMine: isMine)
+            if let subject, !subject.isEmpty {
                 Text(subject)
                     .font(DSHTheme.Typography.body.weight(.semibold))
                     .foregroundStyle(DSHTheme.labelPrimary)
@@ -287,40 +266,6 @@ struct OwnerLetterCard: View {
     }
 }
 
-/// 我方发出的：灰底「我发出的」卡，带时间；比对方的信件卡轻，一眼分得出谁写的。
-struct UserLetterCard: View {
-
-    let text: String
-    let createdAt: Date?
-
-    /// 详情里只在最上面那封我方留言上写主题，其余按卡片重复反而更乱。
-    var subject: String?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: DSHTheme.Spacing.hairline) {
-            LetterHeader(sender: String(localized: "我发出的"), createdAt: createdAt, isMine: true)
-            if let subject, !subject.isEmpty {
-                Text(subject)
-                    .font(DSHTheme.Typography.body.weight(.semibold))
-                    .foregroundStyle(DSHTheme.labelPrimary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.top, 2)
-            }
-            Text(text)
-                .font(DSHTheme.Typography.body)
-                .foregroundStyle(DSHTheme.labelPrimary)
-                .fixedSize(horizontal: false, vertical: true)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .padding(DSHTheme.Spacing.standard)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(DSHTheme.layer2,
-                    in: RoundedRectangle(cornerRadius: DSHTheme.Radius.large, style: .continuous))
-    }
-}
-
 /// 一条通知的详情：与回信同一种信件式版式，打开即记已读。
 struct FeedbackNoticeView: View {
 
@@ -333,8 +278,9 @@ struct FeedbackNoticeView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: DSHTheme.Spacing.standard) {
                 if let notice {
-                    OwnerLetterCard(
+                    LetterCard(
                         sender: String(localized: "服务通知"),
+                        isMine: false,
                         subject: FeedbackSubject.line(subject: notice.subject, body: notice.body),
                         text: notice.body,
                         createdAt: notice.createdAt
