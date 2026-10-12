@@ -17,7 +17,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { realDshHome, whichBinary } from './l1-runtime.mjs'
-import { desktopInstance, freshInstall, pluginInstallHot, smoke } from './l1-scenarios.mjs'
+import { desktopInstance, freshInstall, iosLinkCarrierLifecycle, pluginInstallHot, smoke } from './l1-scenarios.mjs'
 
 export const lane = {
   id: 'l1',
@@ -30,6 +30,10 @@ export const lane = {
     'plugin-install-hot': { title: '新装一个插件是否需要重启宿主', run: pluginInstallHot },
     'desktop-instance': { title: '官方桌面版能否在隔离 HOME 下起第二个实例', run: desktopInstance },
     'fresh-install': { title: '空 DSH_HOME 下从零起得来（新用户第一次跑 dsh web）', run: freshInstall },
+    'ios-link-carrier-lifecycle': {
+      title: 'iOS 协议层：relay socket 断开/替换必须 cancel（单测 + 仿真器经中转用例）',
+      run: iosLinkCarrierLifecycle,
+    },
   },
 }
 

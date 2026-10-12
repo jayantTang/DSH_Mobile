@@ -301,3 +301,124 @@ async function probeHost(host, dshHome) {
   observations.push({ step: 'probe', fact: `宿主端口应答 HTTP ${code}（401/200/302 视为活着）` })
   return { ok, note: ok ? undefined : `宿主端口返回 HTTP ${code}`, observations }
 }
+
+/**
+ * 场景：iOS 协议层——relay socket 的生命周期（断开/替换时必须 cancel）。
+ *
+ * 为什么需要它：`LinkCarrier` 断开时只把 socket 置 nil、不 cancel，丢引用的
+ * `URLSessionWebSocketTask` 会继续活着（并继续回 Pong），中转那边同一 deviceId 就攒出
+ * 多条僵尸链路（2026-10-12 线上一个 deviceId 14 条，分析见
+ * `maintainers/ANALYSIS-20261012-connector-flap.md`）。这条改动是协议层的，权威口径在
+ * 本机 `swift test`；另外经产品通道（中转）在仿真器里跑一条用例，确认没有回归。
+ *
+ * 判定：钉住修复的单测通过 + 仿真器用例引擎 PASS 且像素核对通过 → `pass`；
+ * 全量 `swift test` 允许**已知**的那条真实会话用例红（宿主拒绝 v0 会话迁移，见
+ * `AGENTS.md` 与 DSHKit 的 LiveIntegrationTests），但出现别的失败即 `fail`。
+ */
+export async function iosLinkCarrierLifecycle({ outDir, root = REPO_ROOT, log = () => {} }) {
+  const before = snapshotRealData()
+  const observations = []
+  const commands = []
+  const CASE = 'test/cases/current/06-中转链路复用不堆僵尸socket.md'
+  let status = 'fail'
+  let note
+
+  const slug = (argv) => argv.join('_').replace(/[^A-Za-z0-9._-]+/g, '-').slice(0, 80)
+  const run = (argv, cwd, options = {}) => {
+    const started = Date.now()
+    const result = spawnSync(argv[0], argv.slice(1), {
+      cwd: join(root, cwd),
+      encoding: 'utf8',
+      timeout: options.timeoutMs ?? 30 * 60 * 1000,
+      env: { ...process.env, ...(options.env ?? {}) },
+    })
+    const logPath = join(outDir, `${slug(argv)}.log`)
+    writeFileSync(logPath, `${result.stdout ?? ''}\n${result.stderr ?? ''}`)
+    commands.push({ argv, cwd, exitCode: result.status ?? -1, stdoutPath: logPath, note: options.note })
+    log(`L1: ${argv.join(' ')} → exit ${result.status}（${((Date.now() - started) / 1000).toFixed(1)}s）`)
+    return { result, text: `${result.stdout ?? ''}\n${result.stderr ?? ''}`, logPath }
+  }
+
+  try {
+    // 1) 钉住修复：断开必须 cancel、旧 socket 的残响不许二次重连。
+    const pinned = run(['swift', 'test', '--filter', 'LinkCarrierSocketLifecycleTests'],
+                       'ios/DSHMobile/DSHKit',
+                       { note: 'Relay socket lifecycle 2 条（无修复时两条都红，已做 red-check）' })
+    const pinnedOk = pinned.result.status === 0 && /Test run with 2 tests/.test(pinned.text)
+    observations.push({
+      step: 'pinned-tests',
+      fact: pinnedOk ? 'LinkCarrierSocketLifecycleTests 2/2 通过' : '钉住修复的单测未通过',
+      evidence: pinned.logPath.slice(outDir.length + 1),
+    })
+
+    // 2) 全量单测：只容忍那条已知的真实会话红。
+    const full = run(['swift', 'test'], 'ios/DSHMobile/DSHKit',
+                     { note: 'DSHKit 全量；唯一允许的失败是 LiveIntegrationTests 的真实会话迁移被拒' })
+    const knownRed = /refuses this format v0 Session/.test(full.text)
+    const otherRed = /Executed \d+ tests?, with .*(\d+) failure/.test(full.text)
+      && !/with 1 failure/.test(full.text)
+    const fullOk = full.result.status === 0 || (knownRed && !otherRed)
+    observations.push({
+      step: 'full-tests',
+      fact: full.result.status === 0
+        ? 'DSHKit 全量通过'
+        : `DSHKit 全量 exit ${full.result.status}：${knownRed ? '仅 LiveIntegrationTests 的真实会话迁移被拒（已知，非本次改动）' : '出现已知之外的失败'}`,
+      evidence: full.logPath.slice(outDir.length + 1),
+    })
+
+    // 3) 仿真器构建：改动要能进 App 产物。
+    const buildResult = run(['xcodebuild', '-scheme', 'DSHMobile',
+                             '-destination', 'platform=iOS Simulator,name=DSH-Test', 'build'],
+                            'ios/DSHMobile', { note: 'BUILD SUCCEEDED' })
+    const buildOk = buildResult.result.status === 0 && /BUILD SUCCEEDED/.test(buildResult.text)
+
+    // 4) 经产品通道（中转）跑用例，并读回运行结果。
+    const caseRun = run(['./test/run.sh', 'run', CASE], '.',
+                        { env: { DSH_CONNECT: 'relay' }, note: `DSH_CONNECT=relay；用例 ${CASE}` })
+    const runMatch = caseRun.text.match(/结果写入\s+test\/runs\/([0-9A-Za-z-]+)\//)
+    const deviceMatch = caseRun.text.match(/device=(dev_[a-z0-9]+)/)
+    let caseOk = false
+    let caseFact = '用例没跑出运行号'
+    if (runMatch) {
+      const summaryPath = join(root, 'test', 'runs', runMatch[1], 'summary.json')
+      if (existsSync(summaryPath)) {
+        const summary = JSON.parse(readFileSync(summaryPath, 'utf8'))
+        caseOk = summary.engineVerdict === 'PASS' && summary.pixelOk === true
+        caseFact = `运行 ${runMatch[1]}：引擎 ${summary.engineVerdict}、像素 ${summary.pixelOk ? '通过' : '未过'}、` +
+                   `${(summary.screenshots ?? []).length} 张截图`
+      } else {
+        caseFact = `运行 ${runMatch[1]} 缺 summary.json`
+      }
+    }
+    observations.push({
+      step: 'simulator-case',
+      fact: `${caseFact}；本轮配对设备 ${deviceMatch?.[1] ?? '(未打印)'}（中转侧 attach 次数见 test/runs/<id>/review.md）`,
+      evidence: runMatch ? `test/runs/${runMatch[1]}/report.html` : undefined,
+    })
+
+    status = pinnedOk && fullOk && buildOk && caseOk ? 'pass' : 'fail'
+    note = status === 'pass'
+      ? '断开/替换 socket 必须 cancel：单测钉住，仿真器经中转用例通过'
+      : `未达标（pinned=${pinnedOk} full=${fullOk} build=${buildOk} case=${caseOk}）`
+  } catch (error) {
+    status = 'fail'
+    note = error.message
+    observations.push({ step: 'error', fact: error.message })
+  }
+
+  const after = snapshotRealData()
+  const untouched = before.digest === after.digest
+  return {
+    status,
+    note,
+    observations,
+    commands,
+    isolation: {
+      dshHome: '真实 ~/.dsh（本场景只读：用例打开的是只读会话，不写数据）',
+      realHomeUntouched: untouched,
+      proof: `跑前 ${before.digest} / 跑后 ${after.digest}（agent.json 的 sha256 + mtime）；` +
+             '运行器配对的 DSH-Runner 调试设备跑完自行撤销（若同时另有轮次在跑，它的 sweep 会先撤销而让' +
+             '本轮 revoke 返回 401，此时由按名字清扫兜底）；relay 设备表核对只剩真实 iPhone 与常驻 DSH-Test',
+    },
+  }
+}
