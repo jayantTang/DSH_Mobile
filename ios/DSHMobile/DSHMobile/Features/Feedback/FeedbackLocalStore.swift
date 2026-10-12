@@ -64,7 +64,11 @@ struct FeedbackLocalStore: Sendable {
         tickets().first { $0.threadId == threadId }
     }
 
-    /// 清凭据。清掉之后这台手机上的历史反馈不可恢复——只有用户要求删除时才调用。
+    /// 清凭据。清掉之后这台手机上的历史反馈不可恢复。
+    ///
+    /// **App 里目前没有入口调它**：2026-10-12 owner 要求把「从这台手机移除记录」这个选项删掉
+    /// （记录页不再有那一行）。留着这个原语是为了将来真要给一条"彻底删除"的路时，最自然的位置是
+    /// 设置页「清除本地缓存」旁边，而不是反馈记录页。
     func removeCredentials() {
         Keychain.remove(Self.ticketsAccount)
     }

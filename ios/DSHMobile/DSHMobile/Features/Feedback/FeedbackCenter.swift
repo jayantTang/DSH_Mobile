@@ -269,21 +269,6 @@ final class FeedbackCenter {
         recomputeUnread()
     }
 
-    /// 记录页的「从这台手机移除」：清镜像与已读标记，**并且删掉 Keychain 里的取件凭据**。
-    ///
-    /// 与 ``clearLocalMirror()`` 的区别就在这份凭据：镜像可以重建，凭据删掉之后这台手机
-    /// 再也取不回那些线程（服务端仍在，直到 owner 按隐私请求删除）。所以只有用户明确
-    /// 要求时才调它，设置页的「清除本地缓存」不走这里。
-    func removeLocalRecords() {
-        store.removeCredentials()
-        store.clearMirror()
-        mirror = FeedbackMirror()
-        serverUnreadCount = 0
-        needsSeed = true
-        lastRefreshedAt = nil
-        recomputeUnread()
-    }
-
     // MARK: - 内部
 
     private func client(_ endpoint: Endpoint) -> RelayFeedbackClient {

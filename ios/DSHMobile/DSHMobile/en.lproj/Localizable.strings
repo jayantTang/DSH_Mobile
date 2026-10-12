@@ -665,9 +665,6 @@ It is registered as a workspace first, so a new group appears in the desktop sid
 "通知" = "Notice";
 "这条通知已经不在了。" = "This notice is gone.";
 "反馈详情" = "Feedback";
-"从这台手机移除" = "Remove from this phone";
-"移除本机记录？" = "Remove records from this phone?";
-"移除后这台手机再也取不回这些记录；服务器上的副本要另行联系我们删除。" = "After removing them, this phone can never read these records again; to delete the copies on our server, contact us.";
 
 /* 014 反馈通道：界面重做（T068/T069/T070，2026-10-12 设计稿） */
 "写反馈" = "New feedback";
@@ -682,7 +679,6 @@ It is registered as a workspace first, so a new group appears in the desktop sid
 "收件箱" = "Inbox";
 "收件箱 %lld" = "Inbox %lld";
 "已发送" = "Sent";
-"移除本机记录" = "Remove local records";
 /* 回信行没有主题时的兜底标题（拿用户自己那句话，像邮件的「关于：…」） */
 "关于你的反馈：%@" = "About your feedback: %@";
 /* 空态在拉不到内容时替换成这一行（只留一行，不额外加说明） */

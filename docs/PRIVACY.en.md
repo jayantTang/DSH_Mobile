@@ -56,9 +56,9 @@ Caddy. Self-hosting removes the third party entirely.
 
 - **On the phone:** Settings → Paired devices → revoke; or delete the app, which takes the token
   with it. The feedback pickup key lives in the Keychain and survives an app reinstall (that is what
-  makes replies readable again after reinstalling), so use *Remove from this phone* in the feedback
-  screen when you want the local copy and the key gone; *Settings → Cache* clears the local mirror
-  but keeps the key.
+  makes replies readable again after reinstalling); *Settings → Cache* clears the local mirror of
+  feedback records and keeps the key. There is no separate in-app way to delete that key — it goes
+  away when the device is erased.
 - **On the computer:** delete `~/.dsh/mobile-link/agent.json` to unregister this computer.
 - **On the relay:** the operator (yourself, if self-hosted) uses `admin.py device-revoke` /
   `account-delete` / `purge`, and deletes feedback threads on request.

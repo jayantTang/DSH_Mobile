@@ -46,7 +46,6 @@ struct FeedbackCenterView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var tab: FeedbackTab = .inbox
     @State private var isComposing = false
-    @State private var isConfirmingRemove = false
 
     private var center: FeedbackCenter { .shared }
 
@@ -59,7 +58,6 @@ struct FeedbackCenterView: View {
                     case .inbox: inboxRows
                     case .sent: sentRows
                     }
-                    if hasLocalRecords { localSection }
                 }
                 .listStyle(.insetGrouped)
                 .scrollContentBackground(.hidden)
@@ -84,17 +82,8 @@ struct FeedbackCenterView: View {
         }
         .sheet(isPresented: $isComposing) {
             // 发送成功后关窗，并把记录页切到「已发送」：刚写完的那条就在眼前
-            // （`test/cases/current/48-*.steps` 第 8 步等的是 `feedback.row.` 出现）。
+            // （`test/cases/current/49-*.steps` 第 13 步等的是 `feedback.row.` 出现）。
             FeedbackComposerView { tab = .sent }
-        }
-        .confirmationDialog("移除本机记录？", isPresented: $isConfirmingRemove, titleVisibility: .visible) {
-            Button("从这台手机移除", role: .destructive) {
-                center.removeLocalRecords()
-            }
-            .accessibilityIdentifier("feedback.removeLocal.confirm")
-            Button("取消", role: .cancel) {}
-        } message: {
-            Text("移除后这台手机再也取不回这些记录；服务器上的副本要另行联系我们删除。")
         }
     }
 
@@ -217,27 +206,6 @@ struct FeedbackCenterView: View {
         }
         let notices = center.notices.map { InboxItem.notice($0) }
         return (replies + notices).sorted { $0.createdAt > $1.createdAt }
-    }
-
-    // MARK: - 本机记录
-
-    /// 「移除本机记录」降到页脚：它是清理，不是日常动作，不该占着列表中间一行。
-    private var hasLocalRecords: Bool {
-        center.storedTicketCount > 0 || !center.threads.isEmpty || !center.notices.isEmpty
-    }
-
-    private var localSection: some View {
-        Section {
-            Button {
-                isConfirmingRemove = true
-            } label: {
-                Text("移除本机记录")
-                    .font(DSHTheme.Typography.caption)
-                    .foregroundStyle(DSHTheme.labelTertiary)
-                    .frame(maxWidth: .infinity, alignment: .center)
-            }
-            .accessibilityIdentifier("feedback.removeLocal")
-        }
     }
 }
 
