@@ -211,12 +211,6 @@
       "backlog": "i18n-backlog-app-pluginwebview"
     },
     {
-      "rule": "hardcoded-string",
-      "file": "ios/DSHMobile/DSHMobile/Support/FeedbackLink.swift",
-      "reason": "反馈入口的预填内容（邮件正文），不进 .strings",
-      "backlog": "i18n-backlog-app-feedbacklink"
-    },
-    {
       "rule": "unlocalized-binding",
       "file": "ios/DSHMobile/DSHMobile/Support/HostEventHub.swift",
       "reason": "宿主事件诊断文案，不在本轮范围（G5 backlog）",

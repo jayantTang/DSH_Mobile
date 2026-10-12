@@ -135,6 +135,23 @@ test('reply --send 才真的执行，正文作远端参数传过去', () => {
   assert.match(remote, /您好 & 谢谢/)
 })
 
+test('--dry-run 压过 --send/--yes，一次写都不发', () => {
+  const reply = spy()
+  const { code } = run(['reply', '--thread', 'th_x', '--body', '正文', '--send', '--dry-run'],
+    { runner: reply.runner })
+  assert.equal(code, 0)
+  assert.equal(reply.calls.length, 0)
+
+  const notify = spy('{"ok":true,"dryRun":true}')
+  run(['notify', '--body', '正文', '--yes', '--dry-run'], { runner: notify.runner })
+  assert.ok(!notify.calls[0].at(-1).includes('--yes'))
+
+  // reply 也接受 --yes 这种写法（命令契约把两个开关并列写过）。
+  const alias = spy('{"ok":true}')
+  run(['reply', '--thread', 'th_x', '--body', '正文', '--yes'], { runner: alias.runner })
+  assert.equal(alias.calls.length, 1)
+})
+
 test('notify 默认预演：服务器只统计收件人，argv 里没有 --yes', () => {
   const fake = spy('{"ok":true,"dryRun":true,"recipients":3}')
   const { code, out, err } = run(['notify', '--body', '维护通知'], { runner: fake.runner })
@@ -179,6 +196,11 @@ test('report 把 JSON 渲染成 HTML 并打印落盘路径', () => {
   assert.equal(code, 0)
   assert.equal(out, reportPath({ outDir, generatedAt: GENERATED_AT }))
   assert.match(readFileSync(out, 'utf8'), /<svg /)
+})
+
+test('report 默认落 maintainers/reports/YYYY-MM-DD.html', () => {
+  assert.equal(reportPath({ generatedAt: GENERATED_AT }),
+    join(ROOT, 'maintainers', 'reports', '2026-10-12.html'))
 })
 
 test('用法错误一律退出码 2（且不调用 runner）', () => {

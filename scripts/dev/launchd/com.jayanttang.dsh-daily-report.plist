@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  com.jayanttang.dsh-daily-report —— 014 运营日报的 LaunchAgent 模板。
+
+  安装不在本文件上手工做，走：
+      node scripts/dev/feedback.mjs report --install-agent
+  脚本把占位符换成这台机器的真值后写到 ~/Library/LaunchAgents/ 再 launchctl bootstrap：
+      __NODE__   → 当前 node 的绝对路径（launchd 没有 PATH，必须绝对路径）
+      __REPO__   → 仓库根（ProgramArguments 与 WorkingDirectory 都用它）
+      ~/…        → 真实家目录（launchd 不展开 ~，模板里保留 ~ 只为可读）
+  卸载：node scripts/dev/feedback.mjs report --uninstall-agent
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.jayanttang.dsh-daily-report</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__NODE__</string>
+    <string>__REPO__/scripts/dev/feedback.mjs</string>
+    <string>report</string>
+    <string>--days</string>
+    <string>30</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>__REPO__</string>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>9</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>~/Library/Logs/dsh-daily-report.log</string>
+  <key>StandardErrorPath</key>
+  <string>~/Library/Logs/dsh-daily-report.log</string>
+</dict>
+</plist>
