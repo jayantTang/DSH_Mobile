@@ -2,7 +2,7 @@ import { HOST_CALL_TIMEOUT_MS, withTimeout, messageOf } from './history/shared.j
 import { createProbeRunner } from './history/probe.js'
 import {
   DEFAULT_LIMIT, DEFAULT_MAX_BYTES, WINDOW_CHUNK,
-  bytesOfRecords, displayRoleOf, roleOf, toRecord,
+  bytesOfRecords, displayRoleOf, roleOf, toRecord, trimRecordForWire, trimRecordsForWire,
 } from './history/records.js'
 import { pageFrom, scanOlder } from './history/window.js'
 
@@ -117,6 +117,13 @@ function failure(code, message, details = {}) {
   return { ok: false, error: { code, message, details } }
 }
 
+/// 搜索命中项按契约只带 `seq`/`role`/`snippet`（不带记录本身），所以今天**没有**
+/// 宿主日志可删。这里仍然逐条过一遍清洗：万一将来命中项带上记录（例如为了跳转
+/// 预取），它就不会成为那条绕过统一口径的旁路。
+function trimHitsForWire(hits) {
+  return hits.map((hit) => (hit?.record === undefined ? hit : trimRecordForWire(hit)))
+}
+
 /// Map a thrown Host/gateway error onto the contract's codes.
 function hostFailure(error) {
   const message = messageOf(error)
@@ -226,7 +233,7 @@ export function createHistoryService({ logger = console } = {}) {
           return {
             ok: true,
             value: {
-              hits: indexed,
+              hits: trimHitsForWire(indexed),
               cursor: page.hasMore === true && page.cursor !== undefined ? String(page.cursor) : null,
               hasMore: page.hasMore === true,
               source: 'index',
@@ -272,7 +279,7 @@ export function createHistoryService({ logger = console } = {}) {
       return {
         ok: true,
         value: {
-          hits,
+          hits: trimHitsForWire(hits),
           cursor: hasMore ? String(to) : null,
           hasMore,
           scannedChunks: scanned,
@@ -317,7 +324,10 @@ export function createHistoryService({ logger = console } = {}) {
     inFlight.add(key)
     try {
       const scan = await scanOlder({ readChunk, sessionId, before, through, limit, maxBytes, roles })
-      return { ok: true, value: pageFrom(scan, { limit, maxBytes, roles }) }
+      const page = pageFrom(scan, { limit, maxBytes, roles })
+      // 016：下发前统一清掉只用于诊断的宿主模型输出日志（口径只有一份，
+      // 见 specs/016-history-load-perf/contracts/history-record-trim.md）。
+      return { ok: true, value: { ...page, records: trimRecordsForWire(page.records) } }
     } catch (error) {
       logger.warn?.(`mobile-link: sessionWindow failed: ${messageOf(error)}`)
       return hostFailure(error)

@@ -17,6 +17,7 @@ import { FileFetcher, FSGET_CANCEL } from './files-out.js'
 import { GitBridge, isGitMethod } from './git.js'
 import { isHelloMethod, helloPayload, parseClientInfo } from './hello.js'
 import { isHistoryMethod } from './history.js'
+import { trimRecordsForWire } from './history/records.js'
 
 /**
  * 后台大文件上传的桥接帧（relay → 连接器），名字见 `docs/relay-contract.json`
@@ -73,6 +74,25 @@ export function messageOf(error) {
 
 export function errorObject(code, message, details = {}) {
   return { code, message, details }
+}
+
+/**
+ * 旧分页通道（`session/page`）的下发形态清洗（016）。
+ *
+ * 这一路是**降级通道**：宿主自己回一页记录，连接器只是转发。它和精确窗口
+ * （`_link/sessionWindow`）必须守同一条口径 —— 只用于诊断的宿主模型输出日志
+ * 不下发（见 `specs/016-history-load-perf/contracts/history-record-trim.md`）。
+ *
+ * 两种形态都要认：宿主 RPC 的信封 `{ ok, value: { records } }`，以及直接给
+ * `{ records }` 的桩/测试形态。其余方法或结构一律原样返回，不做推断。
+ */
+export function trimHistoryPageForWire(method, result) {
+  if (method !== 'session/page') return result
+  if (result === null || typeof result !== 'object') return result
+  const page = result.value ?? result
+  if (page === null || typeof page !== 'object' || !Array.isArray(page.records)) return result
+  const trimmed = { ...page, records: trimRecordsForWire(page.records) }
+  return result.value === undefined ? trimmed : { ...result, value: trimmed }
 }
 
 export class DeviceRouter {
@@ -458,6 +478,7 @@ export class DeviceRouter {
     let result
     try {
       result = await this.dsh.rpc(frame.method, frame.args ?? {})
+      result = trimHistoryPageForWire(frame.method, result)
     } catch (error) {
       result = { ok: false, error: errorObject('host/unavailable', messageOf(error)) }
       this.lastError = messageOf(error)

@@ -803,4 +803,45 @@ final class TimelineTests: XCTestCase {
         XCTAssertEqual(timeline.firstContentSeq, 100)
     }
 
+    /// 016：宿主那份原始模型输出日志**不下发也不解析**之后，历史页折出的时间线必须与
+    /// 带着它时逐行相同（FR-004/FR-009、SC-004）。
+    ///
+    /// 判据不是"看起来差不多"而是同一份投影：行数、行类型、文本、seq 全部逐条相等。
+    /// 另一半（"它不能让提交记录变成流式"）由 011 的
+    /// `testHostChunkLogDoesNotMakeACommittedMessageStreaming` 钉着，两条一起覆盖。
+    func testHostChunkLogDoesNotChangeTheFoldedTimeline() throws {
+        let withLog = try event("""
+        {"type":"assistant/message","seq":71,"time":1789276400000,
+         "data":{"turn":1,"step":1,"usage":{"totalTokens":10},
+                 "stream":[
+                   {"type":"chunk","time":1,"chunk":{"index":0,"type":"block-start","blockType":"reasoning"}},
+                   {"type":"chunk","time":2,"chunk":{"index":0,"type":"reasoning-chunks","texts":["想一想"]}},
+                   {"type":"chunk","time":3,"chunk":{"type":"finish","reason":{"kind":"stop"}}}],
+                 "message":{"role":"assistant","content":[
+                   {"type":"reasoning","text":"想一想"},
+                   {"type":"text","text":"**粗体**答案"}]}}}
+        """)
+        let withoutLog = try event("""
+        {"type":"assistant/message","seq":71,"time":1789276400000,
+         "data":{"turn":1,"step":1,"usage":{"totalTokens":10},
+                 "message":{"role":"assistant","content":[
+                   {"type":"reasoning","text":"想一想"},
+                   {"type":"text","text":"**粗体**答案"}]}}}
+        """)
+
+        func fold(_ record: SessionEvent) -> [String] {
+            var timeline = ChatTimeline()
+            _ = timeline.apply(record)
+            return timeline.items.map { item in
+                switch item.kind {
+                case .assistantText(let text): return "text:\(item.seq):\(text)"
+                case .reasoning(let text): return "reasoning:\(item.seq):\(text)"
+                default: return "other:\(item.seq):\(item.kind)"
+                }
+            }
+        }
+
+        XCTAssertEqual(fold(withLog), fold(withoutLog), "带不带宿主日志必须折出同一份时间线")
+        XCTAssertFalse(fold(withoutLog).isEmpty, "样本本身要能折出行，否则这条用例什么都没验")
+    }
 }

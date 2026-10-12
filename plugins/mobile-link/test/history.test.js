@@ -209,10 +209,16 @@ function fakeSearchQuery(log, { searchEvents } = {}) {
     async filterEvents(_sessionId, filters) {
       const range = filters.find((f) => f.kind === 'seq')
       const text = filters.find((f) => f.kind === 'text')?.text ?? ''
+      // 两种正文形态：老形态 `data.text`，真实形态 `data.message.content[].text`（016 的
+      // 样本记录用后者，所以桩要能认，否则会把"搜不到"误读成清洗删掉了正文）。
+      const textOf = (event) => String(
+        event.data?.text
+        ?? (event.data?.message?.content ?? []).map((block) => block?.text ?? '').join(''),
+      )
       return log
         .filter((event) => event.seq >= range.from && event.seq <= range.to)
-        .filter((event) => String(event.data?.text ?? '').toLowerCase().includes(text.toLowerCase()))
-        .map((event) => ({ seq: event.seq, type: event.type, time: event.time, text: event.data?.text ?? '', data: event.data }))
+        .filter((event) => textOf(event).toLowerCase().includes(text.toLowerCase()))
+        .map((event) => ({ seq: event.seq, type: event.type, time: event.time, text: textOf(event), data: event.data }))
     },
     ...(searchEvents === undefined ? {} : { searchEvents }),
   }
@@ -495,4 +501,176 @@ test('sessionWindow 不带 roles 时旧字段与老口径逐字不变（T039 兼
   assert.equal(empty.value.hasMore, false)
   assert.equal(empty.value.startSeq, null)
   assert.equal(empty.value.scanBoundary, null)
+})
+
+// ── 016 历史记录清洗：宿主原始模型输出日志不再下发 ──────────────────────────
+// 口径见 specs/016-history-load-perf/contracts/history-record-trim.md。
+// 为什么删：那份日志占样本会话报文约六成、占手机侧解码耗时约九成，而渲染不读它
+// （证据：specs/016-history-load-perf/research.md §0）。
+
+/// 一条**带**宿主模型输出日志的 assistant 记录（真实形状的缩小版）。
+function recordWithStream(seq) {
+  return {
+    type: 'event',
+    event: {
+      type: 'assistant/message',
+      seq,
+      time: 1_700_000_000_000 + seq,
+      surfaceOp: { kind: 'append' },
+      data: {
+        turn: 1,
+        step: 1,
+        message: { role: 'assistant', content: [{ type: 'text', text: `答案 ${seq}` }] },
+        usage: { totalTokens: 12 },
+        stream: [
+          { type: 'chunk', time: 1, chunk: { type: 'block-start', index: 0, blockType: 'text' } },
+          { type: 'chunk', time: 2, chunk: { type: 'text-chunks', index: 0, texts: ['答案'] } },
+        ],
+      },
+    },
+  }
+}
+
+test('trimRecordForWire 只删 data.stream，其余字段与壳层逐位不变', async () => {
+  const { trimRecordForWire } = await import('../lib/history/records.js')
+  const original = recordWithStream(7)
+  const snapshot = structuredClone(original)
+  const trimmed = trimRecordForWire(original)
+
+  assert.deepEqual(original, snapshot, '不得就地改写连接器持有的记录')
+  assert.notEqual(trimmed, original, '带日志的记录要产生新对象（浅拷贝）')
+  assert.equal('stream' in trimmed.event.data, false)
+  assert.deepEqual(Object.keys(trimmed.event.data).sort(), ['message', 'step', 'turn', 'usage'])
+  assert.deepEqual(trimmed.event.data.message, snapshot.event.data.message)
+  assert.deepEqual(trimmed.event.data.usage, snapshot.event.data.usage)
+  assert.equal(trimmed.event.type, original.event.type)
+  assert.equal(trimmed.event.seq, original.event.seq)
+  assert.equal(trimmed.event.time, original.event.time)
+  assert.deepEqual(trimmed.event.surfaceOp, original.event.surfaceOp)
+})
+
+test('trimRecordForWire 对没有日志的记录返回原对象（不复制、不动）', async () => {
+  const { trimRecordForWire } = await import('../lib/history/records.js')
+  const plain = { type: 'event', event: { type: 'user/message', seq: 3, data: { content: [{ type: 'text', text: '问' }] } } }
+  assert.equal(trimRecordForWire(plain), plain)
+  const noData = { type: 'event', event: { type: 'step/start', seq: 4 } }
+  assert.equal(trimRecordForWire(noData), noData)
+  const nullData = { type: 'event', event: { type: 'step/end', seq: 5, data: null } }
+  assert.equal(trimRecordForWire(nullData), nullData)
+})
+
+test('sessionWindow 的回包不含 data.stream，且分页元数据与页内 seq 不变', async () => {
+  const log = Array.from({ length: 200 }, (_, seq) => recordWithStream(seq).event)
+  const service = bound(createHistoryService({ logger: { warn() {}, info() {} } }), fakeQuery(log))
+  const page = await service.handle(WINDOW_METHOD, { address: ADDRESS, before: 120, limit: 20 })
+  assert.equal(page.ok, true)
+  assert.equal(page.value.endSeq, 119)
+  assert.equal(page.value.records.length, 20)
+  assert.equal(page.value.startSeq, 100)
+  for (const record of page.value.records) {
+    assert.equal('stream' in record.event.data, false, `seq ${record.event.seq} 仍带着宿主日志`)
+    assert.equal(typeof record.event.seq, 'number')
+    assert.ok(record.event.data.message, '剔除不得动到 message 正文')
+  }
+  assert.deepEqual(
+    page.value.records.map((record) => record.event.seq),
+    Array.from({ length: 20 }, (_, index) => 100 + index),
+    '页内顺序与 seq 逐位不变',
+  )
+  // 宿主侧的原始事件**没有被就地改写**（下一次读同一段仍应看到完整事件）。
+  assert.ok(log[119].data.stream, 'fakeQuery 持有的日志被改写了')
+})
+
+test('roles 过滤页与 scanBoundary 语义不受清洗影响', async () => {
+  // 每 3 条掺一条人类提问（`assistant/*` 记录永远不是 me），这样过滤页是真有命中的。
+  const log = Array.from({ length: 200 }, (_, seq) => {
+    const record = recordWithStream(seq)
+    if (seq % 3 === 0) {
+      record.event.type = 'user/message'
+      record.event.data = { content: [{ type: 'text', text: `问 ${seq}` }], source: { kind: 'user' } }
+    }
+    return record.event
+  })
+  const service = bound(createHistoryService({ logger: { warn() {}, info() {} } }), fakeQuery(log))
+  const page = await service.handle(WINDOW_METHOD, { address: ADDRESS, before: 120, limit: 10, roles: ['me'] })
+  assert.equal(page.ok, true)
+  assert.ok(page.value.records.length > 0, '每 3 条一条 user/message，按 me 过滤应有命中')
+  for (const record of page.value.records) {
+    assert.equal(record.event.type, 'user/message')
+    assert.equal('stream' in record.event.data, false)
+  }
+  // 本次扫到 seq 69 就凑满了 limit（更早的还没看过）→ 有更早的；页内被裁掉的是**新**
+  // 那一端之后的多余命中，边界因此与最老返回记录同值（window.js 的既有口径）。
+  assert.equal(page.value.scanBoundary, page.value.records[0].event.seq)
+  assert.equal(page.value.hasMore, true)
+  assert.equal(page.value.records.length, 10, 'limit 生效')
+})
+
+test('会话内搜索（_link/sessionFind）的回包字段不受清洗影响', async () => {
+  const log = Array.from({ length: 200 }, (_, seq) => recordWithStream(seq).event)
+  const service = bound(createHistoryService({ logger: { warn() {}, info() {} } }), fakeSearchQuery(log))
+  const found = await service.handle(FIND_METHOD, { address: ADDRESS, query: '答案', limit: 5 })
+  assert.equal(found.ok, true)
+  assert.ok(found.value.hits.length > 0, '应能在正文里搜到（snippet 来自文本，不来自那份日志）')
+  for (const hit of found.value.hits) {
+    assert.equal(typeof hit.seq, 'number')
+    assert.equal(typeof hit.role, 'string')
+    assert.equal(typeof hit.snippet, 'string')
+    assert.equal('event' in hit, false, '命中项不带记录本身')
+  }
+})
+
+test('旧分页通道 session/page 的回包同样不含 data.stream（router 层）', async () => {
+  const { DeviceRouter } = await import('../lib/router.js')
+  const sent = []
+  const hostPage = {
+    records: [recordWithStream(11), recordWithStream(12)],
+    hasMore: true,
+  }
+  const router = new DeviceRouter({
+    dsh: {
+      ensureMux: async () => 1, openStream() {}, cancelStream() {},
+      rpc: async () => ({ ok: true, value: hostPage }),
+      on() {}, off() {},
+    },
+    send: (deviceId, frame) => sent.push(frame),
+    logger: {},
+  })
+  await router.attachDevice('dev_1')
+  await router.handleRequest('dev_1', {
+    t: 'req', id: 'r1', method: 'session/page', args: { address: ADDRESS, beforeSeq: 13 },
+  })
+  const reply = sent.find((frame) => frame.t === 'res')
+  assert.ok(reply, `没有收到 res 帧：${JSON.stringify(sent.map((frame) => frame.t))}`)
+  assert.equal(reply.ok, true)
+  const values = reply.value.records
+  assert.equal(values.length, 2)
+  assert.deepEqual(values.map((record) => record.event.seq), [11, 12], '顺序与 seq 不变')
+  for (const record of values) {
+    assert.equal('stream' in record.event.data, false, `seq ${record.event.seq} 仍带着宿主日志`)
+    assert.ok(record.event.data.message, '正文必须还在')
+  }
+  assert.equal(reply.value.hasMore, true)
+  assert.equal(hostPage.records[0].event.data.stream !== undefined, true, '宿主的原始回包不得被就地改写')
+})
+
+test('旧分页清洗认两种回包形态（信封与裸页），其余方法一律不碰', async () => {
+  const { trimHistoryPageForWire } = await import('../lib/router.js')
+  const pageShape = { records: [recordWithStream(1)], hasMore: true }
+
+  const bare = trimHistoryPageForWire('session/page', pageShape)
+  assert.equal('stream' in bare.records[0].event.data, false)
+  assert.equal(bare.hasMore, true)
+  assert.equal('stream' in pageShape.records[0].event.data, true, '入参不得被就地改写')
+
+  const enveloped = trimHistoryPageForWire('session/page', { ok: true, value: pageShape })
+  assert.equal(enveloped.ok, true)
+  assert.equal('stream' in enveloped.value.records[0].event.data, false)
+  assert.equal(enveloped.value.hasMore, true)
+  assert.equal('stream' in pageShape.records[0].event.data, true, '入参不得被就地改写')
+
+  const other = { records: [recordWithStream(1)], hasMore: true }
+  assert.equal(trimHistoryPageForWire('session/list', other), other, '别的方法原样返回')
+  const shapeless = { ok: true, value: 'nope' }
+  assert.equal(trimHistoryPageForWire('session/page', shapeless), shapeless)
 })

@@ -146,16 +146,17 @@ public enum ChatEvent: Sendable {
         public let turn: Int
         public let step: Int
         public let content: [ContentBlock]
-        /// The host's raw model output log for this message (`data.stream`).
-        ///
-        /// It is **not** a streaming mark: it records how the message was produced,
-        /// and is kept for diagnostics. The streaming judgement is
-        /// `AssistantMessage.isProvisional`.
-        public let stream: JSONValue?
         /// Whether this record is this app's own provisional (still-streaming) one.
         ///
         /// The single judgement behind the streaming plain-text fallback; see
         /// `specs/011-transcript-markdown-render/contracts/provisional-mark.md`.
+        ///
+        /// The host's own `assistant/message` also carries a `stream` key — its raw
+        /// model-output chunk log. It is deliberately **not** carried here: nothing
+        /// renders it, and it was ~60% of a history page's bytes and ~94% of the
+        /// decode time, so the connector stops sending it and this app stops
+        /// decoding it (spec 016, `contracts/history-record-trim.md`). It must never
+        /// come back as the streaming judgement — that is the defect spec 011 fixed.
         public let isProvisional: Bool
     }
 
@@ -275,9 +276,9 @@ public enum ChatEventDecoder {
                     turn: data["turn"]?.intValue ?? 0,
                     step: data["step"]?.intValue ?? 0,
                     content: decodeBlocks(message?["content"]),
-                    stream: data["stream"],
-                    // Only this app's own mark counts; the host's `stream` chunk log
-                    // sitting beside it must never be read as "still streaming".
+                    // `data["stream"]`（宿主原始模型输出日志）**有意不在这里解析**：
+                    // 它没有读者，却占一页报文的约六成与解码耗时的约九成（spec 016）。
+                    // 流式判据只看本机私有标记；宿主那份日志永远不算「还在流式」。
                     isProvisional: event.isProvisional
                 )
             )

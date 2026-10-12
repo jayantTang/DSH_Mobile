@@ -47,6 +47,34 @@ export function toRecord(event) {
   return { type: 'event', event }
 }
 
+/// 去掉一条记录里**只用于诊断、渲染不读**的宿主模型输出日志。
+///
+/// 口径只有一份，写在这里由三条回包路径共用（精确窗口 / 搜索 / 旧分页），
+/// 见 `specs/016-history-load-perf/contracts/history-record-trim.md`。
+///
+/// 为什么删：实测该字段占样本会话报文约 60%、占 assistant 记录 75.7%、
+/// 占手机侧解码耗时约 94%（`specs/016-history-load-perf/research.md` §0），
+/// 而产品路径没有任何消费者（`DSHKit` 里只有一句"不能拿它当流式判据"的注释）。
+///
+/// 两条纪律：
+/// - **不就地改写**：宿主回包可能仍被别处引用（测试与探针都会再看一眼），
+///   所以带该键时产生新的 `data` 对象，不带时按原对象返回（不复制、不白花时间）。
+/// - **只删这一个键**：`message` / `usage` / `meta` / `arguments` 等一律原样，
+///   删它们就是丢屏幕上要显示的内容。
+export function trimRecordForWire(record) {
+  const event = record?.event
+  const data = event?.data
+  if (data === null || typeof data !== 'object' || !('stream' in data)) return record
+  const { stream: _dropped, ...rest } = data
+  return { ...record, event: { ...event, data: rest } }
+}
+
+/// 一整页记录的同一条清洗（顺序与长度不变）。
+export function trimRecordsForWire(records) {
+  if (!Array.isArray(records)) return records
+  return records.map(trimRecordForWire)
+}
+
 export function bytesOfRecords(records) {
   return bytesOf(records)
 }
