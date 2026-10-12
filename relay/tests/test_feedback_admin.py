@@ -157,7 +157,9 @@ def test_feedback_show_returns_the_trail_in_time_order_and_marks_it_read(relay, 
     stamps = [message["createdAt"] for message in thread["messages"]]
     assert stamps == sorted(stamps), "留言按时间正序"
     for message in thread["messages"]:
-        assert set(message) >= {"messageId", "author", "body", "createdAt"}
+        assert set(message) >= {"messageId", "author", "body", "format", "createdAt"}
+    assert [message["format"] for message in thread["messages"]] == ["text", "text", "text"], \
+        "没指定 --format 的回信按 text"
     assert thread["ownerReadAt"] == base + 2_000, "推到最新一条用户消息"
 
     code, rows = run_cli(relay["db"], "feedback-list", capsys=capsys)
@@ -309,6 +311,77 @@ def test_feedback_reply_template_has_the_four_parts_and_writes_nothing(relay, ca
     assert "DSH Mobile 团队" in lines, "署名默认是团队名"
     assert re.search(r"^\d{4}-\d{2}-\d{2}$", lines[-1]), "最后一行是日期"
     assert count(relay["db"], "feedbackMessages") == before, "--template 不写库"
+
+
+# ── 正文格式 --format（T079：富文本 2026-10-12）───────────────────────────────
+
+
+def test_feedback_reply_defaults_to_text_and_takes_format_html(relay, capsys):
+    """FR-034：回信默认 `text`（手机按 Markdown 渲染），`--format html` 走锁死的容器。"""
+    code, first = run_cli(relay["db"], "feedback-reply", "--thread", relay["threadId"],
+                          "--body", "称呼：你好\n\n已经修好了。\n", capsys=capsys)
+    assert code == 0 and first["ok"] is True
+    assert query(relay["db"], "SELECT format FROM feedbackMessages WHERE messageId=?",
+                 (first["messageId"],))[0]["format"] == "text"
+
+    code, second = run_cli(relay["db"], "feedback-reply", "--thread", relay["threadId"],
+                           "--body", "<h1>日报</h1>", "--format", "html", capsys=capsys)
+    assert code == 0 and second["ok"] is True
+    assert query(relay["db"], "SELECT format FROM feedbackMessages WHERE messageId=?",
+                 (second["messageId"],))[0]["format"] == "html"
+
+    code, thread = run_cli(relay["db"], "feedback-show", "--thread", relay["threadId"],
+                           capsys=capsys)
+    assert code == 0
+    assert [message["format"] for message in thread["messages"]] == ["text", "text", "html"]
+
+
+def test_feedback_reply_refuses_an_unknown_format_and_writes_nothing(relay, capsys):
+    """取值只认 text/html：别的值在解析命令行时就拒掉，一条留言都不留。"""
+    before = count(relay["db"], "feedbackMessages")
+    with pytest.raises(SystemExit) as caught:
+        run_cli(relay["db"], "feedback-reply", "--thread", relay["threadId"],
+                "--body", "正文", "--format", "rtf", capsys=capsys)
+    assert caught.value.code == 2, "argparse 的用法错误"
+    assert count(relay["db"], "feedbackMessages") == before
+
+
+def test_feedback_notify_stores_the_format_it_was_given(relay, capsys):
+    """通知的格式落在 `notices.format` 上：日报这类正文走 html。"""
+    code, preview = run_cli(relay["db"], "feedback-notify", "--body", "<h1>日报</h1>",
+                            "--format", "html", capsys=capsys)
+    assert code == 0 and preview["dryRun"] is True
+    assert count(relay["db"], "notices") == 0, "预演不写库"
+
+    code, report = run_cli(relay["db"], "feedback-notify", "--body", "<h1>日报</h1>",
+                           "--subject", "日报", "--format", "html", "--yes", capsys=capsys)
+    assert code == 0 and report["ok"] is True
+    assert query(relay["db"], "SELECT format FROM notices WHERE noticeId=?",
+                 (report["noticeId"],))[0]["format"] == "html"
+
+    # 不给 --format 的那条按默认 text。
+    code, plain = run_cli(relay["db"], "feedback-notify", "--body", "维护", "--yes", capsys=capsys)
+    assert code == 0
+    assert query(relay["db"], "SELECT format FROM notices WHERE noticeId=?",
+                 (plain["noticeId"],))[0]["format"] == "text"
+
+
+def test_feedback_list_reports_the_format_of_the_first_message(relay, capsys):
+    """清单行不带留言，格式顺着摘要（首条留言）出来；`html` 的回信改不了用户首条那封。"""
+    store = Store(relay["db"])
+    try:
+        store.append_feedback_message(relay["threadId"], "<h1>日报</h1>", author="owner",
+                                      format="html")
+    finally:
+        store.close()
+
+    code, rows = run_cli(relay["db"], "feedback-list", capsys=capsys)
+    assert code == 0
+    (row,) = rows
+    assert row["format"] == "text", "用户首条是 text"
+    code, thread = run_cli(relay["db"], "feedback-show", "--thread", relay["threadId"],
+                           capsys=capsys)
+    assert code == 0 and thread["messages"][-1]["format"] == "html"
 
 
 # ── T034：防误发 ─────────────────────────────────────────────────────────────

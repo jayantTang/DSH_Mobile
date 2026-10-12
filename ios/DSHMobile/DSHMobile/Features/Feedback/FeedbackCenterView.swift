@@ -178,8 +178,10 @@ struct FeedbackCenterView: View {
                                         subject: FeedbackSubject.replyLine(
                                             threadSubject: thread.subject,
                                             userBody: thread.messages.first { $0.author == .user }?.body,
-                                            replyBody: message.body),
-                                        snippet: FeedbackSubject.snippet(of: message.body),
+                                            replyBody: message.body,
+                                            replyFormat: message.bodyFormat),
+                                        snippet: FeedbackSubject.snippet(of: message.body,
+                                                                         format: message.bodyFormat),
                                         createdAt: message.createdAt,
                                         unread: center.isUnread(messageId: message.messageId))
                     }
@@ -188,8 +190,10 @@ struct FeedbackCenterView: View {
                     NavigationLink(value: FeedbackDestination.notice(notice.noticeId)) {
                         FeedbackMailRow(firstLine: String(localized: "服务通知"),
                                         subject: FeedbackSubject.line(subject: notice.subject,
-                                                                      body: notice.body),
-                                        snippet: FeedbackSubject.snippet(of: notice.body),
+                                                                      body: notice.body,
+                                                                      format: notice.bodyFormat),
+                                        snippet: FeedbackSubject.snippet(of: notice.body,
+                                                                         format: notice.bodyFormat),
                                         createdAt: notice.createdAt,
                                         unread: center.isUnread(noticeId: notice.noticeId))
                     }

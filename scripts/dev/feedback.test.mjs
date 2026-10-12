@@ -280,6 +280,129 @@ test('LaunchAgent 模板含 label、09:00 与日志路径', () => {
   assert.match(template, /feedback\.mjs<\/string>/)
 })
 
+test('reply / notify 的 --format 透传；不传就不出现在 argv 里', () => {
+  const reply = spy('{"ok":true}')
+  run(['reply', '--thread', 'th_x', '--body', '正文', '--format', 'html', '--send'], { runner: reply.runner })
+  assert.match(reply.calls[0].at(-1), /feedback-reply --thread th_x --body .*--format html/)
+
+  const notify = spy('{"ok":true}')
+  run(['notify', '--body', '维护通知', '--device', 'dvc_a', '--format', 'html', '--yes'],
+    { runner: notify.runner })
+  assert.match(notify.calls[0].at(-1), /feedback-notify --body .*--format html/)
+
+  // 不传 --format 时保持既有 argv：服务器默认 text。
+  const plain = spy('{"ok":true}')
+  run(['notify', '--body', '维护通知', '--device', 'dvc_a', '--yes'], { runner: plain.runner })
+  assert.ok(!plain.calls[0].at(-1).includes('--format'), '不传 --format 不得凭空加参数')
+
+  const plainReply = spy('{"ok":true}')
+  run(['reply', '--thread', 'th_x', '--body', '正文', '--send'], { runner: plainReply.runner })
+  assert.ok(!plainReply.calls[0].at(-1).includes('--format'), '不传 --format 不得凭空加参数')
+
+  const bad = spy()
+  const { code, err } = run(['notify', '--body', '维护通知', '--format', 'markdown'], { runner: bad.runner })
+  assert.equal(code, 2)
+  assert.equal(bad.calls.length, 0)
+  assert.match(err, /--format/)
+})
+
+test('report --send：先 scp，再按 html 通知，最后删远端临时文件', () => {
+  const outDir = mkdtempSync(join(tmpdir(), 'feedback-send-'))
+  const fake = spy(JSON.stringify(fixture()))
+  const { code, out } = run(
+    ['report', '--out', outDir, '--send', '--device', 'dvc_a', '--device', 'dvc_b'],
+    { runner: fake.runner },
+  )
+  assert.equal(code, 0)
+  const local = join(outDir, '2026-10-12.html')
+  const remote = '/tmp/dsh-feedback-report-2026-10-12.html'
+  assert.equal(fake.calls.length, 4, `应当是 ops-report → scp → notify → 清理：${fake.calls.length} 次调用`)
+  assert.match(fake.calls[0].at(-1), /ops-report --days 30/)
+
+  const scp = fake.calls[1]
+  assert.equal(scp[0], 'scp')
+  assert.equal(scp.at(-2), local)
+  assert.equal(scp.at(-1), `root@${HOST}:${remote}`)
+
+  const command = fake.calls[2].at(-1)
+  assert.equal(fake.calls[2][0], 'ssh')
+  assert.match(command, new RegExp(`feedback-notify --body-file ${remote} `))
+  assert.match(command, /--format html/)
+  assert.match(command, /--subject 'DSH Mobile 运营日报 2026-10-12'/)
+  assert.match(command, /--device dvc_a --device dvc_b/)
+  assert.match(command, /--yes/)
+  assert.ok(!command.includes('--all'), '直投指定设备，不得群发')
+  assert.ok(!/--body /.test(command), '正文必须走 --body-file，不能塞进 ssh 参数')
+
+  assert.equal(fake.calls[3][0], 'ssh')
+  assert.equal(fake.calls[3].at(-1), `rm -f ${remote}`)
+  assert.equal(out.split('\n')[0], local)
+  assert.match(readFileSync(local, 'utf8'), /<svg /)
+})
+
+test('report --send 的 --subject 覆盖默认标题', () => {
+  const outDir = mkdtempSync(join(tmpdir(), 'feedback-send-subject-'))
+  const fake = spy(JSON.stringify(fixture()))
+  const { code } = run(['report', '--out', outDir, '--send', '--device', 'dvc_a', '--subject', '周报'],
+    { runner: fake.runner })
+  assert.equal(code, 0)
+  assert.match(fake.calls[2].at(-1), /--subject '周报'/)
+})
+
+test('report --send 不带 --device 退 2，不执行任何命令（也不群发）', () => {
+  for (const argv of [['report', '--send'], ['report', '--send', '--all']]) {
+    const fake = spy()
+    const { code, err } = run(argv, { runner: fake.runner })
+    assert.equal(code, 2, `${argv.join(' ')} 应该退 2`)
+    assert.equal(fake.calls.length, 0)
+    assert.match(err, /--device|--all/)
+  }
+})
+
+test('report --send --dry-run 只生成报告并打印将执行的命令', () => {
+  const outDir = mkdtempSync(join(tmpdir(), 'feedback-send-dry-'))
+  const fake = spy(JSON.stringify(fixture()))
+  const { code, out } = run(['report', '--out', outDir, '--send', '--device', 'dvc_a', '--dry-run'],
+    { runner: fake.runner })
+  assert.equal(code, 0)
+  assert.equal(fake.calls.length, 1, '预演只跑只读的 ops-report')
+  assert.match(fake.calls[0].at(-1), /ops-report/)
+  assert.match(out, /预演/)
+  assert.match(out, /scp /)
+  assert.match(out, /feedback-notify --body-file \/tmp\/dsh-feedback-report-2026-10-12\.html/)
+  assert.match(out, /rm -f \/tmp\/dsh-feedback-report-2026-10-12\.html/)
+})
+
+test('notify 失败时远端临时文件仍然被删掉，退出码 1', () => {
+  const outDir = mkdtempSync(join(tmpdir(), 'feedback-send-fail-'))
+  const calls = []
+  const runner = (argv) => {
+    calls.push(argv)
+    if (calls.length === 3) throw new Error('notify 挂了')   // 3 = notify（1 ops-report / 2 scp）
+    return JSON.stringify(fixture())
+  }
+  const { code, err } = run(['report', '--out', outDir, '--send', '--device', 'dvc_a'], { runner })
+  assert.equal(code, 1)
+  assert.equal(calls.length, 4)
+  assert.equal(calls[3].at(-1), 'rm -f /tmp/dsh-feedback-report-2026-10-12.html')
+  assert.match(err, /notify 挂了/)
+})
+
+test('report --send --local 直接读本机报告文件，不 scp 也不清理', () => {
+  const outDir = mkdtempSync(join(tmpdir(), 'feedback-send-local-'))
+  const fake = spy(JSON.stringify(fixture()))
+  const { code } = run(['report', '--out', outDir, '--send', '--device', 'dvc_a', '--local'],
+    { runner: fake.runner })
+  assert.equal(code, 0)
+  assert.equal(fake.calls.length, 2)
+  assert.ok(fake.calls.every((argv) => argv[0] !== 'scp' && argv[0] !== 'ssh'))
+  const notify = fake.calls[1]
+  assert.ok(notify.includes(join(outDir, '2026-10-12.html')), notify.join(' '))
+  assert.ok(notify.includes('--format') && notify.includes('html'))
+  assert.ok(notify.includes('--yes'))
+  assert.ok(!notify.at(-1).includes('rm -f'))
+})
+
 test('renderAgentPlist 把占位符换成绝对路径', () => {
   const plist = renderAgentPlist({ nodePath: '/opt/node/bin/node', repoRoot: '/srv/dsh' })
   assert.ok(!plist.includes('__'), '不能留下占位符')

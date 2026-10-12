@@ -28,6 +28,26 @@ public enum FeedbackClientError: Error, Sendable, Equatable {
     case decoding(String)
 }
 
+/// 正文字段的取值（FR-034）：由消息自带标记区分两种格式。
+///
+/// - ``text``：Markdown（默认），交给 App 自己的渲染器画，字体、暗色与动态字号都跟 App 一致。
+/// - ``html``：报告类消息，交给锁死的 HTML 容器（`HTMLMessageView`）。
+///
+/// 线上标记一律经 ``init(wire:)`` 归一：缺字段、`null`、大小写不一致与任何认不出的值都落到
+/// ``text``。**退到 Markdown 是安全的，退到 HTML 不是**——HTML 容器要多锁一层才敢开，
+/// 所以只有明确的 `html` 才配走那条路。服务端此刻还没有这个字段，客户端先按"读不出来就是
+/// Markdown"跑起来。
+public enum FeedbackBodyFormat: String, Sendable, Hashable, Codable {
+    case text
+    case html
+
+    /// 归一线上标记；认不出来一律 ``text``。
+    public init(wire: String?) {
+        let normalized = wire?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        self = normalized == Self.html.rawValue ? .html : .text
+    }
+}
+
 /// One message inside a thread : what the user wrote, or what we answered.
 public struct FeedbackMessage: Sendable, Hashable, Identifiable, Codable {
     /// Who wrote it. Unknown values decode as ``unknown`` rather than failing the
@@ -46,19 +66,29 @@ public struct FeedbackMessage: Sendable, Hashable, Identifiable, Codable {
     public let messageId: String
     public let author: Author
     public let body: String
+    /// 正文格式（FR-034）：`text` 或 `html`。
+    ///
+    /// 声明成 `String?` 是为了对齐线上字段：解码走 `decodeIfPresent`，缺字段、`null` 与
+    /// 认不出的值都归一成 `"text"`（见 ``FeedbackBodyFormat/init(wire:)``），所以解码之后
+    /// 不会是 `nil`；只有成员逐一构造时才可能留空，那时也按 Markdown 渲染。
+    public let format: String?
     public let createdAt: Date?
 
     public var id: String { messageId }
 
-    public init(messageId: String, author: Author, body: String, createdAt: Date?) {
+    /// 解析后的格式：判断走哪条渲染路径时用这个，不要在界面里比字符串。
+    public var bodyFormat: FeedbackBodyFormat { FeedbackBodyFormat(wire: format) }
+
+    public init(messageId: String, author: Author, body: String, format: String? = nil, createdAt: Date?) {
         self.messageId = messageId
         self.author = author
         self.body = body
+        self.format = format.map { FeedbackBodyFormat(wire: $0).rawValue }
         self.createdAt = createdAt
     }
 
     private enum CodingKeys: String, CodingKey {
-        case messageId, author, body, createdAt
+        case messageId, author, body, format, createdAt
     }
 
     public init(from decoder: any Decoder) throws {
@@ -66,6 +96,10 @@ public struct FeedbackMessage: Sendable, Hashable, Identifiable, Codable {
         messageId = try container.decode(String.self, forKey: .messageId)
         author = (try? container.decode(Author.self, forKey: .author)) ?? .unknown
         body = (try? container.decode(String.self, forKey: .body)) ?? ""
+        // 服务端还没有这个字段：缺字段/未知值一律当作 `text`。
+        format = FeedbackBodyFormat(
+            wire: try? container.decodeIfPresent(String.self, forKey: .format)
+        ).rawValue
         // The relay reports milliseconds since the epoch, same as `RelayDevice`.
         createdAt = RelayDevice.date(fromMilliseconds: try? container.decodeIfPresent(Int.self, forKey: .createdAt))
     }
@@ -134,22 +168,30 @@ public struct FeedbackNotice: Sendable, Hashable, Identifiable, Codable {
     public let noticeId: String
     public let subject: String?
     public let body: String
+    /// 正文格式（FR-034），口径与 ``FeedbackMessage/format`` 完全一致：缺字段与未知值
+    /// 一律 `text`，只有明确的 `html` 才走锁死的 HTML 容器。
+    public let format: String?
     public let createdAt: Date?
     /// The relay's read state for *this device*.
     public let read: Bool
 
     public var id: String { noticeId }
 
-    public init(noticeId: String, subject: String?, body: String, createdAt: Date?, read: Bool) {
+    /// 解析后的格式：判断走哪条渲染路径时用这个。
+    public var bodyFormat: FeedbackBodyFormat { FeedbackBodyFormat(wire: format) }
+
+    public init(noticeId: String, subject: String?, body: String, format: String? = nil,
+                createdAt: Date?, read: Bool) {
         self.noticeId = noticeId
         self.subject = subject
         self.body = body
+        self.format = format.map { FeedbackBodyFormat(wire: $0).rawValue }
         self.createdAt = createdAt
         self.read = read
     }
 
     private enum CodingKeys: String, CodingKey {
-        case noticeId, subject, body, createdAt, read
+        case noticeId, subject, body, format, createdAt, read
     }
 
     public init(from decoder: any Decoder) throws {
@@ -157,6 +199,10 @@ public struct FeedbackNotice: Sendable, Hashable, Identifiable, Codable {
         noticeId = try container.decode(String.self, forKey: .noticeId)
         subject = try? container.decodeIfPresent(String.self, forKey: .subject)
         body = (try? container.decode(String.self, forKey: .body)) ?? ""
+        // 与 `FeedbackMessage` 同一个归一：读不出来就是 Markdown。
+        format = FeedbackBodyFormat(
+            wire: try? container.decodeIfPresent(String.self, forKey: .format)
+        ).rawValue
         createdAt = RelayDevice.date(fromMilliseconds: try? container.decodeIfPresent(Int.self, forKey: .createdAt))
         read = (try? container.decodeIfPresent(Bool.self, forKey: .read)) ?? false
     }

@@ -415,4 +415,83 @@ struct RelayFeedbackTests {
         let decoded = try JSONDecoder().decode([FeedbackTicket].self, from: encoded)
         #expect(decoded == [original])
     }
+
+    // MARK: - 正文格式（FR-034）
+
+    /// 三种解码都要能跑：服务端此刻还没有 `format` 字段，收到它的那条路还必须先能跑。
+    @Test("an html body carries its format through both models")
+    func htmlFormatDecodes() throws {
+        let message = try JSONDecoder().decode(FeedbackMessage.self, from: Data("""
+        {"messageId":"fm_1","author":"owner","body":"<h1>日报</h1>","format":"html","createdAt":1760000000000}
+        """.utf8))
+        #expect(message.format == "html")
+        #expect(message.bodyFormat == .html)
+
+        let notice = try JSONDecoder().decode(FeedbackNotice.self, from: Data("""
+        {"noticeId":"nt_1","subject":"日报","body":"<h1>日报</h1>","format":"html",
+         "createdAt":1760000000000,"read":false}
+        """.utf8))
+        #expect(notice.format == "html")
+        #expect(notice.bodyFormat == .html)
+    }
+
+    @Test("a missing format reads as Markdown on both models")
+    func missingFormatIsText() throws {
+        // 老服务端（还没有这个字段）发来的那两种形状：整个键都没有，或显式 null。
+        let absent = try JSONDecoder().decode(FeedbackMessage.self, from: Data("""
+        {"messageId":"fm_1","author":"owner","body":"你好：","createdAt":1760000000000}
+        """.utf8))
+        #expect(absent.format == "text")
+        #expect(absent.bodyFormat == .text)
+
+        let null = try JSONDecoder().decode(FeedbackNotice.self, from: Data("""
+        {"noticeId":"nt_1","subject":null,"body":"维护通知","format":null,"createdAt":1760000000000,"read":true}
+        """.utf8))
+        #expect(null.format == "text")
+        #expect(null.bodyFormat == .text)
+        #expect(null.read)
+    }
+
+    @Test("an unknown format degrades to Markdown, never to the HTML container")
+    func unknownFormatIsText() throws {
+        // 认不出的值（未来新增的格式、拼错的、大小写不一致的非 html）都不能开门进 HTML
+        // 容器——那条路要多锁一层才敢开，只有明确的 `html` 才算。
+        for raw in ["markdown", "rich", "hTmLx", "", "1"] {
+            let message = try JSONDecoder().decode(FeedbackMessage.self, from: Data("""
+            {"messageId":"fm_1","author":"owner","body":"正文","format":"\(raw)","createdAt":1}
+            """.utf8))
+            #expect(message.format == "text", "format=\(raw) 该按 text 处理")
+            #expect(message.bodyFormat == .text)
+
+            let notice = try JSONDecoder().decode(FeedbackNotice.self, from: Data("""
+            {"noticeId":"nt_1","subject":null,"body":"正文","format":"\(raw)","createdAt":1,"read":false}
+            """.utf8))
+            #expect(notice.format == "text", "format=\(raw) 该按 text 处理")
+            #expect(notice.bodyFormat == .text)
+        }
+        // 大小写不同的 `html` 写法照旧认：它不是认不出的值。
+        let upper = try JSONDecoder().decode(FeedbackMessage.self, from: Data("""
+        {"messageId":"fm_1","author":"owner","body":"<h1>x</h1>","format":"HTML","createdAt":1}
+        """.utf8))
+        #expect(upper.format == "html")
+        #expect(upper.bodyFormat == .html)
+    }
+
+    @Test("an inbox answer carries the format of messages and notices alike")
+    func inboxCarriesFormat() async throws {
+        Stub.reset([.init(status: 200, body: Data("""
+        {"ok":true,"unreadCount":1,
+         "threads":[{"threadId":"th_1","status":"replied","createdAt":1,"lastMessageAt":2,"unread":1,
+          "messages":[{"messageId":"fm_1","author":"owner","body":"# 回信","format":"text","createdAt":2}]}],
+         "notices":[{"noticeId":"nt_1","subject":"日报","body":"<h1>日报</h1>","format":"html",
+          "createdAt":3,"read":false}]}
+        """.utf8))])
+
+        let inbox = try await client().inbox(tickets: [ticket()])
+        #expect(inbox.threads.first?.messages.first?.bodyFormat == .text)
+        #expect(inbox.notices.first?.bodyFormat == .html)
+        // 镜像要存得下这个字段：离线渲染的判据来自本机那份 JSON。
+        let encoded = try JSONEncoder().encode(inbox.notices.first)
+        #expect(String(decoding: encoded, as: UTF8.self).contains("\"format\":\"html\""))
+    }
 }

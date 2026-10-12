@@ -201,7 +201,7 @@ async def test_inbox_returns_the_thread_behind_a_valid_ticket(client):
     # 字段集合就是契约里那一组：内部的 ticketHash/来源信息一个都不出网。
     assert set(thread) == {"threadId", "subject", "status", "createdAt", "lastMessageAt",
                            "unread", "messages"}
-    assert set(thread["messages"][0]) == {"messageId", "author", "body", "createdAt"}
+    assert set(thread["messages"][0]) == {"messageId", "author", "body", "format", "createdAt"}
     assert body["notices"] == [] and body["unreadCount"] == 0
 
 
@@ -302,10 +302,54 @@ async def test_inbox_reports_notices_per_device(client, provisioned, store):
     body = await inbox(client, headers=device_headers(token))
     assert [n["noticeId"] for n in body["notices"]] == [notice["noticeId"]]
     row = body["notices"][0]
-    assert set(row) == {"noticeId", "subject", "body", "createdAt", "read"}
+    assert set(row) == {"noticeId", "subject", "body", "format", "createdAt", "read"}
     assert row["read"] is False and row["subject"] == "服务通知"
+    assert row["format"] == "text", "没指定格式的通知按 text（手机侧 Markdown）"
     assert body["unreadCount"] == 1
     assert (await inbox(client))["notices"] == [], "匿名没有通知"
+
+
+async def test_inbox_reports_an_html_notice_and_an_html_reply(client, provisioned, store):
+    """FR-034：我们发出的正文自带格式标记，inbox 原样带出（html 走锁死的容器）。"""
+    token = await paired_device(client, provisioned["agent"]["agentId"])
+    device_id = store.device_by_token(token)["deviceId"]
+    store.create_notice("<h1>日报</h1>", "日报", [device_id], format="html", at=5_000)
+    ticket = await feedback_ticket(client)
+    store.append_feedback_message(ticket["threadId"], "<h1>报告</h1>", author="owner",
+                                  format="html")
+
+    body = await inbox(client, [ticket_pair(ticket)], headers=device_headers(token))
+    assert [n["format"] for n in body["notices"]] == ["html"]
+    thread = next(t for t in body["threads"] if t["threadId"] == ticket["threadId"])
+    assert [m["format"] for m in thread["messages"]] == ["text", "html"], \
+        "用户那封是 text，我们的回信是 html"
+
+
+@pytest.mark.parametrize("path", ["/feedback/submit", "/feedback/append"])
+async def test_the_user_paths_reject_an_unknown_format(client, path):
+    """用户提交的正文永远是 text：给一个我们不认的格式就在 400 上拒掉，不入库。"""
+    payload: dict = {"text": "正文", "format": "rtf"}
+    if path.endswith("append"):
+        payload.update(ticket_pair(await feedback_ticket(client)))
+    response = await client.post(path, json=payload)
+    assert response.status == 400, await response.text()
+    assert (await response.json())["error"]["code"] == "feedback/bad-request"
+
+
+async def test_the_user_paths_store_text_whatever_format_they_are_handed(client, store):
+    """`text`/`html` 都是合法取值，但用户提交的正文一律存 `text`（FR-034 只管我们发出的）。"""
+    response = await client.post("/feedback/submit", json={"text": "正文", "format": "  text "})
+    assert response.status == 200, await response.text()
+    body = await response.json()
+    assert store.feedback_thread(body["threadId"], None)["messages"][0]["format"] == "text"
+
+    token = await feedback_ticket(client)
+    appended = await client.post("/feedback/append", json={**ticket_pair(token), "text": "补充",
+                                                           "format": "html"})
+    assert appended.status == 200, await appended.text()
+    thread = store.feedback_thread(token["threadId"], None)
+    assert [m["format"] for m in thread["messages"]] == ["text", "text"], \
+        "用户补充不是 html——我们不替调用方解释这个字段"
 
 
 # ── 限流（T011）─────────────────────────────────────────────────────────────

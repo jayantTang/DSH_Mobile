@@ -17,14 +17,16 @@ NEW_TABLES = ("feedbackThreads", "feedbackMessages", "notices", "noticeDeliverie
 
 OLD_TABLES = {"accounts", "agents", "devices", "pairCodes", "usageDaily", "invites"}
 
-#: 逐字照 data-model.md 的四张表（列名与顺序）。`subject` 在最后：它是界面重做时用
-#: `ALTER TABLE … ADD COLUMN` 补上的，SQLite 把新列追加在末尾，`SCHEMA` 必须与之一致。
+#: 逐字照 data-model.md 的四张表（列名与顺序）。`subject` 与两个 `format` 都在最后：
+#: 它们是用 `ALTER TABLE … ADD COLUMN` 补上的，SQLite 把新列追加在末尾，`SCHEMA` 必须
+#: 与之一致。
 EXPECTED_COLUMNS = {
     "feedbackThreads": ["threadId", "ticketHash", "accountId", "deviceId", "appVersion",
                         "deviceModel", "systemVersion", "createdAt", "lastMessageAt",
                         "ownerReadAt", "userReadAt", "status", "clientRef", "subject"],
-    "feedbackMessages": ["messageId", "threadId", "author", "body", "createdAt", "clientRef"],
-    "notices": ["noticeId", "subject", "body", "createdAt", "createdBy"],
+    "feedbackMessages": ["messageId", "threadId", "author", "body", "createdAt", "clientRef",
+                         "format"],
+    "notices": ["noticeId", "subject", "body", "createdAt", "createdBy", "format"],
     "noticeDeliveries": ["noticeId", "deviceId", "createdAt", "readAt"],
 }
 
@@ -65,8 +67,8 @@ def test_a_fresh_database_creates_the_four_feedback_tables(tmp_path):
     Store(path).close()
     for table, expected in EXPECTED_COLUMNS.items():
         assert columns(path, table) == expected, table
-    # 版本号是 3（界面重做加 `subject` 那一列时 bump 的，见 test_store_schema_version.py）。
-    assert user_version(path) == SCHEMA_VERSION == 3
+    # 版本号是 4（富文本给两张表加 `format` 那一列时 bump 的，见 test_store_schema_version.py）。
+    assert user_version(path) == SCHEMA_VERSION == 4
 
 
 def test_indexes_the_readers_rely_on_exist(tmp_path):
@@ -404,5 +406,87 @@ def test_set_feedback_subject_accepts_the_80_char_limit_and_refuses_beyond_it(tm
         assert store.feedback_thread(thread["threadId"], None)["subject"] == "字" * 80, "越界不改库"
         with pytest.raises(StoreError):
             store.set_feedback_subject(thread["threadId"], 12)
+    finally:
+        store.close()
+
+
+# ── 正文格式 format（T078/T079：富文本 2026-10-12）────────────────────────────
+
+
+def test_a_user_submitted_message_is_always_stored_as_text(tmp_path):
+    """用户提交的正文不接格式参数：手机那一侧没有别的格式可发（FR-034 只管我们发出的）。"""
+    store = Store(str(tmp_path / "state.db"))
+    try:
+        thread = store.create_feedback_thread(ticket_hash=sha256_hex("fk_one"), text="点了没反应",
+                                              subject="转圈")
+        assert store._row("SELECT format FROM feedbackMessages WHERE threadId=?",
+                          (thread["threadId"],))["format"] == "text"
+        assert store.append_feedback_message(thread["threadId"], "补充一句")["created"] is True
+        assert [message["format"] for message in
+                store.feedback_thread(thread["threadId"], None)["messages"]] == ["text", "text"]
+    finally:
+        store.close()
+
+
+def test_the_format_travels_through_every_message_read_path(tmp_path):
+    """`html` 要在**每一条**线程 payload 的留言里出来（详情/凭据/设备/清单）。"""
+    store = Store(str(tmp_path / "state.db"))
+    try:
+        thread = store.create_feedback_thread(ticket_hash=sha256_hex("fk_one"), text="日报没收到",
+                                              device_id="dev_1", account_id="acc_1", at=1_000)
+        store.append_feedback_message(thread["threadId"], "<h1>日报</h1>", author="owner",
+                                      format="html", at=2_000)
+        expected = ["text", "html"]
+        assert [m["format"] for m in
+                store.feedback_thread(thread["threadId"], None)["messages"]] == expected
+        assert [m["format"] for m in store.feedback_thread(
+            thread["threadId"], sha256_hex("fk_one"))["messages"]] == expected
+        assert [m["format"] for m in store.feedback_threads_by_tickets(
+            [(thread["threadId"], sha256_hex("fk_one"))])[0]["messages"]] == expected
+        assert [m["format"] for m in
+                store.feedback_threads_by_device("dev_1", "acc_1")[0]["messages"]] == expected
+        assert [m["format"] for m in
+                store.list_feedback_threads(messages_per_thread=5)[0]["messages"]] == expected
+        # 摘要只带首条留言的格式（线程行本身不带留言）。
+        assert store.feedback_digest([thread["threadId"]])[thread["threadId"]]["format"] == "text"
+    finally:
+        store.close()
+
+
+def test_format_defaults_to_text_and_ignores_surrounding_whitespace(tmp_path):
+    """默认 `text`；首尾空白去掉；空串与全空白与"没给"同义，不是错误。"""
+    store = Store(str(tmp_path / "state.db"))
+    try:
+        thread = store.create_feedback_thread(ticket_hash=sha256_hex("fk_one"), text="原文")
+        store.append_feedback_message(thread["threadId"], "默认", author="owner")
+        store.append_feedback_message(thread["threadId"], "带空白", author="owner",
+                                      format="  html\n")
+        store.append_feedback_message(thread["threadId"], "空串", author="owner", format="")
+        store.append_feedback_message(thread["threadId"], "全空白", author="owner", format="   ")
+        assert [m["format"] for m in
+                store.feedback_thread(thread["threadId"], None)["messages"]] == [
+                    "text", "text", "html", "text", "text"]
+
+        store.create_notice("正文", "通知", ["dev_1"], at=1_000)
+        store.create_notice("正文", "日报", ["dev_1"], format="html", at=2_000)
+        store.create_notice("正文", "带空白", ["dev_1"], format="  html\n", at=3_000)
+        assert [n["format"] for n in store.notices_for_device("dev_1")] == ["html", "html", "text"]
+    finally:
+        store.close()
+
+
+def test_an_unknown_format_is_refused_before_anything_is_written(tmp_path):
+    """取值只认 `text`/`html`：别的一律 StoreError，且**一条留言/通知都不留**。"""
+    store = Store(str(tmp_path / "state.db"))
+    try:
+        thread = store.create_feedback_thread(ticket_hash=sha256_hex("fk_one"), text="原文")
+        for bad in ("rtf", "HTML", "markdown", 12, ["text"], {"format": "text"}):
+            with pytest.raises(StoreError):
+                store.append_feedback_message(thread["threadId"], "不该进库", format=bad)
+            with pytest.raises(StoreError):
+                store.create_notice("不该进库", "通知", ["dev_1"], format=bad)
+        assert count(store, "SELECT COUNT(*) FROM feedbackMessages") == 1
+        assert count(store, "SELECT COUNT(*) FROM notices") == 0
+        assert count(store, "SELECT COUNT(*) FROM noticeDeliveries") == 0
     finally:
         store.close()

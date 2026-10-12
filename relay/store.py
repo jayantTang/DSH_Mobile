@@ -148,7 +148,11 @@ CREATE TABLE IF NOT EXISTS feedbackMessages (
   author     TEXT NOT NULL,
   body       TEXT NOT NULL,
   createdAt  INTEGER NOT NULL,
-  clientRef  TEXT UNIQUE
+  clientRef  TEXT UNIQUE,
+  -- 正文格式（富文本 2026-10-12）：`text`（手机按 Markdown 渲染）/ `html`（锁死的容器）。
+  -- **必须留在表的最后**：老库是靠 `_migrate_to_4` 的 `ALTER TABLE … ADD COLUMN` 补上它
+  -- 的，SQLite 把新列追加在末尾，写在中间会让"新建的库"与"迁移过来的库"列序不一致。
+  format     TEXT NOT NULL DEFAULT 'text'
 );
 CREATE INDEX IF NOT EXISTS feedbackMessagesByThread ON feedbackMessages(threadId, createdAt);
 
@@ -157,7 +161,9 @@ CREATE TABLE IF NOT EXISTS notices (
   subject    TEXT,
   body       TEXT NOT NULL,
   createdAt  INTEGER NOT NULL,
-  createdBy  TEXT
+  createdBy  TEXT,
+  -- 同 `feedbackMessages.format`：取值与"留在表末"的理由完全一样。
+  format     TEXT NOT NULL DEFAULT 'text'
 );
 
 CREATE TABLE IF NOT EXISTS noticeDeliveries (
@@ -192,6 +198,12 @@ DEFAULT_INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000
 #: 两处各有一份：接口层（`feedback.py`）按契约回 400，这里给 owner 侧命令把关。
 MAX_SUBJECT_CHARS = 80
 
+#: 正文格式（FR-034）的**唯一一份**取值定义：`text` 由手机按 Markdown 渲染，`html`
+#: 走 App 里那个锁死的 HTML 容器。接口层的 400、owner 侧命令的 `--format` 与两张表的
+#: 默认值都从这一份来，不要在各处再抄一遍字面量。
+FEEDBACK_FORMATS = ("text", "html")
+DEFAULT_FEEDBACK_FORMAT = "text"
+
 #: The schema generation this code expects, tracked in SQLite's own
 #: ``PRAGMA user_version``.
 #:
@@ -203,7 +215,7 @@ MAX_SUBJECT_CHARS = 80
 #: "no such column" — on a relay that had otherwise reported itself healthy.
 #: Bumping this number and adding a step to ``_MIGRATIONS`` is what turns that
 #: into a startup migration.
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 def _migrate_to_1(conn: sqlite3.Connection) -> None:
@@ -262,12 +274,30 @@ def _migrate_to_3(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE feedbackThreads ADD COLUMN subject TEXT")
 
 
+def _migrate_to_4(conn: sqlite3.Connection) -> None:
+    """富文本：``feedbackMessages`` 与 ``notices`` 各加 ``format``（正文格式）。
+
+    两张表一起补：一张装回信、一张装通知，取值口径相同（`text`/`html`）。幂等性照
+    ``_migrate_to_2``/``_migrate_to_3`` 的口径：``ADD COLUMN`` 在 SQLite 里没有
+    ``IF NOT EXISTS``，所以先查列。``NOT NULL DEFAULT 'text'`` 让老行直接读到 ``text``，
+    旧值一个都不动——回信与通知都是已经发出去的东西，不改写。
+
+    ``format`` 在 ``SCHEMA`` 里也是两张表的最后一列：`ALTER TABLE` 只追加到末尾，
+    写在中间会让迁移过来的库与新建的库列序分叉。
+    """
+    for table in ("feedbackMessages", "notices"):
+        existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if "format" not in existing:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN format TEXT NOT NULL DEFAULT 'text'")
+
+
 #: ``generation → function``, applied in order. Each step must be idempotent:
 #: a migration that fails after a partial commit is retried on the next start.
 _MIGRATIONS: dict[int, Any] = {
     1: _migrate_to_1,
     2: _migrate_to_2,
     3: _migrate_to_3,
+    4: _migrate_to_4,
 }
 
 _SCRYPT_N = 1 << 14
@@ -342,6 +372,26 @@ def clean_feedback_subject(subject: Any) -> str | None:
     if len(trimmed) > MAX_SUBJECT_CHARS:
         raise StoreError(f"subject may be at most {MAX_SUBJECT_CHARS} characters")
     return trimmed or None
+
+
+def clean_feedback_format(value: Any) -> str:
+    """正文格式（FR-034）：去首尾空白，空（或没给）按默认 `text`，别的一律 :class:`StoreError`。
+
+    "没给"与"给了空白"都算默认，而不是错误——两条写入路径（`append_feedback_message`/
+    `create_notice`）的默认值就是 `text`。取值只认 :data:`FEEDBACK_FORMATS`：多一个格式就
+    多一种 App 侧的渲染分支，不该由调用方随手发明。接口层（`feedback.py`）先按契约回 400，
+    这里是落到库前的最后一道。
+    """
+    if value is None:
+        return DEFAULT_FEEDBACK_FORMAT
+    if not isinstance(value, str):
+        raise StoreError("format must be a string")
+    trimmed = value.strip()
+    if not trimmed:
+        return DEFAULT_FEEDBACK_FORMAT
+    if trimmed not in FEEDBACK_FORMATS:
+        raise StoreError("format must be one of: " + ", ".join(FEEDBACK_FORMATS))
+    return trimmed
 
 
 def local_day(stamp: float | None = None) -> int:
@@ -1168,8 +1218,10 @@ class Store:
                 (thread_id, ticket_hash, account_id, device_id, app_version, device_model,
                  system_version, stamp, stamp, client_ref, clean_feedback_subject(subject)))
             self._conn.execute(
-                "INSERT INTO feedbackMessages(messageId, threadId, author, body, createdAt)"
-                " VALUES(?,?,'user',?,?)", (new_id("fm"), thread_id, text, stamp))
+                # 用户自己敲进来的正文永远是纯文本，所以 `format` 在这里**写死** `'text'`、
+                # 不给参数：App 那一侧没有别的格式可发（FR-034 只约束**我们**发出的正文）。
+                "INSERT INTO feedbackMessages(messageId, threadId, author, body, format, createdAt)"
+                " VALUES(?,?,'user',?,'text',?)", (new_id("fm"), thread_id, text, stamp))
             self._conn.commit()
         return {"threadId": thread_id, "createdAt": stamp, "lastMessageAt": stamp, "created": True}
 
@@ -1188,6 +1240,7 @@ class Store:
             return bool(cursor.rowcount)
 
     def append_feedback_message(self, thread_id: str, body: str, *, author: str = "user",
+                                format: str = DEFAULT_FEEDBACK_FORMAT,
                                 client_ref: str | None = None, bind_device_id: str | None = None,
                                 bind_account_id: str | None = None,
                                 at: int | None = None) -> dict[str, Any] | None:
@@ -1196,7 +1249,12 @@ class Store:
         `author='user'`（手机补充）把线程拨回 `open`，`author='owner'`（回信）置
         `replied`。`clientRef` 命中唯一索引时返回既有那条、不重复写。带设备时顺带
         补上匿名线程的绑定：匿名提交后来配对了，这台设备也能找回来。
+
+        `format` 是这条留言的正文格式（`:func:`clean_feedback_format`，默认 `text`）：
+        手机侧用户补充永远是 `text`，`html` 只走 owner 回的"报告类"回信。校验在读库之前，
+        非法取值不留半条留言。
         """
+        cleaned_format = clean_feedback_format(format)
         stamp = at or now_ms()
         with self._lock:
             thread = self._conn.execute("SELECT * FROM feedbackThreads WHERE threadId=?",
@@ -1215,8 +1273,9 @@ class Store:
                             "createdAt": int(existing["createdAt"]), "created": False}
             message_id = new_id("fm")
             self._conn.execute(
-                "INSERT INTO feedbackMessages(messageId, threadId, author, body, createdAt, clientRef)"
-                " VALUES(?,?,?,?,?,?)", (message_id, thread_id, author, body, stamp, client_ref))
+                "INSERT INTO feedbackMessages(messageId, threadId, author, body, format, createdAt,"
+                " clientRef) VALUES(?,?,?,?,?,?,?)",
+                (message_id, thread_id, author, body, cleaned_format, stamp, client_ref))
             self._conn.execute(
                 "UPDATE feedbackThreads SET lastMessageAt=?, status=? WHERE threadId=?",
                 (stamp, "replied" if author == "owner" else "open", thread_id))
@@ -1224,19 +1283,25 @@ class Store:
         return {"messageId": message_id, "threadId": thread_id, "createdAt": stamp, "created": True}
 
     def create_notice(self, body: str, subject: str | None, device_ids: Iterable[str], *,
+                      format: str = DEFAULT_FEEDBACK_FORMAT,
                       created_by: str | None = None, at: int | None = None) -> dict[str, Any]:
         """发一条通知，并给每台收件设备写一行未读投递（发送记录就在这两张表里）。
 
         收件人由调用方定（`admin.py` 的 `--all` 是全部未撤销设备）；这里只去重，
         不核对设备是否存在——投给一台刚被撤销的手机是调度问题，不是存储问题。
+
+        `format` 是这条通知的正文格式（`:func:`clean_feedback_format`，默认 `text`）；
+        `html` 给日报这类带图的正文用。
         """
+        cleaned_format = clean_feedback_format(format)
         stamp = at or now_ms()
         notice_id = new_id("nt")
         targets = list(dict.fromkeys(target for target in device_ids if target))
         with self._lock:
             self._conn.execute(
-                "INSERT INTO notices(noticeId, subject, body, createdAt, createdBy) VALUES(?,?,?,?,?)",
-                (notice_id, subject, body, stamp, created_by))
+                "INSERT INTO notices(noticeId, subject, body, format, createdAt, createdBy)"
+                " VALUES(?,?,?,?,?,?)",
+                (notice_id, subject, body, cleaned_format, stamp, created_by))
             self._conn.executemany(
                 "INSERT OR IGNORE INTO noticeDeliveries(noticeId, deviceId, createdAt) VALUES(?,?,?)",
                 [(notice_id, device_id, stamp) for device_id in targets])
@@ -1317,7 +1382,8 @@ class Store:
         """投给这台设备的通知，最近的在前；`read` 是**这台设备自己**的已读状态。"""
         rows = self._rows(
             "SELECT n.noticeId AS noticeId, n.subject AS subject, n.body AS body,"
-            " n.createdAt AS createdAt, n.createdBy AS createdBy, d.readAt AS readAt"
+            " n.format AS format, n.createdAt AS createdAt, n.createdBy AS createdBy,"
+            " d.readAt AS readAt"
             " FROM notices n JOIN noticeDeliveries d ON d.noticeId = n.noticeId"
             " WHERE d.deviceId=? ORDER BY n.createdAt DESC, n.noticeId DESC LIMIT ?",
             (device_id, limit))
@@ -1391,12 +1457,13 @@ class Store:
 
     def feedback_digest(self, thread_ids: Iterable[str], *, excerpt_chars: int = 80
                         ) -> dict[str, dict[str, Any]]:
-        """每条线程的**首条**留言摘要、主题与**首条** owner 回信时间；只读。
+        """每条线程的**首条**留言摘要、主题、格式与**首条** owner 回信时间；只读。
 
         `list_feedback_threads` 默认不带留言（清单只要摘要），而 owner 要的两个数都在
         消息表里：用户先说了什么（前 `excerpt_chars` 字）、我们隔了多久回第一句。一次
         查完，不逐线程再查一遍；不存在的 id 直接跳过。`subject` 在另一张表上，所以
         清单里那几行的主题也一并取回（为空仍是 NULL，由展示层用摘要兜底）。
+        `format` 是**首条留言**（`excerpt` 的来源）的正文格式，与 `excerpt` 同一条记录。
         """
         ids = list(dict.fromkeys(thread_id for thread_id in thread_ids if thread_id))
         if not ids:
@@ -1406,11 +1473,12 @@ class Store:
             f"SELECT threadId, subject FROM feedbackThreads WHERE threadId IN ({marks})", ids)}
         digest: dict[str, dict[str, Any]] = {}
         for row in self._rows(
-                "SELECT threadId, author, body, createdAt FROM feedbackMessages"
+                "SELECT threadId, author, body, format, createdAt FROM feedbackMessages"
                 f" WHERE threadId IN ({marks}) ORDER BY threadId, createdAt, rowid", ids):
             entry = digest.setdefault(row["threadId"],
                                       {"subject": subjects.get(row["threadId"]),
                                        "excerpt": row["body"][:excerpt_chars],
+                                       "format": row["format"],
                                        "firstReplyAt": None})
             if row["author"] == "owner" and entry["firstReplyAt"] is None:
                 entry["firstReplyAt"] = int(row["createdAt"])
@@ -1436,7 +1504,11 @@ class Store:
 
     def _feedback_payload(self, row: sqlite3.Row, messages_per_thread: int = 50) -> dict[str, Any]:
         """一行线程（含 `subject`，可为 None）+ 最近 N 条留言（按时间升序）
-        + 用户侧未读 + 留言总数。"""
+        + 用户侧未读 + 留言总数。
+
+        留言整行取出（`SELECT *`），所以每条都自带 `format`——清单/凭据/设备三条读路径
+        共用这一个形状，没有第二处要补列的渲染。
+        """
         thread_id = row["threadId"]
         messages: list[dict[str, Any]] = []
         if messages_per_thread > 0:

@@ -138,6 +138,10 @@ struct FeedbackMirror: Codable, Sendable, Equatable {
         var messageId: String
         var author: String
         var body: String
+        /// 正文格式（FR-034）。可选，理由同上面 `subject`：老镜像文件里没有这一项，
+        /// 缺字段按 `text` 渲染。**必须存**——离线时渲染路径只有这份 JSON 可依据，
+        /// 丢了它 HTML 报告就会退成 Markdown 原文（FR-034 要求两种格式离线照常渲染）。
+        var format: String? = nil
         var createdAt: Date
     }
 
@@ -145,6 +149,8 @@ struct FeedbackMirror: Codable, Sendable, Equatable {
         var noticeId: String
         var subject: String?
         var body: String
+        /// 同上：报告类通知靠它才能在离线时仍走 HTML 容器。
+        var format: String? = nil
         var createdAt: Date
     }
 
@@ -174,12 +180,14 @@ extension FeedbackMirror.Thread {
 }
 
 extension FeedbackMirror.Message {
-    /// 镜像里的 `author` 存线上原样的字符串（`user` / `owner`）。
+    /// 镜像里的 `author` 存线上原样的字符串（`user` / `owner`）；`format` 也按线上那套
+    /// 归一后的取值存（`text` / `html`）。
     init(_ message: FeedbackMessage) {
         self.init(
             messageId: message.messageId,
             author: message.author.rawValue,
             body: message.body,
+            format: message.bodyFormat.rawValue,
             createdAt: message.createdAt ?? Date(timeIntervalSince1970: 0)
         )
     }
@@ -191,6 +199,7 @@ extension FeedbackMirror.Notice {
             noticeId: notice.noticeId,
             subject: notice.subject,
             body: notice.body,
+            format: notice.bodyFormat.rawValue,
             createdAt: notice.createdAt ?? Date(timeIntervalSince1970: 0)
         )
     }
@@ -269,6 +278,7 @@ extension FeedbackMirror {
                     messageId: message.messageId,
                     author: FeedbackMessage.Author(rawValue: message.author) ?? .unknown,
                     body: message.body,
+                    format: message.format,
                     createdAt: message.createdAt
                 )
             }
@@ -302,7 +312,8 @@ extension FeedbackMirror {
         return notices
             .map { stored in
                 FeedbackNotice(noticeId: stored.noticeId, subject: stored.subject,
-                               body: stored.body, createdAt: stored.createdAt,
+                               body: stored.body, format: stored.format,
+                               createdAt: stored.createdAt,
                                read: read.contains(stored.noticeId))
             }
             .sorted { ($0.createdAt ?? .distantPast) > ($1.createdAt ?? .distantPast) }

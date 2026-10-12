@@ -188,7 +188,7 @@ def test_v1_gains_the_push_columns_without_losing_rows(tmp_path):
 
     store = Store(path)
     try:
-        assert user_version(path) == SCHEMA_VERSION == 3
+        assert user_version(path) == SCHEMA_VERSION == 4
         columns = {row[1] for row in store._rows("PRAGMA table_info(devices)")}
         assert PUSH_COLUMNS <= columns, f"缺列：{PUSH_COLUMNS - columns}"
 
@@ -300,7 +300,7 @@ def test_v2_gains_the_subject_column_without_touching_the_old_rows(tmp_path):
 
     store = Store(path)
     try:
-        assert user_version(path) == SCHEMA_VERSION == 3
+        assert user_version(path) == SCHEMA_VERSION == 4
         columns = {row[1] for row in store._rows("PRAGMA table_info(feedbackThreads)")}
         assert "subject" in columns, "缺列：subject"
 
@@ -336,6 +336,168 @@ def test_the_subject_migration_is_idempotent(tmp_path):
         conn.commit()
     finally:
         conn.close()
+
+
+#: v3 时代的反馈表（富文本加 `format` 之前）：`feedbackThreads` 已经有 `subject`，
+#: `feedbackMessages` 与 `notices` 都还没有 `format`。手工建，不用 `Store`——store 建出来
+#: 的库已经带版本号与新列，证明不了迁移。
+_FEEDBACK_V3 = """
+CREATE TABLE feedbackThreads (
+  threadId       TEXT PRIMARY KEY,
+  ticketHash     TEXT NOT NULL UNIQUE,
+  accountId      TEXT,
+  deviceId       TEXT,
+  appVersion     TEXT,
+  deviceModel    TEXT,
+  systemVersion  TEXT,
+  createdAt      INTEGER NOT NULL,
+  lastMessageAt  INTEGER NOT NULL,
+  ownerReadAt    INTEGER,
+  userReadAt     INTEGER,
+  status         TEXT NOT NULL DEFAULT 'open',
+  clientRef      TEXT UNIQUE,
+  subject        TEXT
+);
+CREATE TABLE feedbackMessages (
+  messageId  TEXT PRIMARY KEY,
+  threadId   TEXT NOT NULL,
+  author     TEXT NOT NULL,
+  body       TEXT NOT NULL,
+  createdAt  INTEGER NOT NULL,
+  clientRef  TEXT UNIQUE
+);
+CREATE TABLE notices (
+  noticeId   TEXT PRIMARY KEY,
+  subject    TEXT,
+  body       TEXT NOT NULL,
+  createdAt  INTEGER NOT NULL,
+  createdBy  TEXT
+);
+CREATE TABLE noticeDeliveries (
+  noticeId   TEXT NOT NULL,
+  deviceId   TEXT NOT NULL,
+  createdAt  INTEGER NOT NULL,
+  readAt     INTEGER,
+  PRIMARY KEY (noticeId, deviceId)
+);
+"""
+
+#: v3 的留言行（6 列，没有 format）。用来核对迁移之后**整行**没被动过。
+_V3_MESSAGE = ("fm_old", "th_old", "user", "老反馈", 1700000000000, None)
+
+#: v3 的通知行（5 列，没有 format）。
+_V3_NOTICE = ("nt_old", "老通知", "正文", 1700000000000, "admin.py")
+
+V3_MESSAGE_COLUMNS = ("messageId", "threadId", "author", "body", "createdAt", "clientRef")
+V3_NOTICE_COLUMNS = ("noticeId", "subject", "body", "createdAt", "createdBy")
+
+#: 两张表迁移之后多出来的那一列（必须落在末尾）。
+FORMAT_COLUMN = "format"
+
+
+def write_v3_database(path: str) -> None:
+    """A database at generation 3, with a message and a notice already in it."""
+    conn = sqlite3.connect(path)
+    conn.executescript(_FEEDBACK_V3)
+    conn.execute(f"INSERT INTO feedbackThreads VALUES ({','.join('?' * len(_V2_THREAD))}, ?)",
+                 (*_V2_THREAD, "用户写的主题"))
+    conn.execute(f"INSERT INTO feedbackMessages VALUES ({','.join('?' * len(_V3_MESSAGE))})",
+                 _V3_MESSAGE)
+    conn.execute(f"INSERT INTO notices VALUES ({','.join('?' * len(_V3_NOTICE))})", _V3_NOTICE)
+    conn.execute("INSERT INTO noticeDeliveries VALUES ('nt_old', 'dev_old', 1700000000000, NULL)")
+    conn.execute("PRAGMA user_version = 3")
+    conn.commit()
+    conn.close()
+
+
+def test_v3_gains_the_format_column_on_both_tables_without_touching_the_old_rows(tmp_path):
+    """富文本（2026-10-12 第四轮）：v3→v4 迁移，两张表各加 `format`。
+
+    回信（`feedbackMessages`）与通知（`notices`）都可能带 `html`，所以两张表都要补。
+    核心断言与前两次迁移一样是**旧行数据不丢**：`CREATE TABLE IF NOT EXISTS` 对"加一列"
+    是静默无效的，升级后的部署会带着缺列的表起来——中转报告自己健康，直到第一次写那一列
+    才在运行时报 "no such column"。旧行拿不到旧值就是改写历史：那些信与通知已经发出去了。
+    """
+    path = str(tmp_path / "v3.db")
+    write_v3_database(path)
+    assert user_version(path) == 3, "前提：这个库是 v3"
+    conn = sqlite3.connect(path)
+    try:
+        before_message = conn.execute("SELECT * FROM feedbackMessages").fetchone()
+        before_notice = conn.execute("SELECT * FROM notices").fetchone()
+    finally:
+        conn.close()
+
+    store = Store(path)
+    try:
+        assert user_version(path) == SCHEMA_VERSION == 4
+        for table in ("feedbackMessages", "notices"):
+            columns = [row[1] for row in store._rows(f"PRAGMA table_info({table})")]
+            assert FORMAT_COLUMN in columns, f"{table} 缺列：format"
+            assert columns[-1] == FORMAT_COLUMN, f"{table} 的 format 必须在最后一列"
+
+        # 旧行整行不动（含每一个旧列的值），新列取默认 `text`。
+        message = store.feedback_thread("th_old", None, messages_per_thread=1)["messages"][0]
+        assert message["format"] == "text", "已经发出去的信不会被改写成别的格式"
+        assert tuple(message[column] for column in V3_MESSAGE_COLUMNS) == before_message
+        # 通知走设备维度读：老通知在那台设备的收件箱里，格式同样是 text。
+        (notice,) = store.notices_for_device("dev_old")
+        assert notice["format"] == "text"
+        assert tuple(notice[column] for column in V3_NOTICE_COLUMNS) == before_notice
+        # 摘要（日报/清单的那一份）也带得出格式。
+        assert store.feedback_digest(["th_old"])["th_old"]["format"] == "text"
+
+        # 迁移后的两张表立刻可用：写一条 html 回信与一条 html 通知都走通。
+        written = store.append_feedback_message("th_old", "<h1>报告</h1>", author="owner",
+                                                format="html")
+        assert store.feedback_thread("th_old", None)["messages"][-1]["format"] == "html"
+        assert written["messageId"].startswith("fm_")
+        store.create_notice("<h1>日报</h1>", "日报", ["dev_old"], format="html")
+        assert store.notices_for_device("dev_old")[0]["format"] == "html"
+    finally:
+        store.close()
+
+
+def test_the_format_migration_is_idempotent(tmp_path):
+    """v3→v4 的 `ADD COLUMN` 同样不是幂等的：重复跑必须自己发现列已存在。"""
+    path = str(tmp_path / "v3.db")
+    write_v3_database(path)
+    Store(path).close()
+    for _ in range(3):
+        Store(path).close()
+    assert user_version(path) == SCHEMA_VERSION
+
+    import store as store_module
+    conn = sqlite3.connect(path)
+    try:
+        store_module._migrate_to_4(conn)  # noqa: SLF001 - 就是这个幂等性要在测
+        store_module._migrate_to_4(conn)  # noqa: SLF001
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_the_format_columns_of_a_migrated_database_match_a_fresh_one(tmp_path):
+    """迁移过来的两张表与新库逐列一致（列序也要一致）。
+
+    `ALTER TABLE … ADD COLUMN` 把新列追加在末尾，所以 `format` 在 `SCHEMA` 里也必须写在
+    最后；写在中间会让两个部署的行形状分叉（第三条读路径全靠 `SELECT *` 取这一列）。
+    """
+    migrated = str(tmp_path / "migrated.db")
+    write_v3_database(migrated)
+    Store(migrated).close()
+    fresh = str(tmp_path / "fresh.db")
+    Store(fresh).close()
+
+    def shape(path: str, table: str) -> list[tuple]:
+        conn = sqlite3.connect(path)
+        try:
+            return [tuple(row) for row in conn.execute(f"PRAGMA table_info({table})")]
+        finally:
+            conn.close()
+
+    for table in ("feedbackMessages", "notices"):
+        assert shape(migrated, table) == shape(fresh, table), table
 
 
 def test_the_migrated_feedback_table_matches_a_fresh_one_column_for_column(tmp_path):

@@ -20,8 +20,13 @@ const STATUS_LABEL = { open: '待回复', replied: '已回复' }
 
 const STYLE = `
 * { box-sizing: border-box; }
+/* 字体里**不要**写 \`-apple-system\`：在 App 那个锁死的 WKWebView 里，一旦点名它，
+   中文会整片变成方框（拉丁字符照旧）——同一页里默认字体、\`"PingFang SC"\`、\`sans-serif\`
+   三种写法的中文都正常，只有带 \`-apple-system\` 的两行是方框（2026-10-12 在仿真器上逐行对比过）。
+   报告要同时在桌面浏览器与手机里好看，就按 \`"PingFang SC"\` 打头、后面接通用族。 */
 body { margin: 0 auto; padding: 24px 20px 64px; max-width: 1080px; background: #f9fafb; color: #111827;
-  font: 15px/1.55 -apple-system, "PingFang SC", "Helvetica Neue", Arial, sans-serif; }
+  font-family: "PingFang SC", "Helvetica Neue", Arial, sans-serif;
+  font-size: 15px; line-height: 1.55; }
 h1 { margin: 0 0 4px; font-size: 22px; }
 h2 { margin: 28px 0 10px; padding-bottom: 6px; border-bottom: 1px solid #e5e7eb; font-size: 17px; }
 p.meta { margin: 0; color: #6b7280; font-size: 13px; }
@@ -34,7 +39,7 @@ figure.chart figcaption { margin-bottom: 6px; }
 figure.chart .note { margin-left: 8px; color: #6b7280; font-size: 12px; }
 figure.chart svg { display: block; width: 100%; height: auto; }
 figure.chart svg.narrow { max-width: 560px; }
-svg text { font: 11px -apple-system, "PingFang SC", Arial, sans-serif; fill: #6b7280; }
+svg text { font-family: "PingFang SC", Arial, sans-serif; font-size: 11px; fill: #6b7280; }
 svg text.legend { font-size: 12px; fill: #374151; }
 svg text.donutTotal { font-size: 24px; fill: #111827; }
 section.block { margin-top: 26px; }

@@ -14,6 +14,10 @@
 ``inbox``/``read`` 用更宽的读桶；命中限流**不写库**。正文、字段与请求体的上限见下面的
 常量，与 ``specs/014-feedback-channel/contracts/feedback-http.md`` 逐字一致。
 
+正文格式（FR-034）：**我们**发出的正文（owner 回信、通知）自带 ``format``，取值只认
+``store.FEEDBACK_FORMATS``（``text`` 由手机按 Markdown 渲染 / ``html`` 走锁死的容器），
+非法取值按契约回 400；用户自己提交的正文永远是 ``text``，不进这条分支。
+
 SQL 全在 :mod:`store` 里（本模块只管 HTTP、校验与授权）。
 """
 
@@ -28,7 +32,8 @@ from typing import Any
 from aiohttp import web
 
 from api import ClaimLimiter, bearer_token, client_identifier, json_error, read_json
-from store import MAX_SUBJECT_CHARS, Conflict, Store, StoreError, sha256_hex
+from store import (DEFAULT_FEEDBACK_FORMAT, MAX_SUBJECT_CHARS, Conflict, Store, StoreError,
+                   clean_feedback_format, sha256_hex)
 
 LOGGER = logging.getLogger("relay.feedback")
 
@@ -161,6 +166,25 @@ def _tech_of(body: dict[str, Any], key: str) -> tuple[str | None, web.Response |
     return value or None, None
 
 
+def _format_of(body: dict[str, Any]) -> tuple[str | None, web.Response | None]:
+    """请求体里可选的 ``format``；非法取值按契约回 400，缺字段回 ``None``。
+
+    契约里带 ``format`` 的是**我们发出**的正文（回信与通知），用户提交的正文永远是
+    ``text``：所以这里的返回值只用来校验，写入路径两处都是写死的 ``text``。给一个
+    我们不认的值（"rtf"、数字、空白以外的东西）在这里就按 400 拒掉，而不是存进库、
+    等 App 的渲染分支去猜。
+
+    规范化（去首尾空白、空 → 默认）走 :func:`store.clean_feedback_format`，与 owner
+    侧命令、两张表的默认值共用同一份取值定义。
+    """
+    if body.get("format") is None:
+        return None, None
+    try:
+        return clean_feedback_format(body.get("format")), None
+    except StoreError:
+        return None, json_error(400, "feedback/bad-request", "format must be text or html")
+
+
 def _client_ref_of(body: dict[str, Any]) -> tuple[str | None, web.Response | None]:
     """幂等键：≤64 且只允许 ``[A-Za-z0-9._-]``（空字符串等于没带）。"""
     value = body.get("clientRef")
@@ -228,6 +252,8 @@ def _public_thread(thread: dict[str, Any]) -> dict[str, Any]:
     """只留契约里的字段：``ticketHash`` 与来源信息这类内部列不得出网。
 
     ``subject`` 是可选主题，没填就是 ``null``——服务端不替客户端补正文首句。
+    ``messages[].format`` 是那条留言的正文格式（FR-034）；缺列按 ``text`` 兜底，
+    老 App 拿到它也不会比拿不到更糟。
     """
     return {
         "threadId": thread["threadId"],
@@ -238,7 +264,9 @@ def _public_thread(thread: dict[str, Any]) -> dict[str, Any]:
         "unread": thread["unread"],
         "messages": [
             {"messageId": message["messageId"], "author": message["author"],
-             "body": message["body"], "createdAt": message["createdAt"]}
+             "body": message["body"],
+             "format": message.get("format") or DEFAULT_FEEDBACK_FORMAT,
+             "createdAt": message["createdAt"]}
             for message in thread.get("messages", [])
         ],
     }
@@ -246,6 +274,7 @@ def _public_thread(thread: dict[str, Any]) -> dict[str, Any]:
 
 def _public_notice(notice: dict[str, Any]) -> dict[str, Any]:
     return {"noticeId": notice["noticeId"], "subject": notice["subject"], "body": notice["body"],
+            "format": notice.get("format") or DEFAULT_FEEDBACK_FORMAT,
             "createdAt": notice["createdAt"], "read": bool(notice["read"])}
 
 
@@ -297,6 +326,10 @@ async def feedback_submit(request: web.Request) -> web.Response:
     if error is not None:
         return error
     subject, error = _subject_of(body)
+    if error is not None:
+        return error
+    # 用户提交的正文永远是 `text`（见 `_format_of`）：这里只把不合法的取值挡在 400。
+    _, error = _format_of(body)
     if error is not None:
         return error
     fields: dict[str, str | None] = {}
@@ -362,6 +395,10 @@ async def feedback_append(request: web.Request) -> web.Response:
             or not isinstance(ticket, str) or not ticket:
         return json_error(400, "feedback/bad-request", "threadId and ticketKey are required")
     text, error = _text_of(body)
+    if error is not None:
+        return error
+    # 与 `submit` 同一条：用户补充的正文永远是 `text`，只校验取值合不合法。
+    _, error = _format_of(body)
     if error is not None:
         return error
     client_ref, error = _client_ref_of(body)

@@ -168,6 +168,8 @@ def test_ops_report_counts_feedback_and_the_median_first_reply(tmp_path, capsys)
     assert report["feedback"]["threads"][0]["subject"] == "新建会话一直转圈", \
         "日报的线程行与 feedback-list 同形（含 subject）"
     assert report["feedback"]["threads"][1]["subject"] is None, "没填主题就是 null"
+    # FR-034：线程行带首条留言的格式（线程行不带留言，格式只能顺着摘要一起出来）。
+    assert [row["format"] for row in report["feedback"]["threads"]] == ["text", "text"]
     assert report["feedback"]["threads"][0]["source"]["kind"] == "anonymous"
     # 回信过但没人 `feedback-show` 过：用户原文在 owner 侧仍是"没看过"的一条。
     assert report["feedback"]["threads"][1]["ownerUnread"] == 1
@@ -204,19 +206,21 @@ def test_the_digest_read_method_gives_the_excerpt_and_the_first_reply_time(tmp_p
     """`ops-report` 与 `feedback-list` 共用它取"用户先说了什么"和"隔了多久回第一句"。
 
     主题（`subject`）也在这一份摘要里——它落在 `feedbackThreads` 上，而摘要在
-    `feedbackMessages` 上，所以这一次要一起取回来。
+    `feedbackMessages` 上，所以这一次要一起取回来；`format` 同理，而且是**首条**
+    留言的那一个（摘要取的就是首条）。
     """
     store = Store(str(tmp_path / "state.db"))
     try:
         thread = store.create_feedback_thread(ticket_hash=sha256_hex("fk_1"), text="x" * 100,
                                               subject="点了没反应", at=1_000)
         store.append_feedback_message(thread["threadId"], "回信", author="owner", at=2_000)
-        store.append_feedback_message(thread["threadId"], "再回一句", author="owner", at=3_000)
+        store.append_feedback_message(thread["threadId"], "<h1>报告</h1>", author="owner",
+                                      format="html", at=3_000)
 
         digest = store.feedback_digest([thread["threadId"], "th_nope", thread["threadId"]])
         assert set(digest) == {thread["threadId"]}, "重复的 id 只算一次，不存在的跳过"
         assert digest[thread["threadId"]] == {"subject": "点了没反应", "excerpt": "x" * 80,
-                                              "firstReplyAt": 2_000}
+                                              "format": "text", "firstReplyAt": 2_000}
         assert store.feedback_digest([]) == {}
     finally:
         store.close()

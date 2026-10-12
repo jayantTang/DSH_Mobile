@@ -25,8 +25,8 @@ from typing import Any
 from urllib.parse import quote
 
 from push import PushSender
-from store import (DEFAULT_INVITE_TTL_MS, DEFAULT_PAIR_TTL_MS, Store, StoreError, local_day,
-                   now_ms)
+from store import (DEFAULT_FEEDBACK_FORMAT, DEFAULT_INVITE_TTL_MS, DEFAULT_PAIR_TTL_MS,
+                   FEEDBACK_FORMATS, Store, StoreError, local_day, now_ms)
 
 #: The relay is published as a path prefix on the existing, already-certified
 #: site (no new DNS record, no new certificate).
@@ -206,6 +206,10 @@ def build_parser() -> argparse.ArgumentParser:
     feedback_reply.add_argument("--subject",
                                 help="replace the thread subject (≤80 chars; blank clears it);"
                                      " omit to keep the user's own")
+    feedback_reply.add_argument("--format", choices=FEEDBACK_FORMATS,
+                                default=DEFAULT_FEEDBACK_FORMAT,
+                                help="body format: text (the phone renders Markdown, the default)"
+                                     " or html (the locked-down container, for reports with images)")
     feedback_reply.add_argument("--template", action="store_true",
                                 help="print the official skeleton and write nothing")
     feedback_reply.add_argument("--signature", default=DEFAULT_SIGNATURE,
@@ -216,6 +220,10 @@ def build_parser() -> argparse.ArgumentParser:
     feedback_notify.add_argument("--body")
     feedback_notify.add_argument("--body-file")
     feedback_notify.add_argument("--subject")
+    feedback_notify.add_argument("--format", choices=FEEDBACK_FORMATS,
+                                 default=DEFAULT_FEEDBACK_FORMAT,
+                                 help="body format: text (Markdown on the phone, the default)"
+                                      " or html (the locked-down container)")
     feedback_notify.add_argument("--device", action="append", default=[],
                                  help="deviceId, may be repeated")
     feedback_notify.add_argument("--all", action="store_true",
@@ -394,7 +402,8 @@ def run(args: argparse.Namespace, store: Store) -> int:
             # 线程不存在时这里返回 False；下面的 append 同样返回 None，
             # 报的还是"thread not found"。
             store.set_feedback_subject(args.thread, args.subject)
-        written = store.append_feedback_message(args.thread, letter, author="owner")
+        written = store.append_feedback_message(args.thread, letter, author="owner",
+                                                format=args.format)
         if written is None:
             _emit({"ok": False, "error": "thread not found"})
             return 1
@@ -413,7 +422,8 @@ def run(args: argparse.Namespace, store: Store) -> int:
         if not args.yes:
             _emit({"ok": True, "dryRun": True, "recipients": len(targets), "devices": targets})
             return 0
-        notice = store.create_notice(body, args.subject, targets, created_by="admin.py")
+        notice = store.create_notice(body, args.subject, targets, format=args.format,
+                                     created_by="admin.py")
         _emit({"ok": True, "noticeId": notice["noticeId"], "recipients": notice["recipients"],
                "createdAt": int(notice["createdAt"])})
         return 0
@@ -572,6 +582,8 @@ def _feedback_rows(store: Store, *, status: str | None, since_ms: int | None,
 
     `subject` 是可选主题，用户没填就是 None（展示层用 `excerpt` 兜底）；
     `ops-report` 的 `feedback.threads[]` 照抄这一份，所以两处永远同形。
+    `format` 是 `excerpt` 那条留言（线程首条）的正文格式（FR-034）：线程行不带留言，
+    格式只能顺着摘要一起取；`feedback-show` 的每条留言各自带自己的 `format`。
     """
     unread = store.owner_unread_counts()
     rows = store.list_feedback_threads(status=status, since_ms=since_ms, limit=limit)
@@ -593,6 +605,7 @@ def _feedback_rows(store: Store, *, status: str | None, since_ms: int | None,
                 "systemVersion": row["systemVersion"],
             },
             "excerpt": digest.get(row["threadId"], {}).get("excerpt", ""),
+            "format": digest.get(row["threadId"], {}).get("format", DEFAULT_FEEDBACK_FORMAT),
             "messages": int(row["messageCount"]),
         }
         for row in rows
