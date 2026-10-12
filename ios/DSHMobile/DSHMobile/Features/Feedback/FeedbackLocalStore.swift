@@ -121,6 +121,9 @@ struct FeedbackMirror: Codable, Sendable, Equatable {
 
     struct Thread: Codable, Sendable, Equatable {
         var threadId: String
+        /// 可选，理由同 `RelayKit.FeedbackThread.subject`：老镜像文件与还没有这个
+        /// 字段的服务端都要能读，缺字段按未填处理。
+        var subject: String? = nil
         var status: String
         var createdAt: Date
         var lastMessageAt: Date
@@ -157,6 +160,7 @@ extension FeedbackMirror.Thread {
         let created = thread.createdAt ?? Date(timeIntervalSince1970: 0)
         self.init(
             threadId: thread.threadId,
+            subject: thread.subject,
             status: thread.status,
             createdAt: created,
             lastMessageAt: thread.lastMessageAt ?? created,
@@ -219,9 +223,10 @@ extension FeedbackMirror {
     }
 
     /// 提交成功后立刻把空线程塞进镜像，记录页不必等一次拉取就能看到它。
-    mutating func insert(threadId: String, createdAt: Date) {
+    /// 带着用户写的主题：提交响应里没有正文，主题是那一刻唯一能显示的东西。
+    mutating func insert(threadId: String, subject: String? = nil, createdAt: Date) {
         guard !threads.contains(where: { $0.threadId == threadId }) else { return }
-        threads.insert(Thread(threadId: threadId, status: "open", createdAt: createdAt,
+        threads.insert(Thread(threadId: threadId, subject: subject, status: "open", createdAt: createdAt,
                               lastMessageAt: createdAt, messages: []), at: 0)
     }
 
@@ -278,6 +283,7 @@ extension FeedbackMirror {
             }
             return FeedbackThread(
                 threadId: stored.threadId,
+                subject: stored.subject,
                 status: stored.status,
                 createdAt: stored.createdAt,
                 lastMessageAt: stored.lastMessageAt,
@@ -287,6 +293,17 @@ extension FeedbackMirror {
         }
         .sorted { ($0.lastMessageAt ?? $0.createdAt ?? .distantPast)
             > ($1.lastMessageAt ?? $1.createdAt ?? .distantPast) }
+    }
+
+    /// 单条 owner 留言是否还没看过。列表的蓝点按**每一封信**标，所以不能只看线程的
+    /// `unread`（那是整条线程的合计，一条线程里可能有多封回信）。
+    func isUnread(messageId: String) -> Bool {
+        !readOwnerMessageIds.contains(messageId)
+    }
+
+    /// 单条通知是否还没看过。
+    func isUnread(noticeId: String) -> Bool {
+        !readNoticeIds.contains(noticeId)
     }
 
     var displayNotices: [FeedbackNotice] {

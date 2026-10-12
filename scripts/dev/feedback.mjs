@@ -7,7 +7,7 @@
 //   node scripts/dev/feedback.mjs list [--status open|replied|all] [--limit 20] [--since 30]
 //   node scripts/dev/feedback.mjs show --thread th_x
 //   node scripts/dev/feedback.mjs template
-//   node scripts/dev/feedback.mjs reply --thread th_x --body-file /tmp/reply.txt [--send]
+//   node scripts/dev/feedback.mjs reply --thread th_x --body-file /tmp/reply.txt [--subject S] [--send]
 //   node scripts/dev/feedback.mjs notify --body-file /tmp/notice.txt [--subject S] [--all] [--yes]
 //   node scripts/dev/feedback.mjs delete --thread th_x [--yes]
 //   node scripts/dev/feedback.mjs report [--days 30] [--out maintainers/reports]
@@ -52,7 +52,7 @@ const USAGE = `用法：
   feedback.mjs list [--status open|replied|all] [--limit 20] [--since DAYS]
   feedback.mjs show --thread th_x
   feedback.mjs template
-  feedback.mjs reply --thread th_x (--body-file PATH | --body TEXT) [--send]
+  feedback.mjs reply --thread th_x (--body-file PATH | --body TEXT) [--subject S] [--send]
   feedback.mjs notify (--body-file PATH | --body TEXT) [--subject S] [--device ID]... [--all] [--yes]
   feedback.mjs delete --thread th_x [--yes]
   feedback.mjs report [--days 30] [--out DIR] [--install-agent | --uninstall-agent]
@@ -167,7 +167,10 @@ export function adminArgs({ sub, opts }, db) {
         ...(opts.since ? ['--since', String(opts.since)] : [])]
     case 'show': return [...head, 'feedback-show', '--thread', opts.thread]
     case 'template': return [...head, 'feedback-reply', '--template']
-    case 'reply': return [...head, 'feedback-reply', '--thread', opts.thread, '--body', opts.bodyText]
+    case 'reply':
+      // `--subject` 是回信给线程起的标题（邮件那一行）；不传就沿用用户写的那句。
+      return [...head, 'feedback-reply', '--thread', opts.thread, '--body', opts.bodyText,
+        ...(opts.subject ? ['--subject', opts.subject] : [])]
     case 'notify':
       return [...head, 'feedback-notify', '--body', opts.bodyText,
         ...(opts.subject ? ['--subject', opts.subject] : []),

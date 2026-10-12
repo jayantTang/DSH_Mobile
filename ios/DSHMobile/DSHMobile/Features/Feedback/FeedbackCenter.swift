@@ -111,16 +111,22 @@ final class FeedbackCenter {
 
     /// 提交一条反馈。网络超时后**重复调用是安全的**：同一条草稿复用同一个 `clientRef`，
     /// 服务端按它幂等，重试只产生一条反馈。失败即抛错，绝不假装成功。
+    ///
+    /// `subject` 是可选的标题行；空白按未填处理（服务端此刻可能还没有这个字段，
+    /// 缺字段不会让解析失败）。
     @discardableResult
-    func submit(text: String) async throws -> FeedbackTicket {
+    func submit(text: String, subject: String? = nil) async throws -> FeedbackTicket {
         guard let endpoint = endpointProvider() else {
             throw FeedbackClientError.network("no-relay-endpoint")
         }
         isSubmitting = true
         defer { isSubmitting = false }
         let info = Self.technicalInfo
+        let title = subject?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let kept = (title?.isEmpty ?? true) ? nil : title
         let ticket = try await client(endpoint).submit(
             text: text,
+            subject: kept,
             appVersion: info.appVersion,
             deviceModel: info.deviceModel,
             systemVersion: info.systemVersion,
@@ -133,7 +139,7 @@ final class FeedbackCenter {
             // 凭据没进 Keychain：这条反馈已经发出去了，但重装后本机取不回来。
             feedbackLog("ticket store failed: \(error)")
         }
-        mirror.insert(threadId: ticket.threadId, createdAt: ticket.createdAt ?? Date())
+        mirror.insert(threadId: ticket.threadId, subject: kept, createdAt: ticket.createdAt ?? Date())
         persistMirror()
         lastError = nil
         return ticket
@@ -253,6 +259,16 @@ final class FeedbackCenter {
 
     func notice(_ noticeId: String) -> FeedbackNotice? {
         notices.first { $0.noticeId == noticeId }
+    }
+
+    /// 单条回信的未读：列表按「哪封信没看过」标蓝点，服务端的 `unread` 只到线程粒度。
+    func isUnread(messageId: String) -> Bool {
+        mirror.isUnread(messageId: messageId)
+    }
+
+    /// 单条通知的未读。
+    func isUnread(noticeId: String) -> Bool {
+        mirror.isUnread(noticeId: noticeId)
     }
 
     /// 本机保存了几条取件凭据。0 表示这台手机没有历史记录可取（换机且未配对）。

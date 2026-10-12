@@ -123,6 +123,7 @@ struct RelayFeedbackTests {
 
         let ticket = try await client().submit(
             text: "点了新建会话之后一直转圈",
+            subject: "新建会话一直转圈",
             appVersion: "1.2 (345)",
             deviceModel: "iPhone15,4",
             systemVersion: "18.2",
@@ -137,6 +138,7 @@ struct RelayFeedbackTests {
 
         let body = try jsonBody()
         #expect(body["text"] as? String == "点了新建会话之后一直转圈")
+        #expect(body["subject"] as? String == "新建会话一直转圈")
         #expect(body["appVersion"] as? String == "1.2 (345)")
         #expect(body["deviceModel"] as? String == "iPhone15,4")
         #expect(body["systemVersion"] as? String == "18.2")
@@ -147,6 +149,66 @@ struct RelayFeedbackTests {
         #expect(ticket.ticketKey == "fk_3nQ")
         // Milliseconds since the epoch, converted the way `RelayDevice` does it.
         #expect(ticket.createdAt == Date(timeIntervalSince1970: 1_760_000_000))
+    }
+
+    @Test("an omitted or blank subject never reaches the body")
+    func subjectIsOmittedWhenBlank() async throws {
+        Stub.reset([.init(status: 200, body: Data(
+            #"{"ok":true,"threadId":"th_s","ticketKey":"fk_s","createdAt":1760000000000}"#.utf8
+        ))])
+        _ = try await client().submit(text: "先看看", subject: "   ")
+        let blank = try jsonBody()
+        // `nil` in the JSON body: a relay that predates `subject` sees the old request.
+        #expect(blank.keys.contains("subject") == false || blank["subject"] is NSNull)
+
+        Stub.reset([.init(status: 200, body: Data(
+            #"{"ok":true,"threadId":"th_s","ticketKey":"fk_s","createdAt":1760000000000}"#.utf8
+        ))])
+        _ = try await client().submit(text: "先看看")
+        #expect(try jsonBody().keys.contains("subject") == false || jsonBody()["subject"] is NSNull)
+    }
+
+    @Test("a relay without the subject field still decodes a thread")
+    func threadSubjectIsOptional() async throws {
+        // The answer a relay that has not learned `subject` yet sends: no such
+        // key anywhere. It must decode, and the subject must read as absent.
+        Stub.reset([.init(status: 200, body: Data("""
+        {"ok":true,"unreadCount":0,
+         "threads":[{"threadId":"th_1","status":"open","createdAt":1750000000000,
+          "lastMessageAt":1750000000000,"unread":0,
+          "messages":[{"messageId":"fm_1","author":"user","body":"没有主题","createdAt":1750000000000}]}],
+         "notices":[]}
+        """.utf8))])
+
+        let inbox = try await client().inbox(tickets: [ticket()])
+        #expect(inbox.threads.first?.subject == nil)
+        #expect(inbox.threads.first?.messages.first?.body == "没有主题")
+
+        // And when the relay does send one, it comes through.
+        Stub.reset([.init(status: 200, body: Data("""
+        {"ok":true,"unreadCount":0,
+         "threads":[{"threadId":"th_1","subject":"新建会话一直转圈","status":"open",
+          "createdAt":1750000000000,"lastMessageAt":1750000000000,"unread":0,
+          "messages":[]}],
+         "notices":[]}
+        """.utf8))])
+        let titled = try await client().inbox(tickets: [ticket()])
+        #expect(titled.threads.first?.subject == "新建会话一直转圈")
+    }
+
+    @Test("a subject in the answer round-trips through a thread's own coding")
+    func threadSubjectRoundTrip() throws {
+        let thread = FeedbackThread(
+            threadId: "th_1", subject: "主题", status: "replied",
+            createdAt: Date(timeIntervalSince1970: 1), lastMessageAt: nil,
+            unread: 0, messages: []
+        )
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .millisecondsSince1970
+        let data = try encoder.encode(thread)
+        let decoded = try JSONDecoder().decode(FeedbackThread.self, from: data)
+        #expect(decoded.subject == "主题")
+        #expect(decoded == thread)
     }
 
     @Test("an unpaired phone submits without an Authorization header")

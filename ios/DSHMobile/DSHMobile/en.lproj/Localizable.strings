@@ -674,3 +674,23 @@ It is registered as a workspace first, so a new group appears in the desktop sid
 "从这台手机移除" = "Remove from this phone";
 "移除本机记录？" = "Remove records from this phone?";
 "移除后这台手机再也取不回这些记录；服务器上的副本要另行联系我们删除。" = "After removing them, this phone can never read these records again; to delete the copies on our server, contact us.";
+
+/* 014 反馈通道：界面重做（T068/T069/T070，2026-10-12 设计稿） */
+"写反馈" = "New feedback";
+"收件人" = "To";
+"只发给我们，不公开" = "Only we see this";
+"主题" = "Subject";
+"一句话标题（可选）" = "One-line title (optional)";
+"描述你遇到的问题，或者你想要的功能…" = "Describe the problem you hit, or the feature you would like…";
+"随信附带" = "Attached";
+"展开" = "Show";
+"App 版本、机型、iOS 这三项是排障需要的，不包含任何会话内容。正文会存到我们的服务器，用来回复你。" = "The app version, device model and iOS version help us diagnose the problem; nothing from your conversations is included. Your text is stored on our server so we can reply.";
+"栏目" = "Section";
+"收件箱" = "Inbox";
+"收件箱 %lld" = "Inbox %lld";
+"已发送" = "Sent";
+"还没有发出过反馈。点右上角的笔，写下第一条。" = "You have not sent any feedback yet. Tap the pen at the top right to write the first one.";
+"从这台手机移除记录…" = "Remove records from this phone…";
+"写回复" = "Write a reply";
+/* 回信行没有主题时的兜底标题（拿用户自己那句话，像邮件的「关于：…」） */
+"关于你的反馈：%@" = "About your feedback: %@";

@@ -74,6 +74,13 @@ public struct FeedbackMessage: Sendable, Hashable, Identifiable, Codable {
 /// One feedback thread, as the relay returns it in an inbox answer.
 public struct FeedbackThread: Sendable, Hashable, Identifiable, Codable {
     public let threadId: String
+    /// The one-line title the sender wrote, when they wrote one.
+    ///
+    /// Optional on purpose: the relay learned this field after the first phones
+    /// shipped, so an answer from a relay that does not have it yet must decode
+    /// rather than fail. Empty is treated as absent by the UI, which falls back
+    /// to the first sentence of the body.
+    public let subject: String?
     /// `open` (待回复) or `replied` (已回复); kept as the server's raw string.
     public let status: String
     public let createdAt: Date?
@@ -89,6 +96,7 @@ public struct FeedbackThread: Sendable, Hashable, Identifiable, Codable {
 
     public init(
         threadId: String,
+        subject: String? = nil,
         status: String,
         createdAt: Date?,
         lastMessageAt: Date?,
@@ -96,6 +104,7 @@ public struct FeedbackThread: Sendable, Hashable, Identifiable, Codable {
         messages: [FeedbackMessage]
     ) {
         self.threadId = threadId
+        self.subject = subject
         self.status = status
         self.createdAt = createdAt
         self.lastMessageAt = lastMessageAt
@@ -104,12 +113,14 @@ public struct FeedbackThread: Sendable, Hashable, Identifiable, Codable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case threadId, status, createdAt, lastMessageAt, unread, messages
+        case threadId, subject, status, createdAt, lastMessageAt, unread, messages
     }
 
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         threadId = try container.decode(String.self, forKey: .threadId)
+        // Missing, null and wrong-typed all mean "no subject" — never a failure.
+        subject = try? container.decodeIfPresent(String.self, forKey: .subject)
         status = (try? container.decode(String.self, forKey: .status)) ?? "open"
         createdAt = RelayDevice.date(fromMilliseconds: try? container.decodeIfPresent(Int.self, forKey: .createdAt))
         lastMessageAt = RelayDevice.date(fromMilliseconds: try? container.decodeIfPresent(Int.self, forKey: .lastMessageAt))
@@ -260,8 +271,14 @@ public struct RelayFeedbackClient: Sendable {
     ///
     /// `clientRef` is the idempotency key: retrying the same reference returns the
     /// thread that already exists instead of a second one.
+    ///
+    /// `subject` is the optional one-line title. Whitespace-only is the same as
+    /// absent (the contract says so), and an absent subject is **omitted** from
+    /// the body rather than sent as null — a relay that predates the field must
+    /// see exactly the request it used to see.
     public func submit(
         text: String,
+        subject: String? = nil,
         appVersion: String? = nil,
         deviceModel: String? = nil,
         systemVersion: String? = nil,
@@ -269,6 +286,7 @@ public struct RelayFeedbackClient: Sendable {
     ) async throws -> FeedbackTicket {
         struct Request: Encodable {
             let text: String
+            let subject: String?
             let appVersion: String?
             let deviceModel: String?
             let systemVersion: String?
@@ -281,8 +299,11 @@ public struct RelayFeedbackClient: Sendable {
             let createdAt: Int?
             let error: DSHRPCFailure?
         }
+        let title = subject?.trimmingCharacters(in: .whitespacesAndNewlines)
         let data = try await post("/feedback/submit", Request(
-            text: text, appVersion: appVersion, deviceModel: deviceModel,
+            text: text,
+            subject: (title?.isEmpty ?? true) ? nil : title,
+            appVersion: appVersion, deviceModel: deviceModel,
             systemVersion: systemVersion, clientRef: clientRef
         ))
         let answer = try decode(Answer.self, from: data)
