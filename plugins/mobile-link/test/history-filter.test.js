@@ -45,9 +45,11 @@ function fakeQuery(log, { withFilter = true } = {}) {
     query.filterEvents = async (sessionId, filters) => {
       const range = (filters ?? []).find((filter) => filter.kind === 'seq')
       if (range === undefined) return []
+      // **照真实宿主：文档不带 `data`**（只有 seq/type/text）。角色判定必须回到原始事件上做，
+      // 否则 `data.source` 缺失会让注入消息被算成 `me`——这条差异真机上发生过。
       return log
         .filter((event) => event.seq >= range.from && event.seq <= range.to && MESSAGE_TYPES.has(event.type))
-        .map(({ seq, type, time, data }) => ({ sessionId, seq, type, time, data }))
+        .map(({ seq, type, time }) => ({ sessionId, seq, type, time }))
     }
   }
   return query
@@ -216,4 +218,26 @@ test('游标远大于日志（投影 asOfSeq 的情形）必须 clamp，不能�
     'clamp 之后要给的是日志最新的那批 me（页内升序）')
   assert.ok(page.value.scanBoundary <= 1168, `边界必须落在真实范围内，实得 ${page.value.scanBoundary}`)
   assert.equal(page.value.hasMore, true)
+})
+
+test('注入型消息不许被算成"我"（doc 不带 data 时尤其要守住）', async () => {
+  // seq 8 是一条 `user/message`，但来源是宿主注入（source.kind = agent-instructions），
+  // 与"用户本人提问"必须区分开——spec 009 修过的就是这个（实测占 user/message 的 24%）。
+  const log = makeLog(60).map((event, seq) => {
+    if (seq % 4 !== 0) return event
+    const injected = seq === 8
+    return {
+      ...event,
+      data: injected
+        ? { text: 'injected', source: { kind: 'agent-instructions', form: 'instructions' } }
+        : { text: 'mine', source: { kind: 'user', rpcId: `R-${seq}` } },
+    }
+  })
+  const service = bound(fakeQuery(log))
+  const page = await service.handle(WINDOW_METHOD,
+    { address: ADDRESS, before: 60, limit: 50, maxBytes: 256 * 1024, roles: ['me'] })
+  assert.equal(page.ok, true)
+  const seqs = page.value.records.map((record) => record.event.seq)
+  assert.ok(!seqs.includes(8), `注入消息不该出现：${seqs.join(',')}`)
+  assert.deepEqual(seqs, [0, 4, 12, 16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56])
 })

@@ -6,6 +6,7 @@ import {
 } from './history/records.js'
 import { pageFrom, scanOlder } from './history/window.js'
 import { filteredScan } from './history/filter-scan.js'
+import { createSnapshotCache, scanSnapshot } from './history/session-snapshot.js'
 
 // Re-exported for the caller/tests that read them off this module (single source
 // is `history/records.js`; the call ceiling lives in `history/shared.js`).
@@ -139,6 +140,11 @@ function hostFailure(error) {
 export function createHistoryService({ logger = console } = {}) {
   let sessionQuery
   const probeRunner = createProbeRunner({ getQuery: () => sessionQuery, logger })
+  /// 会话日志快照（只给**按角色过滤**的读取用）：一个会话读一次整份、本地过滤、短 TTL。
+  /// 它把"每条命中一次宿主调用"那道墙去掉——灌库一个会话从十几次往返变成一次读。
+  const snapshots = createSnapshotCache({
+    readSession: (sessionId) => withTimeout(sessionQuery.readSession(sessionId), HOST_CALL_TIMEOUT_MS, 'readSession'),
+  })
   /// Set to false after the Host has told us its full-text index is closed
   /// (`openAt: "never"`), so later searches go straight to the scan.
   let indexSearchable = true
@@ -280,6 +286,13 @@ export function createHistoryService({ logger = console } = {}) {
         // far more often than about something old.
         for (let index = docs.length - 1; index >= 0; index -= 1) {
           const doc = docs[index]
+          // **已知局限**：这里只能按文档判角色，而宿主的 `filterEvents` 文档不带 `data.source`，
+          // 所以 `roles:['me']` 会把 `source.kind = "agent-instructions"` 这类**注入消息**也算进来
+          // （真机实测：AGENTS.md 注入那条被判成 me）。窗口路径（`_link/sessionWindow`）已改成
+          // 取回原始事件后复判，这里没有原始事件、逐条回读的代价又太大（50 条命中 ≈ 11 秒），
+          // 因此保留现状并在 `session-search` 的说明里标注：**角色过滤对注入消息不可靠**。
+          // App 侧「只看我的提问」自 T040 起走本地库，不走这条路；要恢复这条能力需先让宿主
+          // 在文档里带上 `data.source`。
           const role = roleOf(doc)
           if (roles !== undefined && (role === undefined || !roles.has(role))) continue
           const display = displayRoleOf(doc)
@@ -344,12 +357,20 @@ export function createHistoryService({ logger = console } = {}) {
       // 同样一段日志，过滤路径实测从 2.5–4.1 s 降到数百毫秒；未过滤的浏览翻页保持原样
       // （它要的是精确的一段原始事件，`readEvent` 每块 51 条正合适）。
       const useFilterScan = roles !== undefined && typeof sessionQuery?.filterEvents === 'function'
-      const scan = useFilterScan
-        ? await filteredScan({
-            readFilterChunk, readRecords: readChunk, newestSeq, sessionId, before, through, limit,
-            roles, roleOf,
-          })
-        : await scanOlder({ readChunk, sessionId, before, through, limit, maxBytes, roles })
+      // 三级：① 角色过滤 + 宿主能整份读 → 从快照出（一次读、之后每页零往返）；
+      //       ② 角色过滤但快照不可用（没有 readSession / 太大 / 读失败）→ A1 的分块定位；
+      //       ③ 不带角色 → 原来的分块扫描（浏览翻页要的是精确的一段原始事件）。
+      const snapshot = roles !== undefined && typeof sessionQuery?.readSession === 'function'
+        ? await snapshots.get(sessionId)
+        : undefined
+      const scan = snapshot !== undefined
+        ? scanSnapshot(snapshot, { before, through, limit, maxBytes, roles, roleOf })
+        : useFilterScan
+          ? await filteredScan({
+              readFilterChunk, readRecords: readChunk, newestSeq, sessionId, before, through, limit,
+              roles, roleOf,
+            })
+          : await scanOlder({ readChunk, sessionId, before, through, limit, maxBytes, roles })
       const page = pageFrom(scan, { limit, maxBytes, roles })
       // 016：下发前统一清掉只用于诊断的宿主模型输出日志（口径只有一份，
       // 见 specs/016-history-load-perf/contracts/history-record-trim.md）。

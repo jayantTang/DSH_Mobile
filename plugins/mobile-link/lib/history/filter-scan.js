@@ -123,9 +123,14 @@ export async function filteredScan({
     for (const event of Array.isArray(result?.events) ? result.events : []) {
       // **必须同时卡簇边界**：相邻簇的 `readEvent` 窗口会重叠（`before: 50` 往前多取 50 个 seq），
       // 只按 `wanted` 过滤会把上一个簇里的命中重复收进来（实测 48 号记录进了两页，两页并集少一条）。
-      if (event?.seq >= cluster.from && event?.seq <= cluster.to && wanted.has(event.seq)) {
-        events.push(event)
-      }
+      if (event?.seq < cluster.from || event?.seq > cluster.to || !wanted.has(event.seq)) continue
+      // **角色必须用原始事件复判一次**，不能信文档的判定：宿主的 `filterEvents` 文档不带
+      // `data.source`（实测：`source.kind = "agent-instructions"` 的注入消息在 doc 路径下被判成
+      // `me`），而 `roleOf` 正是靠 `data.source` 才能把注入消息排除掉——spec 009 修过的那个
+      // "把 plugin 注入消息错算成提问"的缺陷（实测占比 24%）会由 doc 判定重新引入。
+      // 文档在这里只是"定位用的索引"，命中与否以原始事件为准。
+      if (roles !== undefined && !roles.has(roleOf(event))) continue
+      events.push(event)
     }
   }
   events.sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0))
