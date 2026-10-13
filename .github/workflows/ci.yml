@@ -11,6 +11,10 @@
 #     那是开发者私有的，不进公共 runner；
 #   * 重启 DSH 后的连接验证 —— 依赖本机进程与真实会话。
 # 把这几项塞进 CI 只会得到假绿灯：DSHKit 的集成测试在公共 runner 上会整片 skip。
+#
+# 每个作业都写了 `timeout-minutes`（Linux 20 分钟、macOS 30 分钟；正常分别是 1–2 分钟与
+# 2–7 分钟）。2026-10-13 夜里 `dshkit` 在 runner 上卡了 5 小时没有动静，连取消请求都要等
+# runner 自己回应——不写上界时默认是 6 小时，白占一张 macOS runner。
 
 name: CI
 
@@ -29,6 +33,7 @@ jobs:
   # 本机的真值都不入库，这是这个仓库最容易犯的错，所以单独一条先跑。
   hygiene:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - name: 本机专用的文件没有被提交
@@ -75,6 +80,7 @@ jobs:
   # 调试钩子闸门），它必须进 CI —— 不进 CI 的守卫等于没有。
   docs:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       # 文档规范（结构、口吻、链接、本机路径）与真值检查同属"仓库卫生"，
@@ -98,6 +104,7 @@ jobs:
 
   node:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -120,6 +127,7 @@ jobs:
 
   relay:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -150,6 +158,7 @@ jobs:
 
   dshkit:
     runs-on: macos-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - name: swift test（协议层）
@@ -160,6 +169,7 @@ jobs:
 
   app-build:
     runs-on: macos-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - name: Release 构建：clone 下来的样子（没有本机 xcconfig）
@@ -213,6 +223,7 @@ jobs:
   # 声明会被原样打印出来，不是"验过"，只是"不许静默跳过"。
   lanes:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
