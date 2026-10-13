@@ -138,9 +138,11 @@ public actor LinkDiagnostics {
     /// 拨号起点（epoch 毫秒）。`app.*.elapsedMs` 全部相对它算。
     private var dialAtMs: Int?
 
-    /// 记下这次拨号的起点（由 `LinkCarrier.openSocket` 在 `resume()` 前调用）。
+    /// 记下这次拨号的起点（由 `LinkCarrier.openSocket` 在 `resume()` 前调用），
+    /// 并开启一个新的"首交互/首屏"周期。
     public func markDialStart(_ ms: Int? = nil) {
         dialAtMs = ms ?? now()
+        beginDialCycle()
     }
 
     /// 距拨号起点多少毫秒；还没拨过号就是 `nil`（不编 0）。
@@ -167,14 +169,44 @@ public actor LinkDiagnostics {
 
     /// 记一次交互收尾：每次都留一条 `app.request`（环有上限兜底），
     /// 首个交互再补一条 `app.first-response`（阶段阶梯要它）。
-    public func endInteraction(method: String, elapsedMs: Int, bytes: Int) {
-        let detail: [String: JSONValue] = [
-            "method": .string(method), "elapsedMs": .int(elapsedMs), "bytes": .int(bytes),
+    ///
+    /// `ok` 是必需的：`bytes: 0` 既可能是"失败"，也可能是"成功但响应为空"，
+    /// 不写 `ok` 这两种情况在包内分不开（现场诊断时发现的缺口）。
+    public func endInteraction(method: String, elapsedMs: Int, bytes: Int,
+                               ok: Bool = true, errorCode: String? = nil) {
+        var detail: [String: JSONValue] = [
+            "method": .string(method), "elapsedMs": .int(elapsedMs), "bytes": .int(bytes), "ok": .bool(ok),
         ]
+        if !ok, let errorCode { detail["error"] = .string(String(errorCode.prefix(120))) }
         record(kind: "app.request", detail: detail)
         guard firstInteractionSent, !firstInteractionCompleted else { return }
         firstInteractionCompleted = true
         record(kind: "app.first-response", detail: detail)
+    }
+
+    /// 首个内容**真的画出来**（与"状态机已连接"分开）。一次拨号只记一条。
+    ///
+    /// `cached` 是关键：列表有本地缓存时，首批内容可能在**拨号后几百毫秒**就画出来了
+    /// （实测 410 ms），而此时新数据还没到（同一份包的首个响应在 10 秒后）。
+    /// 不标这个字段的话，"首屏 410 ms"会被读成"加载很快"，与事实相反。
+    @discardableResult
+    public func markFirstRender() -> Bool {
+        guard !firstRenderRecorded else { return false }
+        firstRenderRecorded = true
+        var detail: [String: JSONValue] = ["cached": .bool(!firstInteractionCompleted)]
+        if let elapsed = elapsedSinceDial() { detail["elapsedMs"] = .int(elapsed) }
+        record(kind: "app.first-render", detail: detail)
+        return true
+    }
+
+    private var firstRenderRecorded = false
+
+    /// 重置"首屏"相关的标志（每次安装新链路时调用）：
+    /// 不重置的话第二次连接就没有 `app.first-response` / `app.first-render` 了。
+    public func beginDialCycle() {
+        firstInteractionSent = false
+        firstInteractionCompleted = false
+        firstRenderRecorded = false
     }
 
     /// 连接器确认收到 `upTo` 为止；水位只前进不后退。

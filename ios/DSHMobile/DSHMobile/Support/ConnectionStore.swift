@@ -192,12 +192,25 @@ public final class ConnectionStore {
     /// 前后台切换（spec 020 的 FR-009）。用来把"App 被系统挂起"与"拨号卡住"分开。
     public enum AppScene: String, Sendable { case foreground, background }
 
-    /// 记一条前后台切换。**不参与连接主路径**：失败也只是少一条记录。
-    public func noteScene(_ scene: AppScene) async {
-        guard let link = carrier as? LinkCarrier else { return }
-        await link.diagnosticsNote("app.scene", detail: ["phase": .string(scene.rawValue)])
+    /// 记一条前后台切换。**不依赖 carrier**：链路还没建起来时更要记——
+    /// "App 回到前台但一直没拨号"正是最需要看见的现场（记录走 store 自己那份流水）。
+    public func noteScene(_ scene: AppScene, cold: Bool = false) async {
+        await linkDiagnostics.record(kind: "app.scene", detail: [
+            "phase": .string(scene.rawValue), "cold": .bool(cold),
+        ])
         // 回到前台顺手把攒下的记录推上去（后台期间可能攒了"挂起—恢复"这一串）。
-        if scene == .foreground { await pushDiagnostics(link) }
+        if scene == .foreground, let link = carrier as? LinkCarrier { await pushDiagnostics(link) }
+    }
+
+    /// 冷启动：进程从零起来并进入前台。与"从后台回来"必须分得开（现场诊断发现的缺口）。
+    public func noteColdLaunch() async {
+        await noteScene(.foreground, cold: true)
+    }
+
+    /// 首个内容真的画出来了（由会话行的 `onAppear` 调用）。一次拨号只记一条。
+    public func noteFirstRender() async {
+        await linkDiagnostics.markFirstRender()
+        if let link = carrier as? LinkCarrier { await pushDiagnostics(link) }
     }
 
     /// 把 App 攒下的阶段记录增量推给连接器（spec 020 的 FR-011）。

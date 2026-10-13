@@ -65,6 +65,28 @@ struct LinkDiagnosticsTests {    @Test("环有上限，被挤掉的条数如实�
         #expect(await diagnostics.elapsedSinceDial() != nil)
     }
 
+    @Test("首屏渲染要标出是不是缓存：有缓存时它会在首个响应之前发生")
+    func firstRenderCached() async {
+        let clock = FakeClock(1_000)
+        let diagnostics = LinkDiagnostics(now: { clock.tick(10) })
+        await diagnostics.markDialStart()
+        clock.tick(400)
+        #expect(await diagnostics.markFirstRender(), "第一次要记")
+        let cached = await diagnostics.entries().first { $0.kind == "app.first-render" }
+        #expect(cached?.detail?["cached"] == .bool(true), "首个响应还没到 → 画的是缓存")
+        #expect(cached?.detail?["elapsedMs"] == .int(410), "耗时相对拨号起点")
+
+        // 换一次拨号：这次先有交互收尾再渲染 → 不是缓存
+        clock.tick(1000)
+        await diagnostics.markDialStart()
+        _ = await diagnostics.beginInteraction(method: "session/list")
+        await diagnostics.endInteraction(method: "session/list", elapsedMs: 9000, bytes: 731_017)
+        clock.tick(50)
+        #expect(await diagnostics.markFirstRender(), "新周期要能再记一条")
+        let fresh = await diagnostics.entries().last { $0.kind == "app.first-render" }
+        #expect(fresh?.detail?["cached"] == .bool(false), "首个响应已到 → 不是缓存")
+    }
+
     @Test("落盘：一行一条 JSON，能读回来")
     func writesJsonLines() async throws {
         let directory = makeDirectory()

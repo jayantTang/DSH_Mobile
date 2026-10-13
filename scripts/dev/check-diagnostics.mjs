@@ -13,7 +13,7 @@
  * 退出码：0 无命中 / 1 有命中（逐条打印）/ 2 工具自身错误或用法错。
  */
 
-import { readFileSync, readdirSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -129,6 +129,42 @@ export function listFiles(dir, base = dir) {
  *
  * @returns {{ok: boolean, hits: Array, files: number, bytes: number, issues: string[]}}
  */
+/**
+ * 核对 `findings.json`（spec 020 的 US9 / T070）。
+ *
+ * 三件事：结构对、每条 `warn` 都有证据、README 顶部列出的告警与它一致
+ * （否则"包里没告警"与"README 说没告警"可能对不上，读包的人就被误导了）。
+ * 老包（没有 findings.json）**不算问题**：诊断包格式的兼容规则是只增不改。
+ */
+export function checkFindingsFile(directory) {
+  const file = join(directory, 'findings.json')
+  if (!existsSync(file)) return { ok: true, problems: [], skipped: '老包没有 findings.json（兼容）', warnCount: 0 }
+  let rows
+  try {
+    rows = JSON.parse(readFileSync(file, 'utf8'))
+  } catch (error) {
+    return { ok: false, problems: [`findings.json 不是合法 JSON：${error.message}`], warnCount: 0 }
+  }
+  if (!Array.isArray(rows)) return { ok: false, problems: ['findings.json 应当是数组'], warnCount: 0 }
+  const problems = []
+  for (const [index, row] of rows.entries()) {
+    if (typeof row.id !== 'string' || !row.id) problems.push(`第 ${index + 1} 条缺 id`)
+    if (!['warn', 'info'].includes(row.level)) problems.push(`第 ${index + 1} 条 level 只能是 warn/info：${row.level}`)
+    if (typeof row.summary !== 'string' || row.summary.length < 8) problems.push(`第 ${index + 1} 条的 summary 太短`)
+    if (!Array.isArray(row.evidence) || row.evidence.length === 0) problems.push(`第 ${index + 1} 条没有 evidence`)
+  }
+  const warn = rows.filter((row) => row.level === 'warn')
+  const readmePath = join(directory, 'README.md')
+  if (existsSync(readmePath)) {
+    const readme = readFileSync(readmePath, 'utf8')
+    for (const row of warn) {
+      if (!readme.includes(row.summary)) problems.push(`README 没有列出这条告警：${row.id}`)
+    }
+    if (warn.length === 0 && !/告警：无/.test(readme)) problems.push('没有告警时 README 要写「告警：无」')
+  }
+  return { ok: problems.length === 0, problems, warnCount: warn.length }
+}
+
 export function checkDiagnosticsPack(directory, { home = homedir() } = {}) {
   const files = listFiles(directory)
   const hits = []
@@ -151,7 +187,10 @@ export function checkDiagnosticsPack(directory, { home = homedir() } = {}) {
   if (!names.has('timeline.jsonl') && !names.has('timeline.by-source.jsonl')) {
     issues.push('既没有 timeline.jsonl 也没有 timeline.by-source.jsonl（拿不到偏移时后者是替代）')
   }
-  return { ok: hits.length === 0 && issues.length === 0, hits, issues, files: files.length, bytes }
+  const found = checkFindingsFile(directory)
+  issues.push(...found.problems)
+  return { ok: hits.length === 0 && issues.length === 0, hits, issues, files: files.length, bytes,
+    findingsWarn: found.warnCount, findings: found }
 }
 
 export function parseArgs(argv) {

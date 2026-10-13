@@ -62,6 +62,7 @@ export const EVENT_KINDS = Object.freeze([
   'app.first-response',
   'app.request',
   'app.first-screen',
+  'app.first-render',
   'app.scene',
   'app.push',
   // 内部：写失败与超大条目自报（不在契约的对外表里，但同属写入侧词表）

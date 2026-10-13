@@ -1135,3 +1135,55 @@ test('slowRequestMs: 0 时不写 request.slow，但汇总照写（数字仍在�
   assert.equal(kinds.includes('request.slow'), false, '0 = 关闭逐条慢请求')
   assert.equal(kinds.includes('device.summary'), true, '汇总不跟着关：p50/p95 仍要能看')
 })
+
+// ── US8：链路被异常关闭时要留下系统给的错误文本（spec 020 的 FR-027） ──────────
+
+test('异常关闭：socket 的系统错误进 link.close.socketError', async () => {
+  const sockets = []
+  const agent = new MobileLinkAgent({
+    dshClient: new FakeDsh(),
+    logger: { debug() {}, info() {}, warn() {}, error() {} },
+    relayUrl: 'ws://relay.test', agentId: 'agt_1', agentSecret: 'as_1', heartbeatMs: 60000,
+    connectImpl: async () => {
+      const socket = new ConnectedSocket()
+      sockets.push(socket)
+      return socket
+    },
+  })
+  agent.identity = { agentId: 'agt_1', agentSecret: 'as_1', relayUrl: 'ws://relay.test' }
+  agent.needsEnroll = false
+  await agent.start()
+  await until(() => agent.state === 'connected', `没能连上（state=${agent.state}）`)
+
+  // 系统层报错（真实里就是"1006 + 这个文本"的情形），然后 socket 关掉。
+  sockets[0].errorHandler?.(new Error('ECONNRESET: socket hang up'))
+  sockets[0].closeHandler?.(1006, '')
+  await until(() => agent.journal.entries().some((entry) => entry.kind === 'link.close'),
+    '拆链没有写进流水')
+  await agent.stop()
+  const close = agent.journal.entries().find((entry) => entry.kind === 'link.close')
+  assert.match(String(close.socketError), /ECONNRESET/, `错误文本要留下：${close.socketError}`)
+})
+
+test('正常关闭：不带 socketError（凭空多一个 null 会让人以为出过错）', async () => {
+  const sockets = []
+  const agent = new MobileLinkAgent({
+    dshClient: new FakeDsh(),
+    logger: { debug() {}, info() {}, warn() {}, error() {} },
+    relayUrl: 'ws://relay.test', agentId: 'agt_1', agentSecret: 'as_1', heartbeatMs: 60000,
+    connectImpl: async () => {
+      const socket = new ConnectedSocket()
+      sockets.push(socket)
+      return socket
+    },
+  })
+  agent.identity = { agentId: 'agt_1', agentSecret: 'as_1', relayUrl: 'ws://relay.test' }
+  agent.needsEnroll = false
+  await agent.start()
+  await until(() => agent.state === 'connected', `没能连上（state=${agent.state}）`)
+  sockets[0].closeHandler?.(1000, 'bye')
+  await until(() => agent.journal.entries().some((entry) => entry.kind === 'link.close'), '拆链没写进流水')
+  await agent.stop()
+  const close = agent.journal.entries().find((entry) => entry.kind === 'link.close')
+  assert.ok(!('socketError' in close), `正常关闭不该带 socketError：${JSON.stringify(close)}`)
+})

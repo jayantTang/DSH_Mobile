@@ -18,7 +18,8 @@ import test from 'node:test'
 import {
   bundleName, chooseOffset, computeAppOffset, computeOffsetFromCommonEvents, computeOffsetFromStats,
   debugDeviceIds, dshHome, journalSince, mergeTimeline, parseArgs, parseRelayJsonRecord,
-  parseRelayLines, parseRelayMessage, parseSince, readConnectorJournal, sliceByWindow, summarizeAttaches,
+  parseRelayLines, parseRelayMessage, parseSince, readConnectorJournal, scopeRelayEvents,
+  sliceByWindow, summarizeAttaches,
 } from './collect-diagnostics.mjs'
 
 const AT = Date.parse('2026-10-13T01:10:10.506Z')
@@ -324,4 +325,44 @@ test('summarizeAttaches：两次接入分成两段，互不串味', () => {
   assert.equal(rows.length, 2)
   assert.equal(rows[0].appStages.dialMs, 0)
   assert.equal(rows[1].appStages.dialMs, 0, '第二段的拨号相对第二段自己的起点')
+})
+
+// ── US6：中转切片必须只含自己的设备 ────────────────────────────────────────
+
+test('parseRelayMessage 取行尾的 (agent …)，且不把归属混进错误文本', () => {
+  const detach = parseRelayMessage('relay: device dev_x detached (socket closed) (agent agt_y)', 1)
+  assert.equal(detach.agentId, 'agt_y')
+  assert.equal(detach.reason, 'socket closed')
+
+  const pong = parseRelayMessage('relay: device dev_x socket error: No PONG received after 15.0 seconds (agent agt_y)', 1)
+  assert.equal(pong.agentId, 'agt_y')
+  assert.equal(pong.error, 'No PONG received after 15.0 seconds', '归属不能混进错误文本')
+
+  const legacy = parseRelayMessage('relay: device dev_x detached (socket closed)', 1)
+  assert.equal(legacy.agentId, undefined, '没有后缀的老行按"归属未知"处理')
+})
+
+test('scopeRelayEvents：别的账号的行一律丢，认得的老设备行留下', () => {
+  const events = [
+    { kind: 'relay.device-attach', deviceId: 'dev_mine', agentId: 'agt_me' },
+    { kind: 'relay.agent-connect', agentId: 'agt_me' },
+    { kind: 'relay.device-detach', deviceId: 'dev_other', agentId: 'agt_other' },
+    { kind: 'relay.device-detach', deviceId: 'dev_mine' },
+    { kind: 'relay.device-replaced', deviceId: 'dev_stranger' },
+  ]
+  const scoped = scopeRelayEvents(events, { agentId: 'agt_me', deviceIds: ['dev_mine', 'dev_mine_old'] })
+  assert.deepEqual(scoped.kept.map((e) => e.kind),
+    ['relay.device-attach', 'relay.agent-connect', 'relay.device-detach'], '只留自己的')
+  assert.equal(scoped.excludedOtherAgent, 1, '带别人 agentId 的算"别的账号"')
+  assert.equal(scoped.excludedUnknownDevice, 1, '不认识又没归属的单独计数')
+})
+
+test('scopeRelayEvents：没有 agentId 可比时（老部署）仍按设备清单收窄', () => {
+  const events = [
+    { kind: 'relay.device-detach', deviceId: 'dev_mine' },
+    { kind: 'relay.device-detach', deviceId: 'dev_other' },
+  ]
+  const scoped = scopeRelayEvents(events, { deviceIds: ['dev_mine'] })
+  assert.deepEqual(scoped.kept.map((e) => e.deviceId), ['dev_mine'])
+  assert.equal(scoped.excludedUnknownDevice, 1)
 })

@@ -13,6 +13,8 @@
  */
 
 import { execFileSync } from 'node:child_process'
+
+import { buildFindings, slowSideSummary } from './diagnostics-findings.mjs'
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -80,17 +82,26 @@ export function parseRelayMessage(message, ms) {
   const text = String(message ?? '')
   const at = Number.isFinite(ms) ? ms : undefined
   const base = at === undefined ? {} : { at: new Date(at).toISOString(), ms: at }
+  // 行尾的 ` (agent <id>)`：四类设备行以前不带 agentId，采集侧因此无法按 agent 收窄
+  // （2026-10-13 实测：111 条中转行只有 9 条是本机的）。没有后缀的老行按"归属未知"处理。
+  const suffix = / \(agent (\S+)\)\s*$/.exec(text)
+  const agent = suffix ? { agentId: suffix[1] } : {}
 
   let match = /relay: device (\S+) \((\S+)\) attached to agent (\S+)/.exec(text)
   if (match) return { ...base, kind: 'relay.device-attach', deviceId: match[1], name: match[2], agentId: match[3] }
   match = /relay: device (\S+) detached \(([^)]*)\)/.exec(text)
-  if (match) return { ...base, kind: 'relay.device-detach', deviceId: match[1], reason: match[2] }
+  if (match) return { ...base, kind: 'relay.device-detach', deviceId: match[1], reason: match[2], ...agent }
   match = /relay: device (\S+) attached again while its previous socket is still open/.exec(text)
-  if (match) return { ...base, kind: 'relay.device-replaced', deviceId: match[1] }
+  if (match) return { ...base, kind: 'relay.device-replaced', deviceId: match[1], ...agent }
   match = /relay: device (\S+) closed a socket that had already been replaced/.exec(text)
-  if (match) return { ...base, kind: 'relay.device-superseded-close', deviceId: match[1] }
+  if (match) return { ...base, kind: 'relay.device-superseded-close', deviceId: match[1], ...agent }
   match = /relay: device (\S+) socket error: (.*)$/.exec(text)
-  if (match) return { ...base, kind: 'relay.pong-timeout', deviceId: match[1], error: match[2].slice(0, MAX_TEXT) }
+  if (match) {
+    // 后缀要从错误文本里摘掉，否则错误里会带上 "(agent agt_…)"，
+    // 读者会把归属当成错误内容的一部分。
+    const detail = suffix ? match[2].slice(0, -suffix[0].length) : match[2]
+    return { ...base, kind: 'relay.pong-timeout', deviceId: match[1], error: detail.trim().slice(0, MAX_TEXT), ...agent }
+  }
   match = /relay: agent (\S+) connected \(([^)]*)\)/.exec(text)
   if (match) return { ...base, kind: 'relay.agent-connect', agentId: match[1], name: match[2] }
   match = /relay: agent (\S+) disconnected/.exec(text)
@@ -219,6 +230,38 @@ function nearestWithin(sorted, value, tolerance) {
 }
 
 /**
+ * 把中转事件收窄到本机 agent 自己的设备（FR-021）。
+ *
+ * 为什么需要：中转的 `detach` / `replaced` / `superseded-close` / `socket error` 四类行在
+ * 2026-10-13 之前**不带 agentId**，而采集侧只能按 agentId 过滤 → 别的账号的设备行全部混进包
+ * （实测 111 条里只有 9 条是本机的），甚至误导过一次判断。
+ *
+ * 判定规则（从严到宽）：
+ *   1. 行上有 agentId 且不是我们 → **别的账号**，丢；
+ *   2. 行上有 agentId 且是我们 → 留；
+ *   3. 没有 agentId 但有 deviceId，且该 deviceId 在本机设备清单里 → 留（老行靠清单兜底）；
+ *   4. 其余（没有 agentId、deviceId 也不认识）→ 丢，并单独计数：这类最可能是别人的设备。
+ *
+ * @returns {{kept: Array, excludedOtherAgent: number, excludedUnknownDevice: number}}
+ */
+export function scopeRelayEvents(events, { agentId, deviceIds = [] } = {}) {
+  const known = new Set(deviceIds)
+  const kept = []
+  let excludedOtherAgent = 0
+  let excludedUnknownDevice = 0
+  for (const event of events ?? []) {
+    if (event.agentId) {
+      if (agentId && event.agentId === agentId) kept.push(event)
+      else excludedOtherAgent += 1
+      continue
+    }
+    if (event.deviceId && known.has(event.deviceId)) kept.push(event)
+    else excludedUnknownDevice += 1
+  }
+  return { kept, excludedOtherAgent, excludedUnknownDevice }
+}
+
+/**
  * 手机是**第三个时钟**：它的 `app.*` 时刻用的是手机自己钟。
  *
  * 偏移取自连接器在收到那批推送时记下的 `skewMs`（= 连接器本机时刻 − App 上报的 `sentAt`），
@@ -296,12 +339,20 @@ export function summarizeAttaches({ connector = [], app = [], relay = [] } = {},
       segment.app.firstRequestAtMs = event.ms
     } else if (event.kind === 'app.first-response' && segment.app.firstResponseAtMs === undefined) {
       segment.app.firstResponseAtMs = event.ms
+      if (typeof event.bytes === 'number') segment.app.firstResponseBytes = event.bytes
     } else if (event.kind === 'app.hello' && segment.app.helloAtMs === undefined) {
       segment.app.helloAtMs = event.ms
     } else if (event.kind === 'app.first-screen' && segment.app.firstScreenAtMs === undefined) {
       segment.app.firstScreenAtMs = event.ms
     }
   }
+  // 连接器自己的重启（插件热更 / dsh 重启）会让手机重挂，但手机并没有重新拨号：
+  // 这种"半次接入"不是故障，判读时要能认出来，否则每次开发热更都会刷一片告警。
+  const restartMarks = [...connector]
+    .filter((event) => event.kind === 'link.start' || event.kind === 'link.open')
+    .map((event) => event.ms)
+    .sort((a, b) => a - b)
+
   return segments.map((segment) => {
     // App 侧一律相对**拨号起点**算；没有拨号起点时相对接入时刻（并记进 note）。
     const base = segment.app.dialAtMs ?? segment.attachAtMs
@@ -315,6 +366,27 @@ export function summarizeAttaches({ connector = [], app = [], relay = [] } = {},
       firstScreenMs: at(segment.app.firstScreenAtMs),
     }
     const missing = Object.entries(stages).filter(([, value]) => value === null).map(([key]) => STAGE_NAMES[key])
+    // ── 派生指标（FR-028）：把"哪一侧慢"变成现成字段，不再要人肉相减 ──
+    //
+    // 两侧的毫秒各自相对自己的起点（App 相对拨号、连接器相对接入），这里只换算一次。
+    const phases = segment.connector.phases ?? null
+    const connectorHandlingMs = phases && phases.firstRequestMs !== null && phases.firstResponseMs !== null
+      ? Math.round(phases.firstResponseMs - phases.firstRequestMs)
+      : null
+    // 连接器的"首个响应"换算到拨号起点：+ (接入 − 拨号)
+    const leadMs = segment.app.dialAtMs === undefined ? null : segment.attachAtMs - segment.app.dialAtMs
+    const phoneHandlingMs = (connectorHandlingMs !== null && stages.firstResponseMs !== null && leadMs !== null)
+      ? Math.round(stages.firstResponseMs - (phases.firstResponseMs + leadMs))
+      : null
+    const relayEvents = { attach: 0, replaced: 0, detach: 0, supersededClose: 0, pongTimeout: 0 }
+    for (const event of relay) {
+      if (event.deviceId !== segment.deviceId) continue
+      if (event.kind === 'relay.device-attach') relayEvents.attach += 1
+      else if (event.kind === 'relay.device-replaced') relayEvents.replaced += 1
+      else if (event.kind === 'relay.device-detach') relayEvents.detach += 1
+      else if (event.kind === 'relay.device-superseded-close') relayEvents.supersededClose += 1
+      else if (event.kind === 'relay.pong-timeout') relayEvents.pongTimeout += 1
+    }
     return {
       deviceId: segment.deviceId,
       attachAt: new Date(segment.attachAtMs).toISOString(),
@@ -322,15 +394,25 @@ export function summarizeAttaches({ connector = [], app = [], relay = [] } = {},
       relayAttachMs: segment.relay.attachAtMs ?? null,
       appStages: stages,
       appMissing: missing,
-      connectorPhases: segment.connector.phases ?? null,
+      appBytes: segment.app.firstResponseBytes ?? null,
+      connectorPhases: phases,
       connectorMissing: segment.connector.missing ?? [],
-      // 两侧对"拨号→握手"的读数：两边各自相对自己的起点，先把连接器那份换算到拨号起点
-      // （App 拨号早于接入，`attachAtMs - dialAtMs` 是正的）。差得多说明归属配错了——
-      // 这是自检，不是结论。
-      helloSkewMs: (segment.connector.phases?.helloMs ?? null) !== null && stages.helloMs !== null
-        && segment.app.dialAtMs !== undefined
-        ? Math.round(stages.helloMs
-            - (segment.connector.phases.helloMs + (segment.attachAtMs - segment.app.dialAtMs)))
+      connectorHandlingMs,
+      // 手机侧处理耗时：连接器答完到 App 认定拿到数据之间的时间。负数说明对齐或归属有问题。
+      phoneHandlingMs: phoneHandlingMs !== null && phoneHandlingMs >= 0 ? phoneHandlingMs : null,
+      phoneHandlingNegative: phoneHandlingMs !== null && phoneHandlingMs < 0,
+      relayEvents,
+      // 这次接入距最近一次连接器重启多少毫秒（没重启过就是 null）。
+      afterConnectorRestartMs: (() => {
+        let latest = null
+        for (const ms of restartMarks) {
+          if (ms <= segment.attachAtMs && (latest === null || ms > latest)) latest = ms
+        }
+        return latest === null || segment.attachAtMs - latest > 120000 ? null : segment.attachAtMs - latest
+      })(),
+      // 两侧对"拨号→握手"的读数：差得多说明归属配错了——这是自检，不是结论。
+      helloSkewMs: (phases?.helloMs ?? null) !== null && stages.helloMs !== null && leadMs !== null
+        ? Math.round(stages.helloMs - (phases.helloMs + leadMs))
         : null,
     }
   })
@@ -439,6 +521,19 @@ export function readRelayLog({ host, since, agentIds = [], deviceIds = [] } = {}
   const text = execFileSync('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', `root@${host}`, command],
     { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, timeout: 60_000 })
   return { text, ...parseRelayLines(text, { agentIds, deviceIds }) }
+}
+
+/**
+ * 走 ssh 取本机 agent 名下的**全部**设备 id（含已撤销的老设备）。
+ *
+ * 用途只有一个：给中转日志行判归属。清单来自权威侧（中转库），不是从日志里猜的。
+ */
+export function readRelayDeviceIds({ host, agentId, db = process.env.DSH_RELAY_DB || '/var/lib/dsh-relay/state.db' } = {}) {
+  const text = execFileSync('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', `root@${host}`,
+    `/opt/dsh-relay/.venv/bin/python /opt/dsh-relay/admin.py --db ${db} device-list`],
+  { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, timeout: 30_000 })
+  const rows = JSON.parse(text)
+  return rows.filter((row) => !agentId || row.agentId === agentId).map((row) => row.deviceId)
 }
 
 /** 走 ssh 取 `/stats`（它只监听回环，从公网拿不到——这是设计，不是缺陷）。 */
@@ -551,11 +646,29 @@ async function collect({ options, window, log = () => {} }) {
       nextStep: '在仓库根 .env.local 写上 DSH_OTA_HOST，或加 --no-relay' })
   } else {
     try {
-      const log_ = readRelayLog({ host: relayHost, since: options.since,
-        agentIds: [...new Set(agentIds)], deviceIds: options.devices })
+      // 本机设备清单（权威侧）：状态里的在用设备 ∪ 中转库里该 agent 的全部设备（含已撤销）。
+      const statusDevices = (status?.devices ?? []).map((device) => device.deviceId).filter(Boolean)
+      let knownDeviceIds = [...new Set(statusDevices)]
+      try {
+        knownDeviceIds = [...new Set([...knownDeviceIds, ...readRelayDeviceIds({ host: relayHost, agentId: status?.agentId })])]
+      } catch (error) {
+        // 拿不到清单也能继续：靠 agentId 后缀收窄（新行都带），只是老行会更保守地被丢掉。
+        missing.push({ source: 'relay-device-list', reason: error.message,
+          nextStep: '确认 admin.py 路径与 db 路径（可用 DSH_RELAY_DB 覆盖）' })
+      }
+      const log_ = readRelayLog({ host: relayHost, since: options.since, agentIds: [...new Set(agentIds)] })
       relayText = log_.text
-      relayEvents = sliceByWindow(log_.events, window)
-      coverage.relay = { lines: log_.readLines, parsed: log_.events.length, unmatched: log_.unmatched }
+      const scoped = scopeRelayEvents(log_.events, { agentId: status?.agentId, deviceIds: knownDeviceIds })
+      relayEvents = sliceByWindow(scoped.kept, window)
+      coverage.relay = {
+        lines: log_.readLines,
+        parsed: log_.events.length,
+        unmatched: log_.unmatched,
+        kept: scoped.kept.length,
+        excludedOtherAgent: scoped.excludedOtherAgent,
+        excludedUnknownDevice: scoped.excludedUnknownDevice,
+        knownDevices: knownDeviceIds.length,
+      }
     } catch (error) {
       missing.push({ source: 'relay-log', reason: error.message,
         nextStep: `确认能 ssh root@${relayHost}（密钥/网络），或加 --no-relay` })
@@ -650,9 +763,31 @@ function writeBundle({ outDir, collected, window, options, log }) {
     relay: collected.relayEvents })
   writeJsonl(join(outDir, 'attaches.jsonl'), attaches.map((row) => JSON.parse(scrub(row))))
 
+  // 自动判读：把"哪一跳缺/有没有双 socket/哪一侧慢"变成机器可核对的清单（US9）。
+  const findings = buildFindings({
+    attaches,
+    connectorEvents: collected.connectorEvents,
+    appEvents: collected.appEvents,
+    relayEvents: collected.relayEvents,
+    coverage: collected.coverage,
+  })
+  writeJson(join(outDir, 'findings.json'), findings.map((row) => JSON.parse(scrub(row))))
+  const slowSide = slowSideSummary(attaches)
+
   writeFileSync(join(outDir, 'README.md'),
-    readme({ ...collected, coverage, window, options, outDir, attaches }), { mode: 0o600 })
+    readme({ ...collected, coverage, window, options, outDir, attaches, findings, slowSide }),
+    { mode: 0o600 })
   return { coverage, missing: collected.missing }
+}
+
+/** README 顶部的告警行：没有告警就明说"无"，不要留空白让人猜。 */
+function warnLines(findings) {
+  const warn = findings.filter((item) => item.level === 'warn')
+  if (warn.length === 0) {
+    const info = findings.length
+    return [`**告警：无。**${info > 0 ? `（另有 ${info} 条提示级发现，见 \`findings.json\`）` : ''}`]
+  }
+  return warn.map((item) => `- **${item.id}**：${item.summary}`)
 }
 
 /** 表格单元格：`null`（没发生）与 0 要分得开。 */
@@ -661,7 +796,7 @@ function cell(value) {
 }
 
 /** 包内自解释：这次采了什么、怎么判读四类问题、缺了什么。 */
-function readme({ missing, coverage, window, options, outDir, attaches = [] }) {
+function readme({ missing, coverage, window, options, outDir, attaches = [], findings = [], slowSide = null }) {
   const lines = [
     '# 诊断包', '',
     `- 采集窗口：${coverage.window.since} → ${coverage.window.until}（${window.label}）`,
@@ -676,6 +811,9 @@ function readme({ missing, coverage, window, options, outDir, attaches = [] }) {
     '2. **连上耗时长 / 加载慢**：`app.hello.ms` / `app.first-screen.ms` / `device.phase.phases` 是各段毫秒。',
     '3. **同步慢**：`device.summary`（p50/p95/top3）与 `request.slow`（方法名 + 耗时 + 字节）。',
     '4. **记录有没有失控**：`coverage.connector.droppedEarlier` 与 `journal.fileErrors`（在 status.json 里）。',
+    '', '## 先看这里：自动判读（findings.json）', '',
+    ...warnLines(findings),
+    ...(slowSide ? ['', slowSide] : []),
     '', '## 每次接入的阶段耗时（毫秒，相对该次拨号；`—` = 没发生）', '',
     '| 设备 | 接入时刻 | 拨号 | 传输建立 | 首请求 | 首响应 | 握手 | 首屏 | 连接器侧 |',
     '|---|---|---|---|---|---|---|---|---|',

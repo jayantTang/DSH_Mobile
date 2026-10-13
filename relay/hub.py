@@ -809,8 +809,8 @@ class RelayHub:
             self.logger.warning(
                 "relay: device %s attached again while its previous socket is still open — "
                 "replacing the registration; the old socket is now untracked and its close "
-                "will not notify the connector",
-                device["deviceId"])
+                "will not notify the connector (agent %s)",
+                device["deviceId"], device["agentId"])
         self._devices[device["deviceId"]] = link
         self._note_usage(link, connection=True)
         if agent is None:
@@ -840,10 +840,13 @@ class RelayHub:
             # 否则"attach 与 detach 条数对得上"会被误读成"每条都通知到了"。
             self.logger.info(
                 "relay: device %s closed a socket that had already been replaced; "
-                "no detach notification sent for it",
-                link.device_id)
+                "no detach notification sent for it (agent %s)",
+                link.device_id, link.agent_id)
         await link.close(code, reason or "device disconnected")
-        self.logger.info("relay: device %s detached (%s)", link.device_id, reason or "closed")
+        # 行尾带 agentId：没有它，采集侧无法按 agent 收窄（2026-10-13 实测：111 条中转行里
+        # 只有 9 条属于本机 agent，其余是别的账号的设备）。前缀文本保持不动，老解析器继续可用。
+        self.logger.info("relay: device %s detached (%s) (agent %s)",
+                         link.device_id, reason or "closed", link.agent_id)
         # 断开时冲一次：这一批的尾巴不留在内存里，运维命令跑完就是准的。
         await self.flush_usage()
 

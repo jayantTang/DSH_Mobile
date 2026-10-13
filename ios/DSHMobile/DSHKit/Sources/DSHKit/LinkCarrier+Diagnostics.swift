@@ -26,8 +26,10 @@ extension LinkCarrier {
 
     /// 一次数据交互收尾（由 `performUnary` 调用）：每次都记 `app.request`，
     /// 首个交互另外补 `app.first-request` / `app.first-response`。
-    func diagnosticsNoteInteraction(method: String, elapsedMs: Int, bytes: Int) async {
-        await diagnostics.endInteraction(method: method, elapsedMs: elapsedMs, bytes: bytes)
+    func diagnosticsNoteInteraction(method: String, elapsedMs: Int, bytes: Int,
+                                   ok: Bool = true, errorCode: String? = nil) async {
+        await diagnostics.endInteraction(method: method, elapsedMs: elapsedMs, bytes: bytes,
+                                         ok: ok, errorCode: errorCode)
     }
 
     /// 记一条阶段事件。`since` 给了就附上"距它多少毫秒"。

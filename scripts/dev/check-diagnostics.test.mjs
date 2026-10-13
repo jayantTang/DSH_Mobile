@@ -13,7 +13,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
-  checkDiagnosticsPack, parseArgs, parseContractKinds, redactHome, scanForLeaks,
+  checkDiagnosticsPack, checkFindingsFile, parseArgs, parseContractKinds, redactHome, scanForLeaks,
 } from './check-diagnostics.mjs'
 
 /** 合成凭据：形状对（测得出规则），值不是真的（不违反宪法 V）。 */
@@ -96,4 +96,49 @@ test('parseContractKinds 只取 §2/§3 表的第一列（§4 的行内片段不
     '## 4. 中转日志行的解析契约', '| `device <id> (<name>) attached to agent <agentId>` | `relay.device-attach` | x |',
   ].join('\n')
   assert.deepEqual([...parseContractKinds(markdown)].sort(), ['app.dial', 'device.attach', 'link.start'])
+})
+
+// ── US9：findings.json 的核对（含"老包仍可读"） ──────────────────────────────
+
+test('findings 结构不合法/缺证据要判红', () => {
+  {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-findings-1-'))
+    writeFileSync(join(dir, 'findings.json'), JSON.stringify([
+      { id: 'phone-slow', level: 'warn', summary: '手机侧处理用了 9455 ms，连接器侧只用 246 ms', evidence: [] },
+      { id: '', level: 'fatal', summary: '短', evidence: [] },
+    ]))
+    const result = checkFindingsFile(dir)
+    assert.equal(result.ok, false)
+    assert.ok(result.problems.some((item) => /缺 id/.test(item)))
+    assert.ok(result.problems.some((item) => /level 只能是/.test(item)))
+    assert.ok(result.problems.some((item) => /没有 evidence/.test(item)))
+  }
+})
+
+test('README 顶部漏列告警、或没有告警却不写「告警：无」，都要判红', () => {
+  {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-findings-2-'))
+    writeFileSync(join(dir, 'findings.json'), JSON.stringify([
+      { id: 'phone-slow', level: 'warn', summary: '手机侧处理用了 9455 ms，连接器侧只用 246 ms', evidence: ['attaches.jsonl#dev_1'] },
+    ]))
+    writeFileSync(join(dir, 'README.md'), '# 包\n\n没有列出那条告警\n')
+    let result = checkFindingsFile(dir)
+    assert.equal(result.ok, false)
+    assert.ok(result.problems.some((item) => /README 没有列出/.test(item)))
+
+    writeFileSync(join(dir, 'findings.json'), '[]')
+    result = checkFindingsFile(dir)
+    assert.equal(result.ok, false, '没有告警时 README 必须写「告警：无」')
+    assert.ok(result.problems.some((item) => /告警：无/.test(item)))
+
+    writeFileSync(join(dir, 'README.md'), '# 包\n\n**告警：无。**\n')
+    assert.equal(checkFindingsFile(dir).ok, true)
+  }
+})
+
+test('老包（没有 findings.json）仍算合格——包格式只增不改', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-findings-3-'))
+  const result = checkFindingsFile(dir)
+  assert.equal(result.ok, true)
+  assert.match(result.skipped, /兼容/)
 })

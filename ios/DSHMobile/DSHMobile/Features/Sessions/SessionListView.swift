@@ -371,6 +371,9 @@ struct SessionListView: View {
                            snippet: model.coldStartSnippet(for: session.sessionId))
             }
             .buttonStyle(.plain)
+            // 首个会话行真的画出来了 → 记一条 `app.first-render`（一次拨号一条）。
+            // 用行的 onAppear 而不是"状态机已连接"：后者与握手只差 2 ms，不等于画面画完。
+            .onAppear { Task { await store.noteFirstRender() } }
             .accessibilityIdentifier(session.sessionId == model.lastCreatedSessionId
                                      ? "session.row.created"
                                      : "session.row.\(session.sessionId)")
@@ -399,6 +402,8 @@ struct SessionListView: View {
                        snippet: model.coldStartSnippet(for: session.sessionId))
         }
         .buttonStyle(.plain)
+        // 子会话行也是"内容画出来"的一种（同一处语义的两条渲染路径，都要覆盖）。
+        .onAppear { Task { await store.noteFirstRender() } }
         .listRowInsets(EdgeInsets(top: 1, leading: 10, bottom: 1, trailing: 10))
         .listRowBackground(Color.clear)
         .listRowSeparator(.hidden)
@@ -418,6 +423,8 @@ struct SessionListView: View {
                        snippet: model.coldStartSnippet(for: session.sessionId))
         }
         .buttonStyle(.plain)
+        // 子会话行也是"内容画出来"的一种（同一处语义的两条渲染路径，都要覆盖）。
+        .onAppear { Task { await store.noteFirstRender() } }
         .listRowInsets(EdgeInsets(top: 1, leading: 10, bottom: 1, trailing: 10))
         .listRowBackground(Color.clear)
         .listRowSeparator(.hidden)

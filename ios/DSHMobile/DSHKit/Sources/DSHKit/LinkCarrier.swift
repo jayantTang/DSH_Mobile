@@ -285,11 +285,14 @@ public actor LinkCarrier: DSHCarrier {
             let decoded = try JSONDecoder().decode(Value.self, from: data)
             await diagnosticsNoteInteraction(method: method,
                                              elapsedMs: Self.elapsedMs(since: startedAt),
-                                             bytes: data.count)
+                                             bytes: data.count, ok: true)
             return decoded
         } catch {
+            // 失败也要留痕，而且**要能分辨**：`ok: false` + 错误码，而不是一个 bytes: 0 的谜。
+            let code = (error as? DSHRPCFailure)?.code ?? String(describing: type(of: error))
             await diagnosticsNoteInteraction(method: method,
-                                             elapsedMs: Self.elapsedMs(since: startedAt), bytes: 0)
+                                             elapsedMs: Self.elapsedMs(since: startedAt), bytes: 0,
+                                             ok: false, errorCode: code)
             if let error = error as? DecodingError {
                 throw DSHTransportError.malformedResponse(
                     "\(method): could not decode \(Value.self) — \(error)"

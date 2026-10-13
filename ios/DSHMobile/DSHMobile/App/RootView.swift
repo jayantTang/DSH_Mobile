@@ -49,6 +49,8 @@ struct RootView: View {
                 if isConnected { attachmentImages.clearFailures() }
             }
             .task {
+                // 冷启动进前台：与"从后台回来"分开记（现场诊断发现的缺口）。
+                await store.noteColdLaunch()
                 messageLayer.attach { [store] in store.client }
                 listModel.attach(to: store, hub: hub, viewLog: viewLog, messageLayer: messageLayer)
                 attachmentImages.attach(store: store)

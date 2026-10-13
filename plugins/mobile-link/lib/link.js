@@ -136,6 +136,14 @@ export class MobileLinkAgent extends EventEmitter {
     this.reconnectAttempts = 0
     /** 最近一次拆链的时刻（用来在 `link.open` 里报"距上次断开多久"）。 */
     this._lastClosedAt = undefined
+    /**
+     * socket 上最后一次系统错误（`onError` 的文本）。
+     *
+     * 为什么要专门留住它：链路被异常关闭时，`close` 回调只给一个代码（实测常见 1006，
+     * 含义是"没有关闭帧"），据此无法判断是网络、代理还是对端。系统错误文本是唯一线索，
+     * 而它以前只进了 debug 日志、不落流水（2026-10-13 现场诊断时卡在这里）。
+     */
+    this._socketError = undefined
 
     this._stopping = false
     this._sessionClosed = undefined
@@ -421,7 +429,10 @@ export class MobileLinkAgent extends EventEmitter {
         .catch((error) => this.logger.debug?.(`mobile-link: frame handler error: ${messageOf(error)}`))
       return this._inbox
     })
-    socket.onError((error) => this.logger.debug?.(`mobile-link: relay socket error: ${messageOf(error)}`))
+    socket.onError((error) => {
+      this._socketError = messageOf(error)
+      this.logger.debug?.(`mobile-link: relay socket error: ${this._socketError}`)
+    })
     socket.onClose((code, reason) => this.#teardownSocket(`relay closed the socket (${code ?? '?'} ${reason ?? ''})`))
 
     this.#startHeartbeat()
@@ -547,7 +558,10 @@ export class MobileLinkAgent extends EventEmitter {
       reason,
       from,
       connectedForMs: this.connectedAt === undefined ? undefined : this.now() - this.connectedAt,
+      // 有系统错误才带这个字段（正常关闭时不该凭空多一个 null）。
+      socketError: this._socketError,
     })
+    this._socketError = undefined
     const resolve = this._sessionClosed
     this._sessionClosed = undefined
     this.emit('status')

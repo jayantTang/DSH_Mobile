@@ -4,6 +4,30 @@
 [语义化版本](https://semver.org/lang/zh-CN/)。三处部署（App / 连接器 / 中转）的组合见
 [`docs/VERSIONING.md`](docs/VERSIONING.md)。
 
+## 连接器 0.6.3 / 中转 / App 1.0（开发版）— 2026-10-13（第二次现场诊断之后）
+
+第一次拿这套能力给真机做完整诊断时，**工具自身**暴露出七个缺口。这一版把它们补上：
+
+- **采集包的中转切片按设备收窄**：以前只按 agent 过滤，而中转的 `detached` / `attached again` /
+  `superseded` / `socket error` 四类行不带 agentId，于是别的账号的设备行全都会混进包
+  （实测 111 条里只有 9 条是本机的），还因此误读过一次判断。现在四类行的行尾带 `(agent …)`，
+  采集侧再用"连接器状态 ∪ 中转 device-list 里该 agent 的全部设备"做归属判定，
+  `coverage.json` 如实报出保留与排除的条数。
+- **包内自动判读** `findings.json`：`stage-missing` / `duplicate-socket` / `phone-slow` /
+  `connector-slow` / `link-closed-abnormally` / `no-dial` / `collector-restart` / `collector-scope`
+  八类，每条带证据；README 顶部先列告警（没有就写「告警：无」）与"哪一侧慢"一句话。
+  判据集中在 `scripts/dev/diagnostics-findings.mjs` 一处、阈值可配。
+  插件热更重启连接器造成的"半次接入"会被认出来归提示级，不会刷告警。
+- **派生指标**：`attaches.jsonl` 直接给 `connectorHandlingMs` / `phoneHandlingMs` / `relayEvents`，
+  "慢在哪一侧"不用再人肉相减。
+- **App 侧三个记录缺口**：冷启动记 `app.scene{cold: true}`（与"从后台回来"分开）、
+  逐交互记录带 `ok` 与失败时的错误码（不再与"成功但空响应"混淆）、
+  `app.first-render`（首批内容画出来的时刻，带 `cached` 标明是不是本地缓存）。
+- **连接器**：链路异常关闭时把 socket 的系统错误文本记进 `link.close.socketError`
+  （以前只有一个 1006，无法判断是网络、代理还是对端）。
+- 事件目录增至 29 个 kind；`check:diagnostics` 核对 `findings.json` 结构、告警与 README 一致，
+  并保持"老包没有 findings.json 仍算合格"的兼容口径。
+
 ## 连接器 0.6.2 / App 1.0（开发版）— 2026-10-13
 
 这一天做的是**看得见问题**：在此之前，"手机偶尔连不上"只能靠中转日志反推（连接器的拆链原因不落盘、

@@ -211,8 +211,9 @@ async def link_device(request: web.Request) -> web.WebSocketResponse:
             elif msg.type == WSMsgType.ERROR:
                 # `link.label` 带着 deviceId：这条之前只写 "device socket error"，
                 # 于是一整片 PONG 超时属于哪台设备只能靠紧邻的 detached 行猜
-                # （2026-10-13 排查时正是卡在这里）。
-                LOGGER.info("relay: %s socket error: %s", link.label, ws.exception())
+                # （2026-10-13 排查时正是卡在这里）。行尾再带 agentId，采集侧才能按 agent 收窄。
+                LOGGER.info("relay: %s socket error: %s (agent %s)",
+                            link.label, ws.exception(), link.agent_id)
                 break
     finally:
         await hub.detach_device(link, reason="socket closed")
