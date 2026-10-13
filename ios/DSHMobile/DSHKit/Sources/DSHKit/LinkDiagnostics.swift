@@ -133,6 +133,50 @@ public actor LinkDiagnostics {
         return batch
     }
 
+    // MARK: - 阶段（拨号起点与首个交互）
+
+    /// 拨号起点（epoch 毫秒）。`app.*.elapsedMs` 全部相对它算。
+    private var dialAtMs: Int?
+
+    /// 记下这次拨号的起点（由 `LinkCarrier.openSocket` 在 `resume()` 前调用）。
+    public func markDialStart(_ ms: Int? = nil) {
+        dialAtMs = ms ?? now()
+    }
+
+    /// 距拨号起点多少毫秒；还没拨过号就是 `nil`（不编 0）。
+    public func elapsedSinceDial() -> Int? {
+        guard let dialAtMs else { return nil }
+        return now() - dialAtMs
+    }
+
+    /// 首个数据交互是否已经发出去过（每个 carrier 生命周期内一次）。
+    private var firstInteractionSent = false
+
+    /// 记「首个数据请求发出」。**只有第一次**返回 true 并落一条 `app.first-request`。
+    public func beginInteraction(method: String) -> Bool {
+        guard !firstInteractionSent else { return false }
+        firstInteractionSent = true
+        var detail: [String: JSONValue] = ["method": .string(method)]
+        if let elapsed = elapsedSinceDial() { detail["elapsedMs"] = .int(elapsed) }
+        record(kind: "app.first-request", detail: detail)
+        return true
+    }
+
+    /// 首个交互是否已经收尾（`app.first-response` 只该有一条）。
+    private var firstInteractionCompleted = false
+
+    /// 记一次交互收尾：每次都留一条 `app.request`（环有上限兜底），
+    /// 首个交互再补一条 `app.first-response`（阶段阶梯要它）。
+    public func endInteraction(method: String, elapsedMs: Int, bytes: Int) {
+        let detail: [String: JSONValue] = [
+            "method": .string(method), "elapsedMs": .int(elapsedMs), "bytes": .int(bytes),
+        ]
+        record(kind: "app.request", detail: detail)
+        guard firstInteractionSent, !firstInteractionCompleted else { return }
+        firstInteractionCompleted = true
+        record(kind: "app.first-response", detail: detail)
+    }
+
     /// 连接器确认收到 `upTo` 为止；水位只前进不后退。
     public func markPushed(upTo: Int) {
         if upTo > pushedUpTo {

@@ -238,6 +238,114 @@ export function computeAppOffset(connectorEvents) {
   }
 }
 
+/**
+ * 把三侧事件按"一次接入"分组，算出一张阶段表（spec 020 的 US2）。
+ *
+ * 为什么要它：`timeline.jsonl` 是**流水**，人要在里面自己找"这次接入的五个数字"。这张表直接给
+ * 每次接入一行：拨号 → 传输建立 → 首个数据请求 → 首个数据响应 → 握手 → 首屏，缺的阶段写 `missing`
+ * 而不是 0（与连接器侧同一条口径）。
+ *
+ * 归属规则：连接器的 `device.attach`/`attach-again`/`reattach` 各开一段；App 的事件按
+ * "同一个 deviceId、且时刻落在该接入前后 `toleranceMs` 内"归到那一段——App 的拨号**早于**
+ * 中转/连接器记到的接入（实测领先约 150 ms），所以不能用"接入之后"当唯一条件。
+ */
+export function summarizeAttaches({ connector = [], app = [], relay = [] } = {},
+  { toleranceMs = 5000 } = {}) {
+  const segments = []
+  const deviceOf = (event) => event.deviceId
+  for (const event of [...connector].sort((a, b) => a.ms - b.ms)) {
+    if (!CONNECTOR_ATTACH_KINDS.has(event.kind) || !event.deviceId) continue
+    segments.push({ deviceId: event.deviceId, attachAtMs: event.ms, connector: {}, app: {}, relay: {} })
+  }
+  /**
+   * 归到"哪一段接入"：取该设备**最后一段已经开始的接入**（起点往前放宽 `toleranceMs`，
+   * 因为 App 的拨号早于中转/连接器记到的接入），事件落在它之后就一直属于它——
+   * 直到下一段接入开始。不能用"距接入最近"：握手可能在接入之后十几秒（实测 19 s），
+   * 那样会被判成"不在任何一段里"。
+   */
+  const segmentFor = (deviceId, ms) => {
+    let found = null
+    for (const segment of segments) {
+      if (segment.deviceId !== deviceId) continue
+      if (segment.attachAtMs - toleranceMs > ms) continue
+      if (found === null || segment.attachAtMs > found.attachAtMs) found = segment
+    }
+    return found
+  }
+  for (const event of connector) {
+    if (event.kind !== 'device.phase' || !event.deviceId) continue
+    const segment = segmentFor(event.deviceId, event.ms)
+    if (segment && segment.connector.phases === undefined) {
+      segment.connector = { phases: event.phases ?? null, missing: event.missing ?? [] }
+    }
+  }
+  for (const event of relay) {
+    if (event.kind !== 'relay.device-attach' || !event.deviceId) continue
+    const segment = segmentFor(event.deviceId, event.ms)
+    if (segment && segment.relay.attachAtMs === undefined) segment.relay.attachAtMs = event.ms
+  }
+  for (const event of app) {
+    if (!event.deviceId || !event.kind.startsWith('app.')) continue
+    const segment = segmentFor(event.deviceId, event.ms)
+    if (!segment) continue
+    if (event.kind === 'app.dial' && event.phase === 'start' && segment.app.dialAtMs === undefined) {
+      segment.app.dialAtMs = event.ms
+    } else if (event.kind === 'app.dial' && event.phase === 'transport-up' && segment.app.transportUpAtMs === undefined) {
+      segment.app.transportUpAtMs = event.ms
+    } else if (event.kind === 'app.first-request' && segment.app.firstRequestAtMs === undefined) {
+      segment.app.firstRequestAtMs = event.ms
+    } else if (event.kind === 'app.first-response' && segment.app.firstResponseAtMs === undefined) {
+      segment.app.firstResponseAtMs = event.ms
+    } else if (event.kind === 'app.hello' && segment.app.helloAtMs === undefined) {
+      segment.app.helloAtMs = event.ms
+    } else if (event.kind === 'app.first-screen' && segment.app.firstScreenAtMs === undefined) {
+      segment.app.firstScreenAtMs = event.ms
+    }
+  }
+  return segments.map((segment) => {
+    // App 侧一律相对**拨号起点**算；没有拨号起点时相对接入时刻（并记进 note）。
+    const base = segment.app.dialAtMs ?? segment.attachAtMs
+    const at = (value) => (value === undefined ? null : Math.round(value - base))
+    const stages = {
+      dialMs: at(segment.app.dialAtMs),
+      transportUpMs: at(segment.app.transportUpAtMs),
+      firstRequestMs: at(segment.app.firstRequestAtMs),
+      firstResponseMs: at(segment.app.firstResponseAtMs),
+      helloMs: at(segment.app.helloAtMs),
+      firstScreenMs: at(segment.app.firstScreenAtMs),
+    }
+    const missing = Object.entries(stages).filter(([, value]) => value === null).map(([key]) => STAGE_NAMES[key])
+    return {
+      deviceId: segment.deviceId,
+      attachAt: new Date(segment.attachAtMs).toISOString(),
+      attachMs: segment.attachAtMs,
+      relayAttachMs: segment.relay.attachAtMs ?? null,
+      appStages: stages,
+      appMissing: missing,
+      connectorPhases: segment.connector.phases ?? null,
+      connectorMissing: segment.connector.missing ?? [],
+      // 两侧对"拨号→握手"的读数：两边各自相对自己的起点，先把连接器那份换算到拨号起点
+      // （App 拨号早于接入，`attachAtMs - dialAtMs` 是正的）。差得多说明归属配错了——
+      // 这是自检，不是结论。
+      helloSkewMs: (segment.connector.phases?.helloMs ?? null) !== null && stages.helloMs !== null
+        && segment.app.dialAtMs !== undefined
+        ? Math.round(stages.helloMs
+            - (segment.connector.phases.helloMs + (segment.attachAtMs - segment.app.dialAtMs)))
+        : null,
+    }
+  })
+}
+
+/** 阶段名（`missing` 里出现的那套，与连接器侧同名）。 */
+export const STAGE_NAMES = Object.freeze({
+  dialMs: 'dial',
+  transportUpMs: 'transport-up',
+  firstRequestMs: 'first-request',
+  firstResponseMs: 'first-response',
+  helloMs: 'hello',
+  firstScreenMs: 'first-screen',
+})
+
 /** 选一个偏移：共同事件优先（更精确），否则 RTT 法；都没有就是 `none`（不合并时间线）。 */
 export function chooseOffset({ common = null, stats = null } = {}) {
   const chosen = common ?? stats
@@ -537,12 +645,23 @@ function writeBundle({ outDir, collected, window, options, log }) {
   const timeline = merged.rows.map((row) => JSON.parse(scrub(row)))
   writeJsonl(join(outDir, merged.rows.length ? 'timeline.jsonl' : 'timeline.by-source.jsonl'), timeline)
 
-  writeFileSync(join(outDir, 'README.md'), readme({ ...collected, coverage, window, options, outDir }), { mode: 0o600 })
+  // 每次接入一行：人要的就是这张表，而不是在流水里自己找五个数字。
+  const attaches = summarizeAttaches({ connector: collected.connectorEvents, app: collected.appEvents,
+    relay: collected.relayEvents })
+  writeJsonl(join(outDir, 'attaches.jsonl'), attaches.map((row) => JSON.parse(scrub(row))))
+
+  writeFileSync(join(outDir, 'README.md'),
+    readme({ ...collected, coverage, window, options, outDir, attaches }), { mode: 0o600 })
   return { coverage, missing: collected.missing }
 }
 
+/** 表格单元格：`null`（没发生）与 0 要分得开。 */
+function cell(value) {
+  return value === null || value === undefined ? '—' : String(value)
+}
+
 /** 包内自解释：这次采了什么、怎么判读四类问题、缺了什么。 */
-function readme({ missing, coverage, window, options, outDir, merged }) {
+function readme({ missing, coverage, window, options, outDir, attaches = [] }) {
   const lines = [
     '# 诊断包', '',
     `- 采集窗口：${coverage.window.since} → ${coverage.window.until}（${window.label}）`,
@@ -557,6 +676,15 @@ function readme({ missing, coverage, window, options, outDir, merged }) {
     '2. **连上耗时长 / 加载慢**：`app.hello.ms` / `app.first-screen.ms` / `device.phase.phases` 是各段毫秒。',
     '3. **同步慢**：`device.summary`（p50/p95/top3）与 `request.slow`（方法名 + 耗时 + 字节）。',
     '4. **记录有没有失控**：`coverage.connector.droppedEarlier` 与 `journal.fileErrors`（在 status.json 里）。',
+    '', '## 每次接入的阶段耗时（毫秒，相对该次拨号；`—` = 没发生）', '',
+    '| 设备 | 接入时刻 | 拨号 | 传输建立 | 首请求 | 首响应 | 握手 | 首屏 | 连接器侧 |',
+    '|---|---|---|---|---|---|---|---|---|',
+    ...attaches.map((row) => `| ${row.deviceId} | ${row.attachAt.slice(11, 19)} | ${
+      cell(row.appStages.dialMs)} | ${cell(row.appStages.transportUpMs)} | ${cell(row.appStages.firstRequestMs)} | ${
+      cell(row.appStages.firstResponseMs)} | ${cell(row.appStages.helloMs)} | ${cell(row.appStages.firstScreenMs)} | ${
+      row.connectorPhases ? `hello ${cell(row.connectorPhases.helloMs)} / 首响应 ${cell(row.connectorPhases.firstResponseMs)}` : '（缺）'
+    } |`),
+    '', '两侧对「接入→握手」的读数应当接近（`attaches.jsonl` 的 `helloSkewMs`）；差得多说明归属配错了。',
     '', '## 常用命令', '```bash',
     `jq -r '"\\(.at[11:19]) \\(.source) \\(.kind)"' ${join(outDir, 'timeline.jsonl')} | less`,
     `jq -c 'select(.kind=="device.summary") | {deviceId, requests, p95Ms, top3}' ${join(outDir, 'sources/connector.jsonl')}`,

@@ -18,7 +18,7 @@ import test from 'node:test'
 import {
   bundleName, chooseOffset, computeAppOffset, computeOffsetFromCommonEvents, computeOffsetFromStats,
   debugDeviceIds, dshHome, journalSince, mergeTimeline, parseArgs, parseRelayJsonRecord,
-  parseRelayLines, parseRelayMessage, parseSince, readConnectorJournal, sliceByWindow,
+  parseRelayLines, parseRelayMessage, parseSince, readConnectorJournal, sliceByWindow, summarizeAttaches,
 } from './collect-diagnostics.mjs'
 
 const AT = Date.parse('2026-10-13T01:10:10.506Z')
@@ -257,4 +257,71 @@ test('DSH_HOME 与环境默认值', () => {
 
 test('bundleName 形状稳定（便于按名字排序与找最近一次）', () => {
   assert.equal(bundleName(new Date('2026-10-13T01:10:10.506Z')), 'diagnostics-20261013-011010')
+})
+
+// ── US2：把一次接入的两侧阶段合成一张表 ──────────────────────────────────────
+
+test('summarizeAttaches 按接入分组，缺的阶段进 missing 而不是 0', () => {
+  const connector = [
+    { kind: 'device.attach', deviceId: 'dev_1', ms: 10_000, name: 'iPhone' },
+    { kind: 'device.phase', deviceId: 'dev_1', ms: 31_000,
+      phases: { helloMs: 19_109, firstRequestMs: 246, firstResponseMs: 487 }, missing: [] },
+  ]
+  const app = [
+    // App 的拨号早于连接器记到的接入（实测领先约 150ms）
+    { kind: 'app.dial', deviceId: 'dev_1', ms: 9_850, phase: 'start' },
+    { kind: 'app.dial', deviceId: 'dev_1', ms: 10_020, phase: 'transport-up' },
+    { kind: 'app.first-request', deviceId: 'dev_1', ms: 10_100, method: 'session/list' },
+    { kind: 'app.first-response', deviceId: 'dev_1', ms: 10_400, method: 'session/list', bytes: 700 },
+    { kind: 'app.hello', deviceId: 'dev_1', ms: 29_400, elapsedMs: 19_325 },
+    { kind: 'app.first-screen', deviceId: 'dev_1', ms: 29_403 },
+  ]
+  const relay = [{ kind: 'relay.device-attach', deviceId: 'dev_1', ms: 10_030 }]
+  const rows = summarizeAttaches({ connector, app, relay })
+  assert.equal(rows.length, 1)
+  const row = rows[0]
+  assert.equal(row.deviceId, 'dev_1')
+  assert.equal(row.appStages.dialMs, 0, 'App 侧一律相对拨号起点')
+  assert.equal(row.appStages.transportUpMs, 170)
+  assert.equal(row.appStages.helloMs, 19_550)
+  assert.equal(row.appStages.firstScreenMs, 19_553)
+  assert.deepEqual(row.appMissing, [], '六个阶段都到了就不该有 missing')
+  assert.equal(row.connectorPhases.helloMs, 19_109)
+  assert.equal(row.relayAttachMs, 10_030)
+  // 两侧对「接入→握手」的读数接近（App 从拨号起算，连接器从接入起算，差一个 150ms 的领先）
+  assert.ok(Math.abs(row.helloSkewMs) < 300, `两侧读数该接近：${row.helloSkewMs}`)
+})
+
+test('summarizeAttaches：没握手的那次接入把 hello 记成 missing', () => {
+  const connector = [
+    { kind: 'device.attach', deviceId: 'dev_2', ms: 1_000 },
+    { kind: 'device.phase', deviceId: 'dev_2', ms: 2_000,
+      phases: { helloMs: null, firstRequestMs: 50, firstResponseMs: 200 }, missing: ['hello'] },
+  ]
+  const app = [
+    { kind: 'app.dial', deviceId: 'dev_2', ms: 900, phase: 'start' },
+    { kind: 'app.dial', deviceId: 'dev_2', ms: 1_050, phase: 'transport-up' },
+  ]
+  const [row] = summarizeAttaches({ connector, app })
+  assert.equal(row.appStages.helloMs, null, '没发生就是 null')
+  assert.notEqual(row.appStages.helloMs, 0, '0 与"没发生"是两回事')
+  assert.ok(row.appMissing.includes('hello'))
+  assert.ok(row.appMissing.includes('first-request'))
+  assert.deepEqual(row.connectorMissing, ['hello'])
+  assert.equal(row.helloSkewMs, null, '两侧缺一段就不算差值')
+})
+
+test('summarizeAttaches：两次接入分成两段，互不串味', () => {
+  const connector = [
+    { kind: 'device.attach', deviceId: 'dev_3', ms: 1_000 },
+    { kind: 'device.attach', deviceId: 'dev_3', ms: 100_000 },
+  ]
+  const app = [
+    { kind: 'app.dial', deviceId: 'dev_3', ms: 900, phase: 'start' },
+    { kind: 'app.dial', deviceId: 'dev_3', ms: 99_900, phase: 'start' },
+  ]
+  const rows = summarizeAttaches({ connector, app })
+  assert.equal(rows.length, 2)
+  assert.equal(rows[0].appStages.dialMs, 0)
+  assert.equal(rows[1].appStages.dialMs, 0, '第二段的拨号相对第二段自己的起点')
 })

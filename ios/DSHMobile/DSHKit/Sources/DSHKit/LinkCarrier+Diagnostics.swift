@@ -17,9 +17,17 @@ extension LinkCarrier {
         session.delegate is LinkSocketObserver
     }
 
-    /// 记录一次拨号开始（在 `resume()` 之前调用）。
+    /// 记录一次拨号开始（在 `resume()` 之前调用）。同时把拨号起点交给流水——
+    /// 之后所有 `app.*.elapsedMs` 都相对它算，所以**不能**等握手完再补。
     func diagnosticsDialStarted() async {
+        await diagnostics.markDialStart()
         await diagnostics.record(kind: "app.dial", detail: ["phase": .string("start")])
+    }
+
+    /// 一次数据交互收尾（由 `performUnary` 调用）：每次都记 `app.request`，
+    /// 首个交互另外补 `app.first-request` / `app.first-response`。
+    func diagnosticsNoteInteraction(method: String, elapsedMs: Int, bytes: Int) async {
+        await diagnostics.endInteraction(method: method, elapsedMs: elapsedMs, bytes: bytes)
     }
 
     /// 记一条阶段事件。`since` 给了就附上"距它多少毫秒"。

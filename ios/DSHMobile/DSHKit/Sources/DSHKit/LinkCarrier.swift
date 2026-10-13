@@ -275,15 +275,33 @@ public actor LinkCarrier: DSHCarrier {
         args: Args,
         as valueType: Value.Type
     ) async throws -> Value {
-        let value = try await performUnary(method: method, args: args)
-        let data = try JSONEncoder().encode(value)
+        // 诊断计时（spec 020 的 FR-010）：只影响流水，不影响这条调用本身。
+        // 失败也要记（不记的话"看不见的超时"就还是看不见）。
+        let startedAt = Date()
+        await diagnostics.beginInteraction(method: method)
         do {
-            return try JSONDecoder().decode(Value.self, from: data)
+            let value = try await performUnary(method: method, args: args)
+            let data = try JSONEncoder().encode(value)
+            let decoded = try JSONDecoder().decode(Value.self, from: data)
+            await diagnosticsNoteInteraction(method: method,
+                                             elapsedMs: Self.elapsedMs(since: startedAt),
+                                             bytes: data.count)
+            return decoded
         } catch {
-            throw DSHTransportError.malformedResponse(
-                "\(method): could not decode \(Value.self) from \(data.count) bytes — \(error)"
-            )
+            await diagnosticsNoteInteraction(method: method,
+                                             elapsedMs: Self.elapsedMs(since: startedAt), bytes: 0)
+            if let error = error as? DecodingError {
+                throw DSHTransportError.malformedResponse(
+                    "\(method): could not decode \(Value.self) — \(error)"
+                )
+            }
+            throw error
         }
+    }
+
+    /// 毫秒取整（诊断用；不与任何判断挂钩）。
+    static func elapsedMs(since start: Date) -> Int {
+        Int(Date().timeIntervalSince(start) * 1000)
     }
 
     public func stream<Args: Encodable & Sendable>(

@@ -60,6 +60,7 @@ export const EVENT_KINDS = Object.freeze([
   'app.hello',
   'app.first-request',
   'app.first-response',
+  'app.request',
   'app.first-screen',
   'app.scene',
   'app.push',

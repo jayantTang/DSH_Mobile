@@ -43,6 +43,28 @@ struct LinkDiagnosticsTests {    @Test("环有上限，被挤掉的条数如实�
         #expect(second.detail?["elapsedMs"] == .int(12))
     }
 
+    @Test("首个交互只记一次，每次交互都留 app.request；拨号前不编 elapsedMs")
+    func interactionRecording() async {
+        let clock = FakeClock(1_000)
+        let diagnostics = LinkDiagnostics(now: { clock.tick(10) })
+        #expect(await diagnostics.elapsedSinceDial() == nil, "还没拨号就不该编一个 0 出来")
+
+        await diagnostics.markDialStart()
+        #expect(await diagnostics.beginInteraction(method: "session/list"), "第一次要返回 true")
+        await diagnostics.endInteraction(method: "session/list", elapsedMs: 120, bytes: 700)
+        let secondWasFirst = await diagnostics.beginInteraction(method: "session/get")
+        #expect(secondWasFirst == false, "第二次不再是首个")
+        await diagnostics.endInteraction(method: "session/get", elapsedMs: 30, bytes: 10)
+
+        let kinds = await diagnostics.entries().map(\.kind)
+        #expect(kinds.filter { $0 == "app.first-request" }.count == 1, "首个请求只记一次：\(kinds)")
+        #expect(kinds.filter { $0 == "app.first-response" }.count == 1, "首个响应只记一次：\(kinds)")
+        #expect(kinds.filter { $0 == "app.request" }.count == 2, "每次交互都要留一条：\(kinds)")
+        let first = await diagnostics.entries().first { $0.kind == "app.first-request" }
+        #expect(first?.detail?["elapsedMs"] != nil, "阶段事件要带相对拨号的耗时")
+        #expect(await diagnostics.elapsedSinceDial() != nil)
+    }
+
     @Test("落盘：一行一条 JSON，能读回来")
     func writesJsonLines() async throws {
         let directory = makeDirectory()
