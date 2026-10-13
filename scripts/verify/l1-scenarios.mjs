@@ -4,7 +4,7 @@
  * 环境搭建与收尾在 `l1-runtime.mjs`；这里只管"做什么、观察到什么、四态怎么给"。
  */
 
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawn, spawnSync } from 'node:child_process'
@@ -420,5 +420,100 @@ export async function iosLinkCarrierLifecycle({ outDir, root = REPO_ROOT, log = 
              '运行器配对的 DSH-Runner 调试设备跑完自行撤销（若同时另有轮次在跑，它的 sweep 会先撤销而让' +
              '本轮 revoke 返回 401，此时由按名字清扫兜底）；relay 设备表核对只剩真实 iPhone 与常驻 DSH-Test',
     },
+  }
+}
+
+/**
+ * 场景：三侧诊断（spec 020 / tasks.md T024）。
+ *
+ * 判什么：**在真实宿主里**（不是单测桩里）隔离起一个 DSH，确认新增的诊断设施真的活着：
+ *   1. 连接器在孤立 DSH_HOME 下写出 `mobile-link/link-events.jsonl`，权限 0600；
+ *   2. 写进去的 kind **全部**在 `EVENT_KINDS` 词表内（写入侧自检在真实宿主里也成立）；
+ *   3. 文件大小在上限内，且 `journal` 的 `.1` 滚动口径不产生第三份文件；
+ *   4. 真实 `~/.dsh/mobile-link/agent.json` 未被改动（宪法 III）。
+ *
+ * 为什么 L1 只能验到这些：隔离宿主没有身份文件（身份在 `$DSH_HOME/mobile-link/agent.json`，
+ * 不在 profile 里），于是连接器**不会**去连真中转——这既是安全性质（L1 不会把用户的手机挤下线），
+ * 也意味着"App→连接器推送"那一段只能在慢闸用仿真器经中转验（见 quickstart 的 S1/S2）。
+ */
+export async function linkDiagnostics({ outDir, log = () => {} }) {
+  const before = snapshotRealData()
+  const root = mkdtempSync(join(tmpdir(), 'dsh-lane-l1-'))
+  const home = join(root, 'home')
+  const dshHome = join(home, '.dsh')
+  mkdirSync(dshHome, { recursive: true })
+  const observations = []
+  const commands = []
+  let status = 'fail'
+  let note
+  let host
+
+  try {
+    seedProfile(dshHome)
+    observations.push({ step: 'seed', fact: `隔离档案已就位：${join(dshHome, 'profiles', 'web')}` })
+    host = spawnHost({ home, dshHome, outDir })
+    log(`L1: 已起隔离宿主 pid=${host.pid}`)
+    const probe = await probeHost(host, dshHome)
+    observations.push(...probe.observations)
+    const journal = await inspectDiagnosticsJournal({ dshHome, outDir, log })
+    observations.push(...journal.observations)
+    status = probe.ok && journal.ok ? 'pass' : 'fail'
+    note = probe.note ?? journal.note
+  } catch (error) {
+    status = 'fail'
+    note = error.message
+    observations.push({ step: 'error', fact: error.message })
+    const tail = stderrTail(host)
+    if (tail) observations.push({ step: 'stderr', fact: `宿主 stderr 末尾：\n${tail}`, evidence: 'host.stderr.log' })
+  } finally {
+    return await finishSmoke({ host, before, observations, commands, root, status, note })
+  }
+}
+
+/** 等隔离宿主的连接器写出流水，然后逐条核对（词表、权限、上限）。 */
+async function inspectDiagnosticsJournal({ dshHome, outDir, log, timeoutMs = 30_000 }) {
+  const { EVENT_KINDS, DEFAULT_MAX_BYTES } = await import('../../plugins/mobile-link/lib/journal.js')
+  const directory = join(dshHome, 'mobile-link')
+  const path = join(directory, 'link-events.jsonl')
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline && !existsSync(path)) await sleep(500)
+  if (!existsSync(path)) {
+    return { ok: false, note: `${timeoutMs}ms 内连接器没写出 ${path}`, observations: [
+      { step: 'journal', fact: `没等到流水文件：${path}` },
+    ] }
+  }
+  const text = readFileSync(path, 'utf8')
+  const copy = join(outDir, 'link-events.jsonl')
+  writeFileSync(copy, text)
+  const lines = text.split('\n').filter(Boolean)
+  const events = []
+  const badLines = []
+  for (const line of lines) {
+    try {
+      events.push(JSON.parse(line))
+    } catch {
+      badLines.push(line)
+    }
+  }
+  const kinds = [...new Set(events.map((event) => event.kind))]
+  const unknown = kinds.filter((kind) => !EVENT_KINDS.includes(kind))
+  const mode = (statSync(path).mode & 0o777).toString(8)
+  const size = statSync(path).size
+  const observations = [
+    { step: 'journal', fact: `流水已写出：${lines.length} 条事件，${size} 字节，权限 0${mode}`, evidence: 'link-events.jsonl' },
+    { step: 'journal', fact: `事件种类：${kinds.join(', ') || '（空）'}` },
+  ]
+  const problems = []
+  if (badLines.length > 0) problems.push(`${badLines.length} 行不是合法 JSON`)
+  if (unknown.length > 0) problems.push(`出现词表外的 kind：${unknown.join(', ')}`)
+  if (mode !== '600') problems.push(`权限应为 0600，实际 0${mode}`)
+  if (size > DEFAULT_MAX_BYTES) problems.push(`单文件超过上限：${size} > ${DEFAULT_MAX_BYTES}`)
+  if (events.length === 0) problems.push('一条事件都没有')
+  if (existsSync(`${path}.2`)) problems.push('出现了第三份流水文件（滚动口径只该保两代）')
+  log(`L1: 诊断流水核完（${events.length} 条，问题 ${problems.length} 处）`)
+  return {
+    ok: problems.length === 0,
+    note: problems.join('；') || undefined,
+    observations: [...observations, ...problems.map((problem) => ({ step: 'journal', fact: `不合格：${problem}` }))],
   }
 }

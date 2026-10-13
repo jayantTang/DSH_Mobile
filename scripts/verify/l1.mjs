@@ -17,7 +17,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { realDshHome, whichBinary } from './l1-runtime.mjs'
-import { desktopInstance, freshInstall, iosLinkCarrierLifecycle, pluginInstallHot, smoke } from './l1-scenarios.mjs'
+import {
+  desktopInstance, freshInstall, iosLinkCarrierLifecycle, linkDiagnostics, pluginInstallHot, smoke,
+} from './l1-scenarios.mjs'
 
 export const lane = {
   id: 'l1',
@@ -33,6 +35,10 @@ export const lane = {
     'ios-link-carrier-lifecycle': {
       title: 'iOS 协议层：relay socket 断开/替换必须 cancel（单测 + 仿真器经中转用例）',
       run: iosLinkCarrierLifecycle,
+    },
+    'link-diagnostics': {
+      title: '三侧诊断：隔离宿主里真的写出有界、词表内的生命周期流水（spec 020）',
+      run: linkDiagnostics,
     },
   },
 }

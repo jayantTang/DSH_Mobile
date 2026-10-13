@@ -178,6 +178,62 @@ public final class ConnectionStore {
     /// Probes a live link and repairs a dropped one.
     private var watchTask: Task<Void, Never>?
 
+    /// App 的生命周期流水，**整个进程一份**。
+    ///
+    /// 为什么由 store 持有而不是每条 carrier 各建一个：修复连接时会换一个全新的 carrier，
+    /// 而"上次为什么断、手机上几点发生的"必须跨 carrier 连起来看；每建一个就写一份文件
+    /// 还会互相滚动覆盖。落在 App 容器的 Application Support 下（不是 `~/.dsh`）。
+    private let linkDiagnostics: LinkDiagnostics = {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+        let directory = base?.appendingPathComponent("link-diagnostics", isDirectory: true)
+        return LinkDiagnostics(directory: directory)
+    }()
+
+    /// 前后台切换（spec 020 的 FR-009）。用来把"App 被系统挂起"与"拨号卡住"分开。
+    public enum AppScene: String, Sendable { case foreground, background }
+
+    /// 记一条前后台切换。**不参与连接主路径**：失败也只是少一条记录。
+    public func noteScene(_ scene: AppScene) async {
+        guard let link = carrier as? LinkCarrier else { return }
+        await link.diagnosticsNote("app.scene", detail: ["phase": .string(scene.rawValue)])
+        // 回到前台顺手把攒下的记录推上去（后台期间可能攒了"挂起—恢复"这一串）。
+        if scene == .foreground { await pushDiagnostics(link) }
+    }
+
+    /// 把 App 攒下的阶段记录增量推给连接器（spec 020 的 FR-011）。
+    ///
+    /// 三条纪律：
+    ///   1. **失败当无事**（旧连接器回 `link/unsupported` 是预期内的），下次 install/回前台再试；
+    ///   2. 只推 `pending()`（未推过的），水位按连接器确认的 `lastSeq` 前进——不重发也不漏发；
+    ///   3. 绝不因为推送失败改变连接状态。
+    func pushDiagnostics(_ link: LinkCarrier) async {
+        let pending = await link.diagnostics.pending()
+        guard !pending.isEmpty, let client else { return }
+        let request = LinkDiagnosticsRequest(
+            since: await link.diagnostics.pushedUpTo,
+            sentAt: Int(Date().timeIntervalSince1970 * 1000),
+            dropped: await link.diagnostics.dropped,
+            events: pending,
+            client: LinkDiagnosticsClient(name: Self.clientName,
+                                          version: Self.clientVersion,
+                                          build: Self.clientBuild)
+        )
+        guard let ack = try? await client.pushDiagnostics(request) else { return }
+        await link.diagnostics.markPushed(upTo: ack.lastSeq)
+    }
+
+    /// 只在两次动作之间记录**首个**交互的耗时（FR-010）：第一个数据请求发出与它的响应到达。
+    private var firstInteractionRecorded = false
+
+    /// 记首个数据交互的耗时与字节（由消息管道在收到首个响应时调用）。
+    public func noteFirstInteraction(method: String, ms: Int, bytes: Int) async {
+        guard !firstInteractionRecorded, let link = carrier as? LinkCarrier else { return }
+        firstInteractionRecorded = true
+        await link.diagnosticsNote("app.first-response", detail: [
+            "method": .string(method), "ms": .int(ms), "bytes": .int(bytes),
+        ])
+    }
+
     private let defaultsKey = "dsh.connection.profiles"
 
     public init() {
@@ -390,11 +446,14 @@ public final class ConnectionStore {
                 agentId: agentId,
                 deviceToken: secret
             )
-            let link = LinkCarrier(configuration: configuration)
+            // 拨号起点：`install()` 里要用它算"从拨号到握手/到首屏各多少毫秒"。
+            let dialStartedAt = Date()
+            let link = LinkCarrier(configuration: configuration, diagnostics: linkDiagnostics)
             await link.connect()
             do {
                 let probe = try await DSHClient(carrier: link).sessions()
-                await install(carrier: link, profile: profile, sampleCount: probe.items.count)
+                await install(carrier: link, profile: profile, sampleCount: probe.items.count,
+                              dialStartedAt: dialStartedAt)
                 observeStatus(of: link)
             } catch {
                 await link.close()
@@ -428,7 +487,8 @@ public final class ConnectionStore {
     }
     static var clientBuild: String? { Bundle.main.infoDictionary?["CFBundleVersion"] as? String }
 
-    private func install(carrier: any DSHCarrier, profile: ConnectionProfile, sampleCount: Int) async {
+    private func install(carrier: any DSHCarrier, profile: ConnectionProfile, sampleCount: Int,
+                         dialStartedAt: Date? = nil) async {
         let previous = self.carrier
         self.carrier = carrier
         let client = DSHClient(carrier: carrier)
@@ -445,10 +505,21 @@ public final class ConnectionStore {
             clientVersion: Self.clientVersion,
             clientBuild: Self.clientBuild
         ))
+        // 握手完成的时刻（spec 020）：有它才谈得上"连上耗时卡在哪一段"。
+        if let link = carrier as? LinkCarrier {
+            await link.diagnosticsNote("app.hello", since: dialStartedAt)
+        }
         capabilities = Set(handshake?.capabilities ?? [])
         // Recorded for the out-of-date notice only; never used to refuse the link.
         connectorVersion = handshake?.serverVersion
         state = .connected(hostHome: profile.hostHome)
+        // 首屏就绪：状态机已切到 connected，屏幕可以渲染了（与"握手完成"是两个时刻）。
+        if let link = carrier as? LinkCarrier {
+            firstInteractionRecorded = false
+            await link.diagnosticsNote("app.first-screen", since: dialStartedAt)
+            // 推送在后台跑：它是一次网络往返，**不许**挂在连接主路径上（FR-011）。
+            Task { await self.pushDiagnostics(link) }
+        }
         recordConnection(profile.id, hostHome: profile.hostHome)
         startWatching()
         // What a repair replaced is closed only now, once the new link has

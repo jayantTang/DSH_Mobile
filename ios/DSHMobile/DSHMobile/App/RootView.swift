@@ -205,6 +205,13 @@ struct RootView: View {
                     chatModel.persistTranscriptNow()
                     Task { await chatModel.flushTranscript() }
                 }
+                // 前后台切换记一条（spec 020）：这是区分「App 被系统挂起」与「拨号卡住」
+                // 的唯一本地证据——两者在中转与连接器两侧看起来完全一样。
+                if phase == .background {
+                    Task { await store.noteScene(.background) }
+                } else if phase == .active {
+                    Task { await store.noteScene(.foreground) }
+                }
                 // Re-checked on every return to the foreground: that is when a
                 // user who just installed an update comes back to look.
                 if phase == .active { Task { await updates.refresh() } }

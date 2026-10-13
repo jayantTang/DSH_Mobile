@@ -164,7 +164,8 @@ public actor LinkCarrier: DSHCarrier {
     /// The relay identity this carrier dials with. `nonisolated` so the device-admin
     /// helper can be built without hopping onto the actor.
     nonisolated let configuration: LinkConfiguration
-    private let session: URLSession
+    /// internal（不是 private）：同一模块的诊断半边要问它「观察者挂上了没有」。
+    let session: URLSession
     private let timeout: Duration
     private let reconnect: ReconnectPolicy
     /// 造 socket 的工厂。线上是 `session.webSocketTask(with:)`；单测注入替身，
@@ -213,7 +214,11 @@ public actor LinkCarrier: DSHCarrier {
             let configuration = URLSessionConfiguration.ephemeral
             configuration.waitsForConnectivity = false
             configuration.httpShouldSetCookies = false
-            self.session = URLSession(configuration: configuration)
+            // 带上观察者：`transport-up` / `transport-closed` 只有系统回调能给（见
+            // LinkCarrier+Diagnostics.swift 的说明）。它只持有 diagnostics，不持有 carrier。
+            self.session = URLSession(configuration: configuration,
+                                      delegate: LinkSocketObserver(diagnostics: diagnostics),
+                                      delegateQueue: nil)
         }
         let session = self.session
         self.makeSocket = { session.webSocketTask(with: $0) }
@@ -450,6 +455,9 @@ public actor LinkCarrier: DSHCarrier {
         // 只被丢引用时会一直活着（并继续替我们回 Pong），中转会把同一个 deviceId 记成
         // 又一条 attach，旧的那条就变成僵尸链路——2026-10-12 线上一个 deviceId 攒到 14 条。
         socket?.cancel(with: .goingAway, reason: nil)
+        // 拨号开始的时刻必须在 `resume()` 之前记：这是"连上耗时"的起点，
+        // 也是判断"拨号卡住"（有 start 没有 transport-up）的唯一依据。
+        await diagnosticsDialStarted()
         let task = makeSocket(request)
         // Session history snapshots arrive as one large frame; the 1 MiB
         // default would drop them with an opaque "Message too long".

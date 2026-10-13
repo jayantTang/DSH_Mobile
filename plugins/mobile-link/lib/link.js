@@ -24,7 +24,7 @@ import { LinkJournal, defaultJournalPath } from './journal.js'
 import { statusSnapshot } from './status.js'
 import { mintPairCode } from './pairing.js'
 import {
-  DEFAULT_EVENTS_BACKLOG,
+  DEFAULT_EVENTS_BACKLOG, DEFAULT_SLOW_REQUEST_MS,
   EVENTS_ENDPOINT, EVENTS_RESULT, DeviceRouter, messageOf,
 } from './router.js'
 import { SERVER_VERSION, SERVER_CAPABILITIES } from './hello.js'
@@ -58,6 +58,8 @@ export class MobileLinkAgent extends EventEmitter {
     logger = console, heartbeatMs = 20000, pongTimeoutMs = 60000, maxBackoffMs = 30000,
     random = Math.random, now = Date.now, dshClient, connectImpl = wsConnect, enabled = true,
     watchdogMs = 180000,
+    // 慢请求阈值（毫秒）；0 = 关闭逐条慢请求记录。见 router.js 的 DEFAULT_SLOW_REQUEST_MS。
+    slowRequestMs = DEFAULT_SLOW_REQUEST_MS,
     inviteCode, fetchImpl = fetch, env = process.env,
     // 生命周期流水（见 journal.js）：`journal` 传实例（测试注入），`journalPath`
     // 传路径（`defaultJournalPath()` 之外的位置），false 表示只留内存不落盘。
@@ -73,6 +75,7 @@ export class MobileLinkAgent extends EventEmitter {
     this.pongTimeoutMs = pongTimeoutMs
     this.maxBackoffMs = maxBackoffMs
     this.watchdogMs = watchdogMs
+    this.slowRequestMs = Number(slowRequestMs) || 0
     this.random = random
     this.now = now
     this.connectImpl = connectImpl
@@ -97,6 +100,7 @@ export class MobileLinkAgent extends EventEmitter {
       now,
       protocolVersion: PROTOCOL_VERSION,
       eventsBacklog,
+      slowRequestMs: this.slowRequestMs,
       send: (deviceId, frame) => this.sendToDevice(deviceId, frame),
       // 设备侧的 attach/detach 与链路侧同源记进流水：事后想把"手机断了"和
       // "连接器拆链"对上时间，两边必须写在同一份文件里。
@@ -546,10 +550,15 @@ export class MobileLinkAgent extends EventEmitter {
   // ── relay I/O ───────────────────────────────────────────────────────────
 
   #rawSend(frame) {
+    return this.#sendText(encodeFrame(frame))
+  }
+
+  /** 唯一的发送出口：socket 不在就丢掉，发送异常只记 debug、绝不抛。 */
+  #sendText(text) {
     const socket = this.socket
     if (!socket || socket.closed) return false
     try {
-      socket.send(encodeFrame(frame))
+      socket.send(text)
       return true
     } catch (error) {
       this.logger.debug?.(`mobile-link: send failed: ${messageOf(error)}`)
@@ -561,7 +570,10 @@ export class MobileLinkAgent extends EventEmitter {
     // `deviceId` 为空＝这是一条**不带寻址**的帧（`fsPutAck`/`fsPutDone`/`fsErr` 那一族）：
     // relay 靠 `bid` 把回复对回发起的那个 HTTP 请求，多一个 deviceId 反而会让它对不上。
     if (deviceId === undefined || deviceId === null) return this.#rawSend(frame)
-    return this.#rawSend({ ...frame, deviceId })
+    const text = encodeFrame({ ...frame, deviceId })
+    // 记字节给路由层的"慢请求/汇总"用（它按 deviceId 归）：只有这里知道真正上线了多少字节。
+    this.router.noteSent?.(deviceId, Buffer.byteLength(text))
+    return this.#sendText(text)
   }
 
   sendHostStatus() {

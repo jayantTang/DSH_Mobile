@@ -95,6 +95,33 @@ export function trimHistoryPageForWire(method, result) {
   return result.value === undefined ? trimmed : { ...result, value: trimmed }
 }
 
+import { DeviceTimeline } from './diagnostics.js'
+
+/** 慢请求阈值默认值（毫秒）；0 = 关闭逐条慢请求记录。 */
+export const DEFAULT_SLOW_REQUEST_MS = 2000
+
+/** App 把自己那份阶段记录推上来的方法（契约 connector-diagnostics-method.md）。 */
+export const DIAGNOSTICS_METHOD = '_link/diagnostics'
+/** 单批上限：超过就截断并如实报 `accepted`，剩下的由 App 下次再推（水位不推进）。 */
+export const DIAGNOSTICS_BATCH_BYTES = 32 * 1024
+/** 单条事件里字符串字段的保留长度。 */
+const DIAGNOSTICS_MAX_TEXT = 400
+
+/** 只留标量（字符串/数字/布尔）与标量数组：App 侧事件的形状由它自己定，这里不替它校验语义。 */
+function sanitizeDiagnosticEvent(event) {
+  if (!event || typeof event !== 'object' || typeof event.kind !== 'string') return null
+  const clean = { kind: event.kind }
+  for (const [key, value] of Object.entries(event)) {
+    if (key === 'kind') continue
+    if (typeof value === 'string') clean[key] = value.slice(0, DIAGNOSTICS_MAX_TEXT)
+    else if (typeof value === 'number' || typeof value === 'boolean') clean[key] = value
+    else if (Array.isArray(value) && value.every((item) => typeof item === 'string' || typeof item === 'number')) {
+      clean[key] = value.slice(0, 32)
+    }
+  }
+  return clean
+}
+
 export class DeviceRouter {
   /**
    * @param {object} options
@@ -105,9 +132,20 @@ export class DeviceRouter {
   constructor({
     dsh, send, logger = console, onChange = () => {}, now = Date.now, protocolVersion = 1,
     eventsBacklog = DEFAULT_EVENTS_BACKLOG, notify = () => {}, onEvent = () => {},
+    slowRequestMs = DEFAULT_SLOW_REQUEST_MS,
   } = {}) {
     this.dsh = dsh
     this.eventsBacklog = eventsBacklog
+    this.slowRequestMs = Number(slowRequestMs) || 0
+    /** 每个 deviceId 当前这次接入的计时（attach 时建、detach 时收）。 */
+    this.timelines = new Map()
+    /**
+     * 当前这次请求已经发出去的字节数（在 `noteSent` 里累加、在请求收尾时取走）。
+     *
+     * 同一设备上并发请求会把字节算到一起——诊断只要量级对得上（"这次响应是几 KB 还是几 MB"），
+     * 不值得为它引入逐请求关联（那要改所有回包点的形状）。
+     */
+    this._sentBytes = new Map()
     // 「跑完了 / 待你回应」这类事件到了就报一声（见 `notifyFor`）。默认空函数，
     // 测试与不关心提醒的调用方可以不管它。帧由 link.js 发（router 不发帧）。
     this.notify = notify
@@ -179,9 +217,12 @@ export class DeviceRouter {
       return
     }
     switch (frame.t) {
-      case 'req':
+      case 'req': {
+        const startedAt = this.now()
         await this.handleRequest(deviceId, frame)
+        this.#noteRequest(deviceId, frame.method, startedAt)
         return
+      }
       case 'open':
         await this.handleOpen(deviceId, frame)
         return
@@ -282,8 +323,95 @@ export class DeviceRouter {
 
   // ── device lifecycle ────────────────────────────────────────────────────
 
+  /**
+   * 记一条请求的耗时与字节（spec 020 的 FR-001–FR-003）。
+   *
+   * `bytes` 取"这次请求期间发出去的字节"（见 `noteSent`）——它是一个近似值，
+   * 只在同一设备上并发请求时才会串味，而诊断要回答的是"这次响应是几 KB 还是几 MB"。
+   */
+  #noteRequest(deviceId, method, startedAt) {
+    const timeline = this.timelines.get(deviceId)
+    if (!timeline) return
+    const bytes = this._sentBytes.get(deviceId) ?? 0
+    this._sentBytes.set(deviceId, 0)
+    timeline.noteRequest({ method, startedAt, ms: this.now() - startedAt, bytes })
+  }
+
+  /** 每发一帧给某台设备就累加它的字节数（由 `link.js` 的 `sendToDevice` 调用）。 */
+  noteSent(deviceId, bytes) {
+    if (!deviceId || !Number.isFinite(bytes)) return
+    this._sentBytes.set(deviceId, (this._sentBytes.get(deviceId) ?? 0) + bytes)
+  }
+
+  /**
+   * 收下 App 推来的阶段记录（spec 020 的 FR-011 / 契约 §2）。
+   *
+   * 三条硬规则：
+   *   1. **时刻照抄**：App 事件的 `at`/`ms` 是它自己钟上的读数，连接器不许改写
+   *      （否则"手机侧几点了"这条信息就没了，而它正是区分"App 挂起"与"拨号卡住"的依据）；
+   *   2. **按序号幂等**：同一批重推不会写两遍（水位记在设备记录上）；
+   *   3. **超批上限就截断**：只收前若干条并如实报 `accepted`/`lastSeq`，剩下的下次再推——
+   *      绝不假装收全了。
+   *
+   * @returns {{ok: true, value: {accepted: number, lastSeq: number}}}
+   */
+  acceptDiagnostics(deviceId, args = {}) {
+    const record = this.devices.get(deviceId)
+    const watermark = Number(record?.diagnosticsSeq) || 0
+    const events = Array.isArray(args.events) ? args.events : []
+    let accepted = 0
+    let lastSeq = watermark
+    let bytes = 0
+    for (const raw of events) {
+      const event = sanitizeDiagnosticEvent(raw)
+      if (!event) continue
+      const seq = Number(event.seq)
+      if (Number.isFinite(seq) && seq <= watermark) continue
+      const size = JSON.stringify(event).length
+      if (bytes > 0 && bytes + size > DIAGNOSTICS_BATCH_BYTES) break
+      // `at`/`ms` 覆盖信封：这是刻意的，见上面第 1 条。
+      this.onEvent(event.kind, { ...event, source: 'app' })
+      bytes += size
+      accepted += 1
+      if (Number.isFinite(seq)) lastSeq = Math.max(lastSeq, seq)
+    }
+    if (record) record.diagnosticsSeq = lastSeq
+    const sentAt = Number(args.sentAt)
+    this.onEvent('app.push', {
+      deviceId,
+      count: accepted,
+      dropped: Number(args.dropped) || 0,
+      sentAt: Number.isFinite(sentAt) ? sentAt : undefined,
+      // 手机时钟与本机时钟的差（单向延迟几十毫秒）；采集侧的对齐就靠这一个数。
+      skewMs: Number.isFinite(sentAt) ? this.now() - sentAt : undefined,
+    })
+    return { ok: true, value: { accepted, lastSeq } }
+  }
+
+  /** 起一次新的接入计时（回头客也重起：那确实是一次新连接）。 */
+  #startTimeline(deviceId) {
+    this.timelines.get(deviceId)?.finish()
+    this.timelines.set(deviceId, new DeviceTimeline({
+      deviceId,
+      slowRequestMs: this.slowRequestMs,
+      now: this.now,
+      onEvent: this.onEvent,
+    }))
+    this._sentBytes.set(deviceId, 0)
+  }
+
+  /** 收掉一次接入计时（断开、撤销、进程收尾都走这里）。 */
+  #finishTimeline(deviceId) {
+    const timeline = this.timelines.get(deviceId)
+    if (!timeline) return
+    timeline.finish()
+    this.timelines.delete(deviceId)
+    this._sentBytes.delete(deviceId)
+  }
+
   async attachDevice(deviceId, info = {}) {
     if (!nonEmptyString(deviceId)) return
+    this.#startTimeline(deviceId)
     const existing = this.devices.get(deviceId)
     if (existing) {
       // 回头客：手机又连上了。流和攒下的提问都还在，交给 handleOpen 补发。
@@ -337,6 +465,7 @@ export class DeviceRouter {
    * 那段的说明）。这也是「撤销即放下」是唯一出口的原因。
    */
   async detachDevice(deviceId, reason) {
+    this.#finishTimeline(deviceId)
     const record = this.devices.get(deviceId)
     if (!record) return
     if (reason === 'revoked') {
@@ -401,16 +530,29 @@ export class DeviceRouter {
   teardownAll() {
     const muxIds = []
     for (const deviceId of [...this.devices.keys()]) {
+      // 进程收尾/链路重建也要把这次接入的汇总写掉，否则"连上过、发过请求"这件事没有数字。
+      this.#finishTimeline(deviceId)
       muxIds.push(...this.streams.removeDevice(deviceId))
       this.devices.delete(deviceId)
     }
     this.streams = new StreamTable()
+    // 不该有残留：上面的循环已经逐个收过；这里兜底，防止 attach 之后没进 devices 的路径留下脏项。
+    this.timelines.clear()
+    this._sentBytes.clear()
     return muxIds
   }
 
   // ── device requests ─────────────────────────────────────────────────────
 
   async handleRequest(deviceId, frame) {
+    // App 推上来的阶段记录：**只落盘，不影响任何连接行为**（契约
+    // connector-diagnostics-method.md §4）。放在最前面，免得被后面的方法族顺序影响。
+    if (frame.method === DIAGNOSTICS_METHOD) {
+      const result = this.acceptDiagnostics(deviceId, frame.args ?? {})
+      this.send(deviceId, resultFrame(frame.id, result, deviceId))
+      return
+    }
+
     // Files the phone sends are answered here rather than forwarded: the Host
     // has no upload endpoint, and carrying them on the existing unary frame
     // means neither the relay nor the protocol has to change.
