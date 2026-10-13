@@ -158,7 +158,8 @@ struct FeedbackMirror: Codable, Sendable, Equatable {
     var notices: [Notice] = []
     /// 本机已读的 owner 消息。**只在用户真正打开某条时追加**：前台拉取与离线都不动它。
     var readOwnerMessageIds: [String] = []
-    /// 本机已读的通知。
+    /// 已读的通知。019 之后通知的已读是**账号级**一份（服务端权威）：这里既记"本机打开过"的，
+    /// 也记每次拉取时服务端说已经读过的那批，两者取并集——只增不减。
     var readNoticeIds: [String] = []
 }
 
@@ -209,15 +210,22 @@ extension FeedbackMirror.Notice {
 
 extension FeedbackMirror {
 
-    /// 用这次拉到的内容覆盖镜像；已读集合原样保留，所以刷新本身永远不会清未读。
+    /// 用这次拉到的内容覆盖镜像；已读集合只增不减，所以刷新本身永远不会把未读清掉，
+    /// 也不会把已经读过的重新标成未读。
     ///
     /// `seedingReadState` 只在镜像文件不存在（首次安装、换机、刚清过缓存）时为真：
-    /// 那一次服务端的 `unread`/`read` 是唯一线索，用它补种，免得把早就读过的消息
-    /// 重新标成未读。
+    /// 那一次服务端的 `unread`/`read` 是唯一线索，用它补种线程的已读。
+    ///
+    /// 通知的已读除此之外每次刷新都要对齐服务端：019 之后它是**账号级**一份，
+    /// 别的设备读过，这台设备的角标与蓝点就得跟着消失——服务端是唯一权威，
+    /// 本机那份只是"我打开过哪几条"的补集。
     func refreshing(with inbox: FeedbackInbox, seedingReadState: Bool) -> FeedbackMirror {
         var next = seedingReadState ? FeedbackMirror.seeded(from: inbox) : self
         next.threads = inbox.threads.map(Thread.init)
         next.notices = inbox.notices.map(Notice.init)
+        for id in inbox.notices.filter(\.read).map(\.noticeId) where !next.readNoticeIds.contains(id) {
+            next.readNoticeIds.append(id)
+        }
         return next
     }
 
@@ -231,7 +239,8 @@ extension FeedbackMirror {
             let unread = max(0, min(thread.unread, ownerIds.count))
             mirror.readOwnerMessageIds.append(contentsOf: ownerIds.prefix(ownerIds.count - unread))
         }
-        mirror.readNoticeIds = inbox.notices.filter(\.read).map(\.noticeId)
+        // 通知不在这里补种：`refreshing(with:)` 每次拉取都会把服务端的已读并进来，
+        // 两条路径都做同一件事只会让"谁负责"变模糊。
         return mirror
     }
 
@@ -259,6 +268,7 @@ extension FeedbackMirror {
     }
 
     /// 本机口径的未读数：镜像里 owner 的、不在已读集合里的消息 + 未读通知。
+    /// 通知部分与账号口径一致（服务端读过的那批已经在 `readNoticeIds` 里）。
     var localUnreadCount: Int {
         let readMessages = Set(readOwnerMessageIds)
         let readNotices = Set(readNoticeIds)
@@ -302,7 +312,7 @@ extension FeedbackMirror {
         !readOwnerMessageIds.contains(messageId)
     }
 
-    /// 单条通知是否还没看过。
+    /// 单条通知是否还没看过（账号口径：别的设备读过就等于读过）。
     func isUnread(noticeId: String) -> Bool {
         !readNoticeIds.contains(noticeId)
     }

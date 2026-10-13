@@ -163,7 +163,7 @@ public struct FeedbackThread: Sendable, Hashable, Identifiable, Codable {
     }
 }
 
-/// One notice we broadcast to paired devices; independent of any thread.
+/// One notice we broadcast to an account; independent of any thread.
 public struct FeedbackNotice: Sendable, Hashable, Identifiable, Codable {
     public let noticeId: String
     public let subject: String?
@@ -172,7 +172,8 @@ public struct FeedbackNotice: Sendable, Hashable, Identifiable, Codable {
     /// 一律 `text`，只有明确的 `html` 才走锁死的 HTML 容器。
     public let format: String?
     public let createdAt: Date?
-    /// The relay's read state for *this device*.
+    /// The relay's read state for *this account* (019): the same notice is read or unread
+    /// for every device under the account, so one phone opening it clears the other's badge.
     public let read: Bool
 
     public var id: String { noticeId }
@@ -208,8 +209,8 @@ public struct FeedbackNotice: Sendable, Hashable, Identifiable, Codable {
     }
 }
 
-/// One inbox answer: threads we own, notices for this device, and the relay's
-/// unread total. Pulling it **never** changes read state.
+/// One inbox answer: threads we own, the notices delivered to this account, and the
+/// relay's unread total. Pulling it **never** changes read state.
 public struct FeedbackInbox: Sendable, Hashable {
     public let threads: [FeedbackThread]
     public let notices: [FeedbackNotice]
@@ -361,7 +362,9 @@ public struct RelayFeedbackClient: Sendable {
     }
 
     /// Everything this phone may read: threads its tickets own, plus — with a
-    /// valid device token — threads bound to this device, plus its notices.
+    /// valid device token — threads bound to this device, plus the notices
+    /// delivered to this device's **account** (019: one inbox per account, shared
+    /// by every device under it).
     ///
     /// Read-only by contract: the relay does not move `userReadAt` here, so a
     /// refresh on its own can never clear the unread badge.

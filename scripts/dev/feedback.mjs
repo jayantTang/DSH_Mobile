@@ -13,7 +13,7 @@
 //                                  [--format text|html] [--all] [--yes]
 //   node scripts/dev/feedback.mjs delete --thread th_x [--yes]
 //   node scripts/dev/feedback.mjs report [--days 30] [--full-day] [--out maintainers/reports]
-//   node scripts/dev/feedback.mjs report --send --device dvc_a [--device dvc_b] [--subject S]
+//   node scripts/dev/feedback.mjs report --send --account acc_a [--account acc_b] [--subject S]
 //   node scripts/dev/feedback.mjs report-data [--days 30]
 //   node scripts/dev/feedback.mjs report --install-agent | --uninstall-agent
 //
@@ -22,11 +22,12 @@
 // 0 成功 / 1 业务失败 / 2 用法错误。
 //
 // `--format`（默认 text）原样透传给 admin.py：`html` 让手机用锁死的 HTML 容器渲染（日报）。
-// `report --send` 把刚生成的 HTML 报告作为一条 HTML 通知投给 `--device` 指定的设备
-// （**只发指定设备，不群发**）：报告有三万多字节，不能当 ssh 的参数元素传（命令行长度与
-// 引号都会出事），所以先 scp 到服务器 `/tmp/dsh-feedback-report-<文件名>`，再
-// `feedback-notify --format html --body-file <远端路径> --device … --yes`，最后删掉远端临时
-// 文件（失败也删）。
+// `report --send` 把刚生成的 HTML 报告作为一条 HTML 通知投给 **账号**（019）：账号取
+// `--account`，没给就取 `.env.local` 的 `DSH_ACCOUNT_ID`（定时任务走这条，参数里不再有
+// 任何会随手机重配失效的 id）。**只发指定账号，不群发**：报告有三万多字节，不能当 ssh 的
+// 参数元素传（命令行长度与引号都会出事），所以先 scp 到服务器 `/tmp/dsh-feedback-report-<文件名>`，
+// 再 `feedback-notify --format html --body-file <远端路径> --account … --yes`，最后删掉远端
+// 临时文件（失败也删）。
 
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
@@ -65,17 +66,17 @@ const USAGE = `用法：
   feedback.mjs show --thread th_x
   feedback.mjs template
   feedback.mjs reply --thread th_x (--body-file PATH | --body TEXT) [--subject S] [--format text|html] [--send]
-  feedback.mjs notify (--body-file PATH | --body TEXT) [--subject S] [--format text|html] [--device ID]... [--all] [--yes]
+  feedback.mjs notify (--body-file PATH | --body TEXT) [--subject S] [--format text|html] [--account ACC]... [--all] [--yes]
   feedback.mjs delete --thread th_x [--yes]
-  feedback.mjs report [--days 30] [--full-day] [--out DIR] [--send --device ID]...
-  feedback.mjs report [--install-agent [--device ID]... | --uninstall-agent]
-  feedback.mjs report [--full-day] --send --device ID [--device ID]... [--subject S] [--days 30] [--out DIR]
+  feedback.mjs report [--days 30] [--full-day] [--out DIR] [--send [--account ACC]...]
+  feedback.mjs report [--install-agent | --uninstall-agent]
+  feedback.mjs report [--full-day] --send [--account ACC]... [--subject S] [--days 30] [--out DIR]
   feedback.mjs report-data [--days 30]
   （加 --local 跑本机 relay/.local/state.db；写操作默认预演）
   （--full-day 覆盖刚过去的一整天，默认是当天到此刻）
-  （--format 默认 text；report --send 把 HTML 报告按 html 投给 --device 指定的设备，报告里的
-    默认标题是「DSH Mobile 运营日报 YYYY-MM-DD」（日期取覆盖日），--subject 可覆盖；
-    不带 --device 是用法错误）`
+  （--format 默认 text；report --send 把 HTML 报告按 html 投给账号——收件人是账号不是设备，
+    --account 不给时取 .env.local 的 DSH_ACCOUNT_ID；两者都没有是用法错误，不会群发。报告里的
+    默认标题是「DSH Mobile 运营日报 YYYY-MM-DD」（日期取覆盖日），--subject 可覆盖）`
 
 /// 用法错误（退出码 2）与业务失败（1）分开。
 class UsageError extends Error {}
@@ -137,7 +138,7 @@ export function parseArgs(argv) {
   const sub = argv[0]
   if (!sub) throw new UsageError('缺少子命令')
   if (!SUBCOMMANDS.has(sub)) throw new UsageError(`未知子命令 ${sub}`)
-  const opts = { local: false, dryRun: false, send: false, yes: false, all: false, devices: [], days: 30,
+  const opts = { local: false, dryRun: false, send: false, yes: false, all: false, accounts: [], days: 30,
     installAgent: false, uninstallAgent: false, fullDay: false }
   for (let i = 1; i < argv.length; i += 1) {
     const flag = argv[i]
@@ -160,7 +161,7 @@ export function parseArgs(argv) {
         if (!FORMATS.has(opts.format)) throw new UsageError(`--format 只能是 text 或 html，收到 ${opts.format}`)
         break
       case '--out': opts.out = need(argv, ++i, flag); break
-      case '--device': opts.devices.push(need(argv, ++i, flag)); break
+      case '--account': opts.accounts.push(need(argv, ++i, flag)); break
       case '--limit': opts.limit = number(argv, ++i, flag); break
       case '--since': opts.since = number(argv, ++i, flag); break
       case '--days': opts.days = number(argv, ++i, flag); break
@@ -169,12 +170,10 @@ export function parseArgs(argv) {
   }
   if (NEEDS_THREAD.has(sub) && !opts.thread) throw new UsageError(`${sub} 需要 --thread`)
   if (NEEDS_BODY.has(sub) && !opts.body && !opts.bodyFile) throw new UsageError(`${sub} 需要 --body-file 或 --body`)
-  // `report --send` 只投给点名的设备：不给 --device 就是用法错误，绝不退化成群发（--all）。
-  if (sub === 'report' && opts.send && !opts.devices.length) {
-    throw new UsageError('report --send 需要 --device <id>（可重复）；本命令不会群发，群发请用 notify --all')
-  }
+  // `report --send` 的收件账号在 `main` 里定：`--account` 优先，否则取 `.env.local` 的
+  // `DSH_ACCOUNT_ID`（定时任务用这条）。两者都没有时在那边报用法错误，绝不退化成群发。
   if (sub === 'report' && opts.send && opts.all) {
-    throw new UsageError('report --send 只发 --device 指定的设备，不支持 --all')
+    throw new UsageError('report --send 按 --account 投递，不支持 --all')
   }
   return { sub, opts }
 }
@@ -212,7 +211,7 @@ export function adminArgs({ sub, opts }, db) {
       return [...head, 'feedback-notify', ...body,
         ...(opts.subject ? ['--subject', opts.subject] : []),
         ...(opts.format ? ['--format', opts.format] : []),
-        ...opts.devices.flatMap((device) => ['--device', device]),
+        ...opts.accounts.flatMap((account) => ['--account', account]),
         ...(opts.all ? ['--all'] : []),
         ...(opts.yes && !opts.dryRun ? ['--yes'] : [])]
     }
@@ -367,15 +366,12 @@ export function renderAgentPlist({
   nodePath = process.execPath,
   repoRoot = ROOT,
   logPath,
-  deviceIds = [],
   template = readFileSync(AGENT_TEMPLATE, 'utf8'),
 } = {}) {
   const home = homedir()
-  // 定时任务默认只落盘；给了 `--device` 就顺带把日报作为一条 HTML 通知投过去
-  // （owner 2026-10-12：每天那份直接进他手机收件箱）。
-  const sendArgs = deviceIds.length === 0 ? ''
-    : ['--send', ...deviceIds.flatMap((id) => ['--device', id])]
-      .map((arg) => `\n    <string>${arg}</string>`).join('')
+  // 定时任务固定 `--send`：收件账号由脚本在运行时从 `.env.local` 的 DSH_ACCOUNT_ID 取
+  // （019）。plist 里不再写任何 id —— 设备 id 每次重配都会变，写进去必然某天失效。
+  const sendArgs = '\n    <string>--send</string>' 
   const rendered = template
     .replace('__SEND_ARGS__', sendArgs)
     .replaceAll('__NODE__', nodePath)
@@ -393,16 +389,14 @@ function installAgent(io, opts = {}) {
   const path = agentPath()
   mkdirSync(dirname(path), { recursive: true })
   mkdirSync(join(homedir(), 'Library', 'Logs'), { recursive: true })
-  const rendered = renderAgentPlist({ deviceIds: opts.devices ?? [] })
+  const rendered = renderAgentPlist({})
   writeFileSync(path, rendered, { mode: 0o644 })
   const uid = process.getuid()
   try {
     execFileSync('launchctl', ['bootout', `gui/${uid}/${AGENT_LABEL}`], { stdio: 'ignore' })
   } catch { /* 还没装过：bootout 回非零是正常的 */ }
   execFileSync('launchctl', ['bootstrap', `gui/${uid}`, path])
-  const devices = opts.devices ?? []
-  const where = devices.length === 0 ? '只在本机落盘'
-    : `并且发给 ${devices.join('、')}`
+  const where = '并把日报投给 .env.local 里 DSH_ACCOUNT_ID 指定的账号' 
   // 触发时刻从**装下去的 plist** 里读，不写死在提示里（改过模板后提示跟着变）。
   const at = (key) => new RegExp(`<key>${key}</key>\\s*<integer>(\\d+)</integer>`).exec(rendered)?.[1]
   const hour = at('Hour')
@@ -439,7 +433,15 @@ export function main(argv, deps = {}) {
     const env = deps.env ?? { ...localEnv(), ...process.env }
     const exists = deps.exists ?? existsSync
     const run = (command) => String((deps.runner ?? defaultRunner)(command))
-    if (sub === 'report' && opts.send) return reportAndSend(parsed, { env, exists, run, io })
+    if (sub === 'report' && opts.send) {
+      // 收件账号：命令行优先，其次 `.env.local` 的 DSH_ACCOUNT_ID（定时任务的口径）。
+      opts.accounts = opts.accounts.length ? opts.accounts : [env.DSH_ACCOUNT_ID].filter(Boolean)
+      if (!opts.accounts.length) {
+        throw new UsageError('report --send 需要 --account <accountId>（可重复），'
+          + '或在 .env.local 里设 DSH_ACCOUNT_ID；本命令不会群发')
+      }
+      return reportAndSend(parsed, { env, exists, run, io })
+    }
     const invocation = buildInvocation(parsed, { env, exists })
     if (sub === 'reply' && ((!opts.send && !opts.yes) || opts.dryRun)) return previewReply(invocation, opts, io)
     const raw = run(invocation.argv)

@@ -168,12 +168,15 @@ CREATE TABLE IF NOT EXISTS notices (
 
 CREATE TABLE IF NOT EXISTS noticeDeliveries (
   noticeId   TEXT NOT NULL,
-  deviceId   TEXT NOT NULL,
+  accountId  TEXT NOT NULL,
   createdAt  INTEGER NOT NULL,
   readAt     INTEGER,
-  PRIMARY KEY (noticeId, deviceId)
+  PRIMARY KEY (noticeId, accountId)
 );
-CREATE INDEX IF NOT EXISTS noticeDeliveriesByDevice ON noticeDeliveries(deviceId, readAt);
+-- `noticeDeliveriesByAccount` 的索引**故意不写在这里**：`CREATE INDEX` 没有
+-- "列不存在就先跳过"这回事，而老的库里 `noticeDeliveries` 还是 `deviceId` 那一版，
+-- `IF NOT EXISTS` 不会重建它，于是这条索引会让"打开一个老库"当场报
+-- `no such column: accountId`。索引由 `_migrate_to_5` 建（两条路径都会跑到它）。
 """
 
 DEFAULT_PAIR_TTL_MS = 10 * 60 * 1000
@@ -215,7 +218,7 @@ DEFAULT_FEEDBACK_FORMAT = "text"
 #: "no such column" — on a relay that had otherwise reported itself healthy.
 #: Bumping this number and adding a step to ``_MIGRATIONS`` is what turns that
 #: into a startup migration.
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 def _migrate_to_1(conn: sqlite3.Connection) -> None:
@@ -291,6 +294,55 @@ def _migrate_to_4(conn: sqlite3.Connection) -> None:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN format TEXT NOT NULL DEFAULT 'text'")
 
 
+def _migrate_to_5(conn: sqlite3.Connection) -> None:
+    """收件箱归属从设备换成账号（019）：`noticeDeliveries` 重建为 `(noticeId, accountId)`。
+
+    为什么是重建而不是加列：主键从 `(noticeId, deviceId)` 变成 `(noticeId, accountId)`，
+    SQLite 改不了主键；而且留着 `deviceId` 会让"迁移过来的库"与"新建的库"列不一致
+    （`:func:`_migrate` 之上那条守卫用例正是查这个）。
+
+    回填规则：旧行经 `devices.accountId` 找到所属账号，同一 `(noticeId, accountId)` 合并成一行，
+    `createdAt` 取最早的一次投递，`readAt` 取最早的一次已读（只前进；全未读则保持 NULL）。
+    设备行已经不存在的旧行（本机清理过 2000+ 台已撤销设备，确实会有）**跳过**，
+    只把条数写进日志——为一条无法归属的历史行让整库迁移失败，代价远大于丢掉它。
+
+    幂等：先看列，已经只有 `accountId` 就认为迁过了（重复启动、迁移到一半重试都安全）——
+    但索引仍要补一次：新库是先由 `SCHEMA` 建表（那里**故意不建**这条索引，见 `SCHEMA` 里的注释），
+    再走迁移的，所以"表已经对了"不等于"索引已经在了"。
+    """
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(noticeDeliveries)")}
+    if "accountId" in existing and "deviceId" not in existing:
+        conn.execute("CREATE INDEX IF NOT EXISTS noticeDeliveriesByAccount"
+                     " ON noticeDeliveries(accountId, readAt)")
+        return
+
+    skipped = int(conn.execute(
+        "SELECT COUNT(*) FROM noticeDeliveries d"
+        " LEFT JOIN devices v ON v.deviceId = d.deviceId WHERE v.deviceId IS NULL"
+    ).fetchone()[0])
+    conn.execute(
+        "CREATE TABLE noticeDeliveries_new ("
+        "  noticeId   TEXT NOT NULL,"
+        "  accountId  TEXT NOT NULL,"
+        "  createdAt  INTEGER NOT NULL,"
+        "  readAt     INTEGER,"
+        "  PRIMARY KEY (noticeId, accountId)"
+        ")")
+    conn.execute(
+        "INSERT OR IGNORE INTO noticeDeliveries_new(noticeId, accountId, createdAt, readAt)"
+        " SELECT d.noticeId, v.accountId, MIN(d.createdAt),"
+        "        MIN(CASE WHEN d.readAt IS NOT NULL THEN d.readAt END)"
+        "   FROM noticeDeliveries d JOIN devices v ON v.deviceId = d.deviceId"
+        "  GROUP BY d.noticeId, v.accountId")
+    conn.execute("DROP TABLE noticeDeliveries")
+    conn.execute("ALTER TABLE noticeDeliveries_new RENAME TO noticeDeliveries")
+    conn.execute("CREATE INDEX IF NOT EXISTS noticeDeliveriesByAccount"
+                 " ON noticeDeliveries(accountId, readAt)")
+    if skipped:
+        logging.getLogger("relay.store").info(
+            "relay: migrate 5: %d notice delivery row(s) skipped (device gone)", skipped)
+
+
 #: ``generation → function``, applied in order. Each step must be idempotent:
 #: a migration that fails after a partial commit is retried on the next start.
 _MIGRATIONS: dict[int, Any] = {
@@ -298,6 +350,7 @@ _MIGRATIONS: dict[int, Any] = {
     2: _migrate_to_2,
     3: _migrate_to_3,
     4: _migrate_to_4,
+    5: _migrate_to_5,
 }
 
 _SCRYPT_N = 1 << 14
@@ -1282,13 +1335,15 @@ class Store:
             self._conn.commit()
         return {"messageId": message_id, "threadId": thread_id, "createdAt": stamp, "created": True}
 
-    def create_notice(self, body: str, subject: str | None, device_ids: Iterable[str], *,
+    def create_notice(self, body: str, subject: str | None, account_ids: Iterable[str], *,
                       format: str = DEFAULT_FEEDBACK_FORMAT,
                       created_by: str | None = None, at: int | None = None) -> dict[str, Any]:
-        """发一条通知，并给每台收件设备写一行未读投递（发送记录就在这两张表里）。
+        """发一条通知，并给每个收件账号写一行未读投递（发送记录就在这两张表里）。
 
-        收件人由调用方定（`admin.py` 的 `--all` 是全部未撤销设备）；这里只去重，
-        不核对设备是否存在——投给一台刚被撤销的手机是调度问题，不是存储问题。
+        收件人是**账号**（019）：一封通知对一个账号恰好一行，账号下的哪台设备在读、有几台，
+        都不影响投递行。收件人由调用方定（`admin.py` 的 `--all` 是全部账号）；
+        这里只去重，不核对账号是否存在——投给一个刚建好还没配手机的账号是调度问题，
+        不是存储问题（`admin.py` 在更上层做校验并把错报给操作者）。
 
         `format` 是这条通知的正文格式（`:func:`clean_feedback_format`，默认 `text`）；
         `html` 给日报这类带图的正文用。
@@ -1296,15 +1351,15 @@ class Store:
         cleaned_format = clean_feedback_format(format)
         stamp = at or now_ms()
         notice_id = new_id("nt")
-        targets = list(dict.fromkeys(target for target in device_ids if target))
+        targets = list(dict.fromkeys(target for target in account_ids if target))
         with self._lock:
             self._conn.execute(
                 "INSERT INTO notices(noticeId, subject, body, format, createdAt, createdBy)"
                 " VALUES(?,?,?,?,?,?)",
                 (notice_id, subject, body, cleaned_format, stamp, created_by))
             self._conn.executemany(
-                "INSERT OR IGNORE INTO noticeDeliveries(noticeId, deviceId, createdAt) VALUES(?,?,?)",
-                [(notice_id, device_id, stamp) for device_id in targets])
+                "INSERT OR IGNORE INTO noticeDeliveries(noticeId, accountId, createdAt) VALUES(?,?,?)",
+                [(notice_id, account_id, stamp) for account_id in targets])
             self._conn.commit()
         return {"noticeId": notice_id, "createdAt": stamp, "recipients": len(targets)}
 
@@ -1378,28 +1433,32 @@ class Store:
             self._conn.commit()
         return True
 
-    def notices_for_device(self, device_id: str, *, limit: int = 200) -> list[dict[str, Any]]:
-        """投给这台设备的通知，最近的在前；`read` 是**这台设备自己**的已读状态。"""
+    def notices_for_account(self, account_id: str, *, limit: int = 200) -> list[dict[str, Any]]:
+        """投给这个账号的通知，最近的在前；`read` 是**账号级**已读（019）。"""
         rows = self._rows(
             "SELECT n.noticeId AS noticeId, n.subject AS subject, n.body AS body,"
             " n.format AS format, n.createdAt AS createdAt, n.createdBy AS createdBy,"
             " d.readAt AS readAt"
             " FROM notices n JOIN noticeDeliveries d ON d.noticeId = n.noticeId"
-            " WHERE d.deviceId=? ORDER BY n.createdAt DESC, n.noticeId DESC LIMIT ?",
-            (device_id, limit))
+            " WHERE d.accountId=? ORDER BY n.createdAt DESC, n.noticeId DESC LIMIT ?",
+            (account_id, limit))
         return [{**dict(row), "read": row["readAt"] is not None} for row in rows]
 
-    def mark_notices_read(self, device_id: str, notice_ids: Iterable[str],
+    def mark_notices_read(self, account_id: str, notice_ids: Iterable[str],
                           at: int | None = None) -> int:
-        """把这几条通知在本设备上的投递行标已读；返回被改的行数（幂等）。"""
+        """把这个账号的这几条通知投递行标已读；返回被改的行数（幂等、只前进）。
+
+        账号下任一设备调用即全账号已读：`readAt IS NULL` 才写，所以第二台设备
+        再标一次是 0 行、不倒退（019 的"一份已读"）。
+        """
         ids = list(dict.fromkeys(notice_id for notice_id in notice_ids if notice_id))
         if not ids:
             return 0
         marks = ",".join("?" * len(ids))
         with self._lock:
             cursor = self._conn.execute(
-                f"UPDATE noticeDeliveries SET readAt=? WHERE deviceId=? AND readAt IS NULL"
-                f" AND noticeId IN ({marks})", [at or now_ms(), device_id, *ids])
+                f"UPDATE noticeDeliveries SET readAt=? WHERE accountId=? AND readAt IS NULL"
+                f" AND noticeId IN ({marks})", [at or now_ms(), account_id, *ids])
             self._conn.commit()
             return cursor.rowcount or 0
 

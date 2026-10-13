@@ -294,10 +294,10 @@ async def test_inbox_orders_threads_by_last_activity(client, store):
     assert [t["threadId"] for t in body["threads"]] == [early["threadId"], late["threadId"]]
 
 
-async def test_inbox_reports_notices_per_device(client, provisioned, store):
+async def test_inbox_reports_notices_for_the_account(client, provisioned, store):
     token = await paired_device(client, provisioned["agent"]["agentId"])
-    device_id = store.device_by_token(token)["deviceId"]
-    notice = store.create_notice("维护通知正文", "服务通知", [device_id], at=5_000)
+    account_id = store.device_by_token(token)["accountId"]
+    notice = store.create_notice("维护通知正文", "服务通知", [account_id], at=5_000)
 
     body = await inbox(client, headers=device_headers(token))
     assert [n["noticeId"] for n in body["notices"]] == [notice["noticeId"]]
@@ -312,8 +312,8 @@ async def test_inbox_reports_notices_per_device(client, provisioned, store):
 async def test_inbox_reports_an_html_notice_and_an_html_reply(client, provisioned, store):
     """FR-034：我们发出的正文自带格式标记，inbox 原样带出（html 走锁死的容器）。"""
     token = await paired_device(client, provisioned["agent"]["agentId"])
-    device_id = store.device_by_token(token)["deviceId"]
-    store.create_notice("<h1>日报</h1>", "日报", [device_id], format="html", at=5_000)
+    account_id = store.device_by_token(token)["accountId"]
+    store.create_notice("<h1>日报</h1>", "日报", [account_id], format="html", at=5_000)
     ticket = await feedback_ticket(client)
     store.append_feedback_message(ticket["threadId"], "<h1>报告</h1>", author="owner",
                                   format="html")
@@ -526,27 +526,50 @@ async def test_read_clears_the_unread_count_and_is_idempotent(client, store):
 
 
 async def test_read_without_a_device_token_ignores_notice_ids(client, store):
-    store.create_notice("通知正文", "服务通知", ["dev_x"], at=5_000)
+    store.create_notice("通知正文", "服务通知", ["acc_x"], at=5_000)
     notice_id = store._rows("SELECT noticeId FROM notices")[0]["noticeId"]
     response = await client.post("/feedback/read", json={"threadIds": [], "noticeIds": [notice_id]})
     assert response.status == 200, await response.text()
     assert (await response.json())["unreadCount"] == 0
-    assert store.notices_for_device("dev_x")[0]["read"] is False, "没有设备令牌就标不动 notice"
+    assert store.notices_for_account("acc_x")[0]["read"] is False, "没有设备令牌就标不动 notice"
 
 
-async def test_read_marks_a_notice_only_for_this_device(client, provisioned, store):
+async def test_read_marks_a_notice_for_the_whole_account(client, provisioned, store):
+    """019：已读是账号级一份——同一账号的另一台设备再拉，看到的是已读。"""
     one = await paired_device(client, provisioned["agent"]["agentId"], "DSH-One")
     two = await paired_device(client, provisioned["agent"]["agentId"], "DSH-Two")
-    ids = [store.device_by_token(one)["deviceId"], store.device_by_token(two)["deviceId"]]
-    notice = store.create_notice("维护通知", "服务通知", ids, at=5_000)
+    account_id = store.device_by_token(one)["accountId"]
+    assert store.device_by_token(two)["accountId"] == account_id, "前提：两台设备同账号"
+    notice = store.create_notice("维护通知", "服务通知", [account_id], at=5_000)
 
     response = await client.post("/feedback/read",
                                  json={"threadIds": [], "noticeIds": [notice["noticeId"]]},
                                  headers=device_headers(one))
     assert response.status == 200, await response.text()
     assert (await response.json())["unreadCount"] == 0
-    assert store.notices_for_device(ids[0])[0]["read"] is True
-    assert store.notices_for_device(ids[1])[0]["read"] is False, "两台设备各记各的未读（FR-017）"
+    assert store.notices_for_account(account_id)[0]["read"] is True
+
+    # 另一台设备（同账号）不需要再标一次，拉到的就是已读、未读数为 0。
+    body = await inbox(client, headers=device_headers(two))
+    assert [n["read"] for n in body["notices"]] == [True]
+    assert body["unreadCount"] == 0
+
+
+async def test_a_repaired_device_still_sees_the_accounts_notices(client, provisioned, store):
+    """019 的起因场景：手机重配换了 deviceId，收件箱里的通知不该跟着丢。
+
+    断言的是"重新配对之后还能取到"——旧实现里这条会失败，因为投递行挂在旧设备上。
+    """
+    first = await paired_device(client, provisioned["agent"]["agentId"], "DSH-Old")
+    account_id = store.device_by_token(first)["accountId"]
+    notice = store.create_notice("日报", "运营日报", [account_id], at=5_000)
+    store.revoke_device(store.device_by_token(first)["deviceId"])   # 旧设备下线
+    second = await paired_device(client, provisioned["agent"]["agentId"], "DSH-New")
+
+    body = await inbox(client, headers=device_headers(second))
+    assert [n["noticeId"] for n in body["notices"]] == [notice["noticeId"]]
+    assert [n["read"] for n in body["notices"]] == [False]
+    assert body["unreadCount"] == 1
 
 
 async def test_read_leaves_threads_the_caller_cannot_prove(client, provisioned, store):

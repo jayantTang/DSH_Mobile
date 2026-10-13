@@ -188,7 +188,7 @@ def test_v1_gains_the_push_columns_without_losing_rows(tmp_path):
 
     store = Store(path)
     try:
-        assert user_version(path) == SCHEMA_VERSION == 4
+        assert user_version(path) == SCHEMA_VERSION == 5
         columns = {row[1] for row in store._rows("PRAGMA table_info(devices)")}
         assert PUSH_COLUMNS <= columns, f"缺列：{PUSH_COLUMNS - columns}"
 
@@ -300,7 +300,7 @@ def test_v2_gains_the_subject_column_without_touching_the_old_rows(tmp_path):
 
     store = Store(path)
     try:
-        assert user_version(path) == SCHEMA_VERSION == 4
+        assert user_version(path) == SCHEMA_VERSION == 5
         columns = {row[1] for row in store._rows("PRAGMA table_info(feedbackThreads)")}
         assert "subject" in columns, "缺列：subject"
 
@@ -395,16 +395,48 @@ V3_NOTICE_COLUMNS = ("noticeId", "subject", "body", "createdAt", "createdBy")
 FORMAT_COLUMN = "format"
 
 
+#: v3 时代的 `devices`（推送那几列已经在）：019 的回填要靠它把设备映射到账号。
+_DEVICES_V3 = """
+CREATE TABLE devices (
+  deviceId        TEXT PRIMARY KEY,
+  deviceTokenHash TEXT NOT NULL UNIQUE,
+  agentId         TEXT NOT NULL,
+  accountId       TEXT NOT NULL,
+  name            TEXT NOT NULL,
+  model           TEXT,
+  appVersion      TEXT,
+  createdAt       INTEGER NOT NULL,
+  expiresAt       INTEGER NOT NULL,
+  lastSeenAt      INTEGER,
+  revokedAt       INTEGER,
+  apnsToken       TEXT,
+  apnsEnv         TEXT,
+  pushTurnEnd     INTEGER NOT NULL DEFAULT 1,
+  pushAttention   INTEGER NOT NULL DEFAULT 1,
+  pushUpdatedAt   INTEGER
+);
+"""
+
+#: v3 时代的投递行：设备维度（019 之前）。
+_V3_DELIVERY = ("nt_old", "dev_old", 1700000000000, None)
+
+
 def write_v3_database(path: str) -> None:
     """A database at generation 3, with a message and a notice already in it."""
     conn = sqlite3.connect(path)
+    conn.executescript(_DEVICES_V3)
+    conn.execute(
+        "INSERT INTO devices VALUES ('dev_old', 'hash_old', 'agt_old', 'acc_old', 'iPhone',"
+        " 'iPhone17,1', '1.0', 1700000000000, 4102444800000, 1700000001000, NULL,"
+        " NULL, NULL, 1, 1, NULL)")
     conn.executescript(_FEEDBACK_V3)
     conn.execute(f"INSERT INTO feedbackThreads VALUES ({','.join('?' * len(_V2_THREAD))}, ?)",
                  (*_V2_THREAD, "用户写的主题"))
     conn.execute(f"INSERT INTO feedbackMessages VALUES ({','.join('?' * len(_V3_MESSAGE))})",
                  _V3_MESSAGE)
     conn.execute(f"INSERT INTO notices VALUES ({','.join('?' * len(_V3_NOTICE))})", _V3_NOTICE)
-    conn.execute("INSERT INTO noticeDeliveries VALUES ('nt_old', 'dev_old', 1700000000000, NULL)")
+    conn.execute(f"INSERT INTO noticeDeliveries VALUES ({','.join('?' * len(_V3_DELIVERY))})",
+                 _V3_DELIVERY)
     conn.execute("PRAGMA user_version = 3")
     conn.commit()
     conn.close()
@@ -430,7 +462,7 @@ def test_v3_gains_the_format_column_on_both_tables_without_touching_the_old_rows
 
     store = Store(path)
     try:
-        assert user_version(path) == SCHEMA_VERSION == 4
+        assert user_version(path) == SCHEMA_VERSION == 5
         for table in ("feedbackMessages", "notices"):
             columns = [row[1] for row in store._rows(f"PRAGMA table_info({table})")]
             assert FORMAT_COLUMN in columns, f"{table} 缺列：format"
@@ -440,8 +472,8 @@ def test_v3_gains_the_format_column_on_both_tables_without_touching_the_old_rows
         message = store.feedback_thread("th_old", None, messages_per_thread=1)["messages"][0]
         assert message["format"] == "text", "已经发出去的信不会被改写成别的格式"
         assert tuple(message[column] for column in V3_MESSAGE_COLUMNS) == before_message
-        # 通知走设备维度读：老通知在那台设备的收件箱里，格式同样是 text。
-        (notice,) = store.notices_for_device("dev_old")
+        # 通知走**账号**维度读（019）：老通知在那台设备所属账号的收件箱里，格式同样是 text。
+        (notice,) = store.notices_for_account("acc_old")
         assert notice["format"] == "text"
         assert tuple(notice[column] for column in V3_NOTICE_COLUMNS) == before_notice
         # 摘要（日报/清单的那一份）也带得出格式。
@@ -452,8 +484,8 @@ def test_v3_gains_the_format_column_on_both_tables_without_touching_the_old_rows
                                                 format="html")
         assert store.feedback_thread("th_old", None)["messages"][-1]["format"] == "html"
         assert written["messageId"].startswith("fm_")
-        store.create_notice("<h1>日报</h1>", "日报", ["dev_old"], format="html")
-        assert store.notices_for_device("dev_old")[0]["format"] == "html"
+        store.create_notice("<h1>日报</h1>", "日报", ["acc_old"], format="html")
+        assert store.notices_for_account("acc_old")[0]["format"] == "html"
     finally:
         store.close()
 
@@ -475,6 +507,149 @@ def test_the_format_migration_is_idempotent(tmp_path):
         conn.commit()
     finally:
         conn.close()
+
+
+#: v4 时代的通知投递：收件人是**设备**（019 要换掉的那一版）。
+_FEEDBACK_V4 = """
+CREATE TABLE notices (
+  noticeId   TEXT PRIMARY KEY,
+  subject    TEXT,
+  body       TEXT NOT NULL,
+  createdAt  INTEGER NOT NULL,
+  createdBy  TEXT,
+  format     TEXT NOT NULL DEFAULT 'text'
+);
+CREATE TABLE noticeDeliveries (
+  noticeId   TEXT NOT NULL,
+  deviceId   TEXT NOT NULL,
+  createdAt  INTEGER NOT NULL,
+  readAt     INTEGER,
+  PRIMARY KEY (noticeId, deviceId)
+);
+CREATE INDEX noticeDeliveriesByDevice ON noticeDeliveries(deviceId, readAt);
+"""
+
+#: v4 的投递行：(noticeId, deviceId, createdAt, readAt)。
+#: - `nt_one` 投给同一账号的两台设备，其中一台已读 → 合并成一行、保留那次已读；
+#: - `nt_two` 只投给一台设备且未读 → 一行未读；
+#: - `nt_three` 投给一台**设备表里已经没有**的设备 → 孤儿，迁移跳过。
+_V4_DELIVERIES = (
+    ("nt_one", "dev_a", 1_700_000_000_000, None),
+    ("nt_one", "dev_b", 1_700_000_001_000, 1_700_000_009_000),
+    ("nt_two", "dev_a", 1_700_000_002_000, None),
+    ("nt_three", "dev_gone", 1_700_000_003_000, None),
+)
+
+
+def write_v4_database(path: str) -> None:
+    """A database at generation 4: notices delivered per device, one row orphaned."""
+    conn = sqlite3.connect(path)
+    conn.executescript(_DEVICES_V3)
+    conn.execute(
+        "INSERT INTO devices VALUES ('dev_a', 'hash_a', 'agt_old', 'acc_one', 'iPhone',"
+        " 'iPhone17,1', '1.0', 1700000000000, 4102444800000, 1700000001000, NULL,"
+        " NULL, NULL, 1, 1, NULL)")
+    conn.execute(
+        "INSERT INTO devices VALUES ('dev_b', 'hash_b', 'agt_old', 'acc_one', 'iPad',"
+        " 'iPad17,1', '1.0', 1700000000000, 4102444800000, 1700000001000, NULL,"
+        " NULL, NULL, 1, 1, NULL)")
+    conn.executescript(_FEEDBACK_V4)
+    for notice_id, subject in (("nt_one", "老通知一"), ("nt_two", "老通知二"), ("nt_three", "孤儿")):
+        conn.execute("INSERT INTO notices VALUES (?,?,?,?,?,?)",
+                     (notice_id, subject, "正文", 1_700_000_000_000, "admin.py", "text"))
+    conn.executemany(
+        f"INSERT INTO noticeDeliveries VALUES ({','.join('?' * 4)})", _V4_DELIVERIES)
+    conn.execute("PRAGMA user_version = 4")
+    conn.commit()
+    conn.close()
+
+
+def test_v4_deliveries_are_backfilled_and_merged_into_the_account(tmp_path):
+    """019：v4→v5 把"一台设备一行"合并成"一个账号一行"，已读只前进，孤儿行跳过。
+
+    这是本特性唯一会改到**已经存在的数据**的一步：合并之后无法原地还原，
+    所以断言要一条一条对着来（哪一行该在、该是什么状态）。
+    """
+    path = str(tmp_path / "v4.db")
+    write_v4_database(path)
+    assert user_version(path) == 4, "前提：这个库是 v4"
+
+    store = Store(path)
+    try:
+        assert user_version(path) == SCHEMA_VERSION == 5
+
+        rows = [dict(row) for row in store._rows(
+            "SELECT noticeId, accountId, readAt FROM noticeDeliveries ORDER BY noticeId")]
+        # 四行旧投递 → 两行账号投递（nt_three 的设备已经不在设备表里，跳过）。
+        assert [(row["noticeId"], row["accountId"]) for row in rows] == [
+            ("nt_one", "acc_one"), ("nt_two", "acc_one")]
+        assert rows[0]["readAt"] == 1_700_000_009_000, "两台设备各一行时取最早的那次已读"
+        assert rows[1]["readAt"] is None
+
+        # 账号视角：两条通知，一条已读一条未读。
+        inbox = store.notices_for_account("acc_one")
+        assert [n["noticeId"] for n in inbox] == ["nt_two", "nt_one"]
+        assert [n["read"] for n in inbox] == [False, True]
+        # 孤儿通知不再出现在任何账号里（它本来就没有归属）。
+        assert all(n["noticeId"] != "nt_three" for n in inbox)
+
+        # 迁移后的表立刻可用：标已读、再投一条都走通。
+        assert store.mark_notices_read("acc_one", ["nt_two"]) == 1
+        assert store.notices_for_account("acc_one")[0]["read"] is True
+        fresh = store.create_notice("新正文", "新通知", ["acc_one"], at=1_700_000_010_000)
+        assert store.notices_for_account("acc_one")[0]["noticeId"] == fresh["noticeId"]
+
+        # 老索引随老表一起消失了，不会留下指向已删列的索引。
+        indexes = {row[1] for row in store._rows("PRAGMA index_list(noticeDeliveries)")
+                   if not row[1].startswith("sqlite_autoindex")}
+        assert indexes == {"noticeDeliveriesByAccount"}
+    finally:
+        store.close()
+
+
+def test_the_notice_migration_is_idempotent(tmp_path):
+    """v4→v5 重建表：重复跑必须自己发现"已经是账号口径"，不重建、不再动数据。"""
+    path = str(tmp_path / "v4.db")
+    write_v4_database(path)
+    Store(path).close()
+    snapshot = sqlite3.connect(path).execute(
+        "SELECT noticeId, accountId, readAt FROM noticeDeliveries ORDER BY noticeId").fetchall()
+
+    for _ in range(3):
+        Store(path).close()
+    assert user_version(path) == SCHEMA_VERSION
+    assert sqlite3.connect(path).execute(
+        "SELECT noticeId, accountId, readAt FROM noticeDeliveries ORDER BY noticeId").fetchall() == snapshot
+
+    import store as store_module
+    conn = sqlite3.connect(path)
+    try:
+        store_module._migrate_to_5(conn)  # noqa: SLF001 - 就是这个幂等性要在测
+        store_module._migrate_to_5(conn)  # noqa: SLF001
+        conn.commit()
+    finally:
+        conn.close()
+    assert sqlite3.connect(path).execute(
+        "SELECT noticeId, accountId, readAt FROM noticeDeliveries ORDER BY noticeId").fetchall() == snapshot
+
+
+def test_the_notice_deliveries_table_of_a_migrated_database_matches_a_fresh_one(tmp_path):
+    """迁移过来的 `noticeDeliveries` 与新库逐列一致：不留 `deviceId`、列序相同、索引同名。"""
+    migrated = str(tmp_path / "migrated.db")
+    write_v4_database(migrated)
+    Store(migrated).close()
+    fresh = str(tmp_path / "fresh.db")
+    Store(fresh).close()
+
+    def shape(path: str) -> list[tuple]:
+        conn = sqlite3.connect(path)
+        try:
+            return [tuple(row) for row in conn.execute("PRAGMA table_info(noticeDeliveries)")]
+        finally:
+            conn.close()
+
+    assert shape(migrated) == shape(fresh)
+    assert "deviceId" not in [column[1] for column in shape(fresh)]
 
 
 def test_the_format_columns_of_a_migrated_database_match_a_fresh_one(tmp_path):

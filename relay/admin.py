@@ -228,7 +228,7 @@ def build_parser() -> argparse.ArgumentParser:
                                 help="signature used by --template")
 
     feedback_notify = subs.add_parser("feedback-notify",
-                                      help="send one notice to devices (dry run unless --yes)")
+                                      help="send one notice to accounts (dry run unless --yes)")
     feedback_notify.add_argument("--body")
     feedback_notify.add_argument("--body-file")
     feedback_notify.add_argument("--subject")
@@ -236,10 +236,10 @@ def build_parser() -> argparse.ArgumentParser:
                                  default=DEFAULT_FEEDBACK_FORMAT,
                                  help="body format: text (Markdown on the phone, the default)"
                                       " or html (the locked-down container)")
-    feedback_notify.add_argument("--device", action="append", default=[],
-                                 help="deviceId, may be repeated")
+    feedback_notify.add_argument("--account", action="append", default=[],
+                                 help="accountId, may be repeated")
     feedback_notify.add_argument("--all", action="store_true",
-                                 help="every device that is not revoked (the default)")
+                                 help="every account; must be asked for explicitly")
     feedback_notify.add_argument("--yes", action="store_true", help="actually write it")
 
     feedback_delete = subs.add_parser("feedback-delete",
@@ -427,14 +427,14 @@ def run(args: argparse.Namespace, store: Store) -> int:
 
     if command == "feedback-notify":
         body = _read_body(args)
-        targets = _notify_targets(store, args)
+        targets = _notify_accounts(store, args)
         if not targets:
-            # 没有收件人时**连 --yes 也不写库**：留下一条发给零台设备的通知，
+            # 没有收件人时**连 --yes 也不写库**：留下一条发给零个账号的通知，
             # 会让"发送记录"从此撒谎。
-            _emit({"ok": False, "error": "no recipients", "recipients": 0, "devices": []})
+            _emit({"ok": False, "error": "no recipients", "recipients": 0, "accounts": []})
             return 1
         if not args.yes:
-            _emit({"ok": True, "dryRun": True, "recipients": len(targets), "devices": targets})
+            _emit({"ok": True, "dryRun": True, "recipients": len(targets), "accounts": targets})
             return 0
         notice = store.create_notice(body, args.subject, targets, format=args.format,
                                      created_by="admin.py")
@@ -645,20 +645,25 @@ def _reply_template(signature: str) -> str:
     )
 
 
-def _notify_targets(store: Store, args: argparse.Namespace) -> list[str]:
-    """通知的收件人：`--all`（默认）是全部未撤销设备，`--device` 指定时只发这几台。
+def _notify_accounts(store: Store, args: argparse.Namespace) -> list[str]:
+    """通知的收件账号：`--account` 点名（可重复），或**显式** `--all` 发给全部账号。
 
-    点名一台不存在或已撤销的设备是**错误**，不静默丢弃：这条命令的全部意义就是别把
-    通知发错人，打错一个 deviceId 却看到"发出去了"是最糟的结果。
+    点名一个不存在的账号是**错误**，不静默丢弃：这条命令的全部意义就是别把通知发错人，
+    打错一个 accountId 却看到"发出去了"是最糟的结果。设备维度已按 019 删除：
+    收件人是账号，账号下有几台设备、哪台在线，都不影响投递。
+
+    **两个都不给也是错误**（019 收紧了这条）：以前"不给参数"等于"发给所有人"，
+    一次手滑就把测试正文广播给全中转的账号。全量群发必须是显式写下来的动作。
     """
-    if args.all or not args.device:
-        return [row["deviceId"] for row in store.list_devices(include_revoked=False)]
-    known = {row["deviceId"] for row in store.list_devices(include_revoked=False)}
-    wanted = list(dict.fromkeys(device for device in args.device if device))
-    unknown = [device for device in wanted if device not in known]
-    if unknown:
-        raise StoreError(f"这些设备不存在或已撤销：{', '.join(unknown)}")
-    return wanted
+    if args.account:
+        wanted = list(dict.fromkeys(account for account in args.account if account))
+        unknown = [account for account in wanted if store.get_account(account) is None]
+        if unknown:
+            raise StoreError(f"这些账号不存在：{', '.join(unknown)}")
+        return wanted
+    if not args.all:
+        raise StoreError("必须点名收件人：--account <accountId>（可重复），或显式 --all 发给全部账号")
+    return [row["accountId"] for row in store.list_accounts()]
 
 
 def _recent_days(days: int, *, end: int | None = None) -> list[int]:

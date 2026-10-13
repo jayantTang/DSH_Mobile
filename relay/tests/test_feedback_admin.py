@@ -349,18 +349,19 @@ def test_feedback_reply_refuses_an_unknown_format_and_writes_nothing(relay, caps
 def test_feedback_notify_stores_the_format_it_was_given(relay, capsys):
     """通知的格式落在 `notices.format` 上：日报这类正文走 html。"""
     code, preview = run_cli(relay["db"], "feedback-notify", "--body", "<h1>日报</h1>",
-                            "--format", "html", capsys=capsys)
+                            "--format", "html", "--all", capsys=capsys)
     assert code == 0 and preview["dryRun"] is True
     assert count(relay["db"], "notices") == 0, "预演不写库"
 
     code, report = run_cli(relay["db"], "feedback-notify", "--body", "<h1>日报</h1>",
-                           "--subject", "日报", "--format", "html", "--yes", capsys=capsys)
+                           "--subject", "日报", "--format", "html", "--all", "--yes", capsys=capsys)
     assert code == 0 and report["ok"] is True
     assert query(relay["db"], "SELECT format FROM notices WHERE noticeId=?",
                  (report["noticeId"],))[0]["format"] == "html"
 
     # 不给 --format 的那条按默认 text。
-    code, plain = run_cli(relay["db"], "feedback-notify", "--body", "维护", "--yes", capsys=capsys)
+    code, plain = run_cli(relay["db"], "feedback-notify", "--body", "维护", "--all", "--yes",
+                          capsys=capsys)
     assert code == 0
     assert query(relay["db"], "SELECT format FROM notices WHERE noticeId=?",
                  (plain["noticeId"],))[0]["format"] == "text"
@@ -388,25 +389,28 @@ def test_feedback_list_reports_the_format_of_the_first_message(relay, capsys):
 
 
 def test_feedback_notify_without_yes_only_previews(relay, capsys):
-    """群发前先看人数（FR-016）：不带 `--yes` 一律预演，库里不留任何痕迹。"""
+    """群发前先看账号数（FR-016/019）：不带 `--yes` 一律预演，库里不留任何痕迹。"""
     code, report = run_cli(relay["db"], "feedback-notify", "--body", "今晚 22:00 维护",
-                           "--subject", "服务通知", capsys=capsys)
+                           "--subject", "服务通知", "--all", capsys=capsys)
     assert code == 0
     assert report["ok"] is True and report["dryRun"] is True and report["recipients"] == 1
-    assert report["devices"] == [relay["deviceId"]], "已撤销的设备不在收件人里"
+    assert report["accounts"] == [relay["accountId"]], "收件人是账号，不是设备"
     assert count(relay["db"], "notices") == 0 and count(relay["db"], "noticeDeliveries") == 0
 
 
-def test_feedback_notify_with_yes_writes_one_notice_and_unread_deliveries(relay, capsys):
+def test_feedback_notify_writes_one_delivery_row_per_account(relay, capsys):
+    """019 的核心：投递行是"一个账号一行"。账号下再配对一台设备，行数不变。"""
     store = Store(relay["db"])
     try:
-        extra = store.claim_pair_code(
+        # 同一台电脑又配了一台手机（同账号）：不该多出收件人。
+        store.claim_pair_code(
             store.mint_pair_code(relay["agentId"], ttl_ms=60_000)["code"], device_name="iPhone 2")
+        other = store.create_account("others")
     finally:
         store.close()
 
     code, report = run_cli(relay["db"], "feedback-notify", "--body", "今晚 22:00 维护",
-                           "--subject", "服务通知", "--yes", capsys=capsys)
+                           "--subject", "服务通知", "--all", "--yes", capsys=capsys)
     assert code == 0 and report["ok"] is True and report["recipients"] == 2
     assert report["noticeId"].startswith("nt_") and report["createdAt"] > 0
 
@@ -415,32 +419,49 @@ def test_feedback_notify_with_yes_writes_one_notice_and_unread_deliveries(relay,
     assert notice["subject"] == "服务通知" and notice["body"] == "今晚 22:00 维护"
     assert notice["createdBy"], "发送记录要有来源标注"
 
-    deliveries = query(relay["db"], "SELECT deviceId, readAt FROM noticeDeliveries WHERE noticeId=?",
+    deliveries = query(relay["db"],
+                       "SELECT accountId, readAt FROM noticeDeliveries WHERE noticeId=?",
                        (report["noticeId"],))
-    assert {row["deviceId"] for row in deliveries} == {relay["deviceId"], extra["deviceId"]}
+    assert {row["accountId"] for row in deliveries} == {relay["accountId"], other["accountId"]}
     assert all(row["readAt"] is None for row in deliveries), "投递即未读，等手机自己来读"
     assert count(relay["db"], "notices") == 1
 
 
-def test_feedback_notify_refuses_to_write_when_nothing_matches(relay, capsys):
-    store = Store(relay["db"])
-    try:
-        store.revoke_device(relay["deviceId"])  # 至此一台未撤销设备都没有
-    finally:
-        store.close()
+def test_feedback_notify_requires_an_explicit_recipient(relay, capsys):
+    """019 收紧：不给 `--account` 也不给 `--all` 是错误，不许默认就广播给所有人。
 
-    code, report = run_cli(relay["db"], "feedback-notify", "--body", "空发", "--yes", capsys=capsys)
+    起因是一次真实手滑：漏了收件人参数，测试正文被写给了库里全部 58 个账号。
+    """
+    code, report = run_cli(relay["db"], "feedback-notify", "--body", "手滑", "--yes", capsys=capsys)
+    assert code == 1, "没点名收件人：业务失败，不是写成功"
+    assert "必须点名收件人" in report["stderr"]
+    assert count(relay["db"], "notices") == 0, "没有点名就一条都不许写"
+
+
+def test_feedback_notify_refuses_to_write_when_there_are_no_accounts(tmp_path, capsys):
+    """一个账号都没有时，连 `--yes` 也不写库：不能留下"发给零个收件人"的记录。"""
+    path = str(tmp_path / "empty.db")
+    Store(path).close()
+    code, report = run_cli(path, "feedback-notify", "--body", "空发", "--all", "--yes", capsys=capsys)
     assert code == 1 and report["ok"] is False and report["recipients"] == 0
     assert report["error"] == "no recipients"
-    assert count(relay["db"], "notices") == 0, "没有收件人就不许留下发送记录"
+    assert count(path, "notices") == 0, "没有收件人就不许留下发送记录"
 
 
-def test_feedback_notify_refuses_a_device_that_is_unknown_or_revoked(relay, capsys):
-    """点名一台不存在/已撤销的设备是错误：打错一个 id 却看到"发出去了"最糟。"""
-    for wrong in ("dev_nope", relay["revokedId"]):
-        code, report = run_cli(relay["db"], "feedback-notify", "--body", "x",
-                               "--device", wrong, capsys=capsys)
-        assert code == 1 and wrong in report["stderr"]
+def test_feedback_notify_refuses_an_unknown_account_too(relay, capsys):
+    """点名一个不存在的账号是错误：打错一个 id 却看到"发出去了"最糟（019 换的是维度，不是这条规矩）。"""
+    code, report = run_cli(relay["db"], "feedback-notify", "--body", "x",
+                           "--account", "acc_nope", capsys=capsys)
+    assert code == 1 and "acc_nope" in report["stderr"]
+    assert count(relay["db"], "notices") == 0
+
+
+def test_feedback_notify_has_no_device_flag_any_more(relay, capsys):
+    """设备维度已经删掉：`--device` 是用法错误，不会静默被当成账号或别名。"""
+    with pytest.raises(SystemExit) as caught:
+        run_cli(relay["db"], "feedback-notify", "--body", "x",
+                "--device", relay["deviceId"], capsys=capsys)
+    assert caught.value.code == 2, "argparse 的用法错误"
     assert count(relay["db"], "notices") == 0
 
 

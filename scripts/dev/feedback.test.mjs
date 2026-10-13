@@ -409,13 +409,13 @@ test('reply / notify 的 --format 透传；不传就不出现在 argv 里', () =
   assert.match(reply.calls[0].at(-1), /feedback-reply --thread th_x --body .*--format html/)
 
   const notify = spy('{"ok":true}')
-  run(['notify', '--body', '维护通知', '--device', 'dvc_a', '--format', 'html', '--yes'],
+  run(['notify', '--body', '维护通知', '--account', 'acc_a', '--format', 'html', '--yes'],
     { runner: notify.runner })
   assert.match(notify.calls[0].at(-1), /feedback-notify --body .*--format html/)
 
   // 不传 --format 时保持既有 argv：服务器默认 text。
   const plain = spy('{"ok":true}')
-  run(['notify', '--body', '维护通知', '--device', 'dvc_a', '--yes'], { runner: plain.runner })
+  run(['notify', '--body', '维护通知', '--account', 'acc_a', '--yes'], { runner: plain.runner })
   assert.ok(!plain.calls[0].at(-1).includes('--format'), '不传 --format 不得凭空加参数')
 
   const plainReply = spy('{"ok":true}')
@@ -433,7 +433,7 @@ test('report --send：先 scp，再按 html 通知，最后删远端临时文件
   const outDir = mkdtempSync(join(tmpdir(), 'feedback-send-'))
   const fake = spy(JSON.stringify(fixture()))
   const { code, out } = run(
-    ['report', '--out', outDir, '--send', '--device', 'dvc_a', '--device', 'dvc_b'],
+    ['report', '--out', outDir, '--send', '--account', 'acc_a', '--account', 'acc_b'],
     { runner: fake.runner },
   )
   assert.equal(code, 0)
@@ -452,9 +452,9 @@ test('report --send：先 scp，再按 html 通知，最后删远端临时文件
   assert.match(command, new RegExp(`feedback-notify --body-file ${remote} `))
   assert.match(command, /--format html/)
   assert.match(command, /--subject 'DSH Mobile 运营日报 2026-10-12'/)
-  assert.match(command, /--device dvc_a --device dvc_b/)
+  assert.match(command, /--account acc_a --account acc_b/)
   assert.match(command, /--yes/)
-  assert.ok(!command.includes('--all'), '直投指定设备，不得群发')
+  assert.ok(!command.includes('--all'), '直投指定账号，不得群发')
   assert.ok(!/--body /.test(command), '正文必须走 --body-file，不能塞进 ssh 参数')
 
   assert.equal(fake.calls[3][0], 'ssh')
@@ -466,26 +466,44 @@ test('report --send：先 scp，再按 html 通知，最后删远端临时文件
 test('report --send 的 --subject 覆盖默认标题', () => {
   const outDir = mkdtempSync(join(tmpdir(), 'feedback-send-subject-'))
   const fake = spy(JSON.stringify(fixture()))
-  const { code } = run(['report', '--out', outDir, '--send', '--device', 'dvc_a', '--subject', '周报'],
+  const { code } = run(['report', '--out', outDir, '--send', '--account', 'acc_a', '--subject', '周报'],
     { runner: fake.runner })
   assert.equal(code, 0)
   assert.match(fake.calls[2].at(-1), /--subject '周报'/)
 })
 
-test('report --send 不带 --device 退 2，不执行任何命令（也不群发）', () => {
+test('report --send 收件账号：--account 优先，其次 .env.local 的 DSH_ACCOUNT_ID', () => {
+  // 没给 --account 时取 DSH_ACCOUNT_ID（定时任务的 plist 里不再有任何 id）。
+  const outDir = mkdtempSync(join(tmpdir(), 'feedback-send-env-'))
+  const fake = spy(JSON.stringify(fixture()))
+  const { code } = run(['report', '--out', outDir, '--send'],
+    { runner: fake.runner, env: { DSH_OTA_HOST: HOST, DSH_ACCOUNT_ID: 'acc_env' } })
+  assert.equal(code, 0)
+  assert.match(fake.calls[2].at(-1), /--account acc_env/)
+
+  // 命令行给了就压过 .env.local（换账号试发时不必改本机真值）。
+  const explicit = spy(JSON.stringify(fixture()))
+  const other = mkdtempSync(join(tmpdir(), 'feedback-send-env2-'))
+  run(['report', '--out', other, '--send', '--account', 'acc_cli'],
+    { runner: explicit.runner, env: { DSH_OTA_HOST: HOST, DSH_ACCOUNT_ID: 'acc_env' } })
+  assert.match(explicit.calls[2].at(-1), /--account acc_cli/)
+  assert.ok(!explicit.calls[2].at(-1).includes('acc_env'))
+})
+
+test('report --send 一个账号都取不到时退 2，不执行任何命令（也不群发）', () => {
   for (const argv of [['report', '--send'], ['report', '--send', '--all']]) {
     const fake = spy()
-    const { code, err } = run(argv, { runner: fake.runner })
+    const { code, err } = run(argv, { runner: fake.runner })   // env 里没有 DSH_ACCOUNT_ID
     assert.equal(code, 2, `${argv.join(' ')} 应该退 2`)
     assert.equal(fake.calls.length, 0)
-    assert.match(err, /--device|--all/)
+    assert.match(err, /--account|--all|DSH_ACCOUNT_ID/)
   }
 })
 
 test('report --send --dry-run 只生成报告并打印将执行的命令', () => {
   const outDir = mkdtempSync(join(tmpdir(), 'feedback-send-dry-'))
   const fake = spy(JSON.stringify(fixture()))
-  const { code, out } = run(['report', '--out', outDir, '--send', '--device', 'dvc_a', '--dry-run'],
+  const { code, out } = run(['report', '--out', outDir, '--send', '--account', 'acc_a', '--dry-run'],
     { runner: fake.runner })
   assert.equal(code, 0)
   assert.equal(fake.calls.length, 1, '预演只跑只读的 ops-report')
@@ -504,7 +522,7 @@ test('notify 失败时远端临时文件仍然被删掉，退出码 1', () => {
     if (calls.length === 3) throw new Error('notify 挂了')   // 3 = notify（1 ops-report / 2 scp）
     return JSON.stringify(fixture())
   }
-  const { code, err } = run(['report', '--out', outDir, '--send', '--device', 'dvc_a'], { runner })
+  const { code, err } = run(['report', '--out', outDir, '--send', '--account', 'acc_a'], { runner })
   assert.equal(code, 1)
   assert.equal(calls.length, 4)
   assert.equal(calls[3].at(-1), 'rm -f /tmp/dsh-feedback-report-2026-10-12.html')
@@ -514,7 +532,7 @@ test('notify 失败时远端临时文件仍然被删掉，退出码 1', () => {
 test('report --send --local 直接读本机报告文件，不 scp 也不清理', () => {
   const outDir = mkdtempSync(join(tmpdir(), 'feedback-send-local-'))
   const fake = spy(JSON.stringify(fixture()))
-  const { code } = run(['report', '--out', outDir, '--send', '--device', 'dvc_a', '--local'],
+  const { code } = run(['report', '--out', outDir, '--send', '--account', 'acc_a', '--local'],
     { runner: fake.runner })
   assert.equal(code, 0)
   assert.equal(fake.calls.length, 2)
@@ -533,14 +551,8 @@ test('renderAgentPlist 把占位符换成绝对路径', () => {
   assert.match(plist, /<string>\/srv\/dsh\/scripts\/dev\/feedback\.mjs<\/string>/)
   assert.match(plist, /<key>WorkingDirectory<\/key>\s*<string>\/srv\/dsh<\/string>/)
   assert.ok(!plist.includes('<string>~/'), 'launchd 不展开 ~，安装时必须绝对化')
-  assert.ok(!plist.includes('--send'), '不给 --device 时定时任务只落盘，不发送')
-})
-
-test('renderAgentPlist 给了设备就带上 --send --device', () => {
-  const plist = renderAgentPlist({ nodePath: '/opt/node/bin/node', repoRoot: '/srv/dsh',
-    deviceIds: ['dev_test1', 'dev_test2'] })
-  assert.ok(!plist.includes('__'), '不能留下占位符')
+  // 019：定时任务固定带 --send，收件账号运行时从 .env.local 取；plist 里不留任何 id。
   assert.match(plist, /<string>--send<\/string>/)
-  assert.match(plist, /<string>--device<\/string>\s*<string>dev_test1<\/string>/)
-  assert.match(plist, /<string>--device<\/string>\s*<string>dev_test2<\/string>/)
+  assert.ok(!plist.includes('--device'), '设备维度已删：plist 里不该再有 --device')
+  assert.ok(!/dev_|acc_/.test(plist), 'plist 里不该写任何设备或账号 id')
 })

@@ -56,9 +56,9 @@ front end.
 | `GET` | `/devices` | device token | the caller's own pairings |
 | `POST` | `/devices/revoke` | device token | revokes one of the caller's own pairings |
 | `POST` | `/feedback/submit` | optional device token | `{text, appVersion, deviceModel, systemVersion, clientRef}` → `{threadId, ticketKey}`; anonymous works, the ticket key is the capability |
-| `POST` | `/feedback/inbox` | optional device token | `{tickets:[{threadId, ticketKey}], messagesPerThread}` → threads, notices, `unreadCount`; **does not mark anything read** |
+| `POST` | `/feedback/inbox` | optional device token | `{tickets:[{threadId, ticketKey}], messagesPerThread}` → threads, notices, `unreadCount`; notices are the caller's **account** inbox; **does not mark anything read** |
 | `POST` | `/feedback/append` | optional device token | `{threadId, ticketKey, text, clientRef}` → a follow-up on the same thread |
-| `POST` | `/feedback/read` | optional device token | `{threadIds, noticeIds}` → marks them read for this device/ticket |
+| `POST` | `/feedback/read` | optional device token | `{threadIds, noticeIds}` → marks them read for the caller's ticket(s) and **account** (one read mark per account) |
 | `OPTIONS` | `*` | — | CORS preflight |
 
 Every path above is served **both** as `/healthz` and as `/dsh-link/healthz`
@@ -170,27 +170,32 @@ code is shown as `XXXX-XXXX` plus a `dsh://pair?relay=…&code=…` QR payload.
 ### Feedback and notices
 
 In-app feedback lands in `feedbackThreads`/`feedbackMessages`; broadcast notices
-land in `notices`/`noticeDeliveries` (one row per recipient device, each with its
-own read mark). The phone's pickup key is never stored — only its SHA-256, like
-an agent secret — so a thread is readable with that key, with the device token it
-was submitted from, or by the operator.
+land in `notices`/`noticeDeliveries` — **one row per recipient account** (019), with
+one read mark shared by every device under it. A phone authenticates with its device
+token, but the inbox it reads belongs to the account: re-pairing the phone (which mints
+a new `deviceId`) never loses the notices already delivered. The phone's pickup key is
+never stored — only its SHA-256, like an agent secret — so a thread is readable with
+that key, with the device token it was submitted from, or by the operator.
 
 ```bash
 $A admin.py --db $DB feedback-list --status open      # 待回复的反馈（也可以 --limit/--since）
 $A admin.py --db $DB feedback-show --thread th_x      # 完整往返；顺带把 ownerReadAt 推到最新一条
 $A admin.py --db $DB feedback-reply --template        # 打印官方邮件式骨架（称呼/正文/署名/日期）
 $A admin.py --db $DB feedback-reply --thread th_x --body-file /tmp/reply.txt
-$A admin.py --db $DB feedback-notify --body-file /tmp/notice.txt --all        # 预演：只打印收件人数
+$A admin.py --db $DB feedback-notify --body-file /tmp/notice.txt --all        # 预演：只打印收件账号数
+$A admin.py --db $DB feedback-notify --body-file /tmp/notice.txt --account acc_x --yes  # 只发一个账号
 $A admin.py --db $DB feedback-notify --body-file /tmp/notice.txt --all --yes  # 真正落库
 $A admin.py --db $DB feedback-delete --thread th_x --yes                      # 响应删除请求
 $A admin.py --db $DB ops-report --days 30                                     # 日报原始数据（JSON）
 $A admin.py --db $DB ops-report --days 30 --as-of yesterday                   # 刚过去的一整天
 ```
 
-`feedback-notify` **默认只预演**：不加 `--yes` 不写库，先给出收件设备数与清单；
-一台设备都不匹配时即使加了 `--yes` 也不写库，退出码 1。本机侧还有一层薄包装
-（`scripts/dev/feedback.mjs`）走 SSH 调这些命令，并负责把 `ops-report` 渲染成带图表的日报；
-写操作在那里同样默认预演，要 `--send`/`--yes` 才落库。
+`feedback-notify` **默认只预演**：不加 `--yes` 不写库，先给出收件账号数与清单；
+收件人必须**显式**点名（`--account`，可重复；或 `--all` 表示全部账号）——两个都不给是错误，
+不会默认广播给所有人；没有任何账号时即使加了 `--yes` 也不写库，退出码 1——设备维度在 019 里删掉了，因为手机每次
+重新配对都会换 `deviceId`。本机侧还有一层薄包装（`scripts/dev/feedback.mjs`）走 SSH 调这些命令，
+并负责把 `ops-report` 渲染成带图表的日报；写操作在那里同样默认预演，要 `--send`/`--yes`
+才落库，日报的收件账号取 `.env.local` 的 `DSH_ACCOUNT_ID`。
 
 `ops-report --as-of` 是报告的时间锚点，取值 `now`（默认，当天 00:00 到此刻的部分数据）、
 `yesterday`（刚过去的一整天）或 `YYYY-MM-DD`（指定那一天）；后两者把「今日」板块与
@@ -348,7 +353,7 @@ feedbackThreads(threadId, ticketHash, accountId, deviceId, appVersion, deviceMod
                 status, clientRef)
 feedbackMessages(messageId, threadId, author, body, createdAt, clientRef)
 notices(noticeId, subject, body, createdAt, createdBy)
-noticeDeliveries(noticeId, deviceId, createdAt, readAt)
+noticeDeliveries(noticeId, accountId, createdAt, readAt)
 ```
 
 Back up by copying `state.db` (plus `-wal`/`-shm`) with the service stopped, or

@@ -280,7 +280,7 @@ def _public_notice(notice: dict[str, Any]) -> dict[str, Any]:
 
 async def _collect(store: Store, pairs: list[tuple[str, str]], device: dict[str, Any] | None,
                    messages_per_thread: int, *, with_notices: bool = True) -> dict[str, Any]:
-    """调用方看得到的线程（凭据命中 ∪ 设备命中，去重）与未读计数。"""
+    """调用方看得到的线程（凭据命中 ∪ 设备/账号命中，去重）与未读计数。"""
     hashed = [(thread_id, sha256_hex(ticket)) for thread_id, ticket in pairs]
     threads = await asyncio.to_thread(store.feedback_threads_by_tickets, hashed,
                                       messages_per_thread=messages_per_thread)
@@ -293,7 +293,8 @@ async def _collect(store: Store, pairs: list[tuple[str, str]], device: dict[str,
     threads.sort(key=lambda thread: thread["lastMessageAt"], reverse=True)
     notices = []
     if with_notices and device is not None:
-        notices = await asyncio.to_thread(store.notices_for_device, device["deviceId"])
+        # 通知按**账号**取（019）：同一账号下的设备共享一份收件箱与一份已读。
+        notices = await asyncio.to_thread(store.notices_for_account, device["accountId"])
     unread = sum(thread["unread"] for thread in threads) + sum(1 for row in notices if not row["read"])
     return {"threads": [_public_thread(thread) for thread in threads],
             "notices": [_public_notice(notice) for notice in notices],
@@ -428,7 +429,7 @@ async def feedback_append(request: web.Request) -> web.Response:
 
 
 async def feedback_read(request: web.Request) -> web.Response:
-    """标记已读；只有调用方能证明的线程才标得动，notice 只按设备标。"""
+    """标记已读；只有调用方能证明的线程才标得动，notice 按账号标（019）。"""
     store: Store = request.app["store"]
     body, error = await _json_body(request)
     if error is not None:
@@ -452,6 +453,6 @@ async def feedback_read(request: web.Request) -> web.Response:
         if thread_id in allowed:
             await asyncio.to_thread(store.mark_thread_read, thread_id)
     if device is not None and notice_ids:
-        await asyncio.to_thread(store.mark_notices_read, device["deviceId"], notice_ids)
+        await asyncio.to_thread(store.mark_notices_read, device["accountId"], notice_ids)
     payload = await _collect(store, pairs, device, 0)
     return web.json_response({"ok": True, "unreadCount": payload["unreadCount"]})

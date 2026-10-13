@@ -27,7 +27,8 @@ EXPECTED_COLUMNS = {
     "feedbackMessages": ["messageId", "threadId", "author", "body", "createdAt", "clientRef",
                          "format"],
     "notices": ["noticeId", "subject", "body", "createdAt", "createdBy", "format"],
-    "noticeDeliveries": ["noticeId", "deviceId", "createdAt", "readAt"],
+    # 019：收件人是账号而不是设备（设备维度已删）。
+    "noticeDeliveries": ["noticeId", "accountId", "createdAt", "readAt"],
 }
 
 
@@ -67,8 +68,9 @@ def test_a_fresh_database_creates_the_four_feedback_tables(tmp_path):
     Store(path).close()
     for table, expected in EXPECTED_COLUMNS.items():
         assert columns(path, table) == expected, table
-    # 版本号是 4（富文本给两张表加 `format` 那一列时 bump 的，见 test_store_schema_version.py）。
-    assert user_version(path) == SCHEMA_VERSION == 4
+    # 版本号是 5（019 把 `noticeDeliveries` 的收件人从设备换成账号时 bump 的，
+    # 见 test_store_schema_version.py）。
+    assert user_version(path) == SCHEMA_VERSION == 5
 
 
 def test_indexes_the_readers_rely_on_exist(tmp_path):
@@ -80,7 +82,7 @@ def test_indexes_the_readers_rely_on_exist(tmp_path):
         assert {row[1] for row in store._rows("PRAGMA index_list(feedbackMessages)")} >= {
             "feedbackMessagesByThread"}
         assert {row[1] for row in store._rows("PRAGMA index_list(noticeDeliveries)")} >= {
-            "noticeDeliveriesByDevice"}
+            "noticeDeliveriesByAccount"}
     finally:
         store.close()
 
@@ -273,26 +275,44 @@ def test_unread_counts_owner_messages_after_user_read_at(tmp_path):
         store.close()
 
 
-def test_notices_are_delivered_and_read_per_device(tmp_path):
+def test_notices_are_delivered_and_read_per_account(tmp_path):
+    """019：投递与已读都按账号一份，不再按设备。"""
     store = Store(str(tmp_path / "state.db"))
     try:
-        notice = store.create_notice("维护通知正文", "服务通知", ["dev_a", "dev_b", "dev_a"], at=5_000)
+        notice = store.create_notice("维护通知正文", "服务通知", ["acc_a", "acc_b", "acc_a"], at=5_000)
         assert notice["noticeId"].startswith("nt_") and notice["recipients"] == 2
         assert count(store, "SELECT COUNT(*) FROM notices") == 1
         assert count(store, "SELECT COUNT(*) FROM noticeDeliveries") == 2
 
-        mine = store.notices_for_device("dev_a")
+        mine = store.notices_for_account("acc_a")
         assert [n["noticeId"] for n in mine] == [notice["noticeId"]]
         assert mine[0]["read"] is False and mine[0]["subject"] == "服务通知"
 
-        assert store.mark_notices_read("dev_a", [notice["noticeId"]]) == 1
-        assert store.notices_for_device("dev_a")[0]["read"] is True
-        # 同一批通知，每台设备各记各的未读（FR-017）。
-        assert store.notices_for_device("dev_b")[0]["read"] is False
+        assert store.mark_notices_read("acc_a", [notice["noticeId"]]) == 1
+        assert store.notices_for_account("acc_a")[0]["read"] is True
+        # 账号级一份已读：另一个账号看到的仍是同一封通知的**自己那一行**，未读。
+        assert store.notices_for_account("acc_b")[0]["read"] is False
         # 幂等与空操作。
-        assert store.mark_notices_read("dev_a", [notice["noticeId"]]) == 0
-        assert store.mark_notices_read("dev_a", ["nt_nope"]) == 0
-        assert store.notices_for_device("dev_c") == []
+        assert store.mark_notices_read("acc_a", [notice["noticeId"]]) == 0
+        assert store.mark_notices_read("acc_a", ["nt_nope"]) == 0
+        assert store.notices_for_account("acc_c") == []
+    finally:
+        store.close()
+
+
+def test_one_account_has_exactly_one_delivery_row_per_notice(tmp_path):
+    """同一封通知对同一账号只留一行：重复投递不会翻倍（不变式 1）。"""
+    store = Store(str(tmp_path / "state.db"))
+    try:
+        notice = store.create_notice("正文", "通知", ["acc_a"], at=5_000)
+        again = store.create_notice("正文", "通知", ["acc_a"], at=6_000)
+        assert count(store, "SELECT COUNT(*) FROM noticeDeliveries WHERE noticeId=?",
+                     (notice["noticeId"],)) == 1
+        assert count(store, "SELECT COUNT(*) FROM noticeDeliveries WHERE noticeId=?",
+                     (again["noticeId"],)) == 1
+        # 一封通知一个账号一行——不是"一个账号下每台设备一行"。
+        assert [n["noticeId"] for n in store.notices_for_account("acc_a")] == [
+            again["noticeId"], notice["noticeId"]]
     finally:
         store.close()
 
@@ -467,10 +487,10 @@ def test_format_defaults_to_text_and_ignores_surrounding_whitespace(tmp_path):
                 store.feedback_thread(thread["threadId"], None)["messages"]] == [
                     "text", "text", "html", "text", "text"]
 
-        store.create_notice("正文", "通知", ["dev_1"], at=1_000)
-        store.create_notice("正文", "日报", ["dev_1"], format="html", at=2_000)
-        store.create_notice("正文", "带空白", ["dev_1"], format="  html\n", at=3_000)
-        assert [n["format"] for n in store.notices_for_device("dev_1")] == ["html", "html", "text"]
+        store.create_notice("正文", "通知", ["acc_1"], at=1_000)
+        store.create_notice("正文", "日报", ["acc_1"], format="html", at=2_000)
+        store.create_notice("正文", "带空白", ["acc_1"], format="  html\n", at=3_000)
+        assert [n["format"] for n in store.notices_for_account("acc_1")] == ["html", "html", "text"]
     finally:
         store.close()
 
@@ -484,7 +504,7 @@ def test_an_unknown_format_is_refused_before_anything_is_written(tmp_path):
             with pytest.raises(StoreError):
                 store.append_feedback_message(thread["threadId"], "不该进库", format=bad)
             with pytest.raises(StoreError):
-                store.create_notice("不该进库", "通知", ["dev_1"], format=bad)
+                store.create_notice("不该进库", "通知", ["acc_1"], format=bad)
         assert count(store, "SELECT COUNT(*) FROM feedbackMessages") == 1
         assert count(store, "SELECT COUNT(*) FROM notices") == 0
         assert count(store, "SELECT COUNT(*) FROM noticeDeliveries") == 0
