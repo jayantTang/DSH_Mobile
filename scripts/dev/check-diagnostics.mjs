@@ -3,8 +3,8 @@
  * 诊断包的机械检查：脱敏、上限、结构（spec 020 的 FR-014/FR-018），
  * 以及**事件目录漂移**（写入侧 `EVENT_KINDS` 与契约文档必须逐字一致）。
  *
- * 契约：`specs/020-link-diagnostics/contracts/collect-command.md` §2/§4、
- *       `specs/020-link-diagnostics/contracts/diagnostics-events.md`
+ * 契约：`docs/diagnostics-events.md`（事件词表；采集命令字段契约在内部 spec 里，
+ *       不随仓库发布，见 `specs/020-link-diagnostics/contracts/collect-command.md`）
  *
  * 为什么必须是**机械检查**而不是"写的时候小心点"：脱敏规则一旦只活在人的记忆里，下一次
  * "顺手加个字段"就会把凭据带进要发出去的包；事件词表同理，加了 kind 忘了改契约，
@@ -29,7 +29,7 @@ const USAGE = `用法: node scripts/dev/check-diagnostics.mjs [--pack <目录>] 
 `
 
 /** 写入侧与文档比对的那份契约。 */
-export const EVENT_CONTRACT = 'specs/020-link-diagnostics/contracts/diagnostics-events.md'
+export const EVENT_CONTRACT = 'docs/diagnostics-events.md'
 
 /**
  * 从契约文档里取出事件词表（只取 §2 既有 与 §3 新增两张表的**第一列**）。

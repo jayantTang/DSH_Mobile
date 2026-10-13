@@ -50,6 +50,7 @@ const DOCS = [
   'docs/RELAY-PROTOCOL.md',
   'docs/CONNECTOR-NOTES.md',
   'docs/DIAGNOSTICS.md',
+  'docs/diagnostics-events.md',
   'docs/RELAY-NOTES.md',
   'plugins/README.md',
   'plugins/mobile-link/README.md',

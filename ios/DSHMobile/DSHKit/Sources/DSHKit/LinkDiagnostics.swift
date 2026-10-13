@@ -9,7 +9,7 @@ import Foundation
 ///
 /// **硬约束**：任何一步失败都不许影响连接与同步。写失败记一次然后闭嘴，调用方永远拿到结果而不是异常。
 ///
-/// 契约：`specs/020-link-diagnostics/contracts/diagnostics-events.md`、
+/// 契约：`docs/diagnostics-events.md`、
 ///       `specs/020-link-diagnostics/contracts/connector-diagnostics-method.md`
 public actor LinkDiagnostics {
     /// 环容量（条）。

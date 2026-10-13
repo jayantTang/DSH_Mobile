@@ -30,7 +30,7 @@ export const MAX_EVENT_BYTES = 2048
 /**
  * 事件目录（`kind` 词表）——**与契约逐字一致**，由 `npm run check:contracts` 机械核对。
  *
- * 契约：`specs/020-link-diagnostics/contracts/diagnostics-events.md`（§2 既有 + §3 新增 + 内部）。
+ * 契约：`docs/diagnostics-events.md`（§2 既有 + §3 新增 + 内部）。
  * 为什么把词表放进代码：写入侧需要一个能自检的集合（防止手滑写错 kind 后没人发现），
  * 而插件是独立发布的包，不能运行时去读仓库里的 spec 文件。
  */

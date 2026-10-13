@@ -11,7 +11,7 @@
  * 本模块是纯逻辑：它不认识 socket、不认识 journal，事件由上层通过 `onEvent` 注入
  * （宪法原则 VII.1：能力注入，不在内部读全局状态）。
  *
- * 契约：`specs/020-link-diagnostics/contracts/diagnostics-events.md`
+ * 契约：`docs/diagnostics-events.md`
  * 数据模型：`specs/020-link-diagnostics/data-model.md` §3–§5
  */
 

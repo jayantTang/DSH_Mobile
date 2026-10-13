@@ -10,7 +10,7 @@ import FoundationNetworking
 /// **看到的完全一样**（都没有事件）——2026-10-13 00:59–01:05 那个 5 分 50 秒的空窗就是这么卡住的。
 /// 要区分二者，只有系统层的 WebSocket 建立/关闭回调能给答案。
 ///
-/// 契约：`specs/020-link-diagnostics/contracts/diagnostics-events.md` §3
+/// 契约：`docs/diagnostics-events.md` §3
 extension LinkCarrier {
     /// 这条 carrier 的 session 上有没有挂观察者（单测用：漏挂就等于拿不到"传输建立"）。
     var socketObserverInstalled: Bool {

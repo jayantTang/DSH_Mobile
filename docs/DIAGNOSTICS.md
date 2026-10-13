@@ -64,7 +64,7 @@ npm run diag:collect -- --no-relay         # 跳过中转侧（无 ssh 时用，
 
 ## 四、相关文档
 
-- 采集命令与诊断包的字段契约：`specs/020-link-diagnostics/contracts/collect-command.md`
-- 事件词表：`specs/020-link-diagnostics/contracts/diagnostics-events.md`
-- 连接器状态接口：`specs/001-connector-host-compat/contracts/status-endpoint.md`
+- 事件词表（连接器、App、中转三侧共用的 `kind` 与字段规则）：`docs/diagnostics-events.md`
 - 安装与宿主识别：`docs/ONBOARDING.md`
+- 采集命令的字段契约与连接器状态接口的契约是内部 spec 产物，不随仓库发布；可观察到的行为
+  以本文件与 `npm run diag:collect -- --help` 为准。
