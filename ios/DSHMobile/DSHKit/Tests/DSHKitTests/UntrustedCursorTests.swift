@@ -76,6 +76,48 @@ final class UntrustedCursorTests: XCTestCase {
         XCTAssertNil(entry.oldestSeq)
     }
 
+    // MARK: - 外部数值：host 下发的 JSON 数字
+
+    /// `Double → Int` 不许 trap：1e30 / NaN / 无穷都按"不是整数"返回 nil。
+    /// （原来是 `Int(value)`，这些输入是进程级 SIGTRAP。）
+    func testHugeJSONNumberDoesNotTrap() {
+        XCTAssertEqual(JSONValue.double(42.0).intValue, 42)
+        XCTAssertNil(JSONValue.double(42.5).intValue)
+        XCTAssertNil(JSONValue.double(1e30).intValue)
+        XCTAssertNil(JSONValue.double(-1e30).intValue)
+        XCTAssertNil(JSONValue.double(.nan).intValue)
+        XCTAssertNil(JSONValue.double(.infinity).intValue)
+        XCTAssertEqual(JSONValue.int(7).intValue, 7)
+        // 走真实解码路径（host 回包就是这么进来的）。
+        let decoded = try? JSONDecoder().decode(JSONValue.self,
+                                                from: Data(#"{"size": 1e30}"#.utf8))
+        XCTAssertNil(decoded?["size"]?.intValue)
+    }
+
+    // MARK: - 外部输入：磁盘上的 ranges_json
+
+    /// 坏区间 JSON 当解码失败处理：区间集是纯缓存，退化成空集重拉即可，不许 trap。
+    func testCorruptRangesJSONDoesNotTrap() async throws {
+        XCTAssertThrowsError(try JSONDecoder().decode(
+            [RangeIndex.Span].self, from: Data(#"[{"start":9,"end":1}]"#.utf8)))
+        XCTAssertNoThrow(try JSONDecoder().decode(
+            [RangeIndex.Span].self, from: Data(#"[{"start":1,"end":9}]"#.utf8)))
+
+        try await store.applyWrites([.upsertRecords(
+            scope: "mac", sessionId: "s1", records: [record(1)])])
+        // 模拟磁盘上被写坏的持久化区间（跨版本、手工改过都算）。
+        try await store.pool.write { db in
+            try db.execute(sql: """
+                UPDATE session_state SET ranges_json = ?
+                WHERE scope = 'mac' AND session_id = 's1'
+                """, arguments: [#"[{"start":9,"end":1}]"#])
+        }
+        let states = try await store.sessionStates(scope: "mac")
+        let entry = try XCTUnwrap(states.first)
+        XCTAssertTrue(entry.ranges.isEmpty, "坏区间按空集处理")
+        XCTAssertEqual(entry.newestSeq, 1, "聚合列不受影响")
+    }
+
     // MARK: - 页边界：离谱游标不产页
 
     /// 崩溃现场的区间（Int.max 附近）与整段离谱区间都不产页；正常游标不受影响。

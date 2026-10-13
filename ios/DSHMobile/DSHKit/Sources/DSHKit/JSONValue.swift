@@ -84,7 +84,11 @@ extension JSONValue {
     public var intValue: Int? {
         switch self {
         case .int(let value): return value
-        case .double(let value) where value.rounded() == value: return Int(value)
+        // `Int(exactly:)` 而不是 `Int(value)`：Double 取整成立不代表装得进 Int，
+        // host 下发 `{"size": 1e30}` 这类数字时 `Int(value)` 是**进程级 trap**
+        //（Double→Int 越界，SIGTRAP），不是返回 nil。可表示就转，不可表示按"不是整数"
+        // 处理（调用方本来就要处理 nil）。
+        case .double(let value): return Int(exactly: value)
         default: return nil
         }
     }

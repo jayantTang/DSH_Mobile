@@ -14,12 +14,6 @@
       "reason": "有意选的哨兵：上行乐观记录的排序键，只活在 MessagePipeline 的内存行序与 record 表的 pending 行里。两个下游出口都已收口：聚合列排除 pending（MessageStore+Records.refreshState），页边界拒绝超 seqCeiling 的游标（SessionPipeline+Paging.alignedPages）。"
     },
     {
-      "file": "ios/DSHMobile/DSHKit/Sources/DSHKit/JSONValue.swift",
-      "rule": "dbl2int",
-      "snippet": "case .double(let value) where value.rounded() == value: return Int(value)",
-      "reason": "TODO: 真实 trap。Double 的取整判定成立不代表能装进 Int，host 下发 {\"size\":1e30} 这类数字会直接崩（Double→Int 越界）。修法：Int(exactly: value)，不可表示时返回 nil。"
-    },
-    {
       "file": "ios/DSHMobile/DSHKit/Sources/DSHKit/LinkCarrier.swift",
       "rule": "range",
       "snippet": "let offset = Double.random(in: -spread...spread)",
@@ -29,7 +23,7 @@
       "file": "ios/DSHMobile/DSHKit/Sources/DSHKit/RangeIndex.swift",
       "rule": "range",
       "snippet": "for span in spans { insert(span.start...span.end) }",
-      "reason": "TODO: ranges_json 解码走的是合成 init(from:)，绕过了 Span 的 start <= end 前置条件；损坏或跨版本的区间 JSON 会在这里 trap（同类：SessionPipeline.swift:204）。修法是给 Span 写显式 Decodable 校验。"
+      "reason": "Span 只有两条构造路径：init(_:_:) 与显式 init(from:) 都校验 start <= end，非法区间在解码处就变成解码失败（区间集是纯缓存，退化成空集）。"
     },
     {
       "file": "ios/DSHMobile/DSHKit/Sources/DSHKit/RangeIndex.swift",
@@ -41,7 +35,7 @@
       "file": "ios/DSHMobile/DSHKit/Sources/DSHKit/RangeIndex.swift",
       "rule": "trap",
       "snippet": "precondition(start <= end, \"span start must not exceed end\")",
-      "reason": "有意的区间不变量。真正的缺口在解码路径绕过它（见 RangeIndex.swift:41 的 TODO），前置条件本身保留。"
+      "reason": "有意的区间不变量：两条构造路径都汇到这里，解码也不再绕过（2026-10-13 加了显式 init(from:)）。"
     },
     {
       "file": "ios/DSHMobile/DSHKit/Sources/DSHKit/Timeline.swift",
@@ -71,7 +65,7 @@
       "file": "ios/DSHMobile/DSHKit/Sources/DSHKit/SessionPipeline.swift",
       "rule": "range",
       "snippet": "ranges.insert(span.start...span.end)",
-      "reason": "TODO: 与 RangeIndex.swift:41 同一根因（持久化区间解码不校验 start <= end），adoptPersistedRanges 会把坏段直接并进区间集。"
+      "reason": "持久化区间来自 RangeIndex.Span 的显式解码校验，start > end 的段进不来（见 Span 的 init(from:)）。"
     },
     {
       "file": "ios/DSHMobile/DSHKit/Sources/DSHKit/SessionPipeline.swift",

@@ -21,6 +21,26 @@ public struct RangeIndex: Sendable, Equatable {
         }
 
         public var count: Int { end - start + 1 }
+
+        private enum CodingKeys: String, CodingKey { case start, end }
+
+        /// 显式解码而不是合成的那份：合成的 `init(from:)` 直接给存储属性赋值，
+        /// **绕过** `init(_:_:)` 里 `start <= end` 的前置条件。`ranges_json` 是磁盘上的
+        /// 外部输入（跨版本、写坏、手工改过都算），解出一个 start > end 的段会在
+        /// `RangeIndex.insert` 与 `SessionPipeline.adoptPersistedRanges` 的闭区间构造处
+        /// trap（SIGTRAP，不是可捕获的错误）。这里把不合法当解码失败：区间集是纯缓存，
+        /// 调用方拿到空区间集重拉即可（`sessionStates` 本来就是 `try?`）。
+        public init(from decoder: any Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            let start = try container.decode(Int.self, forKey: .start)
+            let end = try container.decode(Int.self, forKey: .end)
+            guard start <= end else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .end, in: container,
+                    debugDescription: "span start \(start) exceeds end \(end)")
+            }
+            self.init(start, end)
+        }
     }
 
     /// 一次取值的判定结果（spec §6 三分支）。
