@@ -5,12 +5,13 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { buildInvocation, main, renderAgentPlist, reportPath, resolveSshTarget } from './feedback.mjs'
+import { buildInvocation, foreignRecipients, main, renderAgentPlist, reportPath,
+  resolveSshTarget } from './feedback.mjs'
 import { escapeHtml, renderReport } from './feedback-report.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -18,6 +19,10 @@ const ROOT = join(HERE, '..', '..')
 const PLIST = join(HERE, 'launchd', 'com.jayanttang.dsh-daily-report.plist')
 
 const HOST = 'relay.example.com'
+/// owner 自己的账号（`.env.local` 的 DSH_ACCOUNT_ID）：默认 env 里带上它，才是本机的真实形状。
+const OWNER = 'acc_owner'
+/// 写给别人的信必须带这句——审批门（AGENTS.md 硬性约束第 9 条）。
+const APPROVED = ['--owner-approved', '同意，发吧']
 /// 生成时间取本机时区的 2026-10-12 09:00，文件名才不随 UTC 偏移变化。
 const GENERATED_AT = new Date(2026, 9, 12, 9, 0, 0).getTime()
 
@@ -110,16 +115,23 @@ function completedDayFixture() {
   return data
 }
 
-function run(argv, { runner, env = { DSH_OTA_HOST: HOST } } = {}) {
+function run(argv, { runner, approvalLog, env = { DSH_OTA_HOST: HOST, DSH_ACCOUNT_ID: OWNER } } = {}) {
   const out = []
   const err = []
+  // 默认把留痕写进临时目录：用例绝不能碰真实 `~/Library/Logs`（宪法第 III 条）。
   const code = main(argv, {
     runner: runner ?? (() => { throw new Error('runner 不该被调用') }),
     env,
+    approvalLog: approvalLog ?? approvalLogFile(),
     out: (line) => out.push(String(line)),
     err: (line) => err.push(String(line)),
   })
   return { code, out: out.join('\n'), err: err.join('\n') }
+}
+
+/// 审批留痕文件放临时目录：断言"批准过什么"记下来了，不往真实 `~/Library/Logs` 写。
+function approvalLogFile() {
+  return join(mkdtempSync(join(tmpdir(), 'feedback-approval-')), 'approvals.log')
 }
 
 function bodyFile(content = '您好：\n\n已收到反馈。\n\nDSH Mobile 团队\n2026-10-12\n') {
@@ -174,12 +186,15 @@ test('reply 默认预演：runner 一次都不调用，正文原样打出来', (
 
 test('reply --send 才真的执行，正文作远端参数传过去', () => {
   const fake = spy('{"ok":true,"threadId":"th_x"}')
-  const { code } = run(['reply', '--thread', 'th_x', '--body', '您好 & 谢谢', '--send'], { runner: fake.runner })
+  const log = approvalLogFile()
+  const { code } = run(['reply', '--thread', 'th_x', '--body', '您好 & 谢谢', '--send', ...APPROVED],
+    { runner: fake.runner, approvalLog: log })
   assert.equal(code, 0)
-  assert.equal(fake.calls.length, 1)
+  assert.equal(fake.calls.length, 1, '给了批准就直发，不再多读一次线程清单')
   const remote = fake.calls[0].at(-1)
   assert.match(remote, /feedback-reply --thread th_x --body /)
   assert.match(remote, /您好 & 谢谢/)
+  assert.equal(JSON.parse(readFileSync(log, 'utf8')).approval, '同意，发吧')
 })
 
 test('--dry-run 压过 --send/--yes，一次写都不发', () => {
@@ -195,7 +210,7 @@ test('--dry-run 压过 --send/--yes，一次写都不发', () => {
 
   // reply 也接受 --yes 这种写法（命令契约把两个开关并列写过）。
   const alias = spy('{"ok":true}')
-  run(['reply', '--thread', 'th_x', '--body', '正文', '--yes'], { runner: alias.runner })
+  run(['reply', '--thread', 'th_x', '--body', '正文', '--yes', ...APPROVED], { runner: alias.runner })
   assert.equal(alias.calls.length, 1)
 })
 
@@ -211,7 +226,7 @@ test('notify 默认预演：服务器只统计收件人，argv 里没有 --yes',
 
 test('notify --yes 才落库；delete 同理', () => {
   const notify = spy('{"ok":true,"noticeId":"nt_a"}')
-  run(['notify', '--body', '维护通知', '--subject', 'S', '--all', '--yes'], { runner: notify.runner })
+  run(['notify', '--body', '维护通知', '--subject', 'S', '--all', '--yes', ...APPROVED], { runner: notify.runner })
   const remote = notify.calls[0].at(-1)
   assert.match(remote, /feedback-notify --body /)
   assert.match(remote, /--subject S/)
@@ -405,21 +420,21 @@ test('覆盖整天的日报按覆盖日写日期、标题与「全天」标签',
 
 test('reply / notify 的 --format 透传；不传就不出现在 argv 里', () => {
   const reply = spy('{"ok":true}')
-  run(['reply', '--thread', 'th_x', '--body', '正文', '--format', 'html', '--send'], { runner: reply.runner })
+  run(['reply', '--thread', 'th_x', '--body', '正文', '--format', 'html', '--send', ...APPROVED], { runner: reply.runner })
   assert.match(reply.calls[0].at(-1), /feedback-reply --thread th_x --body .*--format html/)
 
   const notify = spy('{"ok":true}')
-  run(['notify', '--body', '维护通知', '--account', 'acc_a', '--format', 'html', '--yes'],
+  run(['notify', '--body', '维护通知', '--account', 'acc_a', '--format', 'html', '--yes', ...APPROVED],
     { runner: notify.runner })
   assert.match(notify.calls[0].at(-1), /feedback-notify --body .*--format html/)
 
   // 不传 --format 时保持既有 argv：服务器默认 text。
   const plain = spy('{"ok":true}')
-  run(['notify', '--body', '维护通知', '--account', 'acc_a', '--yes'], { runner: plain.runner })
+  run(['notify', '--body', '维护通知', '--account', 'acc_a', '--yes', ...APPROVED], { runner: plain.runner })
   assert.ok(!plain.calls[0].at(-1).includes('--format'), '不传 --format 不得凭空加参数')
 
   const plainReply = spy('{"ok":true}')
-  run(['reply', '--thread', 'th_x', '--body', '正文', '--send'], { runner: plainReply.runner })
+  run(['reply', '--thread', 'th_x', '--body', '正文', '--send', ...APPROVED], { runner: plainReply.runner })
   assert.ok(!plainReply.calls[0].at(-1).includes('--format'), '不传 --format 不得凭空加参数')
 
   const bad = spy()
@@ -433,8 +448,8 @@ test('report --send：先 scp，再按 html 通知，最后删远端临时文件
   const outDir = mkdtempSync(join(tmpdir(), 'feedback-send-'))
   const fake = spy(JSON.stringify(fixture()))
   const { code, out } = run(
-    ['report', '--out', outDir, '--send', '--account', 'acc_a', '--account', 'acc_b'],
-    { runner: fake.runner },
+    ['report', '--out', outDir, '--send', '--account', 'acc_a', '--account', 'acc_b', ...APPROVED],
+    { runner: fake.runner, approvalLog: approvalLogFile() },
   )
   assert.equal(code, 0)
   const local = join(outDir, '2026-10-12.html')
@@ -466,8 +481,8 @@ test('report --send：先 scp，再按 html 通知，最后删远端临时文件
 test('report --send 的 --subject 覆盖默认标题', () => {
   const outDir = mkdtempSync(join(tmpdir(), 'feedback-send-subject-'))
   const fake = spy(JSON.stringify(fixture()))
-  const { code } = run(['report', '--out', outDir, '--send', '--account', 'acc_a', '--subject', '周报'],
-    { runner: fake.runner })
+  const { code } = run(['report', '--out', outDir, '--send', '--account', 'acc_a', '--subject', '周报', ...APPROVED],
+    { runner: fake.runner, approvalLog: approvalLogFile() })
   assert.equal(code, 0)
   assert.match(fake.calls[2].at(-1), /--subject '周报'/)
 })
@@ -481,11 +496,12 @@ test('report --send 收件账号：--account 优先，其次 .env.local 的 DSH_
   assert.equal(code, 0)
   assert.match(fake.calls[2].at(-1), /--account acc_env/)
 
-  // 命令行给了就压过 .env.local（换账号试发时不必改本机真值）。
+  // 命令行给了就压过 .env.local（换账号试发时不必改本机真值）；换成别人的账号就要审批。
   const explicit = spy(JSON.stringify(fixture()))
   const other = mkdtempSync(join(tmpdir(), 'feedback-send-env2-'))
-  run(['report', '--out', other, '--send', '--account', 'acc_cli'],
-    { runner: explicit.runner, env: { DSH_OTA_HOST: HOST, DSH_ACCOUNT_ID: 'acc_env' } })
+  run(['report', '--out', other, '--send', '--account', 'acc_cli', ...APPROVED],
+    { runner: explicit.runner, approvalLog: approvalLogFile(),
+      env: { DSH_OTA_HOST: HOST, DSH_ACCOUNT_ID: 'acc_env' } })
   assert.match(explicit.calls[2].at(-1), /--account acc_cli/)
   assert.ok(!explicit.calls[2].at(-1).includes('acc_env'))
 })
@@ -493,7 +509,8 @@ test('report --send 收件账号：--account 优先，其次 .env.local 的 DSH_
 test('report --send 一个账号都取不到时退 2，不执行任何命令（也不群发）', () => {
   for (const argv of [['report', '--send'], ['report', '--send', '--all']]) {
     const fake = spy()
-    const { code, err } = run(argv, { runner: fake.runner })   // env 里没有 DSH_ACCOUNT_ID
+    // env 里没有 DSH_ACCOUNT_ID：连"发给谁"都取不到
+    const { code, err } = run(argv, { runner: fake.runner, env: { DSH_OTA_HOST: HOST } })
     assert.equal(code, 2, `${argv.join(' ')} 应该退 2`)
     assert.equal(fake.calls.length, 0)
     assert.match(err, /--account|--all|DSH_ACCOUNT_ID/)
@@ -522,7 +539,8 @@ test('notify 失败时远端临时文件仍然被删掉，退出码 1', () => {
     if (calls.length === 3) throw new Error('notify 挂了')   // 3 = notify（1 ops-report / 2 scp）
     return JSON.stringify(fixture())
   }
-  const { code, err } = run(['report', '--out', outDir, '--send', '--account', 'acc_a'], { runner })
+  const { code, err } = run(['report', '--out', outDir, '--send', '--account', 'acc_a', ...APPROVED],
+    { runner, approvalLog: approvalLogFile() })
   assert.equal(code, 1)
   assert.equal(calls.length, 4)
   assert.equal(calls[3].at(-1), 'rm -f /tmp/dsh-feedback-report-2026-10-12.html')
@@ -532,8 +550,8 @@ test('notify 失败时远端临时文件仍然被删掉，退出码 1', () => {
 test('report --send --local 直接读本机报告文件，不 scp 也不清理', () => {
   const outDir = mkdtempSync(join(tmpdir(), 'feedback-send-local-'))
   const fake = spy(JSON.stringify(fixture()))
-  const { code } = run(['report', '--out', outDir, '--send', '--account', 'acc_a', '--local'],
-    { runner: fake.runner })
+  const { code } = run(['report', '--out', outDir, '--send', '--account', 'acc_a', '--local', ...APPROVED],
+    { runner: fake.runner, approvalLog: approvalLogFile() })
   assert.equal(code, 0)
   assert.equal(fake.calls.length, 2)
   assert.ok(fake.calls.every((argv) => argv[0] !== 'scp' && argv[0] !== 'ssh'))
@@ -555,4 +573,146 @@ test('renderAgentPlist 把占位符换成绝对路径', () => {
   assert.match(plist, /<string>--send<\/string>/)
   assert.ok(!plist.includes('--device'), '设备维度已删：plist 里不该再有 --device')
   assert.ok(!/dev_|acc_/.test(plist), 'plist 里不该写任何设备或账号 id')
+})
+
+// ── 审批门（AGENTS.md 硬性约束第 9 条）：写给别人的信先要 owner 的批准 ────────────────
+
+test('foreignRecipients：没配 DSH_ACCOUNT_ID 时每个账号都算别人', () => {
+  assert.deepEqual(foreignRecipients({ accounts: ['a', 'b'] }, 'a'), { all: false, foreign: ['b'] })
+  assert.deepEqual(foreignRecipients({ accounts: ['a'] }, ''), { all: false, foreign: ['a'] })
+  assert.deepEqual(foreignRecipients({ accounts: [OWNER] }, OWNER), { all: false, foreign: [] })
+  assert.deepEqual(foreignRecipients({ accounts: [], all: true }, OWNER), { all: true, foreign: [] })
+})
+
+test('审批门：写给别人的信没给 --owner-approved 就退 2，一次写都不发', () => {
+  // notify 点名别人的账号
+  const notify = spy('{"ok":true,"noticeId":"nt_a"}')
+  const notified = run(['notify', '--body', '维护通知', '--account', 'acc_b', '--yes'],
+    { runner: notify.runner, approvalLog: approvalLogFile() })
+  assert.equal(notified.code, 2)
+  assert.equal(notify.calls.length, 0, '拒发时一条命令都不执行')
+  assert.match(notified.err, /未获 owner 批准/)
+  assert.match(notified.err, /--owner-approved/)
+  assert.match(notified.err, /acc_b/)
+
+  // notify --all：本机看不到账号名单，一律要批准
+  const everyone = spy('{"ok":true,"noticeId":"nt_b"}')
+  const all = run(['notify', '--body', '全体通知', '--all', '--yes'],
+    { runner: everyone.runner, approvalLog: approvalLogFile() })
+  assert.equal(all.code, 2)
+  assert.equal(everyone.calls.length, 0)
+  assert.match(all.err, /--all/)
+
+  // reply：只允许读一次线程清单，读出来不是 owner 的就不回信
+  const reply = spy(JSON.stringify([{ threadId: 'th_x', source: { accountId: 'acc_b' } }]))
+  const replied = run(['reply', '--thread', 'th_x', '--body', '正文', '--send'],
+    { runner: reply.runner, approvalLog: approvalLogFile() })
+  assert.equal(replied.code, 2)
+  assert.equal(reply.calls.length, 1, '只读清单，不回信')
+  assert.match(reply.calls[0].at(-1), /feedback-list/)
+  assert.match(replied.err, /th_x/)
+
+  // reply：清单读不出来（不是 JSON）也算"发给别人"
+  const garbled = spy('ssh 挂了')
+  const undecided = run(['reply', '--thread', 'th_x', '--body', '正文', '--send'],
+    { runner: garbled.runner, approvalLog: approvalLogFile() })
+  assert.equal(undecided.code, 2)
+  assert.equal(garbled.calls.filter((argv) => /feedback-reply/.test(argv.at(-1))).length, 0)
+
+  // report --send 点名别人的账号：连只读的 ops-report 都不跑
+  const report = spy(JSON.stringify(fixture()))
+  const outDir = mkdtempSync(join(tmpdir(), 'feedback-gate-report-'))
+  const sent = run(['report', '--out', outDir, '--send', '--account', 'acc_b'],
+    { runner: report.runner, approvalLog: approvalLogFile() })
+  assert.equal(sent.code, 2)
+  assert.equal(report.calls.length, 0)
+
+  // --owner-approved 后面没值 = 用法错误
+  const missing = run(['notify', '--body', '通知', '--account', 'acc_b', '--yes', '--owner-approved'],
+    { runner: spy().runner, approvalLog: approvalLogFile() })
+  assert.equal(missing.code, 2)
+})
+
+test('审批门：只发给 owner 自己、或回复自己的线程，不需要批准', () => {
+  const log = approvalLogFile()
+  const notify = spy('{"ok":true,"noticeId":"nt_a"}')
+  const mine = run(['notify', '--body', '给自己', '--account', OWNER, '--yes'],
+    { runner: notify.runner, approvalLog: log })
+  assert.equal(mine.code, 0)
+  assert.match(notify.calls[0].at(-1), new RegExp(`--account ${OWNER}`))
+
+  // 日报的默认收件账号就是 DSH_ACCOUNT_ID（定时任务的口径）→ 不加审批也照发
+  const outDir = mkdtempSync(join(tmpdir(), 'feedback-gate-daily-'))
+  const daily = spy(JSON.stringify(fixture()))
+  const sent = run(['report', '--out', outDir, '--send'], { runner: daily.runner, approvalLog: log })
+  assert.equal(sent.code, 0)
+  assert.ok(daily.calls.some((argv) => /feedback-notify/.test(argv.at(-1))), '日报必须真的投出去')
+
+  // 回信：清单说这条线程就是 owner 自己的
+  const ownThread = spy(JSON.stringify([{ threadId: 'th_mine', source: { accountId: OWNER } }]))
+  const replied = run(['reply', '--thread', 'th_mine', '--body', '正文', '--send'],
+    { runner: ownThread.runner, approvalLog: log })
+  assert.equal(replied.code, 0)
+  assert.equal(ownThread.calls.length, 2, '先读清单判归属，再回信')
+  assert.match(ownThread.calls[0].at(-1), /feedback-list --status all --limit 500/)
+  assert.match(ownThread.calls[1].at(-1), /feedback-reply --thread th_mine/)
+
+  assert.ok(!existsSync(log), '全程没走审批，不该留下任何"批准"记录')
+})
+
+test('审批门：预演不判——没有 --send/--yes 或带 --dry-run 都能跑', () => {
+  const notify = spy('{"ok":true,"dryRun":true,"recipients":3}')
+  const preview = run(['notify', '--body', '通知', '--all'],
+    { runner: notify.runner, approvalLog: approvalLogFile() })
+  assert.equal(preview.code, 0)
+  assert.ok(!notify.calls[0].at(-1).includes('--yes'))
+
+  const dry = spy('{"ok":true,"dryRun":true}')
+  assert.equal(run(['notify', '--body', '通知', '--all', '--yes', '--dry-run'],
+    { runner: dry.runner, approvalLog: approvalLogFile() }).code, 0)
+
+  const reply = spy()
+  assert.equal(run(['reply', '--thread', 'th_x', '--body', '正文'],
+    { runner: reply.runner, approvalLog: approvalLogFile() }).code, 0)
+  assert.equal(reply.calls.length, 0, '回信预演不读清单')
+})
+
+test('审批门：批准过的发送留一条 JSON 痕（原话 + 收件人）', () => {
+  const log = approvalLogFile()
+  const notify = spy('{"ok":true,"noticeId":"nt_a"}')
+  const { code, err } = run(['notify', '--body', '维护通知', '--subject', 'S', '--account', 'acc_b', '--yes', ...APPROVED],
+    { runner: notify.runner, approvalLog: log })
+  assert.equal(code, 0)
+  assert.match(notify.calls[0].at(-1), /--yes/)
+  const record = JSON.parse(readFileSync(log, 'utf8'))
+  assert.equal(record.sub, 'notify')
+  assert.deepEqual(record.accounts, ['acc_b'])
+  assert.equal(record.subject, 'S')
+  assert.equal(record.approval, '同意，发吧')
+  assert.equal(record.ownerAccount, OWNER)
+  assert.ok(record.bodyBytes > 0, '正文长度要记下来')
+  assert.match(err, /已批准/)
+
+  // 群发那条记成 --all，不留空数组
+  const log2 = approvalLogFile()
+  run(['notify', '--body', '全体通知', '--all', '--yes', ...APPROVED],
+    { runner: spy('{"ok":true,"noticeId":"nt_b"}').runner, approvalLog: log2 })
+  assert.deepEqual(JSON.parse(readFileSync(log2, 'utf8')).accounts, ['--all'])
+
+  // 回信那条记线程 id
+  const log3 = approvalLogFile()
+  run(['reply', '--thread', 'th_x', '--body', '正文', '--send', ...APPROVED],
+    { runner: spy('{"ok":true}').runner, approvalLog: log3 })
+  assert.equal(JSON.parse(readFileSync(log3, 'utf8')).thread, 'th_x')
+})
+
+test('审批门：留痕写不进去就不发（不留无凭据的发送）', () => {
+  const blocker = join(mkdtempSync(join(tmpdir(), 'feedback-approval-')), 'a-file')
+  writeFileSync(blocker, 'x')
+  const fake = spy('{"ok":true,"noticeId":"nt_a"}')
+  const { code, err } = run(['notify', '--body', '通知', '--account', 'acc_b', '--yes', ...APPROVED],
+    { runner: fake.runner, approvalLog: join(blocker, 'nested', 'approvals.log') })
+  assert.equal(code, 2)
+  assert.equal(fake.calls.length, 0)
+  assert.match(err, /留痕/)
 })

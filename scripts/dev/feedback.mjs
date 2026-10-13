@@ -8,9 +8,9 @@
 //   node scripts/dev/feedback.mjs show --thread th_x
 //   node scripts/dev/feedback.mjs template
 //   node scripts/dev/feedback.mjs reply --thread th_x --body-file /tmp/reply.txt [--subject S]
-//                                  [--format text|html] [--send]
+//                                  [--format text|html] [--send] [--owner-approved "<owner 的原话>"]
 //   node scripts/dev/feedback.mjs notify --body-file /tmp/notice.txt [--subject S]
-//                                  [--format text|html] [--all] [--yes]
+//                                  [--format text|html] [--all] [--yes] [--owner-approved "…"]
 //   node scripts/dev/feedback.mjs delete --thread th_x [--yes]
 //   node scripts/dev/feedback.mjs report [--days 30] [--full-day] [--out maintainers/reports]
 //   node scripts/dev/feedback.mjs report --send --account acc_a [--account acc_b] [--subject S]
@@ -21,6 +21,12 @@
 // 强制预演。误发一条通知的代价比多点一次确认高（plan.md 11）。退出码与 admin.py 对齐：
 // 0 成功 / 1 业务失败 / 2 用法错误。
 //
+// **发给其他用户的信必须先经 owner 批准**（owner 2026-10-13 要求，AGENTS.md 硬性约束第 9 条）：
+// reply / notify / report --send 的收件人里只要有一个不是 owner 自己（`.env.local` 的
+// `DSH_ACCOUNT_ID`），就必须带 `--owner-approved "<owner 的原话>"`，否则拒绝发送（退出码 2）。
+// 预演（没有 --send/--yes，或带 `--dry-run`）不判；真发之前往
+// `~/Library/Logs/dsh-feedback-approvals.log` 记一条 JSON 行（批准原话 + 收件人）。
+//
 // `--format`（默认 text）原样透传给 admin.py：`html` 让手机用锁死的 HTML 容器渲染（日报）。
 // `report --send` 把刚生成的 HTML 报告作为一条 HTML 通知投给 **账号**（019）：账号取
 // `--account`，没给就取 `.env.local` 的 `DSH_ACCOUNT_ID`（定时任务走这条，参数里不再有
@@ -30,7 +36,7 @@
 // 临时文件（失败也删）。
 
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -60,15 +66,22 @@ const NEEDS_THREAD = new Set(['show', 'reply', 'delete'])
 const NEEDS_BODY = new Set(['reply', 'notify'])
 /// 正文形态：`text` 由手机按 Markdown 渲染，`html` 走锁死的 HTML 容器（日报这类带图的）。
 const FORMATS = new Set(['text', 'html'])
+/// 审批门（AGENTS.md 硬性约束第 9 条）：写给别人之前要 owner 的批准原话。
+const OWNER_APPROVED = '--owner-approved'
+const APPROVAL_LOG = 'Library/Logs/dsh-feedback-approvals.log'
+/// 线程清单一次最多读多少条来判回信收件人（`feedback-list --limit` 没有服务端上限）。
+const THREAD_LOOKUP_LIMIT = 500
 
 const USAGE = `用法：
   feedback.mjs list [--status open|replied|all] [--limit 20] [--since DAYS]
   feedback.mjs show --thread th_x
   feedback.mjs template
   feedback.mjs reply --thread th_x (--body-file PATH | --body TEXT) [--subject S] [--format text|html] [--send]
+                    [--owner-approved "owner 的原话"]
   feedback.mjs notify (--body-file PATH | --body TEXT) [--subject S] [--format text|html] [--account ACC]... [--all] [--yes]
+                    [--owner-approved "owner 的原话"]
   feedback.mjs delete --thread th_x [--yes]
-  feedback.mjs report [--days 30] [--full-day] [--out DIR] [--send [--account ACC]...]
+  feedback.mjs report [--days 30] [--full-day] [--out DIR] [--send [--account ACC]...] [--owner-approved "…"]
   feedback.mjs report [--install-agent | --uninstall-agent]
   feedback.mjs report [--full-day] --send [--account ACC]... [--subject S] [--days 30] [--out DIR]
   feedback.mjs report-data [--days 30]
@@ -76,10 +89,20 @@ const USAGE = `用法：
   （--full-day 覆盖刚过去的一整天，默认是当天到此刻）
   （--format 默认 text；report --send 把 HTML 报告按 html 投给账号——收件人是账号不是设备，
     --account 不给时取 .env.local 的 DSH_ACCOUNT_ID；两者都没有是用法错误，不会群发。报告里的
-    默认标题是「DSH Mobile 运营日报 YYYY-MM-DD」（日期取覆盖日），--subject 可覆盖）`
+    默认标题是「DSH Mobile 运营日报 YYYY-MM-DD」（日期取覆盖日），--subject 可覆盖）
+  （收件人里有非 owner 账号（.env.local 的 DSH_ACCOUNT_ID）时必须给 --owner-approved "<owner 的原话>"，
+    否则拒发（退出码 2）；只发给 owner 自己的（日报、自测）不需要。预演不判）`
 
 /// 用法错误（退出码 2）与业务失败（1）分开。
 class UsageError extends Error {}
+
+/// 没有 owner 的批准就写信。与用法错误同一个退出码（2），但只提示怎么补，不刷整屏用法。
+class ApprovalError extends Error {
+  constructor(message, { hint = true } = {}) {
+    super(message)
+    this.hint = hint
+  }
+}
 
 function localEnv() {
   const out = {}
@@ -162,6 +185,7 @@ export function parseArgs(argv) {
         break
       case '--out': opts.out = need(argv, ++i, flag); break
       case '--account': opts.accounts.push(need(argv, ++i, flag)); break
+      case '--owner-approved': opts.ownerApproved = need(argv, ++i, flag); break
       case '--limit': opts.limit = number(argv, ++i, flag); break
       case '--since': opts.since = number(argv, ++i, flag); break
       case '--days': opts.days = number(argv, ++i, flag); break
@@ -287,6 +311,117 @@ function writeReport(raw, opts, io) {
   writeFileSync(file, renderReport(data), 'utf8')
   io.out(file)
   return { code: data?.ok === false ? 1 : 0, file }
+}
+
+/// **审批门**（owner 2026-10-13 要求，AGENTS.md 硬性约束第 9 条）：写给别人的信，先拿 owner 的批准。
+///
+/// 判定只看"这次会不会真的落库"：预演（没有 --send/--yes，或带 `--dry-run`）一律不判，
+/// 因为预演在服务器上只统计收件人、不写库。真发时：
+/// - `notify`：收件账号由命令行给出，逐个与 owner 账号比；`--all` 直接算"有别人"。
+/// - `report --send`：收件账号同上（日报默认就是 owner 自己，所以日常不受影响）。
+/// - `reply`：收件人是线程提交者，argv 里看不出来，只能读一次线程清单来判（见下）。
+///
+/// 判定不出"收件人就是 owner"时一律按需要审批处理——宁可多要一次批准，不可少要。
+///
+/// 这是**流程约束**，不是防对抗的墙：门只在这条本机命令上（服务器侧的 `admin.py` 不校验，
+/// 直接 ssh 调它就能绕过）。它的作用是让"没经 owner 同意就发信"这件事必须显式跨过一道门槛，
+/// 并留下"谁批准了什么"的记录。
+
+/// owner 自己的账号：与日报同一处口径，`.env.local` 的 `DSH_ACCOUNT_ID`。
+export function ownerAccount(env) {
+  return String(env?.DSH_ACCOUNT_ID ?? '').trim()
+}
+
+/// 这批收件账号里哪些不是 owner 自己。取不到 owner 账号（本机没配 `DSH_ACCOUNT_ID`）时，
+/// 每个账号都算别人：证明不了是自己，就别放行。
+export function foreignRecipients({ accounts = [], all = false } = {}, owner = '') {
+  const mine = String(owner ?? '').trim()
+  const foreign = accounts.filter((account) => !mine || account !== mine)
+  return { all: Boolean(all), foreign }
+}
+
+/// 回信的收件人是线程提交者，要读一次线程清单才知道归属。
+///
+/// 用 `feedback-list`（只读）而不是 `feedback-show`：后者会把 `ownerReadAt` 推到最新一条
+/// 用户留言，一个只为判定收件人的查询不该顺手改已读状态。读不到、或线程不在清单里，
+/// 返回 false = 当作"发给别人"。
+export function threadBelongsToOwner(parsed, { env = {}, exists = existsSync, run } = {}, owner = '') {
+  const mine = String(owner ?? '').trim()
+  if (!mine || typeof run !== 'function') return false
+  try {
+    const lookup = buildInvocation(
+      { sub: 'list', opts: { local: parsed.opts.local, status: 'all', limit: THREAD_LOOKUP_LIMIT } },
+      { env, exists })
+    const rows = JSON.parse(run(lookup.argv))
+    const row = (Array.isArray(rows) ? rows : []).find((each) => each?.threadId === parsed.opts.thread)
+    return row?.source?.accountId === mine
+  } catch {
+    return false
+  }
+}
+
+/// 这次发送需不需要 owner 审批；返回原因（字符串）或 null。
+export function approvalGate(parsed, ctx = {}, owner = '') {
+  const { sub, opts } = parsed
+  if (opts.dryRun) return null
+  if (sub === 'notify') {
+    if (!opts.yes) return null
+    if (opts.all) return 'notify --all 会发给库里全部账号（含其他用户）'
+    const { foreign } = foreignRecipients({ accounts: opts.accounts }, owner)
+    return foreign.length ? `notify 的收件人里有非 owner 账号：${foreign.join('、')}` : null
+  }
+  if (sub === 'report') {
+    if (!opts.send) return null
+    const { foreign } = foreignRecipients({ accounts: opts.accounts }, owner)
+    return foreign.length ? `report --send 的收件人里有非 owner 账号：${foreign.join('、')}` : null
+  }
+  if (sub === 'reply') {
+    if (!opts.send && !opts.yes) return null
+    const who = `线程 ${opts.thread} 的提交者`
+    // 已经拿到批准就不再读清单：判定只用来决定"要不要拦"，拦不拦已经定了。
+    if (opts.ownerApproved) return `reply 发给${who}`
+    if (threadBelongsToOwner(parsed, ctx, owner)) return null
+    return `reply 的收件人是${who}（不是 owner 本人，或读不出归属）`
+  }
+  return null
+}
+
+/// 留痕文件：与日报日志同一个目录（`~/Library/Logs/`）。
+export function approvalLogPath({ approvalLog } = {}) {
+  return approvalLog ?? join(homedir(), 'Library', 'Logs', 'dsh-feedback-approvals.log')
+}
+
+/// 写在实际发送之前：记的是"owner 同意过这一次发送"，不是"发送成功"。
+/// 留痕写不进去就不发——它的作用就是让"批准过什么"可查，丢了这个就退回无凭据发送。
+function appendApprovalLog(parsed, approval, owner, deps = {}) {
+  const { sub, opts } = parsed
+  const record = {
+    at: new Date().toISOString(),
+    sub,
+    thread: opts.thread ?? null,
+    accounts: sub === 'notify' && opts.all ? ['--all'] : (opts.accounts ?? []),
+    subject: opts.subject ?? null,
+    bodyBytes: Buffer.byteLength(opts.bodyText ?? '', 'utf8'),
+    ownerAccount: owner,
+    approval,
+  }
+  const path = approvalLogPath(deps)
+  try {
+    mkdirSync(dirname(path), { recursive: true })
+    appendFileSync(path, `${JSON.stringify(record)}\n`, 'utf8')
+  } catch (error) {
+    throw new ApprovalError(`审批留痕写不进去（${path}）：${error.message}`, { hint: false })
+  }
+}
+
+/// 判定 + 放行：需要审批而没给 `--owner-approved` 就拒发；给了就留痕再继续。
+function requireOwnerApproval(parsed, ctx, owner, io, deps) {
+  const reason = approvalGate(parsed, ctx, owner)
+  if (!reason) return
+  const approval = String(parsed.opts.ownerApproved ?? '').trim()
+  if (!approval) throw new ApprovalError(reason)
+  appendApprovalLog(parsed, approval, owner, deps)
+  io.err(`（已批准）${reason}\nowner 的原话：${approval}`)
 }
 
 /// 报告通知的默认标题：日期取报告文件名（`2026-10-12.html` → `2026-10-12`）。
@@ -433,6 +568,7 @@ export function main(argv, deps = {}) {
     const env = deps.env ?? { ...localEnv(), ...process.env }
     const exists = deps.exists ?? existsSync
     const run = (command) => String((deps.runner ?? defaultRunner)(command))
+    const owner = ownerAccount(env)
     if (sub === 'report' && opts.send) {
       // 收件账号：命令行优先，其次 `.env.local` 的 DSH_ACCOUNT_ID（定时任务的口径）。
       opts.accounts = opts.accounts.length ? opts.accounts : [env.DSH_ACCOUNT_ID].filter(Boolean)
@@ -440,8 +576,10 @@ export function main(argv, deps = {}) {
         throw new UsageError('report --send 需要 --account <accountId>（可重复），'
           + '或在 .env.local 里设 DSH_ACCOUNT_ID；本命令不会群发')
       }
+      requireOwnerApproval(parsed, { env, exists, run }, owner, io, deps)
       return reportAndSend(parsed, { env, exists, run, io })
     }
+    requireOwnerApproval(parsed, { env, exists, run }, owner, io, deps)
     const invocation = buildInvocation(parsed, { env, exists })
     if (sub === 'reply' && ((!opts.send && !opts.yes) || opts.dryRun)) return previewReply(invocation, opts, io)
     const raw = run(invocation.argv)
@@ -454,6 +592,15 @@ export function main(argv, deps = {}) {
     if (error instanceof UsageError) {
       io.err(`用法错误：${error.message}`)
       io.err(USAGE)
+      return 2
+    }
+    if (error instanceof ApprovalError) {
+      io.err(`未获 owner 批准，没有发送：${error.message}`)
+      if (error.hint) {
+        io.err('先把正文全文与收件名单发给 owner，得到明确同意后再带上：')
+        io.err(`  ${OWNER_APPROVED} "<owner 的原话>"`)
+        io.err('（预演不加 --send/--yes 即可；留痕落在 ~/Library/Logs/dsh-feedback-approvals.log）')
+      }
       return 2
     }
     io.err(failureText(error))
