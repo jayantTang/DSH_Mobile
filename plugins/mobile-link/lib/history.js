@@ -5,6 +5,7 @@ import {
   bytesOfRecords, displayRoleOf, roleOf, toRecord, trimRecordForWire, trimRecordsForWire,
 } from './history/records.js'
 import { pageFrom, scanOlder } from './history/window.js'
+import { filteredScan } from './history/filter-scan.js'
 
 // Re-exported for the caller/tests that read them off this module (single source
 // is `history/records.js`; the call ceiling lives in `history/shared.js`).
@@ -183,6 +184,22 @@ export function createHistoryService({ logger = console } = {}) {
     }
   }
 
+  /**
+   * 一个 seq 段的**消息类文档**（`filterEvents`）：比 `readEvent` 每块 51 条快约 20 倍/seq，
+   * 但只回消息类事件（user/assistant/tool 那一族）——角色过滤要的正是这些。
+   *
+   * 宿主没挂这个接口时（老宿主）回 undefined，`window()` 会退回原来的分块扫描。
+   */
+  async function readFilterChunk(sessionId, from, to) {
+    if (typeof sessionQuery?.filterEvents !== 'function') return undefined
+    const docs = await withTimeout(
+      sessionQuery.filterEvents(sessionId, [{ kind: 'seq', from, to }]),
+      HOST_CALL_TIMEOUT_MS,
+      'filterEvents(window)',
+    )
+    return { docs: Array.isArray(docs) ? docs : [] }
+  }
+
   /// One page of in-session literal search (spec 007 FR-010…FR-012).
   ///
   /// Preferred path is the Host's indexed `searchEvents`; this deployment ships it
@@ -323,7 +340,16 @@ export function createHistoryService({ logger = console } = {}) {
     if (inFlight.has(key)) return failure('link/busy', 'another window read is in flight for this session')
     inFlight.add(key)
     try {
-      const scan = await scanOlder({ readChunk, sessionId, before, through, limit, maxBytes, roles })
+      // 按角色过滤时走"先定位命中 seq、再定向取完整记录"（spec 016 的"来回次数"一条）：
+      // 同样一段日志，过滤路径实测从 2.5–4.1 s 降到数百毫秒；未过滤的浏览翻页保持原样
+      // （它要的是精确的一段原始事件，`readEvent` 每块 51 条正合适）。
+      const useFilterScan = roles !== undefined && typeof sessionQuery?.filterEvents === 'function'
+      const scan = useFilterScan
+        ? await filteredScan({
+            readFilterChunk, readRecords: readChunk, newestSeq, sessionId, before, through, limit,
+            roles, roleOf,
+          })
+        : await scanOlder({ readChunk, sessionId, before, through, limit, maxBytes, roles })
       const page = pageFrom(scan, { limit, maxBytes, roles })
       // 016：下发前统一清掉只用于诊断的宿主模型输出日志（口径只有一份，
       // 见 specs/016-history-load-perf/contracts/history-record-trim.md）。

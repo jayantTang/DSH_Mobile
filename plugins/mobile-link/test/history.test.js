@@ -40,8 +40,23 @@ function fakeQuery(log, { delayMs = 0, onCall } = {}) {
       calls.push({ method: 'listEvents', sessionId })
       return log.map((event) => ({ sessionId, seq: event.seq, type: event.type, time: event.time }))
     },
+    /// 宿主的"按 seq 段过滤"接口：实测只回**消息类**文档（user/assistant/tool 那一族），
+    /// 带 seq/type/data.source，足够判断角色。这里照这个口径模拟。
+    async filterEvents(sessionId, filters) {
+      calls.push({ method: 'filterEvents', sessionId, filters })
+      if (onCall) await onCall({ filterEvents: true })
+      const range = (filters ?? []).find((filter) => filter.kind === 'seq')
+      if (range === undefined) return []
+      return log
+        .filter((event) => event.seq >= range.from && event.seq <= range.to)
+        .filter((event) => MESSAGE_TYPES.has(event.type))
+        .map((event) => ({ sessionId, seq: event.seq, type: event.type, time: event.time, data: event.data }))
+    },
   }
 }
+
+/// 宿主 `filterEvents` 会回的消息类事件（其余 step/turn/goal 之类不在其中）。
+const MESSAGE_TYPES = new Set(['user/message', 'assistant/message', 'tool/call', 'tool/result'])
 
 const ADDRESS = { kind: 'session', sessionId: 'session-test' }
 
@@ -428,21 +443,34 @@ test('sessionWindow 带 roles 但整页无匹配时返回空页且 hasMore 如�
 
 /// 1000 条里只有 seq 0 是 me：一次调用能把 12 个 chunk（612 个 seq）扫完，
 /// 一个匹配都没有，但扫描确实往前走了一大截。
-function sparseLog() {
-  const log = makeLog(1000).map((event) => ({ ...event, type: 'assistant/message' }))
-  log[0] = { ...log[0], type: 'user/message' }
-  return log
-}
-
 test('sessionWindow 整页被过滤为空时 scanBoundary 仍然前进（T039）', async () => {
-  const service = bound(createHistoryService({ logger: { warn() {}, info() {} } }), fakeQuery(sparseLog()))
-  const page = await service.handle(WINDOW_METHOD, { address: ADDRESS, before: 1000, limit: 10, roles: ['me'] })
+  // 场景 A：整份日志没有一条 me —— 空页必须把边界推到日志开头并如实说"没有更早的了"。
+  const none = makeLog(1000).map((event) => ({ ...event, type: 'assistant/message' }))
+  const empty = bound(createHistoryService({ logger: { warn() {}, info() {} } }), fakeQuery(none))
+  const page = await empty.handle(WINDOW_METHOD, { address: ADDRESS, before: 1000, limit: 10, roles: ['me'] })
   assert.equal(page.ok, true)
   assert.deepEqual(page.value.records, [], '整页被滤空')
   assert.equal(page.value.startSeq, null, '空页给不出返回记录的边界（老口径不变）')
-  assert.equal(page.value.hasMore, true, '没扫到日志开头，更早还有匹配')
-  assert.equal(page.value.scanBoundary, 388, '扫描边界 = 这次真正扫到的最老 seq')
-  assert.ok(page.value.scanBoundary < 999, '空页也必须前进，否则回填原地卡住')
+  assert.equal(page.value.scanBoundary, 0, '扫到了日志开头')
+  assert.equal(page.value.hasMore, false, '确实没有更早的了')
+
+  // 场景 B：唯一一条 me 在 seq 0，而日志比一次调用的扫描预算更长 ——
+  // 空页仍必须**前进**（边界落在这轮真正扫过的下界），否则"我问过的"回填会在原地卡死。
+  const long = makeLog(20000).map((event) => ({ ...event, type: 'assistant/message' }))
+  long[0] = { ...long[0], type: 'user/message' }
+  const service = bound(createHistoryService({ logger: { warn() {}, info() {} } }), fakeQuery(long))
+  const first = await service.handle(WINDOW_METHOD, { address: ADDRESS, before: 20000, limit: 10, roles: ['me'] })
+  assert.equal(first.ok, true)
+  assert.deepEqual(first.value.records, [], '这轮扫过的范围内没有 me')
+  assert.ok(first.value.scanBoundary > 0 && first.value.scanBoundary < 20000,
+    `边界要前进且不能跳过没看过的地方，实得 ${first.value.scanBoundary}`)
+  assert.equal(first.value.hasMore, true, '更早还有没扫过的地方')
+  const second = await service.handle(WINDOW_METHOD, {
+    address: ADDRESS, before: first.value.scanBoundary, limit: 10, roles: ['me'],
+  })
+  assert.equal(second.ok, true)
+  assert.deepEqual(second.value.records.map((record) => record.event.seq), [0],
+    '按边界续读要能找回剩下那条 me（不重不漏）')
 })
 
 test('sessionWindow 有返回时 scanBoundary 与页对齐，下一页不重不漏（T039）', async () => {
@@ -453,7 +481,9 @@ test('sessionWindow 有返回时 scanBoundary 与页对齐，下一页不重不�
   assert.equal(first.ok, true)
   assert.equal(first.value.records.length, 10)
   assert.equal(first.value.startSeq, 250, '最老的一条返回记录')
-  assert.equal(first.value.scanBoundary, 249, '扫描边界在返回记录之下一个 seq（chunk 头，被滤掉的那条）')
+  // 老口径这里是 249（旧 51 事件块的块头）；过滤路径按 2000 seq 分块后下界更靠下，但**定义与
+  // 承诺不变**：`scanBoundary` 之下才是没看过的地方，从它往回续读不会重也不会漏（下面逐条断言）。
+  assert.ok(first.value.scanBoundary <= first.value.startSeq, '扫描边界不高于页内最老记录')
   const second = await service.handle(WINDOW_METHOD, {
     address: ADDRESS, before: first.value.scanBoundary, limit: 10, roles: ['me'],
   })
