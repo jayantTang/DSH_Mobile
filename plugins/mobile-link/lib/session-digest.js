@@ -16,9 +16,6 @@ import { deflateRawSync } from 'node:zlib'
 /** 方法名（设备发起，中转不校验方法名，所以不需要中转改动）。 */
 export const SESSION_DIGEST_METHOD = '_link/sessionDigest'
 
-/** 能力名：`_link/hello.capabilities` 里出现它才代表连接器支持这个方法。 */
-export const SESSION_DIGEST_CAPABILITY = 'session-digest'
-
 /** 会话项里剔掉的字段：零读取点（`agentAvailable` 1.8%）。 */
 export const DROPPED_ITEM_KEYS = Object.freeze(['agentAvailable'])
 

@@ -117,12 +117,6 @@ test('apply registers every route through ctx.inject and starts the agent', () =
   assert.ok(effects.some(([label]) => label.includes('DLP agent')))
 })
 
-test('the history probe route stays unregistered unless explicitly enabled', () => {
-  const { ctx, routes } = fakeContext()
-  plugin.apply(ctx, BASE_CONFIG)
-  assert.equal(routes.has('/mobile-link/history-probe'), false)
-})
-
 test('apply survives a missing webServer service', () => {
   const { ctx, routes } = fakeContext({ injectable: false })
   assert.doesNotThrow(() => plugin.apply(ctx, BASE_CONFIG))

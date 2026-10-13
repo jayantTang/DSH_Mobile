@@ -94,39 +94,7 @@ export function registerMobileLinkRoutes(ctx, { agent, logger, config = {}, hist
   const guard = makeGuard(ctx, logger)
   const STATUS_ROUTE = '/mobile-link/status'
   const PAIR_ROUTE = '/mobile-link/pair-code'
-  /// SPIKE（spec 007 / T008）：只读测量宿主窗口与检索 API 的语义。
-  /// 默认关闭，只有 `DSH_MOBILE_LINK_HISTORY_PROBE=1` 时注册——它是一次性测量工具，
-  /// 不是产品面（结论已写回 specs/007-transcript-history/plan.md 的 Phase 0）。
-  const PROBE_ROUTE = '/mobile-link/history-probe'
   const disposers = []
-
-  if (history !== undefined && process.env.DSH_MOBILE_LINK_HISTORY_PROBE === '1') {
-    disposers.push(ctx.webServer.register({
-      kind: 'exact',
-      path: PROBE_ROUTE,
-      handler: async (req, res) => {
-        if (guard(req, res)) return
-        if (req.method !== 'GET') {
-          res.statusCode = 405
-          res.setHeader('allow', 'GET')
-          res.end()
-          return
-        }
-        const url = new URL(req.url ?? '/', 'http://127.0.0.1')
-        try {
-          const result = await history.probe({
-            sessionId: url.searchParams.get('sessionId') ?? '',
-            seq: url.searchParams.get('seq') ?? undefined,
-            n: url.searchParams.get('n') ?? undefined,
-            text: url.searchParams.get('text') ?? undefined,
-          })
-          sendJson(res, 200, result)
-        } catch (error) {
-          sendJson(res, 500, { ok: false, error: String(error?.message ?? error) })
-        }
-      },
-    }))
-  }
 
   disposers.push(ctx.webServer.register({
     kind: 'exact',

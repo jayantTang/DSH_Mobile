@@ -163,6 +163,10 @@ public struct ChatTimeline: Sendable {
     // MARK: - Bulk load
 
     /// Replaces the transcript with one history snapshot.
+    /// 整份替换（冷启动落盘、re-base 用）。返回的 `Change` 目前**没有任何调用方**使用——
+    /// 这些场景都是"整屏重画"，不需要增量差异；标注 `@discardableResult` 说明这一点，
+    /// 顺带消掉 App 侧三处"返回值被丢弃"的编译告警。
+    @discardableResult
     public mutating func reset(with records: [SessionRecord]) -> Change {
         items.removeAll(keepingCapacity: true)
         toolIndex.removeAll(keepingCapacity: true)

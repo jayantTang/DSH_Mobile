@@ -1,5 +1,4 @@
 import { HOST_CALL_TIMEOUT_MS, withTimeout, messageOf } from './history/shared.js'
-import { createProbeRunner } from './history/probe.js'
 import {
   DEFAULT_LIMIT, DEFAULT_MAX_BYTES, WINDOW_CHUNK,
   bytesOfRecords, displayRoleOf, roleOf, toRecord, trimRecordForWire, trimRecordsForWire,
@@ -32,10 +31,6 @@ export { HOST_CALL_TIMEOUT_MS } from './history/shared.js'
  * Feature detection is the switch, not version comparison: a connector that
  * lacks the injected service answers `link/unsupported`, and the phone keeps
  * using `session/page`. Nothing about the existing methods changes.
- *
- * SPIKE NOTE (spec 007, task T008): `probe()` below is a temporary read-only
- * measurement used to pick the exact Host API mapping. It is wired to
- * `GET /mobile-link/history-probe` and is removed once the mapping is locked.
  */
 
 export const WINDOW_METHOD = '_link/sessionWindow'
@@ -139,7 +134,6 @@ function hostFailure(error) {
  */
 export function createHistoryService({ logger = console } = {}) {
   let sessionQuery
-  const probeRunner = createProbeRunner({ getQuery: () => sessionQuery, logger })
   /// 会话日志快照（只给**按角色过滤**的读取用）：一个会话读一次整份、本地过滤、短 TTL。
   /// 它把"每条命中一次宿主调用"那道墙去掉——灌库一个会话从十几次往返变成一次读。
   const snapshots = createSnapshotCache({
@@ -403,10 +397,5 @@ export function createHistoryService({ logger = console } = {}) {
       return failure('link/unknown-method', String(method))
     },
 
-    /// Exposed for the unit tests and the (gated) measurement route.
-    /// 只读测量（spec 007 T008/T047）：实现见 `history/probe.js`。
-    async probe(args = {}) {
-      return probeRunner(args)
-    },
   }
 }
