@@ -98,6 +98,22 @@ if [ "$EXPORT_ONLY" = 0 ] && [ "$UPLOAD_ONLY" = 0 ]; then
 fi
 [ "$ARCHIVE_ONLY" = 1 ] && { say "只归档，结束"; exit 0; }
 
+# `--upload-only` 复用的是**已经导出**的那个包，里面的构建号是当时归档写进去的，
+# 不能拿"现在"的时间当构建号：2026-10-13 实测就是这么错的——上传的是 20261013.2233，
+# 脚本却拿着 20261013.2312 去等处理，15 分钟后必然超时。构建号一律以包里的为准。
+if [ "$UPLOAD_ONLY" = 1 ] && [ -f "$BUILD_DIR/export/DSHMobile.ipa" ]; then
+  ipa_plist="$(mktemp)"
+  unzip -p "$BUILD_DIR/export/DSHMobile.ipa" 'Payload/*.app/Info.plist' > "$ipa_plist" 2>/dev/null || true
+  ipa_build="$(plutil -extract CFBundleVersion raw -o - "$ipa_plist" 2>/dev/null || true)"
+  rm -f "$ipa_plist"
+  if [ -n "$ipa_build" ]; then
+    say "复用已导出的包：构建号以包内为准（${ipa_build}）"
+    BUILD_NUMBER="$ipa_build"
+  elif [ "$BETA_ONLY" = 0 ]; then
+    die "读不出 $BUILD_DIR/export/DSHMobile.ipa 的 CFBundleVersion：先跑一次不带 --upload-only 的完整发布"
+  fi
+fi
+
 # ── 2. 导出 ─────────────────────────────────────────────────────────────────
 
 if [ "$UPLOAD_ONLY" = 0 ]; then
