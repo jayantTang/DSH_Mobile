@@ -12,7 +12,9 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import test from 'node:test'
 
-import { LinkJournal, EVENT_KINDS, MAX_EVENT_BYTES, defaultJournalPath } from '../lib/journal.js'
+import {
+  LinkJournal, EVENT_KINDS, DEFAULT_LIMIT, DEFAULT_MAX_BYTES, MAX_EVENT_BYTES, defaultJournalPath,
+} from '../lib/journal.js'
 import { withTempHome } from './helpers/tmp-home.js'
 
 /** 读回 JSONL，逐行解析（顺便证明每一行都是合法 JSON）。 */
@@ -179,4 +181,23 @@ test('未知 kind 照写不误（老读者必须忽略，写入者不得因未�
   const entry = journal.record('future.thing', { hello: 'world' })
   assert.equal(entry.kind, 'future.thing')
   assert.equal(entry.hello, 'world')
+})
+
+// ── US5：上限的常量口径（改了这里就等于改了对外承诺） ─────────────────────────
+
+test('默认上限口径固定：单文件 256 KiB、滚动保两代、单条 2 KiB', () => {
+  assert.equal(DEFAULT_MAX_BYTES, 256 * 1024, '连接器流水单文件上限')
+  assert.equal(MAX_EVENT_BYTES, 2048, '单条事件上限')
+  assert.equal(DEFAULT_LIMIT, 200, '内存环容量')
+})
+
+test('写失败只报一次，之后不再尝试（不刷屏、不拖慢链路）', async () => {
+  await withTempHome(async (home) => {
+    const blocker = join(home, 'blocker')
+    writeFileSync(blocker, 'x')
+    const journal = new LinkJournal({ path: join(blocker, 'sub', 'x.jsonl'), logger: { debug() {} } })
+    for (let index = 0; index < 5; index += 1) journal.record('link.start', {})
+    assert.equal(journal.fileErrors, 1, '只报一次')
+    assert.equal(journal.recorded, 5, '内存那份照旧可用')
+  })
 })

@@ -88,12 +88,12 @@ class FakeDsh extends EventEmitter {
   }
 }
 
-function makeAgent({ responses, notify } = {}) {
+function makeAgent({ responses, notify, slowRequestMs, diagnostics } = {}) {
   const dsh = new FakeDsh()
   if (responses) for (const [method, value] of Object.entries(responses)) dsh.responses.set(method, value)
   const logger = { debug() {}, info() {}, warn() {}, error() {} }
   const agent = new MobileLinkAgent({
-    dshClient: dsh, logger, relayUrl: 'ws://relay.test', agentId: 'agt_1',
+    dshClient: dsh, logger, relayUrl: 'ws://relay.test', agentId: 'agt_1', slowRequestMs, diagnostics,
   })
   agent.identity = { agentId: 'agt_1', agentSecret: 'as_1', relayUrl: 'ws://relay.test', agentName: 'test mac' }
   const socket = new FakeSocket()
@@ -1109,4 +1109,29 @@ test('同一台设备又 attach 一次（中间没有 detach）会被标出来',
   assert.ok(after.includes('device.detach'), `断开要记：${after.join(', ')}`)
   assert.ok(after.includes('device.reattach'), `回头客要记成 reattach：${after.join(', ')}`)
   assert.ok(!after.includes('device.attach-again'), '先断后连不是"又开一条"')
+})
+
+// ── US5：上限与回退闸（spec 020 的 FR-018） ────────────────────────────────
+
+test('回退闸：diagnostics: false 时明确拒绝接收，且不影响链路', async () => {
+  const { agent } = makeAgent({ diagnostics: false })
+  await agent.handleRelayFrame(attach('dev_1'))
+  const before = agent.journal.recorded
+  await agent.handleRelayFrame(diagReq({ since: 0, sentAt: 1, events: [appEvent(1, 'app.dial', 1, { phase: 'start' })] }))
+  const entries = agent.journal.entries()
+  assert.equal(entries.filter((entry) => entry.kind === 'app.dial').length, 0, '关掉后不该落盘')
+  assert.equal(entries.filter((entry) => entry.kind === 'app.push').length, 0)
+  assert.equal(agent.journal.recorded, before, '一条都不该多')
+  assert.equal(agent.router.lastError, undefined, '拒绝接收不是链路错误')
+  assert.equal(agent.state, 'idle', '链路状态不受影响')
+})
+
+test('slowRequestMs: 0 时不写 request.slow，但汇总照写（数字仍在）', async () => {
+  const { agent } = makeAgent({ slowRequestMs: 0, responses: { 'session/list': { items: [] } } })
+  await agent.handleRelayFrame(attach('dev_1'))
+  await agent.handleRelayFrame(dataReq('u1'))
+  await agent.handleRelayFrame({ t: 'deviceDetach', deviceId: 'dev_1', reason: 'socket closed' })
+  const kinds = agent.journal.entries().map((entry) => entry.kind)
+  assert.equal(kinds.includes('request.slow'), false, '0 = 关闭逐条慢请求')
+  assert.equal(kinds.includes('device.summary'), true, '汇总不跟着关：p50/p95 仍要能看')
 })

@@ -130,6 +130,10 @@ dsh-mobile-link --dsh-url "http://127.0.0.1:<端口>/?token=<令牌>"
 `host` 是 `desktop` / `web` / `unknown`；`dsh.errorKind` 为 `null` 表示本机侧正常，
 问题在别处（中转或手机侧）。
 
+本机这一侧正常、手机仍连不上或时断时续时，**不要靠猜**：一条命令取一个诊断包，
+它把手机、中转、连接器三侧的记录对齐到同一个时钟，能直接看出停在哪一跳。
+采集与判读见 `docs/DIAGNOSTICS.md`（`npm run diag:collect`）。
+
 ---
 
 ## A · 用现成中转（5 分钟）

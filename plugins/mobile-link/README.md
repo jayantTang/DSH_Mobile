@@ -113,6 +113,8 @@ plugin's config block (`cordis.patch.yml`), not by editing this file.
 | `agentId` / `agentSecret` | from `agent.json` | Override the enrolled identity |
 | `stateFile` | `~/.dsh/mobile-link/agent.json` | Where the identity lives |
 | `journalFile` | `~/.dsh/mobile-link/link-events.jsonl` | Lifecycle journal (rotated once at 256 KiB); `false` keeps it in memory only |
+| `slowRequestMs` | `2000` | A slower single request gets its own `request.slow` entry; `0` disables those (per-attach `device.summary` is still written) |
+| `diagnostics` | `true` | `false` refuses the phone's phase uploads; the phone ignores the refusal and stays connected |
 | `dshUrl` | discovery | Explicit local DSH base URL (usually unnecessary — the host hands the connector its own address) |
 | `heartbeatMs` | `20000` | DLP ping interval |
 

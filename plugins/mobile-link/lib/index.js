@@ -51,6 +51,11 @@ const DEFAULTS = {
   // 生命周期流水的落盘位置：留空＝默认写在身份文件旁边（`$DSH_HOME/mobile-link/
   // link-events.jsonl`），给字符串＝写在那里，`false`＝只在内存里留一份。
   journalFile: '',
+  // 慢请求阈值（毫秒）；0 = 不记单条慢请求（每次接入的 `device.summary` 仍然写）。
+  slowRequestMs: 2000,
+  // 是否接收手机推上来的阶段记录（`_link/diagnostics`）。false = 回 diagnostics/disabled，
+  // 手机静默忽略——这是"记录出问题时的回退闸"，关掉不影响连接。
+  diagnostics: true,
   heartbeatMs: 20000,
   pongTimeoutMs: 60000,
   maxBackoffMs: 30000,
@@ -102,6 +107,11 @@ function buildAgent(config, logger) {
     journalPath: config.journalFile === false
       ? false
       : (typeof config.journalFile === 'string' && config.journalFile ? config.journalFile : undefined),
+    // 注意 0 是**有效值**（关闭逐条慢请求），所以不能用 `||` 兜底。
+    slowRequestMs: config.slowRequestMs === undefined
+      ? DEFAULTS.slowRequestMs
+      : Number(config.slowRequestMs) || 0,
+    diagnostics: config.diagnostics !== false,
     heartbeatMs: Number(config.heartbeatMs) || DEFAULTS.heartbeatMs,
     pongTimeoutMs: Number(config.pongTimeoutMs) || DEFAULTS.pongTimeoutMs,
     maxBackoffMs: Number(config.maxBackoffMs) || DEFAULTS.maxBackoffMs,

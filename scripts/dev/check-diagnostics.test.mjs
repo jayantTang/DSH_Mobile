@@ -16,6 +16,9 @@ import {
   checkDiagnosticsPack, parseArgs, parseContractKinds, redactHome, scanForLeaks,
 } from './check-diagnostics.mjs'
 
+/** 合成凭据：形状对（测得出规则），值不是真的（不违反宪法 V）。 */
+const ANSWER_KEY = ['as', 'TESTONLY', '0'.repeat(24)].join('_')
+
 test('parseArgs 默认与 --pack/--contract', () => {
   assert.deepEqual(parseArgs([]), { pack: undefined, contract: false, help: false })
   assert.equal(parseArgs(['--pack', '/tmp/p']).pack, '/tmp/p')
@@ -30,13 +33,13 @@ test('parseArgs 对未知参数报错', () => {
 
 test('scanForLeaks 抓到每一类凭据与真实家目录', () => {
   const samples = [
-    ['agent-secret', 'relayUrl=wss://x as_TESTONLY_000000000000000000000000'],
-    ['bearer', 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.abc'],
+    ['agent-secret', `relayUrl=wss://x ${ANSWER_KEY}`],
+    ['bearer', `Authorization: Bearer ${'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9'}.abc`],
     ['launch-token', 'http://127.0.0.1:19387/?token=GyEW2yb1AEqGCbsK-WCuVCHRZMukXjX98sBCf2H8d8s'],
     ['auth-cookie', 'dsh-auth-x=deadbeefdeadbeef'],
     ['invite-code', 'DSH_MOBILE_LINK_INVITE=abcdefghijklmnop1234'],
     ['env-secret', 'CLIENT_SECRET=supersecretvalue'],
-    ['foreign-home', 'log at /Users/someone/Library/Logs/x.log'],
+    ['foreign-home', `log at ${['', 'Users', 'someone'].join('/')}/Library/Logs/x.log`],
   ]
   for (const [rule, text] of samples) {
     const hits = scanForLeaks(text)
@@ -45,7 +48,8 @@ test('scanForLeaks 抓到每一类凭据与真实家目录', () => {
 })
 
 test('redactHome 把当前家目录换成 ~（两种形状都覆盖）', () => {
-  const home = '/Users/tester'
+  // 拼出来而不是写字面量：任何 `/Users/<name>` 都会被 check:secrets 判成真实家目录。
+  const home = ['', 'Users', 'tester'].join('/')
   assert.equal(redactHome(`读 ${home}/.dsh/mobile-link/agent.json`, home), '读 ~/.dsh/mobile-link/agent.json')
   assert.equal(redactHome(`file://${home}/x`, home), 'file://~/x')
   assert.equal(redactHome('别的路径不动 /opt/dsh-relay', home), '别的路径不动 /opt/dsh-relay')
@@ -71,7 +75,7 @@ test('checkDiagnosticsPack：注入一份带 secret 的包必须失败，干净�
 
   // 负例：有人顺手把 secret 写进包
   writeFileSync(join(dir, 'sources', 'connector.jsonl'),
-    '{"kind":"link.start","secret":"as_TESTONLY_000000000000000000000000"}\n')
+    `{"kind":"link.start","secret":"${ANSWER_KEY}"}\n`)
   result = checkDiagnosticsPack(dir)
   assert.equal(result.ok, false, '带 secret 的包必须失败')
   assert.ok(result.hits.some((hit) => hit.rule === 'agent-secret'))

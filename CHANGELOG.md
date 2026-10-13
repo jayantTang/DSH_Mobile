@@ -4,6 +4,30 @@
 [语义化版本](https://semver.org/lang/zh-CN/)。三处部署（App / 连接器 / 中转）的组合见
 [`docs/VERSIONING.md`](docs/VERSIONING.md)。
 
+## 连接器 0.6.2 / App 1.0（开发版）— 2026-10-13
+
+这一天做的是**看得见问题**：在此之前，"手机偶尔连不上"只能靠中转日志反推（连接器的拆链原因不落盘、
+手机上什么都没有），同一条症状下"App 被挂起"与"拨号卡住"看起来一模一样。
+
+- **连接器**（0.6.2）：
+  - 每次接入写一条 `device.phase`（接入→握手→首个数据请求→首个响应，缺的阶段记 `missing` 而不是 0）；
+  - 每次接入写 `device.summary`（请求数、超阈值数、p50/p95、最慢三条），单次请求超 `slowRequestMs`
+    （默认 2000，`0` 关闭）另写一条 `request.slow`——条数是常数级，不随请求量增长；
+  - 新增方法 `_link/diagnostics`：收下手机推来的阶段记录，**时刻照抄**（那是"手机侧几点"的唯一来源），
+    按序号幂等，超 32 KiB 截断并如实报 `accepted`/`lastSeq`；配置 `diagnostics: false` 可整体拒收（回退闸）；
+  - 配置新增 `slowRequestMs` / `diagnostics`；`journalFile` 的默认值不变。
+- **中转**：设备行带 deviceId、顶替与被顶替各留一行日志、`GET /stats` 增加 `now`（只增字段，
+  供三侧时钟对齐）。行为不变，只加日志与一个数字。
+- **App**（开发版）：`app.dial`（拨号开始 / 传输建立 / 传输关闭，后两者来自系统 WebSocket 回调）、
+  `app.scene`（前后台）、`app.hello` / `app.first-screen`（相对拨号起点的毫秒）、
+  `app.first-request` / `app.first-response` / `app.request`（逐交互耗时与字节），
+  增量推给连接器（不阻塞连接主路径，失败静默）；本地有界落盘（128 KiB × 两代）。
+- **诊断包**：`npm run diag:collect` 一条命令取三侧记录，合并到同一个时钟，产出
+  `timeline.jsonl` / `attaches.jsonl` / `clock.json` / `coverage.json` / `missing.json` 与自解释 README；
+  写包前先做脱敏与结构自检，命中就不出包。判读指引见 `docs/DIAGNOSTICS.md`。
+- **这条链路的第一个真实结论**：仿真器经中转实测，`app.request{session/list, 731027 B, 16264 ms}`
+  ——首个会话列表在手机上要 16.3 秒，而连接器答同一个请求只用 220 ms。瓶颈在手机侧处理这 731 KB。
+
 ## 连接器 0.6.1 — 2026-10-13
 
 - **新增生命周期流水，回答"连接器为什么把这条链路拆了"**：链路 `link.start` / `link.open` / `link.close`（带原因、拆之前的链路状态、这条挂了多久）/ 重连退避 / 看门狗动手 / 本机 DSH 是否可达 / 设备 `attach`（含"同一台设备又开了一条"）/ `detach`，逐条落盘到 `~/.dsh/mobile-link/link-events.jsonl`（每行一条 JSON，超 256 KiB 滚动一次、只保两代），并随 `/mobile-link/status` 的 `journal` 块带出最近 20 条（新字段，只增；配置项 `journalFile`，`false` 则只留内存）。起因：2026-10-13 排查真机连不上时，连接器的拆链原因不落任何文件——宿主的 `ctx.logger` 不写盘，`lastError` 只留最后一条，只能靠中转日志反推；补上之后当天就当场抓到一次「同一台设备在第一条 socket 还活着时又开了一条」（相隔 40 秒）。

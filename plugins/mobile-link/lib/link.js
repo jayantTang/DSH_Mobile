@@ -60,6 +60,8 @@ export class MobileLinkAgent extends EventEmitter {
     watchdogMs = 180000,
     // 慢请求阈值（毫秒）；0 = 关闭逐条慢请求记录。见 router.js 的 DEFAULT_SLOW_REQUEST_MS。
     slowRequestMs = DEFAULT_SLOW_REQUEST_MS,
+    // 关掉手机推送的接收（回退闸）；见 contracts/connector-diagnostics-method.md §4。
+    diagnostics = true,
     inviteCode, fetchImpl = fetch, env = process.env,
     // 生命周期流水（见 journal.js）：`journal` 传实例（测试注入），`journalPath`
     // 传路径（`defaultJournalPath()` 之外的位置），false 表示只留内存不落盘。
@@ -76,6 +78,7 @@ export class MobileLinkAgent extends EventEmitter {
     this.maxBackoffMs = maxBackoffMs
     this.watchdogMs = watchdogMs
     this.slowRequestMs = Number(slowRequestMs) || 0
+    this.diagnostics = diagnostics !== false
     this.random = random
     this.now = now
     this.connectImpl = connectImpl
@@ -101,6 +104,7 @@ export class MobileLinkAgent extends EventEmitter {
       protocolVersion: PROTOCOL_VERSION,
       eventsBacklog,
       slowRequestMs: this.slowRequestMs,
+      diagnostics: this.diagnostics,
       send: (deviceId, frame) => this.sendToDevice(deviceId, frame),
       // 设备侧的 attach/detach 与链路侧同源记进流水：事后想把"手机断了"和
       // "连接器拆链"对上时间，两边必须写在同一份文件里。

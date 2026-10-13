@@ -49,6 +49,7 @@ const DOCS = [
   'docs/DSH-PROTOCOL.md',
   'docs/RELAY-PROTOCOL.md',
   'docs/CONNECTOR-NOTES.md',
+  'docs/DIAGNOSTICS.md',
   'docs/RELAY-NOTES.md',
   'plugins/README.md',
   'plugins/mobile-link/README.md',

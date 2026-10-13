@@ -27,6 +27,11 @@
 #                  the fact; the newest entries also ride along in
 #                  GET /mobile-link/status as `journal`. `false` keeps the ring
 #                  in memory only, no file.
+#   slowRequestMs  single-request threshold (default 2000). A request slower than
+#                  this gets its own `request.slow` entry; 0 disables those entries
+#                  (the per-attach `device.summary` is still written).
+#   diagnostics    false refuses the phone's phase uploads (`_link/diagnostics`) with
+#                  `diagnostics/disabled`; the phone ignores it and stays connected.
 #   dshUrl         explicit local DSH base URL override (default: discovery)
 #
 # Address resolution order: this config block, then DSH_RELAY_URL (or

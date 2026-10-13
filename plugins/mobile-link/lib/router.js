@@ -141,11 +141,12 @@ export class DeviceRouter {
   constructor({
     dsh, send, logger = console, onChange = () => {}, now = Date.now, protocolVersion = 1,
     eventsBacklog = DEFAULT_EVENTS_BACKLOG, notify = () => {}, onEvent = () => {},
-    slowRequestMs = DEFAULT_SLOW_REQUEST_MS,
+    slowRequestMs = DEFAULT_SLOW_REQUEST_MS, diagnostics = true,
   } = {}) {
     this.dsh = dsh
     this.eventsBacklog = eventsBacklog
     this.slowRequestMs = Number(slowRequestMs) || 0
+    this.diagnosticsEnabled = diagnostics !== false
     /** 每个 deviceId 当前这次接入的计时（attach 时建、detach 时收）。 */
     this.timelines = new Map()
     /**
@@ -365,6 +366,10 @@ export class DeviceRouter {
    * @returns {{ok: true, value: {accepted: number, lastSeq: number}}}
    */
   acceptDiagnostics(deviceId, args = {}) {
+    if (!this.diagnosticsEnabled) {
+      // 回退闸：关掉时明确拒绝，手机据此静默忽略（不影响连接）。
+      return { ok: false, error: errorObject('diagnostics/disabled', 'diagnostics intake is disabled on this connector') }
+    }
     const record = this.devices.get(deviceId)
     const watermark = Number(record?.diagnosticsSeq) || 0
     const events = Array.isArray(args.events) ? args.events : []
