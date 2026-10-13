@@ -81,6 +81,47 @@ final class MessageStoreTests: XCTestCase {
         XCTAssertEqual(states[0].hasMore, true)  // 默认 true：失败永不写 hasMore
     }
 
+    /// 自愈迁移（`v3-aggregate-excludes-pending`）：老库里被 pending 合成 seq 抬高的
+    /// 聚合列，要按"排除 pending"的口径重算。这里造一个"迁移前就写坏"的库来验
+    ///（TestFlight 20261012.1310 的崩溃根因之一，见 UntrustedCursorTests 头注）。
+    func testMigrationRepairsAggregateRaisedByPendingSyntheticSeq() async throws {
+        let path = directory.appendingPathComponent("legacy.sqlite3")
+        let pool = try DatabasePool(path: path.path)
+        // 只跑到自愈之前那一步，模拟旧版本的库。
+        try MessageStore.migrator.migrate(pool, upTo: "v3-fts-blocks-text")
+        let sent = record(5)
+        let pending = record(Int.max, type: "user/message")
+        try await pool.write { db in
+            let encoder = JSONEncoder()
+            func insertRecord(_ record: SessionRecord, status: String, clientId: String?) throws {
+                let payload = try encoder.encode(record)
+                try db.execute(sql: """
+                    INSERT INTO record (scope, session_id, seq, kind, role, payload, byte_size,
+                                        client_id, status, source_kind, source_id)
+                    VALUES ('mac', 's1', ?, ?, ?, ?, ?, ?, ?, NULL, NULL)
+                    """, arguments: [
+                        record.event.seq, record.event.type,
+                        MessageStore.Role(eventType: record.event.type).rawValue,
+                        payload, payload.count, clientId, status,
+                    ])
+            }
+            try insertRecord(sent, status: "sent", clientId: nil)
+            try insertRecord(pending, status: "pending", clientId: "c-1")
+            // 老版本的聚合行：MAX(seq) 把 pending 的合成 seq 算了进来。
+            try db.execute(sql: """
+                INSERT INTO session_state (scope, session_id, oldest_seq, newest_seq, has_more,
+                                           last_opened, last_snippet, unread_count, ranges_json)
+                VALUES ('mac', 's1', 5, ?, 1, 0, '', 0, '[]')
+                """, arguments: [Int.max])
+        }
+        // 跑剩下的迁移，然后按正常路径读聚合。
+        try MessageStore.migrator.migrate(pool)
+        let reopened = try MessageStore(path: path)
+        let states = try await reopened.sessionStates(scope: "mac")
+        XCTAssertEqual(states.first?.newestSeq, 5, "自愈后游标必须回到真实最大 seq")
+        XCTAssertEqual(states.first?.oldestSeq, 5)
+    }
+
     /// 区间集随会话持久化（data-model ranges_json）：冷启动预取判定靠它。
     func testRangesRoundTrip() async throws {
         try await upsert([record(1)])

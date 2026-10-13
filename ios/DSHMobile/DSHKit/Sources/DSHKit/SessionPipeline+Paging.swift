@@ -5,19 +5,45 @@ import Foundation
 extension SessionPipeline {
 
     /// 覆盖某缺口的对齐页集合（页大小对齐，spec §6 页边界）。
+    ///
+    /// 入口做**异常游标防御**（2026-10-13 崩溃回归）。seq 有两个外部来源：host 的
+    /// `asOfSeq`，以及本地磁盘的聚合列 `newest_seq`。原来这两处来一个离谱值就会在
+    /// 本函数里炸：`start + pageSize - 1` 整数溢出是 SIGTRAP，不是可捕获的错误
+    ///（TestFlight 20261012.1310 就是磁盘聚合列被 pending 行的合成 seq 抬到
+    /// `Int.max`，冷启动预取照它算页边界）。判据只有一份：终点超出 `seqCeiling` 的游标
+    /// 不产页，请求自然退化为空结果（预取静默、读者路径照常回退），不崩、不发网络。
+    /// 下界不管：`alignedStart` 本来就把 0/负数钳到第 1 页，保持原语义不变。
     func alignedPages(covering span: RangeIndex.Span) -> [ClosedRange<Int>] {
+        guard pageSize > 0, span.end >= 1, span.start <= span.end,
+              span.end <= Self.seqCeiling
+        else { return [] }
         var pages: [ClosedRange<Int>] = []
         var start = alignedStart(for: span.start)
-        while start <= span.end {
-            pages.append(start...(start + pageSize - 1))
-            start += pageSize
+        // 页数封顶：`seqCeiling` 之内的区间理论上仍可以是两千万页（1e9 / 50），
+        // 一次请求也不该无限扩。真实请求最宽的是回看（pagesPerFetch=2 页）与跳转（1 页），
+        // 512 页是它们的两个数量级以上的余量。
+        while start <= span.end, pages.count < Self.maxPagesPerRequest {
+            guard let page = pageRange(startingAt: start) else { break }
+            pages.append(page)
+            let (next, overflow) = start.addingReportingOverflow(pageSize)
+            guard !overflow else { break }
+            start = next
         }
         return pages
     }
 
-    func alignedPage(containing seq: Int) -> ClosedRange<Int> {
-        let start = alignedStart(for: seq)
-        return start...(start + pageSize - 1)
+    /// 含某 seq 的那一页；游标离谱（超出 `seqCeiling`）或页上沿溢出时返回 nil。
+    /// 预取方拿到 nil 即跳过这一页，不构造非法区间。0/负数照旧钳到第 1 页。
+    func alignedPage(containing seq: Int) -> ClosedRange<Int>? {
+        guard pageSize > 0, seq <= Self.seqCeiling else { return nil }
+        return pageRange(startingAt: alignedStart(for: seq))
+    }
+
+    /// 从对齐起点起的一页；上沿溢出 `Int` 时返回 nil（不 trap）。
+    private func pageRange(startingAt start: Int) -> ClosedRange<Int>? {
+        let (end, overflow) = start.addingReportingOverflow(pageSize - 1)
+        guard !overflow, end >= start else { return nil }
+        return start...end
     }
 
     func alignedStart(for seq: Int) -> Int {

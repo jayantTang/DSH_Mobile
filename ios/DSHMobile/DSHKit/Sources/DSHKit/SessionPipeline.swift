@@ -153,6 +153,14 @@ public actor SessionPipeline {
 
     static let maxRetries = 3 // internal：gap 派生（+Paging 扩展）要读
 
+    /// seq 的可信上界（2026-10-13 崩溃回归）。真实 seq 是事件计数，量级在千到百万；
+    /// 1e9 有一千倍余量。超出一律视为异常游标（host 的 `asOfSeq`，或本地聚合列被污染），
+    /// 页边界计算不产页（+Paging 的 alignedPages/alignedPage）。
+    static let seqCeiling = 1_000_000_000
+
+    /// 一次缺口请求最多派生的页数：异常区间的第二道闸，防两千万页那种"不崩但拖死"的形态。
+    static let maxPagesPerRequest = 512
+
     /// 缺页集合内的取页并发上限（017）。为什么是 2 而不是更大：一页 200–400ms 里大头是
     /// 往返与宿主读取，压到 2 路就能把"一次取 3 页"的等待从 3×往返降到约 1.5×往返；
     /// 再往上只是把一个读者的取数铺开，会挤占同一宿主上别的会话。预取与读者触发共用它。
@@ -579,7 +587,7 @@ public actor SessionPipeline {
         guard depth > 0 else { return }
         var next = cursor
         for _ in 0..<depth where next > 1 {
-            let page = alignedPage(containing: next - 1)
+            guard let page = alignedPage(containing: next - 1) else { return }
             prefetch(page)
             next = page.lowerBound
         }
@@ -590,7 +598,7 @@ public actor SessionPipeline {
         guard depth > 0 else { return }
         var next = cursor
         for _ in 0..<depth {
-            let page = alignedPage(containing: next + 1)
+            guard let page = alignedPage(containing: next + 1) else { return }
             prefetch(page)
             next = page.upperBound
         }

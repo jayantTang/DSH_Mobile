@@ -57,9 +57,15 @@ extension MessageStore {
     private static func refreshState(
         scope: String, sessionId: String, openedAt: Date, db: Database
     ) throws {
+        // 聚合只统计 sent 行。上行的乐观记录用合成 seq（`nextSyntheticSeq` 从
+        // `Int.max` 起递减，见 MessagePipeline+Send），算进 MAX(seq) 会让
+        // `newest_seq` 变成 9223372036854775807；冷启动预取拿它当游标算页边界，
+        // 第二次 `start + pageSize - 1` 就整数溢出（TestFlight 20261012.1310 的
+        // SIGTRAP 落在 SessionPipeline+Paging.swift:12）。pending 是"host 还没接受"
+        // 的上行缓存，不是会话里最新的内容，任何对外暴露的游标都不该包含它。
         let bounds = try Row.fetchOne(db, sql: """
             SELECT MIN(seq) AS oldest, MAX(seq) AS newest, COUNT(*) AS total
-            FROM record WHERE scope = ? AND session_id = ?
+            FROM record WHERE scope = ? AND session_id = ? AND status != 'pending'
             """, arguments: [scope, sessionId])
         let snippet = try Row.fetchOne(db, sql: """
             SELECT payload FROM record WHERE scope = ? AND session_id = ? AND status != 'pending'

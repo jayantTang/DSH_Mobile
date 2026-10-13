@@ -83,6 +83,9 @@ public actor MessageStore {
         migrator.registerMigration("v3-user-inputs-cleanup") { db in try migrateToV3Cleanup(db) }
         migrator.registerMigration("v3-fts-reindex") { db in try reindexRecordFts(db) }
         migrator.registerMigration("v3-fts-blocks-text") { db in try migrateToV3BlocksText(db) }
+        migrator.registerMigration("v3-aggregate-excludes-pending") { db in
+            try repairAggregatesExcludingPending(db)
+        }
         return migrator
     }()
 
@@ -258,5 +261,27 @@ public actor MessageStore {
             END;
             """)
         try reindexRecordFts(db)
+    }
+
+    /// v3-aggregate-excludes-pending：修**已经写坏**的聚合列。
+    ///
+    /// 写入侧原来把 pending 行一起算进 MIN/MAX(seq)，而 pending 的 seq 是
+    /// `MessagePipeline` 的合成游标（从 `Int.max` 起递减）。任何一次"发出去但没等到
+    /// 确认"（App 被杀、断网、确认丢失）都会把 `session_state.newest_seq` 留成
+    /// 9223372036854775807，下一次冷启动预取拿它算页边界就整数溢出崩溃
+    ///（TestFlight 20261012.1310）。改了写入侧只保证新写的对，老库里那行还在，
+    /// 所以这里按"排除 pending"的口径把两个边界列重算一遍。一次性、幂等。
+    static func repairAggregatesExcludingPending(_ db: Database) throws {
+        try db.execute(sql: """
+            UPDATE session_state SET
+              oldest_seq = (SELECT MIN(seq) FROM record
+                            WHERE record.scope = session_state.scope
+                              AND record.session_id = session_state.session_id
+                              AND record.status != 'pending'),
+              newest_seq = (SELECT MAX(seq) FROM record
+                            WHERE record.scope = session_state.scope
+                              AND record.session_id = session_state.session_id
+                              AND record.status != 'pending')
+            """)
     }
 }
