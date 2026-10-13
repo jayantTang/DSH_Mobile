@@ -1,0 +1,198 @@
+{
+  "note": "会 trap 的写法基线（见 scripts/dev/check-traps.mjs）。按「文件 + 规则 + 代码片段」记账，不按行号；片段改了就重新说明一次。每条必须有 reason；reason 以 TODO: 开头表示已知风险、待处理，闸门每次运行都会点名。",
+  "exemptions": [
+    {
+      "file": "ios/DSHMobile/DSHKit/Sources/DSHKit/MessagePipeline.swift",
+      "rule": "range",
+      "snippet": "_ = try? await pipeline.records(in: lower...target.newestSeq, priority: priority)",
+      "reason": "调用方 prefetchLatestPages 先 filter newestSeq > 0，lower 由 max(1, newestSeq - pageSize + 1) 算出，恒 ≤ newestSeq。"
+    },
+    {
+      "file": "ios/DSHMobile/DSHKit/Sources/DSHKit/MessagePipeline.swift",
+      "rule": "sentinel",
+      "snippet": "var nextSyntheticSeq = Int.max",
+      "reason": "有意选的哨兵：上行乐观记录的排序键，只活在 MessagePipeline 的内存行序与 record 表的 pending 行里。两个下游出口都已收口：聚合列排除 pending（MessageStore+Records.refreshState），页边界拒绝超 seqCeiling 的游标（SessionPipeline+Paging.alignedPages）。"
+    },
+    {
+      "file": "ios/DSHMobile/DSHKit/Sources/DSHKit/JSONValue.swift",
+      "rule": "dbl2int",
+      "snippet": "case .double(let value) where value.rounded() == value: return Int(value)",
+      "reason": "TODO: 真实 trap。Double 的取整判定成立不代表能装进 Int，host 下发 {\"size\":1e30} 这类数字会直接崩（Double→Int 越界）。修法：Int(exactly: value)，不可表示时返回 nil。"
+    },
+    {
+      "file": "ios/DSHMobile/DSHKit/Sources/DSHKit/LinkCarrier.swift",
+      "rule": "range",
+      "snippet": "let offset = Double.random(in: -spread...spread)",
+      "reason": "spread = min(base, maximum) * jitter，两个因子都非负，-spread ≤ spread 恒成立。"
+    },
+    {
+      "file": "ios/DSHMobile/DSHKit/Sources/DSHKit/RangeIndex.swift",
+      "rule": "range",
+      "snippet": "for span in spans { insert(span.start...span.end) }",
+      "reason": "TODO: ranges_json 解码走的是合成 init(from:)，绕过了 Span 的 start <= end 前置条件；损坏或跨版本的区间 JSON 会在这里 trap（同类：SessionPipeline.swift:204）。修法是给 Span 写显式 Decodable 校验。"
+    },
+    {
+      "file": "ios/DSHMobile/DSHKit/Sources/DSHKit/RangeIndex.swift",
+      "rule": "range",
+      "snippet": "insert(seq...seq)",
+      "reason": "单点区间 seq...seq，两端恒等，不可能非法。"
+    },
+    {
+      "file": "ios/DSHMobile/DSHKit/Sources/DSHKit/RangeIndex.swift",
+      "rule": "trap",
+      "snippet": "precondition(start <= end, \"span start must not exceed end\")",
+      "reason": "有意的区间不变量。真正的缺口在解码路径绕过它（见 RangeIndex.swift:41 的 TODO），前置条件本身保留。"
+    },
+    {
+      "file": "ios/DSHMobile/DSHKit/Sources/DSHKit/Timeline.swift",
+      "rule": "sentinel",
+      "snippet": "seq: Int.max - 1,",
+      "reason": "时间线折叠用的合成行序（本地回显），只参与 UI 排序；落库走 MessagePipeline 自己的合成游标，不走这个值。"
+    },
+    {
+      "file": "ios/DSHMobile/DSHKit/Sources/DSHKit/SessionPipeline+Paging.swift",
+      "rule": "range",
+      "snippet": "return start...end",
+      "reason": "pageRange 里先做 addingReportingOverflow，并要求 end >= start 才构造区间，溢出返回 nil。"
+    },
+    {
+      "file": "ios/DSHMobile/DSHKit/Sources/DSHKit/SessionPipeline+Paging.swift",
+      "rule": "range",
+      "snippet": "return ranges.gaps(within: oldest...newest).map { span in",
+      "reason": "同一函数上方有 guard let oldest = ranges.oldest, let newest = ranges.newest, oldest <= newest。"
+    },
+    {
+      "file": "ios/DSHMobile/DSHKit/Sources/DSHKit/RPC.swift",
+      "rule": "force",
+      "snippet": "self = .ok(DSHEmpty() as! Value)",
+      "reason": "上一行刚判定 Value.self == DSHEmpty.self 且回包无 value 字段，转换恒成立。"
+    },
+    {
+      "file": "ios/DSHMobile/DSHKit/Sources/DSHKit/SessionPipeline.swift",
+      "rule": "range",
+      "snippet": "ranges.insert(span.start...span.end)",
+      "reason": "TODO: 与 RangeIndex.swift:41 同一根因（持久化区间解码不校验 start <= end），adoptPersistedRanges 会把坏段直接并进区间集。"
+    },
+    {
+      "file": "ios/DSHMobile/DSHKit/Sources/DSHKit/SessionPipeline.swift",
+      "rule": "range",
+      "snippet": "ranges.insert(pageRecords.first!.event.seq...pageRecords.last!.event.seq)",
+      "reason": "在 pageRecords 非空的 else 分支里，且已按 seq 升序排过，first ≤ last 恒成立。"
+    },
+    {
+      "file": "ios/DSHMobile/DSHKit/Sources/DSHKit/SessionPipeline+Hydration.swift",
+      "rule": "range",
+      "snippet": "let absent = (from...to).filter { hotWindow[$0] == nil }.sorted()",
+      "reason": "from = max(span.start, range.lowerBound)、to = min(span.end, range.upperBound)，而外层 filter 已保证 span 与 range 相交，故 from ≤ to。"
+    },
+    {
+      "file": "ios/DSHMobile/DSHKit/Sources/DSHKit/SessionPipeline+Hydration.swift",
+      "rule": "range",
+      "snippet": "scope: scope, sessionId: sessionId, in: from...to)) ?? []",
+      "reason": "与上一行同源同值（from/to 同一对局部变量），from ≤ to 的判据同上。"
+    },
+    {
+      "file": "ios/DSHMobile/DSHKit/Sources/DSHKit/SessionPipeline+Hydration.swift",
+      "rule": "sentinel",
+      "snippet": "var previous = Int.min",
+      "reason": "哨兵只用于比较（previous + 1，Int.min + 1 不会溢出），且首次迭代被 start < seq 判据挡住，不会把 Int.min 写进 Span。"
+    },
+    {
+      "file": "ios/DSHMobile/DSHMobile/Features/Chat/ChatModel.swift",
+      "rule": "sentinel",
+      "snippet": "scope: scope, sessionId: sessionId, seq: Int.max,",
+      "reason": "windowBefore 的\"从尾部取\"上界参数，只用于 SQL 比较（seq < ?），不落库也不进区间集。"
+    },
+    {
+      "file": "ios/DSHMobile/DSHMobile/Features/Chat/ChatModel+Follow.swift",
+      "rule": "dbl2int",
+      "snippet": "\"distance\": String(Int(distance))], force: true)",
+      "reason": "滚动几何上报的 CGFloat，值域是屏幕尺寸量级（点），不是外部下发数据。",
+      "count": 2
+    },
+    {
+      "file": "ios/DSHMobile/DSHMobile/Features/Chat/ChatModel+PipelineFetch.swift",
+      "rule": "range",
+      "snippet": "_ = try await session.records(in: lower...(oldest - 1), priority: .userVisible)",
+      "reason": "函数开头有 guard oldest > 1，lower = max(1, oldest - pageSize*pagesPerFetch) 恒 ≤ oldest - 1。"
+    },
+    {
+      "file": "ios/DSHMobile/DSHMobile/Features/Chat/ChatModel+PipelineFetch.swift",
+      "rule": "range",
+      "snippet": "try? await session.retry(range: lower...(oldest - 1))",
+      "reason": "同上：start == 0 的合成行走另外的分支，这里已 guard oldest > 1，lower ≤ oldest - 1。"
+    },
+    {
+      "file": "ios/DSHMobile/DSHMobile/Features/Chat/ChatModel+PipelineFetch.swift",
+      "rule": "range",
+      "snippet": "try? await session.retry(range: start...end)",
+      "reason": "start/end 来自缺口行（RangeIndex.gaps 派生，有序且 start ≤ end）；start == 0 的合成缺口行在上面单独处理。"
+    },
+    {
+      "file": "ios/DSHMobile/DSHMobile/Features/Chat/ChatModel+PipelineFetch.swift",
+      "rule": "range",
+      "snippet": "_ = try? await session.records(in: lower...lastSeq, priority: .jump)",
+      "reason": "catchUp 里已 guard lastSeq > 0，lower = max(1, lastSeq - pageSize + 1) 恒 ≤ lastSeq。"
+    },
+    {
+      "file": "ios/DSHMobile/DSHMobile/Features/Chat/ChatModel+PipelineFetch.swift",
+      "rule": "range",
+      "snippet": "await session.abandonGap((localNewest + 1)...(lower - 1))",
+      "reason": "上一行的 if localNewest + 1 <= lower - 1 就是这个区间的构造判据。"
+    },
+    {
+      "file": "ios/DSHMobile/DSHMobile/Features/Chat/ChatModel+PipelineFetch.swift",
+      "rule": "range",
+      "snippet": "_ = try? await session.records(in: (localNewest + 1)...lastSeq, priority: .userVisible)",
+      "reason": "else 分支成立的前提是 missing = lastSeq - localNewest > 0，即 localNewest + 1 ≤ lastSeq。"
+    },
+    {
+      "file": "ios/DSHMobile/DSHMobile/Features/Chat/TranscriptListSpikeView.swift",
+      "rule": "force",
+      "snippet": "let event = try! JSONDecoder().decode(SessionEvent.self, from: Data(json.utf8))",
+      "reason": "探针屏（ProbeVariants.listSpike 才走），JSON 是同一函数里的字面量，解码失败即代码写错，属于\"早崩早发现\"的调试路径。"
+    },
+    {
+      "file": "ios/DSHMobile/DSHMobile/Features/Chat/TranscriptListHost.swift",
+      "rule": "trap",
+      "snippet": "required init?(coder: NSCoder) { fatalError(\"not used\") }",
+      "reason": "UIKit 的 init?(coder:)，本 App 全部用代码构造视图，该入口不会被调用（标准写法）。"
+    },
+    {
+      "file": "ios/DSHMobile/DSHMobile/Features/Chat/ChatModel+Pipeline.swift",
+      "rule": "range",
+      "snippet": "let fetched = try await session.records(in: lower...upper, priority: .jump)",
+      "reason": "upper = seq + leading、lower = max(1, upper - limit + 1)，limit ≥ 1 故 lower ≤ upper；seq 是搜索命中的真实 seq（record 表），不是合成行。"
+    },
+    {
+      "file": "ios/DSHMobile/DSHMobile/Features/Chat/ChatModel+Pipeline.swift",
+      "rule": "range",
+      "snippet": "await session.abandonGap((upper + 1)...(windowOldest - 1))",
+      "reason": "上一行的 if let windowOldest, upper + 1 <= windowOldest - 1 就是这个区间的构造判据。"
+    },
+    {
+      "file": "ios/DSHMobile/DSHMobile/Features/Chat/ChatModel+Pipeline.swift",
+      "rule": "range",
+      "snippet": "await session.abandonGap((windowNewest + 1)...(lower - 1))",
+      "reason": "上一行的 if let windowNewest, windowNewest + 1 <= lower - 1 就是这个区间的构造判据。"
+    },
+    {
+      "file": "ios/DSHMobile/DSHMobile/Support/P13ResumeProbe.swift",
+      "rule": "dbl2int",
+      "snippet": "var description: String { \"probe step timed out after \\(Int(seconds))s\" }",
+      "reason": "探针自己算的超时秒数（本地时钟差），值域是秒级 Double。"
+    },
+    {
+      "file": "ios/DSHMobile/DSHMobile/Support/P13ResumeObserver.swift",
+      "rule": "dbl2int",
+      "snippet": "P13ResumeObserver.bytesWritten = Int(totalBytesWritten)",
+      "reason": "URLSession 的 Int64 字节数，64 位平台上 Int64 → Int 不丢范围。"
+    },
+    {
+      "file": "ios/DSHMobile/DSHMobile/Support/P13ResumeObserver.swift",
+      "rule": "dbl2int",
+      "snippet": "P13ResumeObserver.totalBytesWritten = Int(totalBytesWritten)",
+      "reason": "同上：URLSession 的 Int64 字节数，64 位平台上不丢范围。"
+    }
+  ]
+}

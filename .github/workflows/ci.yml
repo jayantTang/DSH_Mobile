@@ -91,6 +91,10 @@ jobs:
       # 所以放在这个 Ubuntu job 里跑没有平台风险，不必新建 job。
       - name: 本地化检查（双向缺键 / 硬编码 / 未本地化绑定）
         run: npm run check:i18n
+      # 会 trap 的写法（整数溢出 / 非法闭区间 / try! / precondition / Double→Int）。
+      # 同样是纯文本扫描 + find，不依赖 macOS / Xcode，本机 0.1s。
+      - name: trap 写法闸门（崩溃类问题，基线在 scripts/dev/trap-exemptions.json）
+        run: npm run check:traps
 
   node:
     runs-on: ubuntu-latest
