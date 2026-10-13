@@ -153,8 +153,10 @@ struct TranscriptSearchSheet: View {
             // T040 起浏览态（「只看我的提问」）直接读本地全量库，一次就位，没有"第一页"
             // 要等；`watchUserInputSyncState()` 负责在灌全时把它变完整。
         }
-        // 未灌全时盯着完整性标记（切到「只看我的提问」才开始转）。
+        // 切到「只看我的提问」：先按需把这个会话灌上（(a)），再盯着完整性标记。
+        // 面板本来就有"同步中…"状态与 1.5 秒轮询，所以这里只负责**把灌库跑起来**。
         .task(id: onlyMine) {
+            if onlyMine { await model.ensureUserInputsBackfilled() }
             await watchUserInputSyncState()
         }
         // 打字：防抖，只有停下来（或换了关键词）才真正搜一次。

@@ -177,8 +177,19 @@ final class MessageLayer {
     /// 刻意**串行**：灌库是缓存行为，不许和读者正在用的拉取抢隧道（连接器对
     /// 同会话并发窗口读也直接回 `link/busy`）。未连接、磁盘层缺位、地址未注册
     /// 都静默跳过；去重与增量判定全在 `UserInputBackfiller`。
+    /// 一次冷启动最多花多少页 / 多少秒在后台灌库上。
+    ///
+    /// 为什么要有预算：以前这里是"按列表顺序遍历**全部**会话"，重装后账本为空就是 437 个会话
+    /// 一路扫下去（实测后台要跑几十秒到几十分钟）。改成"只预热活跃的十来个 + 每轮有硬上限"：
+    /// 常用会话照旧"点开即完整"，其余交给按需灌（`backfillUserInput`，见下），
+    /// 后台流量不再无上限。
+    static let warmupPageBudget = 200
+    static let warmupTimeBudget: TimeInterval = 60
+
     func backfillUserInputs(scope: String, summaries: [SessionSummary],
-                            roleFilterSupported: Bool) async {
+                            roleFilterSupported: Bool,
+                            pageBudget: Int = MessageLayer.warmupPageBudget,
+                            timeBudget: TimeInterval = MessageLayer.warmupTimeBudget) async {
         guard let store, let client = clientProvider?() else { return }
         guard roleFilterSupported else {
             ViewportProbe.note("userinputs.backfill.degraded", [
@@ -187,7 +198,19 @@ final class MessageLayer {
             return
         }
         let backfiller = UserInputBackfiller(store: store)
+        let startedAt = Date()
+        var pagesUsed = 0
+        var sessionsDone = 0
         for summary in summaries {
+            // 预算用尽就收工：剩下的等下一次冷启动，或由用户打开面板时按需补。
+            guard pagesUsed < pageBudget, Date().timeIntervalSince(startedAt) < timeBudget else {
+                ViewportProbe.note("userinputs.backfill.budget", [
+                    "sessions": String(sessionsDone), "pages": String(pagesUsed),
+                    "remaining": String(summaries.count - sessionsDone),
+                    "seconds": String(format: "%.1f", Date().timeIntervalSince(startedAt)),
+                ], force: true)
+                return
+            }
             guard let address = addresses.address(for: summary.sessionId) else { continue }
             let lastSeq = summary.asOfSeq
             guard lastSeq > 0 else { continue }
@@ -199,10 +222,14 @@ final class MessageLayer {
                             limit: 200, maxBytes: 256 * 1024, roles: ["me"]))
                     }
                 if case .pulled(let pages, let rows) = outcome {
+                    pagesUsed += pages
+                    sessionsDone += 1
                     ViewportProbe.note("userinputs.backfill", [
                         "session": summary.sessionId,
                         "pages": String(pages), "rows": String(rows),
                     ], force: true)
+                } else {
+                    sessionsDone += 1
                 }
             } catch {
                 // 失败不记账（backfiller 语义），下次冷启动重试；不刷错误，
@@ -213,6 +240,43 @@ final class MessageLayer {
                 ], force: true)
                 continue
             }
+        }
+    }
+
+    /// 灌**一个**会话（按需路径，(a)）。
+    ///
+    /// 触发点是会话内搜索面板切到「只看我的提问」：那里已经有"同步中…"一等状态与 1.5 秒轮询，
+    /// 所以这里只要把这一会话的灌库跑起来，面板会自己从"同步中"翻到完整。不做预算——用户此刻
+    /// 就在等这一个会话，而 A2 之后单会话实测 0.3–1.1 秒（连接器 `readSession` 快照一次读完）。
+    @discardableResult
+    func backfillUserInput(scope: String, sessionId: String, lastSeq: Int,
+                           roleFilterSupported: Bool) async -> Bool {
+        guard let store, let client = clientProvider?() else { return false }
+        guard roleFilterSupported else {
+            ViewportProbe.note("userinputs.backfill.degraded", [
+                "reason": "connector-missing-history-role-filter", "onDemand": "1",
+            ], force: true)
+            return false
+        }
+        guard lastSeq > 0, let address = addresses.address(for: sessionId) else { return false }
+        let backfiller = UserInputBackfiller(store: store)
+        do {
+            let outcome = try await backfiller.backfill(scope: scope, sessionId: sessionId, lastSeq: lastSeq) { before in
+                try await client.historyWindow(HistoryWindowRequest(
+                    address: address, before: before ?? HistoryWindowRequest.safeMaxBefore,
+                    limit: 200, maxBytes: 256 * 1024, roles: ["me"]))
+            }
+            if case .pulled(let pages, let rows) = outcome {
+                ViewportProbe.note("userinputs.backfill", [
+                    "session": sessionId, "pages": String(pages), "rows": String(rows), "onDemand": "1",
+                ], force: true)
+            }
+            return true
+        } catch {
+            ViewportProbe.note("userinputs.backfill.error", [
+                "session": sessionId, "error": String(describing: error), "onDemand": "1",
+            ], force: true)
+            return false
         }
     }
 }

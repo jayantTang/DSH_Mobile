@@ -59,6 +59,25 @@ extension ChatModel {
         return (try? await store.userInputsSyncedAt(scope: scope, sessionId: sessionId)) != nil
     }
 
+    /// (a) 打开会话内搜索面板、切到「只看我的提问」时，把这个会话的用户输入按需灌上。
+    ///
+    /// 幂等 + 防重入：已灌全直接返回；正在灌则不重复发起（面板的 1.5 秒轮询会把它翻成完整）。
+    /// 冷启动那条后台预热只覆盖首屏可见的十来个会话（见 `MessageLayer.warmupPageBudget`），
+    /// 归档/冷门会话就靠这里补——A2 之后单会话实测 0.3–1.1 秒，用户感知是"转一下"。
+    func ensureUserInputsBackfilled() async {
+        guard let store, let layer = messageLayer,
+              let scope = sessionScope, let summary = session
+        else { return }
+        guard await userInputsSynced() == false else { return }
+        guard !isBackfillingUserInputs else { return }
+        isBackfillingUserInputs = true
+        defer { isBackfillingUserInputs = false }
+        let supported = store.supports(LinkHandshake.Capability.historyRoleFilter)
+        await layer.backfillUserInput(
+            scope: scope, sessionId: summary.sessionId, lastSeq: summary.asOfSeq,
+            roleFilterSupported: supported)
+    }
+
     /// 记录正文：data.text 优先，blocks 拼接兜底（与 MessageStore.snippet 同一约定）。
     /// 真实 user/message 的正文在 `data.content[]`（blocks 形态）——读错键会让
     /// 本地列表整列丢光只剩 live 尾巴的几条（T036 慢闸抓出）。

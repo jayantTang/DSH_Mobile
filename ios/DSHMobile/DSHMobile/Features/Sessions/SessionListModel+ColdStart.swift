@@ -31,6 +31,9 @@ extension SessionListModel {
     /// T011：按列表顺序为前 ~10 个会话排预取瀑布（最新页 [newestSeq-49, newestSeq]，
     /// 并发 3，低优先级后台任务）。链接未建立、磁盘层不可用都整体跳过——
     /// 预取不许报错刷日志；同一台电脑一次启动只排一次。
+    /// 冷启动后台预热覆盖多少个会话（与最新页预取同一批：首屏可见的十来个）。
+    static let warmupSessions = 10
+
     func scheduleColdStartPrefetch() {
         guard let scope = store?.scopeId, store?.client != nil,
               lastPrefetchScope != scope,
@@ -70,8 +73,12 @@ extension SessionListModel {
             // T033：预取瀑布之后灌「我问过的」全量库（优先级天然低于最新页预取——
             // 串行排在它后面；任务本身是 .utility）。逐会话串行，内部有 24h
             // 去重与 lastSeq 增量判定，重复触发是廉价的。
+            // (b) 只预热**首屏可见的那一批**（与上面最新页预取同一批），不再遍历全部会话：
+            // 重装后账本为空时"遍历全部"意味着 437 个会话一路扫下去。剩下的会话由面板按需灌
+            // （`ChatModel.ensureUserInputsBackfilled`），用户点开哪一个就补哪一个。
             await layer.backfillUserInputs(
-                scope: scope, summaries: ordered, roleFilterSupported: roleFilter)
+                scope: scope, summaries: Array(ordered.prefix(Self.warmupSessions)),
+                roleFilterSupported: roleFilter)
         }
     }
 }

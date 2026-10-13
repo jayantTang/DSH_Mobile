@@ -202,6 +202,9 @@ final class ChatModel {
     /// 会话 id 本来就可能撞（fork/clone），那就是把 A 的记录当成 B 的显示。
     private(set) var sessionScope: String?
 
+    /// 「我问过的」按需灌库是否正在进行（面板切到该筛选时会触发一次，见 `+UserInputs`）。
+    var isBackfillingUserInputs = false
+
     /// 这次打开用的同步计划（快照到达时还要用它判断合并还是重来）。
     private var syncPlanRef = TranscriptSyncPlan.plan(localThrough: nil, hostCursor: 0)
 
