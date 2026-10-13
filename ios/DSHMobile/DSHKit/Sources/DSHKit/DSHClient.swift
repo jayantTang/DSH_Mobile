@@ -7,10 +7,15 @@ import Foundation
 /// The method surface mirrors DSH's own endpoint names one-to-one, so the DSH
 /// protocol reference doubles as the documentation for this type.
 public struct DSHClient: Sendable {
-    public let carrier: any DSHCarrier
+    /// 连接器在 `_link/hello` 里声明的能力（连接时才知道，缺省为空表示"还不知道"）。
+    public static let sessionDigestCapability = "session-digest"
 
-    public init(carrier: any DSHCarrier) {
+    public let carrier: any DSHCarrier
+    public let capabilities: Set<String>
+
+    public init(carrier: any DSHCarrier, capabilities: Set<String> = []) {
         self.carrier = carrier
+        self.capabilities = capabilities
     }
 
     // MARK: - Sessions
@@ -25,11 +30,30 @@ public struct DSHClient: Sendable {
     /// not offer a cursor parameter: an unused knob is an invitation to build
     /// pagination that silently pages nothing.
     public func sessions() async throws -> SessionListValue {
-        try await carrier.unary(
+        // 连接器会答 `_link/sessionDigest` 时走精简版：同一份数据，少 66% 字节，压缩后少 93%
+        // （spec 021）。**失败必须回退**：能力是握手时声明的，但一次调用失败不该让列表打不开，
+        // 老连接器、半路升级、压缩格式对不上都要能落到 `session/list` 上。
+        if capabilities.contains(Self.sessionDigestCapability) {
+            if let digest = try? await sessionDigest() { return digest }
+        }
+        return try await carrier.unary(
             method: "session/list",
             args: UnderscoreRequestArgs(_request: SessionListRequest()),
             as: SessionListValue.self
         )
+    }
+
+    /// 精简版会话列表（`_link/sessionDigest`，spec 021）。
+    ///
+    /// 调用方一般不需要直接用它：`sessions()` 会按能力自动选通道。留成公开方法是给
+    /// 诊断/测试一条"强制走精简版"的路。
+    public func sessionDigest() async throws -> SessionListValue {
+        let envelope = try await carrier.unary(
+            method: "_link/sessionDigest",
+            args: SessionDigestRequest(_request: SessionListRequest(), encoding: "deflate-raw"),
+            as: SessionDigestEnvelope.self
+        )
+        return try decodeSessionDigest(envelope)
     }
 
     /// Reads one page of backwards history.
@@ -520,6 +544,15 @@ struct SessionListRequest: Encodable, Sendable {
     init(cursor: String? = nil) {
         self.cursor = cursor
     }
+}
+
+/// `_link/sessionDigest` 的 args（spec 021）。
+///
+/// `_request` 与 `session/list` 同形（宿主目前忽略其中的选择器）；
+/// `encoding` 只认 `deflate-raw`，连接器对别的值按不压缩处理，不会报错。
+struct SessionDigestRequest: Encodable, Sendable {
+    var _request: SessionListRequest
+    var encoding: String
 }
 
 public struct SessionCreateRequest: Encodable, Sendable {

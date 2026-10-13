@@ -25,6 +25,11 @@
   `session/list` 727,381 B → `_link/sessionDigest` **244,745 B（33.6%）** → 再加 deflate **50,319 B（6.9%）**。
   对比脚本：`node scripts/dev/probe-session-compare.mjs`（配对 `DSH-` 调试设备，跑完撤销）。
 - 兼容：`session/list` 逐字段不变；中转不校验方法名，所以本方法不需要中转配合，也不影响旧版本。
+- **App 侧同步切换（P2）**：`_link/hello` 声明了 `session-digest` 就走精简版，**任何失败都回退**到
+  `session/list`（老连接器、半路升级、编码不认识、畸形响应都不许让列表打不开）；
+  连接后的第一次拉取（探针）也乐观走精简版，否则每次冷启动都会先拉一次 731 KB。
+  iOS 侧解压用 `Compression` 的 `compression_decode_buffer` 一行（原始 DEFLATE），`rawBytes` 给出长度。
+  **实测（仿真器经真实中转）**：列表 `731,017 B → 51,258 B`，冷启动到首屏 926 ms。
 
 ## 连接器 0.6.3 / 中转 / App 1.0（开发版）— 2026-10-13（第二次现场诊断之后）
 

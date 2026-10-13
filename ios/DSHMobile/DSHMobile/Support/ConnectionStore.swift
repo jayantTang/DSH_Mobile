@@ -192,6 +192,13 @@ public final class ConnectionStore {
     /// 前后台切换（spec 020 的 FR-009）。用来把"App 被系统挂起"与"拨号卡住"分开。
     public enum AppScene: String, Sendable { case foreground, background }
 
+    /// 探针这一次列表调用带的能力。
+    ///
+    /// **乐观地先按"对方支持精简版"试**：探针跑在握手之前，此时还不知道能力；而探针恰好是
+    /// 冷启动里最大的一次列表拉取（731 KB → 50 KB）。老连接器上这次调用会返回
+    /// `status=unsupported`，`sessions()` 捕获后自动回退到 `session/list`，代价只是一次几百毫秒的往返。
+    private var probeCapabilities: Set<String> { [DSHClient.sessionDigestCapability] }
+
     /// 记一条前后台切换。**不依赖 carrier**：链路还没建起来时更要记——
     /// "App 回到前台但一直没拨号"正是最需要看见的现场（记录走 store 自己那份流水）。
     public func noteScene(_ scene: AppScene, cold: Bool = false) async {
@@ -445,7 +452,7 @@ public final class ConnectionStore {
             do {
                 // A stale cookie is the common case after a DSH restart; the
                 // carrier reports it so the UI can ask for a fresh token.
-                let probe = try await DSHClient(carrier: carrier).sessions()
+                let probe = try await DSHClient(carrier: carrier, capabilities: probeCapabilities).sessions()
                 await install(carrier: carrier, profile: profile, sampleCount: probe.items.count)
             } catch {
                 await carrier.close()
@@ -464,7 +471,7 @@ public final class ConnectionStore {
             let link = LinkCarrier(configuration: configuration, diagnostics: linkDiagnostics)
             await link.connect()
             do {
-                let probe = try await DSHClient(carrier: link).sessions()
+                let probe = try await DSHClient(carrier: link, capabilities: probeCapabilities).sessions()
                 await install(carrier: link, profile: profile, sampleCount: probe.items.count,
                               dialStartedAt: dialStartedAt)
                 observeStatus(of: link)
@@ -504,7 +511,9 @@ public final class ConnectionStore {
                          dialStartedAt: Date? = nil) async {
         let previous = self.carrier
         self.carrier = carrier
-        let client = DSHClient(carrier: carrier)
+        // 带着**上一次**握手得到的能力建 client：同一台电脑的能力不会变，于是这次连接里
+        // 最早的几次列表调用也能走精简版（若连接器换了/降级，`sessions()` 会回退到 `session/list`）。
+        let client = DSHClient(carrier: carrier, capabilities: capabilities)
         self.client = client
         self.activeProfile = profile
         self.hostHome = profile.hostHome
@@ -523,6 +532,9 @@ public final class ConnectionStore {
             await link.diagnosticsNote("app.hello", since: dialStartedAt)
         }
         capabilities = Set(handshake?.capabilities ?? [])
+        // 用刚拿到的能力重建 client（DSHClient 是值类型，换一份即可，carrier 不变）：
+        // 从这一刻起的列表调用都会走精简版。
+        self.client = DSHClient(carrier: carrier, capabilities: capabilities)
         // Recorded for the out-of-date notice only; never used to refuse the link.
         connectorVersion = handshake?.serverVersion
         state = .connected(hostHome: profile.hostHome)
