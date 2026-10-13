@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url'
 
 import { buildInvocation, foreignRecipients, main, renderAgentPlist, reportPath,
   resolveSshTarget } from './feedback.mjs'
-import { escapeHtml, renderReport } from './feedback-report.mjs'
+import { escapeHtml, humanModel, renderReport } from './feedback-report.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const ROOT = join(HERE, '..', '..')
@@ -341,9 +341,9 @@ test('手机上不写死宽表：长清单有上限，且提示"前几条"', () 
     usedAt: GENERATED_AT, inviteNote: '试用', accountId: `acc_${i}`, accountName: `用户 ${i}`,
     agentId: `agt_${i}`, agentName: 'MacBook', devices: 1 }))
   const html = renderReport(many)
-  // 每一类清单只渲染前几条：手机 8、登记 6——正文长度因此不随库里的历史行数增长。
-  assert.ok(html.includes('iPhone 7') && !html.includes('iPhone 39'), '手机清单只列前 8 台')
-  assert.ok(html.includes('最近在线前 8 台'), '清单要说明只列了前几条')
+  // 每一类清单只渲染前几条：手机 6、登记 6——正文长度因此不随库里的历史行数增长。
+  assert.ok(html.includes('iPhone 5') && !html.includes('iPhone 39'), '手机清单只列前 6 台')
+  assert.ok(html.includes('最近在线前 6 台'), '清单要说明只列了前几条')
   assert.ok(html.includes('用户 5') && !html.includes('用户 39'), '登记清单只列前 6 条')
   assert.ok(html.includes('最近 6 条'), '登记清单同理')
 })
@@ -361,6 +361,71 @@ test('空数据也能渲染出可看的整页', () => {
 test('escapeHtml 覆盖五个字符', () => {
   assert.equal(escapeHtml(`<a href="x" & 'y'>`), '&lt;a href=&quot;x&quot; &amp; &#39;y&#39;&gt;')
   assert.equal(escapeHtml(null), '')
+})
+
+test('「关注」板块把待办提到整页最上面，阈值越线才报警', () => {
+  const html = renderReport(fixture())
+  // fixture 的形状：2 条待回复、邀请码剩 9（≤10）——两条 warn 必须在关注区里。
+  const focus = html.indexOf('要处理的事')
+  assert.ok(focus > -1 && focus < html.indexOf('今日</span>概览'), '关注区在今日板块之前')
+  assert.match(html, /反馈待回复 2 条，最早一条已等 1\.0 h/)
+  assert.match(html, /邀请码只剩 9 张（21\/30 已用）/)
+  assert.match(html, /2 件待办/)
+  // d7 = 40% 不越线、推送全注册、没有背离：这三件不该出现。
+  assert.ok(!html.includes('7 日留存 40%（n=10）低于'), '没越线的指标不报警')
+  assert.ok(!html.includes('没注册推送'), '推送全注册不报警')
+  // 没事的时候给一句明确的"没事"，不是一片空白。
+  const quiet = fixture()
+  quiet.feedback.open = 0
+  quiet.invites.remaining = 20
+  quiet.usage.perDay = [{ day: '2026-10-11', egressBytes: 2 * 1024 * 1024, connections: 9, devices: 2 },
+    { day: '2026-10-12', egressBytes: 2 * 1024 * 1024, connections: 9, devices: 2 }]
+  assert.match(renderReport(quiet), /没有待回复反馈，余量与指标都在常态区间内/)
+})
+
+test('连接翻倍而出口反降会被标注为背离', () => {
+  const data = fixture()
+  data.today.usage.connections = 2_800
+  data.today.usage.egressBytes = 700 * 1024
+  data.usage.perDay[1].connections = 2_800
+  data.usage.perDay[1].egressBytes = 700 * 1024
+  data.usage.perDay[0].connections = 900
+  const html = renderReport(data)
+  assert.match(html, /连接 2,800 次是昨日的 3\.1 倍，出口却降 32%/)
+  assert.match(html, /核对重连逻辑/)
+})
+
+test('机型代码转人话，查不到的原样保留', () => {
+  assert.equal(humanModel('iPhone15,4'), 'iPhone 15')
+  assert.equal(humanModel('iPhone11,8'), 'iPhone XR')
+  assert.equal(humanModel('iPhone18,3'), 'iPhone 17')
+  assert.equal(humanModel('iPhone99,9'), 'iPhone99,9', '新型号别乱猜')
+  assert.equal(humanModel('iPhone 17 Pro'), 'iPhone 17 Pro', '已经是人话的原样通过')
+  const data = fixture()
+  data.devices.list[0].model = 'iPhone15,4'
+  assert.ok(renderReport(data).includes('iPhone 15'))
+})
+
+test('邀请码登记去重：今日板块列过的账号不在窗口清单重复出现', () => {
+  const data = fixture()
+  // 同一个账号既在今天登记、又在窗口登记清单里。
+  data.invites.enrollments[0].accountId = 'acc_b'
+  data.invites.enrollments[0].accountName = 'Sam'
+  const html = renderReport(data)
+  // 「Sam 的 MacBook」里也有 Sam 这个名字，所以数的是行标题那一处。
+  assert.equal((html.match(/<span class="t">Sam<\/span>/g) ?? []).length, 1,
+    '同一账号只在今日板块出现一次')
+  assert.match(html, /已扣除今日列过的/)
+  assert.match(html, /窗口内更早的登记已列在上方今日板块/, '扣完后给明确交代，不是空白')
+})
+
+test('活跃时段接近一整天时写「全天有连接」', () => {
+  const data = completedDayFixture()
+  const dayEnd = data.today.dayStartAt + 86_400_000 - 1
+  data.today.usage.firstSeenAt = data.today.dayStartAt + 60_000
+  data.today.usage.lastSeenAt = dayEnd
+  assert.match(renderReport(data), /全天有连接/)
+  assert.ok(!renderReport(data).includes('活跃时段 00:01–23:59'), '不再写占地方的整点跨度')
 })
 
 test('LaunchAgent 模板每天 00:02 跑、带 --full-day 与日志路径', () => {

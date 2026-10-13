@@ -1,11 +1,14 @@
 #!/usr/bin/env node
 // 把 `admin.py ops-report --days N` 的 JSON 渲染成一页自带图表的 HTML（014 运营日报）。
 //
-// 版面分两段，各回答一个问题：
-//   【今日】  今天有没有事——出口流量（含与昨日、前 7 日均值的对比）、活跃手机与时段、
-//             今日电脑/手机/反馈/登记（只列前几条）。
-//   【最近 N 天】趋势与谁在用——总量与日均、每日出口折线与新增手机柱状、电脑排名、
-//             手机与反馈清单、邀请码的账。
+// 版面分三块，各回答一个问题（2026-10-13 运营评审后加了第一块）：
+//   【关注】    今天要处理什么——待回复反馈、邀请码余量、留存与推送注册率越线、
+//               连接/流量背离、单日波动、新增突增、版本分裂。数据没问题就是一句
+//               「没有要处理的事」，不再让 owner 从满页数字里自己挖。
+//   【今日】    今天有没有事——出口流量（含与昨日、前 7 日均值的对比）、活跃手机与时段、
+//               今日电脑/手机/反馈/登记（只列前几条）。
+//   【最近 N 天】趋势与谁在用——总量与日均、每日出口折线与新增手机柱状、转化漏斗、
+//               电脑排名、手机与反馈清单、邀请码的账。
 //
 // 单位只用两个词（2026-10-12 owner 要求）：**手机** = 中转上的配对设备（iOS App，一台手机
 // 一行）；**电脑** = 中转上的账号（装了连接器、用邀请码登记的那台机器，一台电脑一个账号）。
@@ -34,7 +37,50 @@ const WEEKDAYS = ['周日', '周一', '周二', '周三', '周四', '周五', '�
 
 /// 一张清单最多列几条：手机上要一屏能扫完，剩下的用「共 N 条」交代。
 const LIMIT = { todayAccounts: 4, todayBuilds: 3, todayDevices: 4, todayFeedback: 4, todayEnrolls: 3,
-  accounts: 6, devices: 8, feedback: 6, enrolls: 6, recentDays: 7 }
+  accounts: 6, devices: 6, feedback: 6, enrolls: 6, recentDays: 7 }
+
+/// 「关注」板块的报警阈值（2026-10-13 运营评审定的第一版，按周报复盘再调）。
+/// 只有 warn 级要求 owner 动作；info 级是"值得看一眼"的异常标注。
+const THRESHOLDS = {
+  inviteLow: 10,        // 邀请码余量 ≤ 这个数提醒补铸
+  d7Low: 0.2,           // 7 日留存警戒线
+  d7MinCohort: 10,      // 留存样本太小不报警（百分比没意义）
+  pushLow: 0.5,         // 推送注册率低于一半要提醒（「待你回应」到不了）
+  pushMinDevices: 5,    // 手机太少不算率
+  connSpike: 2,         // 连接翻倍以上而出口反降 = 背离
+  egressDip: 0.2,
+  daySwing: 0.5,        // 单日出口偏离 7 日均值超 ±50%
+  newSpike: 2,          // 新增手机 ≥ 7 日均值的两倍
+  newSpikeMin: 3,       // 且绝对量至少 3 台（1→2 台不算新闻）
+  versionSplit: 3,      // 同时在用 App 版本数
+}
+
+/// 机型代码转人话：`iPhone15,4` → `iPhone 15`。只放出现过的主流型号，
+/// 查不到的（新型号、非 iPhone）原样显示，宁保守不乱猜。
+const IPHONE_MODELS = {
+  'iPhone10,1': '8', 'iPhone10,4': '8', 'iPhone10,2': '8 Plus', 'iPhone10,5': '8 Plus',
+  'iPhone10,3': 'X', 'iPhone10,6': 'X',
+  'iPhone11,2': 'XS', 'iPhone11,4': 'XS Max', 'iPhone11,6': 'XS Max', 'iPhone11,8': 'XR',
+  'iPhone12,1': '11', 'iPhone12,3': '11 Pro', 'iPhone12,5': '11 Pro Max',
+  'iPhone12,8': 'SE 2',
+  'iPhone13,1': '12 mini', 'iPhone13,2': '12', 'iPhone13,3': '12 Pro', 'iPhone13,4': '12 Pro Max',
+  'iPhone14,2': '13 Pro', 'iPhone14,3': '13 Pro Max', 'iPhone14,4': '13 mini',
+  'iPhone14,5': '13', 'iPhone14,6': 'SE 3',
+  'iPhone14,7': '14', 'iPhone14,8': '14 Plus',
+  'iPhone15,2': '14 Pro', 'iPhone15,3': '14 Pro Max',
+  'iPhone15,4': '15', 'iPhone15,5': '15 Plus',
+  'iPhone16,1': '15 Pro', 'iPhone16,2': '15 Pro Max',
+  'iPhone17,1': '16 Pro', 'iPhone17,2': '16 Pro Max', 'iPhone17,3': '16',
+  'iPhone17,4': '16 Plus', 'iPhone17,5': '16e',
+  'iPhone18,1': '17 Pro', 'iPhone18,2': '17 Pro Max', 'iPhone18,3': '17', 'iPhone18,4': 'Air',
+}
+
+/** 机型代码转人话；查不到的原样返回（名字已经是人话的也原样通过）。 */
+export function humanModel(raw) {
+  const value = String(raw ?? '')
+  const name = IPHONE_MODELS[value]
+  return name ? `iPhone ${name}` : value
+}
 
 const STYLE = `
 * { box-sizing: border-box; }
@@ -114,6 +160,26 @@ svg text.peakLabel { fill: ${COLORS.peak}; font-weight: 600; }
 p.empty { margin: 0; padding: 11px 12px; border: 1px dashed #d7dde5; border-radius: 11px;
   background: #fff; color: #94a3b8; font-size: 12.5px; }
 p.foot { margin: 18px 2px 0; color: #94a3b8; font-size: 11px; line-height: 1.6; }
+/* 「关注」板块：warn 红边 = 要 owner 动作，info 蓝边 = 值得看一眼。 */
+h2 .tag.focus { background: #7c3aed; }
+ul.alerts { margin: 0; padding: 0; list-style: none; }
+ul.alerts li.alert { display: flex; align-items: baseline; gap: 8px; margin-top: 6px;
+  padding: 9px 11px; background: #fff; border: 1px solid #e8ecf1; border-left-width: 3px;
+  border-radius: 11px; }
+ul.alerts li.alert:first-child { margin-top: 0; }
+ul.alerts li.alert.warn { border-left-color: ${COLORS.peak}; }
+ul.alerts li.alert.info { border-left-color: ${COLORS.line}; }
+ul.alerts .at { font-size: 12.5px; color: #334155; }
+/* 转化漏斗：登记 → 激活 → 次日 → 7 日。各段是各自的队列率，棒长只表达率本身。 */
+.funnel { margin-top: 10px; padding: 10px 12px 12px; background: #fff;
+  border: 1px solid #e8ecf1; border-radius: 11px; }
+.frow { display: flex; align-items: center; gap: 8px; margin-top: 7px; font-size: 12.5px; }
+.frow:first-child { margin-top: 0; }
+.frow .fk { flex: 0 0 74px; color: #64748b; }
+.frow .track { flex: 1 1 auto; height: 8px; border-radius: 999px; background: #eff2f6; }
+.frow .track i { display: block; height: 100%; border-radius: 999px; }
+.frow .fv { flex: 0 0 auto; min-width: 96px; text-align: right; color: #334155;
+  font-variant-numeric: tabular-nums; }
 @media (min-width: 600px) {
   .kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .hero .v { font-size: 34px; }
@@ -413,8 +479,112 @@ export function normalize(data) {
 
 function sourceText(source) {
   if (!source || typeof source !== 'object') return '匿名'
-  const kind = source.kind === 'device' ? text(source.deviceModel, '已配对手机') : '匿名'
+  const kind = source.kind === 'device' ? text(humanModel(source.deviceModel), '已配对手机') : '匿名'
   return [kind, source.appVersion].filter(Boolean).join(' · ')
+}
+
+/** 「关注」板块的报警与异常标注。返回 [{level: 'warn'|'info', text}]，按重要度排序。
+    warn = 要 owner 动作；info = 数据背离/波动，值得看一眼但不用马上做什么。 */
+function attentionItems(report, { completed = false, generatedAt = 0 } = {}) {
+  const items = []
+  const word = completed ? '全天' : '今天'
+  const push = (level, text_) => items.push({ level, text: text_ })
+
+  // 待回复反馈：全窗口的开口线程（不止今天新增的），这是日报里唯一有时效的事。
+  const open = num(report.feedback.open)
+  if (open > 0) {
+    const opened = (report.feedback.threads ?? [])
+      .filter((thread) => thread.status === 'open' && num(thread.createdAt) > 0)
+    const oldest = opened.length ? Math.min(...opened.map((thread) => num(thread.createdAt))) : 0
+    const waited = oldest && generatedAt && generatedAt > oldest
+      ? `${((generatedAt - oldest) / 3_600_000).toFixed(1)} h` : ''
+    push('warn', `反馈待回复 ${formatInt(open)} 条${waited ? `，最早一条已等 ${waited}` : ''}`)
+  }
+  // 邀请码余量：码发完了新用户进不来，剩 10 张以内就提醒。
+  if (num(report.invites.minted) > 0 && num(report.invites.remaining) <= THRESHOLDS.inviteLow) {
+    push('warn', `邀请码只剩 ${formatInt(report.invites.remaining)} 张`
+      + `（${formatInt(report.invites.used)}/${formatInt(report.invites.minted)} 已用），该补铸一批`)
+  }
+  // 7 日留存越线：样本够才判。
+  const d7 = report.retention.d7
+  if (d7 && Number.isFinite(Number(d7.rate)) && num(d7.cohort) >= THRESHOLDS.d7MinCohort
+    && Number(d7.rate) < THRESHOLDS.d7Low) {
+    push('warn', `7 日留存 ${percent(d7.rate)}（n=${formatInt(d7.cohort)}）低于 `
+      + `${Math.round(THRESHOLDS.d7Low * 100)}% 警戒线，该查首日体验`)
+  }
+  // 推送注册率：没注册的手机收不到「待你回应」，直接影响活跃。
+  const phones = (report.devices.list ?? []).filter((row) => !row.revoked)
+  if (phones.length >= THRESHOLDS.pushMinDevices) {
+    const registered = phones.filter((row) => row.push?.registered).length
+    const rate = registered / phones.length
+    if (rate < THRESHOLDS.pushLow) {
+      push('warn', `${formatInt(phones.length - registered)}/${formatInt(phones.length)} 台手机没注册推送`
+        + `（${Math.round((1 - rate) * 100)}%），「待你回应」提醒到不了这些手机`)
+    }
+  }
+  // 今日/全天的量：与今日板块同一套取数（覆盖日取 today.usage，否则取序列末行）。
+  const series = report.usage.perDay ?? []
+  const todayEntry = report.today.day ? report.today.usage : last(series)
+  const egress = num(todayEntry?.egressBytes)
+  const connections = num(todayEntry?.connections)
+  const yesterday = series.length >= 2 ? series[series.length - 2] : null
+  const baseline = series.slice(-8, -1)
+  const average = baseline.length
+    ? baseline.reduce((sum, entry) => sum + num(entry.egressBytes), 0) / baseline.length : 0
+  // 连接/流量背离：连接翻倍而出口反降，多半是心跳/短连接激增或重连逻辑变了。
+  if (yesterday && num(yesterday.connections) > 0 && num(yesterday.egressBytes) > 0) {
+    const connRatio = connections / num(yesterday.connections)
+    const egressDiff = (egress - num(yesterday.egressBytes)) / num(yesterday.egressBytes)
+    if (connRatio >= THRESHOLDS.connSpike && egressDiff <= -THRESHOLDS.egressDip) {
+      push('info', `${word}连接 ${formatInt(connections)} 次是${completed ? '前一日' : '昨日'}的 ${connRatio.toFixed(1)} 倍，`
+        + `出口却降 ${Math.abs(egressDiff * 100).toFixed(0)}%：单次连接负载显著变小，`
+        + '若刚发过版请核对重连逻辑')
+    }
+  }
+  // 出口单日偏离 7 日均值超过阈值。
+  if (average > 0 && egress > 0) {
+    const diff = (egress - average) / average
+    if (Math.abs(diff) >= THRESHOLDS.daySwing) {
+      push('info', `${word}出口较近 7 日均值${diff > 0 ? '高' : '低'} ${Math.abs(diff * 100).toFixed(0)}%，`
+        + `偏离超过 ${Math.round(THRESHOLDS.daySwing * 100)}%`)
+    }
+  }
+  // 新增手机突增：看是不是传播或异常注册。
+  const perDay = (report.devices.newPerDay ?? []).slice(-7)
+  const newAverage = perDay.length ? perDay.reduce((sum, entry) => sum + num(entry.count), 0) / perDay.length : 0
+  const todayNew = num(report.today.devices.new)
+  if (newAverage > 0 && todayNew >= THRESHOLDS.newSpikeMin && todayNew >= THRESHOLDS.newSpike * newAverage) {
+    push('info', `${word}新增手机 ${formatInt(todayNew)} 台，是近 7 日均值的 `
+      + `${(todayNew / newAverage).toFixed(1)} 倍：留意传播或异常注册`)
+  }
+  // 版本分裂：同时在用版本太多说明升级停滞，最新版占比一并给出。
+  const builds = report.today.usage.builds ?? []
+  if (builds.length >= THRESHOLDS.versionSplit) {
+    const entries = builds.map((entry) => ({ ...entry, v: shortBuild(entry.build) })).filter((entry) => entry.v)
+    if (entries.length) {
+      const newest = entries.reduce((best, entry) => (String(entry.v) > String(best.v) ? entry : best), entries[0])
+      push('info', `${word}有 ${formatInt(builds.length)} 个 App 版本同时在用，`
+        + `最新版 ${newest.v} 只有 ${formatInt(newest.devices)} 台手机`)
+    }
+  }
+  return items
+}
+
+/** 「关注」板块：整页最上面。没有事项时给一句明确的"没事"，不留空。 */
+function attentionSection(items) {
+  if (!items.length) {
+    return section('关注', '要处理的事', '',
+      '<p class="empty">没有待回复反馈，余量与指标都在常态区间内。</p>', 'focus')
+  }
+  const warns = items.filter((item) => item.level === 'warn').length
+  const rows = items.map((item) => {
+    const badge = item.level === 'warn'
+      ? '<span class="chip warn">待办</span>' : '<span class="chip up">提示</span>'
+    return `<li class="alert ${item.level}">${badge}<span class="at">${escapeHtml(item.text)}</span></li>`
+  }).join('')
+  return section('关注', '要处理的事',
+    warns ? `${warns} 件待办 · ${items.length - warns} 条提示` : `${items.length} 条提示`,
+    `<ul class="alerts">${rows}</ul>`, 'focus')
 }
 
 const statusChip = (status) => `<span class="chip ${escapeHtml(status)}">${escapeHtml(STATUS_LABEL[status] ?? status)}</span>`
@@ -436,7 +606,7 @@ function todayDeviceRows(report, dayEnd = 0) {
   const label = accountLabeler(list, (row) => text(row.accountName, row.accountId))
   return list.map((row) => {
     const name = text(row.name, row.deviceId)
-    const model = text(row.model, '未知机型')
+    const model = humanModel(text(row.model, '未知机型'))
     const window = [row.firstSeenAt, row.lastSeenAt].filter(Boolean)
       .map((ms) => clock(clampTo(ms, dayEnd)))
     const span = window.length === 2 && window[0] !== window[1] ? `${window[0]}–${window[1]}` : window[0] ?? ''
@@ -488,14 +658,18 @@ function todaySection(report, generatedAt, days, completed = false) {
   const feedback = report.today.feedback
   const activeWindow = [usage.firstSeenAt, usage.lastSeenAt].filter(Boolean)
     .map((ms) => clock(clampTo(ms, dayEnd)))
-  const activeSpan = activeWindow.length === 2
-    ? (activeWindow[0] === activeWindow[1] ? activeWindow[0] : `${activeWindow[0]}–${activeWindow[1]}`)
-    : (activeWindow[0] ?? '—')
+  // 跨度接近一整天时写「全天有连接」：「00:00–23:59」是占地方没信息的废话。
+  const fullSpan = usage.firstSeenAt && usage.lastSeenAt
+    && (clampTo(usage.lastSeenAt, dayEnd) - clampTo(usage.firstSeenAt, dayEnd)) >= 23.5 * 3_600_000
+  const activeSpan = fullSpan ? '全天有连接'
+    : activeWindow.length === 2
+      ? (activeWindow[0] === activeWindow[1] ? activeWindow[0] : `${activeWindow[0]}–${activeWindow[1]}`)
+      : (activeWindow[0] ?? '—')
   const builds = (usage.builds ?? []).map((entry) => entry.build).filter(Boolean)
   const meta = [
     `连接 ${formatInt(connections)} 次`,
     `活跃手机 ${formatInt(devices.active)} 台`,
-    `活跃时段 ${activeSpan}`,
+    fullSpan ? '全天有连接' : `活跃时段 ${activeSpan}`,
     builds.length ? `在用 App 版本 ${builds.length} 个` : '',
   ].filter(Boolean).join(' · ')
 
@@ -516,7 +690,7 @@ function todaySection(report, generatedAt, days, completed = false) {
 
   const counts = kpis([
     [`${word}连接`, formatInt(connections), num(yesterday?.connections) ? `${previous} ${formatInt(yesterday.connections)}` : ''],
-    [`${word}活跃手机`, formatInt(devices.active), `在线 ${formatInt(devices.live)} 台`],
+    [`${word}活跃手机`, formatInt(devices.active), `在册 ${formatInt(devices.live)} 台`],
     [`${word}新增手机`, formatInt(devices.new), devices.revoked ? `撤销 ${formatInt(devices.revoked)}` : ''],
     [`${word}新增反馈`, formatInt(feedback.new), feedback.open ? `待回复 ${formatInt(feedback.open)}` : '全部已回复'],
     [`${word}电脑登记`, formatInt(report.today.invites.used), `邀请码剩 ${formatInt(report.invites.remaining)}`],
@@ -563,23 +737,44 @@ const percent = (ratio) => (ratio === null || ratio === undefined || !Number.isF
 const cohortNote = (entry) => (entry && num(entry.cohort) > 0 ? `n=${formatInt(entry.cohort)}` : '样本不足')
 
 /** 留存板块：只算用邀请码登记的外部账号（页面上写「电脑」，口径与 maintainers 里的活跃/新增一致）。
-    `word` 是覆盖日的叫法（「今日」/「全天」），跟随日报的时间锚点。 */
+    `word` 是覆盖日的叫法（「今日」/「全天」），跟随日报的时间锚点。
+    布局：活跃量三张卡片 + 登记→激活→次日→7 日的漏斗 + 分周队列。
+    注意各段是各自的队列率（服务端按各自 cohort 算），棒长只表达率本身，
+    不做"占上一段的百分之几"的连环换算——那样是把不同分母的率硬接在一起。 */
 function retentionBlock(retention, word = '今日') {
   const users = retention.users ?? {}
   const cards = kpis([
     [`${word}活跃电脑`, formatInt(users.dau), `外部电脑共 ${formatInt(users.external)}`],
-    ['近 7 天活跃', formatInt(users.wau), `近 30 天 ${formatInt(users.mau)}`],
-    ['近 30 天活跃', formatInt(users.mau), `7 日粘性 ${percent(users.stickiness)}`],
-    ['次日留存', percent(retention.d1?.rate), cohortNote(retention.d1)],
-    ['7 日留存', percent(retention.d7?.rate), cohortNote(retention.d7)],
-    ['登记激活', percent(retention.activation?.rate), cohortNote(retention.activation)],
+    ['近 7 天活跃', formatInt(users.wau), `7 日粘性 ${percent(users.stickiness)}`],
+    ['近 30 天活跃', formatInt(users.mau), ''],
   ])
+  const funnelRow = (label, entry, { warnBelow = null } = {}) => {
+    const ratio = entry?.rate
+    if (ratio === null || ratio === undefined || !Number.isFinite(Number(ratio))) {
+      return `<div class="frow"><span class="fk">${escapeHtml(label)}</span>`
+        + '<span class="track"></span><span class="fv">样本不足</span></div>'
+    }
+    // 越过警戒线的段标红，与「关注」板块同一阈值。
+    const low = warnBelow !== null && Number(ratio) < warnBelow
+    return `<div class="frow"><span class="fk">${escapeHtml(label)}</span>`
+      + `<span class="track"><i style="width:${(Number(ratio) * 100).toFixed(1)}%;`
+      + `background:${low ? COLORS.peak : COLORS.line}"></i></span>`
+      + `<span class="fv">${percent(ratio)} · ${cohortNote(entry)}</span></div>`
+  }
+  const funnel = '<div class="funnel">'
+    + `<div class="frow"><span class="fk">登记</span><span class="track">`
+    + `<i style="width:100%;background:#cbd5e1"></i></span>`
+    + `<span class="fv">${formatInt(users.external)} 台电脑</span></div>`
+    + funnelRow('登记激活', retention.activation)
+    + funnelRow('次日留存', retention.d1)
+    + funnelRow('7 日留存', retention.d7, { warnBelow: THRESHOLDS.d7Low })
+    + '</div>'
   const weeks = table([
     { label: '队列周', text: (row) => text(row.week) },
     { label: '新增', text: (row) => formatInt(row.size), num: true },
     { label: '次周留存', text: (row) => percent(row.rate), num: true },
-  ], (retention.weeks ?? []).slice(-4), '还没有过完一整周的队列')
-  return cards + weeks
+  ], (retention.weeks ?? []).slice(-8), '还没有过完一整周的队列')
+  return cards + funnel + weeks
 }
 
 /** 最近 N 天板块：总量与趋势 + 排名与清单。`completed` 见 `renderReport`。 */
@@ -636,7 +831,7 @@ function rangeSection(report, days, completed = false) {
   const deviceLabel = accountLabeler(listedDevices, (row) => text(row.accountName, row.accountId))
   const deviceRows = listedDevices.map((row) => {
     const name = text(row.name, row.deviceId)
-    const model = text(row.model, '未知机型')
+    const model = humanModel(text(row.model, '未知机型'))
     return {
       title: escapeHtml(clip(name)),
       tag: row.revoked ? '<span class="chip warn">已撤销</span>'
@@ -650,11 +845,19 @@ function rangeSection(report, days, completed = false) {
   const feedbackBlock = statusStack(feedback.open, feedback.replied)
     + chips([
       [`新增 ${formatInt(feedback.new)}`],
-      [`首次回复中位 ${formatHours(feedback.medianFirstReplyHours)}`],
+      // 窗口里一条已回复的都没有时，"中位 0.0 h"是误导，直接写 ——。
+      [`首次回复中位 ${num(feedback.replied) > 0 ? formatHours(feedback.medianFirstReplyHours) : '—'}`],
     ])
 
+  // 邀请码登记去重：今天板块已经按账号列过的，窗口清单里不再重复出现。
+  const todayEnrollIds = new Set((report.today.invites.enrollments ?? [])
+    .map((row) => row.accountId).filter(Boolean))
+  const earlierEnrolls = (report.invites.enrollments ?? []).filter((row) => !todayEnrollIds.has(row.accountId))
+  const enrollEmpty = (report.invites.enrollments ?? []).length
+    ? '窗口内更早的登记已列在上方今日板块' : '还没有人用邀请码登记'
+
   const inner = cards + charts
-    + subheading('留存', '外部电脑 · 活跃=当天有中转连接')
+    + subheading('转化与留存', '外部电脑 · 活跃=当天有中转连接')
     + retentionBlock(report.retention, word)
     + subheading('最近 7 天') + recent
     + subheading('电脑排名', `出口前 ${Math.min(LIMIT.accounts, rankedAccounts.length)} 名`) + accounts
@@ -663,8 +866,9 @@ function rangeSection(report, days, completed = false) {
       + (num(feedback.test) > 0 ? ` · 已剔除测试提交 ${formatInt(feedback.test)} 条` : ''))
     + feedbackBlock
     + rowList(feedbackRows(feedback.threads, LIMIT.feedback), '窗口内没有反馈')
-    + subheading('邀请码登记', `最近 ${Math.min(LIMIT.enrolls, report.invites.enrollments.length)} 条`)
-    + rowList(enrollmentRows(report.invites.enrollments, LIMIT.enrolls), '还没有人用邀请码登记')
+    + subheading('邀请码登记', `最近 ${Math.min(LIMIT.enrolls, earlierEnrolls.length)} 条`
+      + (todayEnrollIds.size ? ' · 已扣除今日列过的' : ''))
+    + rowList(enrollmentRows(earlierEnrolls, LIMIT.enrolls), enrollEmpty)
 
   return section(`最近 ${days} 天`, '趋势与明细',
     completed ? `本地日窗口（含 ${shortDay(report.today.day)}）` : '本地日窗口（含今日）',
@@ -684,6 +888,7 @@ export function renderReport(data, { now = Date.now() } = {}) {
   const pad = (value) => String(value).padStart(2, '0')
   const date = `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}`
   const body = [
+    attentionSection(attentionItems(report, { completed, generatedAt })),
     todaySection(report, generatedAt, days, completed),
     rangeSection(report, days, completed),
   ].join('\n')
