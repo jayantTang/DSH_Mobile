@@ -22,6 +22,8 @@ import { REPO_ROOT } from './matrix.mjs'
 const IMAGE = 'node:22-bookworm-slim'
 /// relay 单测要 Python 3.12：单独一个镜像，省掉在 node 镜像里装 Python 的那些步骤。
 const PYTHON_IMAGE = 'python:3.12-bookworm'
+/// caddy 二进制只从官方镜像里取（容器里的 Debian 源不可靠，见 relayTests 里的注释）。
+const CADDY_IMAGE = 'caddy:2'
 const NAME_PREFIX = 'dsh-lane-l2-'
 const VOLUME = 'dsh-lane-l2-data'
 
@@ -188,12 +190,32 @@ async function relayTests({ outDir, log = () => {} }) {
   const name = `${NAME_PREFIX}${process.pid}-${Date.now()}`
   let status = 'fail'
   let note
+  let blockedReason
+  let nextStep
+  const finish = () => {
+    cleanup({ name })
+    return {
+      status,
+      note,
+      blockedReason,
+      nextStep,
+      observations,
+      commands,
+      isolation: {
+        dshHome: '(容器内 /root/.dsh：一次性容器，与宿主 ~/.dsh 无关)',
+        realHomeUntouched: true,
+        proof: '全程在容器里；跑完 docker rm -f 容器与卷，宿主只用到临时目录',
+      },
+    }
+  }
   const step = (argv, { timeoutMs = 900_000, note: label } = {}) => {
     const result = exec(name, argv, { timeoutMs })
     const text = `${result.stdout ?? ''}${result.stderr ?? ''}`
-    writeFileSync(join(outDir, `container-${commands.length + 1}.log`), `$ ${argv.join(' ')}\n${text}`)
-    commands.push({ argv: ['docker', 'exec', name, ...argv], exitCode: result.status ?? -1, note: label })
-    return { code: result.status ?? -1, text }
+    const logPath = join(outDir, `container-${commands.length + 1}.log`)
+    writeFileSync(logPath, `$ ${argv.join(' ')}\n${text}`)
+    commands.push({ argv: ['docker', 'exec', name, ...argv], exitCode: result.status ?? -1,
+      stdoutPath: logPath, note: label })
+    return { code: result.status ?? -1, text, logPath }
   }
   try {
     const started = spawnSync('docker', ['run', '-d', '--name', name, '-v', `${VOLUME}:/data`, '-w', '/work',
@@ -207,36 +229,67 @@ async function relayTests({ outDir, log = () => {} }) {
     const pythonVersion = step(['python3', '--version'], { timeoutMs: 60_000, note: '容器内 Python 版本' })
     observations.push({ step: 'python', fact: `${pythonVersion.text.trim()}（exit ${pythonVersion.code}）` })
 
-    // 整条链路放进**一个** `sh -c`：apt 的 dpkg 前端锁不是跨 exec 立刻释放的，
-    // 分两步跑会撞上 "Could not get lock /var/lib/dpkg/lock-frontend"（实测撞过）。
-    // 开头等一下锁、结尾自己确认 caddy 在 PATH 上——照 CI 的硬要求。
-    const setup = step(['sh', '-c', [
-      'for i in $(seq 1 60); do fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || break; sleep 2; done',
-      'apt-get update -qq',
-      'apt-get install -y -qq --no-install-recommends curl gnupg ca-certificates debian-keyring debian-archive-keyring apt-transport-https',
-      "curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg",
-      "curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' > /etc/apt/sources.list.d/caddy-stable.list",
-      'apt-get update -qq',
-      'apt-get install -y -qq caddy',
-      'command -v caddy && caddy version',
-    ].join(' && ')], { timeoutMs: 1_800_000, note: '装 caddy（照 CI 的步骤）并确认它在 PATH 上' })
-    if (setup.code !== 0) throw new Error(`装 caddy 失败（exit ${setup.code}），见 ${commands.at(-1).stdoutPath}`)
-    const caddyVersion = (commands.at(-1).stdoutPath)
-    const versionLine = setup.text.trim().split('\n').at(-1)
-    observations.push({ step: 'caddy', fact: `caddy 就位：${versionLine}`, evidence: caddyVersion.replace(`${outDir}/`, '') })
+    // Caddy 不走 apt：容器里的 Debian 源在本机网络下会挂住（实测卡 16 分钟），
+    // 而官方镜像拉得动。从镜像里把二进制抠出来放进测试容器，比装一个包可靠得多。
+    // `command -v caddy && caddy version` 是硬要求：没有它，那五条端到端用例会静默变成 skip
+    // （仓库自己的闸门 `DSH_REQUIRE_CADDY` 会在收集期直接报错，见下面 pytest 那条命令）。
+    const caddyName = `${NAME_PREFIX}caddy-${process.pid}-${Date.now()}`
+    const caddyHostPath = join(outDir, 'caddy-binary')
+    try {
+      const create = spawnSync('docker', ['create', '--name', caddyName, '--platform', 'linux/arm64', CADDY_IMAGE],
+        { encoding: 'utf8', timeout: 900_000 })
+      if (create.status !== 0) throw new Error(`拉/建 ${CADDY_IMAGE} 失败：${tail(create.stderr || create.stdout, 300)}`)
+      commands.push({ argv: ['docker', 'create', '--name', caddyName, CADDY_IMAGE], exitCode: 0,
+        note: '只为从镜像里取 caddy 二进制' })
+      const extract = spawnSync('docker', ['cp', `${caddyName}:/usr/bin/caddy`, caddyHostPath],
+        { encoding: 'utf8', timeout: 120_000 })
+      if (extract.status !== 0) throw new Error(`从镜像取 caddy 失败：${tail(extract.stderr, 300)}`)
+      const into = spawnSync('docker', ['cp', caddyHostPath, `${name}:/usr/local/bin/caddy`],
+        { encoding: 'utf8', timeout: 120_000 })
+      if (into.status !== 0) throw new Error(`把 caddy 放进容器失败：${tail(into.stderr, 300)}`)
+      commands.push({ argv: ['docker', 'cp', `${CADDY_IMAGE}:/usr/bin/caddy`, `${name}:/usr/local/bin/caddy`],
+        exitCode: 0, note: 'caddy 二进制进容器（不用 apt）' })
+    } finally {
+      spawnSync('docker', ['rm', '-f', caddyName], { encoding: 'utf8', timeout: 60_000 })
+    }
+    const caddyCheck = step(['sh', '-c', 'chmod 0755 /usr/local/bin/caddy && command -v caddy && caddy version'],
+      { timeoutMs: 120_000, note: '确认 caddy 在 PATH 上' })
+    observations.push({ step: 'caddy', fact: `caddy 就位：${caddyCheck.text.trim().split('\n')[0] || '(无输出)'}（exit ${caddyCheck.code}）` })
+    if (caddyCheck.code !== 0) {
+      status = 'blocked'
+      blockedReason = `容器里没有可用的 caddy（exit ${caddyCheck.code}）：${tail(caddyCheck.text, 300)}`
+      nextStep = '检查本机能否拉取 caddy 镜像；或在 CI 上跑（.github/workflows/ci.yml 的 relay 作业逐条相同）'
+      return finish()
+    }
 
-    const copied = spawnSync('docker', ['cp', join(REPO_ROOT, 'relay') + '/.', `${name}:/work/relay`],
-      { encoding: 'utf8', timeout: 600_000 })
-    if (copied.status !== 0) throw new Error(`docker cp relay 失败：${tail(copied.stderr, 300)}`)
-    commands.push({ argv: ['docker', 'cp', '<仓库>/relay/.', `${name}:/work/relay`], exitCode: 0,
-      note: '代码复制进卷（不用共享挂载）' })
+    // 复制的不只是 `relay/`：`tests/test_dlp_contract.py` 要读仓库里的两份契约
+    // （`docs/relay-contract.json` 与 `test/contract/dlp-vectors.json`），少一份就是收集期报错。
+    const copied = []
+    for (const [source, target] of [
+      ['relay', '/work/relay'],
+      ['docs', '/work/docs'],
+      [join('test', 'contract'), join('/work/test', 'contract')],
+    ]) {
+      const result = spawnSync('docker', ['exec', name, 'mkdir', '-p', target],
+        { encoding: 'utf8', timeout: 60_000 })
+      if (result.status !== 0) throw new Error(`容器内建目录失败：${target}`)
+      const copy = spawnSync('docker', ['cp', join(REPO_ROOT, source) + '/.', `${name}:${target}`],
+        { encoding: 'utf8', timeout: 600_000 })
+      if (copy.status !== 0) throw new Error(`docker cp ${source} 失败：${tail(copy.stderr, 300)}`)
+      copied.push(source)
+    }
+    commands.push({ argv: ['docker', 'cp', '<仓库>/relay,docs,test/contract', `${name}:/work`],
+      exitCode: 0, note: '代码与测试要读的契约复制进卷（不用共享挂载）' })
 
     const install = step(['pip', 'install', '--quiet', '-r', '/work/relay/requirements-dev.txt'],
       { note: '装 relay 依赖（requirements-dev.txt，照 CI）' })
     if (install.code !== 0) throw new Error(`pip 装依赖失败（exit ${install.code}）`)
 
-    const pytest = step(['sh', '-c', 'mkdir -p /root/.dsh && cd /work/relay && python -m pytest -q'],
-      { timeoutMs: 1_800_000, note: '中转单测（含真 Caddy 的端到端那半）' })
+    // `DSH_REQUIRE_CADDY=1` 是仓库自己的硬闸门：没有 caddy 时那五条用例会静默变成 skip，
+    // 绿色的运行等于什么都没说。`-rs` 把每次跳过连同原因打进日志，供人事后核对。
+    const pytest = step(['sh', '-c',
+      'mkdir -p /root/.dsh && cd /work/relay && DSH_REQUIRE_CADDY=1 python -m pytest -q -rs'],
+      { timeoutMs: 1_800_000, note: '中转单测（含真 Caddy 的端到端那半，缺 caddy 即报错）' })
     const summary = pytest.text.trim().split('\n').filter(Boolean).at(-1) ?? '(没有输出)'
     observations.push({ step: 'pytest', fact: `${summary}（exit ${pytest.code}）`, evidence: `container-${commands.length}.log` })
     const skipped = Number(/(\d+) skipped/.exec(pytest.text)?.[1] ?? 0)
@@ -248,19 +301,9 @@ async function relayTests({ outDir, log = () => {} }) {
     note = error.message
     observations.push({ step: 'error', fact: error.message })
   } finally {
-    cleanup({ name })
-    return {
-      status,
-      note,
-      observations,
-      commands,
-      isolation: {
-        dshHome: '(容器内 /root/.dsh：一次性容器，与宿主 ~/.dsh 无关)',
-        realHomeUntouched: true,
-        proof: '全程在容器里；跑完 docker rm -f 容器与卷，宿主只用到临时目录',
-      },
-    }
+    if (status !== 'blocked') cleanup({ name })
   }
+  return finish()
 }
 
 /** 起容器 → 装 DSH 与 pnpm → 把仓库子集复制进卷。 */
