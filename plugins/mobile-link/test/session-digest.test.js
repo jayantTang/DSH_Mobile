@@ -8,7 +8,7 @@
 
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { gunzipSync } from 'node:zlib'
+import { inflateRawSync } from 'node:zlib'
 
 import {
   DROPPED_ITEM_KEYS, DROPPED_PROJECTION_KEYS, SESSION_DIGEST_METHOD,
@@ -96,21 +96,24 @@ test('结构不是预期形状时原样返回：裁剪不把"看不懂"变成"�
   assert.deepEqual(digestSessionList({ ok: true, value: { items: [] } }), { items: [] })
 })
 
-test('压缩往返无损，且回执里带 encoding', () => {
+test('压缩往返无损，回执带 encoding 与 rawBytes（给 iOS 一次分配到位）', () => {
   const digested = digestSessionList(hostPage({ sessions: 5 }))
   const plain = encodeDigest(digested, undefined)
   assert.equal(plain.encoding, 'identity')
   assert.equal(plain.value, digested, '不压缩时原样给出去')
+  assert.equal(plain.rawBytes, undefined, '不压缩时不需要 rawBytes')
 
-  const packed = encodeDigest(digested, 'gzip')
-  assert.equal(packed.encoding, 'gzip')
-  const restored = JSON.parse(gunzipSync(Buffer.from(packed.value, 'base64')).toString('utf8'))
-  assert.deepEqual(restored, digested, '解压后必须逐字段一致')
+  const packed = encodeDigest(digested, 'deflate-raw')
+  assert.equal(packed.encoding, 'deflate-raw')
+  const raw = inflateRawSync(Buffer.from(packed.value, 'base64'))
+  assert.equal(packed.rawBytes, raw.length, 'rawBytes 必须等于解压后的字节数（iOS 靠它分配缓冲区）')
+  assert.deepEqual(JSON.parse(raw.toString('utf8')), digested, '解压后必须逐字段一致')
   assert.ok(packed.value.length < JSON.stringify(digested).length, '压完应该更小')
 })
 
 test('非法 encoding 按不压缩处理（不因为多写一个字段就让调用方失败）', () => {
   assert.equal(encodeDigest({ items: [] }, 'brotli').encoding, 'identity')
+  assert.equal(encodeDigest({ items: [] }, 'gzip').encoding, 'identity', 'gzip 不再接受：格式只有一种，避免第二套解压实现')
   assert.equal(encodeDigest({ items: [] }, 42).encoding, 'identity')
   assert.equal(encodeDigest({ items: [] }, null).encoding, 'identity')
 })

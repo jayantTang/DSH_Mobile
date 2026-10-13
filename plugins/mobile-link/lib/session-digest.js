@@ -11,7 +11,7 @@
  *   3. **只删名单里的**：名单之外的字段（包括以后宿主新增的）一律原样透传，避免"裁剪"变成"猜"。
  */
 
-import { gzipSync } from 'node:zlib'
+import { deflateRawSync } from 'node:zlib'
 
 /** 方法名（设备发起，中转不校验方法名，所以不需要中转改动）。 */
 export const SESSION_DIGEST_METHOD = '_link/sessionDigest'
@@ -36,8 +36,15 @@ export const DROPPED_PROJECTION_KEYS = Object.freeze([
   'contextBreakdown', 'sessionListMetadata', 'subagentTiming', 'agentPreset',
 ])
 
-/** 只接受的压缩编码；其它一律按不压缩处理（保守，不因为多写一个字段就让调用方失败）。 */
-export const GZIP_ENCODING = 'gzip'
+/**
+ * 只接受的压缩编码；其它一律按不压缩处理（保守，不因为多写一个字段就让调用方失败）。
+ *
+ * `deflate-raw` = RFC1951 原始 DEFLATE，**不带** gzip/zlib 包装。选它而不是 gzip 的原因是
+ * 手机侧：Apple 的 `Compression` 框架（`COMPRESSION_ZLIB`）一行 `compression_decode_buffer`
+ * 就能解开原始 DEFLATE，而 gzip 包装它不认，得引 libz 的 `inflateInit2(MAX_WBITS+16)` 做 C 互操作。
+ * 两者压缩比实测相同（239 KiB → 36.8 KiB）。
+ */
+export const DEFLATE_ENCODING = 'deflate-raw'
 export const IDENTITY_ENCODING = 'identity'
 
 /** 按原键序复制并跳过剔除名单：键序稳定才能做"逐字节对比"。 */
@@ -94,12 +101,20 @@ function digestItem(item) {
  * `URLSessionWebSocketTask` 也不支持 permessage-deflate，所以 WS 层压缩救不了手机那一跳。
  * 压缩后的字节 base64 放进 JSON 文本帧（与 `_link/diagnostics` 同款），中转不需要任何改动。
  *
+ * `rawBytes` 是**解压后的字节长度**：Apple 的 `compression_decode_buffer` 必须预先给足输出缓冲区，
+ * 带上它调用方就能一次分配到位，不必"猜容量、失败再翻倍重试"。
+ *
  * @param {unknown} value 裁剪后的值
- * @param {unknown} encoding 调用方要求；只认 `"gzip"`
- * @returns {{encoding: string, value: unknown}} 带 `encoding` 回执，调用方据此决定解不解压
+ * @param {unknown} encoding 调用方要求；只认 `"deflate-raw"`
+ * @returns {{encoding: string, value: unknown, rawBytes?: number}} 带回执，调用方据此决定解不解压
  */
 export function encodeDigest(value, encoding) {
-  if (encoding !== GZIP_ENCODING) return { encoding: IDENTITY_ENCODING, value }
+  if (encoding !== DEFLATE_ENCODING) return { encoding: IDENTITY_ENCODING, value }
   const json = JSON.stringify(value ?? null)
-  return { encoding: GZIP_ENCODING, value: gzipSync(Buffer.from(json, 'utf8')).toString('base64') }
+  const raw = Buffer.from(json, 'utf8')
+  return {
+    encoding: DEFLATE_ENCODING,
+    value: deflateRawSync(raw).toString('base64'),
+    rawBytes: raw.length,
+  }
 }

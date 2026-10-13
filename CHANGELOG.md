@@ -14,11 +14,15 @@
   `subagentCatalog` 2.6%、`contextBreakdown` 2.5%、`sessionListMetadata` 1.9%、`subagentTiming` 1.5%、
   `agentPreset` 0.8%、`projections.kind` 1.3%、`agentAvailable` 1.8%），其余原样透传（含 `asOfSeq`、
   宿主将来新增的字段）。清单与逐条复查依据见 `specs/021-link-payload-slimming/contracts/session-digest.md`。
-- 支持按调用方要求 gzip（`encoding: "gzip"`，压缩后 base64 放进文本帧，与 `_link/diagnostics` 同款）：
-  中转与手机侧都不支持 per-message deflate，所以要压只能在应用层压。
+- 支持按调用方要求压缩（`encoding: "deflate-raw"` = RFC1951 原始 DEFLATE，压缩后 base64 放进文本帧，
+  与 `_link/diagnostics` 同款；中转移交时不碰）：中转与手机侧都不支持 per-message deflate，
+  所以要压只能在应用层压。**选原始 DEFLATE 而不是 gzip**：Apple 的 `Compression` 框架
+  （`COMPRESSION_ZLIB`）一行就能解原始 DEFLATE，gzip 包装它不认、得引 libz 做 C 互操作；
+  两者压缩比实测相同（239 KiB → 36.8 KiB）。响应里带 `rawBytes`（解压后长度），iOS 一次分配到位。
+  代价实测：压缩 1.4 ms、解压 0.1 ms（Apple 框架 0.3 ms），相对每次调用 200–400 ms 的固定成本不到 1%。
 - `_link/hello.capabilities` 增加 `session-digest`（App 以后据此切换，缺了就回退 `session/list`）。
 - **实测对比**（经真实中转、同一份 437 条会话的数据）：
-  `session/list` 726,941 B → `_link/sessionDigest` **244,743 B（33.7%）** → 再加 gzip **50,322 B（6.9%）**。
+  `session/list` 727,381 B → `_link/sessionDigest` **244,745 B（33.6%）** → 再加 deflate **50,319 B（6.9%）**。
   对比脚本：`node scripts/dev/probe-session-compare.mjs`（配对 `DSH-` 调试设备，跑完撤销）。
 - 兼容：`session/list` 逐字段不变；中转不校验方法名，所以本方法不需要中转配合，也不影响旧版本。
 

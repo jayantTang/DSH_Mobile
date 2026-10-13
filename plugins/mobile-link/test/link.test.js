@@ -4,7 +4,7 @@
  */
 
 import assert from 'node:assert/strict'
-import { gunzipSync } from 'node:zlib'
+import { inflateRawSync } from 'node:zlib'
 import { EventEmitter } from 'node:events'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -1245,12 +1245,13 @@ test('sessionDigest：走完整路径出精简结果，老方法一字不改', a
   assert.ok(JSON.stringify(plain.value.value).length < JSON.stringify(page.value).length * 0.5,
     '应省下一半以上')
 
-  // ② 新方法：gzip
-  await agent.handleRelayFrame(digestReq({ _request: {}, encoding: 'gzip' }, 'dg2'))
+  // ② 新方法：deflate-raw
+  await agent.handleRelayFrame(digestReq({ _request: {}, encoding: 'deflate-raw' }, 'dg2'))
   const packed = socket.last('res')
-  assert.equal(packed.value.encoding, 'gzip')
-  const restored = JSON.parse(gunzipSync(Buffer.from(packed.value.value, 'base64')).toString('utf8'))
-  assert.deepEqual(restored, plain.value.value, '压缩往返无损')
+  assert.equal(packed.value.encoding, 'deflate-raw')
+  const bytes = inflateRawSync(Buffer.from(packed.value.value, 'base64'))
+  assert.equal(packed.value.rawBytes, bytes.length, 'rawBytes 要和解压后长度一致')
+  assert.deepEqual(JSON.parse(bytes.toString('utf8')), plain.value.value, '压缩往返无损')
 
   // ③ 老方法：一个字段都不许少（帧的 value 必须逐字段等于宿主给的那份）
   await agent.handleRelayFrame({ t: 'req', id: 'u9', method: 'session/list', args: { _request: {} }, deviceId: 'dev_1' })

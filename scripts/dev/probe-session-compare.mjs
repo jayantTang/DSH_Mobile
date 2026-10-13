@@ -18,7 +18,7 @@
  */
 
 import { parseArgs as parseNodeArgs } from 'node:util'
-import { gunzipSync } from 'node:zlib'
+import { inflateRawSync } from 'node:zlib'
 
 import { connect } from '../../plugins/mobile-link/lib/ws.js'
 import { pairDevice, revokeDevice, route } from '../../test/tools/relaypair.mjs'
@@ -27,7 +27,7 @@ const DEVICE_NAME = 'DSH-DigestProbe'
 const METHODS = [
   { key: 'legacy', label: 'session/list（现状）', method: 'session/list', args: { _request: {} } },
   { key: 'digest', label: '_link/sessionDigest（裁剪）', method: '_link/sessionDigest', args: { _request: {} } },
-  { key: 'gzip', label: '_link/sessionDigest + gzip', method: '_link/sessionDigest', args: { _request: {}, encoding: 'gzip' } },
+  { key: 'deflate', label: '_link/sessionDigest + deflate-raw', method: '_link/sessionDigest', args: { _request: {}, encoding: 'deflate-raw' } },
 ]
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -118,8 +118,8 @@ async function main() {
         const encoding = frame.value?.encoding ?? 'identity'
         // 老方法的帧里直接是宿主的 `{items}`；新方法多一层 `{encoding, value}`。
         const inner = frame.value?.encoding ? frame.value.value : frame.value
-        const items = encoding === 'gzip'
-          ? JSON.parse(gunzipSync(Buffer.from(frame.value.value, 'base64')).toString('utf8'))
+        const items = encoding === 'deflate-raw'
+          ? JSON.parse(inflateRawSync(Buffer.from(frame.value.value, 'base64')).toString('utf8'))
           : inner
         rows.push({
           round, key: entry.key, label: entry.label, ok: true, encoding, ms,
