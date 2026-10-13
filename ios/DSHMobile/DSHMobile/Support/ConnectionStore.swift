@@ -175,6 +175,14 @@ public final class ConnectionStore {
 
     private var carrier: (any DSHCarrier)?
     private var statusTask: Task<Void, Never>?
+    /// 重连节奏（spec 022）：只由 Store 自己的拨号路径使用；Carrier 自愈用同一形状的策略。
+    private var backoff = ReconnectBackoff()
+    /// 连续探活失败次数：**连续两次**才把链路判成断开（FR-004）。
+    private var probeFailures = 0
+    /// 上一次进入已连接的时刻，用于判断这次连接"活得够不够久"。
+    private var connectedAt: Date?
+    /// 最近一次列表采样条数（重装 client 时沿用它，不必为此再拉一次列表）。
+    private var lastSampleCount = 0
     /// Probes a live link and repairs a dropped one.
     private var watchTask: Task<Void, Never>?
 
@@ -205,6 +213,12 @@ public final class ConnectionStore {
         await linkDiagnostics.record(kind: "app.scene", detail: [
             "phase": .string(scene.rawValue), "cold": .bool(cold),
         ])
+        // 回到前台是"用户主动回来"，退避清零并立刻探一次（spec 022 FR-002）：
+        // 用户等着的时候不该还在按退避倒计时。
+        if scene == .foreground {
+            backoff.reset()
+            probeFailures = 0
+        }
         // 回到前台顺手把攒下的记录推上去（后台期间可能攒了"挂起—恢复"这一串）。
         if scene == .foreground, let link = carrier as? LinkCarrier { await pushDiagnostics(link) }
     }
@@ -507,10 +521,14 @@ public final class ConnectionStore {
     }
     static var clientBuild: String? { Bundle.main.infoDictionary?["CFBundleVersion"] as? String }
 
+    /// - Parameter closePrevious: 用**同一个** carrier 重装（链路自愈后的恢复）时必须传
+    ///   `false`：否则末尾那条"关掉上一个"会把刚恢复的 socket 自己关掉，当场又掉一次
+    ///   （spec 022 的振荡现场就是这么来的）。
     private func install(carrier: any DSHCarrier, profile: ConnectionProfile, sampleCount: Int,
-                         dialStartedAt: Date? = nil) async {
+                         dialStartedAt: Date? = nil, closePrevious: Bool = true) async {
         let previous = self.carrier
         self.carrier = carrier
+        lastSampleCount = sampleCount
         // 带着**上一次**握手得到的能力建 client：同一台电脑的能力不会变，于是这次连接里
         // 最早的几次列表调用也能走精简版（若连接器换了/降级，`sessions()` 会回退到 `session/list`）。
         let client = DSHClient(carrier: carrier, capabilities: capabilities)
@@ -538,6 +556,10 @@ public final class ConnectionStore {
         // Recorded for the out-of-date notice only; never used to refuse the link.
         connectorVersion = handshake?.serverVersion
         state = .connected(hostHome: profile.hostHome)
+        // 连上了：探活失败计数与退避都归零（spec 022 FR-001/FR-004）。
+        connectedAt = Date()
+        probeFailures = 0
+        backoff.reset()
         // 首屏就绪：状态机已切到 connected，屏幕可以渲染了（与"握手完成"是两个时刻）。
         if let link = carrier as? LinkCarrier {
             firstInteractionRecorded = false
@@ -550,7 +572,7 @@ public final class ConnectionStore {
         // What a repair replaced is closed only now, once the new link has
         // answered: had the repair failed, the old client would still have been
         // the only one the screen could use.
-        if let previous { await previous.close() }
+        if closePrevious, let previous { await previous.close() }
     }
 
     /// Mirrors the link's online state into the UI.
@@ -585,8 +607,6 @@ public final class ConnectionStore {
     /// sleeping router, a relay restart — and the app would happily keep showing
     /// 已连接 over a dead socket. Twenty seconds is short enough that the user
     /// finds out from the chip rather than from a failed action.
-    private static let heartbeat = Duration.seconds(20)
-
     /// Watches the link and puts it back when it goes away.
     ///
     /// Two jobs in one loop, because they are the same question asked at two
@@ -595,25 +615,49 @@ public final class ConnectionStore {
     /// repairs the link with backoff — the relay socket heals itself, but only
     /// the store knows whether the *host* is answering again, and only the store
     /// can hand the screens a new client once it is.
+    /// 心跳探活的周期（已连接时）。
+    private static let heartbeat = Duration.seconds(20)
+    /// 未连接时的探活周期：Carrier 自愈通常在一两秒内完成，探得太慢恢复就慢。
+    private static let recoveryProbe = Duration.seconds(2)
+
+    /// Watches the link and puts it back when it goes away.
+    ///
+    /// **重连只有一个所有者**（spec 022 FR-005）：socket 掉了由 `LinkCarrier` 自己按
+    /// `ReconnectPolicy` 自愈，Store 在 carrier 还活着时**不建新 socket**——2026-10-13 的
+    /// 每秒重连风暴就是两边各自建 socket、互相顶掉造成的（85 次 `app.dial`、12 次"上一个
+    /// 还开着就再接入"）。Store 只做两件事：探活（`_link/hello`，轻量、不搬列表），
+    /// 以及链路回来之后把 client 重新装上。
+    ///
+    /// 只有没有 carrier 时（首次连接、换档案、carrier 已关闭）才由 Store 拨号，
+    /// 这时才用 `backoff`，避免"主机整夜关着"变成一秒一次的请求。
     private func startWatching() {
         guard watchTask == nil else { return }
         watchTask = Task { [weak self] in
-            var attempt = 0
             while !Task.isCancelled {
                 guard let self, self.activeProfile != nil else { break }
 
-                if self.state.isConnected, let client = self.client {
-                    try? await Task.sleep(for: Self.heartbeat)
+                if let client = self.client, let carrier = self.carrier,
+                   let profile = self.activeProfile ?? self.preferredProfile {
+                    // 已连接：慢心跳探活；未连接：快探活等 Carrier 自愈回来。
+                    let interval = self.state.isConnected ? Self.heartbeat : Self.recoveryProbe
+                    try? await Task.sleep(for: interval)
                     if Task.isCancelled { break }
-                    if (try? await client.sessions()) == nil, self.state.isConnected {
-                        self.state = .connecting("连接中断，正在重连…")
-                    }
+                    await self.probeHost(client: client, carrier: carrier, profile: profile)
                     continue
                 }
 
-                // Not connected: repair, backing off so a host that is off for
-                // the night costs a request a minute rather than one a second.
-                let delay = min(12, 0.6 * Double(attempt + 1))
+                // 没有 carrier：这才轮到 Store 拨号。
+                if let connectedAt = self.connectedAt {
+                    // 上一条链路活了多久，决定退避是否清零（FR-001）。
+                    self.backoff.noteConnectionEnded(livedFor: Date().timeIntervalSince(connectedAt))
+                    self.connectedAt = nil
+                }
+                let delay = self.backoff.nextDelay
+                await self.linkDiagnostics.record(kind: "link.backoff", detail: [
+                    "attempt": .int(self.backoff.attempt),
+                    "nextMs": .int(Int(delay * 1000)),
+                    "reason": .string("store-dial"),
+                ])
                 try? await Task.sleep(for: .seconds(delay))
                 if Task.isCancelled { break }
                 guard !self.isConnecting,
@@ -621,9 +665,46 @@ public final class ConnectionStore {
                       let secret = Keychain.get(profile.secretAccount)
                 else { continue }
                 await self.connect(profile: profile, secret: secret)
-                attempt = self.state.isConnected ? 0 : attempt + 1
             }
             self?.watchTask = nil
+        }
+    }
+
+    /// 轻量探活 + 恢复。
+    ///
+    /// 探活用 `_link/hello`（实测 ~134 ms、几百字节，连接器本地应答），**不**用
+    /// `client.sessions()`：那条路会拉整份会话列表，失败时还会回退到 734 KB 的旧通道，
+    /// 于是"列表慢"被误判成"链路死"，正是风暴的放大器（research §二①②）。
+    private func probeHost(client: DSHClient, carrier: any DSHCarrier,
+                           profile: ConnectionProfile) async {
+        let started = Date()
+        do {
+            _ = try await client.linkHandshake(client: LinkHandshakeRequest(
+                clientName: Self.clientName,
+                clientVersion: Self.clientVersion,
+                clientBuild: Self.clientBuild
+            ))
+            let ms = Int(Date().timeIntervalSince(started) * 1000)
+            probeFailures = 0
+            await linkDiagnostics.record(kind: "link.probe", detail: [
+                "ok": .bool(true), "ms": .int(ms), "fails": .int(0),
+            ])
+            if !state.isConnected {
+                // Carrier 已经把 socket 自愈回来了：同一个 carrier 重装 client，
+                // 不建新 socket（FR-005）。
+                await install(carrier: carrier, profile: profile,
+                              sampleCount: lastSampleCount, closePrevious: false)
+            }
+        } catch {
+            probeFailures += 1
+            let ms = Int(Date().timeIntervalSince(started) * 1000)
+            await linkDiagnostics.record(kind: "link.probe", detail: [
+                "ok": .bool(false), "ms": .int(ms), "fails": .int(probeFailures),
+            ])
+            // 单次失败不判断开（FR-004）：链路抖一下不该让界面闪"重连中"。
+            if probeFailures >= 2, state.isConnected {
+                state = .connecting("连接中断，正在重连…")
+            }
         }
     }
 
@@ -678,6 +759,9 @@ public final class ConnectionStore {
     public func reconnectIfNeeded() async {
         guard !state.isConnected, !isConnecting, !isReconnecting else { return }
         guard let profile = activeProfile ?? preferredProfile else { return }
+        // 用户主动动作：不等退避（FR-002）。
+        backoff.reset()
+        probeFailures = 0
         await connect(to: profile)
     }
 

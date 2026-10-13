@@ -173,6 +173,11 @@ public actor LinkCarrier: DSHCarrier {
     private let makeSocket: @Sendable (URLRequest) -> any RelaySocketTask
 
     private var socket: (any RelaySocketTask)?
+    /// 跨掉线保留的重连轮次（spec 022 FR-001）：只有**稳定存活过**的链路才清零。
+    /// 2026-10-13 真机风暴里每条 socket 只活 0.8 秒，每次掉线都从 0 重开会把节奏钉在 1 秒一次。
+    private var reconnectAttempt = 0
+    /// 当前这条 socket 是什么时候建起来的，用于判断"活得够不够久"。
+    private var socketOpenedAt: Date?
     /// Puts back a frame the relay wrote as several WebSocket messages.
     private var assembler = FrameAssembler()
     private var receiveLoop: Task<Void, Never>?
@@ -350,6 +355,9 @@ public actor LinkCarrier: DSHCarrier {
     }
 
     public func close() async {
+        // 显式关闭：这是主动动作，退避清零（spec 022 FR-002）。
+        reconnectAttempt = 0
+        socketOpenedAt = nil
         isClosed = true
         receiveLoop?.cancel()
         heartbeatLoop?.cancel()
@@ -488,6 +496,7 @@ public actor LinkCarrier: DSHCarrier {
         assembler.reset()
         startReceiveLoop(on: task)
         startHeartbeat(on: task)
+        socketOpenedAt = Date()
     }
 
     private func startReceiveLoop(on task: any RelaySocketTask) {
@@ -585,18 +594,32 @@ public actor LinkCarrier: DSHCarrier {
 
         // Re-establish in the background so the next user action is not the one
         // that pays for the reconnect.
+        // **退避跨掉线保留，只有稳定存活过才清零**（spec 022 FR-001）。
+        // 现场数据：每条 socket 只活约 0.8 秒；若照旧"每次掉线从 attempt 0 重开"，
+        // 节奏永远是初始的 1 秒，两分钟内能接入 100+ 次（2026-10-13 实测 111 次）。
+        let livedFor: TimeInterval? = socketOpenedAt.map { Date().timeIntervalSince($0) }
+        if let livedFor, livedFor >= ReconnectBackoff.stabilityWindow { reconnectAttempt = 0 }
+        socketOpenedAt = nil
+        if let livedFor {
+            let nextDelay = reconnect.delay(forAttempt: reconnectAttempt)
+            await diagnostics.record(kind: "link.backoff", detail: [
+                "attempt": .int(reconnectAttempt),
+                "livedMs": .int(Int(livedFor * 1000)),
+                "nextMs": .int(Int(nextDelay.seconds * 1000)),
+                "reset": .bool(livedFor >= ReconnectBackoff.stabilityWindow),
+            ])
+        }
         guard !isClosed else { return }
         Task {
-            var attempt = 0
             while !Task.isCancelled && !isClosed {
-                let delay = reconnect.delay(forAttempt: attempt)
+                let delay = reconnect.delay(forAttempt: reconnectAttempt)
                 try? await Task.sleep(for: delay)
                 if isClosed { return }
                 do {
                     try await openSocket()
                     return
                 } catch {
-                    attempt += 1
+                    reconnectAttempt += 1
                 }
             }
         }
