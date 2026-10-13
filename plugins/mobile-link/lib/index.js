@@ -48,6 +48,9 @@ const DEFAULTS = {
   stateFile: '',
   dshUrl: '',
   inviteCode: '',
+  // 生命周期流水的落盘位置：留空＝默认写在身份文件旁边（`$DSH_HOME/mobile-link/
+  // link-events.jsonl`），给字符串＝写在那里，`false`＝只在内存里留一份。
+  journalFile: '',
   heartbeatMs: 20000,
   pongTimeoutMs: 60000,
   maxBackoffMs: 30000,
@@ -96,6 +99,9 @@ function buildAgent(config, logger) {
     // otherwise the agent reads DSH_MOBILE_LINK_INVITE (see enroll.js).
     inviteCode: typeof config.inviteCode === 'string' && config.inviteCode ? config.inviteCode : undefined,
     dshUrl: typeof config.dshUrl === 'string' && config.dshUrl ? config.dshUrl : undefined,
+    journalPath: config.journalFile === false
+      ? false
+      : (typeof config.journalFile === 'string' && config.journalFile ? config.journalFile : undefined),
     heartbeatMs: Number(config.heartbeatMs) || DEFAULTS.heartbeatMs,
     pongTimeoutMs: Number(config.pongTimeoutMs) || DEFAULTS.pongTimeoutMs,
     maxBackoffMs: Number(config.maxBackoffMs) || DEFAULTS.maxBackoffMs,

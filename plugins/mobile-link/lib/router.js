@@ -104,13 +104,16 @@ export class DeviceRouter {
    */
   constructor({
     dsh, send, logger = console, onChange = () => {}, now = Date.now, protocolVersion = 1,
-    eventsBacklog = DEFAULT_EVENTS_BACKLOG, notify = () => {},
+    eventsBacklog = DEFAULT_EVENTS_BACKLOG, notify = () => {}, onEvent = () => {},
   } = {}) {
     this.dsh = dsh
     this.eventsBacklog = eventsBacklog
     // 「跑完了 / 待你回应」这类事件到了就报一声（见 `notifyFor`）。默认空函数，
     // 测试与不关心提醒的调用方可以不管它。帧由 link.js 发（router 不发帧）。
     this.notify = notify
+    // 生命周期事件（设备 attach/detach 等）的去处，由 link.js 接到流水（journal.js）。
+    // 默认空函数，所以 router 单独用时（单测、本地脚本）不需要日志设施。
+    this.onEvent = onEvent
     // Reported to the app so it can tell which wire revision it is talking to.
     this.protocolVersion = protocolVersion
     this.send = send
@@ -285,10 +288,19 @@ export class DeviceRouter {
     if (existing) {
       // 回头客：手机又连上了。流和攒下的提问都还在，交给 handleOpen 补发。
       if (existing.offlineSince !== undefined) {
+        const offlineForMs = this.now() - existing.offlineSince
         existing.offlineSince = undefined
+        this.onEvent('device.reattach', { deviceId, offlineForMs, pending: existing.eventsPending.size })
         this.logger.info?.(
           `mobile-link: device ${deviceId} reattached with ${existing.eventsPending.size} unanswered question(s)`)
         this.#changed()
+      } else {
+        // **这条是"同一台设备同时又开了一条"**：中转的 `attach_device` 会直接覆盖旧
+        // 链路，旧的那条既不会再收到 `deviceDetach`、也不会出现在任何一方的状态里
+        // （2026-10-13 01:10 实测：attach 与上一条 detach 之间空了 34 秒）。记下来，
+        // 否则事后只看得到"它连上了"，看不到"它连了两条"。
+        this.onEvent('device.attach-again', { deviceId, connectedForMs: this.now() - existing.connectedAt })
+        this.logger.warn?.(`mobile-link: device ${deviceId} attached again while still attached`)
       }
       return
     }
@@ -308,6 +320,7 @@ export class DeviceRouter {
       offlineSince: undefined,
       eventsPending: new Map(),
     })
+    this.onEvent('device.attach', { deviceId, name: info?.name, model: info?.model })
     this.logger.info?.(`mobile-link: device ${deviceId} attached (${info?.name ?? 'unknown'})`)
     this.#changed()
     await this.ensureEventsStream(deviceId)
@@ -328,6 +341,7 @@ export class DeviceRouter {
     if (!record) return
     if (reason === 'revoked') {
       await this.#dropDevice(deviceId)
+      this.onEvent('device.revoked', { deviceId })
       this.logger.info?.(`mobile-link: device ${deviceId} 已被撤销，放下（不再替它值班）`)
       return
     }
@@ -346,6 +360,7 @@ export class DeviceRouter {
     for (const entry of keep) record.dlpIds.add(entry.dlpId)
 
     if (record.offlineSince === undefined) record.offlineSince = this.now()
+    this.onEvent('device.detach', { deviceId, reason: reason ?? 'closed' })
     this.logger.info?.(
       `mobile-link: device ${deviceId} detached (${reason ?? 'closed'})；`
       + '$events 流一直替它留着，直到设备被撤销或进程退出')

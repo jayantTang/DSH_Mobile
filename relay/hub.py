@@ -798,6 +798,19 @@ class RelayHub:
         link.agent = agent
         link.on_egress = self._note_egress
         link.quota = self._quota_for(device["deviceId"])
+        # 同一个 deviceId 又开了一条、而旧的那条还活着：这里**直接覆盖**登记，
+        # 不关旧 socket、也不告诉连接器。后果是旧的那条从两边的状态里都消失，
+        # 直到它自己关掉才在日志里留下一条没有对应通知的 detached
+        # （2026-10-13 01:10 实测：attach 与上一条 detach 之间空了 34 秒，全程无人可见）。
+        # 暂不改行为（改它要动连接器的设备视图，属于另一件事），先把这件事说清楚：
+        # 不过这一行的话，"手机同时开了两条 socket"在日志里根本看不出来。
+        superseded = self._devices.get(device["deviceId"])
+        if superseded is not None:
+            self.logger.warning(
+                "relay: device %s attached again while its previous socket is still open — "
+                "replacing the registration; the old socket is now untracked and its close "
+                "will not notify the connector",
+                device["deviceId"])
         self._devices[device["deviceId"]] = link
         self._note_usage(link, connection=True)
         if agent is None:
@@ -814,12 +827,21 @@ class RelayHub:
 
     async def detach_device(self, link: DeviceLink, *, reason: str | None = None,
                             code: int = 1001) -> None:
-        if self._devices.get(link.device_id) is link:
+        registered = self._devices.get(link.device_id)
+        if registered is link:
             del self._devices[link.device_id]
         agent = self.agents.get(link.agent_id)
         if agent is not None and agent.devices.get(link.device_id) is link:
             del agent.devices[link.device_id]
             agent.enqueue_frame(dlp.device_detach_frame(link.device_id, reason=reason))
+        elif agent is not None:
+            # 这条 socket 已经被同 deviceId 的新连接顶替过了，所以没有 `deviceDetach`
+            # 可发——连接器会一直以为那台设备还在。日志里必须留下这个区别，
+            # 否则"attach 与 detach 条数对得上"会被误读成"每条都通知到了"。
+            self.logger.info(
+                "relay: device %s closed a socket that had already been replaced; "
+                "no detach notification sent for it",
+                link.device_id)
         await link.close(code, reason or "device disconnected")
         self.logger.info("relay: device %s detached (%s)", link.device_id, reason or "closed")
         # 断开时冲一次：这一批的尾巴不留在内存里，运维命令跑完就是准的。

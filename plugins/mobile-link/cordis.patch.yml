@@ -20,6 +20,13 @@
 #   agentId        overrides ~/.dsh/mobile-link/agent.json
 #   agentSecret    overrides ~/.dsh/mobile-link/agent.json
 #   stateFile      agent identity file (default ~/.dsh/mobile-link/agent.json)
+#   journalFile    lifecycle journal (default ~/.dsh/mobile-link/link-events.jsonl,
+#                  rotated once at 256 KiB). Every link open/close carries its
+#                  reason, and every device attach/detach is recorded, so "why
+#                  did the connector drop the relay link" stays answerable after
+#                  the fact; the newest entries also ride along in
+#                  GET /mobile-link/status as `journal`. `false` keeps the ring
+#                  in memory only, no file.
 #   dshUrl         explicit local DSH base URL override (default: discovery)
 #
 # Address resolution order: this config block, then DSH_RELAY_URL (or

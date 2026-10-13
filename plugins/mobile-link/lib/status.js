@@ -33,8 +33,7 @@ export const HOST_HINTS = {
   unknown: { hint: '无法识别当前宿主；若连不上，请按"排查"一节处理', docAnchor: '排查：连不上时看这里' },
 }
 
-/** 本机 DSH 侧的诊断块（老字段一个不少，新字段只增）。 */
-function dshBlock(agent) {
+/** 本机 DSH 侧的诊断块（老字段一个不少，新字段只增）。 */function dshBlock(agent) {
   const errorKind = agent.dshError ? (agent.dsh?.errorKind ?? 'unreachable') : null
   const entry = errorKind ? DSH_HINTS[errorKind] : undefined
   return {
@@ -50,6 +49,31 @@ function dshBlock(agent) {
     docAnchor: entry?.docAnchor ?? null,
   }
 }
+
+/**
+ * 生命周期流水的读法（只增字段）。
+ *
+ * 为什么状态接口要给这一块：`lastError` 只有最后一条，而"手机为什么连不上"往往要
+ * 看**之前**发生过什么（拆了几次链、每次什么原因、设备是不是同时开了两条）。
+ *
+ * 读法要说清楚：`recent` / `recorded` / `dropped` 都是**当前这个实例**的（热更会换实例，
+ * 换完这几个数从零开始）；跨实例的完整历史只在 `path` 指的 JSONL 文件里——两者互补，
+ * 别拿 `recorded` 当"这台机器一共连过几次"。没有流水对象（老调用方、单测的假 agent）
+ * 时给空块，不是 `undefined`——读者不用做判空。
+ */
+function journalBlock(agent) {
+  const journal = agent.journal
+  return {
+    path: journal?.path ?? null,
+    recorded: journal?.recorded ?? 0,
+    dropped: journal?.dropped ?? 0,
+    fileErrors: journal?.fileErrors ?? 0,
+    recent: journal?.recent?.(STATUS_JOURNAL_ENTRIES) ?? [],
+  }
+}
+
+/** `/status` 里随每次轮询带出的流水条数。完整历史读 `journal.path` 那个文件。 */
+const STATUS_JOURNAL_ENTRIES = 20
 
 /**
  * @param {import('./link.js').MobileLinkAgent} agent
@@ -97,5 +121,7 @@ export function statusSnapshot(agent) {
     startedAt: agent.startedAt ?? null,
     connectedAt: agent.connectedAt ?? null,
     reconnectAttempts: agent.reconnectAttempts,
+    // 新增（只增不改）：生命周期流水的摘要与最近若干条，见上面的 journalBlock。
+    journal: journalBlock(agent),
   }
 }

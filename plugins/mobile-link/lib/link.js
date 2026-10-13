@@ -20,6 +20,7 @@ import { agentEndpoint, decodeFrame, encodeFrame, nextBackoff, normalizeRelayUrl
 const LIVE_AGENT = Symbol.for('dsh.mobile-link.live-agent')
 import { enrollAgent, enrollCommand, inviteFrom } from './enroll.js'
 import { handoffFromEndpoint, writeHandoff } from './handoff.js'
+import { LinkJournal, defaultJournalPath } from './journal.js'
 import { statusSnapshot } from './status.js'
 import { mintPairCode } from './pairing.js'
 import {
@@ -58,6 +59,9 @@ export class MobileLinkAgent extends EventEmitter {
     random = Math.random, now = Date.now, dshClient, connectImpl = wsConnect, enabled = true,
     watchdogMs = 180000,
     inviteCode, fetchImpl = fetch, env = process.env,
+    // 生命周期流水（见 journal.js）：`journal` 传实例（测试注入），`journalPath`
+    // 传路径（`defaultJournalPath()` 之外的位置），false 表示只留内存不落盘。
+    journal, journalPath,
     // 手机不在时替它攒下来的提问条数上限（见 router.js）；环境变量给部署用，
     // 构造参数给测试用。**没有"留多久"这个旋钮**：`$events` 一直留到设备被撤销。
     eventsBacklog = numberFromEnv(env.DSH_MOBILE_LINK_EVENTS_BACKLOG, DEFAULT_EVENTS_BACKLOG),
@@ -79,6 +83,14 @@ export class MobileLinkAgent extends EventEmitter {
     //: to fix, not a transport problem to retry.
     this.needsEnroll = false
     this.dsh = dshClient ?? new DshClient({ explicitUrl: dshUrl, logger })
+    /** 生命周期流水：内存环 +（默认）一份 JSONL，见 journal.js 的文件头。 */
+    this.journal = journal ?? new LinkJournal({
+      path: journalPath === false
+        ? undefined
+        : (typeof journalPath === 'string' && journalPath ? journalPath : defaultJournalPath()),
+      now,
+      logger,
+    })
     this.router = new DeviceRouter({
       dsh: this.dsh,
       logger,
@@ -86,6 +98,9 @@ export class MobileLinkAgent extends EventEmitter {
       protocolVersion: PROTOCOL_VERSION,
       eventsBacklog,
       send: (deviceId, frame) => this.sendToDevice(deviceId, frame),
+      // 设备侧的 attach/detach 与链路侧同源记进流水：事后想把"手机断了"和
+      // "连接器拆链"对上时间，两边必须写在同一份文件里。
+      onEvent: (kind, detail) => this.journal.record(kind, detail),
       // 「跑完了 / 待你回应」到了就报一声（`{t:'notify'}`）。这是 agent 侧控制帧，
       // **不带 deviceId**：连接器不知道、也不需要知道这台电脑配了哪些手机，
       // 「该不该推给某台手机」由中转判（它手里才有"这台设备此刻在不在线"）。
@@ -108,6 +123,8 @@ export class MobileLinkAgent extends EventEmitter {
     this.startedAt = undefined
     this.connectedAt = undefined
     this.reconnectAttempts = 0
+    /** 最近一次拆链的时刻（用来在 `link.open` 里报"距上次断开多久"）。 */
+    this._lastClosedAt = undefined
 
     this._stopping = false
     this._sessionClosed = undefined
@@ -233,6 +250,15 @@ export class MobileLinkAgent extends EventEmitter {
     this._abort = new AbortController()
     this.startedAt = this.now()
     this.state = 'connecting'
+    this.journal.record('link.start', {
+      // 这里只能报**配置值**：真身份（含实际中转地址）要等 `#session()` 里的
+      // `resolveIdentity()` 才读到，那条记在 `link.open` 上。名字带 configured，
+      // 免得读者把占位符 `wss://relay.example.com/dsh-link` 当成真的在连的地址。
+      configuredRelay: this.config.relayUrl,
+      agentId: this.config.agentId || undefined,
+      attempt: this.reconnectAttempts,
+      host: this.hostForm,
+    })
     // 解析器可能在上一次会话里就已经装好；这里补一次本机发现（失败无妨）。
     void this.refreshLocal()
     this._lastProgressAt = this.now()
@@ -262,6 +288,7 @@ export class MobileLinkAgent extends EventEmitter {
     this._loop = undefined
     this.dsh.close()
     this.state = 'stopped'
+    this.journal.record('link.stop', {})
     this.emit('status')
   }
 
@@ -278,6 +305,7 @@ export class MobileLinkAgent extends EventEmitter {
           this.needsEnroll = true
           this.state = 'unregistered'
           this.lastError = messageOf(error)
+          this.journal.record('link.unregistered', { error: this.lastError })
           this.logger.error?.(this.lastError)
           this.emit('status')
           return
@@ -295,11 +323,13 @@ export class MobileLinkAgent extends EventEmitter {
           this.needsEnroll = true
           this.state = 'unregistered'
           this.lastError = messageOf(error)
+          this.journal.record('link.unregistered', { error: this.lastError })
           this.logger.error?.(`${this.lastError}\n  ${this.enrollHint()}`)
           this.emit('status')
           return
         }
         this.lastError = messageOf(error)
+        this.journal.record('link.failed', { error: this.lastError, attempt: this.reconnectAttempts })
         this.logger.warn?.(`mobile-link: ${this.lastError}`)
       }
       if (this._stopping) break
@@ -307,6 +337,7 @@ export class MobileLinkAgent extends EventEmitter {
       this.emit('status')
       const delay = nextBackoff(this.reconnectAttempts, { maxMs: this.maxBackoffMs, random: this.random })
       this.reconnectAttempts += 1
+      this.journal.record('link.backoff', { attempt: this.reconnectAttempts, delayMs: Math.round(delay) })
       await sleep(delay, this._abort.signal)
     }
     this.state = 'stopped'
@@ -365,6 +396,12 @@ export class MobileLinkAgent extends EventEmitter {
     this.router.lastError = undefined
     this._lastPong = this.now()
     this.logger.info?.(`mobile-link: connected to ${this.relay.wsBase} as ${identity.agentId}`)
+    this.journal.record('link.open', {
+      relay: this.relay?.wsBase,
+      agentId: identity.agentId,
+      attempt: this.reconnectAttempts,
+      sinceCloseMs: this._lastClosedAt === undefined ? undefined : this.now() - this._lastClosedAt,
+    })
     this.emit('status')
 
     socket.onMessage((text) => {
@@ -386,9 +423,13 @@ export class MobileLinkAgent extends EventEmitter {
       // 进程外工具（本机脚本、iOS 集成测试辅助）靠这份交接文件拿带凭据地址；
       // 写入失败不影响链路（`#writeHandoff` 自己吞异常）。
       await this.#writeHandoff()
+      this.journal.record('dsh.ok', { endpoint: this.dsh?.endpoint?.base })
     } catch (error) {
       this.dshError = messageOf(error)
       this.lastError = this.dshError
+      // 这一条很关键：本机 DSH 不可达时，手机那句 `_link/hello`/`sessions` 探针
+      // 必然超时，App 会据此重建整条链路——于是"连接器在、手机却连不上"。
+      this.journal.record('dsh.unreachable', { error: this.dshError, kind: this.dsh?.errorKind })
       this.logger.warn?.(`mobile-link: local DSH is not reachable yet: ${this.dshError}`)
     }
     this.emit('status')
@@ -419,6 +460,7 @@ export class MobileLinkAgent extends EventEmitter {
       const idle = this.now() - this._lastProgressAt
       if (!this._loopActive) {
         this.lastError = `链路循环不在了（看门狗重拉，空闲 ${Math.round(idle / 1000)}s）`
+        this.journal.record('watchdog.repull', { idleMs: Math.round(idle) })
         this.logger.warn?.(`mobile-link: ${this.lastError}`)
         this._loop = undefined
         this._lastProgressAt = this.now()
@@ -427,6 +469,7 @@ export class MobileLinkAgent extends EventEmitter {
       }
       if (this.state === 'connected' && idle > this.pongTimeoutMs) {
         this.lastError = `relay 超过 ${Math.round(idle / 1000)}s 没有动静（看门狗拆连接）`
+        this.journal.record('watchdog.drop', { idleMs: Math.round(idle), state: this.state })
         this.logger.warn?.(`mobile-link: ${this.lastError}`)
         this.#teardownSocket(this.lastError)
         this._lastProgressAt = this.now()
@@ -434,6 +477,7 @@ export class MobileLinkAgent extends EventEmitter {
       }
       if (this.state !== 'connected' && idle > this.watchdogMs) {
         this.lastError = `链路 ${Math.round(idle / 1000)}s 没有进展（看门狗重建连接）`
+        this.journal.record('watchdog.drop', { idleMs: Math.round(idle), state: this.state })
         this.logger.warn?.(`mobile-link: ${this.lastError}`)
         this.#teardownSocket(this.lastError)
         this._lastProgressAt = this.now()
@@ -469,6 +513,7 @@ export class MobileLinkAgent extends EventEmitter {
   #teardownSocket(reason) {
     this.#stopHeartbeat()
     const socket = this.socket
+    const from = this.state
     this.socket = undefined
     if (socket) {
       try {
@@ -483,6 +528,15 @@ export class MobileLinkAgent extends EventEmitter {
     this.dsh.close()
     if (this.state !== 'stopped' && this.state !== 'disabled') this.state = 'disconnected'
     this.lastError = this.lastError ?? reason
+    this._lastClosedAt = this.now()
+    // 「为什么拆的」是这一族事件唯一要回答的问题：reason 来自调用点，
+    // from 是拆之前的状态（connected / backoff / connecting），
+    // connectedForMs 用来区分"刚连上就掉"和"挂了很久才掉"。
+    this.journal.record('link.close', {
+      reason,
+      from,
+      connectedForMs: this.connectedAt === undefined ? undefined : this.now() - this.connectedAt,
+    })
     const resolve = this._sessionClosed
     this._sessionClosed = undefined
     this.emit('status')

@@ -112,7 +112,7 @@ async def link_agent(request: web.Request) -> web.WebSocketResponse:
                 link.enqueue_frame(dlp.error_frame(
                     "protocol/binary-unsupported", "binary frames are reserved for DLP v2"))
             elif msg.type == WSMsgType.ERROR:
-                LOGGER.info("relay: agent socket error: %s", ws.exception())
+                LOGGER.info("relay: %s socket error: %s", link.label, ws.exception())
                 break
     finally:
         await hub.detach_agent(link)
@@ -209,7 +209,10 @@ async def link_device(request: web.Request) -> web.WebSocketResponse:
                 link.enqueue_frame(dlp.error_frame(
                     "protocol/binary-unsupported", "binary frames are reserved for DLP v2"))
             elif msg.type == WSMsgType.ERROR:
-                LOGGER.info("relay: device socket error: %s", ws.exception())
+                # `link.label` 带着 deviceId：这条之前只写 "device socket error"，
+                # 于是一整片 PONG 超时属于哪台设备只能靠紧邻的 detached 行猜
+                # （2026-10-13 排查时正是卡在这里）。
+                LOGGER.info("relay: %s socket error: %s", link.label, ws.exception())
                 break
     finally:
         await hub.detach_device(link, reason="socket closed")

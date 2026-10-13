@@ -13,6 +13,13 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+// 隔离 DSH_HOME：agent 默认把生命周期流水写在身份文件旁边
+// （`$DSH_HOME/mobile-link/link-events.jsonl`），不隔离就会写进真实家目录。
+process.env.DSH_HOME = mkdtempSync(join(tmpdir(), 'mobile-link-files-out-test-'))
 
 import { MobileLinkAgent } from '../lib/link.js'
 import { FileFetcher, DEFAULT_WINDOW_BYTES, NON_RETRYABLE_CODES, isPermanent } from '../lib/files-out.js'

@@ -4,6 +4,12 @@
 [语义化版本](https://semver.org/lang/zh-CN/)。三处部署（App / 连接器 / 中转）的组合见
 [`docs/VERSIONING.md`](docs/VERSIONING.md)。
 
+## 连接器 0.6.1 — 2026-10-13
+
+- **新增生命周期流水，回答"连接器为什么把这条链路拆了"**：链路 `link.start` / `link.open` / `link.close`（带原因、拆之前的链路状态、这条挂了多久）/ 重连退避 / 看门狗动手 / 本机 DSH 是否可达 / 设备 `attach`（含"同一台设备又开了一条"）/ `detach`，逐条落盘到 `~/.dsh/mobile-link/link-events.jsonl`（每行一条 JSON，超 256 KiB 滚动一次、只保两代），并随 `/mobile-link/status` 的 `journal` 块带出最近 20 条（新字段，只增；配置项 `journalFile`，`false` 则只留内存）。起因：2026-10-13 排查真机连不上时，连接器的拆链原因不落任何文件——宿主的 `ctx.logger` 不写盘，`lastError` 只留最后一条，只能靠中转日志反推；补上之后当天就当场抓到一次「同一台设备在第一条 socket 还活着时又开了一条」（相隔 40 秒）。
+- **中转的日志把"顶替"这件事说清楚**（行为不变，只加日志）：设备 socket 报错现在带 deviceId（以前只写 `device socket error`，一片 PONG 超时属于哪台设备只能靠相邻的 `detached` 行猜）；同一个 deviceId 又开一条时记 `attached again while its previous socket is still open`（relay 直接覆盖登记、旧 socket 变无人可见）；被顶替的那条关闭时记 `no detach notification sent`，免得"attach 与 detach 条数对得上"被误读成每条都通知到了。
+- 测试隔离：`files-out.test.js` 补 `DSH_HOME`——新增的流水文件默认落在身份文件旁边，不隔离就会写进真实家目录（宪法第 III 条）。
+
 ## 豆包图片 0.2.0 — 2026-10-12
 
 - **默认保留「豆包AI生成」角标**：`stripWatermark` 的默认值从 true 改成 false，只有显式传 true 才去水印（0.1.1 的默认相反，升级后同一段调用拿到的图不一样）。命令行 `generate.mjs` 相应新增 `--strip-watermark`，不加就保留角标。

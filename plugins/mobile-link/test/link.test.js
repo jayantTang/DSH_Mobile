@@ -853,3 +853,73 @@ test('重复实例：新 Link 启动会先停掉上一个（热更不会留下�
   assert.notEqual(second.state, 'stopped')
   await second.stop()
 })
+
+// ── 生命周期流水（2026-10-13「手机连不上」之后补的可观测性） ────────────────
+
+/** 等到 `predicate()` 成立，否则失败。 */
+async function until(predicate, message, timeoutMs = 4000) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (predicate()) return
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+  assert.ok(predicate(), message)
+}
+
+test('链路连上、被拆掉都写进流水，并带上原因', async () => {
+  const sockets = []
+  const agent = new MobileLinkAgent({
+    dshClient: new FakeDsh(),
+    logger: { debug() {}, info() {}, warn() {}, error() {} },
+    relayUrl: 'ws://relay.test',
+    agentId: 'agt_1',
+    agentSecret: 'as_1',
+    heartbeatMs: 60000,
+    connectImpl: async () => {
+      const socket = new ConnectedSocket()
+      sockets.push(socket)
+      return socket
+    },
+  })
+  agent.identity = { agentId: 'agt_1', agentSecret: 'as_1', relayUrl: 'ws://relay.test' }
+  agent.needsEnroll = false
+  await agent.start()
+  await until(() => agent.state === 'connected', `没能连上（state=${agent.state}）`)
+
+  // 关闭 socket ＝ 中转把这条链路断了；会话随即返回，走拆链那条路。
+  sockets[0].closeHandler?.(1006, 'gone')
+  await until(() => agent.journal.entries().some((entry) => entry.kind === 'link.close'),
+    `拆链没有写进流水：${JSON.stringify(agent.journal.entries().map((entry) => entry.kind))}`)
+  await agent.stop()
+
+  const entries = agent.journal.entries()
+  const kinds = entries.map((entry) => entry.kind)
+  const open = entries.find((entry) => entry.kind === 'link.open')
+  assert.ok(kinds.includes('link.start'), `link.start 不见了：${kinds.join(', ')}`)
+  assert.equal(open.agentId, 'agt_1')
+  assert.ok(open.relay.startsWith('ws://relay.test'), `link.open 应带上中转地址：${open.relay}`)
+  const close = entries.find((entry) => entry.kind === 'link.close')
+  assert.match(close.reason, /relay closed the socket/, `拆链原因该被记下来：${close.reason}`)
+  assert.equal(close.from, 'connected', '拆之前的链路状态要一起记，才能区分"刚连上就掉"和"挂了很久才掉"')
+})
+
+test('同一台设备又 attach 一次（中间没有 detach）会被标出来', async () => {
+  const { agent } = makeAgent()
+  await agent.handleRelayFrame(attach('dev_1'))
+  await agent.handleRelayFrame(attach('dev_1'))
+  const kinds = agent.journal.entries().map((entry) => entry.kind)
+  assert.ok(kinds.includes('device.attach'), `首次接入要记：${kinds.join(', ')}`)
+  assert.ok(kinds.includes('device.attach-again'),
+    `同一台设备连着开第二条时必须留痕，否则日志里只看得到"它连上了"：${kinds.join(', ')}`)
+  const again = agent.journal.entries().find((entry) => entry.kind === 'device.attach-again')
+  assert.equal(again.deviceId, 'dev_1')
+
+  // 断开之后再连是**回头客**，不是"又开了一条"：两条要分得开。
+  const before = agent.journal.entries().length
+  await agent.handleRelayFrame({ t: 'deviceDetach', deviceId: 'dev_1', reason: 'socket closed' })
+  await agent.handleRelayFrame(attach('dev_1'))
+  const after = agent.journal.entries().slice(before).map((entry) => entry.kind)
+  assert.ok(after.includes('device.detach'), `断开要记：${after.join(', ')}`)
+  assert.ok(after.includes('device.reattach'), `回头客要记成 reattach：${after.join(', ')}`)
+  assert.ok(!after.includes('device.attach-again'), '先断后连不是"又开一条"')
+})

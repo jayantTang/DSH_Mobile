@@ -63,6 +63,28 @@ test('the pre-existing fields keep their names and types (only additions allowed
   }
 })
 
+test('the lifecycle journal rides along as an added field', () => {
+  // 新增字段：`lastError` 只有最后一条，而"为什么连不上"往往要看之前发生过什么。
+  const withJournal = statusSnapshot(fakeAgent({
+    journal: {
+      path: '/tmp/link-events.jsonl',
+      recorded: 9,
+      dropped: 2,
+      fileErrors: 0,
+      recent: (count) => [{ kind: 'link.close', reason: 'watchdog' }].slice(-count),
+    },
+  }))
+  assert.equal(withJournal.journal.path, '/tmp/link-events.jsonl')
+  assert.equal(withJournal.journal.recorded, 9)
+  assert.equal(withJournal.journal.dropped, 2)
+  assert.equal(withJournal.journal.recent[0].kind, 'link.close')
+
+  // 老调用方（假 agent、更早的接线）没有流水对象时给空块，不是 undefined：
+  // 读者不用为了新增字段做判空。
+  assert.deepEqual(statusSnapshot(fakeAgent()).journal,
+    { path: null, recorded: 0, dropped: 0, fileErrors: 0, recent: [] })
+})
+
 test('a healthy link reports null classification and no hint', () => {
   const status = statusSnapshot(fakeAgent())
   assert.equal(status.dsh.errorKind, null)

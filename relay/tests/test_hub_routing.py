@@ -425,3 +425,46 @@ async def test_revoking_an_offline_device_reports_that_nothing_was_detached(clie
     assert response.status == 200, await response.text()
     assert (await response.json()) == {"ok": True, "deviceId": device["deviceId"]}
     assert device["deviceId"] not in client.app["hub"]._devices
+
+
+async def test_a_second_socket_for_one_device_is_visible_in_the_log(client, provisioned, caplog):
+    """同一个 deviceId 又开一条：顶替与"没有通知"这两件事都必须留痕。
+
+    现场（2026-10-13 01:10，真机）：App 重连时先开新 socket 再关旧的，两条同时活着；
+    relay 的 `attach_device` 直接覆盖登记，于是旧的那条从两边状态里消失，直到它自己关掉
+    才留下一条**没有对应 deviceDetach** 的 detached。当时日志里看不出"它连了两条"——
+    这条用例就是钉住那两行。
+    """
+    caplog.set_level(logging.INFO, logger="relay")
+    agent_ws = await open_agent(client, provisioned)
+    first, device = await open_device(client, provisioned)
+    await recv_json(first)  # hostStatus
+    await recv_json(agent_ws)  # deviceAttach
+    assert client.app["hub"]._devices[device["deviceId"]] is not None
+
+    # 同一个 device token 再开一条：这就是"App 又拨了一次"。
+    second = await client.ws_connect(
+        f"/link/device?agentId={device['agentId']}",
+        headers={"Authorization": f"Bearer {device['deviceToken']}"})
+    await recv_json(second)  # hostStatus
+
+    assert any("attached again while its previous socket is still open" in record.message
+               for record in caplog.records), \
+        "顶替一条还活着的 socket 必须报出来，否则日志里看不到「两条同时在线」"
+
+    # 旧的那条关掉：它已经不是登记项，所以**不该**给连接器发 deviceDetach。
+    caplog.clear()
+    await first.close()
+    deadline = asyncio.get_running_loop().time() + 3.0
+    while asyncio.get_running_loop().time() < deadline:
+        if any("had already been replaced" in record.message for record in caplog.records):
+            break
+        await asyncio.sleep(0.05)
+    assert any("had already been replaced" in record.message for record in caplog.records), \
+        "被顶替的那条关闭时要说明「没发通知」"
+    assert any("no detach notification sent" in record.message for record in caplog.records)
+    # 新那条仍在登记表里，连接器那边的设备视图不受影响。
+    assert client.app["hub"]._devices[device["deviceId"]] is not None
+
+    await second.close()
+    await agent_ws.close()

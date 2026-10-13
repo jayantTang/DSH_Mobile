@@ -30,6 +30,7 @@ plugins/mobile-link/
 │   ├── dlp.js            # DLP v1 frame codec (shared with the relay)
 │   ├── files.js          # phone → computer file transfers (`_link/file*` methods)
 │   ├── enroll.js         # invite-code redemption, writes ~/.dsh/mobile-link/agent.json
+│   ├── journal.js        # lifecycle journal: why a relay link was dropped, after the fact
 │   ├── routes.js         # GET /mobile-link/status, POST /pair-code, GET /qr
 │   ├── qr.js             # dependency-free QR SVG
 │   └── cli.js            # dsh-mobile-link: enroll / mint-pair-code
@@ -95,7 +96,10 @@ dsh plugin --profile web add ./plugins/mobile-link
    else has to be run by hand.
 
 `GET /mobile-link/status` reports whether the link is up, which devices are
-attached, and whether this computer is registered yet.
+attached, and whether this computer is registered yet. Its `journal` block carries
+the current process's newest lifecycle events (link opened/closed with the reason,
+device attached/detached); the counters in it reset when the plugin hot-reloads, so
+the full history — across restarts — is the JSONL file at `journal.path`.
 
 ## Configuration
 
@@ -108,6 +112,7 @@ plugin's config block (`cordis.patch.yml`), not by editing this file.
 | `relayUrl` | from `agent.json` | Relay base URL; a bare deployment dials `<relay>/link/agent` |
 | `agentId` / `agentSecret` | from `agent.json` | Override the enrolled identity |
 | `stateFile` | `~/.dsh/mobile-link/agent.json` | Where the identity lives |
+| `journalFile` | `~/.dsh/mobile-link/link-events.jsonl` | Lifecycle journal (rotated once at 256 KiB); `false` keeps it in memory only |
 | `dshUrl` | discovery | Explicit local DSH base URL (usually unnecessary — the host hands the connector its own address) |
 | `heartbeatMs` | `20000` | DLP ping interval |
 
