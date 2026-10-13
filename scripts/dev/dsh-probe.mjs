@@ -37,14 +37,17 @@ if (existsSync(ENV_FILE)) {
   }
 }
 
-function endpoint() {
+/** 本机 DSH 的带凭据地址（只读 `~/.dsh/mobile-link/endpoint.json`）。诊断采集也用它，
+ *  免得出现第二份"怎么读 endpoint.json"的实现。 */
+export function endpoint() {
   const raw = JSON.parse(readFileSync(ENDPOINT, 'utf8'))
   const token = /token=([^&]+)/.exec(raw.url)?.[1]
   if (!token) throw new Error('endpoint.json carries no launch token')
   return { port: raw.port ?? 54499, token }
 }
 
-async function cookie() {
+/** 用启动令牌换一个会话 cookie（`/mobile-link/status` 需要它）。 */
+export async function cookie() {
   const { port, token } = endpoint()
   const res = await fetch(`http://127.0.0.1:${port}/?token=${token}`, { redirect: 'manual' })
   const header = res.headers.getSetCookie?.()[0] ?? res.headers.get('set-cookie')
@@ -99,7 +102,9 @@ function mintCode() {
 
 const [, , command, argument] = process.argv
 
-switch (command) {
+// 被 import 时不跑 CLI：`collect-diagnostics.mjs` 复用这里的 `endpoint()` / `cookie()`
+// 取本机地址与凭据（契约 §5 要求"不新增第二份实现"）。
+if (import.meta.url === `file://${process.argv[1]}`) switch (command) {
   case 'endpoint': {
     const { port, token } = endpoint()
     // A trailing newline matters: `read` returns non-zero at EOF, which a

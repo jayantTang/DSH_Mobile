@@ -186,20 +186,27 @@ public actor LinkCarrier: DSHCarrier {
     private var statusObservers: [UUID: AsyncStream<HostStatus>.Continuation] = [:]
     private var lastStatus = HostStatus(online: false, info: nil)
 
+    /// App 侧的生命周期流水（`app.*`）。**永远不参与连接主路径**：记录失败只记一次，
+    /// 调用点不 await 结果、也不因为它改变状态（spec 020 的 FR-011/FR-018）。
+    public let diagnostics: LinkDiagnostics
+
     /// - Parameters:
     ///   - configuration: relay origin, target agent, and device credential.
     ///   - session: injected for tests; a dedicated ephemeral session by default.
     ///   - timeout: deadline for one unary call.
     ///   - reconnect: backoff schedule applied when the relay connection drops.
+    ///   - diagnostics: 生命周期流水；不传就只留内存（不落盘时不该悄悄写文件）。
     public init(
         configuration: LinkConfiguration,
         session: URLSession? = nil,
         timeout: Duration = .seconds(60),
-        reconnect: ReconnectPolicy = .default
+        reconnect: ReconnectPolicy = .default,
+        diagnostics: LinkDiagnostics = LinkDiagnostics()
     ) {
         self.configuration = configuration
         self.timeout = timeout
         self.reconnect = reconnect
+        self.diagnostics = diagnostics
         if let session {
             self.session = session
         } else {
@@ -220,11 +227,13 @@ public actor LinkCarrier: DSHCarrier {
         configuration: LinkConfiguration,
         timeout: Duration = .seconds(60),
         reconnect: ReconnectPolicy = .default,
+        diagnostics: LinkDiagnostics = LinkDiagnostics(),
         makeSocket: @escaping @Sendable (URLRequest) -> any RelaySocketTask
     ) {
         self.configuration = configuration
         self.timeout = timeout
         self.reconnect = reconnect
+        self.diagnostics = diagnostics
         self.session = URLSession(configuration: .ephemeral)
         self.makeSocket = makeSocket
     }

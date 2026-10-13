@@ -30,6 +30,8 @@ import { readFileSync, existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { checkEventContract } from './check-diagnostics.mjs'
+
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const read = (relative) => readFileSync(join(REPO_ROOT, relative), 'utf8')
 const readJson = (relative) => JSON.parse(read(relative))
@@ -490,6 +492,22 @@ function listAppSwiftSources() {
   return listSwiftSources().filter((file) => file.startsWith(`${APP_SWIFT_DIR}/`))
 }
 
+// ── ⑨ 诊断事件目录：写入侧 EVENT_KINDS 与契约文档必须逐字一致 ────────────────
+//
+// spec 020。词表是"只增"契约的地基：加了 kind 忘了改文档，下一个人就会按旧契约读新事件；
+// 文档里有而代码里没有，则是有人删了事件却没记账。两个方向都要拦。
+
+console.log('诊断事件目录（写入侧 vs 契约文档）：')
+{
+  const result = checkEventContract({ repoRoot: REPO_ROOT })
+  if (!result.ok) {
+    for (const issue of result.issues) fail(`诊断事件目录漂移：${issue}`)
+    console.log(`  FAIL ${result.issues.join(' / ')}`)
+  } else {
+    console.log(`  ok   写入侧与契约逐字一致（${result.codeKinds.length} 个 kind）`)
+  }
+}
+
 // ── 结论 ───────────────────────────────────────────────────────────────────
 
 if (problems.length) {
@@ -497,4 +515,4 @@ if (problems.length) {
   for (const problem of problems) console.error(`  - ${problem}`)
   process.exit(1)
 }
-console.log('\nok  契约检查通过（DLP 向量接线 / 安装阶梯 / 调试钩子闸门 / send-image 脚本一致性 / 能力词表 / catalog 自洽 / host 基线 / test:scripts 入库）')
+console.log('\nok  契约检查通过（DLP 向量接线 / 安装阶梯 / 调试钩子闸门 / send-image 脚本一致性 / 能力词表 / catalog 自洽 / host 基线 / test:scripts 入库 / 诊断事件目录）')

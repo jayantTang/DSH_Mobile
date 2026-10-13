@@ -23,7 +23,7 @@ from aiohttp import web
 
 import dlp
 from store import (InviteRejected, PairCodeClaimRejected, PairCodeRejected, Store,
-                   StoreError, hash_invite_code, normalize_pair_code)
+                   StoreError, hash_invite_code, normalize_pair_code, now_ms)
 
 LOGGER = logging.getLogger("relay.api")
 
@@ -294,9 +294,13 @@ async def stats(request: web.Request) -> web.Response:
 
     hub = request.app["hub"]
     limits = request.app["limits"]
+    # 取**一次**给整份响应：`now` 是给诊断做三侧时钟对齐用的（spec 020 / contracts/stats-now.md），
+    # 每个字段各取一次会让"同一响应内的时刻"互相矛盾。
+    observed_at = now_ms()
     payload = {
         "ok": True,
         "version": dlp.PROTOCOL_VERSION,
+        "now": observed_at,
         "limits": limits.describe(),
         "load": {
             "agents": len(hub.agents),
