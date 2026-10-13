@@ -62,6 +62,10 @@ export const SERVER_CAPABILITIES = [
   // session-search: it answers `_link/sessionFind` (in-session literal search). The
   // phone switches channels on these and falls back to `session/page` without them.
   'history-window', 'session-search',
+  // session-digest: 连接器答 `_link/sessionDigest`（`session/list` 的精简同形副本，
+  // 去掉 App 侧零读取点的字段、可按要求 gzip）。手机侧按这条能力切换，缺了就回退到
+  // `session/list`——spec 021 只做连接器侧，切换在后续规格。
+  'session-digest',
   // history-role-filter: `_link/sessionWindow` accepts `roles` (e.g. just the
   // "me" role) and returns only matching records; seq cursor semantics are
   // unchanged (spec 009 T031).

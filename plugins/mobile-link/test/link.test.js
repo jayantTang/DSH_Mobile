@@ -4,6 +4,7 @@
  */
 
 import assert from 'node:assert/strict'
+import { gunzipSync } from 'node:zlib'
 import { EventEmitter } from 'node:events'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -17,6 +18,7 @@ process.env.DSH_HOME = TEST_HOME
 process.on('exit', () => rmSync(TEST_HOME, { recursive: true, force: true }))
 
 import { MobileLinkAgent } from '../lib/link.js'
+import { SESSION_DIGEST_METHOD } from '../lib/session-digest.js'
 
 const setTimeoutFnReal = setTimeout
 
@@ -1186,4 +1188,87 @@ test('正常关闭：不带 socketError（凭空多一个 null 会让人以为�
   await agent.stop()
   const close = agent.journal.entries().find((entry) => entry.kind === 'link.close')
   assert.ok(!('socketError' in close), `正常关闭不该带 socketError：${JSON.stringify(close)}`)
+})
+
+// ── spec 021：`_link/sessionDigest` 走完整 DLP 路径，且老方法逐字节不变 ─────────────
+
+/** 一份最小"宿主形状"的列表：两个被剔除的投影键 + 一个保留键 + 一个未来字段。 */
+function hostSessionList() {
+  return {
+    ok: true,
+    value: {
+      items: [{
+        sessionId: 'session-1',
+        updatedAt: 1_791_860_000_000,
+        agentAvailable: true,
+        running: true,
+        blank: false,
+        cwd: '/Users/x/p',
+        origin: 'session',
+        parentSessionId: null,
+        futureField: 'keep-me',
+        projections: {
+          kind: 'sequenced',
+          asOfSeq: 42,
+          values: {
+            title: '标题',
+            turnOutline: [{ turn: 1, prompt: 'p'.repeat(500), response: 'r'.repeat(500) }],
+            imageLimits: { maxImageBytes: 20_971_520 },
+            tokenUsage: { totalTokens: 1234 },
+          },
+        },
+      }],
+    },
+  }
+}
+
+const digestReq = (args, id = 'dg1') => ({ t: 'req', id, method: SESSION_DIGEST_METHOD, args, deviceId: 'dev_1' })
+
+test('sessionDigest：走完整路径出精简结果，老方法一字不改', async () => {
+  const page = hostSessionList()
+  const { agent, dsh, socket } = makeAgent({ responses: { 'session/list': page } })
+  await agent.handleRelayFrame(attach('dev_1'))
+
+  // ① 新方法：不压缩
+  await agent.handleRelayFrame(digestReq({ _request: {} }))
+  const plain = socket.last('res')
+  assert.equal(plain.ok, true)
+  assert.equal(plain.value.encoding, 'identity')
+  const item = plain.value.value.items[0]
+  assert.ok(!('agentAvailable' in item), 'agentAvailable 应被剔除')
+  assert.ok(!('kind' in item.projections), 'projections.kind 应被剔除')
+  assert.ok(!('turnOutline' in item.projections.values), 'turnOutline 应被剔除')
+  assert.ok(!('imageLimits' in item.projections.values), 'imageLimits 应被剔除')
+  assert.equal(item.projections.values.title, '标题', '保留字段逐字不变')
+  assert.equal(item.projections.asOfSeq, 42)
+  assert.equal(item.futureField, 'keep-me', '名单之外的新字段要保留')
+  assert.ok(JSON.stringify(plain.value.value).length < JSON.stringify(page.value).length * 0.5,
+    '应省下一半以上')
+
+  // ② 新方法：gzip
+  await agent.handleRelayFrame(digestReq({ _request: {}, encoding: 'gzip' }, 'dg2'))
+  const packed = socket.last('res')
+  assert.equal(packed.value.encoding, 'gzip')
+  const restored = JSON.parse(gunzipSync(Buffer.from(packed.value.value, 'base64')).toString('utf8'))
+  assert.deepEqual(restored, plain.value.value, '压缩往返无损')
+
+  // ③ 老方法：一个字段都不许少（帧的 value 必须逐字段等于宿主给的那份）
+  await agent.handleRelayFrame({ t: 'req', id: 'u9', method: 'session/list', args: { _request: {} }, deviceId: 'dev_1' })
+  const legacy = socket.last('res')
+  assert.deepEqual(legacy.value, page.value, 'session/list 的响应必须与宿主给的一模一样')
+  const text = JSON.stringify(legacy)
+  assert.ok(text.includes('agentAvailable') && text.includes('turnOutline') && text.includes('imageLimits'),
+    '老路径不许被裁剪波及')
+  assert.ok(dsh.calls.some((call) => call.method === 'session/list'), '新方法最终走的是宿主的 session/list')
+})
+
+test('sessionDigest：宿主失败时返回与老方法同形的错误', async () => {
+  const { agent, dsh, socket } = makeAgent()
+  dsh.rpcError = new Error('DSH is not connected')
+  await agent.handleRelayFrame(attach('dev_1'))
+  await agent.handleRelayFrame(digestReq({ _request: {} }))
+  const res = socket.last('res')
+  assert.equal(res.ok, false)
+  assert.equal(res.error.code, 'host/unavailable')
+  assert.match(res.error.message, /DSH is not connected/)
 })

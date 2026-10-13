@@ -4,6 +4,24 @@
 [语义化版本](https://semver.org/lang/zh-CN/)。三处部署（App / 连接器 / 中转）的组合见
 [`docs/VERSIONING.md`](docs/VERSIONING.md)。
 
+## 连接器 0.6.4 — 2026-10-13（会话列表报文裁剪与压缩）
+
+现场诊断量出来：**`session/list` 占经中转下行字节的 96%**，一次固定 714 KB（437 条会话），
+而其中 **58.8% 是 App 从来不读的字段**。这一版在连接器侧先做减法，**不动 App、不动中转、不动 `session/list`**：
+
+- 新增 `_link/sessionDigest`：`session/list` 的精简同形副本。剔掉 11 项零读取点的字段
+  （`turnOutline` 33.4%、`imageLimits` 6.2%、`sessionStats` 4.2%、`todos` 2.6%、
+  `subagentCatalog` 2.6%、`contextBreakdown` 2.5%、`sessionListMetadata` 1.9%、`subagentTiming` 1.5%、
+  `agentPreset` 0.8%、`projections.kind` 1.3%、`agentAvailable` 1.8%），其余原样透传（含 `asOfSeq`、
+  宿主将来新增的字段）。清单与逐条复查依据见 `specs/021-link-payload-slimming/contracts/session-digest.md`。
+- 支持按调用方要求 gzip（`encoding: "gzip"`，压缩后 base64 放进文本帧，与 `_link/diagnostics` 同款）：
+  中转与手机侧都不支持 per-message deflate，所以要压只能在应用层压。
+- `_link/hello.capabilities` 增加 `session-digest`（App 以后据此切换，缺了就回退 `session/list`）。
+- **实测对比**（经真实中转、同一份 437 条会话的数据）：
+  `session/list` 726,941 B → `_link/sessionDigest` **244,743 B（33.7%）** → 再加 gzip **50,322 B（6.9%）**。
+  对比脚本：`node scripts/dev/probe-session-compare.mjs`（配对 `DSH-` 调试设备，跑完撤销）。
+- 兼容：`session/list` 逐字段不变；中转不校验方法名，所以本方法不需要中转配合，也不影响旧版本。
+
 ## 连接器 0.6.3 / 中转 / App 1.0（开发版）— 2026-10-13（第二次现场诊断之后）
 
 第一次拿这套能力给真机做完整诊断时，**工具自身**暴露出七个缺口。这一版把它们补上：

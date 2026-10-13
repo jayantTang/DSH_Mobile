@@ -96,6 +96,7 @@ export function trimHistoryPageForWire(method, result) {
 }
 
 import { DeviceTimeline } from './diagnostics.js'
+import { SESSION_DIGEST_METHOD, digestSessionList, encodeDigest } from './session-digest.js'
 
 /** 慢请求阈值默认值（毫秒）；0 = 关闭逐条慢请求记录。 */
 export const DEFAULT_SLOW_REQUEST_MS = 2000
@@ -562,6 +563,25 @@ export class DeviceRouter {
   async handleRequest(deviceId, frame) {
     // App 推上来的阶段记录：**只落盘，不影响任何连接行为**（契约
     // connector-diagnostics-method.md §4）。放在最前面，免得被后面的方法族顺序影响。
+    // 精简版会话列表（spec 021）：同一份宿主数据，去掉 App 侧零读取点的字段，可按要求 gzip。
+    // 老方法 `session/list` 一个字节都不改——老版本手机继续走它，这是兼容的前提。
+    if (frame.method === SESSION_DIGEST_METHOD) {
+      const args = frame.args ?? {}
+      let result
+      try {
+        result = await this.dsh.rpc('session/list', { _request: args._request ?? {} })
+      } catch (error) {
+        result = { ok: false, error: errorObject('host/unavailable', messageOf(error)) }
+        this.lastError = messageOf(error)
+        this.#changed()
+      }
+      const payload = result?.ok === true
+        ? { ok: true, value: encodeDigest(digestSessionList(result), args.encoding) }
+        : result
+      this.send(deviceId, resultFrame(frame.id, payload, deviceId))
+      return
+    }
+
     if (frame.method === DIAGNOSTICS_METHOD) {
       const result = this.acceptDiagnostics(deviceId, frame.args ?? {})
       this.send(deviceId, resultFrame(frame.id, result, deviceId))

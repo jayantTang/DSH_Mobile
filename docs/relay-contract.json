@@ -12,6 +12,7 @@
     "background-transfer",
     "history-window",
     "session-search",
+    "session-digest",
     "history-role-filter",
     "history-scan-boundary"
   ],
