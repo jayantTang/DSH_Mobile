@@ -22,14 +22,17 @@ extension LinkCarrier {
         await diagnostics.record(kind: "app.dial", detail: ["phase": .string("start")])
     }
 
-    /// 记一条阶段事件。`since` 给了就附上"距它多少毫秒"（契约里的 `app.*.ms`）。
+    /// 记一条阶段事件。`since` 给了就附上"距它多少毫秒"。
+    ///
+    /// 字段叫 `elapsedMs` **不叫 `ms`**：`ms` 是信封上的时刻，同名会把时刻冲掉
+    /// （2026-10-13 真机运行踩到过：时间线上那条会跑到 1970 年）。见 journal.js 的 PROTECTED_KEYS。
     ///
     /// `public`：App 目标要靠它写 `app.hello` / `app.first-screen` / `app.scene` —— 这几个
     /// 时刻只有 App 的状态机知道（DSHKit 看不到"首屏就绪"）。
     public func diagnosticsNote(_ kind: String, since: Date? = nil, detail: [String: JSONValue] = [:]) async {
         var payload = detail
         if let since {
-            payload["ms"] = .int(Int(Date().timeIntervalSince(since) * 1000))
+            payload["elapsedMs"] = .int(Int(Date().timeIntervalSince(since) * 1000))
         }
         await diagnostics.record(kind: kind, detail: payload)
     }

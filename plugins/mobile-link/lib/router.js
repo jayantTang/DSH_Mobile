@@ -107,11 +107,20 @@ export const DIAGNOSTICS_BATCH_BYTES = 32 * 1024
 /** 单条事件里字符串字段的保留长度。 */
 const DIAGNOSTICS_MAX_TEXT = 400
 
-/** 只留标量（字符串/数字/布尔）与标量数组：App 侧事件的形状由它自己定，这里不替它校验语义。 */
+/**
+ * 只留标量（字符串/数字/布尔）与标量数组。
+ *
+ * **必须把 App 的 `detail` 摊平到顶层**：App 侧的 JSONL 信封是
+ * `{kind, seq, ms, at, detail:{...}}`（见 DSHKit 的 `LinkDiagnostics.Event`），而连接器
+ * 自己的流水是**扁平**的。不摊平的话 `phase`/`ms` 这些字段会在清洗时被当成嵌套对象丢掉——
+ * 实测症状：`app.dial` 落盘后一个字段都没有（2026-10-13 09:25 的中转运行）。
+ */
 function sanitizeDiagnosticEvent(event) {
   if (!event || typeof event !== 'object' || typeof event.kind !== 'string') return null
+  const { detail, ...envelope } = event
+  const flat = { ...envelope, ...(detail && typeof detail === 'object' ? detail : {}) }
   const clean = { kind: event.kind }
-  for (const [key, value] of Object.entries(event)) {
+  for (const [key, value] of Object.entries(flat)) {
     if (key === 'kind') continue
     if (typeof value === 'string') clean[key] = value.slice(0, DIAGNOSTICS_MAX_TEXT)
     else if (typeof value === 'number' || typeof value === 'boolean') clean[key] = value
@@ -369,8 +378,9 @@ export class DeviceRouter {
       if (Number.isFinite(seq) && seq <= watermark) continue
       const size = JSON.stringify(event).length
       if (bytes > 0 && bytes + size > DIAGNOSTICS_BATCH_BYTES) break
-      // `at`/`ms` 覆盖信封：这是刻意的，见上面第 1 条。
-      this.onEvent(event.kind, { ...event, source: 'app' })
+      // 用 recordForeign：App 的时刻照抄（它是"手机侧几点"的唯一来源）。
+      // 补 `deviceId`：App 自己不知道它的 id，而多设备时没有这一列就没法把事件归到某台手机上。
+      this.onEvent(event.kind, { ...event, deviceId, source: 'app' }, { foreign: true })
       bytes += size
       accepted += 1
       if (Number.isFinite(seq)) lastSeq = Math.max(lastSeq, seq)

@@ -104,7 +104,10 @@ export class MobileLinkAgent extends EventEmitter {
       send: (deviceId, frame) => this.sendToDevice(deviceId, frame),
       // 设备侧的 attach/detach 与链路侧同源记进流水：事后想把"手机断了"和
       // "连接器拆链"对上时间，两边必须写在同一份文件里。
-      onEvent: (kind, detail) => this.journal.record(kind, detail),
+      // `options.foreign` 表示这条事件用的是**别人的钟**（App 推上来的），必须原样保留时刻。
+      onEvent: (kind, detail, options) => (options?.foreign
+        ? this.journal.recordForeign(kind, detail)
+        : this.journal.record(kind, detail)),
       // 「跑完了 / 待你回应」到了就报一声（`{t:'notify'}`）。这是 agent 侧控制帧，
       // **不带 deviceId**：连接器不知道、也不需要知道这台电脑配了哪些手机，
       // 「该不该推给某台手机」由中转判（它手里才有"这台设备此刻在不在线"）。

@@ -78,7 +78,9 @@ test('阈值边界：等于阈值不算慢，超过才算；关闭时一条都�
   assert.equal(slow.kinds().includes('request.slow'), false, '等于阈值不算慢')
   slow.request('session/list', 2001)
   assert.equal(slow.kinds().filter((kind) => kind === 'request.slow').length, 1)
-  assert.deepEqual(slow.last('request.slow'), { deviceId: 'dev_1', method: 'session/list', ms: 2001, bytes: 10 })
+  assert.deepEqual(slow.last('request.slow'),
+    { deviceId: 'dev_1', method: 'session/list', elapsedMs: 2001, bytes: 10 },
+    '耗时字段叫 elapsedMs：叫 ms 会把信封上的时刻冲掉')
 
   const off = makeTimeline({ slowRequestMs: 0 })
   for (let index = 0; index < 5; index += 1) off.request('session/list', 9000)

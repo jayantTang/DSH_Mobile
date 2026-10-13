@@ -35,12 +35,12 @@ struct LinkDiagnosticsTests {    @Test("环有上限，被挤掉的条数如实�
         let clock = FakeClock(1_791_825_010_506)
         let diagnostics = LinkDiagnostics(now: { clock.tick(0) })
         let first = await diagnostics.record(kind: "app.dial", detail: ["phase": .string("start")])
-        let second = await diagnostics.record(kind: "app.hello", detail: ["ms": .int(12)])
+        let second = await diagnostics.record(kind: "app.hello", detail: ["elapsedMs": .int(12)])
         #expect(second.seq == first.seq + 1)
         #expect(first.ms == 1_791_825_010_506)
         // `at` 一律是 **UTC** 的 ISO（与连接器流水同口径），采集侧才能直接解析比对。
         #expect(first.at == "2026-10-12T17:10:10.506Z", "ISO 口径要能被采集侧直接解析：\(first.at)")
-        #expect(second.detail?["ms"] == .int(12))
+        #expect(second.detail?["elapsedMs"] == .int(12))
     }
 
     @Test("落盘：一行一条 JSON，能读回来")
@@ -49,7 +49,7 @@ struct LinkDiagnosticsTests {    @Test("环有上限，被挤掉的条数如实�
         defer { try? FileManager.default.removeItem(at: directory) }
         let diagnostics = LinkDiagnostics(directory: directory, now: { 1_791_825_010_506 })
         await diagnostics.record(kind: "app.dial", detail: ["phase": .string("start")])
-        await diagnostics.record(kind: "app.hello", detail: ["ms": .int(12)])
+        await diagnostics.record(kind: "app.hello", detail: ["elapsedMs": .int(12)])
         let url = try #require(await diagnostics.logURL)
         let lines = try String(contentsOf: url, encoding: .utf8).split(separator: "\n")
         #expect(lines.count == 2)
@@ -81,7 +81,7 @@ struct LinkDiagnosticsTests {    @Test("环有上限，被挤掉的条数如实�
         defer { try? FileManager.default.removeItem(at: directory) }
         let first = LinkDiagnostics(directory: directory, now: { 1_000 })
         await first.record(kind: "app.dial", detail: ["phase": .string("start")])
-        await first.record(kind: "app.hello", detail: ["ms": .int(5)])
+        await first.record(kind: "app.hello", detail: ["elapsedMs": .int(5)])
         await first.markPushed(upTo: 1)
 
         let second = LinkDiagnostics(directory: directory, now: { 2_000 })
@@ -178,9 +178,9 @@ struct LinkSocketObserverTests {
         let startedAt = Date(timeIntervalSinceNow: -0.05)
         await carrier.diagnosticsNote("app.hello", since: startedAt)
         let entry = await diagnostics.entries().first { $0.kind == "app.hello" }
-        let elapsed = entry?.detail?["ms"]
+        let elapsed = entry?.detail?["elapsedMs"]
         guard case .int(let ms)? = elapsed else {
-            Issue.record("app.hello 必须带 ms")
+            Issue.record("app.hello 必须带 elapsedMs（不叫 ms：那是信封上的时刻）")
             return
         }
         #expect(ms >= 40, "至少 40 毫秒（起点故意设在 50 毫秒前）：\(ms)")

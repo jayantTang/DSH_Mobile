@@ -8,7 +8,13 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { parseArgs } from './check-diagnostics.mjs'
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+import {
+  checkDiagnosticsPack, parseArgs, parseContractKinds, redactHome, scanForLeaks,
+} from './check-diagnostics.mjs'
 
 test('parseArgs 默认与 --pack/--contract', () => {
   assert.deepEqual(parseArgs([]), { pack: undefined, contract: false, help: false })
@@ -18,4 +24,72 @@ test('parseArgs 默认与 --pack/--contract', () => {
 
 test('parseArgs 对未知参数报错', () => {
   assert.throws(() => parseArgs(['--what']), /未知参数/)
+})
+
+// ── 脱敏：每条规则都要有负例（故意注入必须被抓到） ────────────────────────────
+
+test('scanForLeaks 抓到每一类凭据与真实家目录', () => {
+  const samples = [
+    ['agent-secret', 'relayUrl=wss://x as_TESTONLY_000000000000000000000000'],
+    ['bearer', 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.abc'],
+    ['launch-token', 'http://127.0.0.1:19387/?token=GyEW2yb1AEqGCbsK-WCuVCHRZMukXjX98sBCf2H8d8s'],
+    ['auth-cookie', 'dsh-auth-x=deadbeefdeadbeef'],
+    ['invite-code', 'DSH_MOBILE_LINK_INVITE=abcdefghijklmnop1234'],
+    ['env-secret', 'CLIENT_SECRET=supersecretvalue'],
+    ['foreign-home', 'log at /Users/someone/Library/Logs/x.log'],
+  ]
+  for (const [rule, text] of samples) {
+    const hits = scanForLeaks(text)
+    assert.ok(hits.some((hit) => hit.rule === rule), `${rule} 没被抓到：${JSON.stringify(hits)}`)
+  }
+})
+
+test('redactHome 把当前家目录换成 ~（两种形状都覆盖）', () => {
+  const home = '/Users/tester'
+  assert.equal(redactHome(`读 ${home}/.dsh/mobile-link/agent.json`, home), '读 ~/.dsh/mobile-link/agent.json')
+  assert.equal(redactHome(`file://${home}/x`, home), 'file://~/x')
+  assert.equal(redactHome('别的路径不动 /opt/dsh-relay', home), '别的路径不动 /opt/dsh-relay')
+})
+
+test('正常文本不会被误报（否则检查器会被当成噪音忽略掉）', () => {
+  const hits = scanForLeaks('device dev_testdevice0001 attached to agent agt_testagent00001')
+  assert.deepEqual(hits, [], `不该报：${JSON.stringify(hits)}`)
+})
+
+test('checkDiagnosticsPack：注入一份带 secret 的包必须失败，干净包必须通过', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-pack-test-'))
+  mkdirSync(join(dir, 'sources'), { recursive: true })
+  for (const name of ['README.md', 'clock.json', 'coverage.json', 'missing.json']) {
+    writeFileSync(join(dir, name), '{}\n')
+  }
+  writeFileSync(join(dir, 'timeline.jsonl'), '{"kind":"app.dial"}\n')
+  writeFileSync(join(dir, 'sources', 'connector.jsonl'),
+    '{"kind":"link.open","agentId":"agt_testagent00001"}\n')
+  let result = checkDiagnosticsPack(dir)
+  assert.equal(result.ok, true, `干净包不该被判红：${JSON.stringify(result)}`)
+  assert.equal(result.files, 6)
+
+  // 负例：有人顺手把 secret 写进包
+  writeFileSync(join(dir, 'sources', 'connector.jsonl'),
+    '{"kind":"link.start","secret":"as_TESTONLY_000000000000000000000000"}\n')
+  result = checkDiagnosticsPack(dir)
+  assert.equal(result.ok, false, '带 secret 的包必须失败')
+  assert.ok(result.hits.some((hit) => hit.rule === 'agent-secret'))
+  assert.equal(result.hits[0].file, 'sources/connector.jsonl', '要指出在哪个文件')
+})
+
+test('checkDiagnosticsPack：缺结构文件要报出来', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-pack-test2-'))
+  const result = checkDiagnosticsPack(dir)
+  assert.equal(result.ok, false)
+  assert.ok(result.issues.some((issue) => issue.includes('README.md')))
+})
+
+test('parseContractKinds 只取 §2/§3 表的第一列（§4 的行内片段不算 kind）', () => {
+  const markdown = [
+    '## 2. 既有 kind', '| `link.start` | `a` | 含义 |', '| `device.attach` | `b` | 含义 |',
+    '## 3. 本次新增', '| `app.dial` | `phase` | 含义 |',
+    '## 4. 中转日志行的解析契约', '| `device <id> (<name>) attached to agent <agentId>` | `relay.device-attach` | x |',
+  ].join('\n')
+  assert.deepEqual([...parseContractKinds(markdown)].sort(), ['app.dial', 'device.attach', 'link.start'])
 })

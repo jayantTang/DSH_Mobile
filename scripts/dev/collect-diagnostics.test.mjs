@@ -17,8 +17,8 @@ import test from 'node:test'
 
 import {
   bundleName, chooseOffset, computeAppOffset, computeOffsetFromCommonEvents, computeOffsetFromStats,
-  dshHome, mergeTimeline, parseArgs, parseRelayJsonRecord, parseRelayLines, parseRelayMessage,
-  parseSince, readConnectorJournal, sliceByWindow,
+  debugDeviceIds, dshHome, journalSince, mergeTimeline, parseArgs, parseRelayJsonRecord,
+  parseRelayLines, parseRelayMessage, parseSince, readConnectorJournal, sliceByWindow,
 } from './collect-diagnostics.mjs'
 
 const AT = Date.parse('2026-10-13T01:10:10.506Z')
@@ -137,6 +137,46 @@ test('computeOffsetFromCommonEvents 用中位数，且在只有一条或散布�
   const wild = [{ kind: 'relay.device-attach', deviceId: 'dev_1', ms: 1200 },
     { kind: 'relay.device-attach', deviceId: 'dev_2', ms: 99_000 }]
   assert.equal(computeOffsetFromCommonEvents(connector, wild), null, '散布过大说明配错了事件')
+})
+
+test('共同事件按"最近的同类事件"配对：远处那条 attach 不许污染偏移', () => {
+  // 真实数据里踩到的坑：连接器只在**首次**接入写 `device.attach`，之后同一设备再接入写的是
+  // `device.attach-again`。若拿"连接器的第一条"去配每一条中转 attach，差值会散布到十几分钟。
+  const connector = [
+    { kind: 'device.attach', deviceId: 'dev_1', ms: 1_000_000 },
+    { kind: 'device.attach-again', deviceId: 'dev_1', ms: 1_600_000 },
+    { kind: 'device.reattach', deviceId: 'dev_1', ms: 1_900_000 },
+  ]
+  const relay = [
+    { kind: 'relay.device-attach', deviceId: 'dev_1', ms: 1_000_120 },
+    { kind: 'relay.device-attach', deviceId: 'dev_1', ms: 1_600_090 },
+    { kind: 'relay.device-attach', deviceId: 'dev_1', ms: 1_900_130 },
+    // 距离任何连接器事件都超过 5 秒：不该参与计算
+    { kind: 'relay.device-attach', deviceId: 'dev_1', ms: 1_500_000 },
+  ]
+  const offset = computeOffsetFromCommonEvents(connector, relay)
+  assert.equal(offset.samples, 3, '只认 5 秒内的最近配对')
+  assert.equal(offset.offsetMs, 120, '取中位数：(120, 90, 130) → 120')
+})
+
+test('journalSince 把窗口标签翻成 journalctl 认的写法', () => {
+  assert.equal(journalSince('30m'), '-30m', 'journalctl 不认裸的 30m（实测 Failed to parse timestamp）')
+  assert.equal(journalSince('6h'), '-6h')
+  assert.equal(journalSince('2d'), '-2d')
+  assert.equal(journalSince('2026-10-13T00:00:00Z'), '2026-10-13T00:00:00Z', 'ISO 原样传')
+})
+
+test('debugDeviceIds：名字以 DSH- 开头的设备整条不进包', () => {
+  const ids = debugDeviceIds({
+    events: [{ kind: 'device.attach', deviceId: 'dev_a', name: 'DSH-Test' },
+      { kind: 'device.attach', deviceId: 'dev_b', name: 'iPhone' }],
+    status: { devices: [{ deviceId: 'dev_c', name: 'DSH-Runner' }] },
+  })
+  assert.deepEqual([...ids].sort(), ['dev_a', 'dev_c'])
+  // owner 显式点名时不排除（自验仿真器设备就靠这一条）。
+  assert.deepEqual([...debugDeviceIds({
+    events: [{ deviceId: 'dev_a', name: 'DSH-Test' }], explicit: ['dev_a'],
+  })], [])
 })
 
 test('chooseOffset：共同事件优先；都没有时是 none（不合并时间线）', () => {

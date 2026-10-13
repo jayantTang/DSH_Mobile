@@ -67,6 +67,9 @@ export const EVENT_KINDS = Object.freeze([
   'journal.error',
 ])
 
+/** 信封字段：detail 里的同名键一律忽略（否则会把时刻/事件名冲掉）。 */
+const PROTECTED_KEYS = new Set(['at', 'ms', 'kind'])
+
 /** 单条事件里字符串值的最长保留长度（`#shrink` 用）。 */
 const MAX_STRING_CHARS = 200
 
@@ -144,16 +147,43 @@ export class LinkJournal {
     return sized.entry
   }
 
-  /** 组装条目：信封 + 过滤掉 `undefined` 的 detail。 */
+  /**
+   * 组装条目：信封 + 过滤掉 `undefined` 的 detail。
+   *
+   * **信封字段受保护**：`at`/`ms`/`kind` 不会被 detail 覆盖。这条是 2026-10-13 踩出来的——
+   * 当时 `request.slow`/`app.hello` 的 detail 里也有一个 `ms`（含义是**耗时**），
+   * 摊平后把事件的**时刻**冲掉了，时间线上那条事件会跑到 1970 年。耗时一律叫 `elapsedMs`。
+   */
   #build(kind, detail) {
     const ms = this.now()
     const entry = { at: new Date(ms).toISOString(), ms, kind }
     if (detail && typeof detail === 'object') {
       for (const [key, value] of Object.entries(detail)) {
-        if (value !== undefined) entry[key] = value
+        if (value === undefined || PROTECTED_KEYS.has(key)) continue
+        entry[key] = value
       }
     }
     return entry
+  }
+
+  /**
+   * 记一条**别人钟上**的事件（App 推上来的那些）：时刻用给定的值，不用本机时钟。
+   *
+   * 单独一个入口而不是"让 detail 覆盖 ms"：覆盖是隐式的，谁都能不小心改掉时刻；
+   * 这里只有显式调用才会保留外部时刻。
+   */
+  recordForeign(kind, { at, ms, ...detail } = {}) {
+    const stamp = Number.isFinite(ms) ? ms : this.now()
+    const entry = { at: typeof at === 'string' && at ? at : new Date(stamp).toISOString(), ms: stamp, kind }
+    for (const [key, value] of Object.entries(detail)) {
+      if (value === undefined || PROTECTED_KEYS.has(key)) continue
+      entry[key] = value
+    }
+    const line = toLine(entry)
+    const sized = Buffer.byteLength(line) <= MAX_EVENT_BYTES ? { entry, line } : this.#shrink(entry)
+    this.#push(sized.entry)
+    this.#append(sized.line)
+    return sized.entry
   }
 
   /** 记进内存环（磁盘那半由 `record` 负责）。 */

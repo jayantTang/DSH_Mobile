@@ -13,9 +13,11 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
+
+import { checkDiagnosticsPack, redactHome } from './check-diagnostics.mjs'
 
 // 这个 import 有两个作用：① 复用"怎么读 endpoint.json、怎么换 cookie"的既有口径（契约 §5 要求
 // 不出现第二份实现）；② 它的模块顶层会加载仓库根的 `.env.local`（真值不入库），
@@ -157,26 +159,34 @@ function median(values) {
  * 用"同一条连接在两侧各留了一条记录"算偏移。
  *
  * 比 RTT 法精确得多（两侧记的是**同一个事件**，误差是几毫秒的传播延迟，而不是 ssh 的往返），
- * 所以有共同事件时优先用它。要求至少两条匹配、且彼此相差不超过 `spreadMs`——
- * 只有一条匹配时无法判断是不是巧合。
+ * 所以有共同事件时优先用它。
+ *
+ * **配对规则**：对中转的每一条 attach，在连接器那一侧找**同一 deviceId 最近的**接入类事件
+ * （`device.attach` / `device.reattach` / `device.attach-again`），距离超过 `toleranceMs` 就不算数。
+ * 不能拿"连接器的第一条"去配每一条中转 attach——实测那样差值会散布到 17 分钟（连接器只在
+ * 第一次接入时写 `device.attach`，之后同一设备再接入写的是 `attach-again`），中位数毫无意义。
+ *
+ * 要求至少 `minSamples` 条命中、且彼此相差不超过 `spreadMs`：只有一两条时无法判断是不是巧合。
  */
-export function computeOffsetFromCommonEvents(connectorEvents, relayEvents, { spreadMs = 500 } = {}) {
-  const connectorAttach = new Map()
+export function computeOffsetFromCommonEvents(connectorEvents, relayEvents,
+  { spreadMs = 500, toleranceMs = 5000, minSamples = 2 } = {}) {
+  const attachish = new Map()
   for (const event of connectorEvents ?? []) {
-    if (event.kind === 'device.attach' && !connectorAttach.has(event.deviceId)) {
-      connectorAttach.set(event.deviceId, event.ms)
-    }
+    if (!CONNECTOR_ATTACH_KINDS.has(event.kind) || !Number.isFinite(event.ms)) continue
+    if (!attachish.has(event.deviceId)) attachish.set(event.deviceId, [])
+    attachish.get(event.deviceId).push(event.ms)
   }
+  for (const list of attachish.values()) list.sort((a, b) => a - b)
+
   const deltas = []
   for (const event of relayEvents ?? []) {
-    if (event.kind !== 'relay.device-attach') continue
-    const local = connectorAttach.get(event.deviceId)
-    if (Number.isFinite(local)) deltas.push(event.ms - local)
+    if (event.kind !== 'relay.device-attach' || !Number.isFinite(event.ms)) continue
+    const nearest = nearestWithin(attachish.get(event.deviceId), event.ms, toleranceMs)
+    if (nearest !== null) deltas.push(event.ms - nearest)
   }
-  if (deltas.length < 2) return null
+  if (deltas.length < minSamples) return null
   const sorted = [...deltas].sort((a, b) => a - b)
-  const spread = sorted[sorted.length - 1] - sorted[0]
-  if (spread > spreadMs) return null
+  if (sorted[sorted.length - 1] - sorted[0] > spreadMs) return null
   return {
     source: 'relay',
     offsetMs: median(deltas),
@@ -184,6 +194,28 @@ export function computeOffsetFromCommonEvents(connectorEvents, relayEvents, { sp
     rttMs: null,
     samples: deltas.length,
   }
+}
+
+/** 连接器侧"一次接入"的 kind（首次、回头、以及未断开就又开一条）。 */
+const CONNECTOR_ATTACH_KINDS = new Set(['device.attach', 'device.reattach', 'device.attach-again'])
+
+/** 在有序数组里找距 `value` 最近且不超过 `tolerance` 的那个；没有就 null。 */
+function nearestWithin(sorted, value, tolerance) {
+  if (!sorted || sorted.length === 0) return null
+  let low = 0
+  let high = sorted.length - 1
+  while (low < high) {
+    const middle = (low + high) >> 1
+    if (sorted[middle] < value) low = middle + 1
+    else high = middle
+  }
+  const candidates = [sorted[low], sorted[Math.max(0, low - 1)]]
+  let best = null
+  for (const candidate of candidates) {
+    const distance = Math.abs(candidate - value)
+    if (distance <= tolerance && (best === null || distance < Math.abs(best - value))) best = candidate
+  }
+  return best
 }
 
 /**
@@ -284,9 +316,18 @@ export function readConnectorJournal({ dshHome: home = dshHome() } = {}) {
   return { path, events, counts }
 }
 
+/**
+ * journalctl 认的时间写法与我们的窗口标签不一样：它要 `-30m`（带前导减号）或 `30 min ago`，
+ * 直接给 `30m` 会回 `Failed to parse timestamp`（实测）。ISO 时刻原样传。
+ */
+export function journalSince(label) {
+  const raw = String(label ?? '').trim()
+  return /^\d+[mhd]$/.test(raw) ? `-${raw}` : raw
+}
+
 /** 走 ssh 取中转日志（`-o json`：带 epoch 微秒，不必猜时区）。 */
 export function readRelayLog({ host, since, agentIds = [], deviceIds = [] } = {}) {
-  const command = `journalctl -u dsh-relay --since '${since}' --no-pager -o json`
+  const command = `journalctl -u dsh-relay --since '${journalSince(since)}' --no-pager -o json`
   const text = execFileSync('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', `root@${host}`, command],
     { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, timeout: 60_000 })
   return { text, ...parseRelayLines(text, { agentIds, deviceIds }) }
@@ -323,17 +364,258 @@ export function defaultOutRoot() {
   return join(homedir(), 'dsh-diagnostics')
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+/** 事件是不是 App 侧写进来的（连接器原样落盘时打了 `source: "app"`）。 */
+function isAppEvent(event) {
+  return event?.source === 'app' || (typeof event?.kind === 'string' && event.kind.startsWith('app.'))
+}
+
+/**
+ * 调试设备（名字以 `DSH-` 开头）的 deviceId：它们整条不进包（宪法 III 与 spec 的边界）。
+ *
+ * **例外**：`explicit` 里的 id 不排除。默认采集是"给支持排障用"的包，不该带调试设备；
+ * 但 owner 显式点名 `--device <id>` 时它知道自己在看什么（自验时的仿真器设备就属于这一类）。
+ */
+export function debugDeviceIds({ events = [], status = null, explicit = [] } = {}) {
+  const ids = new Set()
+  const asked = new Set(explicit)
+  for (const event of events) {
+    if (typeof event?.name === 'string' && event.name.startsWith('DSH-') && event.deviceId) ids.add(event.deviceId)
+  }
+  for (const device of status?.devices ?? []) {
+    if (typeof device?.name === 'string' && device.name.startsWith('DSH-') && device.deviceId) ids.add(device.deviceId)
+  }
+  for (const id of asked) ids.delete(id)
+  return ids
+}
+
+/** 把一个对象写成 JSON 文件（统一 0600：包里可能有设备 id 与文件名）。 */
+function writeJson(path, value) {
+  writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 })
+}
+
+/** 逐行写 JSONL（同样 0600）。 */
+function writeJsonl(path, rows) {
+  writeFileSync(path, rows.map((row) => JSON.stringify(row)).join('\n') + (rows.length ? '\n' : ''), { mode: 0o600 })
+}
+
+/**
+ * 采一次并出包。**任何一侧失败都不中断**：记进 `missing.json`，包照样出得来（FR-015）。
+ *
+ * @returns {Promise<{outDir: string, coverage: object, missing: Array}>}
+ */
+async function collect({ options, window, log = () => {} }) {
+  const missing = []
+  const coverage = {}
+  const relayHost = process.env.DSH_OTA_HOST
+  const agentIds = []
+
+  // ① 连接器流水（含 App 推上来的那部分）
+  let raw = { events: [], counts: { current: 0, archived: 0, droppedEarlier: 0 }, path: null }
   try {
-    const options = parseArgs(process.argv.slice(2))
-    if (options.help) {
-      process.stdout.write(USAGE)
-      process.exit(0)
-    }
-    process.stderr.write('collect-diagnostics: 出包流程尚未接完（tasks.md T039）\n')
-    process.exit(2)
+    raw = readConnectorJournal({ dshHome: dshHome() })
   } catch (error) {
-    process.stderr.write(`${error.message}\n\n${USAGE}`)
-    process.exit(2)
+    missing.push({ source: 'connector-journal', reason: error.message,
+      nextStep: '确认本机 DSH 正在运行、且连接器写过 ~/.dsh/mobile-link/link-events.jsonl' })
+  }
+  const inWindow = sliceByWindow(raw.events, window)
+  let status = null
+  try {
+    status = await readConnectorStatus()
+    agentIds.push(status.agentId)
+  } catch (error) {
+    missing.push({ source: 'connector-status', reason: error.message,
+      nextStep: '确认本机 DSH 在跑（endpoint.json 的令牌还有效）' })
+  }
+  const debugIds = debugDeviceIds({ events: inWindow, status, explicit: options.devices })
+  const kept = inWindow.filter((event) => !debugIds.has(event.deviceId))
+  const appEvents = kept.filter(isAppEvent)
+  const connectorEvents = kept.filter((event) => !isAppEvent(event))
+  for (const event of connectorEvents) if (event.agentId) agentIds.push(event.agentId)
+
+  // ② 中转：日志与 /stats 都只能走 ssh（服务只监听回环）
+  let relayText = ''
+  let relayEvents = []
+  const relaySamples = []
+  if (!options.relay) {
+    missing.push({ source: 'relay', reason: '--no-relay：主动跳过', nextStep: '去掉 --no-relay 再采一次' })
+  } else if (!relayHost) {
+    missing.push({ source: 'relay', reason: '.env.local 里没有 DSH_OTA_HOST',
+      nextStep: '在仓库根 .env.local 写上 DSH_OTA_HOST，或加 --no-relay' })
+  } else {
+    try {
+      const log_ = readRelayLog({ host: relayHost, since: options.since,
+        agentIds: [...new Set(agentIds)], deviceIds: options.devices })
+      relayText = log_.text
+      relayEvents = sliceByWindow(log_.events, window)
+      coverage.relay = { lines: log_.readLines, parsed: log_.events.length, unmatched: log_.unmatched }
+    } catch (error) {
+      missing.push({ source: 'relay-log', reason: error.message,
+        nextStep: `确认能 ssh root@${relayHost}（密钥/网络），或加 --no-relay` })
+    }
+    // 两次采样：RTT 小的那次算偏移（ssh 往返是一两百毫秒，精度上限就在这）
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const { stats, sample } = readRelayStats({ host: relayHost })
+        relaySamples.push(sample)
+        status = status ?? { relay: stats }
+      } catch (error) {
+        if (attempt === 0) {
+          missing.push({ source: 'relay-stats', reason: error.message,
+            nextStep: '同上（/stats 只监听回环，必须走 ssh）' })
+        }
+      }
+    }
+  }
+
+  // ③ 时钟：中转优先共同事件，其次 ssh-RTT；手机取最近一条推送的 skewMs
+  //
+  // 用了 `--device` 时，上面那份中转事件只剩一台设备的记录，常常凑不到两条匹配（时钟是
+  // **系统的属性，不是某台设备的**）。所以再取一次 agent 全量的片段，**只用于对齐**——
+  // 包里的 relay 切片仍然按 `--device` 收窄（那是"我只要这几台"的意思）。
+  let alignmentEvents = relayEvents
+  if (options.devices.length > 0 && options.relay && relayHost) {
+    try {
+      const wide = readRelayLog({ host: relayHost, since: options.since,
+        agentIds: [...new Set(agentIds)] })
+      alignmentEvents = sliceByWindow(wide.events, window)
+    } catch {
+      // 拿不到就退回收窄那份：offset 可能算不出来，但**不编**，只是按来源分节。
+    }
+  }
+  const common = computeOffsetFromCommonEvents(connectorEvents, alignmentEvents)
+  const stats = computeOffsetFromStats(relaySamples)
+  const relayOffset = chooseOffset({ common, stats })
+  // 注意传**全部**事件：`app.push` 自己就是 `app.*`（被分到 appEvents 里了），
+  // 只传 connectorEvents 的话永远找不到 skewMs——手机那一半就永远对不齐。
+  const appOffset = computeAppOffset([...connectorEvents, ...appEvents])
+
+  // ④ 合并时间线（逐来源尽力；拿不到偏移的来源只在 sources/ 里分节）
+  const merged = mergeTimeline({
+    connector: connectorEvents, relay: relayEvents, app: appEvents,
+    offsetRelay: relayOffset, offsetApp: appOffset,
+  })
+
+  return { missing, coverage, raw, connectorEvents, appEvents, relayEvents, relayText, status,
+    relayOffset, appOffset, merged, debugIds }
+}
+
+/** 组装并写出诊断包（写前先脱敏与自检，命中就不出包）。 */
+function writeBundle({ outDir, collected, window, options, log }) {
+  const { relayOffset, appOffset, merged } = collected
+  mkdirSync(outDir, { recursive: true, mode: 0o700 })
+  mkdirSync(join(outDir, 'sources'), { recursive: true, mode: 0o700 })
+  const home = homedir()
+  const scrub = (value) => redactHome(typeof value === 'string' ? value : JSON.stringify(value), home)
+
+  writeJsonl(join(outDir, 'sources', 'connector.jsonl'),
+    [...collected.connectorEvents, ...collected.appEvents].map((event) => JSON.parse(scrub(event))))
+  writeFileSync(join(outDir, 'sources', 'relay.log'), scrub(collected.relayText), { mode: 0o600 })
+  writeJson(join(outDir, 'sources', 'status.json'),
+    JSON.parse(scrub({ connector: collected.status?.state ? collected.status : null })))
+
+  const clocks = [relayOffset, appOffset]
+  writeJson(join(outDir, 'clock.json'), clocks)
+  const coverage = {
+    window: { since: new Date(window.sinceMs).toISOString(), until: new Date(window.untilMs).toISOString(),
+      label: window.label },
+    mergedSources: merged.mergedSources,
+    connector: {
+      events: collected.connectorEvents.length + collected.appEvents.length,
+      appEvents: collected.appEvents.length,
+      current: collected.raw.counts.current,
+      archived: collected.raw.counts.archived,
+      droppedEarlier: collected.raw.counts.droppedEarlier,
+      rolledOut: collected.raw.counts.archived > 0,
+    },
+    relay: collected.coverage.relay ?? null,
+    excludedDebugDevices: [...collected.debugIds],
+    ...collected.coverage,
+  }
+  writeJson(join(outDir, 'coverage.json'), coverage)
+  writeJson(join(outDir, 'missing.json'), collected.missing)
+
+  const timeline = merged.rows.map((row) => JSON.parse(scrub(row)))
+  writeJsonl(join(outDir, merged.rows.length ? 'timeline.jsonl' : 'timeline.by-source.jsonl'), timeline)
+
+  writeFileSync(join(outDir, 'README.md'), readme({ ...collected, coverage, window, options, outDir }), { mode: 0o600 })
+  return { coverage, missing: collected.missing }
+}
+
+/** 包内自解释：这次采了什么、怎么判读四类问题、缺了什么。 */
+function readme({ missing, coverage, window, options, outDir, merged }) {
+  const lines = [
+    '# 诊断包', '',
+    `- 采集窗口：${coverage.window.since} → ${coverage.window.until}（${window.label}）`,
+    `- 输出：${outDir}`,
+    `- 并进时间线的来源：${coverage.mergedSources.join(', ')}`,
+    missing.length ? `- **缺失来源 ${missing.length} 个**（见 missing.json）：${missing.map((m) => m.source).join(', ')}`
+      : '- 缺失来源：无',
+    coverage.connector?.rolledOut ? '- 注意：连接器流水已滚动过，更早的事件不在本包里。' : '',
+    '', '## 怎么判读（spec 020 的四类问题）', '',
+    '1. **哪一跳没连上**：看 timeline 上有没有 `app.dial(start)`（App 拨号）、`relay.device-attach`（中转收到）、',
+    '   `device.attach`（连接器收到）。三者缺哪个就停在那一跳；只有 start 没有 `transport-up` = 拨号卡在握手前。',
+    '2. **连上耗时长 / 加载慢**：`app.hello.ms` / `app.first-screen.ms` / `device.phase.phases` 是各段毫秒。',
+    '3. **同步慢**：`device.summary`（p50/p95/top3）与 `request.slow`（方法名 + 耗时 + 字节）。',
+    '4. **记录有没有失控**：`coverage.connector.droppedEarlier` 与 `journal.fileErrors`（在 status.json 里）。',
+    '', '## 常用命令', '```bash',
+    `jq -r '"\\(.at[11:19]) \\(.source) \\(.kind)"' ${join(outDir, 'timeline.jsonl')} | less`,
+    `jq -c 'select(.kind=="device.summary") | {deviceId, requests, p95Ms, top3}' ${join(outDir, 'sources/connector.jsonl')}`,
+    `jq . ${join(outDir, 'clock.json')}`,
+    '```',
+  ]
+  return `${lines.filter((line) => line !== '').join('\n')}\n`
+}
+
+/** 出包（含脱敏自检）：命中就删掉并让调用方以 2 退出。 */
+export async function runCollect({ options, log = () => {} } = {}) {
+  const window = parseSince(options.since)
+  const outDir = options.out ?? join(defaultOutRoot(), bundleName())
+  if (existsSync(outDir)) {
+    return { ok: false, reason: `输出目录已存在：${outDir}（不覆盖）`, outDir }
+  }
+  const collected = await collect({ options, window, log })
+  const { coverage, missing } = writeBundle({ outDir, collected, window, options, log })
+  // 契约 §2 硬规则 6：脱敏或机械检查失败就**不出包**（退出码 2）。
+  const check = checkDiagnosticsPack(outDir)
+  if (!check.ok) {
+    rmSync(outDir, { recursive: true, force: true })
+    return { ok: false, reason: `脱敏/结构检查未通过，已删除未发出的包：${[
+      ...check.issues, ...check.hits.map((hit) => `${hit.rule}@${hit.file}`)].join('；')}`, outDir }
+  }
+  return { ok: true, outDir, coverage, missing, exitCode: missing.length ? 1 : 0 }
+}
+
+if (import.meta.url === `file://${process.argv[1]}`) {
+  const options = (() => {
+    try {
+      return parseArgs(process.argv.slice(2))
+    } catch (error) {
+      process.stderr.write(`${error.message}\n\n${USAGE}`)
+      process.exit(2)
+      return null
+    }
+  })()
+  if (options?.help) {
+    process.stdout.write(USAGE)
+    process.exit(0)
+  }
+  if (options) {
+    runCollect({ options, log: (message) => process.stderr.write(`${message}\n`) })
+      .then((result) => {
+        if (!result.ok) {
+          process.stderr.write(`采集失败：${result.reason}\n`)
+          process.exit(2)
+        }
+        if (options.json) process.stdout.write(`${JSON.stringify({ coverage: result.coverage, missing: result.missing }, null, 2)}\n`)
+        else process.stdout.write(`诊断包已生成：${result.outDir}\n`)
+        if (result.missing.length) {
+          process.stderr.write(`有 ${result.missing.length} 个来源缺失（见包内 missing.json）\n`)
+        }
+        process.exit(result.exitCode)
+      })
+      .catch((error) => {
+        process.stderr.write(`采集工具自身出错：${error.stack ?? error}\n`)
+        process.exit(2)
+      })
   }
 }

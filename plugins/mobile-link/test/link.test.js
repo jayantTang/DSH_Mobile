@@ -857,7 +857,10 @@ test('重复实例：新 Link 启动会先停掉上一个（热更不会留下�
 // ── `_link/diagnostics`：App 推上来的阶段记录（spec 020 的 FR-011） ─────────
 
 const diagReq = (args, id = 'd1') => ({ t: 'req', id, method: '_link/diagnostics', args, deviceId: 'dev_1' })
-const appEvent = (seq, kind, ms, extra = {}) => ({ seq, at: new Date(ms).toISOString(), ms, kind, ...extra })
+// **App 侧的线形状**（与 DSHKit 的 LinkDiagnostics.Event 一致）：字段嵌在 `detail` 里。
+// 用例必须照抄这个形状——曾经用扁平形状写，于是"清洗时把 detail 整个丢掉"这个 bug
+// 在单测里全绿、到真机才暴露（2026-10-13 09:25 的中转运行）。
+const appEvent = (seq, kind, ms, detail = {}) => ({ seq, at: new Date(ms).toISOString(), ms, kind, detail })
 
 test('App 的阶段记录原样落盘，时刻用 App 自己的（连接器不改写）', async () => {
   const { agent } = makeAgent()
@@ -865,13 +868,30 @@ test('App 的阶段记录原样落盘，时刻用 App 自己的（连接器不�
   const appMs = 1_791_825_010_506
   await agent.handleRelayFrame(diagReq({
     since: 0, sentAt: appMs,
-    events: [appEvent(1, 'app.dial', appMs, { phase: 'start' }), appEvent(2, 'app.hello', appMs + 12, { ms: 12 })],
+    events: [
+      appEvent(1, 'app.dial', appMs, { phase: 'start' }),
+      appEvent(2, 'app.hello', appMs + 12, { elapsedMs: 12 }),
+    ],
   }))
   const entries = agent.journal.entries()
   const dial = entries.find((entry) => entry.kind === 'app.dial')
   assert.equal(dial.source, 'app', '要标出来源，否则分不清是谁记的')
   assert.equal(dial.ms, appMs, 'App 的时刻必须原样保留——它正是"手机侧几点"的唯一来源')
-  assert.equal(dial.phase, 'start')
+  assert.equal(dial.phase, 'start', 'detail 里的字段必须摊平到顶层，否则落盘等于丢字段')
+  assert.equal(dial.deviceId, 'dev_1', 'App 不知道自己的 deviceId，连接器必须补上（多设备时要能归人）')
+  const hello = entries.find((entry) => entry.kind === 'app.hello')
+  assert.equal(hello.ms, appMs + 12, '信封的 ms 是 App 的时刻')
+  assert.equal(hello.elapsedMs, 12, '耗时落在 elapsedMs 上')
+  assert.equal(hello.detail, undefined, '不该留一个嵌套 detail')
+
+  // 关键回归：App 的 detail 里也有一个 ms（含义是**耗时**）。摊平时它绝不能把
+  // 事件的**时刻**冲掉——否则时间线上这条会跑到 1970 年（2026-10-13 真机运行踩到过）。
+  const withDuration = { seq: 3, at: new Date(appMs + 500).toISOString(), ms: appMs + 500,
+    kind: 'app.hello', detail: { elapsedMs: 11742 } }
+  await agent.handleRelayFrame(diagReq({ since: 2, sentAt: appMs + 500, events: [withDuration] }, 'd3'))
+  const hello2 = agent.journal.entries().filter((entry) => entry.kind === 'app.hello').at(-1)
+  assert.equal(hello2.ms, appMs + 500, '信封时刻必须还是 App 的时刻')
+  assert.equal(hello2.elapsedMs, 11742, '耗时落在 elapsedMs 上')
   const push = entries.find((entry) => entry.kind === 'app.push')
   assert.equal(push.count, 2)
   assert.equal(push.sentAt, appMs)
@@ -895,7 +915,7 @@ test('超过单批上限就截断，并如实报 accepted/lastSeq（剩下的下
   await agent.handleRelayFrame(attach('dev_1'))
   const events = []
   for (let index = 1; index <= 200; index += 1) {
-    events.push(appEvent(index, 'app.interaction', index, { pad: 'x'.repeat(300) }))
+    events.push(appEvent(index, 'app.interaction', index, { pad: 'x'.repeat(300), n: index }))
   }
   await agent.handleRelayFrame(diagReq({ since: 0, sentAt: 5, events }))
   const acceptedPush = agent.journal.entries().filter((entry) => entry.kind === 'app.push').at(-1)
@@ -972,24 +992,43 @@ test('只接入就断：三段全 null，missing 列全', async () => {
   assert.deepEqual(event.phases, { helloMs: null, firstRequestMs: null, firstResponseMs: null })
 })
 
-test('没有握手但有数据请求：第一段进 missing，后两段照测', async () => {
+test('没有握手但有数据请求：不急着写，等断开时补一条带 missing 的', async () => {
   const { agent } = makeAgent({ responses: { 'session/list': { items: [] } } })
   await agent.handleRelayFrame(attach('dev_1'))
   await agent.handleRelayFrame(dataReq())
+  // 真实顺序是**先探针后握手**（ConnectionStore.connect 先 sessions 再 hello）。若一见数据请求
+  // 就写阶段事件，`missing` 里会永远挂着 hello——最有用的 attach→hello 那一段就丢了。
+  assert.equal(agent.journal.entries().some((entry) => entry.kind === 'device.phase'), false,
+    '握手还没到，不该急着写')
+  await agent.handleRelayFrame({ t: 'deviceDetach', deviceId: 'dev_1', reason: 'socket closed' })
   const event = [...agent.journal.entries()].reverse().find((entry) => entry.kind === 'device.phase')
   assert.deepEqual(event.missing, ['hello'])
   assert.equal(event.phases.helloMs, null)
   assert.equal(event.phases.firstRequestMs !== null, true)
 })
 
+test('真实顺序（先探针后握手）：三段齐了才写，hello 那一段不为空', async () => {
+  const { agent } = makeAgent({ responses: { 'session/list': { items: [] } } })
+  await agent.handleRelayFrame(attach('dev_1'))
+  await agent.handleRelayFrame(dataReq('u1'))
+  assert.equal(agent.journal.entries().some((entry) => entry.kind === 'device.phase'), false)
+  await agent.handleRelayFrame(helloReq())
+  const phases = agent.journal.entries().filter((entry) => entry.kind === 'device.phase')
+  assert.equal(phases.length, 1)
+  assert.deepEqual(phases[0].missing, [], '探针在前、握手在后，三段一起齐')
+  assert.equal(phases[0].phases.helloMs !== null, true, 'hello 那一段必须有数')
+})
+
 test('一次接入只写一条 device.phase，请求再多也不重复', async () => {
   const { agent } = makeAgent({ responses: { 'session/list': { items: [] } } })
   await agent.handleRelayFrame(attach('dev_1'))
+  await agent.handleRelayFrame(helloReq())
   await agent.handleRelayFrame(dataReq('u1'))
   await agent.handleRelayFrame(dataReq('u2'))
   await agent.handleRelayFrame(dataReq('u3'))
   const phases = agent.journal.entries().filter((entry) => entry.kind === 'device.phase')
   assert.equal(phases.length, 1, `一次接入只该一条，实际 ${phases.length}`)
+  assert.deepEqual(phases[0].missing, [], '三段齐了，missing 该是空的')
 })
 
 test('断开时补一条汇总，条数与请求量同级（常数级）', async () => {

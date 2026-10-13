@@ -91,7 +91,8 @@ export class DeviceTimeline {
     this.#keepTop({ method, ms, bytes })
     if (this.slowRequestMs > 0 && ms > this.slowRequestMs) {
       this.slow += 1
-      this.onEvent('request.slow', { deviceId: this.deviceId, method, ms, bytes })
+      // 字段叫 elapsedMs 而不是 ms：`ms` 是信封上的**时刻**，同名会把时刻冲掉（见 journal.js）。
+      this.onEvent('request.slow', { deviceId: this.deviceId, method, elapsedMs: ms, bytes })
     }
     if (this.requests % SUMMARY_EVERY === 0) this.emitSummary()
     this.#maybeEmitPhase()
@@ -157,7 +158,13 @@ export class DeviceTimeline {
 
   #maybeEmitPhase() {
     if (this._phaseEmitted) return
-    // 三段阶梯要么齐了（首个数据请求与它的响应都到了），要么等 `finish()` 时按 missing 写。
+    // 三段**全齐**才写；缺哪一段就等 `finish()` 时按 missing 写（读者要知道"没发生"，而不是看到 0）。
+    //
+    // 为什么要求全齐而不是"有数据请求就写"：App 的真实顺序是**先探针（session/list）再握手**
+    // （`ConnectionStore.connect()` 先 `sessions()`，再在 `install()` 里发 `_link/hello`）。
+    // 按旧条件，阶段事件会在探针那一刻写出来、`missing: ['hello']`，于是最有用的
+    // 「attach→hello 用了多久」在事件里永远是空的——2026-10-13 09:28 的中转运行实测到了这一条。
+    if (this.helloAt === undefined) return
     if (this.firstRequestAt === undefined || this.firstResponseAt === undefined) return
     this._phaseEmitted = true
     this.onEvent('device.phase', this.phaseDetail())

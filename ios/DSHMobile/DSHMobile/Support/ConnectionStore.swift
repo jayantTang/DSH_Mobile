@@ -230,7 +230,7 @@ public final class ConnectionStore {
         guard !firstInteractionRecorded, let link = carrier as? LinkCarrier else { return }
         firstInteractionRecorded = true
         await link.diagnosticsNote("app.first-response", detail: [
-            "method": .string(method), "ms": .int(ms), "bytes": .int(bytes),
+            "method": .string(method), "elapsedMs": .int(ms), "bytes": .int(bytes),
         ])
     }
 
