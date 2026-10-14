@@ -109,8 +109,12 @@ final class GitModel {
         }
         if commits.isEmpty { logPhase = .loading }
         do {
-            let page = try await client.log(cwd: workingDirectory, skip: reset ? 0 : commits.count)
-            commits = reset ? page.commits : commits + page.commits
+            // 跳过多少、怎么合并：两条规则在 DSHKit（`GitLogPaging`）里成对存在，
+            // 分开写迟早会出现"跳过头但没换页"这种半套改动。
+            let page = try await client.log(
+                cwd: workingDirectory,
+                skip: GitLogPaging.skip(existing: commits, reset: reset))
+            commits = GitLogPaging.merge(commits, page: page.commits, reset: reset)
             logHasMore = page.hasMore
             logPhase = .loaded
         } catch {
@@ -178,32 +182,20 @@ final class GitModel {
     /// transport, and "the computer does not answer" must not be dressed up as
     /// "not a repository".
     static func phase(for error: any Error) -> Phase {
-        guard let failure = error as? DSHRPCFailure else {
+        // 语义分类在 DSHKit（`GitFailureClassifier`，带单测）；这里只把**语义**翻成界面状态、
+        // 并给每一种配上话术——话术属于界面，`check:i18n` 管着它们。
+        guard let kind = GitFailureClassifier.classify(error) else {
+            // 传输类失败（电脑不应答）：不许被装扮成"不是仓库"。
             return .failed(ConnectionStore.describe(error))
         }
-        switch failure.code {
-        case "git/not-a-repo":
-            return .notARepository
-        case "git/no-commits":
-            return .loaded
-        case "git/unavailable":
-            return .failed("这台电脑上没有找到 git。")
-        case "git/too-large":
-            return .failed("这个改动太大，手机上不展开。在电脑上看更合适。")
-        case "git/timed-out":
-            return .failed("git 命令超时了。仓库很大时会发生，稍后再试。")
-        case "git/not-found":
-            return .failed(failure.message)
-        case "git/bad-request":
-            return .failed(failure.message)
-        case "gateway/bad-response", "gateway/not-found", "unknown",
-             "gateway/unknown-method", "host/unavailable":
-            // An older connector forwards the call to the Host, which has never
-            // heard of it: that is "this build needs a newer connector", not a
-            // git problem.
-            return .unsupported
-        default:
-            return .failed(failure.message)
+        switch kind {
+        case .notARepository: return .notARepository
+        case .emptyRepository: return .loaded
+        case .unsupported: return .unsupported
+        case .gitUnavailable: return .failed("这台电脑上没有找到 git。")
+        case .tooLarge: return .failed("这个改动太大，手机上不展开。在电脑上看更合适。")
+        case .timedOut: return .failed("git 命令超时了。仓库很大时会发生，稍后再试。")
+        case .message(let text): return .failed(text)
         }
     }
 
