@@ -159,6 +159,37 @@ def test_ops_report_counts_devices_usage_and_invites(tmp_path, capsys):
     assert report["invites"]["enrollments"] == []
 
 
+def test_ops_report_counts_a_reinstalled_phone_once(tmp_path, capsys):
+    """重装/换版本会新插一行设备行，但它不是新手机（2026-10-14 生产库上的实际形态）。
+
+    同一账号同机型两行 + 一台别的机型：新增手机是 2 台，设备行是 3 行；
+    两个数字都留在 JSON 里（`newPerDay` / `newRawPerDay`），免得口径改了看不出来。
+    """
+    db = str(tmp_path / "state.db")
+    store = Store(db)
+    account = store.create_account("ops")
+    agent = store.register_agent(account["accountId"], "mac")
+    for _ in range(2):
+        store.claim_pair_code(
+            store.mint_pair_code(agent["agentId"], ttl_ms=60_000)["code"],
+            device_name="iPhone", model="iPhone12,1")
+    store.claim_pair_code(
+        store.mint_pair_code(agent["agentId"], ttl_ms=60_000)["code"],
+        device_name="iPad", model="iPad17,1")
+    store.close()
+
+    code, report = run_cli(db, "ops-report", "--days", "1", capsys=capsys)
+    assert code == 0
+    assert report["devices"]["newPerDay"][-1] == {"day": local_day(), "count": 2}, \
+        "同账号同机型的两行只算一台手机"
+    assert report["devices"]["newRawPerDay"][-1] == {"day": local_day(), "count": 3}, \
+        "设备行口径留在 newRawPerDay 里对账"
+    assert report["devices"]["newInWindow"] == 2
+    assert report["devices"]["newRawInWindow"] == 3
+    assert report["today"]["devices"]["new"] == 2
+    assert report["today"]["devices"]["newRaw"] == 3
+
+
 def test_ops_report_counts_feedback_and_the_median_first_reply(tmp_path, capsys):
     """`--days` 是窗口（本地日，含今天）：窗口外的老线程不进日报。"""
     db = str(tmp_path / "state.db")

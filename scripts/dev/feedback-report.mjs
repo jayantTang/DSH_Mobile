@@ -925,7 +925,7 @@ function rangeSection(report, days, completed = false, { history = null } = {}) 
     markers: releaseMarkers,
   }) + barChart({
     title: '每日新增手机',
-    note: `共 ${formatInt(devices.newInWindow)} 台`,
+    note: `共 ${formatInt(devices.newInWindow)} 台 · 同一账号同机型重装不计`,
     bars: (devices.newPerDay ?? []).map((row) => ({ label: row.day, value: row.count })),
     format: (value) => String(Math.round(value)),
   })
@@ -1017,8 +1017,9 @@ export function renderReport(data, { now = Date.now(), history = null } = {}) {
     rangeSection(report, days, completed, { history }),
   ].join('\n')
   // 单位说明（2026-10-12）：页面上只有「手机」与「电脑」两个单位，owner 不用再猜哪个数字是电脑。
-  const units = '单位：手机 = 配对过中转的 iOS App（一台手机一行）；电脑 = 用邀请码登记、'
-    + '装了连接器的那台机器（一台电脑一个账号）。电脑表里的「手机」列 = 这台电脑下在连的手机数。'
+  const units = '单位：手机 = 配对过中转的 iOS App（一台手机一行，同一账号同机型重装/换版本'
+    + '不再算新增，故与设备行数可能不等）；电脑 = 用邀请码登记、装了连接器的那台机器'
+    + '（一台电脑一个账号）。电脑表里的「手机」列 = 这台电脑下在连的手机数。'
   const foot = completed
     ? `口径：本报告覆盖 ${fullDay(covered)} 一整个服务器本地自然日（00:00–23:59），`
       + `${clock(generatedAt)} 生成；最近 ${days} 天为本地日窗口、含该日。流量只计中转出口字节`

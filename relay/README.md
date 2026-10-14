@@ -209,6 +209,12 @@ $A admin.py --db $DB ops-report --days 30 --as-of yesterday                   # 
 卡顿会删已撤销设备行、按约定保留 `usageDaily`，留下找不到设备主体的历史行）。外部账号的
 孤儿行保留——那是真人真事的历史。
 
+「新增手机」（`devices.newPerDay`、`today.devices.new`）数的是手机，不是设备行：同一账号 +
+同一机型只算第一次出现（`admin.py:_first_device_rows`）。App 重装或换版本会重新配对、插一行
+新的 `deviceId`，不去重的话同一台手机会被反复记成新用户——2026-10-14 报的 2 台里就有 1 台是
+换版本重配。设备行口径留在 `newRawPerDay` / `newRawInWindow` / `today.devices.newRaw` 里，
+两个数字的差就是当天的重装行数。
+
 ### Deploying to the relay host
 
 ```bash

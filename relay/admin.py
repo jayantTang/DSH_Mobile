@@ -969,6 +969,27 @@ def _is_debug_device(row: dict[str, Any]) -> bool:
     return name.startswith("DSH-") or model in {"Node", "test-harness", "simulator"}
 
 
+def _first_device_rows(real_devices: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """每台「手机」的第一行：同一账号 + 同一机型只留 `createdAt` 最早的那行。
+
+    为什么不能按 `deviceId` 去重：App 重装或换版本后会重新配对，中转插的是**新行**
+    （`deviceId` 与 device token 都换了），同一台手机会被反复记成「新增手机」。
+    2026-10-14 那天报 2 台新增，其中 Windows-PC 的 iPhone 11 是换版本重配：
+    旧行（`20261012.1310`）最后一次在线与新行（`20261013.2233`）创建时间同为 00:21。
+    账号 + 机型是库里能稳定指认"同一台手机"的口径；代价是一个人的两台同型号手机
+    会被并成一台（少见，宁可少报也不要把重装算成新用户）。
+    已被清理工具删掉历史行的设备再注册会重新算一次新增——历史没了，无从辨别。
+    """
+    firsts: dict[tuple[Any, str], dict[str, Any]] = {}
+    for row in real_devices:
+        key = (row.get("accountId"),
+               str(row.get("model") or row.get("name") or row["deviceId"]))
+        seen = firsts.get(key)
+        if seen is None or int(row["createdAt"]) < int(seen["createdAt"]):
+            firsts[key] = row
+    return list(firsts.values())
+
+
 def _day_start_ms(day: int) -> int:
     """本地日 `YYYYMMDD` 的 00:00（服务器时区）对应的毫秒时间戳。
 
@@ -992,10 +1013,14 @@ def _today_report(store: Store, *, stamp: int, threads: list[dict[str, Any]],
 
     调试设备（`_is_debug_device`）的流量、设备、账号一并剔除——这一块是给 owner 看用户的；
     被剔掉的设备 id 与账号名由调用方算好传进来（`usageDaily` 里只有 deviceId）。
+
+    `devices.new` 是**手机**数（`_first_device_rows`）：同一账号同机型的重装/换版本
+    不再算新增；`devices.newRaw` 保留设备行口径，两个数字的差就是重装行数。
     """
     day = local_day(stamp / 1000)
     start = _day_start_ms(day)
     known = {row["deviceId"]: row for row in real_devices}
+    fresh_rows = _first_device_rows(real_devices)
     by_device: list[dict[str, Any]] = []
     by_account: dict[str, dict[str, Any]] = {}
     builds: dict[str, dict[str, Any]] = {}
@@ -1070,8 +1095,10 @@ def _today_report(store: Store, *, stamp: int, threads: list[dict[str, Any]],
         "topAccounts": ranked[:REPORT_TODAY_LIMIT],
         "devices": {
             "list": by_device[:REPORT_TODAY_LIMIT],
-            "new": len([row for row in real_devices
+            "new": len([row for row in fresh_rows
                         if start <= int(row["createdAt"]) <= stamp]),
+            "newRaw": len([row for row in real_devices
+                           if start <= int(row["createdAt"]) <= stamp]),
             "active": len([row for row in live
                            if start <= int(row.get("lastSeenAt") or 0) <= stamp]),
             "revoked": len([row for row in real_devices
@@ -1121,7 +1148,9 @@ def _ops_report(store: Store, days: int, *, as_of: int | None = None) -> dict[st
     传的是 `yesterday`，出来的就是刚过去那一整天的完整数据（见 `_resolve_as_of`）。
 
     设备板块只统计**真实设备**（剔除 `_is_debug_device`），被剔除的行数放在 `debug` 里，
-    这样"图上是用户、库里有多少调试行"两件事都看得见；反馈板块同样剔除模拟器/调试设备
+    这样"图上是用户、库里有多少调试行"两件事都看得见；新增手机（`devices.newPerDay` 与
+    `today.devices.new`）再按 (账号, 机型) 去重，见 `_first_device_rows`，
+    对应的设备行口径留在 `newRawPerDay` / `today.devices.newRaw` 里备查；反馈板块同样剔除模拟器/调试设备
     提的验收单（`_is_test_thread`），被剔的条数放在 `feedback.test`。`today` 板块是同一批
     数据的单日切片，见 `_today_report`；留存只算用邀请码登记的外部账号，见 `_retention_report`。
     """
@@ -1138,12 +1167,20 @@ def _ops_report(store: Store, days: int, *, as_of: int | None = None) -> dict[st
     real = [row for row in devices if row["deviceId"] not in debug_ids]
     live = [row for row in real if not row.get("revokedAt")]
     threads = [row for row in listed if not _is_test_thread(row, debug_ids)]
+    # 「每日新增手机」按手机去重（`_first_device_rows`）：换版本重装会插新设备行，
+    # 不去重的话这类行会被记成新用户。`newRawPerDay` 保留设备行口径。
     created_per_day: dict[int, int] = {}
+    raw_per_day: dict[int, int] = {}
     for row in real:
+        day = local_day(int(row["createdAt"]) / 1000)
+        raw_per_day[day] = raw_per_day.get(day, 0) + 1
+    for row in _first_device_rows(real):
         day = local_day(int(row["createdAt"]) / 1000)
         created_per_day[day] = created_per_day.get(day, 0) + 1
     new_per_day = [{"day": day, "count": created_per_day.get(day, 0)}
                    for day in _recent_days(days, end=stamp)]
+    raw_new_per_day = [{"day": day, "count": raw_per_day.get(day, 0)}
+                       for day in _recent_days(days, end=stamp)]
     # 登记名单要在读用量之前算好：孤儿用量行（设备行被清理工具删掉）要不要算进报表，
     # 取决于它属不属于外部账号，见 `_is_orphan_usage`。
     enrollments = store.list_enrollments()
@@ -1170,10 +1207,14 @@ def _ops_report(store: Store, days: int, *, as_of: int | None = None) -> dict[st
                                  if stamp - days * 86_400_000
                                  <= int(row.get("lastSeenAt") or 0) <= stamp]),
             "newInWindow": sum(int(entry["count"]) for entry in new_per_day),
+            "newRawInWindow": sum(int(entry["count"]) for entry in raw_new_per_day),
             "windowDays": days,
             "revoked": len(real) - len(live),
             "debug": len(devices) - len(real),
             "newPerDay": new_per_day,
+            # 设备行口径的每日新增，只用来核对与 `newPerDay` 的差（差 = 重装行数）。
+            # 渲染层不读它；`_first_device_rows` 记了为什么要按手机去重。
+            "newRawPerDay": raw_new_per_day,
             # 只列**未撤销的真实设备**，按最近在线倒序取前 `REPORT_DEVICE_LIMIT` 台：
             # 全量列表在生产库上是 1900+ 行（历次调试配对都还在），日报会被它撑爆
             # （2026-10-12 第一版 327 KB，正文里 90% 是 DSH-Test/DSH-Sweep 的历史行）。
