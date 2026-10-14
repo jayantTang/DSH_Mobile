@@ -51,18 +51,18 @@ extension SessionListModel {
         let roleFilter = self.store?.supports(LinkHandshake.Capability.historyRoleFilter) ?? false
         Task(priority: .utility) {
             let states = (try? await store.sessionStates(scope: scope)) ?? []
-            var persistedRanges: [MessagePipeline.SessionRef: RangeIndex] = [:]
+            var persistedRanges: [MessageSessionRef: RangeIndex] = [:]
             var newestBySession: [String: Int] = [:]
             for entry in states {
-                let ref = MessagePipeline.SessionRef(scope: scope, sessionId: entry.sessionId)
+                let ref = MessageSessionRef(scope: scope, sessionId: entry.sessionId)
                 if !entry.ranges.isEmpty { persistedRanges[ref] = entry.ranges }
                 if let newest = entry.newestSeq { newestBySession[entry.sessionId] = newest }
             }
             // 最新游标优先取磁盘层的（与持久化区间同源），没有再用 host 的 asOfSeq。
-            let targets = ordered.prefix(10).compactMap { summary -> MessagePipeline.PrefetchTarget? in
+            let targets = ordered.prefix(10).compactMap { summary -> MessagePrefetchTarget? in
                 let newest = newestBySession[summary.sessionId] ?? summary.asOfSeq
                 guard newest > 0 else { return nil }
-                return MessagePipeline.PrefetchTarget(
+                return MessagePrefetchTarget(
                     session: .init(scope: scope, sessionId: summary.sessionId), newestSeq: newest)
             }
             if !targets.isEmpty {

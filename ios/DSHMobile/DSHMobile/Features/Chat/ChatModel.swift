@@ -174,7 +174,9 @@ final class ChatModel {
     /// 空白 + 转圈。落盘的是**原始记录**的尾部——和 `session/follow` 打开时给的快照
     /// 是同一种东西，所以恢复路径与合并路径都复用现成逻辑。
     /// 磁盘层缺位（建库失败）时读写一律空转，行为退化为"只有内存缓存"。
-    private var messageStore: MessageStore? { messageLayer?.store }
+    /// 磁盘层的入口。**不再直接持 `MessageStore`**：读写都走门面（`MessageLayer`），
+    /// 实现层的类型名不出现在产品路径里（spec 023 边界收敛）。
+    private var messageBacking: MessageLayer? { messageLayer }
     /// 落盘尾部保留多少条（沿用 007 `SessionTranscriptCache.maxRecords` 的值）。
     private static let tailRecordLimit = 200
     /// 搜索缓冲一次从磁盘读多少条（沿用 007 `maxOlderRecords` 的值）。
@@ -469,7 +471,7 @@ final class ChatModel {
         // 窗口恰好覆盖了缓冲时（正常且更理想），旧启发式会什么都找不到，冷启动后
         // "只看我的提问"就只剩窗口那一段（T069 实测）。
         var usable: [SessionRecord] = []
-        if let store = messageStore,
+        if let store = messageBacking,
            let raw = try? await store.meta(Self.searchRangeKey(sessionId), scope: scope),
            let range = Self.parseSearchRange(raw) {
             let stored = (try? await store.windowBefore(
@@ -477,7 +479,7 @@ final class ChatModel {
                 limit: Self.searchBufferDiskLimit)) ?? []
             usable = stored.filter { $0.event.seq >= range.oldest && $0.event.seq <= range.newest }
         }
-        if usable.isEmpty, let store = messageStore {
+        if usable.isEmpty, let store = messageBacking {
             let windowOldest = oldestSeq ?? Int.max
             let stored = (try? await store.windowBefore(
                 scope: scope, sessionId: sessionId, seq: windowOldest,
@@ -590,7 +592,7 @@ final class ChatModel {
         }
         guard let sessionId = session?.sessionId, let scope = sessionScope else { return nil }
         let before = max(0, seq + leading)
-        var records = (try? await messageStore?.windowBefore(
+        var records = (try? await messageBacking?.windowBefore(
             scope: scope, sessionId: sessionId, seq: before, limit: limit)) ?? []
         var source = "disk"
         if records.isEmpty, let fetcher = makePageFetcher(pageSize: limit),
@@ -635,7 +637,7 @@ final class ChatModel {
     /// 联网那一枪还没回来）。
     private func hydrateLocally(around seq: Int, leading: Int, limit: Int) async -> Bool {
         guard let sessionId = session?.sessionId, let scope = sessionScope,
-              let store = messageStore, let bridge = pipelineBridge else { return false }
+              let store = messageBacking, let bridge = pipelineBridge else { return false }
         let before = max(0, seq + leading + 1)
         let records = (try? await store.windowBefore(
             scope: scope, sessionId: sessionId, seq: before, limit: limit)) ?? []
@@ -715,7 +717,7 @@ final class ChatModel {
         let missing = wanted.subtracting(inMemory.map(\.seq))
         guard !missing.isEmpty else { return inMemory }
         guard let sessionId = session?.sessionId, let scope = sessionScope,
-              let store = messageStore else { return inMemory }
+              let store = messageBacking else { return inMemory }
         let newest = (missing.max() ?? 0) + 1
         let oldest = missing.min() ?? 0
         let records = (try? await store.windowBefore(
@@ -731,7 +733,7 @@ final class ChatModel {
     /// 把命中所在的那一段从本地库读回时间线（0 网络），这样命中才有行可指。
     private func loadContextForHits(_ hits: [HistorySearchHit]) async {
         guard let sessionId = session?.sessionId, let scope = sessionScope,
-              let store = messageStore,
+              let store = messageBacking,
               let lowest = hits.map(\.seq).min() else { return }
         let before = max(0, lowest + 1)
         guard (timeline.firstContentSeq ?? Int.max) > lowest else { return }
@@ -764,7 +766,7 @@ final class ChatModel {
         let newest = searchRecords.last?.event.seq ?? 0
         let key = Self.searchRangeKey(sessionId)
         let value = "\(oldest):\(newest)"
-        enqueueWrite { [store = messageStore] in
+        enqueueWrite { [store = messageBacking] in
             try? await store?.setMeta(key, value, scope: scope)
         }
     }
@@ -834,7 +836,7 @@ final class ChatModel {
 
     /// 冷启动尾部恢复（T027 起直接读 009 `MessageStore`：session_state + 最新页）。
     func loadStoredTail(scope: String, sessionId: String) async -> StoredTail? {
-        guard let store = messageStore,
+        guard let store = messageBacking,
               let state = try? await store.sessionState(scope: scope, sessionId: sessionId)
         else { return nil }
         let records = (try? await store.windowBefore(
@@ -879,7 +881,7 @@ final class ChatModel {
         cache.removeValue(forKey: sessionId)
         cacheOrder.removeAll { $0 == sessionId }
         let scope = sessionScope ?? scopeId
-        enqueueWrite { [store = messageStore] in try? await store?.clear(scope: scope, sessionId: sessionId) }
+        enqueueWrite { [store = messageBacking] in try? await store?.clear(scope: scope, sessionId: sessionId) }
     }
 
     /// 当前会话属于哪台电脑——缓存按它分目录，换电脑不会串味。
@@ -938,10 +940,8 @@ final class ChatModel {
 
     private func enqueueAppend(scope: String, sessionId: String, records: [SessionRecord]) {
         guard !records.isEmpty else { return }
-        enqueueWrite { [store = messageStore] in
-            try? await store?.applyWrites([
-                .upsertRecords(scope: scope, sessionId: sessionId, records: records),
-            ])
+        enqueueWrite { [layer = messageBacking] in
+            await layer?.upsertRecords(scope: scope, sessionId: sessionId, records: records)
         }
     }
 
@@ -1296,7 +1296,7 @@ final class ChatModel {
     /// means "do not call the host".
     private func backfillFromStore() async -> Bool {
         guard let sessionId = session?.sessionId, let scope = sessionScope,
-              let store = messageStore,
+              let store = messageBacking,
               let firstRow = timeline.firstSeq,
               let from = oldestSeq, from < firstRow else { return false }
         let records = (try? await store.windowBefore(
@@ -1574,7 +1574,7 @@ final class ChatModel {
         defer { isExtendingSearch = false }
         // 先看本地：搜索缓冲要的是"更早的一段"，本地库通常就有（还能省一次往返）。
         if let scope = sessionScope, let sessionId = session?.sessionId,
-           let store = messageStore,
+           let store = messageBacking,
            let local = try? await store.windowBefore(
                scope: scope, sessionId: sessionId, seq: from,
                limit: Self.localSearchReadLimit) {
@@ -1775,7 +1775,7 @@ final class ChatModel {
             guard !Task.isCancelled else { return }
             self?.isAwaitingTurnStart = false
         }
-        let ref = MessagePipeline.SessionRef(scope: scope, sessionId: owner)
+        let ref = MessageSessionRef(scope: scope, sessionId: owner)
         do {
             _ = try await pipeline.send(text: text, to: ref, steer: mode == .steer)
         } catch {

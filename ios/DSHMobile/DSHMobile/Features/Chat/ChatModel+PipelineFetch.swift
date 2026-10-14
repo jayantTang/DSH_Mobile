@@ -66,7 +66,7 @@ extension ChatPipelineBridge {
 
     /// 向上翻页的锚点：本地窗口最老序号；本地还没数据时退回管道区间集的最老
     /// （区间集声称磁盘已覆盖的范围，据此仍能算出一页）。nil = 锚点不可知。
-    private func olderAnchor(_ session: SessionPipeline) async -> Int? {
+    private func olderAnchor(_ session: SessionHandle) async -> Int? {
         if let oldest = records.keys.min() { return oldest }
         return await session.ranges.oldest
     }
@@ -86,7 +86,7 @@ extension ChatPipelineBridge {
     /// 本地窗口最老序号已到 1 = 已到最早：置管道状态并整树重折一次渲染
     /// `.exhausted` 顶部行（整树走一遍是为了让 `hasOlder` 归 false——留着 true
     /// 时上滑哨兵还会继续空转）。不再发请求。
-    private func noteEarliestReached(_ session: SessionPipeline, _ model: ChatModel) async {
+    private func noteEarliestReached(_ session: SessionHandle, _ model: ChatModel) async {
         await session.markEarliestReached()
         isLoadingOlder = false
         olderFailure = nil

@@ -23,7 +23,7 @@ extension ChatModel {
               let sessionId = session?.sessionId
         else { return [] }
         let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        let entries: [MessageStore.UserInputEntry]
+        let entries: [UserInputEntry]
         do {
             entries = needle.isEmpty
                 ? try await store.userInputRecords(scope: scope)

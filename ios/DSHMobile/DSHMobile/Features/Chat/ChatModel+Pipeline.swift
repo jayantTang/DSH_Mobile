@@ -23,12 +23,12 @@ extension ChatModel {
     func startPipelineSubscription(for summary: SessionSummary) {
         pipelineBridge?.stop()
         pipelineBridge = nil
-        guard let pipeline = messageLayer?.pipeline, let scope = sessionScope else { return }
-        let ref = MessagePipeline.SessionRef(scope: scope, sessionId: summary.sessionId)
-        pipelineBridge = ChatPipelineBridge(model: self, pipeline: pipeline, ref: ref)
+        guard let layer = messageLayer, let scope = sessionScope else { return }
+        let ref = layer.sessionRef(scope: scope, sessionId: summary.sessionId)
+        pipelineBridge = ChatPipelineBridge(model: self, layer: layer, ref: ref)
         // T022 重启恢复：上次没发出去的消息（磁盘 status='pending'）以「未发出」
         // 呈现并进时间线，管道内部各尝试重发一次（重发前按 clientId 查重）。
-        Task { await pipeline.restorePending(for: ref) }
+        Task { await layer.restorePending(for: ref) }
     }
 
     /// 失败用户消息「点击重发」（T022）：行身份 `user-<clientId>` 去掉前缀就是
@@ -69,10 +69,11 @@ extension ChatModel {
 final class ChatPipelineBridge {
 
     weak var model: ChatModel? // internal：+PipelineFetch（取页半边）要用
-    private let pipeline: MessagePipeline
-    private let ref: MessagePipeline.SessionRef
-    /// 会话级管道（拿一次存下来：取页/重试/读 topExhausted 都走它）。
-    var session: SessionPipeline? // internal：+PipelineFetch 要用
+    /// 数据层门面（spec 023 边界收敛：不再直接持 `MessagePipeline`）。
+    private let layer: MessageLayer
+    private let ref: MessageSessionRef
+    /// 会话级把手（拿一次存下来：取页/重试/读 topExhausted 都走它）。
+    var session: SessionHandle? // internal：+PipelineFetch 要用
 
     /// 快照数据行的唯一事实来源（seq → 记录；与 MessagePipeline 的广播保持一致）。
     var records: [Int: SessionRecord] = [:] // internal：+PipelineFetch 要用
@@ -80,9 +81,9 @@ final class ChatPipelineBridge {
     private var rowSeqs: [String: Int] = [:]
     /// T022 上行状态（seq → pending/failed/sent）：折叠后回标到时间线行
     /// （pending 回声样式、failed 可点重发），状态变化不改行身份。
-    private var sendStatuses: [Int: MessagePipeline.RenderedMessage.Status] = [:]
+    private var sendStatuses: [Int: MessageSendStatus] = [:]
     /// 当前缺口行（派生量的最新一份）。
-    private var gaps: [SessionPipeline.GapRow] = []
+    private var gaps: [TranscriptGapRow] = []
     /// 管道判定的「已到最早」（hasMore=false / clamped；网络失败永不置位）。
     private var topExhausted = false
 
@@ -113,9 +114,9 @@ final class ChatPipelineBridge {
     /// 点胶囊直跳最新的降级阈值（页）：超过就丢中间段（spec 场景 7）。
     static let catchUpPageBudget = 5 // internal：+PipelineFetch 要用
 
-    init(model: ChatModel, pipeline: MessagePipeline, ref: MessagePipeline.SessionRef) {
+    init(model: ChatModel, layer: MessageLayer, ref: MessageSessionRef) {
         self.model = model
-        self.pipeline = pipeline
+        self.layer = layer
         self.ref = ref
         subscribe()
     }
@@ -142,9 +143,9 @@ final class ChatPipelineBridge {
     private func subscribe() {
         subscription = Task { @MainActor [weak self] in
             guard let self else { return }
-            let session = await self.pipeline.pipeline(for: self.ref)
+            let session = await self.layer.session(for: self.ref)
             self.session = session
-            let stream = await self.pipeline.snapshots(for: self.ref)
+            let stream = await self.layer.snapshots(for: self.ref)
             for await diff in stream {
                 if Task.isCancelled { return }
                 self.apply(diff)
@@ -154,7 +155,7 @@ final class ChatPipelineBridge {
 
     /// 一次 SnapshotDiff（可能同时含头部插入 + gap 生灭 + 尾部更新）落到
     /// 桥状态，然后触发一次重建——宿主那边由 reconcile 作为一次原子更新提交。
-    private func apply(_ diff: MessagePipeline.SnapshotDiff) {
+    private func apply(_ diff: MessageSnapshotDiff) {
         var messagesChanged = false
         var gapsChanged = false
         var hasRemove = false
@@ -297,7 +298,7 @@ final class ChatPipelineBridge {
     /// 缺口行集合：管道派生的中间缺口 + 顶部合成行（向上拉的 spinner 与中间
     /// 缺口同机制）。尾部追平（T018/T019）期间再补一行合成**底部**缺口行。
     private func gapItems(
-        _ pipelineGaps: [SessionPipeline.GapRow], topExhausted: Bool
+        _ pipelineGaps: [TranscriptGapRow], topExhausted: Bool
     ) -> [TimelineItem] {
         var items = pipelineGaps.map { gap in
             ChatTimeline.gapItem(start: gap.start, end: gap.end, status: Self.map(gap.status))
@@ -315,7 +316,7 @@ final class ChatPipelineBridge {
     /// 顶部合成行：已到最早（仅 topExhausted）> 失败可重试 > 加载中。
     /// 实现在 `ChatModel+PipelineFetch.swift`（取页半边）。
 
-    private static func map(_ status: SessionPipeline.GapRow.Status) -> TimelineItem.GapStatus {
+    private static func map(_ status: TranscriptGapRow.Status) -> TimelineItem.GapStatus {
         switch status {
         case .loading: return .loading
         case .failed(let retryable): return .failed(retryable: retryable)
@@ -449,7 +450,7 @@ final class ChatPipelineBridge {
     /// T022 失败行「点击重发」：交给管道的重发状态机（查重 → pending → 网络 →
     /// 确认原地替换），行身份不变。
     func resend(clientId: UUID) async throws {
-        try await pipeline.resend(clientId: clientId, for: ref)
+        try await layer.resend(clientId: clientId, for: ref)
     }
 
     /// 下行数据进管道（follow 快照 / WSS 事件）：合并进热窗口并经 diff 重建。

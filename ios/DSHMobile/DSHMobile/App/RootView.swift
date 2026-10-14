@@ -1020,8 +1020,8 @@ extension RootView {
     /// 仍在调用点照旧执行。
     static func housekeepTranscriptStore() async {
         #if DEBUG
-        if ProbeVariants.clearTranscriptStore, let store = try? MessageStore() {
-            try? await store.clearAll()
+        if ProbeVariants.clearTranscriptStore {
+            await MessageLayer.clearTranscriptCache()
         }
         #endif
     }

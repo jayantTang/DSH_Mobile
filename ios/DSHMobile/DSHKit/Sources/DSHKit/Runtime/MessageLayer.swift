@@ -218,6 +218,109 @@ public final class MessageLayer {
         await probes.note("pager.fetch", fields, true)
     }
 
+    // MARK: - 门面出口（spec 023 边界收敛：App 不再直接持管道 / 磁盘层）
+
+    /// 这个会话的读写把手。
+    public func session(for ref: MessageSessionRef) async -> SessionHandle {
+        SessionHandle(pipeline: await pipeline(for: ref))
+    }
+
+    /// 某会话的渲染快照流。
+    public func snapshots(for ref: MessageSessionRef) async -> AsyncStream<MessageSnapshotDiff> {
+        guard let pipeline else { return AsyncStream { $0.finish() } }
+        return await pipeline.snapshots(for: ref)
+    }
+
+    /// 崩溃前可能已确认但没落库的发送，重连后恢复它的状态。
+    public func restorePending(for ref: MessageSessionRef) async {
+        await pipeline?.restorePending(for: ref)
+    }
+
+    /// 重发一条 pending 的发送。
+    public func resend(clientId: UUID, for ref: MessageSessionRef) async throws {
+        guard let pipeline else { throw FetchFailure.notConnected }
+        try await pipeline.resend(clientId: clientId, for: ref)
+    }
+
+    /// 预取目标（列表冷启动时告诉层"这个会话要预取到哪一条"）。
+    public func prefetchTarget(ref: MessageSessionRef, newestSeq: Int) -> MessagePrefetchTarget {
+        MessagePrefetchTarget(session: ref, newestSeq: newestSeq)
+    }
+
+    /// 这个会话的地址（App 只从摘要推导一次，之后用把手引用它）。
+    public func sessionRef(scope: String, sessionId: String) -> MessageSessionRef {
+        MessageSessionRef(scope: scope, sessionId: sessionId)
+    }
+
+    // MARK: - 磁盘层（App 只读它的窗口与聚合，不直接持 store）
+
+    /// 某个 seq 之前的一页记录（向上翻页用）。
+    public func windowBefore(scope: String, sessionId: String, seq: Int, limit: Int) async throws -> [SessionRecord] {
+        guard let store else { throw FetchFailure.noAddress }
+        return try await store.windowBefore(scope: scope, sessionId: sessionId, seq: seq, limit: limit)
+    }
+
+    /// 某会话的聚合信息（列表首帧叠加用）。
+    public func sessionState(scope: String, sessionId: String) async throws -> MessageStore.SessionListEntry? {
+        guard let store else { return nil }
+        return try await store.sessionState(scope: scope, sessionId: sessionId)
+    }
+
+    /// 丢掉这个会话的落盘记录（"清空对话"用）。
+    public func clear(scope: String, sessionId: String) async {
+        try? await store?.clear(scope: scope, sessionId: sessionId)
+    }
+
+    /// 追加/更新一批记录（幂等，与浏览落库同一条路径）。
+    public func upsertRecords(scope: String, sessionId: String, records: [SessionRecord]) async {
+        guard let store, !records.isEmpty else { return }
+        try? await store.applyWrites([.upsertRecords(scope: scope, sessionId: sessionId, records: records)])
+    }
+
+    /// 读一条与界面无关的元数据（例如"这段搜索铺到哪个 seq 了"）。
+    public func meta(_ key: String, scope: String) async throws -> String? {
+        guard let store else { return nil }
+        return try await store.meta(key, scope: scope)
+    }
+
+    /// 写一条元数据（落库是缓存行为，失败由调用方吞掉）。
+    public func setMeta(_ key: String, _ value: String, scope: String) async throws {
+        guard let store else { return }
+        try await store.setMeta(key, value, scope: scope)
+    }
+
+    /// 「我问过的」的记录（只读本地库）。
+    public func userInputRecords(scope: String) async -> [UserInputEntry] {
+        guard let store else { return [] }
+        return (try? await store.userInputRecords(scope: scope)) ?? []
+    }
+
+    /// 「我问过的」是否已经灌过（空数组的两种含义要靠它区分）。
+    public func userInputsSynced(scope: String, sessionId: String) async -> Bool {
+        guard let store else { return false }
+        return (try? await store.userInputsSyncedAt(scope: scope, sessionId: sessionId)) != nil
+    }
+
+    /// 清空**转写缓存**（设置页与冷启动清理用）。
+    ///
+    /// 静态：调用方（设置页的清除按钮、启动时的清理）手里没有 `MessageLayer` 实例，
+    /// 但它们要做的事就是"把这个磁盘层清掉"，不该为此造一个 store。
+    public static func clearTranscriptCache() async {
+        guard let store = try? MessageStore() else { return }
+        try? await store.clearAll()
+    }
+
+    private func pipeline(for ref: MessageSessionRef) async -> SessionPipeline {
+        // 没有管道时建一个空转的：把手的调用方都在"管道已就绪"的路径上，
+        // 真到这里说明链路还没接上，返回空管道比抛错更符合现有调用点（它们都不处理错误）。
+        await pipeline?.pipeline(for: ref) ?? SessionPipeline(
+            scope: ref.scope,
+            sessionId: ref.sessionId,
+            store: store,
+            fetch: { _, _ in SessionPipeline.FetchPage(records: [], hasMore: false, clamped: false) }
+        )
+    }
+
     // MARK: - T033 用户输入灌库（三表终局，spec 009 data-model v3）
 
     /// 冷启动预取瀑布之后的低优先级任务：逐会话走 `_link/sessionWindow` 的

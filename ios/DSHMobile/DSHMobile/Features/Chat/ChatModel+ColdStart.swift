@@ -16,7 +16,7 @@ extension ChatModel {
               let scope = sessionScope, summary.asOfSeq > 0
         else { return }
         messageLayer?.registerAddresses([summary])
-        let target = MessagePipeline.PrefetchTarget(
+        let target = MessagePrefetchTarget(
             session: .init(scope: scope, sessionId: summary.sessionId),
             newestSeq: summary.asOfSeq)
         Task(priority: .utility) {
