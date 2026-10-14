@@ -764,21 +764,40 @@ def _is_test_enrollment(row: dict[str, Any]) -> bool:
             or str(row.get("agentName") or "").startswith("DSH-"))
 
 
+def _is_orphan_usage(row: dict[str, Any], *, known_ids: set[str],
+                     external: set[str]) -> bool:
+    """这条用量行的设备行已经没了、账号又是内部的——报表里当调试设备剔除。
+
+    为什么会有这种行：`maintainers/purge-revoked-devices.py` 会删掉已撤销/已过期的
+    设备行（不删的话连接器每次重连都要被灌几千帧"回不来的设备"，见
+    maintainers/ANALYSIS-20261012-connector-flap.md），但按约定保留 `usageDaily`
+    ——账目不能丢。代价就是历史用量里留下找不到设备主体的行：2026-10-13 实测
+    近 30 天有 636 台这样的设备、29.5 GB，全部属于 owner 自用账号（历次用例的
+    模拟器设备），把「活跃手机」「每日出口」抬到真实值的两倍以上。
+
+    只剔内部账号（不在邀请码登记名单里）的孤儿行：外部用户自己解绑/过期后留下的
+    孤儿行是真人真事，历史该保留。`usage` 命令照旧读全量——那是账本，这是视图。
+    """
+    return row["deviceId"] not in known_ids and row.get("accountId") not in external
+
+
 def _usage_scan(store: Store, days: int, debug_ids: set[str],
                 names: dict[str, str | None],
-                *, end: int | None = None) -> tuple[list[dict[str, Any]],
-                                                    list[dict[str, Any]],
-                                                    dict[int, set[str]]]:
+                *, end: int | None = None, known_ids: set[str] | None = None,
+                external: set[str] | None = None) -> tuple[list[dict[str, Any]],
+                                                           list[dict[str, Any]],
+                                                           dict[int, set[str]]]:
     """窗口内按天读一遍 `usageDaily`，同时给出三样东西（读一次，三个板块共用）。
 
     - `series`：每日出口字节/连接数/设备数；
     - `ranked`：按账号合并排名（出口、连接、设备数、最近一次构建）；
     - `active_by_day`：每天活跃的账号集合（留存用它，不重复查库）。
 
-    只统计**真实设备**（剔除 `_is_debug_device`）。设备板块从 2026-10-12 起就这么做了，
-    流量这里必须同口径：不然同一天会在「今日」和「最近 N 天」里给出两个不同的数字
-    （2026-10-12 实测：今日 4.0 GB，同一天在 30 天表里 4.4 GB，差的正是历次用例的
-    DSH-* 设备）。`usage` 命令保持全量记账不动——那是账本，日报是给人看的视图。
+    只统计**真实设备**（剔除 `_is_debug_device`）与**内部账号的孤儿用量行**
+    （`_is_orphan_usage`）。设备板块从 2026-10-12 起就这么做了，流量这里必须同口径：
+    不然同一天会在「今日」和「最近 N 天」里给出两个不同的数字（2026-10-12 实测：
+    今日 4.0 GB，同一天在 30 天表里 4.4 GB，差的正是历次用例的 DSH-* 设备）。
+    `usage` 命令保持全量记账不动——那是账本，日报是给人看的视图。
     """
     per_day: dict[int, dict[str, int]] = {
         day: {"egressBytes": 0, "connections": 0, "devices": 0} for day in _recent_days(days, end=end)}
@@ -788,6 +807,8 @@ def _usage_scan(store: Store, days: int, debug_ids: set[str],
     for day in per_day:
         for row in store.usage_rows(day):
             if row["deviceId"] in debug_ids:
+                continue
+            if _is_orphan_usage(row, known_ids=known_ids or set(), external=external or set()):
                 continue
             entry = per_day[day]
             entry["egressBytes"] += int(row["egressBytes"])
@@ -959,7 +980,8 @@ def _day_start_ms(day: int) -> int:
 
 def _today_report(store: Store, *, stamp: int, threads: list[dict[str, Any]],
                   real_devices: list[dict[str, Any]], debug_ids: set[str],
-                  names: dict[str, str | None]) -> dict[str, Any]:
+                  names: dict[str, str | None], known_ids: set[str] | None = None,
+                  external: set[str] | None = None) -> dict[str, Any]:
     """「今日」板块：`stamp` 所在服务器本地自然日 00:00 起（到 `stamp` 为止）的数据。
 
     为什么要有这一块：30 天窗口把当天埋在一堆历史里，看不出"今天有没有事"。今日的口径
@@ -982,6 +1004,10 @@ def _today_report(store: Store, *, stamp: int, threads: list[dict[str, Any]],
     last_seen: int | None = None
     for row in store.usage_rows(day):
         if row["deviceId"] in debug_ids:
+            continue
+        # 内部账号的孤儿用量行（设备行已被清理工具删掉）与 `_usage_scan` 同口径剔除，
+        # 否则同一天在「今日」和「最近 N 天」里又是两个数字。
+        if _is_orphan_usage(row, known_ids=known_ids or set(), external=external or set()):
             continue
         device = known.get(row["deviceId"]) or {}
         size = int(row["egressBytes"])
@@ -1118,10 +1144,14 @@ def _ops_report(store: Store, days: int, *, as_of: int | None = None) -> dict[st
         created_per_day[day] = created_per_day.get(day, 0) + 1
     new_per_day = [{"day": day, "count": created_per_day.get(day, 0)}
                    for day in _recent_days(days, end=stamp)]
-    series, ranked, active_by_day = _usage_scan(store, days, debug_ids, names, end=stamp)
+    # 登记名单要在读用量之前算好：孤儿用量行（设备行被清理工具删掉）要不要算进报表，
+    # 取决于它属不属于外部账号，见 `_is_orphan_usage`。
     enrollments = store.list_enrollments()
     real_enrollments = [row for row in enrollments if not _is_test_enrollment(row)]
     external = {row["accountId"] for row in real_enrollments if row.get("accountId")}
+    known_ids = {row["deviceId"] for row in devices}
+    series, ranked, active_by_day = _usage_scan(store, days, debug_ids, names, end=stamp,
+                                                known_ids=known_ids, external=external)
     owners = {row["deviceId"]: row.get("accountId") for row in devices}
     return {
         "ok": True,
@@ -1129,7 +1159,8 @@ def _ops_report(store: Store, days: int, *, as_of: int | None = None) -> dict[st
         "asOf": stamp,
         "days": days,
         "today": _today_report(store, stamp=stamp, threads=threads, real_devices=real,
-                               debug_ids=debug_ids, names=names),
+                               debug_ids=debug_ids, names=names, known_ids=known_ids,
+                               external=external),
         "feedback": _feedback_report(store, threads, test_count=len(listed) - len(threads)),
         "devices": {
             "paired": len(live),

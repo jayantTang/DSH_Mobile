@@ -370,6 +370,65 @@ def test_ops_report_excludes_debug_devices_from_the_window_usage(tmp_path, capsy
     assert report["today"]["usage"]["egressBytes"] == report["usage"]["perDay"][-1]["egressBytes"]
 
 
+def test_ops_report_drops_internal_orphan_usage_rows(tmp_path, capsys):
+    """设备行已被清理工具删掉的**内部账号**用量行不进报表；外部账号的孤儿行保留。
+
+    背景（2026-10-13 实测）：`maintainers/purge-revoked-devices.py` 会删已撤销/过期的
+    设备行、按约定保留 `usageDaily`，于是历史用量里留下找不到设备主体的行——近 30 天
+    636 台、29.5 GB，全是 owner 自用账号（历次用例的模拟器），把「活跃手机」抬到
+    真实值的两倍以上（10-12 那天 88 台 vs 真实 19 台）。账本不动，视图要干净。
+    外部账号自己解绑后留下的孤儿行是真人真事，历史该保留。
+    """
+    db = str(tmp_path / "state.db")
+    store = Store(db)
+    owner = store.create_account("Jayant")
+    owner_agent = store.register_agent(owner["accountId"], "mac")
+    invite = store.mint_invite(note="公开试用")
+    enrolled = store.claim_invite(invite["code"], "Sam 的 MacBook")
+    store.add_usage([
+        # 内部账号的孤儿行：设备行不存在（模拟 purge 之后的状态）。
+        {"day": local_day(), "deviceId": "dev_ghost_internal", "agentId": owner_agent["agentId"],
+         "accountId": owner["accountId"], "egressBytes": 1_000_000, "connections": 50,
+         "at": now_ms(), "lastBuild": "1.0 1"},
+        # 外部账号的孤儿行：历史该留住。
+        {"day": local_day(), "deviceId": "dev_ghost_external", "agentId": enrolled["agentId"],
+         "accountId": enrolled["accountId"], "egressBytes": 2048, "connections": 4,
+         "at": now_ms(), "lastBuild": "1.2.3"},
+    ])
+    store.close()
+
+    code, report = run_cli(db, "ops-report", "--days", "3", capsys=capsys)
+    assert code == 0
+    assert report["usage"]["totals"]["egressBytes"] == 2048, "内部孤儿行剔除、外部保留"
+    assert report["usage"]["perDay"][-1]["devices"] == 1
+    assert report["usage"]["perDay"][-1]["connections"] == 4
+    assert [row["accountId"] for row in report["usage"]["topAccounts"]] == [enrolled["accountId"]]
+    # 「今日」板块同一口径，且与窗口里的同一天是同一个数字。
+    assert report["today"]["usage"]["egressBytes"] == report["usage"]["perDay"][-1]["egressBytes"]
+    assert report["today"]["usage"]["devices"] == 1
+    assert [row["deviceId"] for row in report["today"]["devices"]["list"]] == ["dev_ghost_external"]
+
+
+def test_ops_report_keeps_orphan_rows_of_a_revoked_device_that_still_exists(tmp_path, capsys):
+    """设备行还在（只是已撤销）的用量行照旧算——孤儿过滤只针对"设备行已不存在"的行。"""
+    db = str(tmp_path / "state.db")
+    store = Store(db)
+    account = store.create_account("ops")
+    agent = store.register_agent(account["accountId"], "mac")
+    device = store.claim_pair_code(
+        store.mint_pair_code(agent["agentId"], ttl_ms=60_000)["code"], device_name="iPhone")
+    store.revoke_device(device["deviceId"])
+    store.add_usage([{"day": local_day(), "deviceId": device["deviceId"],
+                      "agentId": agent["agentId"], "accountId": account["accountId"],
+                      "egressBytes": 777, "connections": 3, "at": now_ms(),
+                      "lastBuild": "1.2.3"}])
+    store.close()
+
+    code, report = run_cli(db, "ops-report", "--days", "3", capsys=capsys)
+    assert code == 0
+    assert report["usage"]["totals"]["egressBytes"] == 777
+
+
 def test_ops_report_today_block_is_a_local_day_slice(tmp_path, capsys):
     """「今日」= 服务器本地自然日 00:00 起：昨天与调试设备的量都不进这一块。
 

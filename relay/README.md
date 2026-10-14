@@ -202,6 +202,12 @@ $A admin.py --db $DB ops-report --days 30 --as-of yesterday                   # 
 `--days` 窗口都锚到那一整天，`generatedAt` 仍是真实的生成时刻。本机包装对应
 `feedback.mjs report --full-day`——每天 00:02 的自动日报用它报刚结束的那一天。
 
+`ops-report` 是**视图**，不是账本：调试设备（`DSH-` 前缀、`Node`/`simulator` 机型）的用量、
+设备与账号一律不进报告，`usage` 命令仍读全量。设备行已被清理工具删掉、账号又不在邀请码
+登记名单里的孤儿用量行同样剔除（见 `admin.py:_is_orphan_usage`：清理工具为治连接器重连
+卡顿会删已撤销设备行、按约定保留 `usageDaily`，留下找不到设备主体的历史行）。外部账号的
+孤儿行保留——那是真人真事的历史。
+
 ### Deploying to the relay host
 
 ```bash
