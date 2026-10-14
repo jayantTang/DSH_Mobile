@@ -973,11 +973,21 @@ public final class ConnectionStore {
             // code (see `ConnectLink.claimedRelay`), so there is nothing to
             // trade here — only a profile to install or refresh.
             let transport = ConnectionProfile.Transport.relay(relayURL: relayURL, agentId: agentId)
-            let profile = existingProfile(matching: transport)
+            var profile = existingProfile(matching: transport)
                 ?? addProfile(
                     ConnectionProfile(name: name ?? relayURL.host() ?? "DSH", transport: transport),
                     secret: deviceToken
                 )
+            // 链接里的设备名是权威的，已有档案也要跟着改：链接是**表单编码**的（空格写作 `+`），
+            // 而 2026-10-14 之前 `ConnectLink` 只做百分号解码，于是 `Jayant MacBook Pro` 被写成了
+            // `Jayant+MacBook+Pro` 存进档案。解析修好之后，旧档案不会自己变好——它只被复用、
+            // 从不回写（`recordConnection` 只更新 lastConnectedAt），所以这里补一次回写。
+            if let name, !name.isEmpty, name != profile.name,
+               let index = profiles.firstIndex(where: { $0.id == profile.id }) {
+                profiles[index].name = name
+                persist()
+                profile = profiles[index]
+            }
             try? Keychain.set(deviceToken, for: profile.secretAccount)
             await connect(to: profile)
         #endif
