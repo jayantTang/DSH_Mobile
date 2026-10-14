@@ -103,6 +103,16 @@ final class WorkspaceFilesModel {
     /// Downloads by workspace path, so two sheets looking at one file agree.
     private(set) var transfers: [String: TransferPhase] = [:]
     private var transferTasks: [String: Task<URL?, Never>] = [:]
+
+    /// 工作区文件缓存。**判定在 DSHKit**（`WorkspaceFileCache`：版本化目录、大小不符即残骸、
+    /// `.part` 不参与淘汰、超预算丢最旧）；**放哪儿由 App 决定**——这是平台选择，不进库。
+    private let fileCache = WorkspaceFileCache(root: WorkspaceFilesModel.cacheRoot)
+
+    /// `Caches/workspace-files`：这里全是电脑那边还有的副本，系统随时可以回收，也不进备份。
+    static var cacheRoot: URL {
+        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("workspace-files", isDirectory: true)
+    }
     /// Throughput per transfer, in MB/s, smoothed over the last few windows.
     ///
     /// Shown because "slow" is otherwise unfalsifiable: the number says whether
@@ -133,7 +143,7 @@ final class WorkspaceFilesModel {
         // already here, no window is ever fetched, and the test passes while
         // proving nothing.
         if ProcessInfo.processInfo.arguments.contains("-DSHForgetDownloadedFiles") {
-            WorkspaceFileCache.clear()
+            fileCache.clear()
         }
         #endif
     }
@@ -346,7 +356,7 @@ final class WorkspaceFilesModel {
             transfers[key] = .idle
             transferRates[key] = nil
             staleRefreshes.insert(key)
-            WorkspaceFileCache.discard(scopeId: scope.sessionId, path: key, version: held)
+            fileCache.discard(scopeId: scope.sessionId, path: key, version: held)
             return await download(path: path)
         }
         guard info.version != held else {
@@ -361,7 +371,7 @@ final class WorkspaceFilesModel {
         transfers[key] = .idle
         transferRates[key] = nil
         staleRefreshes.insert(key)
-        WorkspaceFileCache.discard(
+        fileCache.discard(
             scopeId: scope.sessionId, path: key, version: held
         )
         return await download(path: path)
@@ -475,7 +485,7 @@ final class WorkspaceFilesModel {
         path: String
     ) async throws -> URL? {
         let info = try await downloader.info(scopeId: scopeId, path: path)
-        if let cached = WorkspaceFileCache.existing(
+        if let cached = fileCache.existing(
             scopeId: scopeId, path: key, version: info.version, bytes: info.bytes
         ) {
             transfers[key] = .ready(bytes: cached.bytes, url: cached.url, version: info.version)
@@ -537,7 +547,7 @@ final class WorkspaceFilesModel {
     ///
     /// `expectedBytes` is the host's own size, which is what makes a truncated
     /// transfer a failure here instead of a cache hit later:
-    /// `WorkspaceFileCache.existing(…)` decides by size, so a short file that
+    /// `fileCache.existing(…)` decides by size, so a short file that
     /// landed at the final name would be published as if it were the document.
     private func downloadInBackground(
         _ target: (relayURL: URL, deviceToken: String),
@@ -552,7 +562,7 @@ final class WorkspaceFilesModel {
         // rather than appended to — the system resumes from its own data, so the
         // tail it hands back is a whole file, not a continuation of a prefix this
         // app kept.
-        let destination = WorkspaceFileCache.partial(
+        let destination = fileCache.partial(
             scopeId: scopeId, path: key, version: info.version
         )
         // `session:` 不传：拿的是进程里那**一个**共享后台会话（P-2），不再各自
@@ -579,7 +589,7 @@ final class WorkspaceFilesModel {
 
         // `.part` → final name. Nothing is discarded here: the bytes that just
         // arrived **are** the file now, prefix and all.
-        let published = try WorkspaceFileCache.publish(
+        let published = try fileCache.publish(
             scopeId: scopeId, path: key, version: info.version
         )
         if let started = transferStarted[key],
@@ -587,7 +597,7 @@ final class WorkspaceFilesModel {
                                                seconds: Date().timeIntervalSince(started)) {
             transferRates[key] = average
         }
-        WorkspaceFileCache.trim()
+        fileCache.trim()
         transfers[key] = .ready(bytes: fetched.bytes, url: published, version: info.version)
         clearStaleMark(key: key)
         return published
@@ -606,7 +616,7 @@ final class WorkspaceFilesModel {
         if let client = store?.client {
             let downloader = WorkspaceFileDownloader(client: client)
             if let info = try? await downloader.info(scopeId: scope.sessionId, path: path) {
-                WorkspaceFileCache.discardPartial(
+                fileCache.discardPartial(
                     scopeId: scope.sessionId, path: key, version: info.version
                 )
             }
