@@ -122,7 +122,7 @@
     },
     {
       "rule": "unlocalized-binding",
-      "file": "ios/DSHMobile/DSHMobile/Features/Files/CodeHighlighting.swift",
+      "file": "ios/DSHMobile/DSHMobile/Design/CodeHighlighting.swift",
       "reason": "代码高亮的语言名文案，不在本轮范围（G5 backlog）",
       "backlog": "i18n-backlog-app-codehighlighting"
     },
