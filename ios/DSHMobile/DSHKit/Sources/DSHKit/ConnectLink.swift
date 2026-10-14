@@ -42,9 +42,12 @@ public enum ConnectLink: Equatable {
         guard url.scheme?.lowercased() == "dsh" else { return nil }
         guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
 
-        let items = components.queryItems ?? []
+        // 查询项自己解，不用 `components.queryItems`：那套只做百分号解码，而链接是**表单编码**
+        // 的（桌面端与测试台都用 `URLSearchParams` 生成），空格写作 `+`。用 `queryItems` 会得到
+        // `Jayant+MacBook+Pro` 这种设备名（2026-10-14 在连接管理页实拍到）。
+        let query = Self.formDecodedQuery(components)
         func value(_ name: String) -> String? {
-            items.first { $0.name == name }?.value?.trimmingCharacters(in: .whitespacesAndNewlines)
+            query[name]?.trimmingCharacters(in: .whitespacesAndNewlines)
         }
 
         // The action is carried either as the host or the path, so both
@@ -81,6 +84,28 @@ public enum ConnectLink: Equatable {
         default:
             return nil
         }
+    }
+
+    /// 按表单编码（`application/x-www-form-urlencoded`）解出查询项。
+    ///
+    /// 顺序不能反：**先**把 `+` 还原成空格，**再**做百分号解码。反过来的话真正的加号（`%2B`）
+    /// 也会变成空格。重复的键取第一个（与 `queryItems` 的 `first` 语义一致）。
+    static func formDecodedQuery(_ components: URLComponents) -> [String: String] {
+        let raw = components.percentEncodedQuery ?? components.query ?? ""
+        var values: [String: String] = [:]
+        for pair in raw.split(separator: "&") {
+            let parts = pair.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+            guard let first = parts.first else { continue }
+            func decode(_ text: Substring) -> String {
+                let spaced = text.replacingOccurrences(of: "+", with: " ")
+                return spaced.removingPercentEncoding ?? spaced
+            }
+            let key = decode(first)
+            if values[key] == nil {
+                values[key] = parts.count > 1 ? decode(parts[1]) : ""
+            }
+        }
+        return values
     }
 
     /// Stores a relay address in its HTTP form.
