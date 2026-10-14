@@ -41,7 +41,7 @@ import { homedir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
-import { renderReport } from './feedback-report.mjs'
+import { renderReport, updateHistory } from './feedback-report.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const ROOT = join(HERE, '..', '..')
@@ -298,6 +298,18 @@ export function reportPath({ outDir = DEFAULT_OUT, generatedAt, day = 0, now = D
   return join(outDir, `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}.html`)
 }
 
+/// 历史摘要文件：与报告同目录（maintainers/reports/ 已 gitignore），给 WoW 对照、
+/// 告警连续天数与发版标注供数。只存聚合数字，不含任何用户文本。
+const HISTORY_FILE = '.ops-history.json'
+
+function loadHistory(outDir) {
+  try {
+    return JSON.parse(readFileSync(join(outDir, HISTORY_FILE), 'utf8'))
+  } catch {
+    return null
+  }
+}
+
 function writeReport(raw, opts, io) {
   let data
   try {
@@ -305,10 +317,14 @@ function writeReport(raw, opts, io) {
   } catch {
     throw new Error(`ops-report 返回的不是 JSON：${String(raw).slice(0, 200)}`)
   }
-  const file = reportPath({ outDir: opts.out ? resolve(ROOT, opts.out) : DEFAULT_OUT,
-    generatedAt: data?.generatedAt, day: data?.today?.day })
+  const outDir = opts.out ? resolve(ROOT, opts.out) : DEFAULT_OUT
+  const file = reportPath({ outDir, generatedAt: data?.generatedAt, day: data?.today?.day })
+  const history = loadHistory(outDir)
   mkdirSync(dirname(file), { recursive: true })
-  writeFileSync(file, renderReport(data), 'utf8')
+  writeFileSync(file, renderReport(data, { history }), 'utf8')
+  // 只有「已过完一整天」的报告才更新历史（updateHistory 自己判，半天数据返回 null）。
+  const nextHistory = updateHistory(data, history)
+  if (nextHistory) writeFileSync(join(outDir, HISTORY_FILE), JSON.stringify(nextHistory), 'utf8')
   io.out(file)
   return { code: data?.ok === false ? 1 : 0, file }
 }

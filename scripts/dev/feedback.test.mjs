@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url'
 
 import { buildInvocation, foreignRecipients, main, renderAgentPlist, reportPath,
   resolveSshTarget } from './feedback.mjs'
-import { escapeHtml, humanModel, renderReport } from './feedback-report.mjs'
+import { escapeHtml, humanModel, renderReport, updateHistory } from './feedback-report.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const ROOT = join(HERE, '..', '..')
@@ -313,7 +313,10 @@ test('日报分「今日」与「最近 30 天」两段，正文被转义', () =
   assert.ok(html.includes('<span class="tag range">最近 30 天</span>趋势与明细'), '30 天板块')
   assert.equal((html.match(/<svg /g) ?? []).length, 2, '只有每日出口与每日新增手机两张图')
   assert.ok(html.includes('每日出口流量') && html.includes('每日新增手机'))
-  assert.ok(html.includes('今日出口流量') && html.includes('较昨日') && html.includes('近 7 日均值'))
+  // 头牌是价值指标（活跃手机）；出口流量降级为成本口径的 KPI。
+  assert.ok(html.includes('今日活跃手机') && html.includes('较昨日') && html.includes('近 7 日均值'))
+  assert.ok(html.includes('今日出口（成本）') && html.includes('较昨日 ↑ 100.0%'), '流量只留一行成本小字')
+  assert.ok(!html.includes('今日出口流量'), '流量不再当头牌')
   assert.ok(html.includes('3.0 MB'), '出口字节应换算成 MB')
   assert.ok(html.includes('今日电脑') && html.includes('今日手机') && html.includes('今日反馈'))
   assert.ok(html.includes('电脑排名') && html.includes('邀请码登记'))
@@ -378,9 +381,107 @@ test('「关注」板块把待办提到整页最上面，阈值越线才报警',
   const quiet = fixture()
   quiet.feedback.open = 0
   quiet.invites.remaining = 20
+  quiet.devices.newPerDay = [{ day: '2026-10-11', count: 30 }] // 达成目标，不报缺口
   quiet.usage.perDay = [{ day: '2026-10-11', egressBytes: 2 * 1024 * 1024, connections: 9, devices: 2 },
     { day: '2026-10-12', egressBytes: 2 * 1024 * 1024, connections: 9, devices: 2 }]
   assert.match(renderReport(quiet), /没有待回复反馈，余量与指标都在常态区间内/)
+})
+
+test('新增低于周目标时「关注」给缺口提示，达成就不吱声', () => {
+  const html = renderReport(fixture()) // fixture 一周只新增 3 台，目标 30
+  assert.match(html, /本周新增手机 3 台，目标 30 台（达成 10%）/)
+})
+
+test('待回复反馈超过 24h SLA 时文案升级', () => {
+  const data = fixture()
+  data.feedback.threads[0].createdAt = GENERATED_AT - 30 * 3_600_000
+  assert.match(renderReport(data), /最早一条已等 30\.0 h，超过 24h 响应 SLA/)
+})
+
+test('同一条待办连续挂三天，文案升级为「已连续 N 天未处理」', () => {
+  const data = fixture()
+  const dayStartAt = data.today.dayStartAt
+  const history = { days: {}, alerts: { 'invites-low': { lastStart: dayStartAt - 86_400_000, count: 2 } } }
+  const html = renderReport(data, { history })
+  assert.match(html, /邀请码只剩 9 张（21\/30 已用），该补铸一批（已连续 3 天未处理）/)
+  // 同一天重复渲染不重复计数。
+  const sameDay = renderReport(data, { history:
+    { days: {}, alerts: { 'invites-low': { lastStart: dayStartAt, count: 4 } } } })
+  assert.match(sameDay, /已连续 4 天未处理/)
+})
+
+test('活跃手机有上周同期对照；历史快照给留存漏斗补上目标与 WoW', () => {
+  const data = fixture()
+  data.usage.perDay = Array.from({ length: 9 }, (_, i) => ({
+    day: 20261004 + i, egressBytes: 1024 * 1024 * (i + 1), connections: 3, devices: i + 1 }))
+  const html = renderReport(data)
+  assert.match(html, /较上周同期 [↑→]/, '窗口满 8 天就有 WoW chip')
+
+  const dayStartAt = data.today.dayStartAt
+  const history = { days: { '20261005': { day: 20261005,
+    dayStartAt: dayStartAt - 7 * 86_400_000, dau: 2, d7: 0.5, d1: 0.5 } }, alerts: {} }
+  const withHistory = renderReport(data, { history })
+  assert.match(withHistory, /上周同日 2/, '活跃电脑卡片给上周同日')
+  assert.match(withHistory, /目标 30% · 上周 50%/, '7 日留存带目标与上周')
+  // 没有历史文件：照常渲染，只是没有 WoW 小字。
+  assert.ok(!html.includes('上周同日'))
+})
+
+test('发版日在流量图上标注（构建号第一次出现在历史快照里的那天）', () => {
+  const data = fixture()
+  data.usage.perDay = [
+    { day: 20261010, egressBytes: 1024 * 1024, connections: 3, devices: 1 },
+    { day: 20261011, egressBytes: 2 * 1024 * 1024, connections: 4, devices: 2 },
+    { day: 20261012, egressBytes: 3 * 1024 * 1024, connections: 9, devices: 2 }]
+  const history = { days: {
+    '20261010': { day: 20261010, dayStartAt: 1, builds: ['20261010.0900'] },
+    '20261011': { day: 20261011, dayStartAt: 2, builds: ['20261011.1447'] },
+  }, alerts: {} }
+  const html = renderReport(data, { history })
+  assert.ok(html.includes('>发版</text>'), '新版首次出现的那天有标注')
+  assert.ok(!renderReport(data).includes('>发版</text>'), '没有历史文件就不标')
+})
+
+test('updateHistory 只记过完的一整天，并累计告警连续天数', () => {
+  // 半天数据不记：午间手动跑的报告不该污染 WoW 对照。
+  assert.equal(updateHistory(fixture()), null)
+
+  const completed = completedDayFixture()
+  const first = updateHistory(completed)
+  assert.ok(first, '过完的一天要记')
+  const snap = first.days['20261012']
+  assert.equal(snap.dau, 3)
+  assert.equal(snap.devicesActive, 2)
+  assert.deepEqual(snap.builds, ['20261012.1056', '20260924.1925'])
+  assert.equal(first.alerts['invites-low'].count, 1, '告警第一次出现 streak=1')
+
+  // 次日同一告警还在：streak +1。生成时刻也要跟着往后推一天，否则这天还没"过完"。
+  const nextDay = completedDayFixture()
+  nextDay.today.day = 20261013
+  nextDay.today.dayStartAt += 86_400_000
+  nextDay.generatedAt += 86_400_000
+  nextDay.feedback = { new: 0, open: 0, replied: 0, threads: [] } // 这条告警次日消失了
+  const second = updateHistory(nextDay, first)
+  assert.equal(second.alerts['invites-low'].count, 2)
+  assert.equal(second.alerts['invites-low'].lastStart, nextDay.today.dayStartAt)
+  // 不再出现的告警从账上清掉（下次再出现 streak 从 1 重算）。
+  assert.ok(!('feedback-open' in second.alerts), '消失的告警不保留连续天数')
+})
+
+test('report --full-day 落盘时把当天摘要写进 .ops-history.json', () => {
+  const outDir = mkdtempSync(join(tmpdir(), 'feedback-history-'))
+  const full = spy(JSON.stringify(completedDayFixture()))
+  const { code } = run(['report', '--out', outDir, '--full-day'], { runner: full.runner })
+  assert.equal(code, 0)
+  const history = JSON.parse(readFileSync(join(outDir, '.ops-history.json'), 'utf8'))
+  assert.ok(history.days['20261012'], '过完的那一天要记账')
+  assert.equal(history.days['20261012'].dau, 3)
+  assert.equal(history.alerts['invites-low'].count, 1)
+
+  // 半天数据（不带 --full-day 的当天报告）不写历史，免得污染 WoW 对照。
+  const outDir2 = mkdtempSync(join(tmpdir(), 'feedback-history-partial-'))
+  run(['report', '--out', outDir2], { runner: spy(JSON.stringify(fixture())).runner })
+  assert.ok(!existsSync(join(outDir2, '.ops-history.json')), '部分数据不记账')
 })
 
 test('连接翻倍而出口反降会被标注为背离', () => {
@@ -474,7 +575,8 @@ test('覆盖整天的日报按覆盖日写日期、标题与「全天」标签',
   assert.ok(html.includes('2026-10-12 周一'), '周几也要按覆盖日算')
   assert.ok(html.includes('<span class="tag ">全天</span>概览'), '过完的那一天叫「整天」')
   assert.ok(html.includes('10-12 自然日 00:00–23:59（已过完）'))
-  assert.ok(html.includes('全天出口流量') && html.includes('较前一日'))
+  assert.ok(html.includes('全天活跃手机') && html.includes('较前一日'))
+  assert.ok(html.includes('全天出口（成本）'), '成本口径跟着覆盖日的叫法')
   assert.ok(html.includes('本地日窗口（含 10-12）'))
   assert.ok(html.includes('本报告覆盖 2026-10-12 一整个服务器本地自然日'))
   assert.ok(html.includes('活跃时段 05:00–23:59'), '跨零点的时间要夹到 23:59')
