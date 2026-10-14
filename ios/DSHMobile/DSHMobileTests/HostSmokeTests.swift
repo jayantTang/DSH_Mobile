@@ -1,3 +1,4 @@
+#if DEBUG
 import XCTest
 
 @testable import DSHMobile
@@ -10,6 +11,9 @@ import XCTest
 ///
 /// 断言消息与夹具字符串一律用 ASCII：测试代码不是界面文案，写中文会让 `check:i18n` 按
 /// "硬编码字符串"报出来（它扫的是整棵 `DSHMobile/` 树，包括本 target）。
+///
+/// 整个文件包在 `#if DEBUG` 里：它要断言的 `-DSHDemoMode` 这类调试开关只存在于 DEBUG 构建，
+/// `check:contracts` 的调试钩子闸门也要求这些字面量只出现在 `#if DEBUG` 之内。
 final class HostSmokeTests: XCTestCase {
 
     /// 测试宿主下必须识别出"这是测试"，否则 `RootView` 会被无谓地建起来。
@@ -37,3 +41,4 @@ final class HostSmokeTests: XCTestCase {
                        "dsh://direct?host=10.0.0.5")
     }
 }
+#endif
