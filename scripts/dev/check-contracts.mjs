@@ -485,6 +485,12 @@ function listSwiftSources() {
   return execFileSync('git', ['ls-files', '-z', '--', 'ios/**/*.swift'], {
     cwd: REPO_ROOT, encoding: 'utf8',
   }).split('\0').filter(Boolean)
+    // 只留磁盘上真的存在的文件。`git ls-files` 会把"已删除但还没提交"的路径也列出来
+    // （重构中途正是这个状态），直接 read 会 ENOENT 把整个闸崩掉——2026-10-14 搬运
+    // `MessageLayer.swift` / `PageFailureInjector.swift` 时连撞两次，当时还当成偶发失败。
+    // 跳过的文件由调用方按"目录内容"重新枚举，不会静默漏检：src 目录里存在的文件一定在
+    // git 里（未跟踪文件另有闸）。
+    .filter((file) => existsSync(join(REPO_ROOT, file)))
 }
 
 /** 只属于 App 目标的 Swift 源（不含 DSHKit / 测试）。 */

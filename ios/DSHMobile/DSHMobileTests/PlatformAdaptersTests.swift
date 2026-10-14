@@ -18,38 +18,8 @@ import XCTest
 @MainActor
 final class PlatformAdaptersTests: XCTestCase {
 
-    // MARK: - 版本比较（App 构建号，不是连接器版本）
-
-    func testNewerBuildStampWins() {
-        XCTAssertTrue(UpdateChecker.isNewer("20261014.1450", than: "20261013.2359"))
-        XCTAssertFalse(UpdateChecker.isNewer("20261013.2359", than: "20261014.1450"))
-        XCTAssertFalse(UpdateChecker.isNewer("20261014.1450", than: "20261014.1450"))
-    }
-
-    func testMissingComponentsCountAsZero() {
-        // "20261014.1" 与 "20261014.1.0" 是同一个构建号。
-        XCTAssertFalse(UpdateChecker.isNewer("20261014.1", than: "20261014.1.0"))
-        XCTAssertTrue(UpdateChecker.isNewer("20261014.1.0.1", than: "20261014.1"))
-        XCTAssertTrue(UpdateChecker.isNewer("20261014.2", than: "20261014.1.9"))
-    }
-
-    func testTwelveDigitLegacyStampComparesNumerically() {
-        // 老版本是单个 12 位时间戳：按数值比，不是按字符串比。
-        XCTAssertTrue(UpdateChecker.isNewer("202610141200", than: "202610131200"))
-        XCTAssertFalse(UpdateChecker.isNewer("202610131200", than: "202610141200"))
-    }
-
-    func testEmptyInputsAreNeverNewer() {
-        XCTAssertFalse(UpdateChecker.isNewer("", than: "1"))
-        XCTAssertFalse(UpdateChecker.isNewer("1", than: ""))
-        XCTAssertFalse(UpdateChecker.isNewer("", than: ""))
-    }
-
-    func testNonNumericPartsReadAsZero() {
-        // `Int($0) ?? 0`：畸形段当成 0，不许崩、也不许当成"更新"。
-        XCTAssertFalse(UpdateChecker.isNewer("abc.1", than: "1"))
-        XCTAssertTrue(UpdateChecker.isNewer("2.abc", than: "1.999"))
-    }
+    // 构建号比较的用例已随逻辑搬进 DSHKit（`DSHKitTests/BuildStampTests.swift`）：
+    // 同一类判断只留一份实现，用例也只留一份，免得两处断言各自漂移。
 
     // MARK: - 钥匙串（只用测试账号，收尾必删）
 

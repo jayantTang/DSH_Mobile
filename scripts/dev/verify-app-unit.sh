@@ -32,8 +32,22 @@ if ! grep -q 'DSHMobileTests' "$PROJECT_DIR/DSHMobile.xcodeproj/project.pbxproj"
   exit 2
 fi
 
-printf '\n\033[1;36m>>>\033[0m 跑 DSHMobileTests（不含 UI，不截图）\n'
+printf '\n\033[1;36m>>>\033[0m 先构建 DSHKit scheme（清掉过期的模块缓存）\n'
 cd "$PROJECT_DIR"
+# 为什么必须先来这一步：`xcodebuild test` 只按依赖关系增量编译，DSHKit 里**新增文件**时
+# 这份 derived data 里的 .swiftmodule 常被判为最新，于是 App 侧报
+# `cannot find type 'X' in scope`。显式先构建 DSHKit，已最新时只花一两秒。
+#
+# 顺带一条排查次序（2026-10-14 学到）：同样的报错**先看那个文件有没有 `import DSHKit`**。
+# 那次 `BuildStamp` 找不到的真因是 `UpdateChecker.swift` 从来没 import 过 DSHKit，
+# 与模块缓存无关；先怀疑缓存会白绕一圈（App scheme 编译不了 DSHKit 的包，也不方便直接看）。
+xcodebuild build \
+  -scheme DSHKit \
+  -destination "platform=iOS Simulator,id=$SIM_ID" \
+  -derivedDataPath "$DERIVED" \
+  -quiet
+
+printf '\n\033[1;36m>>>\033[0m 跑 DSHMobileTests（不含 UI，不截图）\n' 
 # 用单测专用 scheme：它只构建 App + DSHMobileTests，不带 UI 测试包（省掉整包构建时间）。
 xcodebuild test \
   -project DSHMobile.xcodeproj \

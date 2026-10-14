@@ -1,3 +1,4 @@
+import DSHKit
 import Foundation
 import Observation
 
@@ -72,26 +73,12 @@ final class UpdateChecker {
 
         // Assigned either way: once the installed build catches up the banner
         // must come down, which it could never do while this only ever set.
-        if Self.isNewer(published.build, than: Self.currentBuild) {
+        if BuildStamp.isNewer(published.build, than: Self.currentBuild) {
             available = published
         } else {
             available = nil
         }
     }
 
-    /// Build numbers are `yyyyMMdd.HHmm` stamps; older builds were a single
-    /// 12-digit stamp. Both order by comparing their numeric parts one by one,
-    /// which is how iOS itself reads a `CFBundleVersion`.
-    static func isNewer(_ candidate: String, than current: String) -> Bool {
-        guard !candidate.isEmpty, !current.isEmpty else { return false }
-        let lhs = candidate.split(separator: ".").map { Int($0) ?? 0 }
-        let rhs = current.split(separator: ".").map { Int($0) ?? 0 }
-        guard !lhs.isEmpty, !rhs.isEmpty else { return candidate != current }
-        for index in 0..<max(lhs.count, rhs.count) {
-            let left = index < lhs.count ? lhs[index] : 0
-            let right = index < rhs.count ? rhs[index] : 0
-            if left != right { return left > right }
-        }
-        return false
-    }
+    // 构建号比较已收进 DSHKit 的 `BuildStamp`（同一类判断只留一份）：见 BuildStamp.swift 的头注。
 }

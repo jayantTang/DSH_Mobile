@@ -82,3 +82,24 @@ final class EmptyPageInjector: @unchecked Sendable {
 public struct PageFailureInjected: Error {
     public init() {}
 }
+
+
+/// 让前 N 次取页失败（`-DSHProbeFailPage <n>`，用例 48 / 慢闸场景③「断网缺口失败重试」用）。
+///
+/// 2026-10-14 从 App 搬进来：它和 `PageFailureInjected` 是一对（谁抛、谁决定抛），
+/// 分居两侧只会让"两处注入抛的不是同一个类型"这种坑重现。产品构建里 `remaining` 恒为 0
+/// （App 传进来的配额来自启动参数，缺省 0）。
+public final class PageFailureInjector: @unchecked Sendable {
+    private let lock = NSLock()
+    private var remaining: Int
+
+    public init(remaining: Int) { self.remaining = remaining }
+
+    public func shouldFail() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard remaining > 0 else { return false }
+        remaining -= 1
+        return true
+    }
+}
