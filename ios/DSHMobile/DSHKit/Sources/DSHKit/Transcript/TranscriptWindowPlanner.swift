@@ -80,6 +80,25 @@ public enum TranscriptWindowPlanner {
         return dropped
     }
 
+    /// 回收与水合各在视口外/内多远（**屏**，按点算：× 视口高度）。
+    ///
+    /// 真值口径在 `specs/008-transcript-list-host/contracts/list-host.md` §4：
+    /// **回收 5 屏、水合 4 屏**（水合那一档是 009 修闪白时按甩动峰值 × 防抖窗调宽的）。
+    ///
+    /// 2026-10-14 记一笔：库里另有三处注释写的是"2 屏水合"（`ViewportBandPlanner` 头注与它的一条
+    /// 用例、`TranscriptListHost` 的注释），都停在调宽之前的旧值上——**契约与代码是 4**。
+    /// 本类型是这两个数的唯一出处，App 侧只读它。
+    public enum Distances {
+        public static let reclaimScreens = 5
+        public static let rehydrateScreens = 4
+    }
+
+    /// 不变量：水合带必须**严格小于**回收保护带，否则会出现「回收 → 水合 → 又回收」的乒乓
+    /// （008 修这个 bug 的原始理由）。写成一个函数是为了让测试能钉住它。
+    public static func bandsDoNotPingPong(reclaimScreens: Int, rehydrateScreens: Int) -> Bool {
+        rehydrateScreens < reclaimScreens
+    }
+
     /// 按「窗口最多几行」算该丢几行。
     ///
     /// 与字节预算那条是**两个不同的旋钮**：这个按行数上限（DEBUG 探针 `-DSHProbeWindowRows`

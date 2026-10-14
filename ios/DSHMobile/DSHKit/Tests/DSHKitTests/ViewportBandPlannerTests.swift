@@ -21,8 +21,8 @@ final class ViewportBandPlannerTests: XCTestCase {
         ]
         for (rowCount, lower, upper) in cases {
             let visible = lower..<upper
-            let rehydrate = ViewportBandPlanner.indexBand(visible: visible, rowCount: rowCount, screens: 2)
-            let protect = ViewportBandPlanner.indexBand(visible: visible, rowCount: rowCount, screens: 5)
+            let rehydrate = ViewportBandPlanner.indexBand(visible: visible, rowCount: rowCount, screens: TranscriptWindowPlanner.Distances.rehydrateScreens)
+            let protect = ViewportBandPlanner.indexBand(visible: visible, rowCount: rowCount, screens: TranscriptWindowPlanner.Distances.reclaimScreens)
             XCTAssertTrue(protect.clamped(to: 0..<rowCount).contains(rehydrate.lowerBound),
                           "visible=\(visible) 时水合带 \(rehydrate) 超出保护带 \(protect)")
             XCTAssertTrue(protect.contains(rehydrate.upperBound - 1),
@@ -36,7 +36,7 @@ final class ViewportBandPlannerTests: XCTestCase {
         let visible = 490..<503
         var reclaimed = Set(0..<rowCount)   // 全部已回收（长会话翻到中段）
         // 水合：把 2 屏行数带里的行要回来。
-        let rehydrateBand = ViewportBandPlanner.indexBand(visible: visible, rowCount: rowCount, screens: 2)
+        let rehydrateBand = ViewportBandPlanner.indexBand(visible: visible, rowCount: rowCount, screens: TranscriptWindowPlanner.Distances.rehydrateScreens)
         let hydrated = rehydrateBand.filter { reclaimed.contains($0) }
         XCTAssertFalse(hydrated.isEmpty)
         reclaimed.subtract(hydrated)
@@ -45,7 +45,7 @@ final class ViewportBandPlannerTests: XCTestCase {
             rowCount: rowCount,
             visible: visible,
             pointProtected: [],
-            screens: 5,
+            screens: TranscriptWindowPlanner.Distances.reclaimScreens,
             isReclaimable: { !reclaimed.contains($0) }
         )
         XCTAssertTrue(Set(victims).isDisjoint(with: hydrated),
@@ -59,7 +59,7 @@ final class ViewportBandPlannerTests: XCTestCase {
             rowCount: 999,
             visible: 0..<0,
             pointProtected: [],
-            screens: 5,
+            screens: TranscriptWindowPlanner.Distances.reclaimScreens,
             isReclaimable: { _ in true }
         )
         XCTAssertEqual(victims, [])
@@ -76,7 +76,7 @@ final class ViewportBandPlannerTests: XCTestCase {
             rowCount: rowCount,
             visible: visible,
             pointProtected: pointProtected,
-            screens: 5,
+            screens: TranscriptWindowPlanner.Distances.reclaimScreens,
             isReclaimable: { _ in true }
         )
         XCTAssertTrue(Set(victims).isDisjoint(with: pointProtected),

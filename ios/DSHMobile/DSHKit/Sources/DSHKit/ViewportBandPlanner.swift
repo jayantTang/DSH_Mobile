@@ -1,6 +1,6 @@
 import Foundation
 
-/// 「离视口几屏」的统一换算（spec 008 §4：5 屏回收 / 2 屏水合）。
+/// 「离视口几屏」的统一换算（值见 `TranscriptWindowPlanner.Distances`：5 屏回收 / 4 屏水合）。
 ///
 /// 修复前回收与水合各用各的尺子：回收按布局点带（`layoutAttributes` 求交），
 /// 水合按下标带（可见行数折算）。行高悬殊时两把尺子量出来的不是同一段——

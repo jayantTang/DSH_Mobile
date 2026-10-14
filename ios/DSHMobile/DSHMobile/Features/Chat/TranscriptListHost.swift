@@ -872,8 +872,9 @@ final class TranscriptListHost: UIView, UICollectionViewDelegate {
         }
     }
 
-    /// 契约里的两个距离（spec 008 的 clarify 决定：5 屏回收 / 2 屏水合）。
-    /// 真值口径在 `contracts/list-host.md` §4；这里读探针覆盖，缺省就是契约值。
+    /// 契约里的两个距离：**回收 5 屏 / 水合 4 屏**（真值口径在 `contracts/list-host.md` §4，
+    /// 常量在 DSHKit 的 `TranscriptWindowPlanner.Distances`；水合那一档是 009 修闪白时调宽的）。
+    /// 这里读探针覆盖（DEBUG 才可能非零），缺省就是契约值。
     static var reclaimDistanceScreens: Int { ProbeVariants.reclaimScreens }
     static var rehydrateDistanceScreens: Int { ProbeVariants.rehydrateScreens }
 

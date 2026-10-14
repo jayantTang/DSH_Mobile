@@ -91,4 +91,22 @@ final class TranscriptWindowPlannerTests: XCTestCase {
         XCTAssertEqual(TranscriptWindowPlanner.rowsToDrop(rowCount: 500, limit: 0), 0)
         XCTAssertEqual(TranscriptWindowPlanner.rowsToDrop(rowCount: 500, limit: -1), 0)
     }
+
+    // MARK: - 回收 / 水合的距离（契约值 + 不变量）
+
+    func testDistancesMatchTheContract() {
+        // 契约：回收 5 屏、水合 4 屏（specs/008 的 contracts/list-host.md §4）。
+        // 库里另有三处注释停在"2 屏水合"的旧值上，这条用例是那句话的机器版本。
+        XCTAssertEqual(TranscriptWindowPlanner.Distances.reclaimScreens, 5)
+        XCTAssertEqual(TranscriptWindowPlanner.Distances.rehydrateScreens, 4)
+    }
+
+    func testRehydrateBandIsStrictlyInsideTheReclaimBand() {
+        // 008 修"回收 → 水合 → 又回收"乒乓的前提就是这个严格小于。
+        XCTAssertTrue(TranscriptWindowPlanner.bandsDoNotPingPong(
+            reclaimScreens: TranscriptWindowPlanner.Distances.reclaimScreens,
+            rehydrateScreens: TranscriptWindowPlanner.Distances.rehydrateScreens))
+        XCTAssertFalse(TranscriptWindowPlanner.bandsDoNotPingPong(reclaimScreens: 4, rehydrateScreens: 4))
+        XCTAssertFalse(TranscriptWindowPlanner.bandsDoNotPingPong(reclaimScreens: 4, rehydrateScreens: 5))
+    }
 }
