@@ -128,7 +128,13 @@ struct ChatView: View {
         .task {
             ViewportProbe.start()
             ViewportProbe.resume()
-            await ViewportProbe.runTyping(into: model, focus: $isFocused)
+            // 端口在调用点构造（spec 024 / FR-005）：调试工具只认这三个动作，
+            // 不再直接持有 `ChatModel`，基础设施与工具目录都不认识业务类型。
+            await ViewportProbe.runTyping(
+                into: TypingTarget(isRunning: { model.isRunning },
+                                   draft: { model.draft },
+                                   setDraft: { model.draft = $0 }),
+                focus: $isFocused)
         }
         .overlay(alignment: .top) {
             // **Stacked, not two parallel overlays.** `CompletionBanner` already

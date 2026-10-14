@@ -512,18 +512,21 @@ enum ViewportProbe {
                 flags.contains("kbcycles"))
     }
 
-    static func runTyping(into model: ChatModel, focus: FocusState<Bool>.Binding) async {
+    /// 驱动一段"边流式流入边打字"的自动化（spec 024：收端口，不收业务类型）。
+    ///
+    /// 唯一调用点是会话页；它在这里构造 `TypingTarget`，所以基础设施与调试工具都不认识 `ChatModel`。
+    static func runTyping(into target: TypingTarget, focus: FocusState<Bool>.Binding) async {
         guard let probe = typingProbe else { return }
         // 先等这一轮真的开始：要复现的是"一边流式流入一边打字"，
         // 打字跑在流式之前就等于没测到那条组合。`now` 旗标跳过这一步。
         if !probe.immediately {
             let waitUntil = Date().addingTimeInterval(90)
-            while !model.isRunning, Date() < waitUntil {
+            while !target.isRunning(), Date() < waitUntil {
                 try? await Task.sleep(for: .milliseconds(200))
             }
         }
         note("typing.begin", ["seconds": String(probe.seconds), "chars": String(probe.text.count),
-                              "running": model.isRunning ? "1" : "0",
+                              "running": target.isRunning() ? "1" : "0",
                               "oscillate": probe.oscillate ? "1" : "0"], force: true)
         focus.wrappedValue = true
         try? await Task.sleep(for: .milliseconds(500))
@@ -541,24 +544,27 @@ enum ViewportProbe {
                 focus.wrappedValue = true
                 try? await Task.sleep(for: .milliseconds(300))
             }
-            model.draft.append(characters[index % characters.count])
+            target.setDraft(target.draft() + String(characters[index % characters.count]))
             index += 1
             typed += 1
             sinceSwing += 1
             if probe.oscillate, sinceSwing >= 45 {
                 sinceSwing = 0
-                for _ in 0..<38 where !model.draft.isEmpty {
-                    model.draft.removeLast()
+                for _ in 0..<38 {
+                    var current = target.draft()
+                    guard !current.isEmpty else { break }
+                    current.removeLast()
+                    target.setDraft(current)
                     try? await Task.sleep(for: .milliseconds(25))
                 }
             }
             if typed % 20 == 0 {
-                note("typing", ["chars": String(typed), "draft": String(model.draft.count),
-                                "running": model.isRunning ? "1" : "0"])
+                note("typing", ["chars": String(typed), "draft": String(target.draft().count),
+                                "running": target.isRunning() ? "1" : "0"])
             }
             try? await Task.sleep(for: .milliseconds(90))
         }
-        note("typing.end", ["chars": String(typed), "draft": String(model.draft.count)], force: true)
+        note("typing.end", ["chars": String(typed), "draft": String(target.draft().count)], force: true)
     }
 }
 
@@ -761,7 +767,7 @@ enum ViewportProbe {
     static func setContent(items: Int, streaming: Int) {}
     static func markReady() {}
     static func start() {}
-    static func runTyping(into model: ChatModel, focus: FocusState<Bool>.Binding) async {}
+    static func runTyping(into target: TypingTarget, focus: FocusState<Bool>.Binding) async {}
 }
 
 enum ProbeVariants {

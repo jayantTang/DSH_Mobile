@@ -6,7 +6,7 @@
       "note": "调试仪器（探针）：采样时要问 SessionPipeline/MessagePipeline 的窗口与热点，才能解释慢闸里「没判定出来」还是「判出来了但取不到」。产品路径不经过它（isOn 为假时全部调用直接返回）。"
     },
     {
-      "path": "ios/DSHMobile/DSHMobile/Support/P13ResumeProbe.swift",
+      "path": "ios/DSHMobile/DSHMobile/Debug/P13ResumeProbe.swift",
       "note": "调试仪器（探针）：后台续传的 P-13 复核要直接构造 RelayFileTransfer 观察 resumeData 落盘时机，产品接口观测不到。产品路径不经过它。"
     },
     {
