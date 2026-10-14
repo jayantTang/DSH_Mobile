@@ -143,8 +143,35 @@ export function host() {
   return JSON.parse(run('node', [join(HERE, 'host.mjs')], { quiet: true }))
 }
 
+/// 挑会话时要绕开的对象：本机有**整个目录**的会话是 v0 格式、宿主的 v0→v1 迁移拒收它们，
+/// 于是"转写页渲染正常"这一步永远拿不到有效证据（2026-10-07 / 10-12 / 10-14 三次都因此红）。
+///
+/// 名单放在**本机文件** `test/.quarantine.json`（已 gitignore）里，不放代码：
+/// 目录路径含家目录，写进被跟踪的文件会同时违反"真值不出本机"与 `check:secrets`。
+/// 格式：
+///
+///   { "sessions": ["session-…"], "directories": ["/abs/path/to/project"], "reason": "…" }
+///
+/// 名单为空或文件不存在时行为与从前一致（不绕开任何会话）。
+export function quarantine() {
+  const path = join(TEST_DIR, '.quarantine.json')
+  if (!existsSync(path)) return { sessions: new Set(), directories: [], reason: '' }
+  try {
+    const parsed = JSON.parse(readFileSync(path, 'utf8'))
+    return {
+      sessions: new Set(parsed.sessions ?? []),
+      directories: parsed.directories ?? [],
+      reason: parsed.reason ?? '',
+    }
+  } catch (error) {
+    warn(`test/.quarantine.json 读不动，按"不绕开"处理：${error.message}`)
+    return { sessions: new Set(), directories: [], reason: '' }
+  }
+}
+
 /// The session with the most history, so the transcript page shows something
-/// real rather than an empty conversation.
+/// real rather than an empty conversation. Quarantined sessions/directories
+/// are skipped (`test/.quarantine.json`, 见 `quarantine()`).
 export async function pickSession(host) {
   const exchange = await fetch(`http://127.0.0.1:${host.port}/?token=${host.token}`, { redirect: 'manual' })
   const cookie = (exchange.headers.getSetCookie?.() ?? [])[0]?.split(';')[0]
@@ -157,7 +184,16 @@ export async function pickSession(host) {
   const body = await response.json()
   const items = (body.result?.value?.items ?? []).filter((item) => item.origin !== 'subagent' && !item.blank)
   items.sort((a, b) => ((b.projections ?? {}).asOfSeq ?? 0) - ((a.projections ?? {}).asOfSeq ?? 0))
-  return items[0]?.sessionId ?? ''
+  const skip = quarantine()
+  const usable = items.filter((item) => {
+    const cwd = item.cwd ?? item.projections?.cwd ?? ''
+    const reason = skip.sessions.has(item.sessionId) ? '会话在隔离名单里'
+      : skip.directories.some((dir) => cwd.startsWith(dir)) ? `目录被隔离（${skip.reason || '见 .quarantine.json'}）`
+        : ''
+    if (reason) console.log(`   跳过 ${item.sessionId}：${reason}`)
+    return !reason
+  })
+  return usable[0]?.sessionId ?? ''
 }
 
 // ---------------------------------------------------------------- build

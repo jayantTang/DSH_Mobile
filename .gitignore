@@ -34,6 +34,9 @@ __pycache__/
 test/runs/
 test/.build/
 test/.venv/
+# 挑会话时要绕开的对象（本机有整目录的 v0 会话被宿主的 v0→v1 迁移拒收）。
+# 里面是真实目录路径，属本机真值；机制与格式见 test/tools/context.mjs 的 quarantine()。
+test/.quarantine.json
 
 # 多 agent 开发管线的运行记录（含真实会话 id、家目录、真机证据），只在本机保留。
 # 规范位置是 sidecars/agent-team/runs/（那里已有同一条规则），这里挡住的是
