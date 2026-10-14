@@ -175,6 +175,13 @@ public final class ConnectionStore {
 
     private var carrier: (any DSHCarrier)?
     private var statusTask: Task<Void, Never>?
+    private var socketStateTask: Task<Void, Never>?
+    /// Store 拨号路径的单飞（T005d，US3）：同时最多一次 connect 在飞。
+    /// 观望者（watcher）复用在飞那次；用户主动动作取消它并立刻新建（用户意图优先）。
+    private var connectTask: Task<Void, Never>?
+    private var connectTaskProfileId: UUID?
+    /// 代数戳：被取消的在飞 connect 完成时不得再 `install()`，否则把新连接顶回去。
+    private var connectGeneration = 0
     /// 重连节奏（spec 022）：只由 Store 自己的拨号路径使用；Carrier 自愈用同一形状的策略。
     private var backoff = ReconnectBackoff()
     /// 连续探活失败次数：**连续两次**才把链路判成断开（FR-004）。
@@ -436,6 +443,31 @@ public final class ConnectionStore {
         await connect(profile: profile, secret: secret)
     }
 
+    /// 拨号单飞的入口（T005d，US3 AC1）。
+    ///
+    /// - `join`（watcher 等后台路径）：同目标的 connect 在飞就等它出结果，不再拨第二次；
+    /// - 用户主动动作（点连接、手动重连）：取消在飞的那次并立刻新建——用户意图优先
+    ///   （plan 风险表），被取消的那次靠 `connectGeneration` 在完成时弃权。
+    private func connectSingleFlight(profile: ConnectionProfile, secret: String, join: Bool) async {
+        if join, let task = connectTask, connectTaskProfileId == profile.id {
+            await task.value
+            return
+        }
+        connectTask?.cancel()
+        connectGeneration += 1
+        let generation = connectGeneration
+        let task = Task { @MainActor in
+            await self.performConnect(profile: profile, secret: secret, generation: generation)
+        }
+        connectTask = task
+        connectTaskProfileId = profile.id
+        await task.value
+        if connectTaskProfileId == profile.id {
+            connectTask = nil
+            connectTaskProfileId = nil
+        }
+    }
+
     /// Connects and verifies the link before reporting success.
     ///
     /// A relay socket can be up while the computer's connector is asleep, so
@@ -446,8 +478,13 @@ public final class ConnectionStore {
     /// the app in `connecting` instead of throwing the user back to the pairing
     /// screen. A network that blinks should cost a status line, not the screen.
     public func connect(profile: ConnectionProfile, secret: String) async {
+        await connectSingleFlight(profile: profile, secret: secret, join: false)
+    }
+
+    /// 真正拨号的那一半（`connectSingleFlight` 保证同时只有一个在飞）。
+    private func performConnect(profile: ConnectionProfile, secret: String, generation: Int) async {
         let isRepair = activeProfile?.id == profile.id
-        if !isRepair { await disconnect() }
+        if !isRepair { await disconnect(invalidateConnects: false) }
         lastError = nil
         isConnecting = true
         defer { isConnecting = false }
@@ -467,9 +504,11 @@ public final class ConnectionStore {
                 // A stale cookie is the common case after a DSH restart; the
                 // carrier reports it so the UI can ask for a fresh token.
                 let probe = try await DSHClient(carrier: carrier, capabilities: probeCapabilities).sessions()
+                guard generation == connectGeneration else { await carrier.close(); return }
                 await install(carrier: carrier, profile: profile, sampleCount: probe.items.count)
             } catch {
                 await carrier.close()
+                guard generation == connectGeneration else { return }
                 attemptFailed(error, repairing: isRepair)
             }
 
@@ -486,11 +525,15 @@ public final class ConnectionStore {
             await link.connect()
             do {
                 let probe = try await DSHClient(carrier: link, capabilities: probeCapabilities).sessions()
+                // 这次拨号已被更新的一次取代（用户换了目标或点了重连）：安静弃权，
+                // 连同自己刚建的 socket 一起收掉，别把新连接顶回去。
+                guard generation == connectGeneration else { await link.close(); return }
                 await install(carrier: link, profile: profile, sampleCount: probe.items.count,
                               dialStartedAt: dialStartedAt)
                 observeStatus(of: link)
             } catch {
                 await link.close()
+                guard generation == connectGeneration else { return }
                 attemptFailed(error, repairing: isRepair)
             }
         }
@@ -597,6 +640,20 @@ public final class ConnectionStore {
                 }
             }
         }
+        // socket 三态（T005b）：Carrier 自愈成功（`.up`）时立刻探活重装，
+        // 不必等下一个 2 秒探活周期——恢复延迟从"最坏 2 秒"缩到"即刻"。
+        socketStateTask?.cancel()
+        socketStateTask = Task { [weak self] in
+            for await socketState in await link.socketStateStream() {
+                guard let self else { return }
+                guard socketState == .up, !self.state.isConnected,
+                      let client = self.client,
+                      let carrier = self.carrier as? LinkCarrier, carrier === link,
+                      let profile = self.activeProfile
+                else { continue }
+                await self.probeHost(client: client, carrier: carrier, profile: profile)
+            }
+        }
     }
 
     // MARK: - Keeping the link honest
@@ -664,7 +721,8 @@ public final class ConnectionStore {
                       let profile = self.activeProfile ?? self.preferredProfile,
                       let secret = Keychain.get(profile.secretAccount)
                 else { continue }
-                await self.connect(profile: profile, secret: secret)
+                // 后台恢复路径：同目标的在飞拨号直接复用（US3 AC1），不另起一拨。
+                await self.connectSingleFlight(profile: profile, secret: secret, join: true)
             }
             self?.watchTask = nil
         }
@@ -765,9 +823,20 @@ public final class ConnectionStore {
         await connect(to: profile)
     }
 
-    public func disconnect() async {
+    /// - Parameter invalidateConnects: 外部（用户/换档案）调用必须为 `true`：把在飞的
+    ///   connect 取消并使它的 `install()` 弃权；`performConnect` 内部的换档案清理传
+    ///   `false`，否则会把刚起步的自己一并作废。
+    public func disconnect(invalidateConnects: Bool = true) async {
+        if invalidateConnects {
+            connectTask?.cancel()
+            connectTask = nil
+            connectTaskProfileId = nil
+            connectGeneration += 1
+        }
         statusTask?.cancel()
         statusTask = nil
+        socketStateTask?.cancel()
+        socketStateTask = nil
         stopWatching()
         await carrier?.close()
         carrier = nil
@@ -794,6 +863,8 @@ public final class ConnectionStore {
         guard activeProfile != nil else { return }
         statusTask?.cancel()
         statusTask = nil
+        socketStateTask?.cancel()
+        socketStateTask = nil
         await carrier?.close()
         carrier = nil
         client = nil

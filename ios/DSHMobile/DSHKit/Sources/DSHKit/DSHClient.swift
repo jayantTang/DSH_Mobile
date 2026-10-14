@@ -34,13 +34,73 @@ public struct DSHClient: Sendable {
         // （spec 021）。**失败必须回退**：能力是握手时声明的，但一次调用失败不该让列表打不开，
         // 老连接器、半路升级、压缩格式对不上都要能落到 `session/list` 上。
         if capabilities.contains(Self.sessionDigestCapability) {
-            if let digest = try? await sessionDigest() { return digest }
+            // 回退分级（spec 022 FR-006 / T003）：传输类失败先对摘要通道退避重试（≤2 次），
+            // 再败才回退旧通道；`link/unsupported` 与格式类是"这条路不存在/对不上"，
+            // 直接回退，不重试——链路最差的时候拿 20 倍大的报文立即重试正是风暴放大器。
+            var digestAttempts = 0
+            let maxDigestAttempts = 3
+            while true {
+                digestAttempts += 1
+                do {
+                    return try await sessionDigest()
+                } catch {
+                    if Self.isTransportFailure(error), digestAttempts < maxDigestAttempts {
+                        // 短暂退避后再打同一通道（FR-006：回退也走退避）。
+                        try? await Task.sleep(for: .milliseconds(600))
+                        continue
+                    }
+                    await noteListFallback(error: error)
+                    return try await legacySessionList()
+                }
+            }
         }
-        return try await carrier.unary(
+        return try await legacySessionList()
+    }
+
+    private func legacySessionList() async throws -> SessionListValue {
+        try await carrier.unary(
             method: "session/list",
             args: UnderscoreRequestArgs(_request: SessionListRequest()),
             as: SessionListValue.self
         )
+    }
+
+    /// 回退原因写进 App 诊断 ring（FR-007）：只有 relay 通道（`LinkCarrier`）有 ring，
+    /// direct 通道（`HTTPCarrier`）没有，跳过不算缺口。
+    private func noteListFallback(error: any Error) async {
+        guard let link = carrier as? LinkCarrier else { return }
+        await link.diagnostics.record(kind: "list.fallback", detail: [
+            "reason": .string(Self.fallbackReason(error)),
+        ])
+    }
+
+    /// 传输类失败（通道本身病了，换条通道无济于事，值得原通道退避重试）。
+    static func isTransportFailure(_ error: any Error) -> Bool {
+        if let failure = error as? DSHRPCFailure {
+            return ["link/timeout", "link/closed", "link/busy"].contains(failure.code)
+        }
+        if let transport = error as? DSHTransportError {
+            switch transport {
+            case .timedOut, .unreachable, .carrierClosed, .notConnected:
+                return true
+            default:
+                return false
+            }
+        }
+        // 网络栈错误（URLError 等）都算传输类。
+        return error is URLError
+    }
+
+    /// `list.fallback` 的 reason 分类（plan §5 的三类 + 兜底）。
+    static func fallbackReason(_ error: any Error) -> String {
+        if let failure = error as? DSHRPCFailure, failure.code == "link/unsupported" {
+            return "unsupported"
+        }
+        if let transport = error as? DSHTransportError, case .malformedResponse = transport {
+            return "format"
+        }
+        if isTransportFailure(error) { return "transport-after-retry" }
+        return "other"
     }
 
     /// 精简版会话列表（`_link/sessionDigest`，spec 021）。

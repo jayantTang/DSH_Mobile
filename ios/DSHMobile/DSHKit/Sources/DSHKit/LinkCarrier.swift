@@ -178,6 +178,9 @@ public actor LinkCarrier: DSHCarrier {
     private var reconnectAttempt = 0
     /// 当前这条 socket 是什么时候建起来的，用于判断"活得够不够久"。
     private var socketOpenedAt: Date?
+    /// 是否有一拨正在飞（T020 单飞）：在飞期间进 `ensureConnected` 的调用挂进
+    /// `connectWaiters` 等同一个结果，而不是各开一条 socket 互相顶替。
+    private var dialInFlight = false
     /// Puts back a frame the relay wrote as several WebSocket messages.
     private var assembler = FrameAssembler()
     private var receiveLoop: Task<Void, Never>?
@@ -191,6 +194,17 @@ public actor LinkCarrier: DSHCarrier {
 
     private var statusObservers: [UUID: AsyncStream<HostStatus>.Continuation] = [:]
     private var lastStatus = HostStatus(online: false, info: nil)
+
+    /// socket 自身的三态（T005b，US3）：与 `HostStatus`（连接器活没活）分开——
+    /// Store 靠它等 Carrier 自愈，而不是抢着拨号。
+    public enum SocketState: Sendable, Equatable {
+        case up
+        case reconnecting
+        case closed
+    }
+
+    private var socketStateObservers: [UUID: AsyncStream<SocketState>.Continuation] = [:]
+    private var lastSocketState: SocketState = .reconnecting
 
     /// App 侧的生命周期流水（`app.*`）。**永远不参与连接主路径**：记录失败只记一次，
     /// 调用点不 await 结果、也不因为它改变状态（spec 020 的 FR-011/FR-018）。
@@ -271,6 +285,29 @@ public actor LinkCarrier: DSHCarrier {
 
     private func removeStatusObserver(_ id: UUID) {
         statusObservers[id] = nil
+    }
+
+    /// 订阅 socket 三态（T005b）。首帧回放当前状态，与 `statusStream()` 同约定。
+    public func socketStateStream() -> AsyncStream<SocketState> {
+        let id = UUID()
+        let (stream, continuation) = AsyncStream<SocketState>.makeStream()
+        socketStateObservers[id] = continuation
+        continuation.yield(lastSocketState)
+        continuation.onTermination = { [weak self] _ in
+            Task { await self?.removeSocketStateObserver(id) }
+        }
+        return stream
+    }
+
+    private func removeSocketStateObserver(_ id: UUID) {
+        socketStateObservers[id] = nil
+    }
+
+    private func updateSocketState(_ state: SocketState) {
+        lastSocketState = state
+        for observer in socketStateObservers.values {
+            observer.yield(state)
+        }
     }
 
     // MARK: - DSHCarrier
@@ -380,6 +417,17 @@ public actor LinkCarrier: DSHCarrier {
             observer.finish()
         }
         statusObservers.removeAll()
+        updateSocketState(.closed)
+        for observer in socketStateObservers.values {
+            observer.finish()
+        }
+        socketStateObservers.removeAll()
+        // 还在等一拨结果的调用：关门了，别让它们吊着（T020）。
+        let waiters = connectWaiters
+        connectWaiters.removeAll()
+        for waiter in waiters {
+            waiter.resume(throwing: DSHTransportError.carrierClosed)
+        }
         session.invalidateAndCancel()
     }
 
@@ -471,7 +519,34 @@ public actor LinkCarrier: DSHCarrier {
     private func ensureConnected() async throws {
         if isClosed { throw DSHTransportError.carrierClosed }
         if let socket, socket.isRunning { return }
-        try await openSocket()
+        try await openSocketSingleFlight()
+    }
+
+    /// 拨号单飞（T020，US3 AC1）：一拨在飞时，再进来的调用挂起等同一个结果，
+    /// 不再各开一条 socket。`openSocket()` 在 `await diagnosticsDialStarted()` 有悬停点，
+    /// 没有这道闸，自愈 Task、探活与用户请求会并发进入、互相 cancel 对方刚建好的
+    /// socket——中转记 attach-again、两边收 1001，正是 2026-10-14 复发的点火器。
+    private func openSocketSingleFlight() async throws {
+        if dialInFlight {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+                connectWaiters.append(continuation)
+            }
+            return
+        }
+        dialInFlight = true
+        do {
+            try await openSocket()
+            dialInFlight = false
+            let waiters = connectWaiters
+            connectWaiters.removeAll()
+            for waiter in waiters { waiter.resume() }
+        } catch {
+            dialInFlight = false
+            let waiters = connectWaiters
+            connectWaiters.removeAll()
+            for waiter in waiters { waiter.resume(throwing: error) }
+            throw error
+        }
     }
 
     private func openSocket() async throws {
@@ -497,6 +572,7 @@ public actor LinkCarrier: DSHCarrier {
         startReceiveLoop(on: task)
         startHeartbeat(on: task)
         socketOpenedAt = Date()
+        updateSocketState(.up)
     }
 
     private func startReceiveLoop(on task: any RelaySocketTask) {
@@ -598,25 +674,33 @@ public actor LinkCarrier: DSHCarrier {
         // 现场数据：每条 socket 只活约 0.8 秒；若照旧"每次掉线从 attempt 0 重开"，
         // 节奏永远是初始的 1 秒，两分钟内能接入 100+ 次（2026-10-13 实测 111 次）。
         let livedFor: TimeInterval? = socketOpenedAt.map { Date().timeIntervalSince($0) }
-        if let livedFor, livedFor >= ReconnectBackoff.stabilityWindow { reconnectAttempt = 0 }
         socketOpenedAt = nil
         if let livedFor {
+            let wasStable = livedFor >= ReconnectBackoff.stabilityWindow
+            // T019：拨号**成功**但转眼就掉的连接也算一次失败轮次。旧逻辑只在拨号抛错时
+            // 递增 attempt——风暴恰恰是"每次都能拨通、0.8 秒后被顶掉"，于是 attempt 永远 0、
+            // 节奏钉死在 1 秒（2026-10-14 11:18/11:24 两次复发，每条 link.backoff 都是 attempt:0）。
+            reconnectAttempt = wasStable ? 0 : reconnectAttempt + 1
             let nextDelay = reconnect.delay(forAttempt: reconnectAttempt)
             await diagnostics.record(kind: "link.backoff", detail: [
                 "attempt": .int(reconnectAttempt),
                 "livedMs": .int(Int(livedFor * 1000)),
                 "nextMs": .int(Int(nextDelay.seconds * 1000)),
-                "reset": .bool(livedFor >= ReconnectBackoff.stabilityWindow),
+                "reset": .bool(wasStable),
             ])
         }
         guard !isClosed else { return }
+        updateSocketState(.reconnecting)
         Task {
             while !Task.isCancelled && !isClosed {
                 let delay = reconnect.delay(forAttempt: reconnectAttempt)
                 try? await Task.sleep(for: delay)
                 if isClosed { return }
+                // 睡醒先看：退避期间探活/用户请求可能已经通过单飞把链路拨回来了，
+                // 这时再开一条就是把刚恢复的 socket 顶掉（T020 的另一半）。
+                if let socket, socket.isRunning { return }
                 do {
-                    try await openSocket()
+                    try await openSocketSingleFlight()
                     return
                 } catch {
                     reconnectAttempt += 1
