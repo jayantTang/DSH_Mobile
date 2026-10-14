@@ -343,6 +343,12 @@ public final class ConnectionStore {
     // MARK: - Connecting
 
     /// Whether the connected connector offers a capability.
+    /// 连接器是否支持经中转的后台文件传输。
+    ///
+    /// 判据在 `RelayFileTransfer.capability`，这里转成一个布尔给 App：产品路径不必写
+    /// RelayKit 的类型名（那是适配器的事，见 `FileTransferAdapter`）。
+    public var supportsFileTransfer: Bool { supports(RelayFileTransfer.capability) }
+
     /// 链路能力（门面）：App 其余文件都从这里拿链路，不直接碰 `DSHClient` / `LinkCarrier`。
     ///
     /// 连接本身（档案、钥匙串、自愈）仍然在这里——`ConnectionStore` 是**连接适配器**，

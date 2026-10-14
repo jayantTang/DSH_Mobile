@@ -222,13 +222,13 @@ final class SettingsModel {
     /// the cap, or one that failed and was retried by the store's watcher, then
     /// fills the page on its own.
     func load() async {
-        guard let client = await waitForClient() else {
+        guard let link = await waitForLink() else {
             phase = .failed(String(localized: "尚未连接"))
             return
         }
         if document == nil { phase = .loading }
         do {
-            let raw = try await client.settings()
+            let raw = try await link.settingsDocument()
             let loaded = SettingsDocument(raw: raw)
             adopt(loaded)
             isReadOnly = !loaded.writable
@@ -249,15 +249,15 @@ final class SettingsModel {
     /// coming right now, so stop waiting and leave the original「尚未连接」in
     /// place rather than inventing a new message. The store's watcher keeps
     /// retrying, and the next `readScreen` picks the link up when it lands.
-    private func waitForClient(retries: Int = 20, interval: Duration = .milliseconds(250)) async -> DSHClient? {
+    private func waitForLink(retries: Int = 20, interval: Duration = .milliseconds(250)) async -> LinkGateway? {
         var attempt = 0
         while attempt < retries, !Task.isCancelled {
-            if let client = store?.client { return client }
+            if let link = store?.link, link.isConnected { return link }
             if let state = store?.state, case .failed = state { return nil }
             try? await Task.sleep(for: interval)
             attempt += 1
         }
-        return store?.client
+        return store?.link.isConnected == true ? store?.link : nil
     }
 
     /// Pull-to-refresh: keeps the edited draft of a namespace the user is still
@@ -281,8 +281,7 @@ final class SettingsModel {
     /// carrier: the client lives in `RelayKit`, which depends on `DSHKit`, so
     /// `DSHKit` cannot return one without a dependency cycle.
     private var deviceAdmin: RelayDeviceAdmin? {
-        guard let link = store?.client?.carrier as? LinkCarrier,
-              let relay = link.relay else { return nil }
+        guard let relay = store?.link.relayIdentity else { return nil }
         return RelayDeviceAdmin(relayURL: relay.url, deviceToken: relay.deviceToken)
     }
 

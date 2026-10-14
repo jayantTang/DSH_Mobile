@@ -513,7 +513,7 @@ final class WorkspaceFilesModel {
         // WSS window path below it, and a `catch` that retreated to that path
         // whenever HTTPS failed; both are gone. No size branch, no fallback:
         // `downloadInBackground` throws and that is the outcome.
-        let target = try store?.fileTransferTarget() ?? { throw RelayFileTransfer.Unavailable.noRelay }()
+        let target = try store?.fileTransferTarget() ?? { throw DSHTransportError.carrierClosed }()
         return try await downloadInBackground(
             target, scopeId: scopeId, key: key, path: path, info: info
         )
@@ -568,15 +568,13 @@ final class WorkspaceFilesModel {
         // `session:` 不传：拿的是进程里那**一个**共享后台会话（P-2），不再各自
         // 建一个 —— 同一 identifier 建两个只是同一个会话，两个对象都以为自己是
         // 主人是 `ownsSession` 当年要盖住的那个歧义。
-        let transfer = RelayFileTransfer(relayURL: target.relayURL,
-                                         deviceToken: target.deviceToken)
-        let fetched = try await transfer.download(
+        let fetched = try await FileTransferAdapter.download(
+            to: destination,
             scopeId: scopeId,
             path: path,
-            to: destination,
             version: info.version,
-            expectedBytes: info.bytes,
-            bid: UUID().uuidString
+            target: target,
+            expectedBytes: info.bytes
         ) { [weak self] received in
             Task { @MainActor in
                 guard let self else { return }

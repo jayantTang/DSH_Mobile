@@ -99,13 +99,13 @@ final class APNSRegistrar: NSObject, UIApplicationDelegate {
         // 交付这个结果；事件只发给会话的 delegate，而此刻进程里还没有会话 —— 不在这里
         // 建一次，系统的唤醒就没人接，传输静默丢掉（"我以为发出去了，其实没有"）。
         // 它只建会话、不发起任何请求（验收里有"启动不产生请求"这一条）。
-        RelayFileTransfer.reassociate()
+        FileTransferAdapter.reassociate()
         // The session delegate's own lines (background delivery finished, or a
         // foreign session's events) go through the app's logger: RelayKit has no
         // logger of its own on purpose, so the app injects one here — once, before
         // any event can arrive.
-        RelayFileTransfer.BackgroundEvents.setLogger { DSHLog.push($0) }
-        DSHLog.push("background session re-associated: \(RelayFileTransfer.sessionIdentifier)")
+        FileTransferAdapter.setLogger { DSHLog.push($0) }
+        DSHLog.push("background session re-associated: \(FileTransferAdapter.sessionIdentifier)")
 
         // A tap that launched the app: the payload is in `launchOptions`, not in
         // a delegate callback (the system only delivers `didReceive` for a tap
@@ -145,13 +145,13 @@ final class APNSRegistrar: NSObject, UIApplicationDelegate {
         // answering for one we do not own would cut someone else's delivery
         // short. Ours is the only background session today, which is why this
         // does not need a map.
-        guard identifier == RelayFileTransfer.sessionIdentifier else {
+        guard identifier == FileTransferAdapter.sessionIdentifier else {
             DSHLog.push("background events for an unknown session: \(identifier)")
             completionHandler()
             return
         }
         DSHLog.push("handleEventsForBackgroundURLSession \(identifier)")
-        RelayFileTransfer.BackgroundEvents.setHandler(completionHandler)
+        FileTransferAdapter.setHandler(completionHandler)
     }
 
     /// Apple's answer to `registerForRemoteNotifications()`: the device token.

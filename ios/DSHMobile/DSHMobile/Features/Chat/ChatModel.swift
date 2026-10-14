@@ -295,7 +295,7 @@ final class ChatModel {
         // 记下"用户想看的那个会话"：如果此刻还没连上（冷启动刚进列表就点开），
         // 这一屏会停在"尚未连接"——连上之后要能自己回来，而不是让用户点重试。
         pendingOpen = summary
-        guard let client = store?.client else {
+        guard let link = store?.link, link.isConnected else {
             phase = .failed(String(localized: "尚未连接"))
             return
         }
@@ -402,10 +402,10 @@ final class ChatModel {
         warmMessageLayer(for: summary)
         // T013：渲染数据源切到 MessagePipeline 快照（管道缺位时桥为 nil，走原路径）。
         startPipelineSubscription(for: summary)
-        startFollowing(client: client, summary: summary, maxMessages: syncPlan.maxMessages)
+        startFollowing(link: link, summary: summary, maxMessages: syncPlan.maxMessages)
         await restoreSearchHistory()
         pendingOpen = nil
-        await loadCatalog(client: client)
+        await loadCatalog(link: link)
         subscribeToPrompts()
     }
 
@@ -961,10 +961,10 @@ final class ChatModel {
         persistSuspended = true
     }
 
-    private func startFollowing(client: DSHClient, summary: SessionSummary, maxMessages: Int = 60) {
+    private func startFollowing(link: LinkGateway, summary: SessionSummary, maxMessages: Int = 60) {
         followTask = Task { [weak self] in
             guard let self else { return }
-            let stream = await client.follow(
+            let stream = await link.follow(
                 SessionFollowRequest(address: summary.address, maxMessages: maxMessages, assistantStream: true)
             )
             do {
@@ -1163,18 +1163,18 @@ final class ChatModel {
         timeline.record(usage: updated.projections?.values?.tokenUsage)
     }
 
-    private func loadCatalog(client: DSHClient) async {
+    private func loadCatalog(link: LinkGateway) async {
         guard catalog == nil else { return }
-        await refreshCatalog(client: client)
+        await refreshCatalog(link: link)
     }
 
     /// Re-reads the host's model routes.
     ///
     /// A failure keeps the catalog already on screen: a picker that empties out
     /// because one request timed out is worse than a slightly stale list.
-    func refreshCatalog(client: DSHClient? = nil) async {
-        guard let client = client ?? store?.client else { return }
-        if let fresh = try? await client.modelCatalog() {
+    func refreshCatalog(link: LinkGateway? = nil) async {
+        guard let link = link ?? store?.link else { return }
+        if let fresh = try? await link.modelCatalog() {
             catalog = fresh
             catalogFetchedAt = Date()
         }
@@ -1199,7 +1199,7 @@ final class ChatModel {
     /// setting and therefore every session started afterwards — including ones
     /// started on the desktop.
     func setDefaultModel(_ selection: ModelSelection) async {
-        guard let client = store?.client else { return }
+        guard let client = store?.client, let link = store?.link else { return }
         guard !isSettingDefaultModel else { return }
         isSettingDefaultModel = true
         defaultModelError = nil
@@ -1213,7 +1213,7 @@ final class ChatModel {
             try await client.updateSettings(namespace: "agent-default-model", patch: .object(patch))
             // Read it back rather than assuming: the host is the one that owns
             // the value, and the picker marks whichever model it reports.
-            await refreshCatalog(client: client)
+            await refreshCatalog(link: link)
         } catch {
             defaultModelError = ConnectionStore.describe(error)
         }

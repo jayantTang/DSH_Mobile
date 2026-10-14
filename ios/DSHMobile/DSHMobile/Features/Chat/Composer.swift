@@ -332,7 +332,7 @@ struct Composer: View {
             // this one would answer the send with "connector too old", so the entry
             // is not offered. (`file-transfer` stays on the wire for
             // already-installed older app versions, which still gate on it.)
-            if store.supports(RelayFileTransfer.capability) {
+            if store.supportsFileTransfer {
                 Button {
                     isPickingFiles = true
                 } label: {

@@ -105,6 +105,37 @@ public struct LinkGateway: Sendable {
         return try await client.createSession(request)
     }
 
+    // MARK: - 会话跟随与模型目录
+
+    /// 跟随一个会话的事件流（进会话时的实时半边）。没有链路时返回立刻结束的流。
+    @MainActor
+    public func follow(_ request: SessionFollowRequest) async -> AsyncThrowingStream<SessionFollowFrame, any Error> {
+        guard let client = clientProvider() else {
+            return AsyncThrowingStream { $0.finish() }
+        }
+        return await client.follow(request)
+    }
+
+    /// 宿主支持的模型路由目录（选择器用）。
+    @MainActor
+    public func modelCatalog() async throws -> ModelCatalog {
+        guard let client = clientProvider() else { throw DSHTransportError.carrierClosed }
+        return try await client.modelCatalog()
+    }
+
+    /// 设置文档（`settings/describe` 的原始 JSON）。
+    @MainActor
+    public func settingsDocument() async throws -> JSONValue {
+        guard let client = clientProvider() else { throw DSHTransportError.carrierClosed }
+        return try await client.settings()
+    }
+
+    /// 中转身份（设备管理用；直连时没有）。判据在库里，App 不必知道 carrier 是什么。
+    @MainActor
+    public var relayIdentity: (url: URL, deviceToken: String, agentId: String)? {
+        (clientProvider()?.carrier as? LinkCarrier)?.relay
+    }
+
     // MARK: - 文件下载
 
     /// 从能力造一个文件下载器（没有链路时返回 nil）。
