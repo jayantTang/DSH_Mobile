@@ -1,4 +1,9 @@
 {
-  "note": "App 里允许直接依赖整个 DSHKit 包（含 RelayKit）的文件。只列具体文件，不允许通配；每条必须写 note 说明为什么它可以碰整包。上限 8 个（spec 023 SC-002），当前为 S0 基线：适配层尚未建立，所以是空的——这不是遗漏，是'还没有任何文件被授权'。",
-  "files": []
+  "note": "App 里允许直接依赖整个 DSHKit 包（含 RelayKit）的文件。只列具体文件，不允许通配；每条必须写 note 说明为什么它可以碰整包。上限 8 个（spec 023 SC-002）。2026-10-14：S4 收口未做完，按 owner 决定只把**调试仪器**登记进来（它们是探针，不是产品路径）；产品路径的残留穿层见 specs/023-app-dshkit-boundary/s4-evidence.md 的残留台账，守卫保持报告模式，不做豁免买账。",
+  "files": [
+    {
+      "path": "ios/DSHMobile/DSHMobile/Support/ViewportProbe.swift",
+      "note": "调试仪器（探针），有意读实现层内部状态：它要在采样时问 SessionPipeline/MessagePipeline 的窗口与热点，才能在慢闸里解释「没判定出来」还是「判出来了但取不到」。产品路径不经过它——`ViewportProbe.isOn` 为假时全部调用直接返回。"
+    }
+  ]
 }
