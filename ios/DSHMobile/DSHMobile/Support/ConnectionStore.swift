@@ -343,6 +343,31 @@ public final class ConnectionStore {
     // MARK: - Connecting
 
     /// Whether the connected connector offers a capability.
+    /// 链路能力（门面）：App 其余文件都从这里拿链路，不直接碰 `DSHClient` / `LinkCarrier`。
+    ///
+    /// 连接本身（档案、钥匙串、自愈）仍然在这里——`ConnectionStore` 是**连接适配器**，
+    /// 也是唯一被授权直接依赖实现层的产品文件（守卫白名单）。
+    public var link: LinkGateway {
+        LinkGateway(
+            clientProvider: { [weak self] in self?.client },
+            statusStreamProvider: { [weak self] in
+                guard let carrier = self?.client?.carrier as? LinkCarrier else {
+                    return AsyncStream { $0.finish() }
+                }
+                let raw = await carrier.statusStream()
+                return AsyncStream { continuation in
+                    let task = Task {
+                        for await status in raw {
+                            continuation.yield(LinkGateway.HostStatus(online: status.online, info: status.info))
+                        }
+                        continuation.finish()
+                    }
+                    continuation.onTermination = { _ in task.cancel() }
+                }
+            }
+        )
+    }
+
     public func supports(_ capability: String) -> Bool {
         capabilities.contains(capability)
     }

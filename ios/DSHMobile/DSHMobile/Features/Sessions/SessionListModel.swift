@@ -341,9 +341,9 @@ final class SessionListModel {
     /// starts working without a client change.
     @discardableResult
     func setArchived(_ archived: Bool, sessionId: String) async -> Bool {
-        guard let client = store?.client else { return false }
+        guard let link = store?.link else { return false }
         do {
-            let ids = try await client.archiveSession(sessionId, archived: archived)
+            let ids = try await link.archiveSession(sessionId, archived: archived)
             archivedSessionIds = Set(ids)
             regroup()
             return true
@@ -366,12 +366,12 @@ final class SessionListModel {
     /// already a workspace (including one the host knows under a canonicalized
     /// path) comes back as itself instead of a duplicate.
     func startSession(directory: String) async throws -> String {
-        guard let client = store?.client else { throw SessionListError.notConnected }
-        let registration = try await client.createWorkspace(path: directory)
+        guard let link = store?.link else { throw SessionListError.notConnected }
+        let registration = try await link.createWorkspace(path: directory)
 
         let id: String
         do {
-            let value = try await client.createSession(
+            let value = try await link.createSession(
                 SessionCreateRequest(workspaceId: registration.workspace.workspaceId)
             )
             guard let created = value["sessionId"]?.stringValue else { throw SessionListError.noSessionId }
@@ -381,7 +381,7 @@ final class SessionListModel {
             // failure as an empty group in the desktop sidebar. One the host
             // already had is none of this call's business.
             if registration.created {
-                try? await client.deleteWorkspace(id: registration.workspace.workspaceId)
+                try? await link.deleteWorkspace(id: registration.workspace.workspaceId)
             }
             throw error
         }
@@ -451,17 +451,17 @@ final class SessionListModel {
         // 冷启动（或上次没拉成）：先把落盘的旧列表画出来，屏幕上立刻有东西，
         // 再去问 host。有缓存时**不进 loading**——那正是"空白等网络"的来源。
         showSnapshotIfEmpty()
-        guard let client = store?.client else {
+        guard let link = store?.link else {
             phase = .failed(String(localized: "尚未连接"))
             return
         }
         if groups.isEmpty { phase = .loading }
         do {
-            let value = try await client.sessions()
+            let value = try await link.sessions()
             allSessions = value.items
             // Retried: the fallback is the wrong grouping, so it should be a
             // last resort rather than the first answer to a slow response.
-            if let baseline = await loadWorkspaces(client: client) {
+            if let baseline = await loadWorkspaces(link: link) {
                 workspaces = baseline.items
                 archivedSessionIds = Set(baseline.archivedSessionIds)
                 isUsingFallbackGrouping = false
@@ -623,9 +623,9 @@ final class SessionListModel {
     ///
     /// A previously loaded list is kept on failure: better a slightly stale
     /// grouping than inventing groups the user never made.
-    private func loadWorkspaces(client: DSHClient) async -> WorkspaceBaseline? {
+    private func loadWorkspaces(link: LinkGateway) async -> WorkspaceBaseline? {
         for attempt in 0..<3 {
-            if let baseline = try? await client.workspaces(timeout: .seconds(20)) {
+            if let baseline = try? await link.workspaces(timeout: .seconds(20)) {
                 return baseline
             }
             guard attempt < 2 else { break }

@@ -31,20 +31,32 @@ final class WorkspaceWebPage {
     private(set) var phase: Phase = .idle
     private var loaded: Loaded?
 
-    private let downloader: WorkspaceFileDownloader
     private let scopeId: String
     private let path: String
     /// 8 MB: past this the phone should say "look at it on the computer" rather
     /// than spend its memory on a file nobody asked it to hold.
     private let sizeLimit = 8 * 1024 * 1024
 
-    init(client: DSHClient, scopeId: String, path: String) {
-        // Zero pacing: these are the handful of files a page needs before it can
-        // be drawn, and making the reader wait 50 ms between every window would
-        // be paid on every open.
-        self.downloader = WorkspaceFileDownloader(client: client, pacing: .zero)
+    /// 链路能力（spec 023 边界收敛：不再直接持 `DSHClient`）。
+    private let link: LinkGateway
+
+    init(link: LinkGateway, scopeId: String, path: String) {
+        self.link = link
         self.scopeId = scopeId
         self.path = path
+    }
+
+    /// Zero pacing: these are the handful of files a page needs before it can
+    /// be drawn, and making the reader wait 50 ms between every window would
+    /// be paid on every open.
+    ///
+    /// 懒建：能力在构造时可能还没接上链路（"尚未连接"那一屏就是这么来的），
+    /// 真的读的时候再问一次。
+    private func makeDownloader() throws -> WorkspaceFileDownloader {
+        guard let downloader = link.fileDownloader(pacing: .zero) else {
+            throw DSHTransportError.carrierClosed
+        }
+        return downloader
     }
 
     /// Loads once, then serves from memory.
@@ -71,7 +83,7 @@ final class WorkspaceWebPage {
     private func fetchPage() async throws -> Loaded {
         let data: Data
         do {
-            data = try await downloader.data(scopeId: scopeId, path: path, cap: sizeLimit)
+            data = try await makeDownloader().data(scopeId: scopeId, path: path, cap: sizeLimit)
         } catch let failure as WorkspaceFileDownloader.Failure {
             if case .overCap(_, let bytes) = failure { throw PageError.tooLarge(bytes ?? 0) }
             throw failure
@@ -90,11 +102,12 @@ final class WorkspaceWebPage {
 
         // Fetched together: a report with six screenshots should not take six
         // round trips in series.
+        let downloader = try? makeDownloader()
         await withTaskGroup(of: String?.self) { group in
             for resource in resources {
                 group.addTask { [downloader, scopeId, base, directory] in
                     let remote = base.isEmpty ? resource : "\(base)/\(resource)"
-                    guard let bytes = try? await downloader.data(
+                    guard let downloader, let bytes = try? await downloader.data(
                         scopeId: scopeId, path: remote, cap: 8 * 1024 * 1024
                     ) else { return resource }
                     let target = directory.appendingPathComponent(resource)

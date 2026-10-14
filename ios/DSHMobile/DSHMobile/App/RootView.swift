@@ -51,14 +51,14 @@ struct RootView: View {
             .task {
                 // 冷启动进前台：与"从后台回来"分开记（现场诊断发现的缺口）。
                 await store.noteColdLaunch()
-                messageLayer.attach { [store] in store.client }
+                messageLayer.attach(link: store.link)
                 listModel.attach(to: store, hub: hub, viewLog: viewLog, messageLayer: messageLayer)
                 attachmentImages.attach(store: store)
                 chatModel.attach(store: store, hub: hub)
                 chatModel.attach(messageLayer: messageLayer)
                 // The feed asks for the client each time it reopens, so a repair
                 // that swapped the carrier underneath is picked up by itself.
-                hub.attach { [store] in store.client }
+                hub.attach { [store] in store.link }
 
                 // Automation hook first: a scripted run passes the target
                 // explicitly and must not fall back to a remembered profile.
@@ -233,7 +233,7 @@ struct RootView: View {
                     // The feed is left running while backgrounded — that is what
                     // makes a notification possible at all — so coming back only
                     // has to make the rows fresh again.
-                    hub.startIfNeeded(client: store.client)
+                    hub.startIfNeeded(link: store.link)
                     Task { await listModel.refresh() }
                     // 可见性兜底（009 tasks T019）：回前台对一次 lastSeq，
                     // 推送在后台漏掉的尾部增量向管道补齐（幂等，在飞不重复）。
@@ -511,7 +511,7 @@ struct RootView: View {
             enteredWorkspace = true
             // "Already read" marks belong to one computer.
             viewLog.useScope(connectionScope)
-            hub.startIfNeeded(client: store.client)
+            hub.startIfNeeded(link: store.link)
             Task { await listModel.start() }
             // Whatever was on screen when the link went away is stale by the
             // time it comes back: re-open the transcript so a blip cannot leave
@@ -1005,9 +1005,9 @@ extension HostEventHub {
     ///
     /// Reconnecting to the same DSH should not open a second `$events` stream,
     /// which would give the app two `clientId`s racing to answer one prompt.
-    func startIfNeeded(client: DSHClient?) {
-        guard let client, !isLive else { return }
-        start(client: client)
+    func startIfNeeded(link: LinkGateway?) {
+        guard let link, !isLive else { return }
+        start(link: link)
     }
 }
 

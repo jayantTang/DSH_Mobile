@@ -615,9 +615,9 @@ final class SettingsModel {
         // 原来那个「找一个像版本的键」的扫描因此永远命中不了，是死代码。真值来自
         // 握手（`_link/hello` 的 serverVersion），store 已经存好了，直接读。
         facts.connectorVersion = store?.connectorVersion
-        if let link = store?.client?.carrier as? LinkCarrier {
+        if let link = store?.link, link.isRelay {
             facts.transport = .relay
-            if let status = await Self.firstStatus(from: link) {
+            if let status = await link.firstHostStatus() {
                 facts.connectorName = status.info?["name"]?.stringValue
                 facts.connectorPort = status.info?["dshPort"]?.intValue
             }
@@ -625,26 +625,8 @@ final class SettingsModel {
         about = facts
     }
 
-    /// Reads the first status frame that carries host information, with a short
-    /// deadline so a silent connector cannot hold up the screen.
-    private static func firstStatus(from link: LinkCarrier) async -> LinkCarrier.HostStatus? {
-        let stream = await link.statusStream()
-        return await withTaskGroup(of: LinkCarrier.HostStatus?.self) { group in
-            group.addTask {
-                for await status in stream where status.info != nil {
-                    return status
-                }
-                return nil
-            }
-            group.addTask {
-                try? await Task.sleep(for: .seconds(1.5))
-                return nil
-            }
-            let first = await group.next() ?? nil
-            group.cancelAll()
-            return first
-        }
-    }
+    // 「取第一帧带信息的连接器状态、超时放弃」搬进 DSHKit 的 `LinkGateway.firstHostStatus`
+    // （spec 023 边界收敛）：它是链路判定、与界面无关，现在有单测覆盖那条 1.5 秒期限。
 
     /// The endpoint the phone is talking to.
     ///

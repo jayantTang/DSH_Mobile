@@ -131,7 +131,7 @@ final class WorkspaceFilesModel {
     /// The live client, for the views that fetch their own content — the web
     /// preview pulls a page and its pictures, and has no business knowing how
     /// the connection is stored.
-    var client: DSHClient? { store?.client }
+    var link: LinkGateway? { store?.link }
 
     init(scope: WorkspaceFileScope, initialPath: String = "") {
         self.scope = scope
@@ -198,13 +198,13 @@ final class WorkspaceFilesModel {
     /// DSH, where `.`, `./`, and the absolute root all answer with the root
     /// listing while `/` is refused as outside the workspace.
     func loadDirectory(_ path: String) async {
-        guard let client = store?.client else {
+        guard let link = store?.link else {
             phase = .failed("尚未连接")
             return
         }
         if listing == nil { phase = .loading }
         do {
-            let raw = try await client.workspaceFiles(scopeId: scope.sessionId, path: path.isEmpty ? "." : path)
+            let raw = try await link.workspaceFiles(scopeId: scope.sessionId, path: path.isEmpty ? "." : path)
             guard let listing = WorkspaceDirectoryListing(json: raw) else {
                 phase = .failed("主机返回的目录结构无法解析。")
                 return
@@ -266,13 +266,13 @@ final class WorkspaceFilesModel {
     }
 
     private func loadFilePage(path: String, offset: Int) async {
-        guard let client = store?.client else {
+        guard let link = store?.link else {
             filePhase = .failed("尚未连接")
             return
         }
         do {
             let range: JSONValue = .object(["offset": .int(offset), "limit": .int(Self.pageLines)])
-            let raw = try await client.workspaceFileRead(scopeId: scope.sessionId, path: path, range: range)
+            let raw = try await link.workspaceFileRead(scopeId: scope.sessionId, path: path, range: range)
             guard let page = WorkspaceFileText(json: raw) else {
                 filePhase = .failed("主机返回的文件内容无法解析。")
                 return

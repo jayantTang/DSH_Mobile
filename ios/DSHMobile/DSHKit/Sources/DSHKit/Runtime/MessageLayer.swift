@@ -78,6 +78,14 @@ public final class MessageLayer {
     public private(set) var pipeline: MessagePipeline?
     /// attach 时注入的 client 现取闭包，T024 灌库也要用（重连后自动换 carrier）。
     private var clientProvider: (@Sendable () -> DSHClient?)?
+    /// 从链路能力接入时的现取闭包（能力挂在 MainActor 上，所以要异步取）。
+    private var asyncClientProvider: (@Sendable () async -> DSHClient?)?
+
+    /// 现在该用哪个 client：优先异步 provider（能力接入），否则同步 provider（直接接入）。
+    private func currentClient() async -> DSHClient? {
+        if let asyncClientProvider { return await asyncClientProvider() }
+        return clientProvider?()
+    }
     private let probes: Probes
     /// DEBUG 故障注入：前 N 次**往更早方向**的取页回空包（`-DSHProbeEmptyPage <n>`）。
     /// release 恒 0（`Probes.emptyPageAttempts` 默认 0）。
@@ -91,6 +99,15 @@ public final class MessageLayer {
     /// 注册一批会话的拉取地址（列表刷新后、进会话前各喂一次）。
     public func registerAddresses(_ summaries: [SessionSummary]) {
         addresses.register(summaries)
+    }
+
+    /// 从链路能力接入（App 侧只持门面：`store.link`）。
+    ///
+    /// 能力是 `@MainActor` 的，而取页闭包是 `@Sendable` 的，所以这里存一个**异步**现取闭包，
+    /// 每次取页时回主线程问一次——重连换了 carrier 也自动跟上。
+    public func attach(link: LinkGateway) {
+        asyncClientProvider = { @Sendable in await MainActor.run { link.clientValue } }
+        attach(client: { nil })
     }
 
     /// 懒建磁盘层与内存层（各一次，进程级复用）。`client` 每次调用现取：
@@ -134,7 +151,7 @@ public final class MessageLayer {
                        probes.failPageShouldInject() {
                         throw PageFailureInjected()
                     }
-                    guard let client = client() else { throw FetchFailure.notConnected }
+                    guard let client = await self.currentClient() else { throw FetchFailure.notConnected }
                     guard let address = addresses.address(for: ref.sessionId) else {
                         throw FetchFailure.noAddress
                     }
@@ -163,7 +180,7 @@ public final class MessageLayer {
             // 确认走下行回流（follow → SessionPipeline → rpcId 命中原地替换），
             // 所以这里受理即返回 nil，不伪造回包。附件发送不走这里（见 ChatModel）。
             sender: { ref, text, clientId, steer in
-                guard let client = client() else { throw FetchFailure.notConnected }
+                guard let client = await self.currentClient() else { throw FetchFailure.notConnected }
                 try await client.prompt(SessionPromptRequest(
                     requestId: clientId.uuidString,
                     sessionId: ref.sessionId,
@@ -174,7 +191,7 @@ public final class MessageLayer {
             // T022 重发去重：崩溃前可能确认了没落库。重发前按 clientId 对服务端
             // 最新页查一次（safeMaxBefore 即最新；Int.max 过不了连接器的 JS 安全整数校验，T036），已有则只替换不重发。
             confirmationLookup: { ref, clientId in
-                guard let client = client(),
+                guard let client = await self.currentClient(),
                       let address = addresses.address(for: ref.sessionId) else { return nil }
                 let value = try? await client.historyWindow(HistoryWindowRequest(
                     address: address, before: HistoryWindowRequest.safeMaxBefore, limit: 50, maxBytes: 256 * 1024))
@@ -345,7 +362,7 @@ public final class MessageLayer {
                                    roleFilterSupported: Bool,
                                    pageBudget: Int = MessageLayer.warmupPageBudget,
                                    timeBudget: TimeInterval = MessageLayer.warmupTimeBudget) async {
-        guard let store, let client = clientProvider?() else { return }
+        guard let store, let client = await self.currentClient() else { return }
         guard roleFilterSupported else {
             await probes.note("userinputs.backfill.degraded", [
                 "reason": "connector-missing-history-role-filter",
@@ -406,7 +423,7 @@ public final class MessageLayer {
     @discardableResult
     public func backfillUserInput(scope: String, sessionId: String, lastSeq: Int,
                                   roleFilterSupported: Bool) async -> Bool {
-        guard let store, let client = clientProvider?() else { return false }
+        guard let store, let client = await self.currentClient() else { return false }
         guard roleFilterSupported else {
             await probes.note("userinputs.backfill.degraded", [
                 "reason": "connector-missing-history-role-filter", "onDemand": "1",

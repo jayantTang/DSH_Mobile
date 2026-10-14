@@ -29,9 +29,9 @@ final class HostEventHub {
     private var clientId: String?
     private var task: Task<Void, Never>?
     private var observers: [UUID: AsyncStream<HostEvent>.Continuation] = [:]
-    private var client: DSHClient?
+    private var link: LinkGateway?
     /// Where the feed gets its client, asked fresh on every reopen.
-    private var clientProvider: (@MainActor () -> DSHClient?)?
+    private var linkProvider: (@MainActor () -> LinkGateway?)?
 
     /// Subscribes to the raw event feed.
     func events() -> AsyncStream<HostEvent> {
@@ -48,8 +48,8 @@ final class HostEventHub {
     ///
     /// A repair replaces the carrier underneath the app, so the feed cannot keep
     /// a client of its own: it has to ask again each time it reopens.
-    func attach(provider: @escaping @MainActor () -> DSHClient?) {
-        clientProvider = provider
+    func attach(provider: @escaping @MainActor () -> LinkGateway?) {
+        linkProvider = provider
     }
 
     /// Consumes the host feed, reopening it whenever the socket drops.
@@ -59,14 +59,14 @@ final class HostEventHub {
     /// the first time the socket failed: the task returned, `isLive` went false,
     /// and nothing reopened it until the app was foregrounded — which is exactly
     /// the moment a background notification should already have been sent.
-    func start(client: DSHClient?) {
+    func start(link: LinkGateway?) {
         guard task == nil else {
             // Already feeding: only the client it should use may have changed.
-            self.client = clientProvider?() ?? client ?? self.client
+            self.link = linkProvider?() ?? link ?? self.link
             return
         }
         stop()
-        self.client = client
+        self.link = link
         task = Task { [weak self] in
             // The handle is what `start` checks, so a loop that ends — because
             // the store has no client at all — has to clear it, or the feed
@@ -75,10 +75,10 @@ final class HostEventHub {
             defer { if !Task.isCancelled { self?.task = nil } }
             var attempt = 0
             while !Task.isCancelled {
-                guard let self, let client = self.clientProvider?() ?? self.client else { return }
-                self.client = client
+                guard let self, let link = self.linkProvider?() ?? self.link else { return }
+                self.link = link
                 do {
-                    for try await event in await client.hostEvents() {
+                    for try await event in await link.hostEvents() {
                         if Task.isCancelled { return }
                         self.handle(event)
                     }
@@ -97,7 +97,7 @@ final class HostEventHub {
     func stop() {
         task?.cancel()
         task = nil
-        client = nil
+        link = nil
         clientId = nil
         isLive = false
         pending.removeAll()
@@ -145,11 +145,11 @@ final class HostEventHub {
 
     /// Answers one pending prompt and clears it locally.
     func answer(_ item: Pending, with outcome: EventAnswer.Outcome) async throws {
-        guard let client, let clientId else {
+        guard let link, let clientId else {
             throw DSHTransportError.carrierClosed
         }
         let answer = EventAnswer(clientId: clientId, eventId: item.id, outcome: outcome)
-        try await client.answer(answer)
+        try await link.answer(answer)
         pending.remove(id: item.id)
     }
 
