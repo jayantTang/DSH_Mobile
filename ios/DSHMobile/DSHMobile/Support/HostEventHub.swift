@@ -16,19 +16,14 @@ final class HostEventHub {
     /// These are the interruptions that block a desktop session: a question
     /// from `ask_user_question`, an approval request. Surfacing them on the
     /// phone is the single most useful thing the mobile client does.
-    struct Pending: Identifiable {
-        let id: String
-        let event: String
-        let agentId: String
-        let request: JSONValue
-        let arrivedAt: Date
-
-        /// The session this prompt belongs to.
-        var sessionId: String { agentId }
-    }
+    ///
+    /// 形状与集合判定在 DSHKit（`PendingPrompts`，spec 023 的边界收敛）；这里保留 `Pending`
+    /// 这个名字，视图侧用法不变。
+    typealias Pending = PendingPrompts.Item
 
     private(set) var hostHome: String?
-    private(set) var pending: [Pending] = []
+    /// 待答集合：waterfall 推进来、cancelled 拿掉（判定在 DSHKit，可在秒级单测里钉住）。
+    private(set) var pending = PendingPrompts()
     private(set) var isLive = false
 
     private var clientId: String?
@@ -93,7 +88,8 @@ final class HostEventHub {
                 self.isLive = false
                 if Task.isCancelled { return }
                 attempt += 1
-                try? await Task.sleep(for: .seconds(min(8, 0.5 * Double(attempt))))
+                // 节奏在 DSHKit（`EventStreamRetry`）：这条重试不拨号、只是重新订阅，所以比连接退避密。
+                try? await Task.sleep(for: .seconds(EventStreamRetry.delay(afterAttempt: attempt)))
             }
         }
     }
@@ -130,21 +126,11 @@ final class HostEventHub {
             ], force: true)
             // A waterfall blocks the host until answered, so it is promoted
             // into the pending list rather than merely forwarded.
-            if !pending.contains(where: { $0.id == waterfall.eventId }) {
-                pending.append(
-                    Pending(
-                        id: waterfall.eventId,
-                        event: waterfall.event,
-                        agentId: waterfall.agentId,
-                        request: waterfall.request,
-                        arrivedAt: Date()
-                    )
-                )
-            }
+            pending.apply(event)
 
         case .cancelled(let eventId):
             ViewportProbe.note("hub.cancelled", ["id": eventId], force: true)
-            pending.removeAll { $0.id == eventId }
+            pending.apply(event)
 
         case .emit, .unknown:
             break
@@ -164,7 +150,7 @@ final class HostEventHub {
         }
         let answer = EventAnswer(clientId: clientId, eventId: item.id, outcome: outcome)
         try await client.answer(answer)
-        pending.removeAll { $0.id == item.id }
+        pending.remove(id: item.id)
     }
 
     /// Declines to handle a prompt, letting the host continue to other clients.
@@ -176,7 +162,7 @@ final class HostEventHub {
 
     /// The pending prompts addressed to one session.
     func pending(for sessionId: String) -> [Pending] {
-        pending.filter { $0.agentId == sessionId }
+        pending.forSession(sessionId)
     }
 }
 
