@@ -230,7 +230,7 @@
     },
     {
       "rule": "hardcoded-string",
-      "file": "ios/DSHMobile/DSHMobile/Support/ViewportProbe.swift",
+      "file": "ios/DSHMobile/DSHMobile/Debug/ViewportAutomation.swift",
       "reason": "视口探针的调试文案（带 -DSHViewportProbe 才跑），不是产品文案",
       "backlog": "i18n-backlog-app-viewportprobe"
     },
