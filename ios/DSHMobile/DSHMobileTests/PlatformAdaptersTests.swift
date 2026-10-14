@@ -8,6 +8,9 @@ import XCTest
 /// （Bundle / Security.framework / 启动参数），但只要有可注入的缝或纯函数，就能在
 /// `xcodebuild test` 里断言——不启界面、不截图。
 ///
+/// 断言消息一律 ASCII：`check:i18n` 扫的是整棵 `DSHMobile/` 树（含本 target），中文测试字面量会被
+/// 当成硬编码的界面文案报出来（与 `HostSmokeTests` 同一条约定）。
+///
 /// 同一批里**没有** `SessionAlerts`：它的 `UserDefaults.standard` 与
 /// `UNUserNotificationCenter.current()` 是硬连接（`private let`），写不出隔离的用例——
 /// 那是"缺注入面"的缺口，记在 `specs/023-app-dshkit-boundary/s4-evidence.md` 里，
@@ -60,11 +63,11 @@ final class PlatformAdaptersTests: XCTestCase {
 
     func testKeychainRoundTrip() {
         Keychain.remove(testAccount)
-        XCTAssertNil(Keychain.get(testAccount), "先清干净再开始")
+        XCTAssertNil(Keychain.get(testAccount), "the test account starts clean")
         do {
             try Keychain.set("secret-value", for: testAccount)
         } catch {
-            return XCTFail("写入钥匙串失败：\(error)")
+            return XCTFail("keychain write failed: \(error)")
         }
         XCTAssertEqual(Keychain.get(testAccount), "secret-value")
     }
@@ -72,7 +75,7 @@ final class PlatformAdaptersTests: XCTestCase {
     func testKeychainOverwriteWins() {
         try? Keychain.set("first", for: testAccount)
         try? Keychain.set("second", for: testAccount)
-        XCTAssertEqual(Keychain.get(testAccount), "second", "同一个账号重复写入应当是更新而不是报错")
+        XCTAssertEqual(Keychain.get(testAccount), "second", "writing the same account twice must update, not fail")
     }
 
     func testKeychainRemoveMakesItDisappear() {
