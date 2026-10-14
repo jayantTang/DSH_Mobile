@@ -353,7 +353,7 @@
 - **解法（要动的时候）**：`RootView` 里那个 sheet 包一层 `NavigationStack`，然后按
   `test/RULES.md` 跑一轮逐屏核对（该页外观会变，不能只跑一条用例）。
 
-## 判据-16 连接管理页的设备名会把表单编码的 `+` 显示出来 ✅ 已修（2026-10-14）
+## 判据-16 连接管理页的设备名会把表单编码的 `+` 显示出来 ✅ 已修（2026-10-14，两处）
 
 - **症状**：连接管理页的第三条连接名显示成 `Jayant+MacBook+Pro`（真实设备名是 `Jayant MacBook Pro`）。
 - **根因**：配对链接由 `URLSearchParams` 生成（`test/tools/relaypair.mjs`），空格按表单编码写成 `+`；
@@ -363,3 +363,9 @@
   两种编码与拒绝分支。
 - **影响面**：产品配对路径不带 `name`（设备名走设备注册的 JSON），所以这条只在 DEBUG 的
   claimed-relay 通道可见；但对"桌面端若也用表单编码生成二维码链接"这种情况，解析现在是对的。
+- **第二处（修完解析才暴露）**：光修解析界面**仍然**显示 `+`，因为名字早就被写进档案了
+  （`com.jayanttang.dsh.plist` 的 `dsh.connection.profiles` 第一条），而 `connect(link:)` 对
+  同名 transport 是"复用、不回写名字"，`recordConnection` 只更新 `lastConnectedAt`（`ConnectionStore.swift:976` / `:338`）。
+  同一个 `+` 名字在 2026-09-29 那轮的图里就有。**修法**：复用已有档案时，若链接带了设备名且与之不同，
+  就回写并落盘（`07ccc4b`）。**验证**：`20261014-221420` 那轮连接管理页显示 `Jayant MacBook Pro`。
+- **教训**：解析类修复要连着看"已经落盘的旧值"——只改读法不改存量，界面上看不出变化。
