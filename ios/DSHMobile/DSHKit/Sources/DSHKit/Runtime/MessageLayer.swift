@@ -146,26 +146,14 @@ public final class MessageLayer {
                         let value = try await client.historyWindow(HistoryWindowRequest(
                             address: address, before: range.upperBound + 1, through: nil,
                             limit: range.count, maxBytes: 256 * 1024))
-                        await probes.note("pager.fetch", [
-                            "source": priority.name,
-                            "start": String(range.lowerBound),
-                            "end": String(range.upperBound),
-                            "records": String(value.records.count),
-                            "ms": String(Int(Date().timeIntervalSince(started) * 1000)),
-                            "ok": "1",
-                        ], true)
+                        await Self.noteFetch(probes, priority: priority, range: range,
+                                             started: started, records: value.records.count)
                         return SessionPipeline.FetchPage(
                             records: value.records, hasMore: value.hasMore,
                             clamped: value.clamped ?? false)
                     } catch {
-                        await probes.note("pager.fetch", [
-                            "source": priority.name,
-                            "start": String(range.lowerBound),
-                            "end": String(range.upperBound),
-                            "ms": String(Int(Date().timeIntervalSince(started) * 1000)),
-                            "ok": "0",
-                            "reason": String(describing: error),
-                        ], true)
+                        await Self.noteFetch(probes, priority: priority, range: range,
+                                             started: started, records: nil, failure: error)
                         throw error
                     }
                 }
@@ -201,6 +189,33 @@ public final class MessageLayer {
         // 注入器要现读热窗口判方向，而管道是它自己创建之后才存在的：这里补一次绑定
         //（弱引用，不把 MessageLayer 挂在自身管道的闭包上）。
         if let pipeline { emptyPages.bind(pipeline: pipeline) }
+    }
+
+
+    /// 一页取回的诊断（成功与失败共用一份字段格式）。
+    ///
+    /// 原来这两条 `note` 各写一遍字段，漏一个就会让"预取有界"的判读少一列；
+    /// 合并成一处之后字段只有一份。
+    private static func noteFetch(_ probes: Probes,
+                                  priority: SessionPipeline.FetchPriority,
+                                  range: ClosedRange<Int>,
+                                  started: Date,
+                                  records: Int?,
+                                  failure: (any Error)? = nil) async {
+        var fields: [String: String] = [
+            "source": priority.name,
+            "start": String(range.lowerBound),
+            "end": String(range.upperBound),
+            "ms": String(Int(Date().timeIntervalSince(started) * 1000)),
+        ]
+        if let records {
+            fields["records"] = String(records)
+            fields["ok"] = "1"
+        } else {
+            fields["ok"] = "0"
+            if let failure { fields["reason"] = String(describing: failure) }
+        }
+        await probes.note("pager.fetch", fields, true)
     }
 
     // MARK: - T033 用户输入灌库（三表终局，spec 009 data-model v3）
