@@ -1,3 +1,4 @@
+import DSHKit
 import Foundation
 import RelayKit
 
@@ -11,8 +12,8 @@ struct FeedbackLocalStore: Sendable {
 
     /// Keychain 里那份凭据的名字；与现有 `profile-<uuid>` 同一套 `Keychain`。
     static let ticketsAccount = "feedback.tickets"
-    /// 最多保留多少条凭据，超出丢最旧的（服务端仍在，只是这台手机取不回来）。
-    static let maxTickets = 200
+    /// 最多保留多少条凭据。判定在 DSHKit（`FeedbackTicketList.cap`），这里只是给调用点留个名字。
+    static var maxTickets: Int { FeedbackTicketList.cap }
 
     /// 镜像根目录。传 `nil` 走 ``defaultRoot``；测试传自己的临时目录，避免并行套件
     /// 争抢进程级环境变量（与 `RelayResumeStore` 的教训一致）。
@@ -42,22 +43,17 @@ struct FeedbackLocalStore: Sendable {
     // MARK: - 取件凭据（Keychain）
 
     /// 本机保存的凭据，按时间倒序；坏数据当作没有，不让一条解析失败挡住整个记录页。
+    ///
+    /// 排序、去重、截断、坏数据容忍都在 DSHKit（`FeedbackTicketList`，有单测）；这里只读 Keychain。
     func tickets() -> [FeedbackTicket] {
-        guard let raw = Keychain.get(Self.ticketsAccount),
-              let data = raw.data(using: .utf8),
-              let stored = try? JSONDecoder().decode([FeedbackTicket].self, from: data)
-        else { return [] }
-        return Array(sorted(stored).prefix(Self.maxTickets))
+        FeedbackTicketList.decode(Keychain.get(Self.ticketsAccount))
     }
 
     /// 记下一条凭据（同线程覆盖旧的），并把最旧的挤出去。
     func save(_ ticket: FeedbackTicket) throws {
-        var list = tickets().filter { $0.threadId != ticket.threadId }
-        list.append(ticket)
-        let trimmed = Array(sorted(list).prefix(Self.maxTickets))
-        let data = try JSONEncoder().encode(trimmed)
+        let merged = FeedbackTicketList.saving(ticket, into: tickets())
         // Keychain 存字符串；凭据只含 base64url 与 UUID，UTF-8 往返无损。
-        try Keychain.set(String(decoding: data, as: UTF8.self), for: Self.ticketsAccount)
+        try Keychain.set(try FeedbackTicketList.encode(merged), for: Self.ticketsAccount)
     }
 
     func ticket(for threadId: String) -> FeedbackTicket? {
@@ -71,10 +67,6 @@ struct FeedbackLocalStore: Sendable {
     /// 设置页「清除本地缓存」旁边，而不是反馈记录页。
     func removeCredentials() {
         Keychain.remove(Self.ticketsAccount)
-    }
-
-    private func sorted(_ list: [FeedbackTicket]) -> [FeedbackTicket] {
-        list.sorted { ($0.createdAt ?? .distantPast) > ($1.createdAt ?? .distantPast) }
     }
 
     // MARK: - 记录镜像（Caches）

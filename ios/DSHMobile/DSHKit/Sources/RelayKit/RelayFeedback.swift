@@ -232,6 +232,10 @@ public struct FeedbackInbox: Sendable, Hashable {
 /// `Codable` on purpose: the app keeps the array of these in the Keychain, and
 /// `createdAt` travels as the relay's epoch milliseconds so the stored JSON and
 /// the wire body read the same way.
+/// 本机凭据列表的判定在 DSHKit（`FeedbackTicketList`）；这里补一句 conformance，
+/// 让那份判定不必认识 RelayKit 的类型。
+extension FeedbackTicket: FeedbackTicketLike {}
+
 public struct FeedbackTicket: Sendable, Hashable, Codable {
     public let threadId: String
     public let ticketKey: String

@@ -40,10 +40,7 @@ final class DirectoryBrowserModel {
     var truncated: Bool { listing?.truncated ?? false }
 
     /// Whether "up" has anywhere to go.
-    var canGoUp: Bool {
-        guard let path = listing?.path else { return false }
-        return parent(of: path) != nil
-    }
+    var canGoUp: Bool { HostPath.canGoUp(from: listing?.path) }
 
     /// Reads the host's home directory, which is where a person starts.
     func start() async {
@@ -75,7 +72,7 @@ final class DirectoryBrowserModel {
     }
 
     func goUp() async {
-        guard let path = listing?.path, let parent = parent(of: path) else { return }
+        guard let path = listing?.path, let parent = HostPath.parent(of: path) else { return }
         await open(parent)
     }
 
@@ -114,12 +111,7 @@ final class DirectoryBrowserModel {
     ///
     /// `/` is its own parent, and reporting that as one would let "up" turn
     /// into "reload the same level".
-    private func parent(of path: String) -> String? {
-        let trimmed = path.count > 1 && path.hasSuffix("/") ? String(path.dropLast()) : path
-        let parent = (trimmed as NSString).deletingLastPathComponent
-        guard !parent.isEmpty, parent != trimmed else { return nil }
-        return parent
-    }
+    // 「上一级是哪个目录」的判定搬进 DSHKit（`HostPath.parent`，有单测）。
 
     /// Turns the two failures a person can actually hit into something to act on.
     ///
