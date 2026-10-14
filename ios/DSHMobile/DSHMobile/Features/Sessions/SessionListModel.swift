@@ -341,7 +341,7 @@ final class SessionListModel {
     /// starts working without a client change.
     @discardableResult
     func setArchived(_ archived: Bool, sessionId: String) async -> Bool {
-        guard let link = store?.link else { return false }
+        guard let link = store?.link, link.isConnected else { return false }
         do {
             let ids = try await link.archiveSession(sessionId, archived: archived)
             archivedSessionIds = Set(ids)
@@ -366,7 +366,7 @@ final class SessionListModel {
     /// already a workspace (including one the host knows under a canonicalized
     /// path) comes back as itself instead of a duplicate.
     func startSession(directory: String) async throws -> String {
-        guard let link = store?.link else { throw SessionListError.notConnected }
+        guard let link = store?.link, link.isConnected else { throw SessionListError.notConnected }
         let registration = try await link.createWorkspace(path: directory)
 
         let id: String
@@ -451,7 +451,7 @@ final class SessionListModel {
         // 冷启动（或上次没拉成）：先把落盘的旧列表画出来，屏幕上立刻有东西，
         // 再去问 host。有缓存时**不进 loading**——那正是"空白等网络"的来源。
         showSnapshotIfEmpty()
-        guard let link = store?.link else {
+        guard let link = store?.link, link.isConnected else {
             phase = .failed(String(localized: "尚未连接"))
             return
         }

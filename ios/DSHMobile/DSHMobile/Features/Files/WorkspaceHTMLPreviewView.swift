@@ -25,8 +25,8 @@ struct WorkspaceHTMLPreviewView: View {
     var body: some View {
         content
             .task {
-            guard page == nil, let link = model.link else {
-                if model.link == nil { phase = .failed("尚未连接") }
+            guard page == nil, let link = model.link, link.isConnected else {
+                phase = .failed("尚未连接")
                 return
             }
             let loader = WorkspaceWebPage(link: link, scopeId: model.scope.sessionId, path: path)

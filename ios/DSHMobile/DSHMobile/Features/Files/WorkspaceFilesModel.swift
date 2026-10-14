@@ -198,7 +198,7 @@ final class WorkspaceFilesModel {
     /// DSH, where `.`, `./`, and the absolute root all answer with the root
     /// listing while `/` is refused as outside the workspace.
     func loadDirectory(_ path: String) async {
-        guard let link = store?.link else {
+        guard let link = store?.link, link.isConnected else {
             phase = .failed("尚未连接")
             return
         }
@@ -266,7 +266,7 @@ final class WorkspaceFilesModel {
     }
 
     private func loadFilePage(path: String, offset: Int) async {
-        guard let link = store?.link else {
+        guard let link = store?.link, link.isConnected else {
             filePhase = .failed("尚未连接")
             return
         }

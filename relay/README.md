@@ -200,7 +200,8 @@ $A admin.py --db $DB ops-report --days 30 --as-of yesterday                   # 
 `ops-report --as-of` 是报告的时间锚点，取值 `now`（默认，当天 00:00 到此刻的部分数据）、
 `yesterday`（刚过去的一整天）或 `YYYY-MM-DD`（指定那一天）；后两者把「今日」板块与
 `--days` 窗口都锚到那一整天，`generatedAt` 仍是真实的生成时刻。本机包装对应
-`feedback.mjs report --full-day`——每天 00:02 的自动日报用它报刚结束的那一天。
+`feedback.mjs report --date today|yesterday|YYYY-MM-DD`（`today` → `--as-of now`）；`--full-day`
+是 `--date yesterday` 的简写——每天 00:02 的自动日报用它报刚结束的那一天。
 
 `ops-report` 是**视图**，不是账本：调试设备（`DSH-` 前缀、`Node`/`simulator` 机型）的用量、
 设备与账号一律不进报告，`usage` 命令仍读全量。设备行已被清理工具删掉、账号又不在邀请码

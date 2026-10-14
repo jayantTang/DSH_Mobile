@@ -555,6 +555,49 @@ test('report --full-day 让 ops-report 锚到刚过去的一整天', () => {
   assert.ok(!plain.calls[0].at(-1).includes('--as-of'), '不给 --full-day 就是当天到此刻')
 })
 
+test('report --date 把报告锚到指定那一天（今天 = 到现在）', () => {
+  const outDir = mkdtempSync(join(tmpdir(), 'feedback-date-'))
+  const fixed = spy(JSON.stringify(fixture()))
+  const { code } = run(['report', '--out', outDir, '--date', '2026-10-09'], { runner: fixed.runner })
+  assert.equal(code, 0)
+  assert.match(fixed.calls[0].at(-1), /ops-report --days 30 --as-of 2026-10-09/,
+    '给具体日期就报那一整天')
+
+  const today = spy(JSON.stringify(fixture()))
+  run(['report', '--out', outDir, '--date', 'today'], { runner: today.runner })
+  assert.match(today.calls[0].at(-1), /ops-report --days 30 --as-of now/,
+    '今天还没过完，就是当天 00:00 到此刻')
+
+  const yesterday = spy(JSON.stringify(fixture()))
+  run(['report', '--out', outDir, '--date', 'yesterday'], { runner: yesterday.runner })
+  assert.match(yesterday.calls[0].at(-1), /--as-of yesterday/)
+})
+
+test('--date 与 --full-day 的冲突、非法日期与错子命令都判用法错误（退出码 2）', () => {
+  const both = run(['report', '--date', '2026-10-09', '--full-day'], { runner: spy().runner })
+  assert.equal(both.code, 2, '等价的两种写法同时给要报错，不能静默选一个')
+  assert.match(both.err, /--full-day 就是 --date yesterday/)
+
+  for (const bad of ['2026-02-30', '2026-10-9', 'last-week']) {
+    const { code, err } = run(['report', '--date', bad], { runner: spy().runner })
+    assert.equal(code, 2, `${bad} 该判用法错误`)
+    assert.match(err, /--date/)
+  }
+
+  const wrongSub = run(['list', '--date', 'today'], { runner: spy().runner })
+  assert.equal(wrongSub.code, 2, '日期口径只有 report 有')
+})
+
+test('服务端不回覆盖日时，文件名用 --date 指定的那天兜底', () => {
+  const outDir = mkdtempSync(join(tmpdir(), 'feedback-dateday-'))
+  const data = fixture()
+  delete data.today.day
+  const { code, out } = run(['report', '--out', outDir, '--date', '2026-10-09'],
+    { runner: spy(JSON.stringify(data)).runner })
+  assert.equal(code, 0)
+  assert.ok(out.trim().endsWith('2026-10-09.html'), `文件名该是覆盖日，实际 ${out}`)
+})
+
 test('reportPath 按覆盖日命名：00:02 生成的那份叫前一天', () => {
   const nextDay = new Date(2026, 9, 13, 0, 2, 0).getTime()
   assert.equal(basename(reportPath({ outDir: '/tmp', day: 20261012, generatedAt: nextDay })),

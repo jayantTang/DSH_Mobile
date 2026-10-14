@@ -12,7 +12,8 @@
 //   node scripts/dev/feedback.mjs notify --body-file /tmp/notice.txt [--subject S]
 //                                  [--format text|html] [--all] [--yes] [--owner-approved "…"]
 //   node scripts/dev/feedback.mjs delete --thread th_x [--yes]
-//   node scripts/dev/feedback.mjs report [--days 30] [--full-day] [--out maintainers/reports]
+//   node scripts/dev/feedback.mjs report [--days 30] [--date today|yesterday|YYYY-MM-DD]
+//                                  [--full-day] [--out maintainers/reports]
 //   node scripts/dev/feedback.mjs report --send --account acc_a [--account acc_b] [--subject S]
 //   node scripts/dev/feedback.mjs report-data [--days 30]
 //   node scripts/dev/feedback.mjs report --install-agent | --uninstall-agent
@@ -81,12 +82,15 @@ const USAGE = `用法：
   feedback.mjs notify (--body-file PATH | --body TEXT) [--subject S] [--format text|html] [--account ACC]... [--all] [--yes]
                     [--owner-approved "owner 的原话"]
   feedback.mjs delete --thread th_x [--yes]
-  feedback.mjs report [--days 30] [--full-day] [--out DIR] [--send [--account ACC]...] [--owner-approved "…"]
+  feedback.mjs report [--days 30] [--date today|yesterday|YYYY-MM-DD] [--full-day] [--out DIR]
+                    [--send [--account ACC]...] [--owner-approved "…"]
   feedback.mjs report [--install-agent | --uninstall-agent]
-  feedback.mjs report [--full-day] --send [--account ACC]... [--subject S] [--days 30] [--out DIR]
+  feedback.mjs report [--date D | --full-day] --send [--account ACC]... [--subject S] [--days 30] [--out DIR]
   feedback.mjs report-data [--days 30]
   （加 --local 跑本机 relay/.local/state.db；写操作默认预演）
-  （--full-day 覆盖刚过去的一整天，默认是当天到此刻）
+  （--date 指定报告覆盖哪一天：today = 今天 00:00 到此刻（默认口径），yesterday 或
+    YYYY-MM-DD = 那一整天；日期一律由服务器按它自己的本地日算，不看本机时钟。
+    --full-day 是 --date yesterday 的简写（00:00 的定时日报用），两个同时给是用法错误）
   （--format 默认 text；report --send 把 HTML 报告按 html 投给账号——收件人是账号不是设备，
     --account 不给时取 .env.local 的 DSH_ACCOUNT_ID；两者都没有是用法错误，不会群发。报告里的
     默认标题是「DSH Mobile 运营日报 YYYY-MM-DD」（日期取覆盖日），--subject 可覆盖）
@@ -157,6 +161,27 @@ function number(argv, at, flag) {
   return value
 }
 
+/// `--date` 的取值 → 服务器 `ops-report --as-of` 的锚点（`today` / `yesterday` / `YYYY-MM-DD`）。
+///
+/// `today` 落成 `now`：服务器按"当天 00:00 到此刻"给部分数据——一天还没过完，不存在"完整的今天"。
+/// 要一整天就给 `yesterday` 或具体日期（服务器把 `YYYY-MM-DD` 锚到那天 23:59:59.999）。
+/// 日期合法性在本机先判一次（`2026-02-30` 这种别等到服务器报错）；`day` 是 `YYYYMMDD`，
+/// 老服务端不回 `today.day` 时用它给报告文件命名。
+export function normalizeDate(value) {
+  const text = String(value ?? '').trim()
+  if (text === 'today') return { asOf: 'now', day: null }
+  if (text === 'yesterday') return { asOf: 'yesterday', day: null }
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text)
+  if (!match) throw new UsageError(`--date 只能是 today / yesterday / YYYY-MM-DD，收到 ${value}`)
+  const [, year, month, day] = match
+  const at = new Date(Number(year), Number(month) - 1, Number(day))
+  if (at.getFullYear() !== Number(year) || at.getMonth() !== Number(month) - 1
+    || at.getDate() !== Number(day)) {
+    throw new UsageError(`--date 不是有效日期：${text}`)
+  }
+  return { asOf: text, day: `${year}${month}${day}` }
+}
+
 export function parseArgs(argv) {
   const sub = argv[0]
   if (!sub) throw new UsageError('缺少子命令')
@@ -174,6 +199,7 @@ export function parseArgs(argv) {
       case '--install-agent': opts.installAgent = true; break
       case '--uninstall-agent': opts.uninstallAgent = true; break
       case '--full-day': opts.fullDay = true; break
+      case '--date': opts.date = need(argv, ++i, flag); break
       case '--thread': opts.thread = need(argv, ++i, flag); break
       case '--status': opts.status = need(argv, ++i, flag); break
       case '--body': opts.body = need(argv, ++i, flag); break
@@ -194,6 +220,17 @@ export function parseArgs(argv) {
   }
   if (NEEDS_THREAD.has(sub) && !opts.thread) throw new UsageError(`${sub} 需要 --thread`)
   if (NEEDS_BODY.has(sub) && !opts.body && !opts.bodyFile) throw new UsageError(`${sub} 需要 --body-file 或 --body`)
+  // `--date` / `--full-day` 只对拉报告的 report 有意义；两个同时给说明口径没说清，直接报错，
+  // 不搞"谁覆盖谁"的静默优先级。
+  if (opts.date || opts.fullDay) {
+    if (sub !== 'report') throw new UsageError(`${sub} 不支持 --date / --full-day（只有 report 有日期口径）`)
+    if (opts.date && opts.fullDay) {
+      throw new UsageError('--full-day 就是 --date yesterday，两个给一个就行')
+    }
+    const resolved = opts.fullDay ? { asOf: 'yesterday', day: null } : normalizeDate(opts.date)
+    opts.asOf = resolved.asOf
+    opts.dateDay = resolved.day
+  }
   // `report --send` 的收件账号在 `main` 里定：`--account` 优先，否则取 `.env.local` 的
   // `DSH_ACCOUNT_ID`（定时任务用这条）。两者都没有时在那边报用法错误，绝不退化成群发。
   if (sub === 'report' && opts.send && opts.all) {
@@ -241,11 +278,12 @@ export function adminArgs({ sub, opts }, db) {
     }
     case 'delete':
       return [...head, 'feedback-delete', '--thread', opts.thread, ...(opts.yes && !opts.dryRun ? ['--yes'] : [])]
-    // `report` 拉的是 `ops-report`；`--full-day` 时锚到**刚过去的一整天**
-    // （服务器自己算"昨天"，不靠本机时钟）：00:00 的自动日报要的是昨天 00:00–23:59 的完整
-    // 数据，按"今天"算的话新的一天刚开头，每个数字都是 0。
+    // `report` 拉的是 `ops-report`；`--as-of` 决定报告覆盖哪一天（`parseArgs` 已把
+    // `--date` / `--full-day` 归一成 `opts.asOf`）：不给就是"当天到此刻"，`yesterday` 是
+    // 刚过去的一整天（00:00 的自动日报要这个——按"今天"算的话新的一天刚开头，数字全是 0），
+    // `YYYY-MM-DD` 是补跑历史。日期一律服务器按自己的本地日算，不看本机时钟。
     default: return [...head, 'ops-report', '--days', String(opts.days),
-      ...(opts.fullDay ? ['--as-of', 'yesterday'] : [])]
+      ...(opts.asOf ? ['--as-of', opts.asOf] : [])]
   }
 }
 
@@ -318,7 +356,10 @@ function writeReport(raw, opts, io) {
     throw new Error(`ops-report 返回的不是 JSON：${String(raw).slice(0, 200)}`)
   }
   const outDir = opts.out ? resolve(ROOT, opts.out) : DEFAULT_OUT
-  const file = reportPath({ outDir, generatedAt: data?.generatedAt, day: data?.today?.day })
+  // 覆盖日以服务器回的 `today.day` 为准；老服务端没有这个字段时，用 `--date` 指定过的那天兜底
+  // （不然文件名会落到生成时刻那天，正是「要 10-14 的报告却拿到 10-13」的来源）。
+  const file = reportPath({ outDir, generatedAt: data?.generatedAt,
+    day: data?.today?.day ?? opts.dateDay })
   const history = loadHistory(outDir)
   mkdirSync(dirname(file), { recursive: true })
   writeFileSync(file, renderReport(data, { history }), 'utf8')
