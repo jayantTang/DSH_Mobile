@@ -653,25 +653,22 @@ final class ChatModel {
 
     /// 按行载荷预算算出"最老端该丢几行"（spec 008 的 FR-004a）。
     ///
-    /// 只算内存里的行、只从最老端数，并且**保留最近 `keepLast` 行**（视口与它附近的余量）。
+    /// **策略已经搬到 DSHKit**（`TranscriptWindowPlanner.rowsToDrop`，spec 023 的 S1）：
+    /// 保留带怎么算、够了在哪停、等于预算算不算超，全部由那边决定，这里只做两件事——
+    /// 把当前窗口折成逐行字节数，以及把预算交进去。预算本身仍是 App 的旋钮：
+    /// DEBUG 探针 `-DSHProbePayloadBudgetKB` 要把真实会话的 32MB 压小，否则这条路在用例里
+    /// 永远看不到。
+    ///
     /// 返回 0 表示没超预算，不该丢。
     func rowsToDropForBudget(keepLast: Int? = nil) -> Int {
-        let items = timeline.items
-        let total = items.reduce(0) { $0 + TranscriptRowPayload(item: $1).payloadBytes }
-        guard total > Self.payloadBudgetBytes else { return 0 }
-        // 保留带按当前窗口自适应：写死 120 会在"窗口本来就小"时把丢弃整条路堵死
-        // （2026-10-08 实测：54 行的窗口 + 4KB 预算，`dropped < items.count - 120` 一开始就不成立，
-        // 于是 `window.trimmed` 一次都没出现）。至少留 20 行给它当视口余量。
-        let keep = keepLast ?? min(120, max(20, items.count / 4))
-        var over = total - Self.payloadBudgetBytes
-        var dropped = 0
-        for item in items {
-            guard dropped < items.count - keep else { break }
-            over -= TranscriptRowPayload(item: item).payloadBytes
-            dropped += 1
-            if over <= 0 { break }
-        }
-        return dropped
+        // 逐行折一次就够：搬迁前是把 `TranscriptRowPayload(item:)` 折两遍（先求和、再逐行扣），
+        // 现在只折一遍，行为不变、少一倍的载荷折算。
+        let sizes = timeline.items.map { TranscriptRowPayload(item: $0).payloadBytes }
+        return TranscriptWindowPlanner.rowsToDrop(
+            payloadBytes: sizes,
+            under: TranscriptPayloadBudget(limitBytes: Self.payloadBudgetBytes),
+            keepLast: keepLast
+        )
     }
 
     /// 丢掉最老端 `count` 行（宿主那边会用同一批 id 做原子丢弃）。
@@ -1338,7 +1335,10 @@ final class ChatModel {
         return
         #endif
         guard readerIsFollowing else { return }
-        let excess = timeline.items.count - Self.windowLimitRows
+        // 上限策略同样在 DSHKit（`TranscriptWindowPlanner.rowsToDrop(rowCount:limit:)`）：
+        // 这里只取"该丢几行"，丢的动作交给下面的 `timeline.dropOldestRows`。
+        let excess = TranscriptWindowPlanner.rowsToDrop(
+            rowCount: timeline.items.count, limit: Self.windowLimitRows)
         guard excess > 0 else { return }
         let dropped = timeline.dropOldestRows(excess)
         guard dropped > 0 else { return }
