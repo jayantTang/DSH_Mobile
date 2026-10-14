@@ -1,5 +1,13 @@
-import DSHKit
 import Foundation
+
+// 连接请求的 URL 解析（spec 024 / S1：从 App 的 Features/Connection 搬进协议层）。
+//
+// 为什么在库里：它是**纯解析**（Foundation 的 URLComponents + 一个值类型），却被基础设施
+// （`ConnectionStore` 做中转地址归一化）和界面（扫码页、启动参数）同时使用。留在 App 的
+// Features 下会让"基础设施 → 业务目录"这条反向依赖成立（`npm run arch` 的 4 模块环就是它
+// 和探针各占一条）。放进协议层之后，双方都只依赖库，方向是单向的。
+//
+// 语义与搬迁前逐字一致，含 `#if DEBUG` 的自动化形状——发布构建解析不到它。
 
 /// A connection request encoded as a URL.
 ///
@@ -12,7 +20,7 @@ import Foundation
 ///
 /// - `dsh://pair?relay=https://relay.example&code=ABCD-1234`
 /// - `dsh://direct?host=192.0.2.20&port=54499&token=<launchToken>`
-enum ConnectLink: Equatable {
+public enum ConnectLink: Equatable {
     case pair(relay: URL, code: String)
     case direct(baseURL: URL, launchToken: String)
     #if DEBUG
@@ -30,7 +38,7 @@ enum ConnectLink: Equatable {
     #endif
 
     /// Parses an incoming URL, returning nil for anything unrecognized.
-    init?(url: URL) {
+    public init?(url: URL) {
         guard url.scheme?.lowercased() == "dsh" else { return nil }
         guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
 
@@ -82,12 +90,12 @@ enum ConnectLink: Equatable {
     /// HTTP. Normalising once here means the profile holds a single address that
     /// both paths derive from — `LinkConfiguration` maps it back to `wss` for
     /// the socket.
-    static func normalizedRelayURL(_ url: URL) -> URL? {
+    public static func normalizedRelayURL(_ url: URL) -> URL? {
         LinkConfiguration.normalizedRelayURL(url)
     }
 
     /// The URL a QR code should encode for a relay pairing.
-    static func pairingURL(relay: URL, code: String) -> URL? {
+    public static func pairingURL(relay: URL, code: String) -> URL? {
         var components = URLComponents()
         components.scheme = "dsh"
         components.host = "pair"

@@ -4,7 +4,7 @@
   "description": "扫码/粘贴配对链接后建立到中转的 WSS 隧道并做能力协商。中转只转发字节，不认识 DLP 帧以内的内容。",
   "steps": [
     { "id": "view", "label": "配对界面扫码或粘贴链接", "file": "ios/DSHMobile/DSHMobile/Features/Connection/ConnectionView.swift", "symbol": "ConnectionView", "kind": "ui" },
-    { "id": "parse", "label": "解析配对链接与中转地址", "file": "ios/DSHMobile/DSHMobile/Features/Connection/ConnectLink.swift", "symbol": "ConnectLink", "kind": "logic" },
+    { "id": "parse", "label": "解析配对链接与中转地址", "file": "ios/DSHMobile/DSHKit/Sources/DSHKit/ConnectLink.swift", "symbol": "ConnectLink", "kind": "logic" },
     { "id": "carrier", "label": "LinkCarrier 建立隧道", "file": "ios/DSHMobile/DSHKit/Sources/DSHKit/LinkCarrier.swift", "symbol": "LinkCarrier", "kind": "net" },
     { "id": "handshake", "label": "LinkHandshake 能力协商", "file": "ios/DSHMobile/DSHKit/Sources/DSHKit/LinkHandshake.swift", "symbol": "LinkHandshake", "kind": "net" },
     { "id": "relay", "label": "中转按设备转发字节", "file": "relay/hub.py", "symbol": "RelayHub", "kind": "net" }
