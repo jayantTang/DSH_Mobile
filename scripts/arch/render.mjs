@@ -12,7 +12,7 @@
  */
 const SECTION_COLOR = {
   'ios-shell': '#4f8ff7', 'ios-features': '#38bdf8', 'ios-support': '#6f7ff0',
-  'ios-design': '#22d3ee', 'ios-protocol': '#7dd3fc', 'ios-relaykit': '#a78bfa',
+  'ios-design': '#22d3ee', 'ios-debug': '#94a3b8', 'ios-protocol': '#7dd3fc', 'ios-relaykit': '#a78bfa',
   relay: '#d98cf0',
   connector: '#46c9a0', plugin: '#2f9e7a', skill: '#a3b36a', sidecar: '#c08a5e',
   repo: '#6b7280',
@@ -21,7 +21,7 @@ const SECTION_COLOR = {
 /** 节点副标题前的短标签：同名文件（如插件与技能各有一个 send-image）靠它区分。 */
 const KIND_LABEL = {
   'ios-shell': 'App 壳', 'ios-features': 'Feature', 'ios-support': 'Support',
-  'ios-design': 'Design', 'ios-protocol': 'DSHKit', 'ios-relaykit': 'RelayKit',
+  'ios-design': 'Design', 'ios-debug': '调试', 'ios-protocol': 'DSHKit', 'ios-relaykit': 'RelayKit',
   relay: '中转服务',
   connector: '连接器', plugin: '插件', skill: '技能', sidecar: 'sidecar',
   repo: '工程',

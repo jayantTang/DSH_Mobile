@@ -41,7 +41,9 @@ const BANDS = [
       { id: 'ios-features', label: 'Features（页面模块）', match: (id) => id.startsWith('ios/app/Features/') },
       { id: 'ios-support', label: '基础支撑（Support）', match: (id) => id === 'ios/app/Support' },
       { id: 'ios-design', label: '设计系统（Design）', match: (id) => id === 'ios/app/Design' },
-      { id: 'ios-debug', label: '调试工具（Debug，只允许它依赖别人）', match: (id) => id === 'ios/app/Debug' },
+      // 整改 024 后新增的目录：探针的自动化驱动。整个目录只在 DEBUG 构建参与编译，
+      // 依赖方向也只有一个：工具 → 基础设施 / 协议层，反向必须为 0。
+      { id: 'ios-debug', label: '调试工具（仅 DEBUG 构建）', match: (id) => id === 'ios/app/Debug' },
       { id: 'ios-protocol', label: '协议与数据层（DSHKit）', match: (id) => id === 'ios/kit/DSHKit' },
       { id: 'ios-relaykit', label: '中转客户端（RelayKit）', match: (id) => id === 'ios/kit/RelayKit' },
     ],
