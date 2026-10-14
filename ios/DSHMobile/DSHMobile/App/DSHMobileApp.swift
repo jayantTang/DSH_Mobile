@@ -43,9 +43,25 @@ struct DSHMobileApp: App {
         #endif
     }
 
+    /// 是不是被 `xcodebuild test` 注入的单元测试宿主。
+    ///
+    /// 为什么需要它：单元测试包必须靠 App 宿主进程才能 `@testable` 到 App 内部的类型（推送注册、
+    /// 通知路由、钥匙串这些平台适配都在 App target 里），但那些用例一点都不关心界面。见到这个
+    /// 环境变量就不建 `RootView`——这就是 spec 023 说的"零截图"口径：不启动主界面、不截图、
+    /// 不做手势。
+    ///
+    /// 注意它**不是**"零模拟器"：`xcodebuild test` 仍会拉起模拟器进程。界面回归照旧走
+    /// `scripts/dev/verify-simulator.sh` 与 `test/run.sh` 的逐屏核对。
+    static let isUnitTestHost = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+
     var body: some Scene {
         WindowGroup {
-            RootView()
+            if Self.isUnitTestHost {
+                // 单元测试宿主：不起界面。用例只用 App 里的非 UI 代码。
+                Color.clear
+            } else {
+                RootView()
+            }
         }
     }
 }

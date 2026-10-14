@@ -74,7 +74,7 @@ public struct SessionListSnapshot: Codable, Sendable {
 public struct SessionListSnapshotStore {
 
     /// How long a snapshot may still be shown.
-    public static let maxAge: TimeInterval = 30 * 24 * 60 * 60
+    static let maxAge: TimeInterval = 30 * 24 * 60 * 60
 
     private let directory: URL
     private let now: () -> Date

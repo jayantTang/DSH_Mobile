@@ -29,7 +29,7 @@ public actor MessageStore {
         public let hasMore: Bool
         public let lastSnippet: String?
         public let unreadCount: Int
-        public let lastOpened: Date
+        let lastOpened: Date
         /// 冷启动预取判定用的有效连续区间（spec §6），JSON 序列化存储。
         public let ranges: RangeIndex
     }

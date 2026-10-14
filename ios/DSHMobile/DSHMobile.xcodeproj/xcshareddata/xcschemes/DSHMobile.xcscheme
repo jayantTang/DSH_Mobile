@@ -25,6 +25,20 @@
                ReferencedContainer = "container:DSHMobile.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
+         <BuildActionEntry
+            buildForTesting = "YES"
+            buildForRunning = "NO"
+            buildForProfiling = "NO"
+            buildForArchiving = "NO"
+            buildForAnalyzing = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "1C0000000000000000000003"
+               BuildableName = "DSHMobileTests.xctest"
+               BlueprintName = "DSHMobileTests"
+               ReferencedContainer = "container:DSHMobile.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
       </BuildActionEntries>
    </BuildAction>
    <TestAction
@@ -41,6 +55,17 @@
                BlueprintIdentifier = "1B0000000000000000000007"
                BuildableName = "DSHMobileUITests.xctest"
                BlueprintName = "DSHMobileUITests"
+               ReferencedContainer = "container:DSHMobile.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
+         <TestableReference
+            skipped = "NO"
+            parallelizable = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "1C0000000000000000000003"
+               BuildableName = "DSHMobileTests.xctest"
+               BlueprintName = "DSHMobileTests"
                ReferencedContainer = "container:DSHMobile.xcodeproj">
             </BuildableReference>
          </TestableReference>

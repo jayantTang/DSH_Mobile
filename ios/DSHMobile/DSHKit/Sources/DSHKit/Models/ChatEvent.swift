@@ -137,7 +137,7 @@ public enum ChatEvent: Sendable {
         /// plugins and from its own runtime-context injection, which share the
         /// `user/message` event type but must never be rendered as something
         /// the human typed.
-        public let sourceKind: String
+        let sourceKind: String
 
         public var isFromHuman: Bool { sourceKind == "user" }
     }
@@ -169,7 +169,7 @@ public enum ChatEvent: Sendable {
         public let arguments: String
 
         /// Parsed arguments, when they are valid JSON.
-        public var parsedArguments: JSONValue? {
+        var parsedArguments: JSONValue? {
             guard let data = arguments.data(using: .utf8) else { return nil }
             return try? JSONDecoder().decode(JSONValue.self, from: data)
         }
@@ -191,7 +191,7 @@ public enum ChatEvent: Sendable {
         public let meta: JSONValue?
 
         /// A one-line label (file name, URL, match count) when there is one.
-        public var metaLabel: String? {
+        var metaLabel: String? {
             if let path = meta?["path"]?.stringValue { return Self.shortPath(path) }
             if let url = meta?["url"]?.stringValue { return url }
             if let total = meta?["total"]?.intValue { return "\(total) 项" }
@@ -199,7 +199,7 @@ public enum ChatEvent: Sendable {
         }
 
         /// Which kind of result this looks like, for the orphan row's icon.
-        public var metaKind: String? {
+        var metaKind: String? {
             if meta?["diffs"] != nil { return "diffs" }
             if meta?["path"] != nil { return "file" }
             if meta?["url"] != nil { return "web" }
@@ -227,14 +227,14 @@ public enum ChatEvent: Sendable {
         /// instead of showing the message twice.
         public let rpcId: String?
         /// True for the splice that withdraws a queued item.
-        public let isRemoval: Bool
+        let isRemoval: Bool
         /// Who authored the spliced content.
         ///
         /// The host injects its own notifications through the same channel —
         /// approval-policy changes, background-job completions — with
         /// `kind: "plugin"`. Rendering those as user bubbles is what put a
         /// second, unexplained message under every prompt.
-        public let sourceKind: String
+        let sourceKind: String
 
         public var isFromHuman: Bool { sourceKind == "user" }
     }

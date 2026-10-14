@@ -79,7 +79,7 @@ extension SessionPipeline {
     }
 
     /// 热窗口最新 seq（nil = 这个会话还没有窗口）：App 侧注入判方向要读。
-    public var hotNewestSeq: Int? { hotWindow.keys.max() }
+    var hotNewestSeq: Int? { hotWindow.keys.max() }
 
     // MARK: - gap 行派生（从主文件拆出，同一 500 行上限）
 

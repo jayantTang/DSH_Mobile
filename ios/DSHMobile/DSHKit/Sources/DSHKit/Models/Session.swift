@@ -130,15 +130,15 @@ public struct SessionProjectionValues: Sendable, Codable, Hashable {
     public let goal: GoalProjection?
     public let tokenUsage: TokenUsageProjection?
     public let contextPressure: ContextPressureProjection?
-    public let sessionStats: SessionStatsProjection?
+    let sessionStats: SessionStatsProjection?
     public let agentPreset: String?
     public let permissions: PermissionsProjection?
     public let modelSelection: ModelSelectionProjection?
-    public let sessionListMetadata: SessionListMetadata?
-    public let todos: JSONValue?
+    let sessionListMetadata: SessionListMetadata?
+    let todos: JSONValue?
     public let plan: PlanProjection?
     public let subagent: SubagentProjection?
-    public let subagentCatalog: JSONValue?
+    let subagentCatalog: JSONValue?
     public let inbox: JSONValue?
 }
 
@@ -161,15 +161,15 @@ public struct GoalProjection: Sendable, Codable, Hashable {
         public let revision: Int
         public let objective: String
         public let phase: String?
-        public let roundsStarted: Int?
-        public let maxGoalRounds: Int?
+        let roundsStarted: Int?
+        let maxGoalRounds: Int?
         /// Why the goal is blocked.
         ///
         /// The Host has sent this as a bare string and as an object with a
         /// `code` and a `message`; both have to decode, because a client that
         /// only understands one shape fails the whole session list — every
         /// screen, not just the goal.
-        public let blockedReason: String?
+        let blockedReason: String?
 
         private enum CodingKeys: String, CodingKey {
             case id, revision, objective, phase, roundsStarted, maxGoalRounds, blockedReason
@@ -204,7 +204,7 @@ public struct TokenUsageProjection: Sendable, Codable, Hashable {
     public let uncachedInputTokens: Int?
     public let outputTokens: Int?
     public let cacheReadTokens: Int?
-    public let cacheWriteTokens: Int?
+    let cacheWriteTokens: Int?
 
     public var totalTokens: Int {
         (uncachedInputTokens ?? 0) + (outputTokens ?? 0) + (cacheReadTokens ?? 0) + (cacheWriteTokens ?? 0)
@@ -213,7 +213,7 @@ public struct TokenUsageProjection: Sendable, Codable, Hashable {
 
 public struct ContextPressureProjection: Sendable, Codable, Hashable {
     public let pressureTokens: Int?
-    public let projectedTokens: Int?
+    let projectedTokens: Int?
     public let contextWindow: Int?
 
     /// Fraction of the context window currently occupied, clamped to 0…1.
@@ -226,8 +226,8 @@ public struct ContextPressureProjection: Sendable, Codable, Hashable {
 public struct SessionStatsProjection: Sendable, Codable, Hashable {
     public let turns: Int?
     public let steps: Int?
-    public let llmMs: Double?
-    public let toolMs: Double?
+    let llmMs: Double?
+    let toolMs: Double?
 }
 
 public struct PermissionsProjection: Sendable, Codable, Hashable {
@@ -248,7 +248,7 @@ public struct ModelSelectionProjection: Sendable, Codable, Hashable {
 
 public struct SessionListMetadata: Sendable, Codable, Hashable {
     public let blank: Bool?
-    public let lastPromptAt: Double?
+    let lastPromptAt: Double?
 }
 
 public struct PlanProjection: Sendable, Codable, Hashable {
@@ -378,7 +378,7 @@ public struct SessionSnapshot: Sendable, Codable {
 }
 
 /// A one-shot RPC result carrying nothing meaningful.
-public struct SessionAck: Sendable, Codable {}
+struct SessionAck: Sendable, Codable {}
 
 // MARK: - Requests
 

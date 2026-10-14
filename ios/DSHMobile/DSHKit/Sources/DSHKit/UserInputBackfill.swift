@@ -223,7 +223,7 @@ extension MessageStore {
 
     /// 本地已灌的最大 seq（增量补拉的锚点），归类口径与 `userInputRecords` 一致；
     /// nil = 空库。
-    public func maxUserInputSeq(scope: String, sessionId: String) async throws -> Int? {
+    func maxUserInputSeq(scope: String, sessionId: String) async throws -> Int? {
         try await pool.read { db in
             try Int.fetchOne(db, sql: """
                 SELECT MAX(seq) FROM record

@@ -5,7 +5,7 @@ import Foundation
 /// Every route the host can currently serve.
 public struct ModelCatalog: Sendable, Codable {
     public let `default`: ModelSelection?
-    public let routableProviders: [String]?
+    let routableProviders: [String]?
     public let groups: [ModelProviderGroup]?
     public let failures: [ModelCatalogFailure]?
 }
@@ -49,7 +49,7 @@ public struct ModelCatalogFailure: Sendable, Codable {
 // MARK: - Skills
 
 public struct SkillListValue: Sendable, Codable {
-    public let skills: [SkillEntry]?
+    let skills: [SkillEntry]?
 }
 
 public struct SkillEntry: Sendable, Codable, Identifiable {

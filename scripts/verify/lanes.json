@@ -96,6 +96,13 @@
       ]
     },
     {
+      "id": "ios-unit",
+      "title": "iOS 单元测试（不含 UI）",
+      "globs": [
+        "ios/DSHMobile/DSHMobileTests/**"
+      ]
+    },
+    {
       "id": "relay",
       "title": "中转 relay",
       "globs": [
@@ -206,6 +213,24 @@
       "lane": "l3",
       "value": "usable",
       "reason": "干净 guest 里要装 Xcode，成本高；只在\"从零启用\"验收时用"
+    },
+    {
+      "subject": "ios-unit",
+      "lane": "l1",
+      "value": "required",
+      "reason": "改了单测或它覆盖的 App 内部代码就必须跑这一级：xcodebuild test 不启动主界面、不截图，比逐屏核对便宜一个数量级（入口 npm run test:app-unit）"
+    },
+    {
+      "subject": "ios-unit",
+      "lane": "l2",
+      "value": "not-applicable",
+      "reason": "Xcode 与模拟器只在 macOS 上，容器里没有"
+    },
+    {
+      "subject": "ios-unit",
+      "lane": "l3",
+      "value": "usable",
+      "reason": "干净 guest 里要装 Xcode，成本高；这级不提供本机拿不到的信息（除非验\"从零启用\"）"
     },
     {
       "subject": "relay",

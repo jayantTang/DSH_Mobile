@@ -183,7 +183,7 @@ public struct DSHClient: Sendable {
 
     /// Subscribes to the host's live control stream: queued messages, jobs, and
     /// projection updates for one session.
-    public func sessionControl() async -> AsyncThrowingStream<JSONValue, any Error> {
+    func sessionControl() async -> AsyncThrowingStream<JSONValue, any Error> {
         await carrier.stream(endpoint: "session/control", args: EmptyArgs())
     }
 
@@ -218,7 +218,7 @@ public struct DSHClient: Sendable {
         )
     }
 
-    public func searchSessions(query: String) async throws -> JSONValue {
+    func searchSessions(query: String) async throws -> JSONValue {
         try await carrier.unary(
             method: "session/search",
             args: RequestArgs(request: SessionSearchRequest(query: query)),
@@ -240,7 +240,7 @@ public struct DSHClient: Sendable {
         )
     }
 
-    public func updateQueue(sessionId: String, itemId: String, action: QueueAction) async throws {
+    func updateQueue(sessionId: String, itemId: String, action: QueueAction) async throws {
         try await carrier.unary(
             method: "session/updateQueue",
             args: RequestArgs(
@@ -266,7 +266,7 @@ public struct DSHClient: Sendable {
 
     // MARK: - Skills and references
 
-    public func skills(sessionId: String) async throws -> SkillListValue {
+    func skills(sessionId: String) async throws -> SkillListValue {
         try await carrier.unary(
             method: "skills/list",
             args: RequestArgs(request: SkillListRequest(sessionId: sessionId)),
@@ -287,7 +287,7 @@ public struct DSHClient: Sendable {
 
     /// The workspace inventory arrives on the `workspace/follow` baseline
     /// rather than a dedicated list endpoint.
-    public func workspaceFollow() async -> AsyncThrowingStream<WorkspaceFrame, any Error> {
+    func workspaceFollow() async -> AsyncThrowingStream<WorkspaceFrame, any Error> {
         let raw = await carrier.stream(endpoint: "workspace/follow", args: EmptyArgs())
         return AsyncThrowingStream { continuation in
             let task = Task {
@@ -347,7 +347,7 @@ public struct DSHClient: Sendable {
         )
     }
 
-    public func renameWorkspace(id: String, title: String) async throws {
+    func renameWorkspace(id: String, title: String) async throws {
         try await carrier.unary(
             method: "workspace/rename",
             args: RequestArgs(request: WorkspaceRenameRequest(workspaceId: id, title: title))
@@ -400,7 +400,7 @@ public struct DSHClient: Sendable {
     /// rather than scrolled — an HTML report and the pictures beside it — where
     /// paging would mean a round trip per page for a file the client is about to
     /// hand to a web view anyway.
-    public func workspaceFileReadAll(scopeId: String, path: String) async throws -> JSONValue {
+    func workspaceFileReadAll(scopeId: String, path: String) async throws -> JSONValue {
         try await carrier.unary(
             method: "workspaceFiles/readAll",
             args: WorkspaceFileArgs(workspaceFileScopeId: scopeId, path: path),
@@ -418,7 +418,7 @@ public struct DSHClient: Sendable {
     /// default) is refused with `workspace-file/too-large` rather than shortened,
     /// so a caller wanting a whole file pages until `eof` and shrinks its window
     /// if a deployment has a smaller cap.
-    public func workspaceFileReadBytes(
+    func workspaceFileReadBytes(
         scopeId: String,
         path: String,
         offset: Int,
@@ -448,7 +448,7 @@ public struct DSHClient: Sendable {
         )
     }
 
-    public func workspaceFileReadRelated(scopeId: String, path: String, relativePath: String) async throws -> JSONValue {
+    func workspaceFileReadRelated(scopeId: String, path: String, relativePath: String) async throws -> JSONValue {
         try await carrier.unary(
             method: "workspaceFiles/readRelated",
             args: WorkspaceFileRelatedArgs(
@@ -487,7 +487,7 @@ public struct DSHClient: Sendable {
         )
     }
 
-    public func mutateSettings(namespace: String, ops: JSONValue) async throws {
+    func mutateSettings(namespace: String, ops: JSONValue) async throws {
         try await carrier.unary(
             method: "settings/mutate",
             args: SettingsMutateArgs(ns: namespace, ops: ops)
@@ -524,7 +524,7 @@ public struct DSHClient: Sendable {
     /// nobody is sitting. Kept because the endpoint exists and a host on the
     /// same LAN may be attended; the phone's own browser uses
     /// ``directoryListing(path:)`` instead.
-    public func pickDirectory() async throws -> JSONValue {
+    func pickDirectory() async throws -> JSONValue {
         try await carrier.unary(method: "directoryPicker/pick", args: EmptyArgs(), as: JSONValue.self)
     }
 
@@ -641,7 +641,7 @@ public struct SessionPromptRequest: Encodable, Sendable {
     public let sessionId: String
     public let mode: Mode
     public let content: [PromptContentPart]
-    public let clientTimeZone: String?
+    let clientTimeZone: String?
 
     public init(
         requestId: String = UUID().uuidString,
@@ -658,12 +658,12 @@ public struct SessionPromptRequest: Encodable, Sendable {
     }
 }
 
-public struct SessionCancelRequest: Encodable, Sendable {
+struct SessionCancelRequest: Encodable, Sendable {
     public let sessionId: String
     public init(sessionId: String) { self.sessionId = sessionId }
 }
 
-public struct SessionRenameRequest: Encodable, Sendable {
+struct SessionRenameRequest: Encodable, Sendable {
     public let sessionId: String
     public let title: String
     public init(sessionId: String, title: String) {
@@ -672,21 +672,21 @@ public struct SessionRenameRequest: Encodable, Sendable {
     }
 }
 
-public struct SessionForkRequest: Encodable, Sendable {
+struct SessionForkRequest: Encodable, Sendable {
     public let sessionId: String
-    public let atSeq: Int?
+    let atSeq: Int?
     public init(sessionId: String, atSeq: Int? = nil) {
         self.sessionId = sessionId
         self.atSeq = atSeq
     }
 }
 
-public struct SessionSearchRequest: Encodable, Sendable {
+struct SessionSearchRequest: Encodable, Sendable {
     public let query: String
     public init(query: String) { self.query = query }
 }
 
-public struct SessionSelectModelRequest: Encodable, Sendable {
+struct SessionSelectModelRequest: Encodable, Sendable {
     public let sessionId: String
     public let provider: String
     public let model: String
@@ -702,7 +702,7 @@ public struct SessionSelectModelRequest: Encodable, Sendable {
 
 public struct SessionUpdateQueueRequest: Encodable, Sendable {
     public let sessionId: String
-    public let itemId: String
+    let itemId: String
     public let action: QueueAction
 
     public init(sessionId: String, itemId: String, action: QueueAction) {
@@ -712,7 +712,7 @@ public struct SessionUpdateQueueRequest: Encodable, Sendable {
     }
 }
 
-public struct SessionAttachmentRequest: Encodable, Sendable {
+struct SessionAttachmentRequest: Encodable, Sendable {
     public let sessionId: String
     public let attachmentId: String
 }
@@ -737,7 +737,7 @@ public struct SkillListRequest: Encodable, Sendable {
     public let sessionId: String
 }
 
-public struct FileReferenceArgs: Encodable, Sendable {
+struct FileReferenceArgs: Encodable, Sendable {
     public let agentId: String
     public let query: String
 }
@@ -746,18 +746,18 @@ public struct WorkspaceCreateRequest: Encodable, Sendable {
     public let path: String
 }
 
-public struct WorkspaceDeleteRequest: Encodable, Sendable {
+struct WorkspaceDeleteRequest: Encodable, Sendable {
     public let workspaceId: String
 }
 
-public struct WorkspaceRenameRequest: Encodable, Sendable {
+struct WorkspaceRenameRequest: Encodable, Sendable {
     public let workspaceId: String
     /// The host calls this field `title`, not `name`; sending the wrong key
     /// fails the whole rename with a schema error.
     public let title: String
 }
 
-public struct WorkspaceArchiveRequest: Encodable, Sendable {
+struct WorkspaceArchiveRequest: Encodable, Sendable {
     public let sessionId: String
     /// False puts the session back. Archiving is a filing decision, not a
     /// deletion, so the phone offers it as a swipe with an undo.
@@ -769,55 +769,55 @@ public struct WorkspaceArchiveRequest: Encodable, Sendable {
     }
 }
 
-public struct WorkspaceScopeArgs: Encodable, Sendable {
+struct WorkspaceScopeArgs: Encodable, Sendable {
     public let workspaceFileScopeId: String
 }
 
-public struct WorkspaceFileArgs: Encodable, Sendable {
+struct WorkspaceFileArgs: Encodable, Sendable {
     public let workspaceFileScopeId: String
     public let path: String
 }
 
-public struct WorkspaceFileRangeArgs: Encodable, Sendable {
+struct WorkspaceFileRangeArgs: Encodable, Sendable {
     public let workspaceFileScopeId: String
     public let path: String
     public let range: JSONValue?
 }
 
-public struct WorkspaceFileRelatedArgs: Encodable, Sendable {
+struct WorkspaceFileRelatedArgs: Encodable, Sendable {
     public let workspaceFileScopeId: String
     public let path: String
-    public let relativePath: String
+    let relativePath: String
 }
 
-public struct SettingsUpdateArgs: Encodable, Sendable {
+struct SettingsUpdateArgs: Encodable, Sendable {
     public let ns: String
     public let patch: JSONValue
     /// Omitted when nil, because the host treats an absent revision as
     /// unconditional and a present-but-null one as invalid.
-    public let expectedRevision: Int?
+    let expectedRevision: Int?
 }
 
-public struct SettingsReplaceArgs: Encodable, Sendable {
+struct SettingsReplaceArgs: Encodable, Sendable {
     public let ns: String
     public let section: JSONValue
-    public let expectedRevision: Int?
+    let expectedRevision: Int?
 }
 
-public struct SettingsMutateArgs: Encodable, Sendable {
+struct SettingsMutateArgs: Encodable, Sendable {
     public let ns: String
-    public let ops: JSONValue
+    let ops: JSONValue
 }
 
-public struct CredentialsDescribeArgs: Encodable, Sendable {
+struct CredentialsDescribeArgs: Encodable, Sendable {
     public let refs: [JSONValue]
 }
 
-public struct CredentialsSetArgs: Encodable, Sendable {
+struct CredentialsSetArgs: Encodable, Sendable {
     public let ref: JSONValue
     public let value: String
 }
 
-public struct CredentialsUnsetArgs: Encodable, Sendable {
+struct CredentialsUnsetArgs: Encodable, Sendable {
     public let ref: JSONValue
 }

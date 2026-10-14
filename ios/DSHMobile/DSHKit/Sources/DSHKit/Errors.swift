@@ -46,7 +46,7 @@ extension DSHRPCFailure {
     ///
     /// DSH rotates its launch token when the server restarts, so a stale
     /// cookie surfaces as an auth failure rather than a transport error.
-    public var isAuthenticationFailure: Bool {
+    var isAuthenticationFailure: Bool {
         code.contains("unauthorized")
             || code.contains("forbidden")
             || code.contains("auth")
@@ -54,7 +54,7 @@ extension DSHRPCFailure {
     }
 
     /// Whether the addressed session/workspace no longer exists.
-    public var isNotFound: Bool {
+    var isNotFound: Bool {
         code.hasSuffix("/not-found") || code == "gateway/not-found"
     }
 }

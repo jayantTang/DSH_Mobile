@@ -199,7 +199,7 @@ public actor SessionPipeline {
     /// 采纳磁盘层持久化的区间集（冷启动预取判定，spec §6「可随会话快照持久化」）。
     /// 只增不删：持久化区间声称的是磁盘覆盖，命中段磁盘短收时仍会转网络补齐，
     /// 所以采纳是安全的（磁盘只是缓存，不是事实来源）。
-    public func adoptPersistedRanges(_ persisted: RangeIndex) {
+    func adoptPersistedRanges(_ persisted: RangeIndex) {
         for span in persisted.spans {
             ranges.insert(span.start...span.end)
         }

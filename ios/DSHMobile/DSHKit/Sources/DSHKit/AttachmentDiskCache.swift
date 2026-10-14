@@ -11,7 +11,7 @@ import Foundation
 public struct AttachmentDiskCache: @unchecked Sendable {
 
     /// How long a downloaded picture may be reused.
-    public static let maxAge: TimeInterval = 30 * 24 * 60 * 60
+    static let maxAge: TimeInterval = 30 * 24 * 60 * 60
 
     /// What all pictures together may occupy before the oldest go.
     public static let budgetBytes = 100 * 1024 * 1024

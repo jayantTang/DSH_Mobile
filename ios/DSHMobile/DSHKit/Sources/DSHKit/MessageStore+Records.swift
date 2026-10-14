@@ -116,7 +116,7 @@ extension MessageStore {
     /// 未发出的上行消息（status='pending'，T022 重启恢复）：clientId + 乐观记录，
     /// 按合成 seq 升序（老→新）。崩溃前确认没落库的消息也在其中，重发前由内存层
     /// 按 clientId 对服务端查重。
-    public func pendingRecords(
+    func pendingRecords(
         scope: String, sessionId: String
     ) async throws -> [(clientId: String, record: SessionRecord)] {
         try await pool.read { db in
@@ -188,7 +188,7 @@ extension MessageStore {
     }
 
     /// 更新「还有更早」标志（网络侧权威值；失败永不写这里，spec 007 FR-038 语义沿用）。
-    public func setHasMore(_ hasMore: Bool, scope: String, sessionId: String) async throws {
+    func setHasMore(_ hasMore: Bool, scope: String, sessionId: String) async throws {
         try await pool.write { db in
             try db.execute(sql: """
                 UPDATE session_state SET has_more = ?

@@ -682,7 +682,7 @@ public struct ChatTimeline: Sendable {
     /// renders it — unlike the caption (where an invisible character, then a
     /// camera glyph, both proved visible) or the file name (which some clients
     /// label).
-    public static let agentRequestPrefix = "agent-"
+    static let agentRequestPrefix = "agent-"
 
     /// A legacy marker kept only so already-sent images still read correctly.
     private static let legacyAgentImagePrefix = "📷"

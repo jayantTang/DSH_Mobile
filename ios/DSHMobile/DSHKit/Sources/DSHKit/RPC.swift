@@ -4,7 +4,7 @@ import Foundation
 ///
 /// Decoded in one pass so the hot path never materializes an intermediate
 /// dynamic value: the success payload goes straight into `T`.
-public enum DSHRPCResult<Value: Decodable & Sendable>: Sendable {
+enum DSHRPCResult<Value: Decodable & Sendable>: Sendable {
     case ok(Value)
     case failure(DSHRPCFailure)
 }
@@ -41,7 +41,7 @@ extension DSHRPCResult {
 }
 
 /// Placeholder for endpoints whose success payload is absent or `null`.
-public struct DSHEmpty: Codable, Sendable, Hashable {
+struct DSHEmpty: Codable, Sendable, Hashable {
     public init() {}
     public init(from decoder: any Decoder) throws {
         // DSH sends either an absent `value`, `null`, `{}`, or `true` for

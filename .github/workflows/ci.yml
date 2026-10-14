@@ -101,6 +101,10 @@ jobs:
       # 同样是纯文本扫描 + find，不依赖 macOS / Xcode，本机 0.1s。
       - name: trap 写法闸门（崩溃类问题，基线在 scripts/dev/trap-exemptions.json）
         run: npm run check:traps
+      # 模块边界（spec 023 R1–R6）：DSHKit 不得依赖 UI 框架、App 侧整包 import 只允许白名单文件。
+      # 同样是纯文本扫描；S0–S3 是报告模式（只给证据），S4 起切拦截。
+      - name: 模块边界守卫（依赖方向，白名单在 scripts/dev/layer-whitelist.json）
+        run: npm run check:layers
 
   node:
     runs-on: ubuntu-latest

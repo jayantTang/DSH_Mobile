@@ -47,9 +47,9 @@ public struct LinkHandshake: Decodable, Sendable {
     /// and `npm run check:contracts` keeps this list a subset of it. Declaring a
     /// name nothing calls would just be dead code.
     public enum Capability {
-        public static let fileTransfer = "file-transfer"
+        static let fileTransfer = "file-transfer"
         public static let events = "events"
-        public static let sessionStreams = "session-streams"
+        static let sessionStreams = "session-streams"
         public static let pairCode = "pair-code"
         public static let git = "git"
         /// `_link/sessionWindow` 支持 roles 过滤、roleOf 按 data.source 严格归类

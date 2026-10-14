@@ -36,7 +36,7 @@ public struct WorkspaceFileDownloader: Sendable {
     public static let windowBytes = 2 * 1024 * 1024
 
     /// The floor for the adaptive window.
-    public static let minimumWindowBytes = 32 * 1024
+    static let minimumWindowBytes = 32 * 1024
 
     /// How many times one window is retried before the transfer gives up.
     public static let windowRetries = 4

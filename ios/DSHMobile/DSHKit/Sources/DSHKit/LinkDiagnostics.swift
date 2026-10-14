@@ -203,7 +203,7 @@ public actor LinkDiagnostics {
 
     /// 重置"首屏"相关的标志（每次安装新链路时调用）：
     /// 不重置的话第二次连接就没有 `app.first-response` / `app.first-render` 了。
-    public func beginDialCycle() {
+    func beginDialCycle() {
         firstInteractionSent = false
         firstInteractionCompleted = false
         firstRenderRecorded = false

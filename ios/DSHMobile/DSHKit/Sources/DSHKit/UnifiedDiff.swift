@@ -34,8 +34,8 @@ public struct UnifiedDiff: Sendable {
     public struct Hunk: Sendable, Identifiable {
         public let index: Int
         public let header: String
-        public let oldStart: Int
-        public let newStart: Int
+        let oldStart: Int
+        let newStart: Int
         public let lines: [Line]
 
         public var id: Int { index }
