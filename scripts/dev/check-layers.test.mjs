@@ -194,3 +194,15 @@ test('默认拦截：--report-only 才退回报告模式', async () => {
   assert.equal(reportOnly.status, 0)
   assert.match(reportOnly.stdout, /报告模式：只给证据、不拦截/)
 })
+
+test('已知盲区：字符串插值里的实现层引用抓不到（待做插值感知的掩码）', () => {
+  // 2026-10-14 在 ChatModel.swift 真抓到一处：`"(\(RelayFileTransfer.fileSize(url)) bytes)"`。
+  // 掩码把整段字面量抹掉，所以插值里的代码也看不见。这条用例**固化当前行为**，
+  // 等掩码学会认 `\(...)` 之后应当把它反过来（那时这里要有命中）。
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-layers-'))
+  const file = join(dir, 'Interpolated.swift')
+  writeFileSync(file, 'let text = "size: \\(RelayFileTransfer.fileSize(url)) bytes"\n', 'utf8')
+  const hits = scanFile(file, 'ios/DSHMobile/DSHMobile/Features/Chat/Interpolated.swift', new Set())
+  assert.deepEqual(hits.filter((hit) => hit.rule === 'R3'), [],
+    '当前确实抓不到；这不是"没问题"，是掩码的已知盲区')
+})

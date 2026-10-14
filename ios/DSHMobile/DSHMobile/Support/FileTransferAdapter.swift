@@ -16,6 +16,9 @@ enum FileTransferAdapter {
         let bytes: Int
     }
 
+    /// 本地文件有多少字节（诊断日志用；读不出来按 0）。
+    static func fileSize(_ url: URL) -> Int { RelayFileTransfer.fileSize(url) }
+
     /// 后台会话的身份（系统唤醒时用它判断事件是不是我们的）。
     static var sessionIdentifier: String { RelayFileTransfer.sessionIdentifier }
 

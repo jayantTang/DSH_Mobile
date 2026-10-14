@@ -1848,7 +1848,7 @@ final class ChatModel {
             // 连接器落盘），失败只会体现在输入框没动静。没有这一行时，真机上
             // 「发了没反应」与「后端没收到」无法区分。
             DSHLog.push("file send failed: \(name) "
-                + "(\(RelayFileTransfer.fileSize(fileURL)) bytes) — \(ConnectionStore.describe(error))")
+                + "(\(FileTransferAdapter.fileSize(fileURL)) bytes) — \(ConnectionStore.describe(error))")
             // 给用户的那句话：说清**哪个文件**、**为什么**、**能做什么**。
             // 不再把内部错误原文丢出去（"中转没有返回落盘路径"就是反面样本）。
             lastError = String(
