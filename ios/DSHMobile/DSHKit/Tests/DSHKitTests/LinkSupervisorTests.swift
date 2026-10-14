@@ -13,7 +13,7 @@ final class LinkSupervisorTests: XCTestCase {
     func testProbeIntervalIsSlowWhenConnectedAndFastWhenNot() {
         let sup = LinkSupervisor()
         XCTAssertEqual(sup.probeInterval(isConnected: true), 20)
-        XCTAssertEqual(sup.probeInterval(isConnected: false), 3)
+        XCTAssertEqual(sup.probeInterval(isConnected: false), 2, "与搬迁前 App 的 recoveryProbe 常量一致")
         XCTAssertGreaterThan(sup.probeInterval(isConnected: true), sup.probeInterval(isConnected: false))
     }
 
@@ -67,6 +67,18 @@ final class LinkSupervisorTests: XCTestCase {
         XCTAssertEqual(sup.attempt, 1)
         XCTAssertEqual(sup.noteLinkEnded(livedFor: 0.8), 4, "第 2 次：4 秒")
         XCTAssertEqual(sup.noteLinkEnded(livedFor: 0.8), 8, "第 3 次：8 秒")
+    }
+
+    /// 只读的 `nextDelay` 不许推进退避——App 的循环在一次迭代里既 note 又读 delay，
+    /// 读那一下要是也推进，退避就会一次翻两档（第一次失败本该 2 秒，会变成 4 秒）。
+    func testReadingNextDelayDoesNotAdvanceTheBackoff() {
+        var sup = LinkSupervisor()
+        _ = sup.noteLinkEnded(livedFor: 0.5)
+        XCTAssertEqual(sup.nextDelay, 2)
+        XCTAssertEqual(sup.nextDelay, 2, "连读两次还是同一档")
+        XCTAssertEqual(sup.attempt, 1)
+        _ = sup.noteLinkEnded(livedFor: 0.5)
+        XCTAssertEqual(sup.nextDelay, 4, "再失败一次才翻档")
     }
 
     func testStableLinkResetsTheBackoff() {

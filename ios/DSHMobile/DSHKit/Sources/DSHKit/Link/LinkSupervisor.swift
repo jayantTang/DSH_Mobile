@@ -24,13 +24,16 @@ public struct LinkSupervisor: Sendable, Equatable {
         /// 已连接时的探活周期。
         public var heartbeat: TimeInterval
         /// 未连接时的探活周期（等 carrier 自愈回来）。
+        ///
+        /// 默认 **2 秒**——与搬迁前 App 里的 `recoveryProbe` 常量一致（不是"顺手调优"：
+        /// 搬迁不许改行为，要调另开任务）。
         public var recoveryProbe: TimeInterval
         /// 连续几次探活失败才判"链路已断"。
         public var failuresToDeclareDown: Int
         public var backoff: ReconnectBackoff
 
         public init(heartbeat: TimeInterval = 20,
-                    recoveryProbe: TimeInterval = 3,
+                    recoveryProbe: TimeInterval = 2,
                     failuresToDeclareDown: Int = 2,
                     backoff: ReconnectBackoff = ReconnectBackoff()) {
             self.heartbeat = heartbeat
@@ -94,6 +97,19 @@ public struct LinkSupervisor: Sendable, Equatable {
         backoff.noteConnectionEnded(livedFor: livedFor)
         return backoff.nextDelay
     }
+
+    /// 下一次拨号前应等多久（**只读**，不推进退避）。
+    ///
+    /// 与 `noteLinkEnded` 的分工要看清楚——App 的循环是"上一条链路刚结束 → 先记它活了多久 →
+    /// 再取这次的延迟"：
+    ///
+    /// ```swift
+    /// if let connectedAt { _ = supervisor.noteLinkEnded(livedFor: now - connectedAt) }  // 推进
+    /// let delay = supervisor.nextDelay                                                   // 不推进
+    /// ```
+    ///
+    /// 两次都用 `noteLinkEnded` 会把退避推进两档（第一次失败本该等 2 秒，会变成 4 秒）。
+    public var nextDelay: TimeInterval { backoff.nextDelay }
 
     /// 当前退避级别（0 = 下一次用最小延迟）。诊断用。
     public var attempt: Int { backoff.attempt }
