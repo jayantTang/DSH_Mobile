@@ -22,8 +22,8 @@
  * 注释与字符串先被抹掉再匹配：文档性注释里写 `import UIKit` 不该判违规。
  *
  * 用法:
- *   node scripts/dev/check-layers.mjs              # 报告模式（默认）：命中逐条打印，退出码 0
- *   node scripts/dev/check-layers.mjs --enforce     # 拦截模式（S4 末尾起为默认）：有未豁免命中即 1
+ *   node scripts/dev/check-layers.mjs              # 拦截模式（默认）：未豁免的**拦截规则**命中即 1
+ *   node scripts/dev/check-layers.mjs --report-only # 报告模式：只打印证据，恒 0（排查时用）
  *   node scripts/dev/check-layers.mjs --report      # 台账视图：连已豁免的一起列出来
  *   node scripts/dev/check-layers.mjs --paths a.swift b.swift
  *
@@ -60,7 +60,7 @@ const IMPLEMENTATION_NAMES = [
 
 const USAGE = `用法: node scripts/dev/check-layers.mjs [--enforce] [--report] [--paths <file...>]
 
-  --enforce        拦截模式：有未豁免命中就退出 1（S4 末尾起成为默认）
+  --report-only    报告模式：只打印证据、不拦截（默认是拦截）
   --report         台账视图：连已豁免的命中一起列出
   --paths <file>   只扫指定文件（调试规则用）
   -h, --help       显示本帮助
@@ -142,6 +142,12 @@ export const RULES = [
     scope: (relative) => relative.startsWith(`${APP_ROOT}/`),
     pattern: /^\s*import\s+(?:DSHKit|RelayKit)\b/,
     onlyOutsideWhitelist: true,
+    // **报告指标，不拦截**（owner 2026-10-14 决定）。理由：门面（`LinkGateway` /
+    // `SessionHandle` / 只读模型）就在 DSHKit 里，产品文件要用它就必须 `import DSHKit`，
+    // 于是"整包 import 一律违规"与"门面在包内"这两件事天生冲突。真正要拦的是
+    // **实现层标识符**（R3）与 **DSHKit 侧的 UI 依赖**（R1）——那两条现在都是 0。
+    // 这个数仍然每次都打印，用来观察"有没有文件开始绕过门面自己拼东西"。
+    advisory: true,
   },
   {
     id: 'R3',
@@ -296,7 +302,9 @@ function parseArgs(args) {
   if (pathsIndex >= 0 && !paths.length) fail('--paths 需要至少一个文件')
   return {
     help: args.includes('-h') || args.includes('--help'),
-    enforce: args.includes('--enforce'),
+    // 默认**拦截**（owner 2026-10-14 决定：R3 归零、白名单 4/8 之后切过来）。
+    // 排查时用 `--report-only` 看证据；`--enforce` 保留为显式写法，老脚本不会失效。
+    enforce: !args.includes('--report-only'),
     report: args.includes('--report'),
     paths,
   }
@@ -363,6 +371,10 @@ function main() {
 
   const hits = collectHits(paths, whitelist)
   const { unexempted, exempted } = partition(hits, exemptions)
+  // 咨询类规则（R2）不算穿层：它们是"值得看一眼的数"，不是"必须修的问题"。
+  const advisoryRules = new Set(RULES.filter((rule) => rule.advisory).map((rule) => rule.id))
+  const blocking = unexempted.filter((hit) => !advisoryRules.has(hit.rule))
+  const advisory = unexempted.filter((hit) => advisoryRules.has(hit.rule))
   printByRule(hits, unexempted, report)
 
   const ledger = []
@@ -371,14 +383,15 @@ function main() {
   }
   for (const issue of ledger) console.log(`\n[R6] ${issue}`)
   console.log(`\ncheck-layers: 白名单 ${whitelist.files.size} 个文件，命中 ${hits.length} 处，`
-    + `已豁免 ${exempted.length} 处，未豁免 ${unexempted.length} 处`)
+    + `已豁免 ${exempted.length} 处，拦截规则未豁免 ${blocking.length} 处`
+    + (advisory.length ? `，报告指标 ${advisory.length} 处（${[...advisoryRules].join('/')}，不拦截）` : ''))
 
   if (!enforce) {
-    console.log('（报告模式：只给证据。S4 末尾 R1–R4 未豁免命中归零后，默认模式切到拦截。）')
+    console.log('（报告模式：只给证据、不拦截。默认是拦截；这个模式用于排查。）')
     return
   }
-  if (unexempted.length) {
-    reportViolations(unexempted)
+  if (blocking.length) {
+    reportViolations(blocking)
     process.exit(1)
   }
   if (ledger.length) process.exit(1)

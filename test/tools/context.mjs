@@ -221,6 +221,18 @@ export function build(simId, { force = false } = {}) {
     if (product >= newestMtime(sourceRoots())) return { skipped: true }
   }
   const started = Date.now()
+  // 先单独构建 DSHKit scheme。为什么必须先来这一步：`xcodebuild ... build-for-testing`
+  // 只按依赖关系增量编译，**DSHKit 里新增文件或新增公开方法时**，这份 derived data 里的
+  // 打包好的 `DSHKit.framework` 常被判为最新，于是 App 侧报 `cannot find type 'X' in scope`
+  // ——看起来像 App 写错了，其实是 DSHKit 的产物过期。2026-10-14 这一天连续踩了三次
+  // （S1、S4-1a、S4 的 BuildStamp），第四次发生在链路能力之后；写成脚本里的一步，
+  // 已最新时只花一两秒。排查次序：同样的报错**先看那个文件有没有 `import DSHKit`**，
+  // 再怀疑缓存（`BuildStamp` 那次真因就是漏 import）。
+  // 必须带 `-project`：`xcodebuild` 的工作目录是仓库根，光有 `-scheme DSHKit` 找不到
+  // 这个包方案（它是工程里的本地包）。
+  run('xcodebuild', ['-project', join(PROJECT, 'DSHMobile.xcodeproj'), '-scheme', 'DSHKit',
+    '-destination', `platform=iOS Simulator,id=${simId}`,
+    '-derivedDataPath', DERIVED, 'build'], { quiet: true })
   // `Debug` 不是风格选择，别顺手改成 Release：`-DSHDemoMode` / `-DSHForgetDirect` /
   // `-DSHFailAttachmentLoad` 这三个调试参数在 App 里被 `#if DEBUG` 关着，切到 Release
   // 之后它们会**静默失效**——用例照样跑、照样绿，只是参数不再生效，于是拿到的是

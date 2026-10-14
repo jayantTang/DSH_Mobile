@@ -167,3 +167,30 @@ test('R5：守卫自身不引第三方依赖', () => {
   assert.deepEqual(checkOwnImports("import { join } from 'node:path'\nimport './x.mjs'\n"), [])
   assert.deepEqual(checkOwnImports("import yaml from 'yaml'\n"), ['yaml'])
 })
+
+// ── 拦截口径（owner 2026-10-14：R2 降为报告指标，默认改拦截）────────────────
+
+test('R2 是报告指标：它不参与拦截', () => {
+  const r2 = RULES.find((rule) => rule.id === 'R2')
+  const r3 = RULES.find((rule) => rule.id === 'R3')
+  assert.equal(r2.advisory, true, 'R2 必须标成 advisory —— 门面在 DSHKit 里，产品文件要用它就得 import')
+  assert.notEqual(r3.advisory, true, 'R3（实现层标识符）必须仍然拦截')
+})
+
+test('默认拦截：--report-only 才退回报告模式', async () => {
+  const { spawnSync } = await import('node:child_process')
+  const repo = new URL('../..', import.meta.url).pathname
+  const run = (args) => spawnSync(process.execPath, ['scripts/dev/check-layers.mjs', ...args], {
+    cwd: repo, encoding: 'utf8',
+  })
+  // 默认（拦截）在"拦截规则未豁免 = 0"的当前库里应当是 0，并且明确写出报告指标。
+  const enforced = run([])
+  assert.equal(enforced.status, 0, `默认拦截应当在拦截命中为 0 时通过，实得 ${enforced.status}\n${enforced.stdout}`)
+  assert.match(enforced.stdout, /拦截规则未豁免 0 处/)
+  assert.match(enforced.stdout, /报告指标 \d+ 处（R2，不拦截）/)
+
+  // 报告模式：恒 0，且明说这是排查用的模式。
+  const reportOnly = run(['--report-only'])
+  assert.equal(reportOnly.status, 0)
+  assert.match(reportOnly.stdout, /报告模式：只给证据、不拦截/)
+})
