@@ -14,7 +14,7 @@ struct RootView: View {
     @State private var listModel = SessionListModel()
     @State private var chatModel = ChatModel()
     /// 009 消息层（磁盘层 + 内存层枢纽）：列表/会话的冷启动叠加都从它取数。
-    @State private var messageLayer = MessageLayer()
+    @State private var messageLayer = MessageLayer.withAppProbes()
     /// Holds the app awake in the background while there is work to report on.
     @State private var keepAlive = RunKeepAlive()
 

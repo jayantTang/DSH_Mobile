@@ -22,4 +22,5 @@ final class PageFailureInjector: @unchecked Sendable {
     }
 }
 
-struct PageFailureInjected: Error {}
+// `PageFailureInjected` 已随 `MessageLayer` 搬进 DSHKit（Runtime/ProbeInjectors.swift）：
+// 两处注入抛的必须是同一个类型，否则 `catch is PageFailureInjected` 会漏。

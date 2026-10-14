@@ -1,5 +1,11 @@
-import DSHKit
 import Foundation
+
+/// 消息层的两个取页注入件（spec 023 的 S4-1：随 `MessageLayer` 一起搬进 DSHKit）。
+///
+/// 它们在产品构建里**恒不生效**（配额默认 0），只有 App 侧通过 `MessageLayer.Probes` 注入配额
+/// 与开关时才动作。搬进来的理由：它们要包在 `MessagePipeline` 的取页闭包外层，
+/// 而那个闭包现在属于 DSHKit；留在 App 会让数据层反过来依赖 App 的调试仪器。
+
 
 /// DEBUG 故障注入：让接下来 N 次**往更早方向**的取页回一个空包
 /// （`-DSHProbeEmptyPage <n>`，spec 009 追加修订 2「空页即异常」的设备层验证用）。
@@ -67,4 +73,12 @@ final class EmptyPageInjector: @unchecked Sendable {
         remaining -= 1
         return true
     }
+}
+
+/// 取页失败注入抛出的错误。
+///
+/// 公开：App 侧的旧分页路径（`ChatModel.loadOlder`）也用同一套注入，抛的必须是同一个类型，
+/// 否则 `catch is PageFailureInjected` 会漏。
+public struct PageFailureInjected: Error {
+    public init() {}
 }

@@ -1,17 +1,48 @@
-import DSHKit
 import Foundation
 
-/// App 侧 009 消息层宿主（tasks T010–T012，spec 009「冷启动流程」）。
+/// 消息数据层的宿主（spec 009 / 023 的 S4-1：搬进 DSHKit 的门面数据能力）。
 ///
 /// 持有进程级唯一的 `MessageStore`（GRDB 磁盘层）与 `MessagePipeline`（内存层枢纽），
 /// 列表冷启动叠加、预取瀑布、进会话首帧都从这一个实例取数。网络面（按页拉取）
 /// 通过注入的 client 闭包现取，重连换了 carrier 不用重建管道。
+///
+/// **搬进 DSHKit 时动了什么**：把三处 App 侧依赖改成注入的 `Probes`——
+/// 探针落盘（原来是 `ViewportProbe.note`）、故障注入的开关与配额（原来是
+/// `PageFailureInjector` / `ProbeVariants`）。逻辑一行没改；App 侧只剩一个
+/// 把这几样接起来的工厂（`MessageLayer.withAppProbes()`）。
 @MainActor
-final class MessageLayer {
+public final class MessageLayer {
+
+    /// App 侧接进来的探针与故障注入。
+    ///
+    /// 全部默认关闭：生产构建下这套东西不产生任何行为，也不需要 App 提供实现。
+    public struct Probes: Sendable {
+        /// 探针落盘（`await`，因为 App 那侧是 `@MainActor`）。
+        public typealias Sink = @Sendable (_ kind: String,
+                                           _ fields: [String: String],
+                                           _ force: Bool) async -> Void
+        /// 这一次用户驱动的取页要不要注入失败。
+        public var failPageShouldInject: @Sendable () -> Bool
+        /// 空回包注入的剩余配额（`-DSHProbeEmptyPage <n>`）。
+        public var emptyPageAttempts: Int
+        /// 失败注入是否已进入"驱动开始之后"的窗口（`-DSHProbeFailPageOnDrive`）。
+        public var failPageArmed: @Sendable () -> Bool
+        public var note: Sink
+
+        public init(failPageShouldInject: @escaping @Sendable () -> Bool = { false },
+                    emptyPageAttempts: Int = 0,
+                    failPageArmed: @escaping @Sendable () -> Bool = { true },
+                    note: @escaping Sink = { _, _, _ in }) {
+            self.failPageShouldInject = failPageShouldInject
+            self.emptyPageAttempts = emptyPageAttempts
+            self.failPageArmed = failPageArmed
+            self.note = note
+        }
+    }
 
     /// 拉取/发送失败原因。预取路径对失败一律静默（磁盘只是缓存，取用失败即拉取
     /// 兜底），这里只为让调试日志可读。
-    enum FetchFailure: Error {
+    public enum FetchFailure: Error {
         /// 链接未建立：预取整体跳过，不刷日志（tasks T011 的硬要求）。
         case notConnected
         /// 该会话没有注册过拉取地址（不在当前列表里）。
@@ -21,11 +52,13 @@ final class MessageLayer {
     /// 会话 id → 拉取地址。subagent 会话的地址需要父 id 与 mode，只能从列表行的
     /// `SessionSummary` 推导，所以由列表/会话侧注册。`@Sendable` 的 fetch 闭包不能
     /// 挂 MainActor，地址簿自带锁。
-    final class AddressBook: @unchecked Sendable {
+    public final class AddressBook: @unchecked Sendable {
         private var table: [String: SessionAddress] = [:]
         private let lock = NSLock()
 
-        func register(_ summaries: [SessionSummary]) {
+        public init() {}
+
+        public func register(_ summaries: [SessionSummary]) {
             lock.lock()
             defer { lock.unlock() }
             for summary in summaries {
@@ -33,32 +66,36 @@ final class MessageLayer {
             }
         }
 
-        func address(for sessionId: String) -> SessionAddress? {
+        public func address(for sessionId: String) -> SessionAddress? {
             lock.lock()
             defer { lock.unlock() }
             return table[sessionId]
         }
     }
 
-    let addresses = AddressBook()
-    private(set) var store: MessageStore?
-    private(set) var pipeline: MessagePipeline?
+    public let addresses = AddressBook()
+    public private(set) var store: MessageStore?
+    public private(set) var pipeline: MessagePipeline?
     /// attach 时注入的 client 现取闭包，T024 灌库也要用（重连后自动换 carrier）。
     private var clientProvider: (@Sendable () -> DSHClient?)?
-    /// DEBUG 故障注入：前 N 次取页失败（`-DSHProbeFailPage <n>`）。release 恒 0。
-    private let pageFailures = PageFailureInjector(remaining: ProbeVariants.failPageAttempts)
+    private let probes: Probes
     /// DEBUG 故障注入：前 N 次**往更早方向**的取页回空包（`-DSHProbeEmptyPage <n>`）。
-    /// release 恒 0。
-    private let emptyPages = EmptyPageInjector(remaining: ProbeVariants.emptyPageAttempts)
+    /// release 恒 0（`Probes.emptyPageAttempts` 默认 0）。
+    private let emptyPages: EmptyPageInjector
+
+    public init(probes: Probes = Probes()) {
+        self.probes = probes
+        self.emptyPages = EmptyPageInjector(remaining: probes.emptyPageAttempts)
+    }
 
     /// 注册一批会话的拉取地址（列表刷新后、进会话前各喂一次）。
-    func registerAddresses(_ summaries: [SessionSummary]) {
+    public func registerAddresses(_ summaries: [SessionSummary]) {
         addresses.register(summaries)
     }
 
     /// 懒建磁盘层与内存层（各一次，进程级复用）。`client` 每次调用现取：
     /// 未连接时 fetch 抛 `notConnected`，预取方按"跳过"处理。
-    func attach(client: @escaping @Sendable () -> DSHClient?) {
+    public func attach(client: @escaping @Sendable () -> DSHClient?) {
         clientProvider = client
         if store == nil {
             // 磁盘层建不起来（如存储被拒）时整套 009 叠加自动缺位，
@@ -69,8 +106,8 @@ final class MessageLayer {
         let addresses = self.addresses
         // T028：`-DSHProbeFailPage` 重接到 009 链路——包在 PageFetch 外层，
         // 前 N 次取页直接抛错，驱动慢闸场景③（断网缺口失败重试）。
-        let pageFailures = self.pageFailures
         let emptyPages = self.emptyPages
+        let probes = self.probes
         // T026：热窗口按 spec 裁决的 500 条裁剪（US2 期间为避免淘汰后回看
         // 静默丢行临时放宽到 5000；空白带根因——磁盘水合不发 diff——已在
         // SessionPipeline 修复，这里调回预算值）。
@@ -84,17 +121,17 @@ final class MessageLayer {
                     if await emptyPages.shouldEmpty(page: range,
                                                     hotNewest: emptyPages.hotNewest(for: ref),
                                                     priority: priority) {
-                        await ViewportProbe.note("pager.empty.injected", [
+                        await probes.note("pager.empty.injected", [
                             "start": String(range.lowerBound), "end": String(range.upperBound),
-                        ], force: true)
+                        ], true)
                         return SessionPipeline.FetchPage(records: [], hasMore: true, clamped: false)
                     }
                     // 只对用户驱动的取页注入失败：预取/冷启动吃配额会让慢闸
                     // 场景③永远等不到可见失败（007 的 PageFailureInjector 头注）。
                     // failPageArmed：带 -DSHProbeFailPageOnDrive 时再等驱动开始，
                     // 打开阶段的可见取页按竞争拿优先级，会随机吃掉配额（用例 48）。
-                    if priority == .userVisible, ProbeVariants.failPageArmed,
-                       pageFailures.shouldFail() {
+                    if priority == .userVisible, probes.failPageArmed(),
+                       probes.failPageShouldInject() {
                         throw PageFailureInjected()
                     }
                     guard let client = client() else { throw FetchFailure.notConnected }
@@ -109,26 +146,26 @@ final class MessageLayer {
                         let value = try await client.historyWindow(HistoryWindowRequest(
                             address: address, before: range.upperBound + 1, through: nil,
                             limit: range.count, maxBytes: 256 * 1024))
-                        await ViewportProbe.note("pager.fetch", [
+                        await probes.note("pager.fetch", [
                             "source": priority.name,
                             "start": String(range.lowerBound),
                             "end": String(range.upperBound),
                             "records": String(value.records.count),
                             "ms": String(Int(Date().timeIntervalSince(started) * 1000)),
                             "ok": "1",
-                        ])
+                        ], true)
                         return SessionPipeline.FetchPage(
                             records: value.records, hasMore: value.hasMore,
                             clamped: value.clamped ?? false)
                     } catch {
-                        await ViewportProbe.note("pager.fetch", [
+                        await probes.note("pager.fetch", [
                             "source": priority.name,
                             "start": String(range.lowerBound),
                             "end": String(range.upperBound),
                             "ms": String(Int(Date().timeIntervalSince(started) * 1000)),
                             "ok": "0",
                             "reason": String(describing: error),
-                        ])
+                        ], true)
                         throw error
                     }
                 }
@@ -183,18 +220,18 @@ final class MessageLayer {
     /// 一路扫下去（实测后台要跑几十秒到几十分钟）。改成"只预热活跃的十来个 + 每轮有硬上限"：
     /// 常用会话照旧"点开即完整"，其余交给按需灌（`backfillUserInput`，见下），
     /// 后台流量不再无上限。
-    static let warmupPageBudget = 200
-    static let warmupTimeBudget: TimeInterval = 60
+    public static let warmupPageBudget = 200
+    public static let warmupTimeBudget: TimeInterval = 60
 
-    func backfillUserInputs(scope: String, summaries: [SessionSummary],
-                            roleFilterSupported: Bool,
-                            pageBudget: Int = MessageLayer.warmupPageBudget,
-                            timeBudget: TimeInterval = MessageLayer.warmupTimeBudget) async {
+    public func backfillUserInputs(scope: String, summaries: [SessionSummary],
+                                   roleFilterSupported: Bool,
+                                   pageBudget: Int = MessageLayer.warmupPageBudget,
+                                   timeBudget: TimeInterval = MessageLayer.warmupTimeBudget) async {
         guard let store, let client = clientProvider?() else { return }
         guard roleFilterSupported else {
-            ViewportProbe.note("userinputs.backfill.degraded", [
+            await probes.note("userinputs.backfill.degraded", [
                 "reason": "connector-missing-history-role-filter",
-            ], force: true)
+            ], true)
             return
         }
         let backfiller = UserInputBackfiller(store: store)
@@ -204,11 +241,11 @@ final class MessageLayer {
         for summary in summaries {
             // 预算用尽就收工：剩下的等下一次冷启动，或由用户打开面板时按需补。
             guard pagesUsed < pageBudget, Date().timeIntervalSince(startedAt) < timeBudget else {
-                ViewportProbe.note("userinputs.backfill.budget", [
+                await probes.note("userinputs.backfill.budget", [
                     "sessions": String(sessionsDone), "pages": String(pagesUsed),
                     "remaining": String(summaries.count - sessionsDone),
                     "seconds": String(format: "%.1f", Date().timeIntervalSince(startedAt)),
-                ], force: true)
+                ], true)
                 return
             }
             guard let address = addresses.address(for: summary.sessionId) else { continue }
@@ -224,20 +261,20 @@ final class MessageLayer {
                 if case .pulled(let pages, let rows) = outcome {
                     pagesUsed += pages
                     sessionsDone += 1
-                    ViewportProbe.note("userinputs.backfill", [
+                    await probes.note("userinputs.backfill", [
                         "session": summary.sessionId,
                         "pages": String(pages), "rows": String(rows),
-                    ], force: true)
+                    ], true)
                 } else {
                     sessionsDone += 1
                 }
             } catch {
                 // 失败不记账（backfiller 语义），下次冷启动重试；不刷错误，
                 // 但留探针——「灌库静默全挂」曾经只有加临时埋点才看得见（T036）。
-                ViewportProbe.note("userinputs.backfill.error", [
+                await probes.note("userinputs.backfill.error", [
                     "session": summary.sessionId,
                     "error": String(describing: error),
-                ], force: true)
+                ], true)
                 continue
             }
         }
@@ -249,13 +286,13 @@ final class MessageLayer {
     /// 所以这里只要把这一会话的灌库跑起来，面板会自己从"同步中"翻到完整。不做预算——用户此刻
     /// 就在等这一个会话，而 A2 之后单会话实测 0.3–1.1 秒（连接器 `readSession` 快照一次读完）。
     @discardableResult
-    func backfillUserInput(scope: String, sessionId: String, lastSeq: Int,
-                           roleFilterSupported: Bool) async -> Bool {
+    public func backfillUserInput(scope: String, sessionId: String, lastSeq: Int,
+                                  roleFilterSupported: Bool) async -> Bool {
         guard let store, let client = clientProvider?() else { return false }
         guard roleFilterSupported else {
-            ViewportProbe.note("userinputs.backfill.degraded", [
+            await probes.note("userinputs.backfill.degraded", [
                 "reason": "connector-missing-history-role-filter", "onDemand": "1",
-            ], force: true)
+            ], true)
             return false
         }
         guard lastSeq > 0, let address = addresses.address(for: sessionId) else { return false }
@@ -267,15 +304,15 @@ final class MessageLayer {
                     limit: 200, maxBytes: 256 * 1024, roles: ["me"]))
             }
             if case .pulled(let pages, let rows) = outcome {
-                ViewportProbe.note("userinputs.backfill", [
+                await probes.note("userinputs.backfill", [
                     "session": sessionId, "pages": String(pages), "rows": String(rows), "onDemand": "1",
-                ], force: true)
+                ], true)
             }
             return true
         } catch {
-            ViewportProbe.note("userinputs.backfill.error", [
+            await probes.note("userinputs.backfill.error", [
                 "session": sessionId, "error": String(describing: error), "onDemand": "1",
-            ], force: true)
+            ], true)
             return false
         }
     }
