@@ -28,6 +28,13 @@
 // 预演（没有 --send/--yes，或带 `--dry-run`）不判；真发之前往
 // `~/Library/Logs/dsh-feedback-approvals.log` 记一条 JSON 行（批准原话 + 收件人）。
 //
+// **发件存档**（owner 2026-10-15 要求）：真发给别人的信（审批门要拦的那类发送）落地之后，
+// 自动向 owner 账号补一条存档通知——信件全文 + 发送对象 + 发送人（owner 手发还是系统代发），
+// 不依赖人记得手动抄送。判定与审批门同一口径：需要批准的发送就是需要存档的发送，只发给
+// owner 自己的不存档（他的收件箱里本来就有）。存档的收件人只有 owner，不再走审批门；它由
+// `run()` 直接执行、不回头调 `main`，所以不会递归存档。存档失败只往 stderr 喊"需手动补档"、
+// 不改退出码——信件已经发出，退非零会让上层重试、造成重发。
+//
 // `--format`（默认 text）原样透传给 admin.py：`html` 让手机用锁死的 HTML 容器渲染（日报）。
 // `report --send` 把刚生成的 HTML 报告作为一条 HTML 通知投给 **账号**（019）：账号取
 // `--account`，没给就取 `.env.local` 的 `DSH_ACCOUNT_ID`（定时任务走这条，参数里不再有
@@ -95,7 +102,9 @@ const USAGE = `用法：
     --account 不给时取 .env.local 的 DSH_ACCOUNT_ID；两者都没有是用法错误，不会群发。报告里的
     默认标题是「DSH Mobile 运营日报 YYYY-MM-DD」（日期取覆盖日），--subject 可覆盖）
   （收件人里有非 owner 账号（.env.local 的 DSH_ACCOUNT_ID）时必须给 --owner-approved "<owner 的原话>"，
-    否则拒发（退出码 2）；只发给 owner 自己的（日报、自测）不需要。预演不判）`
+    否则拒发（退出码 2）；只发给 owner 自己的（日报、自测）不需要。预演不判）
+  （发给别人的信发送成功后，脚本自动向 owner 账号投一条「发件存档」通知：信件全文 +
+    发送对象 + 发送人。只发给 owner 自己的不存档；存档失败只警告需手动补档、不重发原件）`
 
 /// 用法错误（退出码 2）与业务失败（1）分开。
 class UsageError extends Error {}
@@ -472,13 +481,98 @@ function appendApprovalLog(parsed, approval, owner, deps = {}) {
 }
 
 /// 判定 + 放行：需要审批而没给 `--owner-approved` 就拒发；给了就留痕再继续。
+/// 返回审批原因（null = 不需要审批）——它同时是「这次发送要不要发件存档」的判定输入。
 function requireOwnerApproval(parsed, ctx, owner, io, deps) {
   const reason = approvalGate(parsed, ctx, owner)
-  if (!reason) return
+  if (!reason) return null
   const approval = String(parsed.opts.ownerApproved ?? '').trim()
   if (!approval) throw new ApprovalError(reason)
   appendApprovalLog(parsed, approval, owner, deps)
   io.err(`（已批准）${reason}\nowner 的原话：${approval}`)
+  return reason
+}
+
+// ── 发件存档（owner 2026-10-15 要求）：发给别人的信落地后自动抄送 owner 账号 ─────────
+
+/// 存档正文里的「发送对象」一行。
+export function archiveRecipients(parsed) {
+  const { sub, opts } = parsed
+  if (sub === 'reply') return `反馈线程 ${opts.thread} 的提交者`
+  if (sub === 'notify') {
+    return opts.all ? '全部账号（--all 群发）' : (opts.accounts.join('、') || '（未点名）')
+  }
+  return opts.accounts.join('、')
+}
+
+/// 存档通知自己的标题。
+export function archiveSubject(parsed, info = {}) {
+  const { sub, opts } = parsed
+  if (sub === 'reply') return `发件存档：回信 → 线程 ${opts.thread}`
+  if (sub === 'notify') return `发件存档：通知${opts.subject ? `「${opts.subject}」` : ''}`
+  return `发件存档：日报「${info.reportSubject ?? opts.subject ?? ''}」`
+}
+
+/// 原件结果 JSON（admin.py 的回包）里取 messageId / noticeId；取不到就不写这一行。
+function resultId(raw) {
+  try {
+    const data = JSON.parse(String(raw))
+    return data?.messageId ?? data?.noticeId ?? null
+  } catch {
+    return null
+  }
+}
+
+/// 存档正文：头部元数据 + 信件全文。日报是 HTML 文件不是一段文本，塞进 text 通知只会
+/// 得到一屏源码，所以那类存标识与落点（标题 + 本地文件），足够查证。
+export function archiveBody(parsed, info = {}) {
+  const { sub, opts } = parsed
+  const sender = opts.ownerApproved
+    ? `系统代发（owner 审批原话：${opts.ownerApproved}）`
+    : 'owner 手动发送'
+  const lines = [
+    '【发件存档】（feedback.mjs 自动投递）',
+    `发送对象：${archiveRecipients(parsed)}`,
+    `发送人：${sender}`,
+  ]
+  const id = resultId(info.result)
+  if (id) lines.push(`原件 ID：${id}`)
+  lines.push(`存档时间：${new Date(info.now ?? Date.now()).toISOString()}`)
+  if (sub === 'report') {
+    lines.push(`信件全文：HTML 日报「${info.reportSubject ?? opts.subject ?? ''}」，`
+      + `本地文件 ${info.reportFile ?? ''}；收件人收到的是同一条通知`)
+  } else {
+    lines.push('', '――― 信件全文 ―――', '', opts.bodyText ?? '')
+  }
+  return lines.join('\n')
+}
+
+/// 发送成功后调用：向 owner 账号投一条存档通知。收件人只有 owner，不过审批门；
+/// `run()` 直接执行、不回头调 `main`，不会递归。失败不改退出码（原件已发出，不能诱发重发）。
+export function archiveSentLetter(parsed, owner, info, { env, exists, run, io }) {
+  if (!owner) {
+    io.err('发件存档跳过：取不到 owner 账号（.env.local 的 DSH_ACCOUNT_ID），请手动补档')
+    return
+  }
+  const invocation = buildInvocation({
+    sub: 'notify',
+    opts: {
+      local: parsed.opts.local,
+      accounts: [owner],
+      all: false,
+      yes: true,
+      dryRun: false,
+      format: 'text',
+      subject: archiveSubject(parsed, info),
+      bodyText: archiveBody(parsed, info),
+      bodyFileArg: undefined,
+    },
+  }, { env, exists })
+  try {
+    const id = resultId(run(invocation.argv))
+    io.out(`（发件存档）已投给 owner 账号${id ? `：${id}` : ''}`)
+  } catch (error) {
+    io.err(`发件存档失败（信件已发出，需手动补档）：${failureText(error)}`)
+  }
 }
 
 /// 报告通知的默认标题：日期取报告文件名（`2026-10-12.html` → `2026-10-12`）。
@@ -507,7 +601,8 @@ export function buildRemoteRemoveInvocation(remoteFile, { env = {} } = {}) {
 
 /// `report --send`：ops-report → 落盘 HTML → （scp → `feedback-notify --format html` → 删远端）
 /// 完整顺序。`--local` 时报告文件本机就能读到，不走 scp、也不需要清理。
-function reportAndSend(parsed, { env, exists, run, io }) {
+/// 发给别人的日报（审批原因非空）在投递成功后自动发件存档。
+function reportAndSend(parsed, { env, exists, run, io, owner, approvalReason }) {
   const { opts } = parsed
   const invocation = buildInvocation(parsed, { env, exists })
   const { code, file } = writeReport(run(invocation.argv), opts, io)
@@ -537,9 +632,11 @@ function reportAndSend(parsed, { env, exists, run, io }) {
     return 0
   }
 
+  let notifyRaw = ''
   try {
     if (scp) run(scp)
-    io.out(run(notify.argv).trimEnd())
+    notifyRaw = run(notify.argv)
+    io.out(notifyRaw.trimEnd())
   } finally {
     // 清理失败不能盖掉真正的失败原因，所以自己咽下、只提示。
     if (remove) {
@@ -549,6 +646,10 @@ function reportAndSend(parsed, { env, exists, run, io }) {
         io.err(`远端临时文件没删掉：${remoteFile}\n${failureText(error)}`)
       }
     }
+  }
+  if (approvalReason) {
+    archiveSentLetter(parsed, owner, { result: notifyRaw, reportFile: file,
+      reportSubject: opts.subject ?? reportSubject(file) }, { env, exists, run, io })
   }
   return 0
 }
@@ -633,15 +734,17 @@ export function main(argv, deps = {}) {
         throw new UsageError('report --send 需要 --account <accountId>（可重复），'
           + '或在 .env.local 里设 DSH_ACCOUNT_ID；本命令不会群发')
       }
-      requireOwnerApproval(parsed, { env, exists, run }, owner, io, deps)
-      return reportAndSend(parsed, { env, exists, run, io })
+      const approvalReason = requireOwnerApproval(parsed, { env, exists, run }, owner, io, deps)
+      return reportAndSend(parsed, { env, exists, run, io, owner, approvalReason })
     }
-    requireOwnerApproval(parsed, { env, exists, run }, owner, io, deps)
+    const approvalReason = requireOwnerApproval(parsed, { env, exists, run }, owner, io, deps)
     const invocation = buildInvocation(parsed, { env, exists })
     if (sub === 'reply' && ((!opts.send && !opts.yes) || opts.dryRun)) return previewReply(invocation, opts, io)
     const raw = run(invocation.argv)
     if (sub === 'report') return writeReport(raw, opts, io).code
     io.out(raw.trimEnd())
+    // 发件存档：审批门要拦的那类发送（收件人里有别人）落地后，自动抄送 owner 账号。
+    if (approvalReason) archiveSentLetter(parsed, owner, { result: raw }, { env, exists, run, io })
     if (sub === 'notify' && !opts.yes) io.err('（预演）没有 --yes：服务器只统计了收件人，没有落库')
     if (sub === 'delete' && !opts.yes) io.err('（预演）没有 --yes：还没有删除任何数据')
     return 0

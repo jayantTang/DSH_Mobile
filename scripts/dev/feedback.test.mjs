@@ -185,12 +185,12 @@ test('reply 默认预演：runner 一次都不调用，正文原样打出来', (
 })
 
 test('reply --send 才真的执行，正文作远端参数传过去', () => {
-  const fake = spy('{"ok":true,"threadId":"th_x"}')
+  const fake = spy('{"ok":true,"threadId":"th_x","messageId":"fm_1"}')
   const log = approvalLogFile()
   const { code } = run(['reply', '--thread', 'th_x', '--body', '您好 & 谢谢', '--send', ...APPROVED],
     { runner: fake.runner, approvalLog: log })
   assert.equal(code, 0)
-  assert.equal(fake.calls.length, 1, '给了批准就直发，不再多读一次线程清单')
+  assert.equal(fake.calls.length, 2, '给了批准就直发（不重读线程清单），发完自动存档')
   const remote = fake.calls[0].at(-1)
   assert.match(remote, /feedback-reply --thread th_x --body /)
   assert.match(remote, /您好 & 谢谢/)
@@ -208,10 +208,11 @@ test('--dry-run 压过 --send/--yes，一次写都不发', () => {
   run(['notify', '--body', '正文', '--yes', '--dry-run'], { runner: notify.runner })
   assert.ok(!notify.calls[0].at(-1).includes('--yes'))
 
-  // reply 也接受 --yes 这种写法（命令契约把两个开关并列写过）。
+  // reply 也接受 --yes 这种写法（命令契约把两个开关并列写过）；真发后跟着一条存档。
   const alias = spy('{"ok":true}')
   run(['reply', '--thread', 'th_x', '--body', '正文', '--yes', ...APPROVED], { runner: alias.runner })
-  assert.equal(alias.calls.length, 1)
+  assert.equal(alias.calls.length, 2, '发信一次 + 发件存档一次')
+  assert.match(alias.calls[1].at(-1), /feedback-notify --body /)
 })
 
 test('notify 默认预演：服务器只统计收件人，argv 里没有 --yes', () => {
@@ -664,7 +665,7 @@ test('report --send：先 scp，再按 html 通知，最后删远端临时文件
   assert.equal(code, 0)
   const local = join(outDir, '2026-10-12.html')
   const remote = '/tmp/dsh-feedback-report-2026-10-12.html'
-  assert.equal(fake.calls.length, 4, `应当是 ops-report → scp → notify → 清理：${fake.calls.length} 次调用`)
+  assert.equal(fake.calls.length, 5, `应当是 ops-report → scp → notify → 清理 → 存档：${fake.calls.length} 次调用`)
   assert.match(fake.calls[0].at(-1), /ops-report --days 30/)
 
   const scp = fake.calls[1]
@@ -684,6 +685,14 @@ test('report --send：先 scp，再按 html 通知，最后删远端临时文件
 
   assert.equal(fake.calls[3][0], 'ssh')
   assert.equal(fake.calls[3].at(-1), `rm -f ${remote}`)
+  // 收件人里有别人（acc_a、acc_b）：投递成功后自动给 owner 存档（text，记标识与落点）。
+  const archive = fake.calls[4].at(-1)
+  assert.equal(fake.calls[4][0], 'ssh')
+  assert.match(archive, /feedback-notify --body /)
+  assert.match(archive, new RegExp(`--account ${OWNER}`))
+  assert.match(archive, /发件存档：日报「DSH Mobile 运营日报 2026-10-12」/)
+  assert.match(archive, /发送对象：acc_a、acc_b/)
+  assert.match(archive, /HTML 日报/)
   assert.equal(out.split('\n')[0], local)
   assert.match(readFileSync(local, 'utf8'), /<svg /)
 })
@@ -763,13 +772,18 @@ test('report --send --local 直接读本机报告文件，不 scp 也不清理',
   const { code } = run(['report', '--out', outDir, '--send', '--account', 'acc_a', '--local', ...APPROVED],
     { runner: fake.runner, approvalLog: approvalLogFile() })
   assert.equal(code, 0)
-  assert.equal(fake.calls.length, 2)
+  assert.equal(fake.calls.length, 3, 'ops-report → notify → 发件存档')
   assert.ok(fake.calls.every((argv) => argv[0] !== 'scp' && argv[0] !== 'ssh'))
   const notify = fake.calls[1]
   assert.ok(notify.includes(join(outDir, '2026-10-12.html')), notify.join(' '))
   assert.ok(notify.includes('--format') && notify.includes('html'))
   assert.ok(notify.includes('--yes'))
   assert.ok(!notify.at(-1).includes('rm -f'))
+  // 存档同样走本机 admin.py，收件人只有 owner。
+  const archive = fake.calls[2]
+  assert.ok(archive.includes(join(ROOT, 'relay', 'admin.py')), archive.join(' '))
+  assert.ok(archive.includes('--account'), archive.join(' '))
+  assert.match(archive.join(' '), /发件存档：日报/)
 })
 
 test('renderAgentPlist 把占位符换成绝对路径', () => {
@@ -925,4 +939,73 @@ test('审批门：留痕写不进去就不发（不留无凭据的发送）', ()
   assert.equal(code, 2)
   assert.equal(fake.calls.length, 0)
   assert.match(err, /留痕/)
+})
+
+// ── 发件存档（owner 2026-10-15 要求）：发给别人的信落地后自动抄送 owner 账号 ─────────
+
+test('发件存档：notify 发给别人的信，存档含全文、发送对象、发送人与 noticeId', () => {
+  const fake = spy('{"ok":true,"noticeId":"nt_9"}')
+  const { code, out } = run(
+    ['notify', '--body', '维护通知正文', '--subject', '维护', '--account', 'acc_b', '--yes', ...APPROVED],
+    { runner: fake.runner, approvalLog: approvalLogFile() })
+  assert.equal(code, 0)
+  assert.equal(fake.calls.length, 2, '一次发信 + 一次存档')
+  const archive = fake.calls[1].at(-1)
+  assert.match(archive, new RegExp(`--account ${OWNER} `))
+  assert.match(archive, /--yes/)
+  assert.ok(!archive.includes('acc_b --yes') || archive.includes(`--account ${OWNER}`))
+  assert.match(archive, /发件存档：通知「维护」/)
+  assert.match(archive, /发送对象：acc_b/)
+  assert.match(archive, /系统代发（owner 审批原话：同意，发吧）/)
+  assert.match(archive, /原件 ID：nt_9/)
+  assert.match(archive, /维护通知正文/)
+  assert.match(out, /（发件存档）已投给 owner 账号：nt_9/)
+})
+
+test('发件存档：群发 --all 也存档，发送对象写"全部账号"', () => {
+  const fake = spy('{"ok":true,"noticeId":"nt_10"}')
+  run(['notify', '--body', '公告', '--all', '--yes', ...APPROVED],
+    { runner: fake.runner, approvalLog: approvalLogFile() })
+  assert.equal(fake.calls.length, 2)
+  assert.match(fake.calls[1].at(-1), /发送对象：全部账号（--all 群发）/)
+})
+
+test('发件存档：只发给 owner 自己的不存档（自己的收件箱里本来就有）', () => {
+  const fake = spy('{"ok":true,"noticeId":"nt_11"}')
+  const { code } = run(['notify', '--body', '给自己', '--account', OWNER, '--yes'],
+    { runner: fake.runner, approvalLog: approvalLogFile() })
+  assert.equal(code, 0)
+  assert.equal(fake.calls.length, 1, '不抄送自己')
+
+  // 回复 owner 自己的线程同样不存档。
+  const ownThread = spy(JSON.stringify([{ threadId: 'th_mine', source: { accountId: OWNER } }]))
+  run(['reply', '--thread', 'th_mine', '--body', '正文', '--send'],
+    { runner: ownThread.runner, approvalLog: approvalLogFile() })
+  assert.equal(ownThread.calls.length, 2, '读清单判归属 + 回信，没有第三条存档')
+})
+
+test('发件存档：存档失败不改退出码（原件已发出，退非零会让上层重发），stderr 喊补档', () => {
+  const calls = []
+  const runner = (argv) => {
+    calls.push(argv)
+    if (calls.length === 2) throw new Error('存档挂了')   // 2 = 存档那次
+    return '{"ok":true,"noticeId":"nt_12"}'
+  }
+  const { code, err } = run(['notify', '--body', '通知', '--account', 'acc_b', '--yes', ...APPROVED],
+    { runner, approvalLog: approvalLogFile() })
+  assert.equal(code, 0, '原件已发出，不得退非零诱发重发')
+  assert.equal(calls.length, 2)
+  assert.match(err, /发件存档失败（信件已发出，需手动补档）/)
+})
+
+test('发件存档：预演与拒发都不存档', () => {
+  const dry = spy('{"ok":true,"dryRun":true}')
+  run(['notify', '--body', '通知', '--all', '--yes', '--dry-run'],
+    { runner: dry.runner, approvalLog: approvalLogFile() })
+  assert.equal(dry.calls.length, 1, '预演只有服务器那次统计')
+
+  const refused = spy('{"ok":true}')
+  run(['notify', '--body', '通知', '--account', 'acc_b', '--yes'],
+    { runner: refused.runner, approvalLog: approvalLogFile() })
+  assert.equal(refused.calls.length, 0, '没批准连原件都没发，更没有存档')
 })
