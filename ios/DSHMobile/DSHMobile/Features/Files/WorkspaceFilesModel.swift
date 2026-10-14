@@ -396,14 +396,13 @@ final class WorkspaceFilesModel {
             lastSample[key] = (now, received)
             return
         }
-        let seconds = now.timeIntervalSince(previous.at)
-        let bytes = received - previous.bytes
-        // A sample shorter than a blink divides by ~0 and reports a spike.
-        guard seconds > 0.15, bytes > 0 else { return }
-        let instant = Double(bytes) / seconds / 1_048_576
-        // Smoothed, because a single window's jitter is not a speed.
-        let smoothed = transferRates[key].map { $0 * 0.6 + instant * 0.4 } ?? instant
-        transferRates[key] = smoothed
+        // 采样太短（会算出尖峰）或字节没增长（重传/乱序）时：**保留上一次的速率**，
+        // 不报假数字。这两条边界在 DSHKit 的 `TransferSpeed` 里并有单测。
+        guard let instant = TransferSpeed.instant(
+            previous: TransferSpeed.Sample(at: previous.at.timeIntervalSince1970, bytes: previous.bytes),
+            current: TransferSpeed.Sample(at: now.timeIntervalSince1970, bytes: received)
+        ) else { return }
+        transferRates[key] = TransferSpeed.smoothed(previous: transferRates[key], instant: instant)
         lastSample[key] = (now, received)
     }
 
@@ -583,9 +582,10 @@ final class WorkspaceFilesModel {
         let published = try WorkspaceFileCache.publish(
             scopeId: scopeId, path: key, version: info.version
         )
-        if let started = transferStarted[key], fetched.bytes > 0 {
-            let seconds = max(0.001, Date().timeIntervalSince(started))
-            transferRates[key] = Double(fetched.bytes) / seconds / 1_048_576
+        if let started = transferStarted[key],
+           let average = TransferSpeed.average(bytes: fetched.bytes,
+                                               seconds: Date().timeIntervalSince(started)) {
+            transferRates[key] = average
         }
         WorkspaceFileCache.trim()
         transfers[key] = .ready(bytes: fetched.bytes, url: published, version: info.version)
