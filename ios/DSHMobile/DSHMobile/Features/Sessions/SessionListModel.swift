@@ -13,14 +13,10 @@ import Observation
 final class SessionListModel {
 
     /// One working-directory group.
-    struct Group: Identifiable {
-        let id: String
-        let path: String
-        var title: String
-        var sessions: [SessionSummary]
-        /// Subagent transcripts keyed by their parent session id.
-        var children: [String: [SessionSummary]]
-    }
+    ///
+    /// 形状已下沉到 DSHKit（`SessionGrouping.Group`，spec 023 的 S3c）：这里只留一个 typealias，
+    /// 视图侧的名字与用法一字不变。
+    typealias Group = SessionGrouping.Group
 
     enum Phase: Equatable {
         case idle
@@ -648,107 +644,40 @@ final class SessionListModel {
     /// session in — and it keeps the exception the phone needs, because a
     /// session created here has to be reachable before it has any content.
     private func showsInList(_ session: SessionSummary) -> Bool {
-        guard session.blank else { return true }
-        return session.sessionId == currentSessionId || session.sessionId == lastCreatedSessionId
+        // 判据只有一份，在 DSHKit：分组（`SessionGrouping.partition`）与这里的"已归档"区共用它。
+        SessionGrouping.showsInList(session,
+                                    currentSessionId: currentSessionId,
+                                    lastCreatedSessionId: lastCreatedSessionId)
     }
 
     private func regroup() {
-        let query = searchText.trimmingCharacters(in: .whitespaces).lowercased()
-
-        // Archived sessions are hidden on the desktop, so they are hidden here.
-        // The same goes for sessions that have never run a turn: the host keeps
-        // one for every "new session" that was opened and never used, and the
-        // desktop never lists them as rows.
-        let visible = allSessions.filter {
-            !archivedSessionIds.contains($0.sessionId) && showsInList($0)
-        }
-
-        let filtered: [SessionSummary]
-        if query.isEmpty {
-            filtered = visible
-        } else {
-            filtered = visible.filter { session in
-                if session.displayTitle.lowercased().contains(query) { return true }
-                if let cwd = session.cwd, cwd.lowercased().contains(query) { return true }
-                if let objective = session.projections?.values?.goal?.goal?.objective,
-                   objective.lowercased().contains(query) {
-                    return true
-                }
-                return false
-            }
-        }
-
-        // Subagent transcripts are reached through the session that spawned
-        // them, never as list rows of their own.
-        var byParent: [String: [SessionSummary]] = [:]
-        var topLevel: [SessionSummary] = []
-        for session in filtered {
-            if session.isSubagent, let parent = session.parentSessionId {
-                byParent[parent, default: []].append(session)
-            } else {
-                topLevel.append(session)
-            }
-        }
-        let byId = Dictionary(topLevel.map { ($0.sessionId, $0) }, uniquingKeysWith: { first, _ in first })
-
-        // Group exactly the way the desktop sidebar does: the host's workspace
-        // list, each holding the sessions the user assigned to it, in the
-        // user's own order. Deriving groups from the working directory instead
-        // — which is what this used to do — invents groups the user never made
-        // and shows sessions the desktop keeps folded away.
-        var assigned = Set<String>()
-        var built: [Group] = []
-        for workspace in workspaces {
-            let members = workspace.sessionIds.compactMap { id -> SessionSummary? in
-                guard let session = byId[id] else { return nil }
-                assigned.insert(id)
-                return session
-            }
-            guard !members.isEmpty else { continue }
-            built.append(
-                Group(
-                    id: workspace.workspaceId,
-                    path: workspace.path,
-                    title: workspace.title,
-                    sessions: members,
-                    children: byParent
-                )
-            )
-        }
-
-        // Anything the user has not filed into a workspace. The desktop keeps
-        // this folded; it is reference material, not current work.
-        let unfiled = topLevel
-            .filter { !assigned.contains($0.sessionId) }
-            .sorted { $0.updatedAt > $1.updatedAt }
-        let orphans = byParent
-            .filter { !byId.keys.contains($0.key) }
-            .flatMap(\.value)
+        // 切分判定（谁上列表、怎么按 workspace 分配、子代理挂给谁、没归档的归哪里）在 DSHKit
+        // 的 `SessionGrouping` 里，带单测；这里只负责取用 + 排序 + 文案（都是 App 的东西）。
+        let partition = SessionGrouping.partition(
+            sessions: allSessions,
+            archivedIds: archivedSessionIds,
+            workspaces: workspaces,
+            query: searchText,
+            currentSessionId: currentSessionId,
+            lastCreatedSessionId: lastCreatedSessionId
+        )
 
         if workspaces.isEmpty {
-            // No workspace list was ever read: group by directory so the list
-            // is still usable. The header states that this is a fallback, and
-            // unfiled sessions stay folded below either way.
-            groups = orderGroups(
-                Dictionary(grouping: topLevel, by: { $0.cwd ?? "" })
-                    .map { path, sessions in
-                        Group(
-                            id: path.isEmpty ? "__none__" : path,
-                            path: path,
-                            title: path.isEmpty ? "未分组" : (path as NSString).lastPathComponent,
-                            sessions: sessions.sorted { $0.updatedAt > $1.updatedAt },
-                            children: byParent
-                        )
-                    }
-            )
+            // 从没读到过 workspace 列表：按目录兜底。空目录名的那一组拿"未分组"这句文案
+            // （文案归 App，DSHKit 那边返回空标题）。
+            groups = orderGroups(partition.directoryGroups.map { group in
+                var titled = group
+                if titled.title.isEmpty { titled.title = String(localized: "未分组") }
+                return titled
+            })
             // 折叠桶也按状态排序（待答 → 运行中 → 未看 → 看过），而不是只按时间：
             // 一个在等用户回答的会话被压到 48 条折叠列表的中间，等于没做这个状态。
-            loose = orderSessions(unfiled + orphans)
+            loose = orderSessions(partition.loose)
             return
         }
 
-        groups = orderGroups(built)
-        loose = (unfiled + orphans).sorted { $0.updatedAt > $1.updatedAt }
+        groups = orderGroups(partition.workspaceGroups)
+        loose = partition.loose.sorted { $0.updatedAt > $1.updatedAt }
     }
 
     /// Groups with something running first, then the rest; each part by the
