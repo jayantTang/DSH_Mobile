@@ -296,3 +296,20 @@ func wireNotice(_ noticeId: String, subject: String? = nil, body: String,
     FeedbackNotice(noticeId: noticeId, subject: subject, body: body, format: format,
                    createdAt: createdAt, read: read)
 }
+
+extension FeedbackLocalStoreTests {
+    /// 028：票据写入走注入端口，不碰真实钥匙串（此前 submit 成功路径会写真 Keychain）。
+    func testTicketWriterGoesThroughTheInjectedPort() throws {
+        var memory: [String: String] = [:]
+        let store = FeedbackLocalStore(
+            root: nil,
+            ticketReader: { memory[$0] },
+            ticketWriter: { memory[$0] = $1 })
+        XCTAssertTrue(store.tickets().isEmpty)
+
+        let ticket = FeedbackTicket(threadId: "t-1", ticketKey: "k-1")
+        try store.save(ticket)
+        XCTAssertEqual(store.tickets().map(\.threadId), ["t-1"])
+        XCTAssertNotNil(memory["feedback.tickets"], "the write must land in the injected store")
+    }
+}

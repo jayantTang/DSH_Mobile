@@ -112,12 +112,14 @@ public final class MessageLayer {
 
     /// 懒建磁盘层与内存层（各一次，进程级复用）。`client` 每次调用现取：
     /// 未连接时 fetch 抛 `notConnected`，预取方按"跳过"处理。
-    public func attach(client: @escaping @Sendable () -> DSHClient?) {
+    /// `storePath`：测试注入临时目录；生产传 nil 走默认路径，行为不变。
+    public func attach(client: @escaping @Sendable () -> DSHClient?,
+                       storePath: URL? = nil) {
         clientProvider = client
         if store == nil {
             // 磁盘层建不起来（如存储被拒）时整套 009 叠加自动缺位，
             // 列表/会话都回退到现有行为——不劣于现状。
-            store = try? MessageStore()
+            store = try? MessageStore(path: storePath)
         }
         guard let store, pipeline == nil else { return }
         let addresses = self.addresses

@@ -10,6 +10,10 @@ import RelayKit
 /// - **记录镜像**放 `Caches/feedback/inbox.json`：只增不减地跟着服务端刷新，属于可重建
 ///   数据，设置页的「清除本地缓存」清它、**不**清凭据。
 public struct FeedbackLocalStore: Sendable {
+    /// 票据读/写端口（默认 Keychain；测试注入内存实现，避免碰真实钥匙串）。
+    public let ticketReader: @Sendable (String) -> String?
+    public let ticketWriter: @Sendable (String, String) throws -> Void
+
 
     /// Keychain 里那份凭据的名字；与现有 `profile-<uuid>` 同一套 `Keychain`。
     static let ticketsAccount = "feedback.tickets"
@@ -20,8 +24,12 @@ public struct FeedbackLocalStore: Sendable {
     /// 争抢进程级环境变量（与 `RelayResumeStore` 的教训一致）。
     public let root: URL?
 
-    init(root: URL? = nil) {
+    public init(root: URL? = nil,
+                ticketReader: @escaping @Sendable (String) -> String? = { Keychain.get($0) },
+                ticketWriter: @escaping @Sendable (String, String) throws -> Void = { try Keychain.set($1, for: $0) }) {
         self.root = root
+        self.ticketReader = ticketReader
+        self.ticketWriter = ticketWriter
     }
 
     /// 生产是 `Caches/feedback`；`#if DEBUG` 下允许测试用环境变量重定向，
@@ -47,14 +55,14 @@ public struct FeedbackLocalStore: Sendable {
     ///
     /// 排序、去重、截断、坏数据容忍都在 DSHKit（`FeedbackTicketList`，有单测）；这里只读 Keychain。
     public func tickets() -> [FeedbackTicket] {
-        FeedbackTicketList.decode(Keychain.get(Self.ticketsAccount))
+        FeedbackTicketList.decode(ticketReader(Self.ticketsAccount))
     }
 
     /// 记下一条凭据（同线程覆盖旧的），并把最旧的挤出去。
     public func save(_ ticket: FeedbackTicket) throws {
         let merged = FeedbackTicketList.saving(ticket, into: tickets())
         // Keychain 存字符串；凭据只含 base64url 与 UUID，UTF-8 往返无损。
-        try Keychain.set(try FeedbackTicketList.encode(merged), for: Self.ticketsAccount)
+        try ticketWriter(Self.ticketsAccount, FeedbackTicketList.encode(merged))
     }
 
     public func ticket(for threadId: String) -> FeedbackTicket? {
