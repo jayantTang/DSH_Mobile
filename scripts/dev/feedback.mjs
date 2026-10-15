@@ -591,22 +591,20 @@ export function archiveSentLetter(parsed, owner, info, { env, exists, run, io })
     io.err('发件存档跳过：取不到 owner 账号（.env.local 的 DSH_ACCOUNT_ID），请手动补档')
     return
   }
-  const invocation = buildInvocation({
-    sub: 'notify',
-    opts: {
-      local: parsed.opts.local,
-      accounts: [owner],
-      all: false,
-      yes: true,
-      dryRun: false,
-      format: 'text',
-      subject: archiveSubject(parsed, info),
-      bodyText: archiveBody(parsed, info),
-      bodyFileArg: undefined,
-    },
-  }, { env, exists })
+  const archiveOpts = {
+    local: parsed.opts.local,
+    accounts: [owner],
+    all: false,
+    yes: true,
+    dryRun: false,
+    format: 'text',
+    subject: archiveSubject(parsed, info),
+    bodyText: archiveBody(parsed, info),
+    bodyFileArg: undefined,
+  }
   try {
-    const id = resultId(run(invocation.argv))
+    const id = resultId(runLetterCommand({ sub: 'notify', opts: archiveOpts },
+      { env, exists, run, io }))
     io.out(`（发件存档）已投给 owner 账号${id ? `：${id}` : ''}`)
   } catch (error) {
     io.err(`发件存档失败（信件已发出，需手动补档）：${failureText(error)}`)
@@ -656,6 +654,27 @@ export function mergeReportData(relayReport, mailStats) {
   return merged
 }
 
+/// 服务器上还没部署 mail（`/opt/dsh-mail` 不存在）时的判定：只认"目标缺失"，
+/// 别的失败（线程不存在、审批、网络）不许触发回退——那会把真错误搅浑。
+export function mailTargetMissing(error) {
+  const text = failureText(error)
+  return text.includes('dsh-mail') && /No such file or directory|not found/i.test(text)
+}
+
+/// 跑一条**信件类**命令：先打 mail；服务器还没部署 mail 时回退中转旧路径
+/// （生产切换前的过渡期；切换后这条回退自然死掉——目标存在了就不进来）。
+/// 双轨期两端行为逐字一致（M2 的移植验收），回退不改变语义。
+export function runLetterCommand({ sub, opts }, { env, exists, run, io }) {
+  const mail = buildInvocation({ sub, opts }, { env, exists }, 'mail')
+  try {
+    return run(mail.argv)
+  } catch (error) {
+    if (!mailTargetMissing(error)) throw error
+    io.err('（回退）服务器上还没有 mail 服务，信件命令暂走中转旧路径；生产切换后此提示消失')
+    return run(buildInvocation({ sub, opts }, { env, exists }, 'relay').argv)
+  }
+}
+
 /// HTML 报告先落服务器上的临时路径：三万字节当 ssh 参数元素传会撞命令行长度与引号。
 export function remoteReportPath(file) {
   return `/tmp/dsh-feedback-report-${basename(file)}`
@@ -678,7 +697,7 @@ export function buildRemoteRemoveInvocation(remoteFile, { env = {} } = {}) {
 /// 日报的合并取数：中转 ops-report + mail feedback-stats，本机合并（I-3）。
 /// `feedback-stats` 的剔除口径要中转的调试设备 id（`DSH-` 前缀/测试台机型），
 /// 所以一共三次只读调用：device-list（中转）→ ops-report（中转）→ feedback-stats（mail）。
-function fetchReportData(parsed, { env, exists, run }) {
+function fetchReportData(parsed, { env, exists, run, io }) {
   const { opts } = parsed
   const devices = JSON.parse(run(relayDevicesInvocation(parsed, { env, exists }).argv))
   const debugDevices = debugDeviceIds(devices)
@@ -687,7 +706,14 @@ function fetchReportData(parsed, { env, exists, run }) {
     sub: 'feedback-stats',
     opts: { local: opts.local, days: opts.days, asOf: opts.asOf, debugDevices },
   }, { env, exists }, 'mail')
-  const mailStats = JSON.parse(run(stats.argv))
+  let mailStats
+  try {
+    mailStats = JSON.parse(run(stats.argv))
+  } catch (error) {
+    if (!mailTargetMissing(error)) throw error
+    io.err('（回退）服务器上还没有 mail 服务，日报的反馈板块暂用中转的旧计算；生产切换后此提示消失')
+    mailStats = { ok: false }
+  }
   return mergeReportData(relayReport, mailStats)
 }
 
@@ -697,23 +723,21 @@ function fetchReportData(parsed, { env, exists, run }) {
 /// 成功后自动发件存档。
 function reportAndSend(parsed, { env, exists, run, io, owner, approvalReason }) {
   const { opts } = parsed
-  const merged = fetchReportData(parsed, { env, exists, run })
+  const merged = fetchReportData(parsed, { env, exists, run, io })
   const { code, file } = writeReport(JSON.stringify(merged), opts, io)
   if (code !== 0) return code
 
   const remoteFile = remoteReportPath(file)
-  const notify = buildInvocation({
-    sub: 'notify',
-    opts: {
-      ...opts,
-      // 报告一律按 HTML 投递；正文用文件（`--body-file`），不走 `--body`。
-      format: 'html',
-      bodyFileArg: opts.local ? file : remoteFile,
-      bodyText: undefined,
-      subject: opts.subject ?? reportSubject(file),
-      yes: true,
-    },
-  }, { env, exists }, 'mail')
+  const notifyOpts = {
+    ...opts,
+    // 报告一律按 HTML 投递；正文用文件（`--body-file`），不走 `--body`。
+    format: 'html',
+    bodyFileArg: opts.local ? file : remoteFile,
+    bodyText: undefined,
+    subject: opts.subject ?? reportSubject(file),
+    yes: true,
+  }
+  const notify = buildInvocation({ sub: 'notify', opts: notifyOpts }, { env, exists }, 'mail')
   const scp = opts.local ? null : buildScpInvocation(file, remoteFile, { env })
   const remove = opts.local ? null : buildRemoteRemoveInvocation(remoteFile, { env })
 
@@ -728,7 +752,7 @@ function reportAndSend(parsed, { env, exists, run, io, owner, approvalReason }) 
   let notifyRaw = ''
   try {
     if (scp) run(scp)
-    notifyRaw = run(notify.argv)
+    notifyRaw = runLetterCommand({ sub: 'notify', opts: notifyOpts }, { env, exists, run, io })
     io.out(notifyRaw.trimEnd())
   } finally {
     // 清理失败不能盖掉真正的失败原因，所以自己咽下、只提示。
@@ -847,7 +871,7 @@ export function main(argv, deps = {}) {
     }
     // report / report-data：双侧取数（中转 ops-report + mail feedback-stats）后合并。
     if (sub === 'report' || sub === 'report-data') {
-      const merged = fetchReportData(parsed, { env, exists, run })
+      const merged = fetchReportData(parsed, { env, exists, run, io })
       if (sub === 'report-data') {
         io.out(JSON.stringify(merged))
         return 0
@@ -856,7 +880,7 @@ export function main(argv, deps = {}) {
     }
     const invocation = buildInvocation(parsed, { env, exists })
     if (sub === 'reply' && ((!opts.send && !opts.yes) || opts.dryRun)) return previewReply(invocation, opts, io)
-    const raw = run(invocation.argv)
+    const raw = runLetterCommand(parsed, { env, exists, run, io })
     io.out(raw.trimEnd())
     // 发件存档：审批门要拦的那类发送（收件人里有别人）落地后，自动抄送 owner 账号。
     if (approvalReason) archiveSentLetter(parsed, owner, { result: raw }, { env, exists, run, io })
