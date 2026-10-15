@@ -8,28 +8,22 @@ import SnapshotTesting
 /// 断言消息一律 ASCII。
 final class ComponentSnapshotTests: XCTestCase {
 
-    /// 固定环境：iPhone 尺寸、浅色、简体中文。
-    private func traits() -> SnapshottingTraits {
-        SnapshottingTraits()
-            .traits(UITraitCollection(traitsFrom: [
-                UITraitCollection(userInterfaceStyle: .light),
-                UITraitCollection(locale: Locale(identifier: "zh-Hans")),
-            ]))
-    }
+    /// 固定环境：固定尺寸 + 浅色外观（locale 跟随包内 defaultLocalization）。
+    private let traits = UITraitCollection(userInterfaceStyle: .light)
 
     func test_statusDot_ok() {
         let view = StatusDot(level: .ok)
-        assertSnapshot(of: view, as: .image(layout: .sizeThatFits), traits: traits())
+        assertSnapshot(of: view, as: .image(layout: .sizeThatFits, traits: traits))
     }
 
     func test_badge_neutral() {
         let view = Badge(text: "badge")
-        assertSnapshot(of: view, as: .image(layout: .sizeThatFits), traits: traits())
+        assertSnapshot(of: view, as: .image(layout: .sizeThatFits, traits: traits))
     }
 
     func test_emptyState() {
         let view = EmptyStateView(icon: "tray", title: "empty", message: "nothing here")
-        assertSnapshot(of: view, as: .image(layout: .fixed(width: 390, height: 240)), traits: traits())
+        assertSnapshot(of: view, as: .image(layout: .fixed(width: 390, height: 240), traits: traits))
     }
 }
 #endif

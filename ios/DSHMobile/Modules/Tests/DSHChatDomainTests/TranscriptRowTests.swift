@@ -10,12 +10,12 @@ import XCTest
 /// surface (no memberwise-init shortcut into the kit's types) and means the
 /// fixtures are the same shapes the host sends.
 ///
-/// Deliberately **not** here: streaming and paging driven through `ChatModel`.
-/// `ChatModel.attach(store:hub:)` wants a live `ConnectionStore`, and the store
-/// takes no carrier of its own, so `FakeCarrier` cannot reach the chat model's
-/// transport. Faking that seam would mean changing product code, so the
-/// streaming fold is exercised directly (`ChatTimeline.apply(_: AssistantStreamFrame)`)
-/// and the full path with a real relay stays with the simulator lanes.
+/// Deliberately **not** here: paging driven through `ChatModel`. This file folds
+/// frames directly, one layer below the model, which is what makes it a check on
+/// the fold itself. Since 026 the model's transport *is* reachable from a test —
+/// `FakeLinkService.clientOverride` — and the cases that go through it live in
+/// `ChatModelTransportTests` / `ChatModelLiveStreamTests`. The full path with a
+/// real relay still stays with the simulator lanes.
 @MainActor
 final class TranscriptRowTests: XCTestCase {
 

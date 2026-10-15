@@ -31,8 +31,12 @@ public final class FakeLinkService: LinkService {
         }
     }
     public var scopeId: String? { activeProfile?.id.uuidString }
-    public var client: DSHClient? { nil }
-    public var link: LinkGateway { fatalError("FakeLinkService.link must not be called in tests") }
+    /// 测试可注入的假客户端（`DSHClient(carrier: FakeCarrier())`）。
+    public var clientOverride: DSHClient?
+    public var client: DSHClient? { clientOverride }
+    public var link: LinkGateway {
+        LinkGateway(clientProvider: { [clientOverride] in clientOverride })
+    }
 
     public func supports(_ capability: String) -> Bool { capabilities.contains(capability) }
     public func uploadFile(fileURL: URL, name: String, sessionId: String) async throws -> StagedFile {

@@ -26,6 +26,14 @@ final class HostSmokeTests: XCTestCase {
     }
 
     /// 宿主环境变量读到的值与 App 自己的判断一致（防止两边各读一份、各写一套判断）。
+    /// iOS 宿主下钥匙串可用（025 P5：模块包里的 Keychain 用例在 macOS 跑，这里留一条宿主侧兜底）。
+    func testKeychainRoundTripOnHost() throws {
+        let account = "dsh-unit-test.host-keychain"
+        defer { Keychain.remove(account) }
+        try Keychain.set("v", for: account)
+        XCTAssertEqual(Keychain.get(account), "v")
+    }
+
     func testHostDetectionMatchesEnvironment() {
         let fromEnvironment = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
         XCTAssertEqual(DSHMobileApp.isUnitTestHost, fromEnvironment)

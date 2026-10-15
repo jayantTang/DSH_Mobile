@@ -7,6 +7,10 @@ import XCTest
 final class FoundationSmokeTests: XCTestCase {
 
     // MARK: - Keychain（只用测试账号，收尾必删）
+    //
+    // 只在 macOS 跑：裸 xctest 包在 iOS 仿真器上没有钥匙串 entitlement（-34018），
+    // iOS 侧覆盖由 DSHMobileTests 宿主冒烟保留一条（025 P5）。
+#if os(macOS)
 
     private let testAccount = "dsh-unit-test.round-trip"
 
@@ -38,6 +42,7 @@ final class FoundationSmokeTests: XCTestCase {
         Keychain.remove("dsh-unit-test.never-written")
         XCTAssertNil(Keychain.get("dsh-unit-test.never-written"))
     }
+#endif
 
     // MARK: - InstallChannel
 

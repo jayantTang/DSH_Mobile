@@ -83,7 +83,11 @@ let package = Package(
 
         // L1 聊天单元：转写/流式/分页的领域层，与转写界面层
         .target(name: "DSHChatDomain", dependencies: ["DSHCore", "DSHConnectionAPI", "DSHFoundation", dshKit]),
-        .testTarget(name: "DSHChatDomainTests", dependencies: ["DSHChatDomain", dshKit]),
+        // 传输注入缝用例要 FakeLinkService + FakeCarrier（026 的 clientOverride），
+        // 并直接点名 HostEventHub / ConnectionProfile。
+        .testTarget(name: "DSHChatDomainTests", dependencies: [
+            "DSHChatDomain", "DSHTestingSupport", "DSHCore", "DSHConnectionAPI", dshKit,
+        ]),
         .target(name: "DSHChatUI", dependencies: ["DSHChatDomain", "DSHDesign", "DSHCore"]),
 
         // L1 设置单元
