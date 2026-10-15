@@ -37,13 +37,10 @@ const BANDS = [
     label: 'iOS 侧（iPhone App）',
     match: (id) => id.startsWith('ios/'),
     sections: [
-      { id: 'ios-shell', label: 'App 壳与入口', match: (id) => id === 'ios/app/App' },
-      { id: 'ios-features', label: 'Features（页面模块）', match: (id) => id.startsWith('ios/app/Features/') },
-      { id: 'ios-support', label: '基础支撑（Support）', match: (id) => id === 'ios/app/Support' },
-      { id: 'ios-design', label: '设计系统（Design）', match: (id) => id === 'ios/app/Design' },
-      // 整改 024 后新增的目录：探针的自动化驱动。整个目录只在 DEBUG 构建参与编译，
-      // 依赖方向也只有一个：工具 → 基础设施 / 协议层，反向必须为 0。
-      { id: 'ios-debug', label: '调试工具（仅 DEBUG 构建）', match: (id) => id === 'ios/app/Debug' },
+      { id: 'ios-shell', label: 'App 壳与装配（App target 剩余）', match: (id) => id.startsWith('ios/app/') },
+      { id: 'ios-domain', label: 'Domain 层（业务规则，禁 UI）', match: (id) => id.startsWith('ios/mod/') && /Domain|API$/.test(id) },
+      { id: 'ios-ui', label: 'Feature UI 层', match: (id) => id.startsWith('ios/mod/') && /UI$/.test(id) },
+      { id: 'ios-shared', label: 'Core / Design / Foundation / 测试支撑', match: (id) => id.startsWith('ios/mod/') },
       { id: 'ios-protocol', label: '协议与数据层（DSHKit）', match: (id) => id === 'ios/kit/DSHKit' },
       { id: 'ios-relaykit', label: '中转客户端（RelayKit）', match: (id) => id === 'ios/kit/RelayKit' },
     ],
@@ -96,6 +93,10 @@ function defineGroups() {
   // iOS SPM 包：按 target 目录分组（权威边界）
   const kitRoot = join(ROOT, 'ios/DSHMobile/DSHKit/Sources')
   for (const target of dirsIn(kitRoot)) add(`ios/kit/${target}`, 'ios-kit', join(kitRoot, target))
+
+  // Modules 本地包（025/026 模块化重构后的新家）：一个 target 一个分组，名字就是 import 名
+  const modulesRoot = join(ROOT, 'ios/DSHMobile/Modules/Sources')
+  for (const target of dirsIn(modulesRoot)) add(`ios/mod/${target}`, 'ios-mod', join(modulesRoot, target))
 
   for (const name of dirsIn(join(ROOT, 'plugins'))) add(`plugin/${name}`, 'js', join(ROOT, 'plugins', name))
   for (const name of dirsIn(join(ROOT, 'scripts'))) add(`scripts/${name}`, 'js', join(ROOT, 'scripts', name))
@@ -222,11 +223,18 @@ function unusedLegacy() {
 
 /** iOS App → kit 模块：`import DSHKit` 是权威边界，其余 import 记进外部依赖。 */
 function addSwiftImportEdges(groups, nodes, edges, externals) {
+  // SPM target 名（Modules 包 + DSHKit 包）到分组的映射：import 名就是 target 名
+  const byModule = new Map()
   for (const group of groups) {
-    if (group.layer !== 'ios-app') continue
+    if (group.layer === 'ios-mod' || group.layer === 'ios-kit') {
+      byModule.set(group.id.split('/').pop(), group.id)
+    }
+  }
+  for (const group of groups) {
+    if (group.layer !== 'ios-app' && group.layer !== 'ios-mod') continue
     for (const name of nodes.get(group.id).swiftImports) {
-      const target = groups.find((item) => item.id === `ios/kit/${name}`)
-      if (target) edges.add(group.id, target.id, 'authoritative', `import ${name}`)
+      const target = byModule.get(name)
+      if (target) edges.add(group.id, target, 'authoritative', `import ${name}`)
       else externals.set(`ios-app|${name}`, (externals.get(`ios-app|${name}`) ?? 0) + 1)
     }
   }

@@ -76,12 +76,16 @@ npm run arch:deep -- --force   # 忽略缓存全量重跑
 - 顶部固定显示 commit、分支、生成时间、未提交改动数：**先确认这几个值再看图**，否则可能在看旧快照。
 - 模块图**按部署角色分带**，这是看这张图的第一层信息（语言是实现细节，放在节点副标题里）：
 
-| 带 | 包含 | 配色 |
+| 带 | 子块 | 配色 |
 |---|---|---|
-| iOS 侧（iPhone App） | `ios/DSHMobile/DSHMobile`（App 与各 Feature）与 `ios/DSHMobile/DSHKit`（DSHKit / RelayKit） | 蓝 |
+| iOS 侧（iPhone App） | App 壳与装配（App target 剩余：App/Support/Debug）；**Domain 层**（`Modules/Sources/*Domain` 与 `*API`，禁 UI）；**Feature UI 层**（`*UI`）；Core / Design / Foundation / 测试支撑；协议与数据层（DSHKit）；中转客户端（RelayKit） | 蓝 / 橙 / 青 |
 | 中转（公网主机） | `relay/` | 紫 |
-| 电脑侧 DSH（连接器与插件） | `plugins/`、`skills/`、`sidecars/`；`plugin/mobile-link` 是**连接器**，节点右上角单独标注 | 绿 |
+| 电脑侧 DSH（连接器与插件） | `plugins/`、`skills/`、`sidecars/`；`plugin/mobile-link` 是**连接器** | 绿 |
 | 仓库工程（不进产品链路） | `scripts/`、`test/tools` | 灰 |
+
+025/026 模块化重构后，iOS 业务代码住进 `ios/DSHMobile/Modules/`（本地 SPM 包，按 Feature 拆 Domain/UI 两层），
+App target 只剩壳与装配；模块间的编译期边界由 `scripts/dev/check-module-boundaries.mjs`（`npm run check:module-boundaries`）守护，
+本页负责把实际依赖画出来供人看，两者互补。
 
   链路是 `iPhone App → WSS → 中转 → WSS → 连接器 → 127.0.0.1 → dsh web`。
 - 工具条可按角色过滤（全部 / iOS 侧 / 中转 / 电脑侧 DSH / 仓库工程），可关掉启发式边，可只看环。

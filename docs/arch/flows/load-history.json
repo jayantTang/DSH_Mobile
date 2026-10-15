@@ -3,8 +3,8 @@
   "title": "打开会话并回溯历史",
   "description": "列表点进会话后向上翻页取历史。分页状态机在 TranscriptPager，取页通道在 TranscriptPageFetcher，两个方向（更早/更新）走同一条状态机。",
   "steps": [
-    { "id": "list", "label": "会话列表点击", "file": "ios/DSHMobile/DSHMobile/Features/Sessions/SessionListView.swift", "symbol": "SessionListView", "kind": "ui" },
-    { "id": "follow", "label": "ChatModel 跟随该会话", "file": "ios/DSHMobile/DSHMobile/Features/Chat/ChatModel+Follow.swift", "symbol": "ChatModel", "kind": "logic" },
+    { "id": "list", "label": "会话列表点击", "file": "ios/DSHMobile/Modules/Sources/DSHSessionsUI/SessionListView.swift", "symbol": "SessionListView", "kind": "ui" },
+    { "id": "follow", "label": "ChatModel 跟随该会话", "file": "ios/DSHMobile/Modules/Sources/DSHChatDomain/ChatModel+Follow.swift", "symbol": "ChatModel", "kind": "logic" },
     { "id": "pager", "label": "TranscriptPager 分页状态机", "file": "ios/DSHMobile/DSHKit/Sources/DSHKit/TranscriptPager.swift", "symbol": "TranscriptPager", "kind": "logic" },
     { "id": "fetcher", "label": "TranscriptPageFetcher 选通道取页", "file": "ios/DSHMobile/DSHKit/Sources/DSHKit/TranscriptPageFetcher.swift", "symbol": "TranscriptPageFetcher", "kind": "logic" },
     { "id": "client", "label": "DSHClient.historyWindow", "file": "ios/DSHMobile/DSHKit/Sources/DSHKit/DSHClient.swift", "symbol": "DSHClient", "kind": "net" },
