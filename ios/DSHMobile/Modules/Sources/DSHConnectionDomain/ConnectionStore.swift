@@ -23,7 +23,7 @@ public final class ConnectionStore {
 
     /// App 注入的可观测探针钩子（默认无操作）。
     /// RootView 在启动时把它接到 ViewportProbe.note。
-    public static var probeNote: ((_ kind: String, _ fields: [String: String], _ force: Bool) -> Void)? = nil
+    public var probeNote: ((_ kind: String, _ fields: [String: String], _ force: Bool) -> Void)? = nil
 
     /// A DSH instance discovered through pairing, awaiting a name.
     public struct Pairing: Sendable {

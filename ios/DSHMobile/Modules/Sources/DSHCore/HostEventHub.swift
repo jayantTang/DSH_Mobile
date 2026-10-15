@@ -13,7 +13,7 @@ import Observation
 @Observable
 public final class HostEventHub {
     /// App 注入的可观测探针钩子（默认无操作）。
-    public static var probeNote: ((_ kind: String, _ fields: [String: String], _ force: Bool) -> Void)? = nil
+    public var probeNote: ((_ kind: String, _ fields: [String: String], _ force: Bool) -> Void)? = nil
 
     public init() {}
 
@@ -116,7 +116,7 @@ public final class HostEventHub {
         case .ready(let clientId, let home):
             // 每次重连都会拿到新的 clientId——补投是否发生，就看 ready 之后有没有
             // hub.waterfall。
-            Self.probeNote?("hub.ready", ["client": String(clientId.prefix(8))], true)
+            probeNote?("hub.ready", ["client": String(clientId.prefix(8))], true)
             self.clientId = clientId
             if !home.isEmpty { hostHome = home }
             isLive = true
@@ -125,7 +125,7 @@ public final class HostEventHub {
             // 待答状态是"手机看不看得出 agent 在等你"的唯一来源，所以这里留一行
             // 诊断日志（只在 -DSHViewportProbe 时写文件）：排查"host 明明挂着提问、
             // 手机却没反应"时，第一件事就是看这行有没有出现。
-            Self.probeNote?("hub.waterfall", [
+            probeNote?("hub.waterfall", [
                 "event": waterfall.event,
                 "agent": waterfall.agentId,
                 "pending": String(pending.count + 1),
@@ -135,7 +135,7 @@ public final class HostEventHub {
             pending.apply(event)
 
         case .cancelled(let eventId):
-            Self.probeNote?("hub.cancelled", ["id": eventId], true)
+            probeNote?("hub.cancelled", ["id": eventId], true)
             pending.apply(event)
 
         case .emit, .unknown:

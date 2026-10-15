@@ -32,7 +32,7 @@ import Observation
 @Observable
 public final class SessionRouter {
     /// App 注入的可观测探针钩子（默认无操作）。
-    public static var probeNote: ((_ kind: String, _ fields: [String: String], _ force: Bool) -> Void)? = nil
+    public var probeNote: ((_ kind: String, _ fields: [String: String], _ force: Bool) -> Void)? = nil
     /// App-wide instance. A notification response is delivered to the delegate,
     /// which has no reference to any view, so this cannot be per-view.
     public static let shared = SessionRouter()
@@ -76,7 +76,7 @@ public final class SessionRouter {
         let request = box.put(sessionId: sessionId)
         requestedSessionId = request.sessionId
         routingToken = "\(request.generation)"
-        Self.probeNote?("route.request", [
+        probeNote?("route.request", [
             "sid": request.sessionId,
             "generation": "\(request.generation)",
         ], true)
@@ -90,7 +90,7 @@ public final class SessionRouter {
     public func take() -> SessionRequest? {
         guard let request = box.take() else { return nil }
         requestedSessionId = nil
-        Self.probeNote?("route.take", [
+        probeNote?("route.take", [
             "sid": request.sessionId,
             "generation": "\(request.generation)",
         ], true)

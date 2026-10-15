@@ -17,7 +17,7 @@ import Observation
 public final class SessionListModel {
     public init() {}
     /// App 注入的探针钩子（025）。
-    nonisolated(unsafe) public static var probeNote: ((String, [String: String], Bool) -> Void)? = nil
+    public var probeNote: ((String, [String: String], Bool) -> Void)? = nil
 
     /// One working-directory group.
     ///
@@ -533,7 +533,7 @@ public final class SessionListModel {
         // T010：快照首帧之上叠加 009 磁盘层的摘要（异步，磁盘读，不阻塞首帧）。
         Task { await overlayMessageStoreSnippets() }
         // 诊断：冷启动到底有没有用上缓存（排查"打开是空的"时第一眼要看的就是这行）。
-        Self.probeNote?("snapshot.loaded", ["items": String(snapshot.items.count)], true)
+        probeNote?("snapshot.loaded", ["items": String(snapshot.items.count)], true)
     }
 
     /// Remembers the list for the next cold start. Metadata only.
@@ -553,19 +553,19 @@ public final class SessionListModel {
         )
         let fingerprint = snapshot.contentFingerprint
         guard fingerprint != lastSavedFingerprint else {
-            Self.probeNote?("snapshot.unchanged", ["items": String(allSessions.count)], false)
+            probeNote?("snapshot.unchanged", ["items": String(allSessions.count)], false)
             return
         }
         lastSavedFingerprint = fingerprint
         snapshotStore.save(snapshot)
         // 规模可见：会话上千时这个 RPC 的载荷会开始咬人（协议里没有分页可用，
         // 见 DSHClient.sessions 的注释），到时候能在日志里先看见。
-        Self.probeNote?("snapshot.saved", [
+        probeNote?("snapshot.saved", [
             "items": String(allSessions.count),
             "workspaces": String(workspaces.count),
         ], true)
         if allSessions.count > 2_000 {
-            Self.probeNote?("snapshot.large", ["items": String(allSessions.count)], true)
+            probeNote?("snapshot.large", ["items": String(allSessions.count)], true)
         }
     }
 

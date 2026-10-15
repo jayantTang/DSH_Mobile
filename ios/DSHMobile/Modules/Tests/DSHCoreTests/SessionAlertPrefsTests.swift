@@ -20,7 +20,6 @@ final class SessionAlertPrefsTests: XCTestCase {
     }
 
     override func tearDown() {
-        SessionAlertPrefs.onChange = nil
         isolated?.removeDomain()
         isolated = nil
         super.tearDown()
@@ -70,7 +69,7 @@ final class SessionAlertPrefsTests: XCTestCase {
         let prefs = SessionAlertPrefs(defaults: isolated.defaults)
         let fired = expectation(description: "onChange fired per write")
         fired.expectedFulfillmentCount = 2
-        SessionAlertPrefs.onChange = { fired.fulfill() }
+        prefs.onChange = { fired.fulfill() }
 
         prefs.notifyOnTurnEnd = false
         prefs.notifyOnAttention = false

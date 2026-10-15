@@ -66,7 +66,7 @@ public extension SessionListModel {
                     session: .init(scope: scope, sessionId: summary.sessionId), newestSeq: newest)
             }
             if !targets.isEmpty {
-                SessionListModel.probeNote?("prefetch.coldstart", ["sessions": String(targets.count)], true)
+                probeNote?("prefetch.coldstart", ["sessions": String(targets.count)], true)
                 await pipeline.prefetchLatestPages(
                     targets, persistedRanges: persistedRanges, limit: 10, concurrency: 3)
             }

@@ -28,6 +28,17 @@ struct RootView: View {
     @State private var attachmentImages = AttachmentImages()
     @State private var viewLog = SessionViewLog()
     @State private var listModel = SessionListModel()
+
+    /// 026：探针从 static 改实例后，由装配点在构造期注入（行为与 static 版一致）。
+    init() {
+        let note: (String, [String: String], Bool) -> Void = { kind, fields, force in
+            ViewportProbe.note(kind, fields, force: force)
+        }
+        store.probeNote = note
+        hub.probeNote = note
+        SessionRouter.shared.probeNote = note
+        listModel.probeNote = note
+    }
     @State private var chatModel = ChatModel()
     /// 009 消息层（磁盘层 + 内存层枢纽）：列表/会话的冷启动叠加都从它取数。
     @State private var messageLayer = MessageLayer.withAppProbes()

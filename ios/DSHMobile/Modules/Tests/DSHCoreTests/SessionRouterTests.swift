@@ -18,12 +18,6 @@ import XCTest
 @MainActor
 final class SessionRouterTests: XCTestCase {
 
-    override func tearDown() {
-        // The probe hook is process-wide; leaving it wired would leak into
-        // every case after this one.
-        SessionRouter.probeNote = nil
-        super.tearDown()
-    }
 
     // MARK: - Take once, own once
 
@@ -102,12 +96,12 @@ final class SessionRouterTests: XCTestCase {
             var fields: [[String: String]] = []
         }
         let notes = Notes()
-        SessionRouter.probeNote = { kind, fields, _ in
+        let router = SessionRouter()
+        router.probeNote = { (kind: String, fields: [String: String], _: Bool) in
             notes.kinds.append(kind)
             notes.fields.append(fields)
         }
 
-        let router = SessionRouter()
         router.request(sessionId: "session-1")
         _ = router.take()
 

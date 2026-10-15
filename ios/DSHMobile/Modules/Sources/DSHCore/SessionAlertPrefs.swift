@@ -14,7 +14,7 @@ public final class SessionAlertPrefs {
     public var notifyOnTurnEnd: Bool {
         didSet {
             defaults.set(notifyOnTurnEnd, forKey: Keys.turnEnd)
-            Task { await Self.onChange?() }
+            Task { await self.onChange?() }
         }
     }
 
@@ -22,7 +22,7 @@ public final class SessionAlertPrefs {
     public var notifyOnAttention: Bool {
         didSet {
             defaults.set(notifyOnAttention, forKey: Keys.attention)
-            Task { await Self.onChange?() }
+            Task { await self.onChange?() }
         }
     }
 
@@ -30,7 +30,7 @@ public final class SessionAlertPrefs {
     public var isAuthorized = false
 
     /// 偏好变化后的同步钩子（App 装配到 APNSRegistrar.switchesChanged）。
-    nonisolated(unsafe) public static var onChange: (() async -> Void)? = nil
+    public var onChange: (() async -> Void)? = nil
 
     private let defaults: UserDefaults
 
