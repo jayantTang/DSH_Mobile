@@ -124,7 +124,7 @@ def _relay_shaped_db(path: pathlib.Path) -> str:
 def test_migrate_copies_by_column_idempotently_and_never_touches_the_source(tmp_path):
     source = _relay_shaped_db(tmp_path / "state.db")
     target = str(tmp_path / "mail.db")
-    Store(target).close()   # 建好 mail 侧的表（生产里服务启动过一次即如此）
+    # 目标库**不预建表**：迁表脚本自己建（切换顺序是先迁表、再上路由）。
 
     # dry-run：一个字都不写。
     dry = subprocess.run([sys.executable, str(MIGRATE), "--from", source, "--to", target,

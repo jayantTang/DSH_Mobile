@@ -8,7 +8,10 @@
 
 - 按列名拷贝（`PRAGMA table_info` 读目标库的列序，两边列序一致有测试钉住），
   `INSERT OR REPLACE` 幂等：切换窗口内重跑不会翻倍，只会补齐。
-- `--dry-run` 只数源库行数、打印将拷什么，一个字都不写。
+- 目标库缺表时**自动建**（用 mail 自己的 store 建表语句）——切换顺序因此可以是
+  「先迁表、再跑 deploy.sh 上路由」：片段上线的那一刻数据已经就位，不存在
+  「新信落空库、老信看不见」的窗口。
+- `--dry-run` 只数源库行数、打印将拷什么，一个字都不写（建表除外——空表无数据）。
 - 不删源库的任何行：中转那边的 4 张表原样保留，作为回滚窗口的退路
   （设计文档：回滚 = 切回 Caddy 旧片段，旧数据仍在）。
 - 源库缺表（还没跑过带信件的中转）不算错误：打印 0 行继续——这让它可以
@@ -18,8 +21,13 @@
 from __future__ import annotations
 
 import argparse
+import pathlib
 import sqlite3
 import sys
+
+# 目标库建表用 mail 自己的 store（同一份 SCHEMA，不另抄一份）。
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+from store import Store  # noqa: E402
 
 TABLES = ("feedbackThreads", "feedbackMessages", "notices", "noticeDeliveries")
 
@@ -44,6 +52,9 @@ def main(argv: list[str] | None = None) -> int:
 
     source = sqlite3.connect(f"file:{args.source}?mode=ro", uri=True)
     source.row_factory = sqlite3.Row
+    # 目标库先按 mail 的 SCHEMA 建齐（已存在的表不动）：先迁表、再上路由的顺序
+    # 因此成立，片段上线时数据已就位。
+    Store(args.target).close()
     target = sqlite3.connect(args.target)
 
     copied = 0
