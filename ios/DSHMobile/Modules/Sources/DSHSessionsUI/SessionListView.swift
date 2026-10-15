@@ -1,3 +1,5 @@
+#if os(iOS)
+@_exported import DSHSessionsDomain
 import DSHConnectionDomain
 import DSHCore
 import DSHDesign
@@ -11,16 +13,33 @@ import SwiftUI
 /// handful of rows, so anything that is reference material rather than current
 /// work — subagent transcripts, sessions with no workspace — stays collapsed
 /// until asked for.
-struct SessionListView: View {
+/// 装配钩子（025）：会话单元不认识信箱单元，入口与计数由 App 注入。
+public enum SessionsHooks {
+    /// 拉一次信箱（冷启动/前台时）。
+    nonisolated(unsafe) public static var refreshFeedback: () async -> Void = {}
+    /// 未读数。
+    nonisolated(unsafe) public static var feedbackUnreadCount: () -> Int = { 0 }
+    /// 信箱页内容（AnyView 包装，信箱单元在另一个 target 里由 App 注入）。
+    nonisolated(unsafe) public static var feedbackView: () -> AnyView = { AnyView(EmptyView()) }
+}
+
+public struct SessionListView: View {
     @Environment(\.openURL) private var openURL
     @Environment(ConnectionStore.self) private var store
     @Environment(HostEventHub.self) private var hub
     @Environment(UpdateChecker.self) private var updates
-    @Bindable var model: SessionListModel
-    var onOpenConnections: () -> Void
-    var onOpenSettings: () -> Void
+    @Bindable public var model: SessionListModel
+    public var onOpenConnections: () -> Void
+    public var onOpenSettings: () -> Void
     /// Called with a freshly created session's id so the caller can open it.
-    var onOpenSession: (String) -> Void = { _ in }
+    public var onOpenSession: (String) -> Void = { _ in }
+
+    public init(model: SessionListModel, onOpenConnections: @escaping () -> Void, onOpenSettings: @escaping () -> Void, onOpenSession: @escaping (String) -> Void = { _ in }) {
+        self.model = model
+        self.onOpenConnections = onOpenConnections
+        self.onOpenSettings = onOpenSettings
+        self.onOpenSession = onOpenSession
+    }
 
     @State private var isLooseExpanded = false
     @State private var isArchivedExpanded = false
@@ -31,7 +50,7 @@ struct SessionListView: View {
     @State private var justArchived: SessionSummary?
     @State private var archiveFailure: String?
 
-    var body: some View {
+    public var body: some View {
         @Bindable var model = model
 
         VStack(spacing: 0) {
@@ -64,7 +83,7 @@ struct SessionListView: View {
         // 不等连接：离线冷启动也要先把上次的列表画出来（否则就是空白+转圈）。
         .task { model.loadCachedList() }
         // 反馈未读：冷启动不会触发 `ScenePhase` 变化事件，所以列表出现时就拉一次（SC-003）。
-        .task { await FeedbackCenter.shared.applicationBecameActive() }
+        .task { await SessionsHooks.refreshFeedback() }
         // 待答集合的唯一来源是 `$events` 的 waterfall（host 的会话摘要里没有这个
         // 信息：等回答时它照样报 running）。把它同步进 model，行状态与计数才看得见它；
         // hub 是 @Observable，这里读一下就等于订阅了变化。
@@ -94,7 +113,7 @@ struct SessionListView: View {
             }
         }
         .sheet(isPresented: $isShowingFeedback) {
-            FeedbackCenterView()
+            SessionsHooks.feedbackView()
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if let archived = justArchived { archivedNotice(archived) }
@@ -122,7 +141,7 @@ struct SessionListView: View {
                 } label: {
                     Image(systemName: "text.bubble")
                         .overlay(alignment: .topTrailing) {
-                            if FeedbackCenter.shared.unreadCount > 0 {
+                            if SessionsHooks.feedbackUnreadCount() > 0 {
                                 Text(unreadBadgeText)
                                     .font(DSHTheme.Typography.micro)
                                     .foregroundStyle(.white)
@@ -155,7 +174,7 @@ struct SessionListView: View {
 
     /// 角标上的数字：超过两位数显示 `99+`。没数字就没角标（`unreadCount == 0` 时不占位）。
     private var unreadBadgeText: String {
-        let count = FeedbackCenter.shared.unreadCount
+        let count = SessionsHooks.feedbackUnreadCount()
         return count > 99 ? "99+" : "\(count)"
     }
 
@@ -462,7 +481,7 @@ private struct ArchivedHeader: View {
     let count: Int
     @Binding var isExpanded: Bool
 
-    var body: some View {
+    public var body: some View {
         Button {
             withAnimation(.snappy(duration: 0.18)) { isExpanded.toggle() }
         } label: {
@@ -496,7 +515,7 @@ private struct WorkspaceHeader: View {
     let path: String
     let home: String?
 
-    var body: some View {
+    public var body: some View {
         HStack(spacing: DSHTheme.Spacing.hairline) {
             Image(systemName: "folder")
                 .font(.system(size: 10, weight: .medium))
@@ -535,7 +554,7 @@ private struct LooseHeader: View {
     var waiting: Int = 0
     @Binding var isExpanded: Bool
 
-    var body: some View {
+    public var body: some View {
         Button {
             withAnimation(.snappy(duration: 0.18)) { isExpanded.toggle() }
         } label: {
@@ -573,8 +592,8 @@ private struct LooseHeader: View {
 
 /// Marks the session the app just created, so it can be told apart from the
 /// other untitled rows.
-struct CreatedBadge: View {
-    var body: some View {
+public struct CreatedBadge: View {
+    public var body: some View {
         Text("刚创建")
             .font(DSHTheme.Typography.micro)
             .foregroundStyle(DSHTheme.brand)
@@ -589,7 +608,7 @@ struct CreatedBadge: View {
 /// The model name and full path deliberately do not appear here — both are
 /// available on the session itself, where they are relevant, and repeating them
 /// on every row is what made the list feel dense.
-struct SessionRow: View {
+public struct SessionRow: View {
     let session: SessionSummary
     /// What the leading dot says. Passed in rather than read from the model:
     /// the row is a pure view, and the model needs the phone's own view-log to
@@ -604,7 +623,7 @@ struct SessionRow: View {
 
     private var projections: SessionProjectionValues? { session.projections?.values }
 
-    var body: some View {
+    public var body: some View {
         HStack(spacing: DSHTheme.Spacing.tight) {
             if isChild {
                 // An elbow keeps the parent/child relationship legible without
@@ -747,10 +766,10 @@ struct SessionRow: View {
 // MARK: - Connection status
 
 /// The toolbar button that shows link health and opens the connection sheet.
-struct ConnectionStatusButton: View {
+public struct ConnectionStatusButton: View {
     let store: ConnectionStore
 
-    var body: some View {
+    public var body: some View {
         HStack(spacing: DSHTheme.Spacing.hairline) {
             StatusDot(level: level, size: 7, animated: isBusy)
             Text(label)
@@ -801,7 +820,7 @@ private struct OutdatedConnectorBanner: View {
     let baseline: String
     let onDismiss: () -> Void
 
-    var body: some View {
+    public var body: some View {
         HStack(spacing: DSHTheme.Spacing.tight) {
             Image(systemName: "desktopcomputer")
                 .font(.system(size: 13, weight: .medium))
@@ -843,7 +862,7 @@ private struct UpdateBanner: View {
     let published: UpdateChecker.Published
     let onInstall: () -> Void
 
-    var body: some View {
+    public var body: some View {
         Button(action: onInstall) {
             HStack(spacing: DSHTheme.Spacing.tight) {
                 Image(systemName: "arrow.down.circle.fill")
@@ -874,3 +893,4 @@ private struct UpdateBanner: View {
         .accessibilityLabel("有新版本 \(published.build)，点此更新")
     }
 }
+#endif

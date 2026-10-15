@@ -1,3 +1,4 @@
+#if os(iOS)
 import DSHConnectionDomain
 import DSHCore
 import DSHDesign
@@ -355,3 +356,4 @@ public struct ConnectionView: View {
         if case .failed(let message) = store.state { error = message }
     }
 }
+#endif

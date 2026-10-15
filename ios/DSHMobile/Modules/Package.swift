@@ -29,6 +29,8 @@ let package = Package(
         .library(name: "DSHConnectionAPI", targets: ["DSHConnectionAPI"]),
         .library(name: "DSHConnectionDomain", targets: ["DSHConnectionDomain"]),
         .library(name: "DSHConnectionUI", targets: ["DSHConnectionUI"]),
+        .library(name: "DSHSessionsDomain", targets: ["DSHSessionsDomain"]),
+        .library(name: "DSHSessionsUI", targets: ["DSHSessionsUI"]),
         .library(name: "DSHTestingSupport", targets: ["DSHTestingSupport"]),
     ],
     dependencies: [
@@ -54,6 +56,10 @@ let package = Package(
 
         // L1 连接单元界面层
         .target(name: "DSHConnectionUI", dependencies: ["DSHConnectionDomain", "DSHDesign", "DSHCore"]),
+
+        // L1 会话单元
+        .target(name: "DSHSessionsDomain", dependencies: ["DSHCore", "DSHFoundation", dshKit]),
+        .target(name: "DSHSessionsUI", dependencies: ["DSHSessionsDomain", "DSHDesign", "DSHCore"]),
 
         // 测试辅助：仅测试依赖
         .target(name: "DSHTestingSupport", dependencies: ["DSHCore", "DSHConnectionAPI", dshKit]),

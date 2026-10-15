@@ -20,38 +20,39 @@ import Observation
 ///   cannot be a file.
 @MainActor
 @Observable
-final class DirectoryBrowserModel {
+public final class DirectoryBrowserModel {
+    public init() {}
 
     /// The level on screen, once one has been read.
-    private(set) var listing: HostDirectoryListing?
-    private(set) var isLoading = false
+    public private(set) var listing: HostDirectoryListing?
+    public private(set) var isLoading = false
     /// Why the last attempt failed, if it did.
-    private(set) var failure: String?
+    public private(set) var failure: String?
     /// What the path field holds. Typing is the fast way to a deep directory,
     /// so the field is not merely a label: it is a jump target.
-    var pathDraft = ""
+    public var pathDraft = ""
 
     private weak var store: ConnectionStore?
 
-    func attach(to store: ConnectionStore) {
+    public func attach(to store: ConnectionStore) {
         self.store = store
     }
 
-    var currentPath: String? { listing?.path }
-    var entries: [HostDirectoryEntry] { listing?.entries ?? [] }
-    var crumbs: [HostDirectoryEntry] { listing?.crumbs ?? [] }
-    var truncated: Bool { listing?.truncated ?? false }
+    public var currentPath: String? { listing?.path }
+    public var entries: [HostDirectoryEntry] { listing?.entries ?? [] }
+    public var crumbs: [HostDirectoryEntry] { listing?.crumbs ?? [] }
+    public var truncated: Bool { listing?.truncated ?? false }
 
     /// Whether "up" has anywhere to go.
-    var canGoUp: Bool { HostPath.canGoUp(from: listing?.path) }
+    public var canGoUp: Bool { HostPath.canGoUp(from: listing?.path) }
 
     /// Reads the host's home directory, which is where a person starts.
-    func start() async {
+    public func start() async {
         await open(nil)
     }
 
     /// Reads one level and shows it. `nil` asks the host for its home.
-    func open(_ path: String?) async {
+    public func open(_ path: String?) async {
         guard let client = store?.client else {
             failure = "尚未连接"
             return
@@ -70,17 +71,17 @@ final class DirectoryBrowserModel {
         }
     }
 
-    func open(_ entry: HostDirectoryEntry) async {
+    public func open(_ entry: HostDirectoryEntry) async {
         await open(entry.path)
     }
 
-    func goUp() async {
+    public func goUp() async {
         guard let path = listing?.path, let parent = HostPath.parent(of: path) else { return }
         await open(parent)
     }
 
     /// Jumps to whatever the path field says.
-    func submitDraft() async {
+    public func submitDraft() async {
         let trimmed = pathDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         await open(trimmed)
@@ -88,7 +89,7 @@ final class DirectoryBrowserModel {
 
     /// Creates one folder inside the level on screen and steps into it.
     @discardableResult
-    func createFolder(named name: String) async -> String? {
+    public func createFolder(named name: String) async -> String? {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
         guard let client = store?.client, let parent = listing?.path else {
@@ -106,7 +107,7 @@ final class DirectoryBrowserModel {
     }
 
     /// A path as the desktop client would show it.
-    func displayPath(_ path: String) -> String {
+    public func displayPath(_ path: String) -> String {
         PathFormat.short(path, home: store?.hostHome ?? listing?.home)
     }
 

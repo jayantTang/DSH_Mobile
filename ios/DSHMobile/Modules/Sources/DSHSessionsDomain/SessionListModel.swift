@@ -14,15 +14,18 @@ import Observation
 /// that spawned them.
 @MainActor
 @Observable
-final class SessionListModel {
+public final class SessionListModel {
+    public init() {}
+    /// App 注入的探针钩子（025）。
+    nonisolated(unsafe) public static var probeNote: ((String, [String: String], Bool) -> Void)? = nil
 
     /// One working-directory group.
     ///
     /// 形状已下沉到 DSHKit（`SessionGrouping.Group`，spec 023 的 S3c）：这里只留一个 typealias，
     /// 视图侧的名字与用法一字不变。
-    typealias Group = SessionGrouping.Group
+    public typealias Group = SessionGrouping.Group
 
-    enum Phase: Equatable {
+    public enum Phase: Equatable {
         case idle
         case loading
         case loaded
@@ -36,20 +39,28 @@ final class SessionListModel {
     /// list is history — archived sessions, sessions never used, sessions from
     /// months ago — and labelling a group with the number of conversations it
     /// has ever held is how "48 个会话" ends up over three rows.
-    struct LiveWorkspace: Identifiable {
-        let id: String
-        let path: String
-        let title: String
-        let sessions: [SessionSummary]
+    public struct LiveWorkspace: Identifiable {
+        public let id: String
+        public let path: String
+        public let title: String
+        public let sessions: [SessionSummary]
 
         /// 真在跑的：等用户回应的那些 host 也报 running，不能算进来。
         /// 两个计数由 model 在建组时算好（只有它知道 hub 的待答集合）。
-        var runningCount: Int = 0
-        var waitingCount: Int = 0
-        var latestActivity: Double { sessions.map(\.updatedAt).max() ?? 0 }
+        public var runningCount: Int = 0
+        public var waitingCount: Int = 0
+        public var latestActivity: Double { sessions.map(\.updatedAt).max() ?? 0 }
+        public init(id: String, path: String, title: String, sessions: [SessionSummary], runningCount: Int = 0, waitingCount: Int = 0) {
+            self.id = id
+            self.path = path
+            self.title = title
+            self.sessions = sessions
+            self.runningCount = runningCount
+            self.waitingCount = waitingCount
+        }
     }
 
-    private(set) var phase: Phase = .idle
+    public private(set) var phase: Phase = .idle
 
     /// 上一次成功刷新落盘的快照（冷启动先拿它把行画出来，再和 host 对账）。
     private let snapshotStore = SessionListSnapshotStore()
@@ -58,24 +69,24 @@ final class SessionListModel {
     ///
     /// 有它才能在离线时把话说明白：列表能看，但后面跟一句"显示的是上次的数据"，
     /// 而不是让用户以为这就是现在的状态。
-    private(set) var isShowingSnapshot = false
+    public private(set) var isShowingSnapshot = false
 
     /// 上一次写盘的快照内容指纹（内容没变就不重写）。
     private var lastSavedFingerprint: Int?
-    private(set) var groups: [Group] = []
+    public private(set) var groups: [Group] = []
     /// The desktop client's explicit workspace list, in its own order.
-    private(set) var workspaces: [Workspace] = []
+    public private(set) var workspaces: [Workspace] = []
 
     /// Set when archiving failed, so the swipe can say why instead of looking
     /// like nothing happened.
-    var archiveError: String?
+    public var archiveError: String?
 
     /// The session the app just created.
     ///
     /// A brand-new session has no title, so its row looks like every other
     /// untitled one — marking it is how the user (and a test) can tell which
     /// row is the one they just made.
-    private(set) var lastCreatedSessionId: String?
+    public private(set) var lastCreatedSessionId: String?
 
     /// The session the app currently has open, when it has one.
     ///
@@ -83,7 +94,7 @@ final class SessionListModel {
     /// it is the selected one — it is that workspace's provisional "new session"
     /// row, not history. Reproducing that rule needs the phone to know which row
     /// is the open one.
-    var currentSessionId: String? {
+    public var currentSessionId: String? {
         didSet { if currentSessionId != oldValue { regroup() } }
     }
 
@@ -98,14 +109,14 @@ final class SessionListModel {
     /// left out above: there is nothing in them to find. The host's archived set
     /// also collects ids of sessions that were never used, and listing those
     /// would put the grey row back on screen one section further down.
-    var archivedSessions: [SessionSummary] {
+    public var archivedSessions: [SessionSummary] {
         allSessions
             .filter { archivedSessionIds.contains($0.sessionId) && showsInList($0) }
             .sorted { $0.updatedAt > $1.updatedAt }
     }
 
     /// A path as the desktop client would show it.
-    func displayPath(_ path: String) -> String {
+    public func displayPath(_ path: String) -> String {
         PathFormat.short(path, home: store?.hostHome)
     }
 
@@ -114,7 +125,7 @@ final class SessionListModel {
     /// session summary does **not** say this (`running` stays true while a
     /// question waits, measured 2026-09-21), so the waterfall event is the only
     /// source.
-    var waitingSessionIds: Set<String> = []
+    public var waitingSessionIds: Set<String> = []
 
     /// Records every session the list is seeing for the first time as viewed.
     ///
@@ -138,8 +149,8 @@ final class SessionListModel {
     /// The chat stream only reports turns for the session on screen, so the way
     /// to know that *any* session finished is the host's own `running` flag,
     /// which this list already refreshes.
-    private(set) var finishedSignal = 0
-    private(set) var lastFinished: SessionSummary?
+    public private(set) var finishedSignal = 0
+    public private(set) var lastFinished: SessionSummary?
 
     /// Sessions the host reported as running on the previous refresh.
     private var previouslyRunning: Set<String> = []
@@ -150,7 +161,7 @@ final class SessionListModel {
     /// Surfaced in the UI on purpose: a silent fallback looks exactly like
     /// correct behaviour while showing the wrong grouping, which is how a stale
     /// install and a failed fetch became indistinguishable.
-    private(set) var isUsingFallbackGrouping = false
+    public private(set) var isUsingFallbackGrouping = false
 
     /// Sessions the user has archived on the desktop; kept out of the list.
     private var archivedSessionIds: Set<String> = []
@@ -160,16 +171,16 @@ final class SessionListModel {
     /// These are reference material rather than things the user is working on,
     /// so the list keeps them behind one collapsed disclosure instead of
     /// interleaving them with live work.
-    private(set) var loose: [SessionSummary] = []
-    private(set) var lastRefreshed: Date?
+    public private(set) var loose: [SessionSummary] = []
+    public private(set) var lastRefreshed: Date?
 
-    var searchText: String = "" {
+    public var searchText: String = "" {
         didSet { if searchText != oldValue { regroup() } }
     }
 
     /// Every session the list knows about, grouped or not. Read by the
     /// new-session sheet, which offers the directories they run in.
-    private(set) var allSessions: [SessionSummary] = []
+    public private(set) var allSessions: [SessionSummary] = []
 
     private var eventTask: Task<Void, Never>?
     private var refreshDebounce: Task<Void, Never>?
@@ -181,9 +192,9 @@ final class SessionListModel {
     /// 009 消息层（磁盘层聚合数据 + 预取瀑布）；nil 时整套叠加缺位，回退现有行为。
     weak var messageLayer: MessageLayer?
     /// 冷启动首帧各行叠加的摘要（sessionId → snippet，来自 MessageStore）。
-    var coldStartSnippets: [String: String] = [:]
+    public var coldStartSnippets: [String: String] = [:]
     /// 这台电脑本轮启动有没有排过预取瀑布（只排一次）。
-    var lastPrefetchScope: String?
+    public var lastPrefetchScope: String?
 
     /// Whether a session is still worth continuing.
     ///
@@ -204,7 +215,7 @@ final class SessionListModel {
     /// Derived from the host's workspace list rather than from directories, so
     /// it matches the desktop sidebar; workspaces whose sessions are all
     /// archived or blank disappear instead of being offered as an empty room.
-    var liveWorkspaces: [LiveWorkspace] {
+    public var liveWorkspaces: [LiveWorkspace] {
         var live: [String: SessionSummary] = [:]
         for session in allSessions where isLive(session) {
             live[session.sessionId] = session
@@ -233,12 +244,12 @@ final class SessionListModel {
     /// Counting every session in the host's registry made the badge disagree
     /// with what the user could see: sessions in the folded ungrouped bucket
     /// were counted but not visible.
-    var runningCount: Int {
+    public var runningCount: Int {
         groups.reduce(0) { $0 + $1.sessions.filter { isReallyRunning($0) }.count }
     }
 
     /// Sessions blocked on the user, among the ones on screen.
-    var waitingCount: Int {
+    public var waitingCount: Int {
         groups.reduce(0) { $0 + $1.sessions.filter { waitingSessionIds.contains($0.sessionId) }.count }
     }
 
@@ -247,7 +258,7 @@ final class SessionListModel {
     /// The host keeps `running` true while a question waits, so counting them
     /// together made the badge claim "3 运行中" when two of the three were
     /// sitting there waiting for the user.
-    func isReallyRunning(_ session: SessionSummary) -> Bool {
+    public func isReallyRunning(_ session: SessionSummary) -> Bool {
         session.running && !waitingSessionIds.contains(session.sessionId)
     }
 
@@ -255,25 +266,25 @@ final class SessionListModel {
     ///
     /// Surfaced separately rather than silently folded away, so the badge can
     /// stay honest without making the ungrouped bucket look empty.
-    var ungroupedRunningCount: Int {
+    public var ungroupedRunningCount: Int {
         loose.filter { isReallyRunning($0) }.count
     }
 
-    var ungroupedWaitingCount: Int {
+    public var ungroupedWaitingCount: Int {
         loose.filter { waitingSessionIds.contains($0.sessionId) }.count
     }
 
-    var isEmpty: Bool {
+    public var isEmpty: Bool {
         groups.isEmpty && loose.isEmpty
     }
 
     /// Whether a search is currently narrowing the list.
-    var isSearching: Bool {
+    public var isSearching: Bool {
         !searchText.trimmingCharacters(in: .whitespaces).isEmpty
     }
 
     /// Looks up one session by id, for navigation destinations.
-    func session(withId id: String) -> SessionSummary? {
+    public func session(withId id: String) -> SessionSummary? {
         if let match = allSessions.first(where: { $0.sessionId == id }) { return match }
         if let match = loose.first(where: { $0.sessionId == id }) { return match }
         for group in groups {
@@ -287,7 +298,7 @@ final class SessionListModel {
 
     // MARK: - Lifecycle
 
-    func attach(to store: ConnectionStore, hub: HostEventHub, viewLog: SessionViewLog? = nil,
+    public func attach(to store: ConnectionStore, hub: HostEventHub, viewLog: SessionViewLog? = nil,
                 messageLayer: MessageLayer? = nil) {
         self.store = store
         self.hub = hub
@@ -299,10 +310,10 @@ final class SessionListModel {
     ///
     /// Injected rather than created here so the same log is shared with the
     /// screen that opens sessions — that write is what clears an unseen row.
-    var viewLog: SessionViewLog?
+    public var viewLog: SessionViewLog?
 
     /// What the leading dot should say for this row.
-    func state(of session: SessionSummary) -> SessionRowState {
+    public func state(of session: SessionSummary) -> SessionRowState {
         SessionRowState.of(
             waiting: waitingSessionIds.contains(session.sessionId),
             running: session.running,
@@ -316,7 +327,7 @@ final class SessionListModel {
     ///
     /// Routed through the model because the model owns the log: the screen that
     /// opens a session has no business knowing where "viewed" is stored.
-    func markViewed(_ sessionId: String) {
+    public func markViewed(_ sessionId: String) {
         viewLog?.markViewed(sessionId)
     }
 
@@ -324,12 +335,12 @@ final class SessionListModel {
     ///
     /// Tests assert on this rather than on a colour: a dot's hue is not
     /// something a run can read, and "looks blue" is not a verdict.
-    func stateIdentifier(of session: SessionSummary) -> String {
+    public func stateIdentifier(of session: SessionSummary) -> String {
         "session.state.\(state(of: session).rawValue)"
     }
 
     /// Loads the list, then keeps it fresh from the host event stream.
-    func start() async {
+    public func start() async {
         await refresh()
         subscribeToHostEvents()
     }
@@ -344,7 +355,7 @@ final class SessionListModel {
     /// one-way. The parameter is still sent, so a host that does support it
     /// starts working without a client change.
     @discardableResult
-    func setArchived(_ archived: Bool, sessionId: String) async -> Bool {
+    public func setArchived(_ archived: Bool, sessionId: String) async -> Bool {
         guard let link = store?.link, link.isConnected else { return false }
         do {
             let ids = try await link.archiveSession(sessionId, archived: archived)
@@ -369,7 +380,7 @@ final class SessionListModel {
     /// `workspace/create` is resolve-or-register, so a directory that is
     /// already a workspace (including one the host knows under a canonicalized
     /// path) comes back as itself instead of a duplicate.
-    func startSession(directory: String) async throws -> String {
+    public func startSession(directory: String) async throws -> String {
         guard let link = store?.link, link.isConnected else { throw SessionListError.notConnected }
         let registration = try await link.createWorkspace(path: directory)
 
@@ -415,7 +426,7 @@ final class SessionListModel {
         }
     }
 
-    func stop() {
+    public func stop() {
         eventTask?.cancel()
         eventTask = nil
         refreshDebounce?.cancel()
@@ -427,7 +438,7 @@ final class SessionListModel {
     /// `stop()` only cancels the streams: the rows, the workspace list and the
     /// search filter stayed on screen (and in memory) after a switch, so the new
     /// computer's list briefly showed the old one's groups.
-    func forgetConnection() {
+    public func forgetConnection() {
         stop()
         groups = []
         loose = []
@@ -451,7 +462,7 @@ final class SessionListModel {
         lastPrefetchScope = nil
     }
 
-    func refresh() async {
+    public func refresh() async {
         // 冷启动（或上次没拉成）：先把落盘的旧列表画出来，屏幕上立刻有东西，
         // 再去问 host。有缓存时**不进 loading**——那正是"空白等网络"的来源。
         showSnapshotIfEmpty()
@@ -493,7 +504,7 @@ final class SessionListModel {
     }
 
     /// 冷启动/离线时先把上次的列表画出来（不等连接）。
-    func loadCachedList() {
+    public func loadCachedList() {
         showSnapshotIfEmpty()
     }
 
@@ -522,7 +533,7 @@ final class SessionListModel {
         // T010：快照首帧之上叠加 009 磁盘层的摘要（异步，磁盘读，不阻塞首帧）。
         Task { await overlayMessageStoreSnippets() }
         // 诊断：冷启动到底有没有用上缓存（排查"打开是空的"时第一眼要看的就是这行）。
-        ViewportProbe.note("snapshot.loaded", ["items": String(snapshot.items.count)], force: true)
+        Self.probeNote?("snapshot.loaded", ["items": String(snapshot.items.count)], true)
     }
 
     /// Remembers the list for the next cold start. Metadata only.
@@ -542,24 +553,24 @@ final class SessionListModel {
         )
         let fingerprint = snapshot.contentFingerprint
         guard fingerprint != lastSavedFingerprint else {
-            ViewportProbe.note("snapshot.unchanged", ["items": String(allSessions.count)], force: false)
+            Self.probeNote?("snapshot.unchanged", ["items": String(allSessions.count)], false)
             return
         }
         lastSavedFingerprint = fingerprint
         snapshotStore.save(snapshot)
         // 规模可见：会话上千时这个 RPC 的载荷会开始咬人（协议里没有分页可用，
         // 见 DSHClient.sessions 的注释），到时候能在日志里先看见。
-        ViewportProbe.note("snapshot.saved", [
+        Self.probeNote?("snapshot.saved", [
             "items": String(allSessions.count),
             "workspaces": String(workspaces.count),
-        ], force: true)
+        ], true)
         if allSessions.count > 2_000 {
-            ViewportProbe.note("snapshot.large", ["items": String(allSessions.count)], force: true)
+            Self.probeNote?("snapshot.large", ["items": String(allSessions.count)], true)
         }
     }
 
     /// 设置页里的"清除缓存"。
-    func clearCachedSnapshot() {
+    public func clearCachedSnapshot() {
         if let scope = store?.scopeId { snapshotStore.clear(scope: scope) }
         lastSavedFingerprint = nil
         isShowingSnapshot = false

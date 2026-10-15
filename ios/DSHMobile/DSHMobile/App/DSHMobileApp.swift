@@ -1,5 +1,6 @@
 import DSHConnectionDomain
 import DSHConnectionUI
+import DSHSessionsUI
 import DSHCore
 import DSHKit
 import RelayKit
@@ -24,6 +25,11 @@ struct DSHMobileApp: App {
         }
         ConnectionStore.probeNote = note
         ConnectionHooks.pairingChanged = { await APNSRegistrar.shared.pairingChanged() }
+        // 025：会话单元的信箱钩子（信箱单元尚未迁入模块前由 App 提供实现）。
+        // FIXME(025-阶段4b)：信箱单元迁入 DSHFeedbackDomain 后改为注入其模型。
+        SessionsHooks.refreshFeedback = { await FeedbackCenter.shared.applicationBecameActive() }
+        SessionsHooks.feedbackUnreadCount = { FeedbackCenter.shared.unreadCount }
+        SessionsHooks.feedbackView = { AnyView(FeedbackCenterView()) }
         HostEventHub.probeNote = note
         SessionRouter.probeNote = note
         // 启动清扫：删掉 `Caches/outgoing-files/` 下 24 小时以上的残留。

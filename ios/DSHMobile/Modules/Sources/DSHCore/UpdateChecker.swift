@@ -17,17 +17,17 @@ import Observation
 /// 掉 App（2026-10-11 的 TestFlight 反馈），所以那些装法连查都不查（见 `InstallChannel`）。
 @MainActor
 @Observable
-final class UpdateChecker {
+public final class UpdateChecker {
 
     /// What the install page advertises.
-    struct Published: Sendable, Decodable {
-        let shortVersion: String
-        let build: String
-        let installPage: String
+    public struct Published: Sendable, Decodable {
+        public let shortVersion: String
+        public let build: String
+        public let installPage: String
     }
 
     /// Set when the published build is newer than the one running.
-    private(set) var available: Published?
+    public private(set) var available: Published?
 
     private let feed: URL
     /// 这份安装是靠哪条路来的；不是 OTA 就不查也不提示（见类型注释）。
@@ -39,18 +39,18 @@ final class UpdateChecker {
     private var isChecking = false
 
     /// 地址来自构建配置（Config.xcconfig / 本机 Config.local.xcconfig），见 AppConfig。
-    init(feed: URL = URL(string: AppConfig.updateFeed)!, channel: InstallChannel = .current) {
+    public init(feed: URL = URL(string: AppConfig.updateFeed)!, channel: InstallChannel = .current) {
         self.feed = feed
         self.channel = channel
     }
 
     /// The build this process was launched from.
-    static var currentBuild: String {
+    public static var currentBuild: String {
         Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "0"
     }
 
     /// Fetches the published stamp and updates what the banner should say.
-    func refresh() async {
+    public func refresh() async {
         // 先看装法再看别的：TestFlight / App Store 装法下这份 feed 无论说什么都不该
         // 变成一条提示，连请求也不发。
         guard channel.acceptsInAppUpdate else {

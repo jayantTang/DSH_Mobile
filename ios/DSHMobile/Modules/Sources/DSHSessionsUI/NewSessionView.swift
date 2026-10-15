@@ -1,3 +1,4 @@
+#if os(iOS)
 import DSHConnectionDomain
 import DSHCore
 import DSHDesign
@@ -19,7 +20,7 @@ import SwiftUI
 ///
 /// Both halves confirm before creating: a session is bound to its directory for
 /// good, and a mistap on a phone is one thumb wide.
-struct NewSessionView: View {
+public struct NewSessionView: View {
     let model: SessionListModel
     /// The connection is the browser's data source: the host walks its own
     /// filesystem, one level per call.
@@ -49,7 +50,7 @@ struct NewSessionView: View {
         var id: String { path }
     }
 
-    var body: some View {
+    public var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
                 if !model.liveWorkspaces.isEmpty { workspaceBlock }
@@ -455,3 +456,4 @@ struct NewSessionView: View {
         }
     }
 }
+#endif

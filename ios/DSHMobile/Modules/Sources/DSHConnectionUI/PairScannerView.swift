@@ -1,3 +1,4 @@
+#if os(iOS)
 import DSHDesign
 import DSHKit
 import SwiftUI
@@ -11,6 +12,9 @@ import VisionKit
 /// than present a black rectangle. The parse → pair half is the same code the
 /// pasted-code field and the `dsh://pair?…` launch hook use, so the scanner is
 /// never the only way in.
+#if os(iOS)
+import VisionKit
+
 public struct PairScannerView: View {
     /// Called with the payload a scanner read.
     let onPayload: (String) -> Void
@@ -157,3 +161,5 @@ public enum PairPayload {
         return nil
     }
 }
+#endif
+#endif

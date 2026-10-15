@@ -6,11 +6,11 @@ import Foundation
 /// 叠加而非替换：现有 `SessionListSnapshotStore` 快照机制照旧负责首帧，这里只在
 /// MessageStore（009 磁盘层）有数据时把它的聚合信息叠上去；磁盘层为空（老用户
 /// 首次启动）时一切表现与现状一致。host 数据回来后仍以 host 为准，刷新逻辑不动。
-extension SessionListModel {
+public extension SessionListModel {
 
     /// T010：从 MessageStore 读会话聚合，把 snippet 叠到列表行上。
     /// 快照首帧与 host 刷新成功后各调一次——后者能叠上预取瀑布刚喂出来的数据。
-    func overlayMessageStoreSnippets() async {
+    public func overlayMessageStoreSnippets() async {
         guard let scope = store?.scopeId, let store = messageLayer?.store,
               let states = try? await store.sessionStates(scope: scope), !states.isEmpty
         else { return }
@@ -24,7 +24,7 @@ extension SessionListModel {
     }
 
     /// 某行的冷启动摘要；nil 时该行布局与现状完全一致（无摘要行）。
-    func coldStartSnippet(for sessionId: String) -> String? {
+    public func coldStartSnippet(for sessionId: String) -> String? {
         coldStartSnippets[sessionId]
     }
 
@@ -34,7 +34,7 @@ extension SessionListModel {
     /// 冷启动后台预热覆盖多少个会话（与最新页预取同一批：首屏可见的十来个）。
     static let warmupSessions = 10
 
-    func scheduleColdStartPrefetch() {
+    public func scheduleColdStartPrefetch() {
         guard let scope = store?.scopeId, store?.client != nil,
               lastPrefetchScope != scope,
               let layer = messageLayer, let pipeline = layer.pipeline, let store = layer.store
@@ -66,7 +66,7 @@ extension SessionListModel {
                     session: .init(scope: scope, sessionId: summary.sessionId), newestSeq: newest)
             }
             if !targets.isEmpty {
-                ViewportProbe.note("prefetch.coldstart", ["sessions": String(targets.count)], force: true)
+                SessionListModel.probeNote?("prefetch.coldstart", ["sessions": String(targets.count)], true)
                 await pipeline.prefetchLatestPages(
                     targets, persistedRanges: persistedRanges, limit: 10, concurrency: 3)
             }

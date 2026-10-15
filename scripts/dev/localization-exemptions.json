@@ -188,19 +188,19 @@
     },
     {
       "rule": "unlocalized-binding",
-      "file": "ios/DSHMobile/DSHMobile/Features/Sessions/DirectoryBrowserModel.swift",
+      "file": "ios/DSHMobile/Modules/Sources/DSHSessionsDomain/DirectoryBrowserModel.swift",
       "reason": "目录浏览数据层的文案出口，不在本轮范围（G5 backlog）",
       "backlog": "i18n-backlog-app-directorybrowsermodel"
     },
     {
       "rule": "hardcoded-string",
-      "file": "ios/DSHMobile/DSHMobile/Features/Sessions/SessionListView.swift",
+      "file": "ios/DSHMobile/Modules/Sources/DSHSessionsUI/SessionListView.swift",
       "reason": "会话列表页的文案出口，不在本轮范围（G5 backlog）",
       "backlog": "i18n-backlog-app-sessionlistview"
     },
     {
       "rule": "unlocalized-binding",
-      "file": "ios/DSHMobile/DSHMobile/Features/Sessions/SessionListView.swift",
+      "file": "ios/DSHMobile/Modules/Sources/DSHSessionsUI/SessionListView.swift",
       "reason": "会话列表页的文案出口，不在本轮范围（G5 backlog）",
       "backlog": "i18n-backlog-app-sessionlistview"
     },

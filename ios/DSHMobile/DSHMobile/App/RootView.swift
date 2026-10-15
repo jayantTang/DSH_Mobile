@@ -1,3 +1,5 @@
+import DSHSessionsDomain
+import DSHSessionsUI
 import DSHConnectionDomain
 import DSHCore
 import DSHConnectionUI
