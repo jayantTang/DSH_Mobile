@@ -44,7 +44,7 @@ async def healthz(_request: web.Request) -> web.Response:
 
 
 def create_app(*, store: Store, resolve_device: ResolveDevice | None = None,
-               base_path: str = "") -> web.Application:
+               base_path: str = "", team_account: str = "") -> web.Application:
     """组装 mail 的 aiohttp 应用。
 
     ``resolve_device`` 不给就用 :class:`RelayIdentityResolver`（生产默认）；
@@ -57,6 +57,8 @@ def create_app(*, store: Store, resolve_device: ResolveDevice | None = None,
     resolver = resolve_device if resolve_device is not None else RelayIdentityResolver()
     app["resolve_device"] = resolver
     app["base_path"] = base_path
+    # 团队收件箱（2026-10-15）：团队账号 = owner 的开发者账号；空 = 功能关闭。
+    app["team_account"] = str(team_account or "").strip()
 
     def route(method: str, path: str, handler: Any) -> None:
         app.router.add_route(method, path, handler)
@@ -88,6 +90,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help="loopback URL of the relay for /internal/tokens/resolve")
     parser.add_argument("--relay-timeout-s", type=float,
                         default=float(os.environ.get("MAIL_RELAY_TIMEOUT_S", "2.0")))
+    parser.add_argument("--team-account", default=os.environ.get("MAIL_TEAM_ACCOUNT", ""),
+                        help="the account id that acts as the DSH Mobile team inbox "
+                             "(empty = team inbox off)")
     parser.add_argument("--base-path", default=os.environ.get("MAIL_BASE_PATH", ""),
                         help="optional mount prefix, e.g. /dsh-link; both forms are served")
     parser.add_argument("--log-level", default=os.environ.get("MAIL_LOG_LEVEL", "INFO"))
@@ -103,9 +108,10 @@ def main(argv: list[str] | None = None) -> int:
     app = create_app(store=store,
                      resolve_device=RelayIdentityResolver(args.relay_internal_url,
                                                           args.relay_timeout_s),
-                     base_path=args.base_path)
-    LOGGER.info("mail: serving on %s:%d (db=%s, relay=%s)",
-                args.host, args.port, args.db, args.relay_internal_url)
+                     base_path=args.base_path, team_account=args.team_account)
+    LOGGER.info("mail: serving on %s:%d (db=%s, relay=%s, team_inbox=%s)",
+                args.host, args.port, args.db, args.relay_internal_url,
+                args.team_account or "off")
     web.run_app(app, host=args.host, port=args.port, print=None)
     store.close()
     return 0

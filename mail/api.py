@@ -20,8 +20,8 @@ from typing import Any
 
 from aiohttp import web
 
-from store import (DEFAULT_FEEDBACK_FORMAT, MAX_SUBJECT_CHARS, Conflict, Store, StoreError,
-                   clean_feedback_format, sha256_hex)
+from store import (DEFAULT_FEEDBACK_FORMAT, MAX_SUBJECT_CHARS, TEST_DEVICE_MODELS, Conflict, Store,
+                   StoreError, clean_feedback_format, sha256_hex)
 
 LOGGER = logging.getLogger("mail.http")
 
@@ -287,6 +287,25 @@ def _messages_limit(body: dict[str, Any]) -> tuple[int | None, web.Response | No
     return min(raw, _MAX_MESSAGES_PER_THREAD), None
 
 
+def _team_account(request: web.Request) -> str:
+    """团队账号（部署配置 MAIL_TEAM_ACCOUNT；空 = 团队收件箱关闭）。"""
+    return str(request.app.get("team_account") or "")
+
+
+def _is_team_side(request: web.Request, device: dict[str, Any] | None,
+                  thread: dict[str, Any] | None = None) -> bool:
+    """这次调用是不是团队那一侧：设备归属团队账号，且（给了线程时）线程绑定了团队。
+
+    只按账号判（设备令牌经中转解析，伪造不了），不引入新的凭据。
+    """
+    team = _team_account(request)
+    if not team or device is None or device.get("accountId") != team:
+        return False
+    if thread is None:
+        return True
+    return bool(thread.get("teamAccountId")) and thread["teamAccountId"] == team
+
+
 async def _caller(request: web.Request) -> dict[str, Any] | None:
     """可选令牌背后的设备；``None`` 就是匿名。
 
@@ -317,6 +336,17 @@ def _public_thread(thread: dict[str, Any]) -> dict[str, Any]:
         "createdAt": thread["createdAt"],
         "lastMessageAt": thread["lastMessageAt"],
         "unread": thread["unread"],
+        "teamUnread": thread.get("teamUnread", 0),
+        # 发件人标识（团队收件箱 2026-10-15）：用户自己的线程看到的是自己；
+        # 团队账号看到的是来信人。取件凭据等内部列仍然不出网。
+        "source": {
+            "kind": "device" if (thread.get("deviceId") or thread.get("accountId")) else "anonymous",
+            "deviceModel": thread.get("deviceModel"),
+            "appVersion": thread.get("appVersion"),
+            "systemVersion": thread.get("systemVersion"),
+            "accountHint": (thread.get("accountId") or "")[:12] or None,
+            "teamBound": bool(thread.get("teamAccountId")),
+        },
         "messages": [
             {"messageId": message["messageId"], "author": message["author"],
              "body": message["body"],
@@ -334,8 +364,14 @@ def _public_notice(notice: dict[str, Any]) -> dict[str, Any]:
 
 
 async def _collect(store: Store, pairs: list[tuple[str, str]], device: dict[str, Any] | None,
-                   messages_per_thread: int, *, with_notices: bool = True) -> dict[str, Any]:
-    """调用方看得到的线程（凭据命中 ∪ 设备/账号命中，去重）与未读计数。"""
+                   messages_per_thread: int, *, with_notices: bool = True,
+                   team_account: str = "") -> dict[str, Any]:
+    """调用方看得到的线程（凭据命中 ∪ 设备/账号/团队命中，去重）与未读计数。
+
+    未读分侧（团队收件箱 2026-10-15）：团队账号数**用户来信**未读（teamUnread），
+    其余数**团队回信**未读（unread）——同一次响应里两个口径都给，`unreadCount`
+    按调用方是哪一侧取对应的那个。
+    """
     hashed = [(thread_id, sha256_hex(ticket)) for thread_id, ticket in pairs]
     threads = await asyncio.to_thread(store.feedback_threads_by_tickets, hashed,
                                       messages_per_thread=messages_per_thread)
@@ -349,7 +385,10 @@ async def _collect(store: Store, pairs: list[tuple[str, str]], device: dict[str,
     notices = []
     if with_notices and device is not None:
         notices = await asyncio.to_thread(store.notices_for_account, device["accountId"])
-    unread = sum(thread["unread"] for thread in threads) + sum(1 for row in notices if not row["read"])
+    team_side = bool(team_account and device and device["accountId"] == team_account)
+    side_key = "teamUnread" if team_side else "unread"
+    unread = sum(thread.get(side_key, 0) for thread in threads) \
+        + sum(1 for row in notices if not row["read"])
     return {"threads": [_public_thread(thread) for thread in threads],
             "notices": [_public_notice(notice) for notice in notices],
             "unreadCount": unread}
@@ -400,13 +439,23 @@ async def feedback_submit(request: web.Request) -> web.Response:
     if error is not None:
         return error
 
+    # 团队收件箱（2026-10-15）：非团队账号的提交（含匿名）都绑到团队账号，
+    # 团队由此在收件箱看到来信；测试台机型与团队自己的测试提交不绑。
+    team = _team_account(request)
+    team_binding = None
+    if team and (device is None or device["accountId"] != team):
+        model = str(fields.get("device_model") or "")
+        if model not in TEST_DEVICE_MODELS:
+            team_binding = team
+
     ticket = f"{_TICKET_PREFIX}{secrets.token_urlsafe(_TICKET_BYTES)}"
     try:
         thread = await asyncio.to_thread(
             store.create_feedback_thread,
             ticket_hash=sha256_hex(ticket), text=text, client_ref=client_ref, subject=subject,
             device_id=device["deviceId"] if device else None,
-            account_id=device["accountId"] if device else None, **fields)
+            account_id=device["accountId"] if device else None,
+            team_account_id=team_binding, **fields)
     except Conflict:
         return json_error(400, "feedback/bad-request", "clientRef has already been used")
     except StoreError:
@@ -433,7 +482,8 @@ async def feedback_inbox(request: web.Request) -> web.Response:
     if error is not None:
         return error
     payload = await _collect(store, pairs, device, limit,
-                             with_notices=bool(body.get("notices", True)))
+                             with_notices=bool(body.get("notices", True)),
+                             team_account=_team_account(request))
     return web.json_response({"ok": True, **payload})
 
 
@@ -444,9 +494,10 @@ async def feedback_append(request: web.Request) -> web.Response:
     if error is not None:
         return error
     thread_id, ticket = body.get("threadId"), body.get("ticketKey")
-    if not isinstance(thread_id, str) or not thread_id \
-            or not isinstance(ticket, str) or not ticket:
-        return json_error(400, "feedback/bad-request", "threadId and ticketKey are required")
+    if not isinstance(thread_id, str) or not thread_id:
+        return json_error(400, "feedback/bad-request", "threadId is required")
+    if ticket is not None and (not isinstance(ticket, str) or not ticket):
+        return json_error(400, "feedback/bad-request", "ticketKey must be a non-empty string")
     text, error = _text_of(body)
     if error is not None:
         return error
@@ -461,15 +512,35 @@ async def feedback_append(request: web.Request) -> web.Response:
     if error is not None:
         return error
 
-    thread = await asyncio.to_thread(store.feedback_thread, thread_id, sha256_hex(ticket),
-                                     messages_per_thread=0)
+    # 授权二选一（团队收件箱 2026-10-15 放宽了第二条）：
+    # 1. 取件凭据命中（老路径，匿名提交者与既有 App 的唯一手段）；
+    # 2. 设备授权：线程绑这台设备/这个账号，或调用方是线程的团队侧——团队在
+    #    App 里直接回信、以及用户换机重配后凭账号找回线程，都走这条。
+    ticket_hash = sha256_hex(ticket) if ticket else None
+    thread = None
+    ticket_ok = False
+    if ticket_hash is not None:
+        thread = await asyncio.to_thread(store.feedback_thread, thread_id, ticket_hash,
+                                         messages_per_thread=0)
+        ticket_ok = thread is not None
     if thread is None:
+        # 凭据没给或没命中时才按设备/团队判——**给了但错的凭据不因为兜底而放行**，
+        # 与"线程不存在"共用同一个 404，不泄露线程是否存在。
+        thread = await asyncio.to_thread(store.feedback_thread, thread_id, None,
+                                         messages_per_thread=0)
+    device_bound = bool(
+        thread is not None and device is not None
+        and (thread.get("deviceId") == device["deviceId"]
+             or (device.get("accountId") and thread.get("accountId") == device["accountId"])))
+    team_side = _is_team_side(request, device, thread)
+    if not (ticket_ok or device_bound or team_side):
         return _not_found()
     try:
         message = await asyncio.to_thread(
-            store.append_feedback_message, thread_id, text, author="user", client_ref=client_ref,
-            bind_device_id=device["deviceId"] if device else None,
-            bind_account_id=device["accountId"] if device else None)
+            store.append_feedback_message, thread_id, text,
+            author="owner" if team_side else "user", client_ref=client_ref,
+            bind_device_id=device["deviceId"] if device and not team_side else None,
+            bind_account_id=device["accountId"] if device and not team_side else None)
     except StoreError:
         LOGGER.exception("mail: storing a feedback message failed")
         return json_error(500, "feedback/store-error", "the mail service could not store the message")
@@ -501,11 +572,19 @@ async def feedback_read(request: web.Request) -> web.Response:
 
     allowed = await _authorized_threads(store, pairs, device)
     for thread_id in thread_ids:
-        if thread_id in allowed:
+        if thread_id not in allowed:
+            continue
+        # 已读分侧（团队收件箱 2026-10-15）：团队读用户来信推 ownerReadAt，
+        # 用户读团队回信推 userReadAt——同一次调用里逐线程判定。
+        thread = await asyncio.to_thread(store.feedback_thread, thread_id, None,
+                                         messages_per_thread=0)
+        if _is_team_side(request, device, thread):
+            await asyncio.to_thread(store.mark_team_thread_read, thread_id)
+        else:
             await asyncio.to_thread(store.mark_thread_read, thread_id)
     if device is not None and notice_ids:
         await asyncio.to_thread(store.mark_notices_read, device["accountId"], notice_ids)
-    payload = await _collect(store, pairs, device, 0)
+    payload = await _collect(store, pairs, device, 0, team_account=_team_account(request))
     return web.json_response({"ok": True, "unreadCount": payload["unreadCount"]})
 
 

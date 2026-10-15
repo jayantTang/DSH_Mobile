@@ -21,7 +21,8 @@ NEW_TABLES = ("feedbackThreads", "feedbackMessages", "notices", "noticeDeliverie
 EXPECTED_COLUMNS = {
     "feedbackThreads": ["threadId", "ticketHash", "accountId", "deviceId", "appVersion",
                         "deviceModel", "systemVersion", "createdAt", "lastMessageAt",
-                        "ownerReadAt", "userReadAt", "status", "clientRef", "subject"],
+                        "ownerReadAt", "userReadAt", "status", "clientRef", "subject",
+                        "teamAccountId"],
     "feedbackMessages": ["messageId", "threadId", "author", "body", "createdAt", "clientRef",
                          "format"],
     "notices": ["noticeId", "subject", "body", "createdAt", "createdBy", "format"],
@@ -120,8 +121,10 @@ def test_a_database_copied_from_the_relay_matches_a_fresh_one_column_for_column(
     for table in NEW_TABLES:
         rows = source.execute(f"SELECT * FROM {table}").fetchall()
         if rows:
-            marks = ",".join("?" * len(rows[0]))
-            dest.executemany(f"INSERT OR REPLACE INTO {table} VALUES({marks})", rows)
+            source_columns = [d[0] for d in source.execute(f"SELECT * FROM {table}").description]
+            marks = ",".join("?" * len(source_columns))
+            dest.executemany(f"INSERT OR REPLACE INTO {table}({','.join(source_columns)})"
+                             f" VALUES({marks})", rows)
     dest.commit()
     dest.close()
     source.close()

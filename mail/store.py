@@ -24,6 +24,10 @@ from typing import Any, Iterable
 
 MAX_SUBJECT_CHARS = 80
 FEEDBACK_FORMATS = ("text", "html")
+
+#: 测试台来源的机型（团队收件箱的过滤口径，与 relay/admin.py 同一份名单）：
+#: 这些来源的提交是验收单，不是用户来信，不进团队收件箱。
+TEST_DEVICE_MODELS = {"arm64", "x86_64", "deploy-check", "Node", "simulator", "test-harness"}
 DEFAULT_FEEDBACK_FORMAT = "text"
 
 SCHEMA = """
@@ -43,11 +47,15 @@ CREATE TABLE IF NOT EXISTS feedbackThreads (
   userReadAt     INTEGER,
   status         TEXT NOT NULL DEFAULT 'open',
   clientRef      TEXT UNIQUE,
-  subject        TEXT
+  subject        TEXT,
+  -- 团队收件箱（2026-10-15）：非团队提交的线程都绑到团队账号，团队（= owner 的
+  -- 开发者账号）由此在自己的收件箱里看到用户来信并直接回信。同样留在表末。
+  teamAccountId  TEXT
 );
 CREATE INDEX IF NOT EXISTS feedbackThreadsByDevice ON feedbackThreads(deviceId);
 CREATE INDEX IF NOT EXISTS feedbackThreadsByAccount ON feedbackThreads(accountId);
 CREATE INDEX IF NOT EXISTS feedbackThreadsByStatus ON feedbackThreads(status, lastMessageAt);
+CREATE INDEX IF NOT EXISTS feedbackThreadsByTeam ON feedbackThreads(teamAccountId, lastMessageAt);
 
 CREATE TABLE IF NOT EXISTS feedbackMessages (
   messageId  TEXT PRIMARY KEY,
@@ -139,8 +147,24 @@ class Store:
         self._conn.row_factory = sqlite3.Row
         with self._lock:
             self._conn.executescript(SCHEMA)
+            self._migrate()
             self._conn.commit()
         logging.getLogger("mail.store").info("mail: store ready at %s", path)
+
+    def _migrate(self) -> None:
+        """`CREATE TABLE IF NOT EXISTS` 不会给老库补新列；按需 ALTER，幂等。
+
+        列一律追加在表末（SQLite 的 ALTER 语义如此），与 relay 侧 subject/format
+        的处理同一条约定：新建库与迁移库列序一致（有测试钉住）。
+        """
+        for table, column, ddl in (
+            ("feedbackThreads", "teamAccountId",
+             "ALTER TABLE feedbackThreads ADD COLUMN teamAccountId TEXT"),
+        ):
+            existing = {row[1] for row in self._conn.execute(f"PRAGMA table_info({table})")}
+            if column not in existing:
+                self._conn.execute(ddl)
+                logging.getLogger("mail.store").info("mail: added column %s.%s", table, column)
 
     def close(self) -> None:
         with self._lock:
@@ -162,7 +186,7 @@ class Store:
                                account_id: str | None = None, device_id: str | None = None,
                                app_version: str | None = None, device_model: str | None = None,
                                system_version: str | None = None, client_ref: str | None = None,
-                               subject: str | None = None,
+                               subject: str | None = None, team_account_id: str | None = None,
                                at: int | None = None) -> dict[str, Any]:
         """建一条线程，并把用户原文作为线程里的第一条留言。
 
@@ -186,10 +210,11 @@ class Store:
             thread_id = new_id("th")
             self._conn.execute(
                 "INSERT INTO feedbackThreads(threadId, ticketHash, accountId, deviceId, appVersion,"
-                " deviceModel, systemVersion, createdAt, lastMessageAt, status, clientRef, subject)"
-                " VALUES(?,?,?,?,?,?,?,?,?,'open',?,?)",
+                " deviceModel, systemVersion, createdAt, lastMessageAt, status, clientRef, subject,"
+                " teamAccountId) VALUES(?,?,?,?,?,?,?,?,?,'open',?,?,?)",
                 (thread_id, ticket_hash, account_id, device_id, app_version, device_model,
-                 system_version, stamp, stamp, client_ref, clean_feedback_subject(subject)))
+                 system_version, stamp, stamp, client_ref, clean_feedback_subject(subject),
+                 team_account_id))
             self._conn.execute(
                 "INSERT INTO feedbackMessages(messageId, threadId, author, body, format, createdAt)"
                 " VALUES(?,?,'user',?,'text',?)", (new_id("fm"), thread_id, text, stamp))
@@ -304,10 +329,15 @@ class Store:
         账号也算命中：重装后重新配对换来一个新的 `deviceId`，只有账号还是同一个，
         "重装后重新配对即可找回"靠的就是这一条。
         """
+        # 团队绑定（teamAccountId）是第三条命中路径：团队账号由此看到用户的来信
+        # （2026-10-15 团队收件箱）。用户自己的可见性不受影响——teamAccountId 只会
+        # 等于团队账号，不会撞上普通用户的账号。
         rows = self._rows(
             "SELECT * FROM feedbackThreads WHERE deviceId=?"
-            " OR (accountId IS NOT NULL AND accountId=?) ORDER BY lastMessageAt DESC",
-            (device_id, account_id))
+            " OR (accountId IS NOT NULL AND accountId=?)"
+            " OR (teamAccountId IS NOT NULL AND teamAccountId=?)"
+            " ORDER BY lastMessageAt DESC",
+            (device_id, account_id, account_id))
         return [self._feedback_payload(row, messages_per_thread) for row in rows]
 
     def mark_thread_read(self, thread_id: str, upto_ms: int | None = None) -> bool:
@@ -326,6 +356,27 @@ class Store:
             if stamp is not None and (row["userReadAt"] is None or int(stamp) > int(row["userReadAt"])):
                 self._conn.execute("UPDATE feedbackThreads SET userReadAt=? WHERE threadId=?",
                                    (int(stamp), thread_id))
+            self._conn.commit()
+        return True
+
+    def mark_team_thread_read(self, thread_id: str) -> bool:
+        """团队侧已读：`ownerReadAt` 推到最后一条**用户**留言（只前进，幂等）。
+
+        与 :meth:`mark_thread_read` 镜像：那边是用户读我们的回信，这边是我们读
+        用户的来信。线程不存在返回 False。
+        """
+        with self._lock:
+            row = self._conn.execute("SELECT ownerReadAt FROM feedbackThreads WHERE threadId=?",
+                                     (thread_id,)).fetchone()
+            if row is None:
+                return False
+            latest = self._conn.execute(
+                "SELECT MAX(createdAt) FROM feedbackMessages WHERE threadId=? AND author='user'",
+                (thread_id,)).fetchone()[0]
+            stamp = int(latest) if latest is not None else None
+            if stamp is not None and (row["ownerReadAt"] is None or stamp > int(row["ownerReadAt"])):
+                self._conn.execute("UPDATE feedbackThreads SET ownerReadAt=? WHERE threadId=?",
+                                   (stamp, thread_id))
             self._conn.commit()
         return True
 
@@ -450,6 +501,10 @@ class Store:
         unread = self._row(
             "SELECT COUNT(*) AS n FROM feedbackMessages WHERE threadId=? AND author='owner'"
             " AND (? IS NULL OR createdAt > ?)", (thread_id, read_at, read_at))
+        owner_at = row["ownerReadAt"]
+        team_unread = self._row(
+            "SELECT COUNT(*) AS n FROM feedbackMessages WHERE threadId=? AND author='user'"
+            " AND (? IS NULL OR createdAt > ?)", (thread_id, owner_at, owner_at))
         count = self._row("SELECT COUNT(*) AS n FROM feedbackMessages WHERE threadId=?", (thread_id,))
         return {**dict(row), "messages": messages, "messageCount": int(count["n"]),
-                "unread": int(unread["n"])}
+                "unread": int(unread["n"]), "teamUnread": int(team_unread["n"])}

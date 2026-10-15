@@ -71,10 +71,14 @@ def main(argv: list[str] | None = None) -> int:
         if not columns:
             print(f"{table}: 目标库没有这张表（mail 服务先启动过一次才会建表）", file=sys.stderr)
             return 1
+        # 源库（中转）没有的列补 NULL：mail 侧新增的 teamAccountId 在中转的
+        # state.db 里不存在；存量线程的团队绑定由绑定脚本补（见
+        # DESIGN-20261015-team-inbox），迁移本身只管搬数据。
         marks = ",".join("?" * len(columns))
         target.executemany(
             f"INSERT OR REPLACE INTO {table}({','.join(columns)}) VALUES({marks})",
-            [tuple(row[column] for column in columns) for row in rows])
+            [tuple(row[column] if column in row.keys() else None for column in columns)
+             for row in rows])
         copied += len(rows)
 
     if args.dry_run:

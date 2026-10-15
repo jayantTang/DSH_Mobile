@@ -195,7 +195,7 @@ async def test_inbox_returns_the_thread_behind_a_valid_ticket(client):
     assert thread["messages"][0]["body"] == "第一条"
     # 字段集合就是契约里那一组：内部的 ticketHash/来源信息一个都不出网。
     assert set(thread) == {"threadId", "subject", "status", "createdAt", "lastMessageAt",
-                           "unread", "messages"}
+                           "unread", "teamUnread", "source", "messages"}
     assert set(thread["messages"][0]) == {"messageId", "author", "body", "format", "createdAt"}
     assert body["notices"] == [] and body["unreadCount"] == 0
 

@@ -32,6 +32,8 @@ from store import Store  # noqa: E402
 
 #: 测试里的"这台电脑"账号：mail 只把它当不透明字符串。
 ACCOUNT_ID = "acc_test"
+#: 团队收件箱（2026-10-15）：测试环境的团队账号。
+TEAM_ACCOUNT = "acc_team"
 
 
 @pytest.fixture
@@ -97,6 +99,7 @@ async def client(aiohttp_client, store: Store):
     async def resolve(token: str):
         return registry.get(token)
 
-    app = mail_module.create_app(store=store, resolve_device=resolve)
+    app = mail_module.create_app(store=store, resolve_device=resolve,
+                                 team_account=TEAM_ACCOUNT)
     app["test_devices"] = registry
     return await aiohttp_client(app)
