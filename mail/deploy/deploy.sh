@@ -115,7 +115,9 @@ say "installing $UNIT_PATH"
 # 端口参数化：模板里的 8788 是默认值，同机可能被别的服务占用（2026-10-15 切换时
 # 8788 就被另一个 node 服务占着）。单元与片段一起替换，保证三处（env、ExecStart、
 # reverse_proxy）永远一致。
-sed "s/8788/$PORT/g" "$SRC_DIR/deploy/dsh-mail.service" > "$UNIT_PATH.rendered"
+sed -e "s/8788/$PORT/g" \
+    -e "s|^Environment=MAIL_TEAM_ACCOUNT=$|Environment=MAIL_TEAM_ACCOUNT=${DSH_MAIL_TEAM_ACCOUNT:-}|" \
+    "$SRC_DIR/deploy/dsh-mail.service" > "$UNIT_PATH.rendered"
 install -m 0644 -o root -g root "$UNIT_PATH.rendered" "$UNIT_PATH"
 rm -f "$UNIT_PATH.rendered"
 systemctl daemon-reload

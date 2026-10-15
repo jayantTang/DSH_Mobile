@@ -24,6 +24,10 @@ Environment=MAIL_LOG_LEVEL=INFO
 # flows do not touch the relay at all.
 Environment=MAIL_RELAY_INTERNAL_URL=http://127.0.0.1:8787
 Environment=MAIL_RELAY_TIMEOUT_S=2.0
+# 团队收件箱（2026-10-15）：团队账号 = owner 的开发者账号（DSH_ACCOUNT_ID）。
+# 空值 = 功能关闭。真值由部署时注入（deploy.sh 的 DSH_MAIL_TEAM_ACCOUNT），
+# 不写进仓库——与部署地址同一条约定。
+Environment=MAIL_TEAM_ACCOUNT=
 # Never write .pyc files (ProtectSystem=strict makes the tree read-only).
 Environment=PYTHONDONTWRITEBYTECODE=1
 
