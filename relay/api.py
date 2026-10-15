@@ -358,6 +358,47 @@ def _stats_page(payload: dict[str, Any]) -> str:
 </body></html>"""
 
 
+#: 内部令牌解析的独立预算（DESIGN-20261015 I-1）：mail 的公开限流（写 30 次/10 分钟）
+#: 远低于这个数，这桶只防 mail 侧失控，不是对外防线（对外有 loopback 守卫）。
+_INTERNAL_RESOLVE_LIMIT = 600
+_INTERNAL_RESOLVE_WINDOW_S = 10 * 60
+
+
+async def internal_token_resolve(request: web.Request) -> web.Response:
+    """POST /internal/tokens/resolve — 拆分后的信件服务（mail）对中转的唯一运行时依赖。
+
+    mail 拿设备令牌来换账号/设备归属；中转不反向调用 mail。契约：
+
+    - 只读、幂等、无副作用。未知 / 撤销 / 过期 / 格式不对一律 404，与既有
+      "坏令牌降级匿名"的语义（feedback._caller）一致，不给调用方区分"撤销"与"不存在"。
+    - loopback-only，公网到达回 404（与 /stats 同一道守卫、同一个理由：探测者
+      不应该分辨得出这个端点是否存在）。
+    - 机型/版本不在返回里：信件线程行需要的展示字段由 App 随请求体自带并快照，
+      mail 不需要持续的设备元数据。
+    """
+    if not is_loopback(request.remote):
+        LOGGER.info("relay: refused /internal/tokens/resolve for non-loopback peer %s", request.remote)
+        return json_error(404, "not-found", "not found")
+    limiter: ClaimLimiter = request.app.setdefault(
+        "internal_resolve_limiter",
+        ClaimLimiter(limit=_INTERNAL_RESOLVE_LIMIT, window_s=_INTERNAL_RESOLVE_WINDOW_S))
+    if limiter.blocked("resolve"):
+        return json_error(429, "internal/rate-limited", "too many resolve requests")
+    limiter.count_failure("resolve", total=False)
+    body = await read_json(request)
+    token = body.get("token") if body is not None else None
+    if not isinstance(token, str) or not token:
+        return json_error(400, "internal/bad-request", 'body must be {"token": "..."}')
+    device = await asyncio.to_thread(request.app["store"].device_by_token, token)
+    if device is None:
+        return json_error(404, "internal/not-found", "token not found")
+    return web.json_response({
+        "deviceId": device["deviceId"],
+        "accountId": device["accountId"],
+        "expiresAt": device["expiresAt"],
+    })
+
+
 @web.middleware
 async def cors_preflight(request: web.Request, handler: Any) -> web.StreamResponse:
     """Answer ``OPTIONS`` for every path (spec §2).
@@ -1150,6 +1191,8 @@ def register_http_routes(app: web.Application, route: Any, base_path: str) -> No
     route("POST", "/feedback/inbox", feedback_inbox)
     route("POST", "/feedback/append", feedback_append)
     route("POST", "/feedback/read", feedback_read)
+    # 拆分后的信件服务（mail）经 loopback 调这一个端点换设备归属（DESIGN-20261015 I-1）。
+    route("POST", "/internal/tokens/resolve", internal_token_resolve)
     app["claim_limiter"] = ClaimLimiter()
     app["enroll_limiter"] = ClaimLimiter(limit=_ENROLL_FAILURES, window_s=_ENROLL_WINDOW_S)
     app["base_path"] = base_path
