@@ -1,0 +1,94 @@
+# XcodeGen 工程声明：DSHMobile
+# 生成：cd ios/DSHMobile && xcodegen
+# 本文件是工程的单一事实来源；DSHMobile.xcodeproj 是生成产物。
+#
+# 说明：
+# - 构建参数与现状 xcodeproj 逐项对齐（见 025 spec/T003）。
+# - 部署地址等机密密钥仍由 Config.xcconfig + Config.local.xcconfig（gitignore）注入，
+#   本文件不含真值。
+
+name: DSHMobile
+
+configs:
+  Debug: debug
+  Release: release
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+    SWIFT_EMIT_LOC_STRINGS: YES
+
+packages:
+  DSHKit:
+    path: DSHKit
+  Modules:
+    path: Modules
+
+targets:
+  DSHMobile:
+    type: application
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: DSHMobile
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.jayanttang.dsh
+        PRODUCT_NAME: DSHMobile
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        TARGETED_DEVICE_FAMILY: "1"
+        CODE_SIGN_STYLE: Automatic
+        INFOPLIST_FILE: DSHMobile-Info.plist
+        CODE_SIGN_ENTITLEMENTS: DSHMobile.entitlements
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_CFBundleDisplayName: "DSH Mobile"
+        INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
+        LD_RUNPATH_SEARCH_PATHS:
+          - $(inherited)
+          - "@executable_path/Frameworks"
+    configFiles:
+      Debug: Config.xcconfig
+      Release: Config.xcconfig
+    dependencies:
+      - package: DSHKit
+        product: DSHKit
+      - package: DSHKit
+        product: RelayKit
+      - package: Modules
+        product: DSHDesign
+
+  DSHMobileTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: DSHMobileTests
+    dependencies:
+      - target: DSHMobile
+
+  DSHMobileUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: DSHMobileUITests
+    dependencies:
+      - target: DSHMobile
+
+schemes:
+  DSHMobile:
+    build:
+      targets:
+        DSHMobile: all
+        DSHMobileTests: [test]
+        DSHMobileUITests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - DSHMobileTests
+        - DSHMobileUITests
+    archive:
+      config: Release

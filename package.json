@@ -65,6 +65,7 @@
     "lane:l1": "node scripts/verify/lane.mjs l1",
     "lane:l2": "node scripts/verify/lane.mjs l2",
     "lane:l3": "node scripts/verify/lane.mjs l3",
-    "plugin:hmr": "node scripts/dev/plugin-hmr.mjs"
+    "plugin:hmr": "node scripts/dev/plugin-hmr.mjs",
+    "check:module-boundaries": "node scripts/dev/check-module-boundaries.mjs"
   }
 }
