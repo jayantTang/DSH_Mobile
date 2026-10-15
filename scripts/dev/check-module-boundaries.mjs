@@ -76,8 +76,10 @@ const allow = [
   [/^DSHConnectionAPI$/, new Set()],
   [/^DSHFoundation$/, new Set()],
   [/^DSHTestingSupport$/, new Set(['DSHCore', 'DSHConnectionAPI', 'DSHKit', 'RelayKit', 'DSHFoundation'])],
-  [/^(\w+)Domain$/, new Set(['DSHCore', 'DSHConnectionAPI', 'DSHFoundation', 'DSHKit', 'RelayKit'])],
-  [/^(\w+)UI$/, new Set(['DSHDesign', 'DSHCore', 'DSHFoundation'])],
+  // 连接状态是全 App 的环境态（ConnectionStore 进 environment），允许单元领域层依赖其实现；
+  // 界面层同样允许（ConnectionView/状态胶囊直接读）。收敛方向：改用 DSHConnectionAPI 协议。
+  [/^(\w+)Domain$/, new Set(['DSHCore', 'DSHConnectionAPI', 'DSHConnectionDomain', 'DSHFoundation', 'DSHKit', 'RelayKit'])],
+  [/^(\w+)UI$/, new Set(['DSHDesign', 'DSHCore', 'DSHFoundation', 'DSHConnectionDomain'])],
   // 测试 target 自由依赖被测目标 + 辅助
   [/Tests$/, null],
 ];

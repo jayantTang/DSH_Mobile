@@ -6,3 +6,4 @@
 | 位置 | 违反条款 | 原因 | 收敛方向与期限 |
 |---|---|---|---|
 | Modules/Sources/DSHConnectionDomain/ConnectionStore.swift（UIDevice.current.name，#if canImport(UIKit)） | C2 禁 UI | 拿设备名做配对显示，iOS 平台 API；已用条件编译限制到 iOS，macOS 构建不引入 | 收敛：抽一个 DeviceInfo 端口到 DSHFoundation，由 App 注入；本轮不做（025 阶段3后续） |
+| Modules/Sources/DSHFeedbackDomain/FeedbackCenter.swift（UIDevice.current.systemVersion，#if canImport(UIKit)） | C2 禁 UI | 技术信息（反馈附带系统版本）是 iOS 平台 API；macOS 构建不引入 | 收敛：与 ConnectionStore 的 DeviceInfo 合并为一个 DSHFoundation 端口；025 阶段4后续 |

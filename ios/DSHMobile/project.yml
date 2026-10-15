@@ -73,6 +73,24 @@ targets:
         product: DSHSessionsDomain
       - package: Modules
         product: DSHSessionsUI
+      - package: Modules
+        product: DSHChatDomain
+      - package: Modules
+        product: DSHChatUI
+      - package: Modules
+        product: DSHSettingsDomain
+      - package: Modules
+        product: DSHSettingsUI
+      - package: Modules
+        product: DSHFeedbackDomain
+      - package: Modules
+        product: DSHFeedbackUI
+      - package: Modules
+        product: DSHPluginUI
+      - package: Modules
+        product: DSHFilesDomain
+      - package: Modules
+        product: DSHFilesUI
 
   DSHMobileTests:
     type: bundle.unit-test

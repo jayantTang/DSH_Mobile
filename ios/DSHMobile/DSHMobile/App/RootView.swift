@@ -1,8 +1,16 @@
+import DSHFilesUI
+import DSHPluginUI
+import DSHSettingsUI
 import DSHSessionsDomain
 import DSHSessionsUI
+import DSHChatDomain
+import DSHChatUI
 import DSHConnectionDomain
 import DSHCore
 import DSHConnectionUI
+import DSHFilesDomain
+import DSHSettingsDomain
+import DSHFeedbackDomain
 import DSHDesign
 import DSHFoundation
 import DSHKit
@@ -15,6 +23,7 @@ struct RootView: View {
     @State private var store = ConnectionStore()
     @State private var hub = HostEventHub()
     @State private var updates = UpdateChecker()
+    @State private var alertPrefs = SessionAlertPrefs.shared
     @State private var alerts = SessionAlerts()
     @State private var attachmentImages = AttachmentImages()
     @State private var viewLog = SessionViewLog()
@@ -44,6 +53,7 @@ struct RootView: View {
             .environment(hub)
             .environment(updates)
             .environment(alerts)
+            .environment(alertPrefs)
             .environment(attachmentImages)
             .tint(DSHTheme.brand)
             .alert("连接失败", isPresented: Binding(
@@ -647,75 +657,14 @@ private struct MainView: View {
     @State private var announcedPending: Set<String> = []
 
     var body: some View {
-        Group {
-            if let automationSessionId, let summary = listModel.session(withId: automationSessionId) {
-                // In compact width a split view can only show one column, and
-                // the sidebar column wins. An unattended run therefore presents
-                // the transcript directly rather than trying to steer the split
-                // view's column visibility.
-                NavigationStack {
-                    chat(for: summary)
-                }
-                .task(id: automationSessionId) {
-                    await chatModel.open(summary)
-                }
-            } else {
-                splitView
-            }
-        }
-        .sheet(isPresented: $isShowingConnections) {
-            NavigationStack {
-                ConnectionView()
-                    .toolbar {
-                        ToolbarItem(placement: .confirmationAction) {
-                            Button("完成") { isShowingConnections = false }
-                        }
-                    }
-            }
-        }
-        .sheet(isPresented: $isShowingSettings) {
-            SettingsSheet(store: store)
-        }
-        .sheet(item: $filesScope) { scope in
-            WorkspaceFilesView(
-                store: store,
-                scope: scope,
-                openPath: $filesOpenPath,
-                initialPath: automationFilesDir ?? ""
-            )
-        }
-        #if DEBUG
-        .sheet(isPresented: $isShowingDiagnostics) {
-            ScrollView {
-                Text(AutomationDiagnostics.report())
-                    .font(.system(size: 12, design: .monospaced))
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding()
-            }
-        }
-        #endif
-        .sheet(isPresented: $isShowingWebFallback) {
-            // The fallback resolves its own surface from the active connection
-            // and explains itself when a relay link cannot serve one.
-            PluginWebFallback(store: store)
-        }
-        // 设置页清了缓存：内存里的转写尾部与图片桶一起放手（否则会被写回来）。
-        .onReceive(NotificationCenter.default.publisher(for: .localCachesCleared)) { _ in
-            chatModel.dropPersistedTail()
-            attachmentImages.clearAllCached()
-        }
-        .onChange(of: listModel.finishedSignal) {
-            guard let finished = listModel.lastFinished else { return }
-            // Silent for the session already on screen — but only while the app
-            // is actually in front. Backgrounded, "on screen" means nothing: the
-            // user put the phone down and is waiting to be told.
-            if scenePhase == .active, chatModel.session?.sessionId == finished.sessionId { return }
-            alerts.turnFinished(
-                sessionId: finished.sessionId,
-                title: finished.displayTitle
-            )
-        }
+        bodyStageTwo
+    }
+
+    /// 修饰符链拆成两段（025 阶段4）：装配层现在跨多个模块，一条 30+ 修饰符的链
+    /// 会让编译器放弃推导（`unable to type-check this expression in reasonable time`，
+    /// 与 `ChatView.transcriptChrome` 同一个拆法）。
+    private var bodyStageTwo: some View {
+        bodyStageOne
         .onChange(of: hub.pending.map(\.id)) { _, ids in
             announceNewPending(ids)
         }
@@ -797,6 +746,83 @@ private struct MainView: View {
             }
         }
     }
+
+    private var bodyStageOne: some View {
+        Group {
+            if let automationSessionId, let summary = listModel.session(withId: automationSessionId) {
+                // In compact width a split view can only show one column, and
+                // the sidebar column wins. An unattended run therefore presents
+                // the transcript directly rather than trying to steer the split
+                // view's column visibility.
+                NavigationStack {
+                    chat(for: summary)
+                }
+                .task(id: automationSessionId) {
+                    await chatModel.open(summary)
+                }
+            } else {
+                splitView
+            }
+        }
+        .sheet(isPresented: $isShowingConnections) {
+            NavigationStack {
+                ConnectionView()
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("完成") { isShowingConnections = false }
+                        }
+                    }
+            }
+        }
+        .sheet(isPresented: $isShowingSettings) {
+            SettingsSheet(store: store)
+        }
+        .sheet(item: $filesScope) { scope in
+            WorkspaceFilesView(
+                store: store,
+                scope: scope,
+                openPath: $filesOpenPath,
+                initialPath: automationFilesDir ?? ""
+            )
+        }
+        #if DEBUG
+        .sheet(isPresented: $isShowingDiagnostics) {
+            ScrollView {
+                Text(AutomationDiagnostics.report())
+                    .font(.system(size: 12, design: .monospaced))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding()
+            }
+        }
+        #endif
+        .sheet(isPresented: $isShowingWebFallback) {
+            // The fallback resolves its own surface from the active connection
+            // and explains itself when a relay link cannot serve one.
+            PluginWebFallback(store: store)
+        }
+        // 设置页清了缓存：内存里的转写尾部与图片桶一起放手（否则会被写回来）。
+        .onReceive(NotificationCenter.default.publisher(for: .localCachesCleared)) { _ in
+            chatModel.dropPersistedTail()
+            attachmentImages.clearAllCached()
+            // 反馈镜像与已读标记一起清；Keychain 里的取件凭据**保留**，记录下次会重新拉回来。
+            // （原在设置页里直接调，025 阶段4 设置单元进模块后改由装配层做——
+            //  `*UI → DSHFeedbackDomain` 是禁止的依赖边。）
+            FeedbackCenter.shared.clearLocalMirror()
+        }
+        .onChange(of: listModel.finishedSignal) {
+            guard let finished = listModel.lastFinished else { return }
+            // Silent for the session already on screen — but only while the app
+            // is actually in front. Backgrounded, "on screen" means nothing: the
+            // user put the phone down and is waiting to be told.
+            if scenePhase == .active, chatModel.session?.sessionId == finished.sessionId { return }
+            alerts.turnFinished(
+                sessionId: finished.sessionId,
+                title: finished.displayTitle
+            )
+        }
+    }
+
 
     /// Presents the file browser for the first session, once there is one.
     ///

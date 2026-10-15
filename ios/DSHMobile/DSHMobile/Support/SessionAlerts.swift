@@ -23,28 +23,24 @@ import UIKit
 @MainActor
 @Observable
 final class SessionAlerts: NSObject, UNUserNotificationCenterDelegate {
-
     /// Whether a finished run is worth a notification.
+    /// 偏好本体在 DSHCore 的 SessionAlertPrefs（025 模块化：设置页在模块里绑它）。
+    /// 这里保留同名转发属性，SessionAlerts 内部与旧调用点不用改。
     var notifyOnTurnEnd: Bool {
-        didSet {
-            defaults.set(notifyOnTurnEnd, forKey: Keys.turnEnd)
-            // The relay decides *whether* to push while this app is not running,
-            // so it keeps its own copy of both switches. A local toggle that never
-            // left the phone would mean a user who turned reminders off still got
-            // woken up — the one failure mode of this feature nobody forgives.
-            Task { await APNSRegistrar.shared.switchesChanged() }
-        }
+        get { prefs.notifyOnTurnEnd }
+        set { prefs.notifyOnTurnEnd = newValue }
     }
 
-    /// Whether a session waiting on an answer is worth a notification.
     var notifyOnAttention: Bool {
-        didSet {
-            defaults.set(notifyOnAttention, forKey: Keys.attention)
-            Task { await APNSRegistrar.shared.switchesChanged() }
-        }
+        get { prefs.notifyOnAttention }
+        set { prefs.notifyOnAttention = newValue }
     }
 
-    private(set) var isAuthorized = false
+    private(set) var isAuthorized = false {
+        didSet { prefs.isAuthorized = isAuthorized }
+    }
+
+    let prefs: SessionAlertPrefs
 
     private let center = UNUserNotificationCenter.current()
     private let defaults = UserDefaults.standard
@@ -61,11 +57,8 @@ final class SessionAlerts: NSObject, UNUserNotificationCenterDelegate {
         static let askVersionTrusted = 1
     }
 
-    override init() {
-        // Both default on: someone who installs a remote client for their agent
-        // is installing it precisely to be told when something needs them.
-        notifyOnTurnEnd = defaults.object(forKey: Keys.turnEnd) as? Bool ?? true
-        notifyOnAttention = defaults.object(forKey: Keys.attention) as? Bool ?? true
+    init(prefs: SessionAlertPrefs = .shared) {
+        self.prefs = prefs
         super.init()
         // 一次性迁移：清掉旧版本不可信的 `didAsk`。
         //

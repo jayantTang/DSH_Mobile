@@ -31,6 +31,15 @@ let package = Package(
         .library(name: "DSHConnectionUI", targets: ["DSHConnectionUI"]),
         .library(name: "DSHSessionsDomain", targets: ["DSHSessionsDomain"]),
         .library(name: "DSHSessionsUI", targets: ["DSHSessionsUI"]),
+        .library(name: "DSHChatDomain", targets: ["DSHChatDomain"]),
+        .library(name: "DSHChatUI", targets: ["DSHChatUI"]),
+        .library(name: "DSHSettingsDomain", targets: ["DSHSettingsDomain"]),
+        .library(name: "DSHSettingsUI", targets: ["DSHSettingsUI"]),
+        .library(name: "DSHFeedbackDomain", targets: ["DSHFeedbackDomain"]),
+        .library(name: "DSHFeedbackUI", targets: ["DSHFeedbackUI"]),
+        .library(name: "DSHPluginUI", targets: ["DSHPluginUI"]),
+        .library(name: "DSHFilesDomain", targets: ["DSHFilesDomain"]),
+        .library(name: "DSHFilesUI", targets: ["DSHFilesUI"]),
         .library(name: "DSHTestingSupport", targets: ["DSHTestingSupport"]),
     ],
     dependencies: [
@@ -60,6 +69,25 @@ let package = Package(
         // L1 会话单元
         .target(name: "DSHSessionsDomain", dependencies: ["DSHCore", "DSHFoundation", dshKit]),
         .target(name: "DSHSessionsUI", dependencies: ["DSHSessionsDomain", "DSHDesign", "DSHCore"]),
+
+        // L1 聊天单元：转写/流式/分页的领域层，与转写界面层
+        .target(name: "DSHChatDomain", dependencies: ["DSHCore", "DSHFoundation", dshKit]),
+        .target(name: "DSHChatUI", dependencies: ["DSHChatDomain", "DSHDesign", "DSHCore"]),
+
+        // L1 设置单元
+        .target(name: "DSHSettingsDomain", dependencies: ["DSHCore", "DSHFoundation", "DSHConnectionDomain", dshKit, relayKit]),
+        .target(name: "DSHSettingsUI", dependencies: ["DSHSettingsDomain", "DSHDesign", "DSHCore", "DSHConnectionDomain"]),
+
+        // L1 信箱单元
+        .target(name: "DSHFeedbackDomain", dependencies: ["DSHFoundation", dshKit, relayKit]),
+        .target(name: "DSHFeedbackUI", dependencies: ["DSHFeedbackDomain", "DSHDesign", "DSHCore"]),
+
+        // L1 插件网页单元
+        .target(name: "DSHPluginUI", dependencies: ["DSHCore", "DSHDesign", "DSHConnectionDomain", dshKit]),
+
+        // L1 文件单元
+        .target(name: "DSHFilesDomain", dependencies: ["DSHCore", "DSHFoundation", "DSHConnectionDomain", dshKit]),
+        .target(name: "DSHFilesUI", dependencies: ["DSHFilesDomain", "DSHDesign", "DSHCore"]),
 
         // 测试辅助：仅测试依赖
         .target(name: "DSHTestingSupport", dependencies: ["DSHCore", "DSHConnectionAPI", dshKit]),

@@ -1,5 +1,10 @@
+import DSHChatDomain
+import DSHChatUI
 import DSHConnectionDomain
 import DSHConnectionUI
+import DSHFeedbackDomain
+import DSHFeedbackUI
+import DSHDesign
 import DSHSessionsUI
 import DSHCore
 import DSHKit
@@ -25,13 +30,56 @@ struct DSHMobileApp: App {
         }
         ConnectionStore.probeNote = note
         ConnectionHooks.pairingChanged = { await APNSRegistrar.shared.pairingChanged() }
+        KeyboardProbe.isOn = { ViewportProbe.isOn }
+        SessionAlertPrefs.onChange = { await APNSRegistrar.shared.switchesChanged() }
+        KeyboardProbe.note = { kind, fields in ViewportProbe.note(kind, fields) }
         // 025：会话单元的信箱钩子（信箱单元尚未迁入模块前由 App 提供实现）。
         // FIXME(025-阶段4b)：信箱单元迁入 DSHFeedbackDomain 后改为注入其模型。
         SessionsHooks.refreshFeedback = { await FeedbackCenter.shared.applicationBecameActive() }
         SessionsHooks.feedbackUnreadCount = { FeedbackCenter.shared.unreadCount }
         SessionsHooks.feedbackView = { AnyView(FeedbackCenterView()) }
+        FeedbackHooks.renderMarkdown = { AnyView(MarkdownText(text: $0)) }
         HostEventHub.probeNote = note
         SessionRouter.probeNote = note
+        // 025 阶段4b：聊天单元的探针端口。`DSHChatDomain` / `DSHChatUI` 不认识
+        // App 的 `ViewportProbe`（调试仪器）与 `ProbeVariants`（读启动参数），
+        // 所以日志、视口几何与变体开关逐项注入；每一项都直接转发给原实现，
+        // 带 `-DSHViewportProbe` / `-DSHProbe*` 启动时的行为与搬迁前逐字一致。
+        ChatProbe.probeNote = note
+        ChatProbe.setContent = { items, streaming in
+            ViewportProbe.setContent(items: items, streaming: streaming)
+        }
+        ChatProbe.setViewport = { rect in ViewportProbe.setViewport(rect) }
+        ChatProbe.markReady = { ViewportProbe.markReady() }
+        ChatProbe.start = { ViewportProbe.start() }
+        ChatProbe.pause = { ViewportProbe.pause() }
+        ChatProbe.resume = { ViewportProbe.resume() }
+        ChatProbe.scrollFacts = { ViewportProbe.scrollFacts }
+        ChatProbe.topVisibleRow = { ViewportProbe.topVisibleRow() }
+        ChatProbe.visibleRowIds = { ViewportProbe.visibleRowIds() }
+        ChatProbe.enterRow = { id, rect in ViewportProbe.enter(id, rect) }
+        ChatProbe.updateRow = { id, rect in ViewportProbe.update(id, rect) }
+        ChatProbe.leaveRow = { id in ViewportProbe.leave(id) }
+        ChatProbe.setScroll = { offset, content in ViewportProbe.lastScroll = (offset, content) }
+        ChatProbe.olderScrollRounds = ViewportProbe.olderScrollRounds
+        ChatProbe.olderDriveSkipsReclaimed = ViewportProbe.olderDriveSkipsReclaimed
+        ChatProbe.listHost = ProbeVariants.listHost
+        ChatProbe.listSpike = ProbeVariants.listSpike
+        ChatProbe.lazyStack = ProbeVariants.lazyStack
+        ChatProbe.windowRows = ProbeVariants.windowRows
+        ChatProbe.payloadBudgetKB = ProbeVariants.payloadBudgetKB
+        ChatProbe.failPageAttempts = ProbeVariants.failPageAttempts
+        ChatProbe.pageShortfall = ProbeVariants.pageShortfall
+        ChatProbe.autoRetryMs = ProbeVariants.autoRetryMs
+        ChatProbe.noHistoryWindow = ProbeVariants.noHistoryWindow
+        ChatProbe.noSessionSearch = ProbeVariants.noSessionSearch
+        ChatProbe.reclaimScreens = ProbeVariants.reclaimScreens
+        ChatProbe.rehydrateScreens = ProbeVariants.rehydrateScreens
+        ChatProbe.forceRehydrate = ProbeVariants.forceRehydrate
+        ChatProbe.noteDriveBegan = { ProbeVariants.noteDriveBegan() }
+        ChatViewSeams.runTyping = { target, focus in
+            await ViewportProbe.runTyping(into: target, focus: focus)
+        }
         // 启动清扫：删掉 `Caches/outgoing-files/` 下 24 小时以上的残留。
         // 正常一次发送由 `ChatModel.sendFile` 自己删拷贝，这里兜的是「上传中途被
         // 杀」那一种 —— 否则暂存区只增不减（P-3）。放在 App 的初始化里、不放进

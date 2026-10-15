@@ -449,14 +449,4 @@ final class APNSRegistrar: NSObject, UIApplicationDelegate {
     }
 }
 
-/// The push-related lines of the app's log.
-///
-/// A tiny wrapper rather than `print` scattered at the call sites: registration
-/// is the one flow whose failures are *silent* (no token, no banner, no error
-/// shown to anyone), so every step says what it saw, and one filter turns the
-/// whole story up.
-enum DSHLog {
-    static func push(_ message: String) {
-        NSLog("[DSHMobile/push] %@", message)
-    }
-}
+// `DSHLog` 已搬进 DSHFoundation（025 阶段4b）：聊天单元在模块层也要写这一行。
