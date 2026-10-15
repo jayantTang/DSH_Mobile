@@ -169,6 +169,7 @@ public enum FeedbackThreadSide: Hashable {
 /// 因此这里没有任何输入区：想补充就在发送窗口再发一封新的（FR-010 / FR-013）。
 /// 收发两封是**同一张信件卡**（``LetterCard``），只有署名与头像字符不同——邮件里我方
 /// 那封也长成信的样子，不是聊天气泡（FR-015，也是 spec 明确的非目标）。
+///
 /// 装配钩子（025 方案 B）：信件正文与聊天正文共用一套 markdown 渲染，
 /// 但信箱单元不直接依赖聊天单元，由 App 装配层注入渲染闭包。
 public enum FeedbackHooks {

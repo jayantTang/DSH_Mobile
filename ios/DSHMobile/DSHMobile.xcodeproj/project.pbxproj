@@ -33,7 +33,6 @@
 		A09E74D5EA969B99C0A165F7 /* ViewportProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 861940A3134E8682E803F451 /* ViewportProbe.swift */; };
 		B91935A77834532A12794730 /* RelayKit in Frameworks */ = {isa = PBXBuildFile; productRef = 6C425537498F50E6BEA70D2F /* RelayKit */; };
 		C6B6CE5AD988D09BAE0A3DEC /* DSHChatDomain in Frameworks */ = {isa = PBXBuildFile; productRef = 2BECD1B3EB265D435AF59898 /* DSHChatDomain */; };
-		CEA217E445B6EBCCE01BE328 /* PlatformAdaptersTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3C5878143F510B9213B6F64 /* PlatformAdaptersTests.swift */; };
 		D009A7D193647A0DB5BF4DF9 /* HostSmokeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08004ADE0CA0A0194E46BA3F /* HostSmokeTests.swift */; };
 		D0E3123F12FFDF65CB904400 /* NotificationProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 612505CABA9C3923B812C93F /* NotificationProbe.swift */; };
 		D990DB0A8389A0E1DAEFCD77 /* DSHFilesDomain in Frameworks */ = {isa = PBXBuildFile; productRef = 591834F656729023198922C3 /* DSHFilesDomain */; };
@@ -77,7 +76,6 @@
 		65666857828618B5B0230B7B /* ViewportAutomation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewportAutomation.swift; sourceTree = "<group>"; };
 		861940A3134E8682E803F451 /* ViewportProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewportProbe.swift; sourceTree = "<group>"; };
 		981C302A6EB2B585792CA2D4 /* zh-Hans */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "zh-Hans"; path = "zh-Hans.lproj/Localizable.strings"; sourceTree = "<group>"; };
-		A3C5878143F510B9213B6F64 /* PlatformAdaptersTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlatformAdaptersTests.swift; sourceTree = "<group>"; };
 		AFF59C8B75008DE0FF3FC446 /* DSHMobileApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DSHMobileApp.swift; sourceTree = "<group>"; };
 		B9260874C4B5CBABBA0027B6 /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.xcconfig; sourceTree = "<group>"; };
 		C5443B4AC48ED16A3F9AAFF1 /* P13ResumeObserver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = P13ResumeObserver.swift; sourceTree = "<group>"; };
@@ -139,7 +137,6 @@
 			isa = PBXGroup;
 			children = (
 				08004ADE0CA0A0194E46BA3F /* HostSmokeTests.swift */,
-				A3C5878143F510B9213B6F64 /* PlatformAdaptersTests.swift */,
 			);
 			path = DSHMobileTests;
 			sourceTree = "<group>";
@@ -218,7 +215,7 @@
 			path = App;
 			sourceTree = "<group>";
 		};
-		"TEMP_05AAB980-2186-404A-B9F7-834448B16CAC" /* Features */ = {
+		"TEMP_1603FDB9-11CD-4B9D-950B-F2E9E6DE19D1" /* Features */ = {
 			isa = PBXGroup;
 			children = (
 			);
@@ -389,7 +386,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				D009A7D193647A0DB5BF4DF9 /* HostSmokeTests.swift in Sources */,
-				CEA217E445B6EBCCE01BE328 /* PlatformAdaptersTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -452,6 +448,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -467,6 +464,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -482,6 +480,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -645,6 +644,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",

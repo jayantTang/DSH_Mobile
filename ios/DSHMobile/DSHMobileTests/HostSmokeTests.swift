@@ -2,6 +2,7 @@
 import XCTest
 
 @testable import DSHMobile
+import DSHFoundation
 
 /// 测试宿主自身的冒烟用例（spec 023 T010）。
 ///

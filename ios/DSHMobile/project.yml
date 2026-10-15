@@ -97,6 +97,9 @@ targets:
     platform: iOS
     sources:
       - path: DSHMobileTests
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
     dependencies:
       - target: DSHMobile
 
@@ -105,6 +108,9 @@ targets:
     platform: iOS
     sources:
       - path: DSHMobileUITests
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
     dependencies:
       - target: DSHMobile
 

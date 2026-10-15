@@ -44,6 +44,8 @@ let package = Package(
     ],
     dependencies: [
         .package(path: "../DSHKit"),
+        // 快照测试：Design 组件回归（固定 size class/主题/locale，防假阳性）
+        .package(url: "https://github.com/pointfreeco/swift-snapshot-testing.git", from: "1.17.0"),
     ],
     targets: [
         // L4 基础层：零业务、零 UI
@@ -52,26 +54,36 @@ let package = Package(
 
         // L1 横切设计系统：仅 SwiftUI
         .target(name: "DSHDesign", dependencies: ["DSHFoundation"]),
+        .testTarget(name: "DSHDesignTests", dependencies: [
+            "DSHDesign",
+            .product(name: "SnapshotTesting", package: "swift-snapshot-testing"),
+        ]),
 
         // L2 纯协议：连接服务接口
         .target(name: "DSHConnectionAPI"),
 
         // L2 核心服务：事件分发 / 传输编排 / 路由意图（禁 UI）
         .target(name: "DSHCore", dependencies: ["DSHConnectionAPI", "DSHFoundation", dshKit, relayKit]),
-        .testTarget(name: "DSHCoreTests", dependencies: ["DSHCore", "DSHTestingSupport"]),
+        .testTarget(name: "DSHCoreTests", dependencies: [
+            "DSHCore", "DSHTestingSupport", dshKit,
+        ]),
 
         // L1 连接单元领域层：实现 LinkService（禁 UI）
         .target(name: "DSHConnectionDomain", dependencies: ["DSHConnectionAPI", "DSHFoundation", dshKit, relayKit]),
+        .testTarget(name: "DSHConnectionDomainTests", dependencies: [
+            "DSHConnectionDomain", "DSHConnectionAPI", "DSHTestingSupport", dshKit, relayKit,
+        ]),
 
         // L1 连接单元界面层
         .target(name: "DSHConnectionUI", dependencies: ["DSHConnectionDomain", "DSHDesign", "DSHCore"]),
 
         // L1 会话单元
-        .target(name: "DSHSessionsDomain", dependencies: ["DSHCore", "DSHFoundation", dshKit]),
+        .target(name: "DSHSessionsDomain", dependencies: ["DSHCore", "DSHFoundation", "DSHConnectionDomain", dshKit]),
         .target(name: "DSHSessionsUI", dependencies: ["DSHSessionsDomain", "DSHDesign", "DSHCore"]),
 
         // L1 聊天单元：转写/流式/分页的领域层，与转写界面层
-        .target(name: "DSHChatDomain", dependencies: ["DSHCore", "DSHFoundation", dshKit]),
+        .target(name: "DSHChatDomain", dependencies: ["DSHCore", "DSHFoundation", "DSHConnectionDomain", dshKit]),
+        .testTarget(name: "DSHChatDomainTests", dependencies: ["DSHChatDomain", dshKit]),
         .target(name: "DSHChatUI", dependencies: ["DSHChatDomain", "DSHDesign", "DSHCore"]),
 
         // L1 设置单元
