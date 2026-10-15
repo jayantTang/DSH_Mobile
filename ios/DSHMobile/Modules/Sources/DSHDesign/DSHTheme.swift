@@ -1,4 +1,7 @@
 import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#endif
 
 /// The DSH design system, transcribed from the desktop client's tokens.
 ///
@@ -161,7 +164,7 @@ public enum DSHTheme {
     }
 }
 
-extension Color {
+public extension Color {
     /// Builds a colour from a packed literal: `0xRRGGBB`, or `0xRRGGBBAA` when
     /// the value carries its own alpha.
     ///
@@ -194,7 +197,7 @@ func hexRGBA(_ hex: UInt32) -> (r: Double, g: Double, b: Double, a: Double) {
 }
 
 #if canImport(UIKit)
-extension UIColor {
+public extension UIColor {
     convenience init(hex: UInt32, alpha: Double? = nil) {
         let parts = hexRGBA(hex)
         self.init(
@@ -206,7 +209,7 @@ extension UIColor {
     }
 }
 #else
-extension NSColor {
+public extension NSColor {
     convenience init(hex: UInt32, alpha: Double? = nil) {
         let parts = hexRGBA(hex)
         self.init(

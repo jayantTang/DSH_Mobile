@@ -1,8 +1,8 @@
 import SwiftUI
 
 /// A small filled status dot, used for connection and run state.
-struct StatusDot: View {
-    enum Level {
+public struct StatusDot: View {
+    public enum Level {
         case ok, busy, attention, error, idle
         /// Finished since this phone last showed it.
         ///
@@ -25,14 +25,19 @@ struct StatusDot: View {
         }
     }
 
-    let level: Level
-    var size: CGFloat = 8
+    public let level: Level
+    public var size: CGFloat = 8
+    public init(level: Level, size: CGFloat = 8, animated: Bool = false) {
+        self.level = level
+        self.size = size
+        self.animated = animated
+    }
     /// Pulses while work is in flight, so a glance tells you it is alive.
-    var animated: Bool = false
+    public var animated: Bool = false
 
     @State private var pulse = false
 
-    var body: some View {
+    public var body: some View {
         Circle()
             .fill(level.color)
             .frame(width: size, height: size)
@@ -51,11 +56,15 @@ struct StatusDot: View {
 }
 
 /// A compact label, used for counts and states.
-struct Badge: View {
-    let text: String
-    var tone: Tone = .neutral
+public struct Badge: View {
+    public let text: String
+    public var tone: Tone = .neutral
+    public init(text: String, tone: Tone = .neutral) {
+        self.text = text
+        self.tone = tone
+    }
 
-    enum Tone {
+    public enum Tone {
         case neutral, brand, success, attention, danger
 
         var foreground: Color {
@@ -71,7 +80,7 @@ struct Badge: View {
         var background: Color { foreground.opacity(0.13) }
     }
 
-    var body: some View {
+    public var body: some View {
         // `text` is a `String`, so `Text(text)` would be verbatim and never reach
         // Localizable.strings — every badge would read Chinese on an English
         // phone. Looking the value up (and falling back to it unchanged) keeps
@@ -86,8 +95,9 @@ struct Badge: View {
 }
 
 /// A hairline that matches the desktop client's panel separators.
-struct Hairline: View {
-    var body: some View {
+public struct Hairline: View {
+    public init() {}
+    public var body: some View {
         Rectangle()
             .fill(DSHTheme.border1)
             .frame(height: 1)
@@ -95,18 +105,18 @@ struct Hairline: View {
 }
 
 /// A titled group of rows, echoing the desktop client's panel sections.
-struct PanelSection<Content: View>: View {
-    let title: String?
-    var accessory: AnyView?
+public struct PanelSection<Content: View>: View {
+    public let title: String?
+    public var accessory: AnyView?
     @ViewBuilder var content: Content
 
-    init(_ title: String? = nil, accessory: AnyView? = nil, @ViewBuilder content: () -> Content) {
+    public init(_ title: String? = nil, accessory: AnyView? = nil, @ViewBuilder content: () -> Content) {
         self.title = title
         self.accessory = accessory
         self.content = content()
     }
 
-    var body: some View {
+    public var body: some View {
         VStack(alignment: .leading, spacing: DSHTheme.Spacing.tight) {
             if title != nil || accessory != nil {
                 HStack(spacing: DSHTheme.Spacing.tight) {
@@ -127,13 +137,19 @@ struct PanelSection<Content: View>: View {
 }
 
 /// The standard empty state: one line of why, one line of what to do.
-struct EmptyStateView: View {
-    let icon: String
-    let title: String
-    let message: String
-    var action: (title: String, handler: () -> Void)?
+public struct EmptyStateView: View {
+    public let icon: String
+    public let title: String
+    public let message: String
+    public var action: (title: String, handler: () -> Void)?
+    public init(icon: String, title: String, message: String, action: (title: String, handler: () -> Void)? = nil) {
+        self.icon = icon
+        self.title = title
+        self.message = message
+        self.action = action
+    }
 
-    var body: some View {
+    public var body: some View {
         VStack(spacing: DSHTheme.Spacing.standard) {
             Image(systemName: icon)
                 .font(.system(size: 32, weight: .light))
@@ -159,11 +175,15 @@ struct EmptyStateView: View {
 }
 
 /// The standard failure state, always offering a retry.
-struct ErrorStateView: View {
-    let message: String
-    var retry: (() -> Void)?
+public struct ErrorStateView: View {
+    public let message: String
+    public var retry: (() -> Void)?
+    public init(message: String, retry: (() -> Void)? = nil) {
+        self.message = message
+        self.retry = retry
+    }
 
-    var body: some View {
+    public var body: some View {
         VStack(spacing: DSHTheme.Spacing.standard) {
             Image(systemName: "exclamationmark.triangle")
                 .font(.system(size: 30, weight: .light))
@@ -185,9 +205,13 @@ struct ErrorStateView: View {
 }
 
 /// A thin determinate progress bar for context pressure.
-struct PressureBar: View {
-    let fraction: Double
-    var height: CGFloat = 3
+public struct PressureBar: View {
+    public let fraction: Double
+    public var height: CGFloat = 3
+    public init(fraction: Double, height: CGFloat = 3) {
+        self.fraction = fraction
+        self.height = height
+    }
 
     private var tone: Color {
         switch fraction {
@@ -197,7 +221,7 @@ struct PressureBar: View {
         }
     }
 
-    var body: some View {
+    public var body: some View {
         GeometryReader { geometry in
             ZStack(alignment: .leading) {
                 Capsule().fill(DSHTheme.border2)
@@ -212,11 +236,16 @@ struct PressureBar: View {
 }
 
 /// A tappable row used across the session list and pickers.
-struct SelectableRow<Content: View>: View {
-    let isSelected: Bool
+public struct SelectableRow<Content: View>: View {
+    public let isSelected: Bool
     @ViewBuilder var content: Content
 
-    var body: some View {
+    public init(isSelected: Bool, @ViewBuilder content: () -> Content) {
+        self.isSelected = isSelected
+        self.content = content()
+    }
+
+    public var body: some View {
         content
             .padding(.horizontal, DSHTheme.Spacing.standard)
             .padding(.vertical, DSHTheme.Spacing.tight)
@@ -233,20 +262,20 @@ struct SelectableRow<Content: View>: View {
 ///
 /// The desktop client abbreviates paths this way; matching it keeps the two
 /// clients readable side by side.
-enum PathFormat {
-    static func short(_ path: String, home: String?) -> String {
+public enum PathFormat {
+    public static func short(_ path: String, home: String?) -> String {
         guard let home, !home.isEmpty, path.hasPrefix(home) else { return path }
         return "~" + path.dropFirst(home.count)
     }
 
-    static func directory(_ path: String, home: String?) -> String {
+    public static func directory(_ path: String, home: String?) -> String {
         (short(path, home: home) as NSString).lastPathComponent
     }
 }
 
 /// Formats token counts the way the desktop client does.
-enum TokenFormat {
-    static func compact(_ count: Int) -> String {
+public enum TokenFormat {
+    public static func compact(_ count: Int) -> String {
         switch count {
         case ..<1_000: return "\(count)"
         case ..<1_000_000: return String(format: "%.1fk", Double(count) / 1_000)
@@ -256,8 +285,8 @@ enum TokenFormat {
 }
 
 /// A relative timestamp, kept short for dense rows.
-enum RelativeTime {
-    static func string(from date: Date) -> String {
+public enum RelativeTime {
+    public static func string(from date: Date) -> String {
         let interval = Date().timeIntervalSince(date)
         if interval < 60 { return String(localized: "刚刚") }
         if interval < 3_600 { return String(localized: "\(Int(interval / 60)) 分钟前") }

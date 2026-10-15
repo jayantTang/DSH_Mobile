@@ -9,7 +9,7 @@ import SwiftUI
 /// Colours come from `DSHTheme` only. The design system has no dedicated syntax
 /// tokens (the desktop client themes code with the same semantic aliases the app
 /// already exposes), so each token kind maps onto an existing semantic role.
-enum CodeTokenKind: Sendable, Hashable {
+public enum CodeTokenKind: Sendable, Hashable {
     case plain
     case keyword
     case type
@@ -21,7 +21,7 @@ enum CodeTokenKind: Sendable, Hashable {
 }
 
 /// The languages the reader can colour, chosen by file extension.
-enum CodeLanguage: String, Sendable {
+public enum CodeLanguage: String, Sendable {
     case swift
     case javascript
     case typescript
@@ -43,7 +43,7 @@ enum CodeLanguage: String, Sendable {
     case css
     case text
 
-    static func from(path: String) -> CodeLanguage {
+    public static func from(path: String) -> CodeLanguage {
         let name = (path as NSString).lastPathComponent.lowercased()
         let ext = (name as NSString).pathExtension
         switch ext {
@@ -75,7 +75,7 @@ enum CodeLanguage: String, Sendable {
         }
     }
 
-    var keywords: Set<String> {
+    public var keywords: Set<String> {
         switch self {
         case .swift:
             return ["actor", "any", "as", "associatedtype", "async", "await", "break", "case", "catch", "class",
@@ -151,7 +151,7 @@ enum CodeLanguage: String, Sendable {
         }
     }
 
-    var lineComments: [String] {
+    public var lineComments: [String] {
         switch self {
         case .swift, .javascript, .typescript, .go, .rust, .c, .cpp, .java, .kotlin: return ["//"]
         case .python, .shell, .yaml, .ruby: return ["#"]
@@ -162,7 +162,7 @@ enum CodeLanguage: String, Sendable {
         }
     }
 
-    var blockComment: (open: String, close: String)? {
+    public var blockComment: (open: String, close: String)? {
         switch self {
         case .swift, .javascript, .typescript, .go, .rust, .c, .cpp, .java, .kotlin, .css, .sql, .php:
             return ("/*", "*/")
@@ -173,14 +173,14 @@ enum CodeLanguage: String, Sendable {
     }
 
     /// Languages where a capitalized identifier usually names a type.
-    var coloursTypeNames: Bool {
+    public var coloursTypeNames: Bool {
         switch self {
         case .swift, .java, .kotlin, .rust, .go, .c, .cpp, .typescript: return true
         default: return false
         }
     }
 
-    var stringsAreQuoted: Bool {
+    public var stringsAreQuoted: Bool {
         switch self {
         case .json, .javascript, .typescript, .swift, .go, .rust, .c, .cpp, .java, .kotlin, .python, .ruby,
              .php, .sql, .yaml, .shell:
@@ -192,14 +192,14 @@ enum CodeLanguage: String, Sendable {
 }
 
 /// Carries cross-line lexer state through a page.
-struct CodeLexerState: Sendable {
-    var inBlockComment = false
+public struct CodeLexerState: Sendable {
+    public var inBlockComment = false
 }
 
-enum CodeHighlighter {
+public enum CodeHighlighter {
 
     /// Tokenizes one line, advancing `state` past any unterminated block comment.
-    static func segments(
+    public static func segments(
         _ line: String,
         language: CodeLanguage,
         state: inout CodeLexerState
@@ -357,10 +357,10 @@ enum CodeHighlighter {
     /// HTML report opened on a phone. Long lines are cut for display and said to
     /// be cut; the file itself is untouched, and the web view renders such a
     /// document properly.
-    static let displayLimit = 2_000
+    public static let displayLimit = 2_000
 
     /// Tokenizes a whole page, so block comments carry across lines.
-    static func page(_ lines: [String], language: CodeLanguage) -> [AttributedString] {
+    public static func page(_ lines: [String], language: CodeLanguage) -> [AttributedString] {
         var state = CodeLexerState()
         return lines.map { line in
             let shown = line.count > displayLimit ? truncated(line) : line
@@ -375,7 +375,7 @@ enum CodeHighlighter {
         return head + "… 本行还有 \(dropped) 个字符未显示"
     }
 
-    static func attributed(_ segments: [(text: String, kind: CodeTokenKind)]) -> AttributedString {
+    public static func attributed(_ segments: [(text: String, kind: CodeTokenKind)]) -> AttributedString {
         var result = AttributedString()
         for segment in segments {
             var piece = AttributedString(segment.text)
@@ -389,7 +389,7 @@ enum CodeHighlighter {
     }
 
     /// Syntax colours use only tokens the design system already defines.
-    static func color(for kind: CodeTokenKind) -> Color {
+    public static func color(for kind: CodeTokenKind) -> Color {
         switch kind {
         case .plain: return DSHTheme.labelPrimary
         case .keyword: return DSHTheme.brand

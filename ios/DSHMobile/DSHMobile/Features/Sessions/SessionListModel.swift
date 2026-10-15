@@ -1,3 +1,4 @@
+import DSHDesign
 import DSHFoundation
 import DSHKit
 import Foundation

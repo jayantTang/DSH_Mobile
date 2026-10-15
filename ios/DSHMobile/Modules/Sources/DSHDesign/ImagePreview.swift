@@ -1,23 +1,26 @@
 import SwiftUI
+#if canImport(UIKit)
 import UIKit
+#endif
 
 // 图片预览（spec 024 / S2：从 Features/Chat 抽出到共享呈现层）。
 //
 // 为什么在共享层：它被三个模块用（会话的图片附件、工作区的文件预览与文件列表），
 // 留在任何一个功能域里都会造成"功能域互相引用"（`npm run arch` 里 Chat ↔ Files 的双向边）。
 // 它只依赖 UIKit 的 UIImage 与 SwiftUI，不引用任何业务类型。
-struct ImagePreview: View {
-    let image: UIImage
-    let label: String
+#if canImport(UIKit)
+public struct ImagePreview: View {
+    public let image: UIImage
+    public let label: String
     /// The file behind the picture, when there is one on this phone.
     ///
     /// A workspace picture arrives as a file the browser downloaded, and the
     /// share sheet is how it leaves the phone again — the same viewer serving the
     /// transcript (which has bytes and no file) and the browser (which has both).
-    var shareURL: URL?
+    public var shareURL: URL?
     /// Prefix for the automation identifiers, so a run can tell the workspace
     /// viewer and the transcript viewer apart.
-    var identifierPrefix: String = "attachment.preview"
+    public var identifierPrefix: String = "attachment.preview"
 
     @Environment(\.dismiss) private var dismiss
     @State private var scale: CGFloat = 1
@@ -25,9 +28,16 @@ struct ImagePreview: View {
     @State private var offset: CGSize = .zero
     @State private var committedOffset: CGSize = .zero
 
+    public init(image: UIImage, label: String, shareURL: URL? = nil, identifierPrefix: String = "attachment.preview") {
+        self.image = image
+        self.label = label
+        self.shareURL = shareURL
+        self.identifierPrefix = identifierPrefix
+    }
+
     private static let maximumScale: CGFloat = 6
 
-    var body: some View {
+    public var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
 
@@ -124,3 +134,4 @@ struct ImagePreview: View {
         UIImageWriteToSavedPhotosAlbum(image, nil, nil, nil)
     }
 }
+#endif

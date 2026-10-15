@@ -21,16 +21,16 @@ import SwiftUI
 /// 装不下就不 fit），同时**保住了这一行原有的取值样式**——`LabeledContent` 的标签是
 /// 主色、值是次级色，手写 `HStack` 会把值从次级色变成主色，那是 B2/G12 不允许的
 /// 版式变化。候选 2 里值显式取次级色，跟候选 1 保持一致。
-struct AdaptivePair<Label: View, Value: View>: View {
+public struct AdaptivePair<Label: View, Value: View>: View {
     private let label: Label
     private let value: Value
 
-    init(@ViewBuilder label: () -> Label, @ViewBuilder value: () -> Value) {
+    public init(@ViewBuilder label: () -> Label, @ViewBuilder value: () -> Value) {
         self.label = label()
         self.value = value()
     }
 
-    var body: some View {
+    public var body: some View {
         ViewThatFits(in: .horizontal) {
             LabeledContent {
                 value.fixedSize(horizontal: true, vertical: false)
@@ -52,14 +52,14 @@ struct AdaptivePair<Label: View, Value: View>: View {
 ///
 /// 尾部给更高的布局优先级（先分配），文本列吃剩下的宽度并换行；文本列内部的
 /// 多行 `Text` 由调用点加 `.fixedSize(horizontal: false, vertical: true)`。
-struct AdaptiveRow<Leading: View, Content: View, Trailing: View>: View {
+public struct AdaptiveRow<Leading: View, Content: View, Trailing: View>: View {
     private let alignment: VerticalAlignment
     private let spacing: CGFloat
     private let leading: Leading
     private let content: Content
     private let trailing: Trailing
 
-    init(
+    public init(
         alignment: VerticalAlignment = .top,
         spacing: CGFloat = DSHTheme.Spacing.tight,
         @ViewBuilder leading: () -> Leading,
@@ -73,7 +73,7 @@ struct AdaptiveRow<Leading: View, Content: View, Trailing: View>: View {
         self.trailing = trailing()
     }
 
-    var body: some View {
+    public var body: some View {
         HStack(alignment: alignment, spacing: spacing) {
             leading
             content

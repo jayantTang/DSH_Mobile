@@ -1,3 +1,4 @@
+import DSHDesign
 import DSHKit
 import QuickLook
 import SwiftUI

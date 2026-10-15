@@ -1,3 +1,4 @@
+import DSHDesign
 import SwiftUI
 
 /// A block-level Markdown renderer tuned for chat transcripts.
