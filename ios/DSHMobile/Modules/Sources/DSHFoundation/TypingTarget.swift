@@ -9,12 +9,18 @@ import Foundation
 ///
 /// 端口本身住在基础设施层（而不是工具目录）：否则界面为了构造它就要反向依赖调试工具。
 /// `#if DEBUG`：它在发布构建里没有消费者，不该编进去。
-struct TypingTarget {
+public struct TypingTarget {
     /// 这一轮是否正在流式流入（探针要等它真的开始，否则"边流入边打字"那条组合没被测到）。
-    var isRunning: () -> Bool
+    public var isRunning: () -> Bool
     /// 当前输入框内容。
-    var draft: () -> String
+    public var draft: () -> String
     /// 写回输入框内容。
-    var setDraft: (String) -> Void
+    public var setDraft: (String) -> Void
+
+    public init(isRunning: @escaping () -> Bool, draft: @escaping () -> String, setDraft: @escaping (String) -> Void) {
+        self.isRunning = isRunning
+        self.draft = draft
+        self.setDraft = setDraft
+    }
 }
 #endif

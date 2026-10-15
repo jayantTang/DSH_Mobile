@@ -14,7 +14,7 @@ import Foundation
 /// whose rows will read as seen either way.
 @MainActor
 @Observable
-final class SessionViewLog {
+public final class SessionViewLog {
 
     /// Which computer these marks are about.
     ///
@@ -30,14 +30,14 @@ final class SessionViewLog {
     private static let key = "list.sessionViewedAt"
     private static let limit = 400
 
-    init(defaults: UserDefaults = .standard) {
+    public init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         let stored = defaults.dictionary(forKey: Self.key) as? [String: Double]
         self.viewedAt = stored ?? [:]
     }
 
     /// Points the log at one computer (or at nothing, when disconnected).
-    func useScope(_ scope: String?) {
+    public func useScope(_ scope: String?) {
         self.scope = scope
     }
 
@@ -46,7 +46,7 @@ final class SessionViewLog {
     }
 
     /// When this session was last opened, or `nil` if it never was.
-    func lastViewed(_ sessionId: String) -> Double? {
+    public func lastViewed(_ sessionId: String) -> Double? {
         viewedAt[key(sessionId)]
     }
 
@@ -54,7 +54,7 @@ final class SessionViewLog {
     ///
     /// Called when the transcript opens, not when a row scrolls past: "viewed"
     /// has to mean the user looked at it, or the marker clears itself.
-    func markViewed(_ sessionId: String, at stamp: Double = Date().timeIntervalSince1970 * 1000) {
+    public func markViewed(_ sessionId: String, at stamp: Double = Date().timeIntervalSince1970 * 1000) {
         let key = key(sessionId)
         // Monotonic per session: a clock that steps backwards must not resurrect
         // an unseen marker for something the user just read.
@@ -65,7 +65,7 @@ final class SessionViewLog {
     }
 
     /// Forgets sessions the list no longer shows.
-    func prune(keeping ids: Set<String>) {
+    public func prune(keeping ids: Set<String>) {
         let wanted = Set(ids.map(key))
         let kept = viewedAt.filter { wanted.contains($0.key) }
         guard kept.count != viewedAt.count else { return }

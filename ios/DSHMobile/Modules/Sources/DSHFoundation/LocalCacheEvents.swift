@@ -6,5 +6,5 @@ import Foundation
 /// 就会把文件写回去——用户会看到"清完又回来了"。所以清理必须广播出去，
 /// 由持有内存副本的地方（会话模型、图片缓存）一起放手。
 extension Notification.Name {
-    static let localCachesCleared = Notification.Name("dsh.localCachesCleared")
+    public static let localCachesCleared = Notification.Name("dsh.localCachesCleared")
 }

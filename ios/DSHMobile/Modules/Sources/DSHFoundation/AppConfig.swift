@@ -7,7 +7,7 @@ import Foundation
 /// 默认连不上任何中转——这是故意的：中转地址属于部署方，不属于仓库。要连自己的
 /// 中转，`cp ios/DSHMobile/Config.xcconfig ios/DSHMobile/Config.local.xcconfig`
 /// 再填真实地址即可。
-enum AppConfig {
+public enum AppConfig {
 
     /// 读 Info.plist 里的地址；缺失、为空、没被 xcconfig 替换掉（仍是 `$(...)`）
     /// 或不是合法 URL 时退回占位符。
@@ -21,12 +21,12 @@ enum AppConfig {
     }
 
     /// 中转基址，含路径前缀，例如 `https://relay.example.com/dsh-link`。
-    static var relayURL: String {
+    public static var relayURL: String {
         string("DSHRelayURL", fallback: "https://relay.example.com/dsh-link")
     }
 
     /// OTA 安装页发布的 `version.json`。
-    static var updateFeed: String {
+    public static var updateFeed: String {
         string("DSHUpdateFeed", fallback: "https://relay.example.com/ios/version.json")
     }
 }

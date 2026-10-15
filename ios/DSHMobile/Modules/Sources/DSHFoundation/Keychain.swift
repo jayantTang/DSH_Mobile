@@ -6,7 +6,7 @@ import Security
 /// Launch tokens and device tokens are bearer credentials: they must not sit in
 /// `UserDefaults`, which is backed by an unprotected plist and included in
 /// unencrypted backups. Profiles keep only a reference; the secret lives here.
-enum Keychain {
+public enum Keychain {
     private static let service = "com.jayanttang.dsh"
 
     enum Failure: Error, LocalizedError {
@@ -20,7 +20,7 @@ enum Keychain {
     }
 
     /// Stores or replaces one secret.
-    static func set(_ value: String, for account: String) throws {
+    public static func set(_ value: String, for account: String) throws {
         let data = Data(value.utf8)
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -45,7 +45,7 @@ enum Keychain {
     }
 
     /// Reads one secret, or nil when it was never stored.
-    static func get(_ account: String) -> String? {
+    public static func get(_ account: String) -> String? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -60,7 +60,7 @@ enum Keychain {
     }
 
     /// Removes one secret, ignoring absence.
-    static func remove(_ account: String) {
+    public static func remove(_ account: String) {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,

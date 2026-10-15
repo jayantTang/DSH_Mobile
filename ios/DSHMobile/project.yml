@@ -59,6 +59,8 @@ targets:
         product: RelayKit
       - package: Modules
         product: DSHDesign
+      - package: Modules
+        product: DSHFoundation
 
   DSHMobileTests:
     type: bundle.unit-test

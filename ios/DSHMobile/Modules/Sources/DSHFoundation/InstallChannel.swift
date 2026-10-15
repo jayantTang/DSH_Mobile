@@ -7,7 +7,7 @@ import Foundation
 /// 安装页，装上就是新版；TestFlight（以及 App Store）装的是苹果分发签名的包，设备不允许
 /// 用开发签名的 OTA 包覆盖它 —— 点了横幅只会一路走到「请先删除应用」。
 /// 2026-10-11 那条 TestFlight 反馈（"更新要求先删除原有的"）说的就是这件事。
-enum InstallChannel: String, Sendable {
+public enum InstallChannel: String, Sendable {
 
     /// OTA 安装页发的包：包里有内嵌描述文件，development 签名。
     case overTheAir
@@ -20,7 +20,7 @@ enum InstallChannel: String, Sendable {
 
     /// 先看收据再看描述文件：苹果分发签名的包一定带收据、一定不带内嵌描述文件，
     /// 收据这一票更权威。
-    static var current: InstallChannel {
+    public static var current: InstallChannel {
         #if DEBUG
         if let forced = forcedByLaunchArgument { return forced }
         #endif
@@ -30,7 +30,7 @@ enum InstallChannel: String, Sendable {
     }
 
     /// 更新横幅的开关：只有 OTA 装法能靠这个横幅真的装上。
-    var acceptsInAppUpdate: Bool { self == .overTheAir }
+    public var acceptsInAppUpdate: Bool { self == .overTheAir }
 
     /// App Store 收据放在包内（TestFlight 那份的文件名是 `sandboxReceipt`）。
     private static var hasAppStoreReceipt: Bool {

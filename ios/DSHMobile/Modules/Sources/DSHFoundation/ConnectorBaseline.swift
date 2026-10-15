@@ -10,7 +10,7 @@ import Foundation
 /// 两者命名空间不同，混用会让提示条永不出现（基线远低于线上连接器）或天天误报。
 /// 低于它的连接器连上来时，App 给一条可关闭的提示——只提示，不阻断连接。
 /// 真值与理由写在 `docs/relay-contract.json`。
-enum ConnectorBaseline {
+public enum ConnectorBaseline {
     /// 这个版本及以上的连接器视为满足基线。
-    static let minVersion = "0.3.1"
+    public static let minVersion = "0.3.1"
 }
