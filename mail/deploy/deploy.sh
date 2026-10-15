@@ -112,7 +112,12 @@ chown -R root:root "$APP_DIR/.venv"
 # ── 3. systemd unit ─────────────────────────────────────────────────────────
 
 say "installing $UNIT_PATH"
-install -m 0644 -o root -g root "$SRC_DIR/deploy/dsh-mail.service" "$UNIT_PATH"
+# 端口参数化：模板里的 8788 是默认值，同机可能被别的服务占用（2026-10-15 切换时
+# 8788 就被另一个 node 服务占着）。单元与片段一起替换，保证三处（env、ExecStart、
+# reverse_proxy）永远一致。
+sed "s/8788/$PORT/g" "$SRC_DIR/deploy/dsh-mail.service" > "$UNIT_PATH.rendered"
+install -m 0644 -o root -g root "$UNIT_PATH.rendered" "$UNIT_PATH"
+rm -f "$UNIT_PATH.rendered"
 systemctl daemon-reload
 systemctl enable dsh-mail.service >/dev/null
 if systemctl is-active --quiet dsh-mail.service; then
@@ -131,7 +136,9 @@ BACKUP="$(mktemp "${CADDYFILE}.deploy.XXXXXX")"
 cp -a "$CADDYFILE" "$BACKUP"
 trap 'rm -f "$BACKUP"' EXIT
 
-action="$("$PYTHON" "$SPLICER" insert "$CADDYFILE" "$SNIPPET" "$SITE")" \
+SNIPPET_RENDERED="$(mktemp)"
+sed "s/127.0.0.1:8788/127.0.0.1:$PORT/g" "$SNIPPET" > "$SNIPPET_RENDERED"
+action="$("$PYTHON" "$SPLICER" insert "$CADDYFILE" "$SNIPPET_RENDERED" "$SITE")" \
   || die "could not insert the managed block; $CADDYFILE was left untouched"
 say "$action the mail route (between 'dsh-mail managed block' markers)"
 
@@ -166,7 +173,10 @@ if command -v curl >/dev/null; then
     if [ "$status" = "400" ]; then
       say "https://$SITE$BASE_PATH/feedback/* is live (400 = the service answered)"
     else
-      say "WARNING: public submit returned HTTP $status (expected 400); check 'journalctl -u caddy -n 50'"
+      # 2026-10-15 切换实测：端口被同机另一个服务占用时，路由会把信件打进
+      # 别人的后端（公网提交回 200 而不是 400）。这条检查必须**硬失败**——
+      # 警告会被部署输出刷过去，而这是"路由进错服务"的唯一现场信号。
+      die "public submit returned HTTP $status (expected 400): the route is NOT reaching this service; check the port and 'journalctl -u caddy -n 50'"
     fi
   else
     say "note: $SITE does not resolve here; the mail service still works on 127.0.0.1:$PORT"
