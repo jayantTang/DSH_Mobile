@@ -105,6 +105,12 @@ let package = Package(
         .target(name: "DSHFilesDomain", dependencies: ["DSHCore", "DSHConnectionAPI", "DSHFoundation", dshKit]),
         .target(name: "DSHFilesUI", dependencies: ["DSHFilesDomain", "DSHDesign", "DSHCore"]),
 
+        // L1 各单元测试（027 补齐）
+        .testTarget(name: "DSHSessionsDomainTests", dependencies: ["DSHSessionsDomain", "DSHTestingSupport", dshKit]),
+        .testTarget(name: "DSHFilesDomainTests", dependencies: ["DSHFilesDomain", "DSHTestingSupport", dshKit]),
+        .testTarget(name: "DSHSettingsDomainTests", dependencies: ["DSHSettingsDomain", "DSHTestingSupport", dshKit]),
+        .testTarget(name: "DSHFeedbackDomainTests", dependencies: ["DSHFeedbackDomain", "DSHTestingSupport", dshKit]),
+
         // 测试辅助：仅测试依赖
         .target(name: "DSHTestingSupport", dependencies: ["DSHCore", "DSHConnectionAPI", dshKit]),
     ]
