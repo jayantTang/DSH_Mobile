@@ -32,7 +32,7 @@ public final class FakeLinkService: LinkService {
     }
     public var scopeId: String? { activeProfile?.id.uuidString }
     public var client: DSHClient? { nil }
-    public var link: LinkGateway { fatalError("FakeLinkService.link: 测试不应走到这里") }
+    public var link: LinkGateway { fatalError("FakeLinkService.link must not be called in tests") }
 
     public func supports(_ capability: String) -> Bool { capabilities.contains(capability) }
     public func uploadFile(fileURL: URL, name: String, sessionId: String) async throws -> StagedFile {
