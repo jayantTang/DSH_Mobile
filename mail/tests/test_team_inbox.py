@@ -44,6 +44,7 @@ async def test_user_letters_bind_to_the_team_account(client, store):
     # 团队侧未读 = 用户来信条数。
     assert thread["teamUnread"] == 1 and thread["unread"] == 0
     assert body["unreadCount"] == 1
+    assert body["teamPerspective"] is True
 
     # 用户自己的可见性不变，且看到的是用户侧口径。
     user_inbox = await client.post("/feedback/inbox", json={"tickets": []},
@@ -51,6 +52,7 @@ async def test_user_letters_bind_to_the_team_account(client, store):
     body = await user_inbox.json()
     assert [t["threadId"] for t in body["threads"]] == [thread_id]
     assert body["unreadCount"] == 0, "用户侧没有团队回信，未读为 0"
+    assert body["teamPerspective"] is False, "视角按调用方账号给，不随线程走"
 
 
 async def test_anonymous_letters_bind_to_the_team_account_too(client, store):

@@ -391,7 +391,11 @@ async def _collect(store: Store, pairs: list[tuple[str, str]], device: dict[str,
         + sum(1 for row in notices if not row["read"])
     return {"threads": [_public_thread(thread) for thread in threads],
             "notices": [_public_notice(notice) for notice in notices],
-            "unreadCount": unread}
+            "unreadCount": unread,
+            # 调用方是不是团队那一侧（团队收件箱 2026-10-15）：App 由此知道该按
+            # 哪个视角排收件/已发送——teamBound 是线程的属性，两侧都看得到，
+            # 视角只能由服务端按调用方账号给。
+            "teamPerspective": team_side}
 
 
 async def _authorized_threads(store: Store, pairs: list[tuple[str, str]],
