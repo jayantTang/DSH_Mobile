@@ -10,8 +10,8 @@ import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { buildInvocation, foreignRecipients, main, renderAgentPlist, reportPath,
-  resolveSshTarget } from './feedback.mjs'
+import { buildInvocation, debugDeviceIds, foreignRecipients, main, mergeReportData,
+  renderAgentPlist, reportPath, resolveSshTarget } from './feedback.mjs'
 import { escapeHtml, humanModel, renderReport, updateHistory } from './feedback-report.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -149,7 +149,7 @@ test('DSH_OTA_HOST 支持裸主机、user@host、URL 与端口', () => {
   assert.throws(() => resolveSshTarget(''))
 })
 
-test('默认经 ssh 跑服务器上的 admin.py', () => {
+test('默认经 ssh 跑服务器上的 admin.py（信件类打 mail）', () => {
   const fake = spy('{"threads":[]}')
   const { code, out } = run(['list', '--status', 'open', '--limit', '20'], { runner: fake.runner })
   assert.equal(code, 0)
@@ -158,8 +158,8 @@ test('默认经 ssh 跑服务器上的 admin.py', () => {
   assert.deepEqual(rest.slice(0, 2), ['-q', '-o'])
   assert.equal(rest[2], 'BatchMode=yes')
   assert.equal(rest.at(-2), `root@${HOST}`)
-  assert.match(rest.at(-1), /^\/opt\/dsh-relay\/\.venv\/bin\/python \/opt\/dsh-relay\/admin\.py /)
-  assert.match(rest.at(-1), /--db \/var\/lib\/dsh-relay\/state\.db feedback-list --status open --limit 20/)
+  assert.match(rest.at(-1), /^\/opt\/dsh-mail\/\.venv\/bin\/python \/opt\/dsh-mail\/admin\.py /)
+  assert.match(rest.at(-1), /--db \/var\/lib\/dsh-mail\/mail\.db feedback-list --status open --limit 20/)
   assert.equal(out, '{"threads":[]}')
 })
 
@@ -169,8 +169,8 @@ test('--local 跑本机 admin.py 与本机测试库，不碰 ssh', () => {
   assert.equal(code, 0)
   const argv = fake.calls[0]
   assert.notEqual(argv[0], 'ssh')
-  assert.equal(argv[1], join(ROOT, 'relay', 'admin.py'))
-  assert.ok(argv.includes(join(ROOT, 'relay', '.local', 'state.db')), argv.join(' '))
+  assert.equal(argv[1], join(ROOT, 'mail', 'admin.py'))
+  assert.ok(argv.includes(join(ROOT, 'mail', '.local', 'mail.db')), argv.join(' '))
 })
 
 test('reply 默认预演：runner 一次都不调用，正文原样打出来', () => {
@@ -226,17 +226,29 @@ test('notify 默认预演：服务器只统计收件人，argv 里没有 --yes',
 })
 
 test('notify --yes 才落库；delete 同理', () => {
-  const notify = spy('{"ok":true,"noticeId":"nt_a"}')
-  run(['notify', '--body', '维护通知', '--subject', 'S', '--all', '--yes', ...APPROVED], { runner: notify.runner })
-  const remote = notify.calls[0].at(-1)
-  assert.match(remote, /feedback-notify --body /)
-  assert.match(remote, /--subject S/)
-  assert.match(remote, /--all/)
-  assert.match(remote, /--yes/)
+  // notify --all：审批后先从中转展开账号（account-list 是第一条），再打 mail 的 notify。
+  const calls = []
+  const runner = (argv) => {
+    calls.push(argv)
+    const remote = argv.at(-1)
+    if (/account-list/.test(remote)) return JSON.stringify([{ accountId: 'acc_b' }, { accountId: 'acc_c' }])
+    if (/feedback-notify/.test(remote)) return '{"ok":true,"noticeId":"nt_a","recipients":2}'
+    return '{"ok":true}'
+  }
+  const { code, err } = run(['notify', '--body', '维护通知', '--subject', 'S', '--all', '--yes', ...APPROVED],
+    { runner, approvalLog: approvalLogFile() })
+  assert.equal(code, 0)
+  assert.match(err, /展开 --all）中转共 2 个账号/)
+  const notifyRemote = calls[1].at(-1)
+  assert.match(notifyRemote, /\/opt\/dsh-mail\/admin\.py [^\n]*feedback-notify --body /)
+  assert.match(notifyRemote, /--subject S/)
+  assert.match(notifyRemote, /--account acc_b --account acc_c/)
+  assert.ok(!notifyRemote.includes('--all'), '--all 已展开成点名，不再下传')
+  assert.match(notifyRemote, /--yes/)
 
   const del = spy('{"ok":true,"deleted":2}')
-  const { code } = run(['delete', '--thread', 'th_x', '--yes'], { runner: del.runner })
-  assert.equal(code, 0)
+  const delCode = run(['delete', '--thread', 'th_x', '--yes'], { runner: del.runner })
+  assert.equal(delCode.code, 0)
   assert.match(del.calls[0].at(-1), /feedback-delete --thread th_x --yes/)
 
   const preview = spy('{"deleted":2}')
@@ -244,12 +256,17 @@ test('notify --yes 才落库；delete 同理', () => {
   assert.ok(!preview.calls[0].at(-1).includes('--yes'))
 })
 
-test('report / report-data 走 ops-report，天数透传', () => {
-  const fake = spy('{"ok":true}')
-  run(['report-data', '--days', '7', '--local'], { runner: fake.runner })
-  assert.match(fake.calls[0].join(' '), /ops-report --days 7/)
-  const out = run(['report-data', '--days', '90'], { runner: fake.runner })
-  assert.equal(out.out, '{"ok":true}')
+test('report / report-data 走双侧取数：中转 ops-report + mail feedback-stats', () => {
+  const fake = spy(JSON.stringify(fixture()))
+  const out = run(['report-data', '--days', '7'], { runner: fake.runner })
+  assert.equal(out.code, 0)
+  assert.equal(fake.calls.length, 3, 'device-list（中转）→ ops-report（中转）→ feedback-stats（mail）')
+  assert.match(fake.calls[0].at(-1), /device-list --all/)
+  assert.match(fake.calls[1].at(-1), /ops-report --days 7/)
+  assert.match(fake.calls[2].at(-1), /\/opt\/dsh-mail\/admin\.py [^\n]*feedback-stats --days 7/)
+  const merged = JSON.parse(out.out)
+  assert.equal(merged.ok, true)
+  assert.ok(merged.feedback, '合并后的报告仍带反馈板块')
 })
 
 test('report 把 JSON 渲染成 HTML 并打印落盘路径', () => {
@@ -549,11 +566,12 @@ test('report --full-day 让 ops-report 锚到刚过去的一整天', () => {
   const full = spy(JSON.stringify(fixture()))
   const { code } = run(['report', '--out', outDir, '--full-day'], { runner: full.runner })
   assert.equal(code, 0)
-  assert.match(full.calls[0].at(-1), /ops-report --days 30 --as-of yesterday/)
+  assert.match(full.calls[1].at(-1), /ops-report --days 30 --as-of yesterday/)
+  assert.match(full.calls[2].at(-1), /feedback-stats --days 30 --as-of yesterday/)
 
   const plain = spy(JSON.stringify(fixture()))
   run(['report', '--out', outDir], { runner: plain.runner })
-  assert.ok(!plain.calls[0].at(-1).includes('--as-of'), '不给 --full-day 就是当天到此刻')
+  assert.ok(!plain.calls[1].at(-1).includes('--as-of'), '不给 --full-day 就是当天到此刻')
 })
 
 test('report --date 把报告锚到指定那一天（今天 = 到现在）', () => {
@@ -561,17 +579,17 @@ test('report --date 把报告锚到指定那一天（今天 = 到现在）', () 
   const fixed = spy(JSON.stringify(fixture()))
   const { code } = run(['report', '--out', outDir, '--date', '2026-10-09'], { runner: fixed.runner })
   assert.equal(code, 0)
-  assert.match(fixed.calls[0].at(-1), /ops-report --days 30 --as-of 2026-10-09/,
+  assert.match(fixed.calls[1].at(-1), /ops-report --days 30 --as-of 2026-10-09/,
     '给具体日期就报那一整天')
 
   const today = spy(JSON.stringify(fixture()))
   run(['report', '--out', outDir, '--date', 'today'], { runner: today.runner })
-  assert.match(today.calls[0].at(-1), /ops-report --days 30 --as-of now/,
+  assert.match(today.calls[1].at(-1), /ops-report --days 30 --as-of now/,
     '今天还没过完，就是当天 00:00 到此刻')
 
   const yesterday = spy(JSON.stringify(fixture()))
   run(['report', '--out', outDir, '--date', 'yesterday'], { runner: yesterday.runner })
-  assert.match(yesterday.calls[0].at(-1), /--as-of yesterday/)
+  assert.match(yesterday.calls[1].at(-1), /--as-of yesterday/)
 })
 
 test('--date 与 --full-day 的冲突、非法日期与错子命令都判用法错误（退出码 2）', () => {
@@ -665,16 +683,20 @@ test('report --send：先 scp，再按 html 通知，最后删远端临时文件
   assert.equal(code, 0)
   const local = join(outDir, '2026-10-12.html')
   const remote = '/tmp/dsh-feedback-report-2026-10-12.html'
-  assert.equal(fake.calls.length, 5, `应当是 ops-report → scp → notify → 清理 → 存档：${fake.calls.length} 次调用`)
-  assert.match(fake.calls[0].at(-1), /ops-report --days 30/)
+  assert.equal(fake.calls.length, 7,
+    `应当是 device-list → ops-report → feedback-stats → scp → notify → 清理 → 存档：${fake.calls.length} 次调用`)
+  assert.match(fake.calls[0].at(-1), /device-list --all/)
+  assert.match(fake.calls[1].at(-1), /ops-report --days 30/)
+  assert.match(fake.calls[2].at(-1), /feedback-stats --days 30/)
 
-  const scp = fake.calls[1]
+  const scp = fake.calls[3]
   assert.equal(scp[0], 'scp')
   assert.equal(scp.at(-2), local)
   assert.equal(scp.at(-1), `root@${HOST}:${remote}`)
 
-  const command = fake.calls[2].at(-1)
-  assert.equal(fake.calls[2][0], 'ssh')
+  const command = fake.calls[4].at(-1)
+  assert.equal(fake.calls[4][0], 'ssh')
+  assert.match(command, /\/opt\/dsh-mail\/admin\.py/)
   assert.match(command, new RegExp(`feedback-notify --body-file ${remote} `))
   assert.match(command, /--format html/)
   assert.match(command, /--subject 'DSH Mobile 运营日报 2026-10-12'/)
@@ -683,11 +705,11 @@ test('report --send：先 scp，再按 html 通知，最后删远端临时文件
   assert.ok(!command.includes('--all'), '直投指定账号，不得群发')
   assert.ok(!/--body /.test(command), '正文必须走 --body-file，不能塞进 ssh 参数')
 
-  assert.equal(fake.calls[3][0], 'ssh')
-  assert.equal(fake.calls[3].at(-1), `rm -f ${remote}`)
+  assert.equal(fake.calls[5][0], 'ssh')
+  assert.equal(fake.calls[5].at(-1), `rm -f ${remote}`)
   // 收件人里有别人（acc_a、acc_b）：投递成功后自动给 owner 存档（text，记标识与落点）。
-  const archive = fake.calls[4].at(-1)
-  assert.equal(fake.calls[4][0], 'ssh')
+  const archive = fake.calls[6].at(-1)
+  assert.equal(fake.calls[6][0], 'ssh')
   assert.match(archive, /feedback-notify --body /)
   assert.match(archive, new RegExp(`--account ${OWNER}`))
   assert.match(archive, /发件存档：日报「DSH Mobile 运营日报 2026-10-12」/)
@@ -703,7 +725,7 @@ test('report --send 的 --subject 覆盖默认标题', () => {
   const { code } = run(['report', '--out', outDir, '--send', '--account', 'acc_a', '--subject', '周报', ...APPROVED],
     { runner: fake.runner, approvalLog: approvalLogFile() })
   assert.equal(code, 0)
-  assert.match(fake.calls[2].at(-1), /--subject '周报'/)
+  assert.match(fake.calls[4].at(-1), /--subject '周报'/)
 })
 
 test('report --send 收件账号：--account 优先，其次 .env.local 的 DSH_ACCOUNT_ID', () => {
@@ -713,7 +735,7 @@ test('report --send 收件账号：--account 优先，其次 .env.local 的 DSH_
   const { code } = run(['report', '--out', outDir, '--send'],
     { runner: fake.runner, env: { DSH_OTA_HOST: HOST, DSH_ACCOUNT_ID: 'acc_env' } })
   assert.equal(code, 0)
-  assert.match(fake.calls[2].at(-1), /--account acc_env/)
+  assert.match(fake.calls[4].at(-1), /--account acc_env/)
 
   // 命令行给了就压过 .env.local（换账号试发时不必改本机真值）；换成别人的账号就要审批。
   const explicit = spy(JSON.stringify(fixture()))
@@ -721,8 +743,8 @@ test('report --send 收件账号：--account 优先，其次 .env.local 的 DSH_
   run(['report', '--out', other, '--send', '--account', 'acc_cli', ...APPROVED],
     { runner: explicit.runner, approvalLog: approvalLogFile(),
       env: { DSH_OTA_HOST: HOST, DSH_ACCOUNT_ID: 'acc_env' } })
-  assert.match(explicit.calls[2].at(-1), /--account acc_cli/)
-  assert.ok(!explicit.calls[2].at(-1).includes('acc_env'))
+  assert.match(explicit.calls[4].at(-1), /--account acc_cli/)
+  assert.ok(!explicit.calls[4].at(-1).includes('acc_env'))
 })
 
 test('report --send 一个账号都取不到时退 2，不执行任何命令（也不群发）', () => {
@@ -742,8 +764,10 @@ test('report --send --dry-run 只生成报告并打印将执行的命令', () =>
   const { code, out } = run(['report', '--out', outDir, '--send', '--account', 'acc_a', '--dry-run'],
     { runner: fake.runner })
   assert.equal(code, 0)
-  assert.equal(fake.calls.length, 1, '预演只跑只读的 ops-report')
-  assert.match(fake.calls[0].at(-1), /ops-report/)
+  assert.equal(fake.calls.length, 3, '预演只跑三次只读取数（清单 ×2 + 报告数据）')
+  assert.match(fake.calls[0].at(-1), /device-list/)
+  assert.match(fake.calls[1].at(-1), /ops-report/)
+  assert.match(fake.calls[2].at(-1), /feedback-stats/)
   assert.match(out, /预演/)
   assert.match(out, /scp /)
   assert.match(out, /feedback-notify --body-file \/tmp\/dsh-feedback-report-2026-10-12\.html/)
@@ -755,14 +779,14 @@ test('notify 失败时远端临时文件仍然被删掉，退出码 1', () => {
   const calls = []
   const runner = (argv) => {
     calls.push(argv)
-    if (calls.length === 3) throw new Error('notify 挂了')   // 3 = notify（1 ops-report / 2 scp）
+    if (/feedback-notify/.test(String(argv.at(-1)))) throw new Error('notify 挂了')
     return JSON.stringify(fixture())
   }
   const { code, err } = run(['report', '--out', outDir, '--send', '--account', 'acc_a', ...APPROVED],
     { runner, approvalLog: approvalLogFile() })
   assert.equal(code, 1)
-  assert.equal(calls.length, 4)
-  assert.equal(calls[3].at(-1), 'rm -f /tmp/dsh-feedback-report-2026-10-12.html')
+  assert.equal(calls.length, 6, 'device-list → ops-report → feedback-stats → scp → notify(挂) → rm')
+  assert.equal(calls[5].at(-1), 'rm -f /tmp/dsh-feedback-report-2026-10-12.html')
   assert.match(err, /notify 挂了/)
 })
 
@@ -772,16 +796,16 @@ test('report --send --local 直接读本机报告文件，不 scp 也不清理',
   const { code } = run(['report', '--out', outDir, '--send', '--account', 'acc_a', '--local', ...APPROVED],
     { runner: fake.runner, approvalLog: approvalLogFile() })
   assert.equal(code, 0)
-  assert.equal(fake.calls.length, 3, 'ops-report → notify → 发件存档')
+  assert.equal(fake.calls.length, 5, 'device-list → ops-report → feedback-stats → notify → 发件存档')
   assert.ok(fake.calls.every((argv) => argv[0] !== 'scp' && argv[0] !== 'ssh'))
-  const notify = fake.calls[1]
+  const notify = fake.calls[3]
   assert.ok(notify.includes(join(outDir, '2026-10-12.html')), notify.join(' '))
   assert.ok(notify.includes('--format') && notify.includes('html'))
   assert.ok(notify.includes('--yes'))
   assert.ok(!notify.at(-1).includes('rm -f'))
   // 存档同样走本机 admin.py，收件人只有 owner。
-  const archive = fake.calls[2]
-  assert.ok(archive.includes(join(ROOT, 'relay', 'admin.py')), archive.join(' '))
+  const archive = fake.calls[4]
+  assert.ok(archive.includes(join(ROOT, 'mail', 'admin.py')), archive.join(' '))
   assert.ok(archive.includes('--account'), archive.join(' '))
   assert.match(archive.join(' '), /发件存档：日报/)
 })
@@ -962,12 +986,21 @@ test('发件存档：notify 发给别人的信，存档含全文、发送对象�
   assert.match(out, /（发件存档）已投给 owner 账号：nt_9/)
 })
 
-test('发件存档：群发 --all 也存档，发送对象写"全部账号"', () => {
-  const fake = spy('{"ok":true,"noticeId":"nt_10"}')
-  run(['notify', '--body', '公告', '--all', '--yes', ...APPROVED],
-    { runner: fake.runner, approvalLog: approvalLogFile() })
-  assert.equal(fake.calls.length, 2)
-  assert.match(fake.calls[1].at(-1), /发送对象：全部账号（--all 群发）/)
+test('发件存档：群发 --all 展开后也存档，发送对象写"全部账号（展开为 N 个）"', () => {
+  const calls = []
+  const runner = (argv) => {
+    calls.push(argv)
+    const remote = String(argv.at(-1))
+    if (/account-list/.test(remote)) return JSON.stringify([{ accountId: 'acc_b' }, { accountId: 'acc_c' }])
+    if (/feedback-notify/.test(remote)) return '{"ok":true,"noticeId":"nt_10"}'
+    return '{"ok":true}'
+  }
+  const { code } = run(['notify', '--body', '公告', '--all', '--yes', ...APPROVED],
+    { runner, approvalLog: approvalLogFile() })
+  assert.equal(code, 0)
+  assert.equal(calls.length, 3, 'account-list（中转展开）→ notify（mail）→ 存档（mail）')
+  assert.match(calls[1].at(-1), /--account acc_b --account acc_c/)
+  assert.match(calls[2].at(-1), /发送对象：全部账号（--all 群发，展开为 2 个）/)
 })
 
 test('发件存档：只发给 owner 自己的不存档（自己的收件箱里本来就有）', () => {
@@ -1008,4 +1041,66 @@ test('发件存档：预演与拒发都不存档', () => {
   run(['notify', '--body', '通知', '--account', 'acc_b', '--yes'],
     { runner: refused.runner, approvalLog: approvalLogFile() })
   assert.equal(refused.calls.length, 0, '没批准连原件都没发，更没有存档')
+})
+
+
+// ── 双目标（DESIGN-20261015 M4）：合并、调试设备规则与 --all 展开的边界 ─────────
+
+test('mergeReportData：mail 的反馈两块覆盖中转的，其余板块原样保留', () => {
+  const relayReport = {
+    ok: true, generatedAt: 1, days: 30,
+    today: { day: 20261015, usage: { egressBytes: 5 }, feedback: { new: 9, threads: ['旧数据'] } },
+    feedback: { new: 9, open: 9, threads: ['旧数据'] },
+    usage: { perDay: [{ day: '2026-10-14' }] },
+    devices: { paired: 3 },
+  }
+  const mailStats = {
+    ok: true, generatedAt: 2, asOf: 3, days: 30,
+    feedback: { new: 1, open: 1, replied: 0, threads: ['新数据'] },
+    today: { new: 1, open: 1, replied: 0, threads: ['新数据'] },
+  }
+  const merged = mergeReportData(relayReport, mailStats)
+  assert.deepEqual(merged.feedback.threads, ['新数据'])
+  assert.deepEqual(merged.today.feedback.threads, ['新数据'])
+  assert.deepEqual(merged.usage, relayReport.usage, '中转的板块不动')
+  assert.deepEqual(merged.today.usage, relayReport.today.usage)
+  // 原 report 不被修改。
+  assert.deepEqual(relayReport.feedback.threads, ['旧数据'])
+  // mail 侧失败（ok:false）时保留中转的计算，日报照常出。
+  const fallback = mergeReportData(relayReport, { ok: false })
+  assert.deepEqual(fallback.feedback.threads, ['旧数据'])
+})
+
+test('debugDeviceIds：DSH- 前缀与测试台机型，规则与中转 _is_debug_device 同一条', () => {
+  const rows = [
+    { deviceId: 'dev_1', name: 'DSH-Test', model: 'iPhone17,1' },
+    { deviceId: 'dev_2', name: 'iPhone', model: 'Node' },
+    { deviceId: 'dev_3', name: 'iPhone', model: 'test-harness' },
+    { deviceId: 'dev_4', name: 'iPhone', model: 'simulator' },
+    { deviceId: 'dev_5', name: '我的 iPhone', model: 'iPhone15,4' },
+  ]
+  assert.deepEqual(debugDeviceIds(rows), ['dev_1', 'dev_2', 'dev_3', 'dev_4'])
+  assert.deepEqual(debugDeviceIds('not-an-array'), [])
+})
+
+test('--all 展开的中转一个账号都没有：退 1，一条写命令都不发', () => {
+  const calls = []
+  const runner = (argv) => {
+    calls.push(argv)
+    if (/account-list/.test(String(argv.at(-1)))) return '[]'
+    return '{"ok":true}'
+  }
+  const { code, err } = run(['notify', '--body', '公告', '--all', '--yes', ...APPROVED],
+    { runner, approvalLog: approvalLogFile() })
+  assert.equal(code, 1)
+  assert.equal(calls.length, 1, '只读了 account-list，没发任何东西')
+  assert.match(err, /中转一个账号都没有/)
+})
+
+test('--all 不带 --yes：仍是预演，不展开、不下发', () => {
+  const fake = spy('{"ok":true,"dryRun":true,"recipients":3}')
+  const { code, err } = run(['notify', '--body', '公告', '--all'], { runner: fake.runner })
+  assert.equal(code, 0)
+  assert.equal(fake.calls.length, 1, '预演不读账号清单')
+  assert.match(err, /没有 --yes/)
 })

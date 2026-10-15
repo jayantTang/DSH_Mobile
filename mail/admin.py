@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 import sys
 import time
@@ -23,6 +24,12 @@ from store import DEFAULT_FEEDBACK_FORMAT, Store, StoreError
 
 #: `feedback-reply --template` 的默认署名（契约：署名默认 `DSH Mobile 团队`）。
 DEFAULT_SIGNATURE = "DSH Mobile 团队"
+
+#: 与 relay/admin.py 同一份口径（feedback-stats 的剔除规则）：
+#: 测试台来源的机型认不出来源，只能按机型判；`DSH-` 前缀的调试设备 id 由
+#: owner 工具从中转的 device-list 取来传进来（--debug-device）。
+TEST_DEVICE_MODELS = {"arm64", "x86_64", "deploy-check", "Node", "simulator", "test-harness"}
+REPORT_THREAD_LIMIT = 1000
 
 
 def _emit(value: Any) -> None:
@@ -114,6 +121,95 @@ def _reply_template(signature: str) -> str:
     )
 
 
+# ── feedback-stats：给日报的反馈板块（与 relay/admin.py 同形，M4 在本机合并） ─────
+
+def _day_start_ms(day: int) -> int:
+    text = str(day)
+    parsed = datetime.datetime(int(text[:4]), int(text[4:6]), int(text[6:]))
+    return int(parsed.timestamp() * 1000)
+
+
+def _resolve_as_of(value: str | None, *, now: int | None = None) -> int | None:
+    """`--as-of` → 锚点毫秒（None = 此刻）。规则与 relay/admin.py 逐字一致。"""
+    text = str(value if value is not None else "now").strip()
+    if text in ("", "now"):
+        return None
+    if text == "yesterday":
+        at = now_ms() if now is None else int(now)
+        return _day_start_ms(local_day(at / 1000)) - 1
+    try:
+        day = int(datetime.datetime.strptime(text, "%Y-%m-%d").strftime("%Y%m%d"))
+    except ValueError:
+        raise StoreError(f"--as-of 只能是 now / yesterday / YYYY-MM-DD，收到 {value!r}") from None
+    return _day_start_ms(day) + 86_400_000 - 1
+
+
+def _is_test_thread(row: dict[str, Any], debug_ids: set[str]) -> bool:
+    """测试提交：调试设备提的，或来自模拟器/测试台（机型认得出来）。
+
+    与 relay/admin.py 的同名函数同规则；`debug_ids` 不在 mail 里查（没有设备表），
+    由 owner 工具从中转取 `DSH-` 前缀的设备 id 传进来。
+    """
+    device = row.get("deviceId") or (row.get("source") or {}).get("deviceId")
+    if device and device in debug_ids:
+        return True
+    model = str((row.get("source") or {}).get("deviceModel") or "")
+    return model in TEST_DEVICE_MODELS
+
+
+def _feedback_report(store: Store, threads: list[dict[str, Any]],
+                     test_count: int = 0) -> dict[str, Any]:
+    """反馈板块：窗口内的新增/待回复/已回复、首复中位小时数、线程清单（与中转同形）。"""
+    digest = store.feedback_digest([row["threadId"] for row in threads])
+    spans = sorted((digest[row["threadId"]]["firstReplyAt"] - row["createdAt"]) / 3_600_000.0
+                   for row in threads
+                   if digest.get(row["threadId"], {}).get("firstReplyAt") is not None)
+    median = None
+    if spans:
+        middle = len(spans) // 2
+        median = round(spans[middle] if len(spans) % 2
+                       else (spans[middle - 1] + spans[middle]) / 2, 1)
+    return {
+        "new": len(threads),
+        "open": len([row for row in threads if row["status"] == "open"]),
+        "replied": len([row for row in threads if row["status"] == "replied"]),
+        "medianFirstReplyHours": median,
+        "test": test_count,
+        "threads": threads,
+    }
+
+
+def _feedback_stats(store: Store, days: int, *, as_of: int | None = None,
+                    debug_ids: set[str] | None = None) -> dict[str, Any]:
+    """日报的两个反馈板块（`feedback` + `today.feedback`），形状与中转的 ops-report 一致。
+
+    owner 工具把这份 JSON 与中转的 ops-report 在本机合并（DESIGN-20261015 I-3）——
+    服务之间没有调用，合并发生在人这一侧。
+    """
+    debug_ids = debug_ids or set()
+    stamp = now_ms() if as_of is None else int(as_of)
+    listed = _feedback_rows(store, status=None, since_ms=stamp - days * 86_400_000,
+                            limit=REPORT_THREAD_LIMIT)
+    # 锚点之后新建的线程不属于这份报告（00:00 跑、报刚过去那一天的那一刀）。
+    listed = [row for row in listed if int(row["createdAt"]) <= stamp]
+    threads = [row for row in listed if not _is_test_thread(row, debug_ids)]
+    today_day = local_day(stamp / 1000)
+    todays = [row for row in threads if local_day(int(row["createdAt"]) / 1000) == today_day]
+    return {
+        "ok": True,
+        "generatedAt": now_ms(),
+        "asOf": stamp,
+        "days": days,
+        "feedback": _feedback_report(store, threads, test_count=len(listed) - len(threads)),
+        "today": {
+            "new": len(todays),
+            "open": len([row for row in todays if row["status"] == "open"]),
+            "replied": len([row for row in todays if row["status"] == "replied"]),
+            "threads": todays,
+        },
+    }
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="admin.py", description="DSH mail administration")
     parser.add_argument("--db", default="mail.db", help="path to the mail SQLite database")
@@ -153,6 +249,14 @@ def build_parser() -> argparse.ArgumentParser:
     feedback_delete = subs.add_parser("feedback-delete", help="delete a thread (needs --yes)")
     feedback_delete.add_argument("--thread", required=True)
     feedback_delete.add_argument("--yes", action="store_true")
+
+    stats = subs.add_parser("feedback-stats", help="the feedback sections for the daily report")
+    stats.add_argument("--days", type=int, default=30)
+    stats.add_argument("--as-of", dest="as_of", default="now",
+                       help="now / yesterday / YYYY-MM-DD (same rule as the relay's ops-report)")
+    stats.add_argument("--debug-device", action="append", default=[],
+                       help="a debug deviceId from the relay (repeatable); "
+                            "the owner tool passes the DSH-* list")
 
     return parser
 
@@ -237,6 +341,12 @@ def _dispatch(store: Store, args: argparse.Namespace) -> int:
             return 0
         removed = store.delete_feedback_thread(args.thread)
         _emit({"ok": True, "threadId": args.thread, "deleted": True, "messages": removed})
+        return 0
+
+    if command == "feedback-stats":
+        _emit(_feedback_stats(store, max(1, int(args.days)),
+                              as_of=_resolve_as_of(args.as_of),
+                              debug_ids=set(args.debug_device)))
         return 0
 
     raise StoreError(f"unknown command: {command}")

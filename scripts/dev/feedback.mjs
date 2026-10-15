@@ -1,8 +1,13 @@
 #!/usr/bin/env node
-// 014 反馈通道的 owner 侧入口：本机包装服务器的 `relay/admin.py`。
+// 014 反馈通道的 owner 侧入口：本机包装两个服务的 admin CLI（DESIGN-20261015 M4 双目标）。
 //
 // 默认走 SSH 在服务器上跑（主机从 `.env.local` 的 DSH_OTA_HOST 取），`--local` 改跑本机
-// 测试库 `relay/.local/state.db`（开发与自测用，不碰生产库）。
+// 测试库（开发与自测用，不碰生产库）。目标按子命令分流：
+//
+//   - 信件类（list/show/template/reply/notify/delete）→ `/opt/dsh-mail`（信件服务）
+//   - 用量与报告数据（report/report-data）→ `/opt/dsh-relay`（中转）的 ops-report
+//     + `/opt/dsh-mail` 的 feedback-stats，**在本机合并**后渲染（两服务之间没有调用）。
+//   - `notify --all` 在发送前从中转的 account-list 展开成逐个点名（mail 没有账号表）。
 //
 //   node scripts/dev/feedback.mjs list [--status open|replied|all] [--limit 20] [--since 30]
 //   node scripts/dev/feedback.mjs show --thread th_x
@@ -60,10 +65,21 @@ const REMOTE = {
   admin: '/opt/dsh-relay/admin.py',
   db: '/var/lib/dsh-relay/state.db',
 }
+/// 信件服务的固定路径（DESIGN-20261015 M4：信件类命令改打这里；与中转同一台主机）。
+const MAIL_REMOTE = {
+  python: '/opt/dsh-mail/.venv/bin/python',
+  admin: '/opt/dsh-mail/admin.py',
+  db: '/var/lib/dsh-mail/mail.db',
+}
 const LOCAL_ADMIN = join(ROOT, 'relay', 'admin.py')
+const LOCAL_MAIL_ADMIN = join(ROOT, 'mail', 'admin.py')
 const LOCAL_PYTHON = join(ROOT, 'relay', '.venv', 'bin', 'python')
 const LOCAL_DB = join(ROOT, 'relay', '.local', 'state.db')
+const LOCAL_MAIL_DB = join(ROOT, 'mail', '.local', 'mail.db')
 const DEFAULT_OUT = join(ROOT, 'maintainers', 'reports')
+
+/// 子命令 → 服务：信件类打 mail，用量/报告数据打中转（拆分后的路由表）。
+const MAIL_SUBS = new Set(['list', 'show', 'template', 'reply', 'notify', 'delete'])
 
 const AGENT_LABEL = 'com.jayanttang.dsh-daily-report'
 const AGENT_TEMPLATE = join(HERE, 'launchd', `${AGENT_LABEL}.plist`)
@@ -104,7 +120,9 @@ const USAGE = `用法：
   （收件人里有非 owner 账号（.env.local 的 DSH_ACCOUNT_ID）时必须给 --owner-approved "<owner 的原话>"，
     否则拒发（退出码 2）；只发给 owner 自己的（日报、自测）不需要。预演不判）
   （发给别人的信发送成功后，脚本自动向 owner 账号投一条「发件存档」通知：信件全文 +
-    发送对象 + 发送人。只发给 owner 自己的不存档；存档失败只警告需手动补档、不重发原件）`
+    发送对象 + 发送人。只发给 owner 自己的不存档；存档失败只警告需手动补档、不重发原件）
+  （双目标：信件类命令打 /opt/dsh-mail，用量与报告数据打 /opt/dsh-relay 并与 mail 的
+    feedback-stats 在本机合并；notify --all 先从中转展开成点名账号再投）`
 
 /// 用法错误（退出码 2）与业务失败（1）分开。
 class UsageError extends Error {}
@@ -287,6 +305,16 @@ export function adminArgs({ sub, opts }, db) {
     }
     case 'delete':
       return [...head, 'feedback-delete', '--thread', opts.thread, ...(opts.yes && !opts.dryRun ? ['--yes'] : [])]
+    // 桥用的两个只读清单（feedback.mjs 自己的子命令表里没有它们；buildInvocation
+    // 直接构造 parsed 对象调用，不经过 parseArgs）。
+    case 'account-list': return [...head, 'account-list']
+    case 'device-list': return [...head, 'device-list', ...(opts.all ? ['--all'] : [])]
+    // mail 侧给日报的反馈板块：--debug-device 是中转的调试设备 id（剔测试提交）。
+    case 'feedback-stats': {
+      return [...head, 'feedback-stats', '--days', String(opts.days ?? 30),
+        ...(opts.asOf ? ['--as-of', opts.asOf] : []),
+        ...(opts.debugDevices ?? []).flatMap((id) => ['--debug-device', id])]
+    }
     // `report` 拉的是 `ops-report`；`--as-of` 决定报告覆盖哪一天（`parseArgs` 已把
     // `--date` / `--full-day` 归一成 `opts.asOf`）：不给就是"当天到此刻"，`yesterday` 是
     // 刚过去的一整天（00:00 的自动日报要这个——按"今天"算的话新的一天刚开头，数字全是 0），
@@ -297,16 +325,24 @@ export function adminArgs({ sub, opts }, db) {
 }
 
 /// 得到要执行的 argv：SSH 远端命令或本机 python。
-export function buildInvocation({ sub, opts }, { env = {}, exists = existsSync } = {}) {
-  const db = opts.local ? LOCAL_DB : REMOTE.db
-  const args = adminArgs({ sub, opts }, db)
+///
+/// `service`：'relay'（用量/设备/账号/ops-report）或 'mail'（信件线程与通知）。
+/// 两个服务在同一台主机上，SSH 目标相同，只有 python/admin/db 三个路径不同
+/// （DESIGN-20261015 M4 的双目标）。
+export function buildInvocation({ sub, opts }, { env = {}, exists = existsSync } = {},
+  service = (MAIL_SUBS.has(sub) || sub === 'feedback-stats') ? 'mail' : 'relay') {
+  const target = service === 'mail'
+    ? (opts.local ? { python: exists(LOCAL_PYTHON) ? LOCAL_PYTHON : 'python3',
+      admin: LOCAL_MAIL_ADMIN, db: LOCAL_MAIL_DB } : MAIL_REMOTE)
+    : (opts.local ? { python: exists(LOCAL_PYTHON) ? LOCAL_PYTHON : 'python3',
+      admin: LOCAL_ADMIN, db: LOCAL_DB } : REMOTE)
+  const args = adminArgs({ sub, opts }, target.db)
   if (opts.local) {
-    const python = exists(LOCAL_PYTHON) ? LOCAL_PYTHON : 'python3'
-    return { kind: 'local', argv: [python, LOCAL_ADMIN, ...args] }
+    return { kind: 'local', argv: [target.python, target.admin, ...args] }
   }
-  const { target, port } = resolveSshTarget(env.DSH_OTA_HOST)
-  const remote = [REMOTE.python, REMOTE.admin, ...args].map(shellQuote).join(' ')
-  const ssh = ['-q', '-o', 'BatchMode=yes', ...(port ? ['-p', port] : []), target, remote]
+  const { target: sshTarget, port } = resolveSshTarget(env.DSH_OTA_HOST)
+  const remote = [target.python, target.admin, ...args].map(shellQuote).join(' ')
+  const ssh = ['-q', '-o', 'BatchMode=yes', ...(port ? ['-p', port] : []), sshTarget, remote]
   return { kind: 'ssh', argv: ['ssh', ...ssh], remote }
 }
 
@@ -499,7 +535,9 @@ export function archiveRecipients(parsed) {
   const { sub, opts } = parsed
   if (sub === 'reply') return `反馈线程 ${opts.thread} 的提交者`
   if (sub === 'notify') {
-    return opts.all ? '全部账号（--all 群发）' : (opts.accounts.join('、') || '（未点名）')
+    if (opts.all) return '全部账号（--all 群发）'
+    if (opts.expandedFromAll) return `全部账号（--all 群发，展开为 ${opts.accounts.length} 个）`
+    return opts.accounts.join('、') || '（未点名）'
   }
   return opts.accounts.join('、')
 }
@@ -580,6 +618,44 @@ export function reportSubject(file) {
   return `DSH Mobile 运营日报 ${basename(file).replace(/\.html$/i, '')}`
 }
 
+// ── 双目标的桥（DESIGN-20261015 I-3/I-4：两服务之间不调用，人做桥） ─────────────
+
+/// 中转的账号清单（`notify --all` 的展开源：mail 没有账号表，名单真值在中转）。
+export function relayAccountsInvocation(parsed, { env, exists }) {
+  return buildInvocation({ sub: 'account-list', opts: { local: parsed.opts.local } },
+    { env, exists }, 'relay')
+}
+
+/// 中转的设备清单（`--all`：含已撤销，与 ops-report 的口径一致）。
+export function relayDevicesInvocation(parsed, { env, exists }) {
+  return buildInvocation({ sub: 'device-list', opts: { local: parsed.opts.local, all: true } },
+    { env, exists }, 'relay')
+}
+
+/// 中转的调试设备 id（`DSH-` 前缀或测试台机型）——feedback-stats 剔测试提交用。
+/// 规则与 relay/admin.py 的 `_is_debug_device` 同一条。
+export function debugDeviceIds(rows) {
+  return (Array.isArray(rows) ? rows : [])
+    .filter((row) => String(row?.name ?? '').startsWith('DSH-')
+      || ['Node', 'test-harness', 'simulator'].includes(String(row?.model ?? '')))
+    .map((row) => row.deviceId)
+    .filter(Boolean)
+}
+
+/// 合并两侧的日报数据：中转的 ops-report（用量/设备/留存/邀请码）+
+/// mail 的 feedback-stats（反馈板块）。mail 的两块直接覆盖中转的——
+/// 切换后中转那边的信件表不再进新数据，留着算也是旧的。
+export function mergeReportData(relayReport, mailStats) {
+  const merged = JSON.parse(JSON.stringify(relayReport))
+  if (mailStats && mailStats.ok !== false && mailStats.feedback) {
+    merged.feedback = mailStats.feedback
+    if (mailStats.today && merged.today) {
+      merged.today = { ...merged.today, feedback: mailStats.today }
+    }
+  }
+  return merged
+}
+
 /// HTML 报告先落服务器上的临时路径：三万字节当 ssh 参数元素传会撞命令行长度与引号。
 export function remoteReportPath(file) {
   return `/tmp/dsh-feedback-report-${basename(file)}`
@@ -599,13 +675,30 @@ export function buildRemoteRemoveInvocation(remoteFile, { env = {} } = {}) {
     `rm -f ${shellQuote(remoteFile)}`]
 }
 
-/// `report --send`：ops-report → 落盘 HTML → （scp → `feedback-notify --format html` → 删远端）
-/// 完整顺序。`--local` 时报告文件本机就能读到，不走 scp、也不需要清理。
-/// 发给别人的日报（审批原因非空）在投递成功后自动发件存档。
+/// 日报的合并取数：中转 ops-report + mail feedback-stats，本机合并（I-3）。
+/// `feedback-stats` 的剔除口径要中转的调试设备 id（`DSH-` 前缀/测试台机型），
+/// 所以一共三次只读调用：device-list（中转）→ ops-report（中转）→ feedback-stats（mail）。
+function fetchReportData(parsed, { env, exists, run }) {
+  const { opts } = parsed
+  const devices = JSON.parse(run(relayDevicesInvocation(parsed, { env, exists }).argv))
+  const debugDevices = debugDeviceIds(devices)
+  const relayReport = JSON.parse(run(buildInvocation(parsed, { env, exists }, 'relay').argv))
+  const stats = buildInvocation({
+    sub: 'feedback-stats',
+    opts: { local: opts.local, days: opts.days, asOf: opts.asOf, debugDevices },
+  }, { env, exists }, 'mail')
+  const mailStats = JSON.parse(run(stats.argv))
+  return mergeReportData(relayReport, mailStats)
+}
+
+/// `report --send`：双侧取数合并 → 落盘 HTML → （scp → mail 的
+/// `feedback-notify --format html` → 删远端）完整顺序。`--local` 时报告文件本机
+/// 就能读到，不走 scp、也不需要清理。发给别人的日报（审批原因非空）在投递
+/// 成功后自动发件存档。
 function reportAndSend(parsed, { env, exists, run, io, owner, approvalReason }) {
   const { opts } = parsed
-  const invocation = buildInvocation(parsed, { env, exists })
-  const { code, file } = writeReport(run(invocation.argv), opts, io)
+  const merged = fetchReportData(parsed, { env, exists, run })
+  const { code, file } = writeReport(JSON.stringify(merged), opts, io)
   if (code !== 0) return code
 
   const remoteFile = remoteReportPath(file)
@@ -620,7 +713,7 @@ function reportAndSend(parsed, { env, exists, run, io, owner, approvalReason }) 
       subject: opts.subject ?? reportSubject(file),
       yes: true,
     },
-  }, { env, exists })
+  }, { env, exists }, 'mail')
   const scp = opts.local ? null : buildScpInvocation(file, remoteFile, { env })
   const remove = opts.local ? null : buildRemoteRemoveInvocation(remoteFile, { env })
 
@@ -738,10 +831,32 @@ export function main(argv, deps = {}) {
       return reportAndSend(parsed, { env, exists, run, io, owner, approvalReason })
     }
     const approvalReason = requireOwnerApproval(parsed, { env, exists, run }, owner, io, deps)
+    // `notify --all` 的展开（审批之后：拒发时连只读的 account-list 也不跑）：
+    // mail 没有账号表（名单真值在中转），把 --all 换成逐个点名（DESIGN-20261015 I-4）。
+    if (sub === 'notify' && opts.all && opts.yes && !opts.dryRun) {
+      const accounts = JSON.parse(run(relayAccountsInvocation(parsed, { env, exists }).argv))
+      opts.accounts = (Array.isArray(accounts) ? accounts : [])
+        .map((row) => row.accountId).filter(Boolean)
+      opts.all = false
+      opts.expandedFromAll = true
+      if (!opts.accounts.length) {
+        io.err('（展开 --all）中转一个账号都没有；没有发出任何东西')
+        return 1
+      }
+      io.err(`（展开 --all）中转共 ${opts.accounts.length} 个账号，按点名投递`)
+    }
+    // report / report-data：双侧取数（中转 ops-report + mail feedback-stats）后合并。
+    if (sub === 'report' || sub === 'report-data') {
+      const merged = fetchReportData(parsed, { env, exists, run })
+      if (sub === 'report-data') {
+        io.out(JSON.stringify(merged))
+        return 0
+      }
+      return writeReport(JSON.stringify(merged), opts, io).code
+    }
     const invocation = buildInvocation(parsed, { env, exists })
     if (sub === 'reply' && ((!opts.send && !opts.yes) || opts.dryRun)) return previewReply(invocation, opts, io)
     const raw = run(invocation.argv)
-    if (sub === 'report') return writeReport(raw, opts, io).code
     io.out(raw.trimEnd())
     // 发件存档：审批门要拦的那类发送（收件人里有别人）落地后，自动抄送 owner 账号。
     if (approvalReason) archiveSentLetter(parsed, owner, { result: raw }, { env, exists, run, io })
