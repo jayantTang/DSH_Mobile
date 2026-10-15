@@ -149,7 +149,7 @@ public final class AttachmentImages {
             // 磁盘命中不触网，也就不受失败静默窗约束。
             if let data = disk.load(scope: scope, attachmentId: attachmentId, variant: variant),
                let image = Self.decode(data) {
-                await ChatProbe.probeNote?("attachment.disk", ["id": attachmentId], true)
+                await ChatProbe.shared.probeNote?("attachment.disk", ["id": attachmentId], true)
                 return (image, false)
             }
             if await self?.shouldInjectFailure(for: attachmentId) == true { return (nil, true) }

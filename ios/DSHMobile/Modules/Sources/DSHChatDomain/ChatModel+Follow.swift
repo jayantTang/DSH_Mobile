@@ -27,12 +27,12 @@ public extension ChatModel {
             if followState != .atBottom {
                 followState = .atBottom
                 unreadWhileReading = 0
-                ChatProbe.probeNote?("follow.state", ["to": "atBottom",
+                ChatProbe.shared.probeNote?("follow.state", ["to": "atBottom",
                                                     "distance": String(Int(distance))], true)
             }
         } else if followState != .reading {
             followState = .reading
-            ChatProbe.probeNote?("follow.state", ["to": "reading",
+            ChatProbe.shared.probeNote?("follow.state", ["to": "reading",
                                                 "distance": String(Int(distance))], true)
         }
     }
@@ -57,7 +57,7 @@ public extension ChatModel {
     /// 桥报"尾部来了 n 条新消息"：reading 期间计未读（atBottom 时读者看得见，不计）。
     public func noteTailArrivals(_ count: Int) {
         guard count > 0 else { return }
-        ChatProbe.probeNote?("follow.tail", ["count": String(count),
+        ChatProbe.shared.probeNote?("follow.tail", ["count": String(count),
                                            "state": followState.rawValue,
                                            "unread": String(unreadWhileReading)], true)
         guard followState == .reading else { return }
@@ -97,7 +97,7 @@ public extension ChatModel {
               let updated = value.items.first(where: { $0.sessionId == current.sessionId })
         else { return }
         let local = pipelineBridge?.localNewestSeq() ?? 0
-        ChatProbe.probeNote?("tail.sync", [
+        ChatProbe.shared.probeNote?("tail.sync", [
             "reason": reason,
             "local": String(local),
             "host": String(updated.asOfSeq),

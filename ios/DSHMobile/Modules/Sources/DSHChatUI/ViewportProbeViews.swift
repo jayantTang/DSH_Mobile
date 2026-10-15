@@ -11,7 +11,7 @@ struct ProbedRow: ViewModifier {
     let id: String
 
     func body(content: Content) -> some View {
-        if ChatProbe.noRowProbe {
+        if ChatProbe.shared.noRowProbe {
             content
         } else {
             content.background(ViewportProbeReporter(id: id))
@@ -27,9 +27,9 @@ struct ViewportProbeReporter: View {
         GeometryReader { proxy in
             let rect = proxy.frame(in: .global)
             Color.clear
-                .onAppear { ChatProbe.enterRow?(id, rect) }
-                .onChange(of: rect) { _, next in ChatProbe.updateRow?(id, next) }
-                .onDisappear { ChatProbe.leaveRow?(id) }
+                .onAppear { ChatProbe.shared.enterRow?(id, rect) }
+                .onChange(of: rect) { _, next in ChatProbe.shared.updateRow?(id, next) }
+                .onDisappear { ChatProbe.shared.leaveRow?(id) }
         }
     }
 }
@@ -53,8 +53,8 @@ struct ScrollGeometryProbe: ViewModifier {
                             content: geometry.contentSize.height,
                             container: geometry.containerSize.height)
             } action: { _, facts in
-                ChatProbe.setScroll?(facts.offset, facts.content)
-                ChatProbe.probeNote?("scroll", [
+                ChatProbe.shared.setScroll?(facts.offset, facts.content)
+                ChatProbe.shared.probeNote?("scroll", [
                     "offset": String(format: "%.0f", facts.offset),
                     "content": String(format: "%.0f", facts.content),
                     "container": String(format: "%.0f", facts.container),

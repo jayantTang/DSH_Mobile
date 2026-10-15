@@ -146,8 +146,8 @@ public struct ChatView: View {
         }
         .background(DSHTheme.background)
         .task {
-            ChatProbe.start?()
-            ChatProbe.resume?()
+            ChatProbe.shared.start?()
+            ChatProbe.shared.resume?()
             // 端口在调用点构造（spec 024 / FR-005）：调试工具只认这三个动作，
             // 不再直接持有 `ChatModel`，基础设施与工具目录都不认识业务类型。
             await ChatViewSeams.runTyping?(
@@ -296,8 +296,8 @@ public struct ChatView: View {
             GeometryReader { proxy in
                 let rect = proxy.frame(in: .global)
                 Color.clear
-                    .onAppear { ChatProbe.setViewport?(rect) }
-                    .onChange(of: rect) { _, next in ChatProbe.setViewport?(next) }
+                    .onAppear { ChatProbe.shared.setViewport?(rect) }
+                    .onChange(of: rect) { _, next in ChatProbe.shared.setViewport?(next) }
             }
         )
         .scrollDismissesKeyboard(.interactively)
@@ -306,7 +306,7 @@ public struct ChatView: View {
             scrollToBottom(proxy, force: true)
         }
         .onChange(of: model.scrollSignal) {
-            ChatProbe.probeNote?("scrollSignal", ["draft": String(model.draft.count)], false)
+            ChatProbe.shared.probeNote?("scrollSignal", ["draft": String(model.draft.count)], false)
             guard isFollowing, ownsTranscript else { return }
             if isPinningOnOpen {
                 proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)
@@ -371,7 +371,7 @@ public struct ChatView: View {
                     listHostRef?.scrollToBottom()
                     // 新宿主下 `ScrollViewProxy` 不在它的视图树里，走 proxy 等于没反应
                     // （2026-10-08 真机反馈：点了不生效）。
-                    if ChatProbe.listHost == "uikit" {
+                    if ChatProbe.shared.listHost == "uikit" {
                         listHostRef?.scrollToBottom()
                     } else {
                         scrollToBottom(proxy, animated: true)
@@ -437,22 +437,22 @@ public struct ChatView: View {
             itemsCountDidChange(count, proxy: proxy)
         }
         .onChange(of: model.timeline.streaming?.text.count ?? 0) { _, streamed in
-            ChatProbe.setContent?(model.timeline.items.count, streamed)
+            ChatProbe.shared.setContent?(model.timeline.items.count, streamed)
         }
         .onChange(of: model.phase) { _, phase in
-            if phase == .ready { ChatProbe.markReady?() }
+            if phase == .ready { ChatProbe.shared.markReady?() }
         }
         .onKeyboardVisibilityChange { visible in
-            ChatProbe.probeNote?("keyboard", ["visible": visible ? "1" : "0",
+            ChatProbe.shared.probeNote?("keyboard", ["visible": visible ? "1" : "0",
                                             "following": isFollowing ? "1" : "0"], false)
             repinAfterViewportChange(proxy, keyboardVisible: visible)
         }
         .onChange(of: model.draft.count) { _, count in
-            ChatProbe.probeNote?("draft", ["chars": String(count),
+            ChatProbe.shared.probeNote?("draft", ["chars": String(count),
                                          "following": isFollowing ? "1" : "0"], false)
         }
         .onChange(of: isFollowing) { _, following in
-            ChatProbe.probeNote?("following", ["on": following ? "1" : "0"], false)
+            ChatProbe.shared.probeNote?("following", ["on": following ? "1" : "0"], false)
             // 手指往上滑正是"到没到顶部"这条判定的输入之一。而且拖动是**唯一**不依赖
             // 滚动几何变化的信号：视口本来就停在顶部时，再拖也不产生几何变化，
             // 只靠回调会漏掉补页（2026-09-24 实测 3 轮里 1 轮）。
@@ -465,7 +465,7 @@ public struct ChatView: View {
         transcriptSurface(proxy)
         .onAppear {
             isFollowing = true
-            ChatProbe.resume?()
+            ChatProbe.shared.resume?()
             scrollToBottom(proxy, animated: false)
         }
         .onChange(of: searchJumpHit) { _, hit in
@@ -476,10 +476,10 @@ public struct ChatView: View {
         // 新宿主自带驱动（coordinator 里那份），**旧的 SwiftUI 驱动必须让位**：
         // 它会去置 `isFollowing=false, userScrolled=true`，把 uikit 路径的 `pinToBottom` 打成假，
         // 于是预算检查永远"算得出来但不该丢"（2026-10-08 实测：`list.budget count=14 pin=0`）。
-        .task { if ChatProbe.listHost != "uikit" { await runOlderScrollDrive(proxy) } }
+        .task { if ChatProbe.shared.listHost != "uikit" { await runOlderScrollDrive(proxy) } }
         // 离开转写页就暂停探针采样：退回列表后"转写区"没有任何内容可量，
         // 继续采只会把列表记成"会话区白了"。
-        .onDisappear { ChatProbe.pause?() }
+        .onDisappear { ChatProbe.shared.pause?() }
         .onChange(of: model.session?.sessionId, initial: true) { _, sessionId in
             sessionDidChange(sessionId, proxy: proxy)
         }
@@ -523,7 +523,7 @@ public struct ChatView: View {
         // 失效，UIKit 直接 SIGABRT（2026-10-08 run 20261008-202231 实测）。
         scheduleWindowTrim()
         let streamed = model.timeline.streaming?.text.count ?? 0
-        ChatProbe.setContent?(count, streamed)
+        ChatProbe.shared.setContent?(count, streamed)
         // 内容变了要重判一次：首次快照落地时"视口停在内容顶部"这件事本身
         // 不产生滚动几何变化，只靠回调会漏（见 `topDistance`）。
         evaluateTopDistance(proxy)
@@ -540,17 +540,17 @@ public struct ChatView: View {
     /// 修饰符链里，编译器会报"表达式太复杂"。
     @ViewBuilder
     private func stackContainer(_ proxy: ScrollViewProxy) -> some View {
-        if ChatProbe.listSpike {
+        if ChatProbe.shared.listSpike {
             // spike 屏（spec 008 Phase 0）：不读会话，纯造数据量位移与并发。
             TranscriptListSpikeView()
-        } else if ChatProbe.listHost == "uikit" {
+        } else if ChatProbe.shared.listHost == "uikit" {
             // spec 008 US1：新列表宿主渲染真会话。行视图直接复用本视图的 `row(_:)`，
             // 所以两条路的视觉是同一套代码（验收口径：等价，不追逐像素）。
             TranscriptListRepresentable(
                 items: model.timeline.items,
                 makeRow: { AnyView(row($0)) },
                 pinToBottom: isFollowing,
-                onDiagnostic: { name, fields in ChatProbe.probeNote?(name, fields, true) },
+                onDiagnostic: { name, fields in ChatProbe.shared.probeNote?(name, fields, true) },
                 onNearTop: { Task { await model.loadOlder() } },
                 onScroll: { distance in
                     topDistance = distance
@@ -561,7 +561,7 @@ public struct ChatView: View {
                     let near = distance < Self.sentinelApproach
                     if near != sentinelNearTop {
                         sentinelNearTop = near
-                        ChatProbe.probeNote?("older.sentinel", [
+                        ChatProbe.shared.probeNote?("older.sentinel", [
                             "distance": String(format: "%.0f", distance),
                             "near": near ? "1" : "0",
                             "following": isFollowing ? "1" : "0",
@@ -579,7 +579,7 @@ public struct ChatView: View {
                     if count > 0 { model.dropOldestRows(count) }
                     return count
                 },
-                driveRounds: ChatProbe.olderScrollRounds ?? 0,
+                driveRounds: ChatProbe.shared.olderScrollRounds ?? 0,
                 onDriveBegin: {
                     isFollowing = false
                     userScrolled = true
@@ -616,7 +616,7 @@ public struct ChatView: View {
                 onBottomChanged: { atBottom in  // 几何驱动
                     // 009 管道 + uikit 宿主：跟随判定由跟底两态接管（48pt + 向上拖动
                     // 抑制，见 onFollowGeometry），这条旧回调只在其它路径生效。
-                    guard !(model.pipelineActive && ChatProbe.listHost == "uikit") else { return }
+                    guard !(model.pipelineActive && ChatProbe.shared.listHost == "uikit") else { return }
                     // 唯一可靠的"跟随"依据：滚动几何。原来靠拖动位移（>24pt）判定，
                     // 于是"轻轻往上滑/刷新"这类情况仍被判成跟随，内容一变就被拽到底部
                     // （2026-10-08 真机反馈："偶尔自动跳到底部"）。
@@ -658,7 +658,7 @@ public struct ChatView: View {
                 atomicApply: model.pipelineActive
             )
             .accessibilityIdentifier("chat.transcript.list")
-        } else if ChatProbe.lazyStack {
+        } else if ChatProbe.shared.lazyStack {
             // 复现用：换回懒加载容器（`-DSHProbeVariants lazy-stack`）。
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: DSHTheme.Spacing.standard) {
@@ -724,7 +724,7 @@ public struct ChatView: View {
     private func olderSentinel(_ proxy: ScrollViewProxy) -> some View {
         Color.clear
             .frame(height: 1)
-            .modifier(TranscriptRowChrome(inList: !ChatProbe.lazyStack))
+            .modifier(TranscriptRowChrome(inList: !ChatProbe.shared.lazyStack))
             .id(Self.topAnchor)
             // 「读者到没到最上面」这件事**以这一行的生死为准**，滚动几何只是提前量。
             //
@@ -734,11 +734,11 @@ public struct ChatView: View {
             // 行是被 `List` 按"离视口多远"建/拆的，这个信号一直有。
             .onAppear {
                 sentinelNearTop = true
-                ChatProbe.probeNote?("older.sentinel", ["near": "1", "why": "appear",
+                ChatProbe.shared.probeNote?("older.sentinel", ["near": "1", "why": "appear",
                                                      "items": String(model.timeline.items.count)], false)
                 if isFollowing, !userScrolled {
                     // 读者没往上翻过、却已经在内容顶部：那是"打开会话没钉到底"，先钉回去。
-                    ChatProbe.probeNote?("older.repin", ["distance": "-1"], false)
+                    ChatProbe.shared.probeNote?("older.repin", ["distance": "-1"], false)
                     repinAfterContentChange(proxy)
                     return
                 }
@@ -757,7 +757,7 @@ public struct ChatView: View {
         // 009 管道模式下失败态由顶部缺口行（点击重试）表达，不再叠这条胶囊。
         if !model.pipelineActive, let reason = model.olderFailure {
             Button {
-                ChatProbe.probeNote?("older.retry.tap", ["reason": reason], true)
+                ChatProbe.shared.probeNote?("older.retry.tap", ["reason": reason], true)
                 Task { await model.retryOlder() }
             } label: {
                 HStack(spacing: DSHTheme.Spacing.hairline) {
@@ -780,7 +780,7 @@ public struct ChatView: View {
             .background(
                 GeometryReader { geometry in
                     Color.clear.onAppear {
-                        ChatProbe.probeNote?("older.retryBar", [
+                        ChatProbe.shared.probeNote?("older.retryBar", [
                             "w": String(format: "%.0f", geometry.size.width),
                             "h": String(format: "%.0f", geometry.size.height),
                             "y": String(format: "%.0f", geometry.frame(in: .global).minY),
@@ -840,7 +840,7 @@ public struct ChatView: View {
                         }
                 }
             }
-            .modifier(TranscriptRowChrome(inList: !ChatProbe.lazyStack))
+            .modifier(TranscriptRowChrome(inList: !ChatProbe.shared.lazyStack))
             .id(item.id)
             .probed("row:\(item.id)")
             // 长按 = 这一行的文字入口：全文/选择文本、拷贝整条。
@@ -850,7 +850,7 @@ public struct ChatView: View {
             // 013：UIKit 宿主下长按由宿主的手势认（见 `TranscriptListHost.onRowAsk`），
             // 这里只负责另一条宿主分支的 `contextMenu`。
             .modifier(MessageActions(item: item,
-                                     hostOwnsLongPress: ChatProbe.listHost == "uikit") {
+                                     hostOwnsLongPress: ChatProbe.shared.listHost == "uikit") {
                 readingMessage = $0
             })
     }
@@ -886,7 +886,7 @@ public struct ChatView: View {
                 Color.clear.frame(height: 1)
             }
         }
-        .modifier(TranscriptRowChrome(inList: !ChatProbe.lazyStack))
+        .modifier(TranscriptRowChrome(inList: !ChatProbe.shared.lazyStack))
         .probed("tail")
     }
 
@@ -894,7 +894,7 @@ public struct ChatView: View {
     private var bottomMarker: some View {
         Color.clear
             .frame(height: 1)
-            .modifier(TranscriptRowChrome(inList: !ChatProbe.lazyStack))
+            .modifier(TranscriptRowChrome(inList: !ChatProbe.shared.lazyStack))
             .id(Self.bottomAnchor)
             .probed("bottom")
     }
@@ -920,7 +920,7 @@ public struct ChatView: View {
         guard let distance = topDistance else {
             // 一次滚动几何都没量到（iOS 17，或内容落地前）：按"该在底部"处理——
             // 读者没往上翻过就钉回底部，别停在会话开头。
-            ChatProbe.probeNote?("older.nogeometry", [
+            ChatProbe.shared.probeNote?("older.nogeometry", [
                 "following": isFollowing ? "1" : "0",
                 "items": String(model.timeline.items.count),
             ], false)
@@ -931,7 +931,7 @@ public struct ChatView: View {
         // 真正触发仍在 `sentinelApproach`（哨兵行进视口）。两条线分开的理由是
         // **取消**——读者掉头往下时，靠 `prefetchMargin` 才有个明确的"可以放弃"的界限。
         if distance >= Self.sentinelApproach, distance <= Self.prefetchMargin, !model.isLoadingOlder {
-            ChatProbe.probeNote?("prefetch.near", [
+            ChatProbe.shared.probeNote?("prefetch.near", [
                 "distance": String(format: "%.0f", distance),
                 "margin": String(format: "%.0f", Self.prefetchMargin),
             ], false)
@@ -939,7 +939,7 @@ public struct ChatView: View {
         let near = distance < Self.sentinelApproach
         if near != sentinelNearTop {
             sentinelNearTop = near
-            ChatProbe.probeNote?("older.sentinel", [
+            ChatProbe.shared.probeNote?("older.sentinel", [
                 "distance": String(format: "%.0f", distance),
                 "near": near ? "1" : "0",
                 "following": isFollowing ? "1" : "0",
@@ -948,7 +948,7 @@ public struct ChatView: View {
         }
         guard near else { return }
         if isFollowing, !userScrolled {
-            ChatProbe.probeNote?("older.repin", ["distance": String(format: "%.0f", distance)], false)
+            ChatProbe.shared.probeNote?("older.repin", ["distance": String(format: "%.0f", distance)], false)
             // 带一次延迟重钉：这次判定往往发生在"内容刚落地、行还没排完"的那一刻，
             // 单次 `scrollTo` 会落在空布局上（2026-09-24 实测 3 轮里 1 轮就这么卡住了）。
             // 这一支**允许用旧数据**：钉底是幂等的、方向明确的（读者没往上翻，就该在底部）。
@@ -961,7 +961,7 @@ public struct ChatView: View {
         // 又白补了一页，命中那一行被顶出屏幕）。
         let fresh = Date().timeIntervalSince(topDistanceAt) < Self.distanceFreshness
         guard fresh else {
-            ChatProbe.probeNote?("older.stale", [
+            ChatProbe.shared.probeNote?("older.stale", [
                 "distance": String(format: "%.0f", distance),
                 "age": String(format: "%.1f", Date().timeIntervalSince(topDistanceAt)),
             ], false)
@@ -992,7 +992,7 @@ public struct ChatView: View {
             for _ in 0..<Self.maxOlderBurst {
                 if Task.isCancelled || !ownsTranscript { return }
                 let anchor = model.timeline.items.first?.id
-                let before = ChatProbe.scrollFacts?()
+                let before = ChatProbe.shared.scrollFacts?()
                 let count = model.timeline.items.count
                 // 锚点在 await 之前落位：插入会在同一帧触发 onChange(items.count)，
                 // 以前等返回再赋值，锚定分支可能先跑（顺序未定义）。
@@ -1016,21 +1016,21 @@ public struct ChatView: View {
                     waitedForAnchor += 25
                 }
                 if Task.isCancelled { return }
-                let after = ChatProbe.scrollFacts?()
+                let after = ChatProbe.shared.scrollFacts?()
                 var kept = "-"
                 if let before, let after {
                     let movedOffset = after.offset - before.offset
                     let grewContent = after.content - before.content
                     kept = abs(movedOffset - grewContent) <= Self.keepTolerance ? "1" : "0"
                     if kept == "0" {
-                        ChatProbe.probeNote?("older.jumped", [
+                        ChatProbe.shared.probeNote?("older.jumped", [
                             "movedOffset": String(format: "%.0f", movedOffset),
                             "grewContent": String(format: "%.0f", grewContent),
                             "items": String(model.timeline.items.count),
                         ], true)
                     }
                 }
-                ChatProbe.probeNote?("older.pump", [
+                ChatProbe.shared.probeNote?("older.pump", [
                     "items": String(model.timeline.items.count),
                     "anchor": anchor ?? "-",
                     "hasOlder": model.hasOlder ? "1" : "0",
@@ -1064,7 +1064,7 @@ public struct ChatView: View {
             // 就停手，没稳就再锚一次，最多 `anchorAttemptCap` 次。
             var attempts = 0
             var stableRounds = 0
-            var lastContent = ChatProbe.scrollFacts?()?.content
+            var lastContent = ChatProbe.shared.scrollFacts?()?.content
             while attempts < Self.anchorAttemptCap {
                 if Task.isCancelled || !ownsTranscript { return }
                 guard model.timeline.items.contains(where: { $0.id == anchor }) else { return }
@@ -1073,7 +1073,7 @@ public struct ChatView: View {
                 proxy.scrollTo(anchor, anchor: .top)
                 attempts += 1
                 try? await Task.sleep(for: .milliseconds(80))
-                let content = ChatProbe.scrollFacts?()?.content
+                let content = ChatProbe.shared.scrollFacts?()?.content
                 if let lastContent, let content, abs(content - lastContent) < 1 {
                     stableRounds += 1
                 } else {
@@ -1083,7 +1083,7 @@ public struct ChatView: View {
                 if stableRounds >= 2 { break }
             }
             anchorCompletions += 1
-            ChatProbe.probeNote?("older.anchor", [
+            ChatProbe.shared.probeNote?("older.anchor", [
                 "attempts": String(attempts),
                 "stable": stableRounds >= 2 ? "1" : "0",
             ], true)
@@ -1106,7 +1106,7 @@ public struct ChatView: View {
         // 才有 `search.jump`，2026-10-11 用例 49 两次复跑里它一次都没出现，凭日志
         // 分不清是"根本没进这个函数"还是"卡在换窗口上"（run 20261011-204318：
         // 面板关掉了、视口留在底部、探针里既没有 search.jump 也没有 search.rebase*）。
-        ChatProbe.probeNote?("search.jump.begin", [
+        ChatProbe.shared.probeNote?("search.jump.begin", [
             "item": hit.id, "seq": String(hit.seq),
             "owner": ownsTranscript ? "1" : "0",
             "inWindow": TranscriptHitLocator.row(exactlyForSeq: hit.seq,
@@ -1116,7 +1116,7 @@ public struct ChatView: View {
             "inPipeline": model.pipelineHolds(seq: hit.seq) ? "1" : "0",
         ], true)
         guard ownsTranscript else {
-            ChatProbe.probeNote?("search.jump.skip", ["reason": "not-owner"], true)
+            ChatProbe.shared.probeNote?("search.jump.skip", ["reason": "not-owner"], true)
             return
         }
         isFollowing = false
@@ -1137,7 +1137,7 @@ public struct ChatView: View {
                 // prepend 的那一段），梯子照旧一枪枪试，换窗口落地后后面的枪会
                 // 打在正确的行上（`search.jump.rebase` 留痕，2026-10-11 用例 49
                 // run 20261011-210945 实测：await 换窗口把 `search.jump` 整条吞掉）。
-                ChatProbe.probeNote?("search.jump.rebase", ["seq": String(hit.seq)], true)
+                ChatProbe.shared.probeNote?("search.jump.rebase", ["seq": String(hit.seq)], true)
                 rebalancing = true
                 Task { @MainActor in
                     _ = await model.rebaseWindow(around: hit.seq)
@@ -1148,7 +1148,7 @@ public struct ChatView: View {
                   !model.timeline.items.contains(where: { $0.id == hit.id }) {
             _ = model.commitSearchHistory()
         }
-        ChatProbe.probeNote?("search.jump", [
+        ChatProbe.shared.probeNote?("search.jump", [
             "item": hit.id, "seq": String(hit.seq),
             // 换窗口之后目标解析到了没有：`-` = 没有可指向的行，梯子每一枪都会跳过。
             "resolved": TranscriptHitLocator.row(exactlyForSeq: hit.seq,
@@ -1163,7 +1163,7 @@ public struct ChatView: View {
                 guard let row = TranscriptHitLocator.row(exactlyForSeq: hit.seq, in: model.timeline.items) else {
                     continue
                 }
-                if ChatProbe.listHost == "uikit" {
+                if ChatProbe.shared.listHost == "uikit" {
                     // uikit 下 ScrollViewProxy 不在宿主的视图树里（无效调用）；
                     // 交给宿主滚，且 nonce 递增让同一目标也能重试（布局未稳会落空）。
                     listJumpNonce += 1
@@ -1172,17 +1172,17 @@ public struct ChatView: View {
                     proxy.scrollTo(row.id, anchor: .center)
                 }
             }
-            let visible = ChatProbe.visibleRowIds?() ?? []
+            let visible = ChatProbe.shared.visibleRowIds?() ?? []
             let target = TranscriptHitLocator.row(exactlyForSeq: hit.seq, in: model.timeline.items)?.id ?? hit.id
-            if ChatProbe.listHost == "uikit" {
+            if ChatProbe.shared.listHost == "uikit" {
                 // 新宿主：把目标交给它滚过去（同一次更新里定位，不经过 ScrollViewProxy）。
                 listJumpNonce += 1
                 listJumpId = "\(target)#\(listJumpNonce)"
                 return
             }
-            ChatProbe.probeNote?("search.jump.settle", [
+            ChatProbe.shared.probeNote?("search.jump.settle", [
                 "item": target, "seq": String(hit.seq),
-                "top": ChatProbe.topVisibleRow?() ?? "-",
+                "top": ChatProbe.shared.topVisibleRow?() ?? "-",
                 "items": String(model.timeline.items.count),
                 "visible": String(visible.count),
                 "near": visible.prefix(3).joined(separator: "|"),
@@ -1208,7 +1208,7 @@ public struct ChatView: View {
         if !model.timeline.items.contains(where: { $0.id == id }) {
             _ = model.commitSearchHistory()
         }
-        ChatProbe.probeNote?("search.jump", ["item": id], true)
+        ChatProbe.shared.probeNote?("search.jump", ["item": id], true)
         Task { @MainActor in
             // 梯子要够长：`commitSearchHistory()` 把搜索缓冲并进时间线时是**往上方插内容**，
             // 插入落地会把目标行挤走；只滚三次（0/120/300ms）时，最后一次常常落在插入之前的布局上
@@ -1223,9 +1223,9 @@ public struct ChatView: View {
                 proxy.scrollTo(id, anchor: .center)
             }
             // 落点诊断：跳完之后视口最上面是哪一行。目标行不在附近就说明又没钉住。
-            let visible = ChatProbe.visibleRowIds?() ?? []
-            ChatProbe.probeNote?("search.jump.settle", [
-                "item": id, "top": ChatProbe.topVisibleRow?() ?? "-",
+            let visible = ChatProbe.shared.visibleRowIds?() ?? []
+            ChatProbe.shared.probeNote?("search.jump.settle", [
+                "item": id, "top": ChatProbe.shared.topVisibleRow?() ?? "-",
                 "items": String(model.timeline.items.count),
                 // 目标行到底在不在视口里、周围是哪些行——一次就能分清"视口外"与"没渲染"。
                 "visible": String(visible.count),
@@ -1242,10 +1242,10 @@ public struct ChatView: View {
     }
 
     /// `-DSHProbeOlderScroll <n>`：由 App 自己把视口送到顶部 n 次（见
-    /// `ChatProbe.olderScrollRounds`）。仿真器里没法对转写页做手势滑动，
+    /// `ChatProbe.shared.olderScrollRounds`）。仿真器里没法对转写页做手势滑动，
     /// 所以"一直往上滑"这一段只能这样驱动；送上去之后的一切都是产品代码。
     private func runOlderScrollDrive(_ proxy: ScrollViewProxy) async {
-        guard let rounds = ChatProbe.olderScrollRounds, rounds > 0 else { return }
+        guard let rounds = ChatProbe.shared.olderScrollRounds, rounds > 0 else { return }
         // 等首屏与钉底那一串走完，否则驱动会和 `pinOnOpen` 抢滚动位置。
         try? await Task.sleep(for: .seconds(6))
         for round in 1...rounds {
@@ -1255,26 +1255,26 @@ public struct ChatView: View {
             // 于是被钉回底部（`evaluateTopDistance` 的第一条），补页永远不触发。
             isFollowing = false
             userScrolled = true
-            ChatProbe.probeNote?("older.drive", [
+            ChatProbe.shared.probeNote?("older.drive", [
                 "round": String(round), "phase": "up",
                 "items": String(model.timeline.items.count),
-                "top": ChatProbe.topVisibleRow?() ?? "-",
+                "top": ChatProbe.shared.topVisibleRow?() ?? "-",
             ], true)
             proxy.scrollTo(Self.topAnchor, anchor: .top)
             try? await Task.sleep(for: .milliseconds(500))
-            ChatProbe.probeNote?("older.drive", [
+            ChatProbe.shared.probeNote?("older.drive", [
                 "round": String(round), "phase": "at-top",
                 "loading": model.isLoadingOlder ? "1" : "0",
                 "near": sentinelNearTop ? "1" : "0",
-                "top": ChatProbe.topVisibleRow?() ?? "-",
+                "top": ChatProbe.shared.topVisibleRow?() ?? "-",
             ], true)
             try? await Task.sleep(for: .seconds(4))
         }
-        ChatProbe.probeNote?("older.drive", [
+        ChatProbe.shared.probeNote?("older.drive", [
             "phase": "done",
             "items": String(model.timeline.items.count),
             "hasOlder": model.hasOlder ? "1" : "0",
-            "top": ChatProbe.topVisibleRow?() ?? "-",
+            "top": ChatProbe.shared.topVisibleRow?() ?? "-",
         ], true)
     }
 
@@ -1405,7 +1405,7 @@ public struct ChatView: View {
         guard olderPump != nil else { return }
         olderPump?.cancel()
         olderPump = nil
-        ChatProbe.probeNote?("prefetch.cancel", ["reason": reason], true)
+        ChatProbe.shared.probeNote?("prefetch.cancel", ["reason": reason], true)
     }
 
     /// 预加载余量：离顶部还有这么高就开始"惦记"下一页（见 `evaluateTopDistance`）。

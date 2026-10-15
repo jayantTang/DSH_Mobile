@@ -387,7 +387,7 @@ public final class ChatPipelineBridge {
         async let landed = waitForRebaseRow(seq: seq)
         do {
             let fetched = try await session.records(in: lower...upper, priority: .jump)
-            ChatProbe.probeNote?("search.rebase.fetched", [
+            ChatProbe.shared.probeNote?("search.rebase.fetched", [
                 "seq": String(seq), "range": "\(lower)-\(upper)",
                 "count": String(fetched.count),
                 "first": String(fetched.first?.event.seq ?? -1),
@@ -396,7 +396,7 @@ public final class ChatPipelineBridge {
         } catch {
             // 拉取失败必须可见（T016 同款纪律）：waiter 超时只会返回 nil，
             // 没有这条 note 时跳转静默落空，无法分辨"没拉到"还是"没等到"。
-            ChatProbe.probeNote?("search.rebase.failed", [
+            ChatProbe.shared.probeNote?("search.rebase.failed", [
                 "seq": String(seq), "range": "\(lower)-\(upper)",
                 "reason": String(describing: error),
             ], true)

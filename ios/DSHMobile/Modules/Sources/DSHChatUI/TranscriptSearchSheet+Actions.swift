@@ -37,23 +37,23 @@ extension TranscriptSearchSheet {
         let key = searchKey
         if runningSearchKey == key {
             pendingScopeRefresh = true
-            ChatProbe.probeNote?("search.dedup", ["key": key, "immediate": immediate ? "1" : "0"], true)
+            ChatProbe.shared.probeNote?("search.dedup", ["key": key, "immediate": immediate ? "1" : "0"], true)
             return
         }
         if isSearchPending, latestSearchKey == key {
             // 已经排上、还没开跑的同一次搜索（点胶囊的双触发）：后一条不该把前一条
             // 取消重排——它跑的就是同一个指纹，等着就行，不置补跑标记。
-            ChatProbe.probeNote?("search.dedup", ["key": key, "queued": "1"], true)
+            ChatProbe.shared.probeNote?("search.dedup", ["key": key, "queued": "1"], true)
             return
         }
         if !immediate, key == landedKey, searchSource == .connector {
-            ChatProbe.probeNote?("search.skip", ["key": key, "reason": "connector-covers-all"], true)
+            ChatProbe.shared.probeNote?("search.skip", ["key": key, "reason": "connector-covers-all"], true)
             return
         }
         searchTask?.cancel()
         latestSearchKey = key
         isSearchPending = true
-        ChatProbe.probeNote?("search.schedule", ["key": key, "immediate": immediate ? "1" : "0"], false)
+        ChatProbe.shared.probeNote?("search.schedule", ["key": key, "immediate": immediate ? "1" : "0"], false)
         if immediate {
             searchTask = Task { @MainActor in await performSearch(key: key) }
             return
@@ -62,7 +62,7 @@ extension TranscriptSearchSheet {
             try? await Task.sleep(for: .milliseconds(Self.typingDebounce))
             if Task.isCancelled {
                 // 打字期间被打断的那些：探针留痕，用来证明"只有最后一次落地"。
-                ChatProbe.probeNote?("search.dropped", ["key": key], false)
+                ChatProbe.shared.probeNote?("search.dropped", ["key": key], false)
                 return
             }
             await performSearch(key: key)
@@ -134,12 +134,12 @@ extension TranscriptSearchSheet {
         let rerun = pendingScopeRefresh && searchSource == .localWindow && latestSearchKey == key
         pendingScopeRefresh = false
         if Task.isCancelled {
-            ChatProbe.probeNote?("search.cancelled", [
+            ChatProbe.shared.probeNote?("search.cancelled", [
                 "key": key, "source": searchSource.rawValue,
             ], true)
             return
         }
-        ChatProbe.probeNote?("search.run", [
+        ChatProbe.shared.probeNote?("search.run", [
             "key": key,
             "source": searchSource.rawValue,
             "items": String(items.count),
@@ -153,7 +153,7 @@ extension TranscriptSearchSheet {
         // 结果集换了（切筛选、改关键词、缓冲变大）：可见集合按 id 保留，余量重算一次。
         visibleHitIds = visibleHitIds.filter { id in found.contains { $0.id == id } }
         if rerun {
-            ChatProbe.probeNote?("search.rerun", ["key": key, "items": String(items.count)], true)
+            ChatProbe.shared.probeNote?("search.rerun", ["key": key, "items": String(items.count)], true)
             scheduleSearch(immediate: true)
             return
         }
@@ -176,7 +176,7 @@ extension TranscriptSearchSheet {
         let synced = await model.userInputsSynced()
         guard synced != isUserInputsSynced else { return }
         isUserInputsSynced = synced
-        ChatProbe.probeNote?("search.sync", ["synced": synced ? "1" : "0"], true)
+        ChatProbe.shared.probeNote?("search.sync", ["synced": synced ? "1" : "0"], true)
         if synced, rerunOnSync { scheduleSearch(immediate: true) }
     }
 
@@ -212,7 +212,7 @@ extension TranscriptSearchSheet {
             return
         }
         let remaining = hits.count - 1 - lastVisible
-        ChatProbe.probeNote?("search.buffer", [
+        ChatProbe.shared.probeNote?("search.buffer", [
             "rows": String(hits.count),
             "visible": String(visibleHitIds.count),
             "remaining": String(remaining),
@@ -223,7 +223,7 @@ extension TranscriptSearchSheet {
         // 那条路会把整段历史读完（2026-09-25 实测：搜 circleboom 一次读掉 9 页到 seq 0）。
         let produced = hits.count > lastRowCount
         guard scrollDrivenLoads < Self.maxScrollDrivenLoads else {
-            ChatProbe.probeNote?("search.prefetch.budget", [
+            ChatProbe.shared.probeNote?("search.prefetch.budget", [
                 "rows": String(hits.count),
                 "remaining": String(remaining),
                 "budget": String(scrollDrivenLoads),
@@ -231,7 +231,7 @@ extension TranscriptSearchSheet {
             return
         }
         scrollDrivenLoads += 1
-        ChatProbe.probeNote?("search.prefetch", [
+        ChatProbe.shared.probeNote?("search.prefetch", [
             "rows": String(hits.count),
             "remaining": String(remaining),
             "produced": produced ? "1" : "0",
@@ -283,7 +283,7 @@ extension TranscriptSearchSheet {
         }
         lastRowCount = hits.count
         isLoadingMore = false
-        ChatProbe.probeNote?("search.page", [
+        ChatProbe.shared.probeNote?("search.page", [
             "before": String(countBefore),
             "after": String(hits.count),
             "firstBefore": firstBefore ?? "-",
@@ -299,7 +299,7 @@ extension TranscriptSearchSheet {
     /// 这一页取回来时结果集已经换了：丢弃，不追加进新列表（留一条探针，别静默）。
     private func dropStalePage(_ key: String) {
         isLoadingMore = false
-        ChatProbe.probeNote?("search.page.dropped", ["key": key], true)
+        ChatProbe.shared.probeNote?("search.page.dropped", ["key": key], true)
     }
 }
 #endif

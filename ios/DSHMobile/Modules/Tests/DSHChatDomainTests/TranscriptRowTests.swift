@@ -235,15 +235,15 @@ final class TranscriptRowTests: XCTestCase {
     }
 
     func test_the_row_payload_budget_defaults_to_thirty_two_megabytes() {
-        let saved = ChatProbe.payloadBudgetKB
-        defer { ChatProbe.payloadBudgetKB = saved }
+        let saved = ChatProbe.shared.payloadBudgetKB
+        defer { ChatProbe.shared.payloadBudgetKB = saved }
 
-        ChatProbe.payloadBudgetKB = nil
+        ChatProbe.shared.payloadBudgetKB = nil
         XCTAssertEqual(ChatModel.payloadBudgetBytes, 32 * 1024 * 1024)
 
         // The probe narrows it so the discard path is reachable on a real
         // session instead of only in theory.
-        ChatProbe.payloadBudgetKB = 64
+        ChatProbe.shared.payloadBudgetKB = 64
         XCTAssertEqual(ChatModel.payloadBudgetBytes, 64 * 1024)
     }
 

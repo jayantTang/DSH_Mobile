@@ -46,7 +46,7 @@ private struct TranscriptListSpikeRepresentable: UIViewRepresentable {
             )
         }
         host.onDiagnostic = { name, fields in
-            ChatProbe.probeNote?(name, fields, true)
+            ChatProbe.shared.probeNote?(name, fields, true)
         }
         context.coordinator.start(host)
         return host
@@ -72,7 +72,7 @@ private struct TranscriptListSpikeRepresentable: UIViewRepresentable {
                     let anchor = host.currentAnchorId
                     let incoming = (0..<50).map { Self.item(seq: self.nextSeq - $0) }
                     self.nextSeq -= 50
-                    ChatProbe.probeNote?("spike.round", [
+                    ChatProbe.shared.probeNote?("spike.round", [
                         "round": String(round),
                         "anchor": anchor ?? "-",
                         "incoming": String(incoming.count),
@@ -93,7 +93,7 @@ private struct TranscriptListSpikeRepresentable: UIViewRepresentable {
                         host.rehydrate(items: items)
                         let yAfter = host.screenY(of: anchor)
                         let hAfter = host.rowHeight(of: sample)
-                        ChatProbe.probeNote?("spike.rehydrate", [
+                        ChatProbe.shared.probeNote?("spike.rehydrate", [
                             "round": String(round),
                             "yDelta": String(format: "%.1f", (yAfter ?? 0) - (yBefore ?? 0)),
                             "hDelta": String(format: "%.1f", (hAfter ?? 0) - (hBefore ?? 0)),
@@ -101,7 +101,7 @@ private struct TranscriptListSpikeRepresentable: UIViewRepresentable {
                         ], true)
                     }
                 }
-                ChatProbe.probeNote?("spike.done", ["rows": String(host.rows.count)], true)
+                ChatProbe.shared.probeNote?("spike.done", ["rows": String(host.rows.count)], true)
             }
         }
 

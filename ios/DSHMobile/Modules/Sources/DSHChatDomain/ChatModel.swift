@@ -248,7 +248,7 @@ public final class ChatModel {
     /// 内存里最多留多少行；超出的从最老端丢（记录仍在库里，可读回）。
     private static var windowLimitRows: Int {
         #if DEBUG
-        if let override = ChatProbe.windowRows, override > 0 { return override }
+        if let override = ChatProbe.shared.windowRows, override > 0 { return override }
         #endif
         return 5000
     }
@@ -277,7 +277,7 @@ public final class ChatModel {
     /// 本地窗口的最老 seq（投影自 pager，供搜索缓冲与落盘使用）。
     private var oldestSeq: Int? { pager?.oldestLoadedSeq }
     /// DEBUG 故障注入：让前 N 次取页失败（`-DSHProbeFailPage <n>`）。
-    private let pageFailures = PageFailureInjector(remaining: ChatProbe.failPageAttempts)
+    private let pageFailures = PageFailureInjector(remaining: ChatProbe.shared.failPageAttempts)
     /// The cut the follow stream opened at; older pages must stay below it.
     private var throughSeq: Int = 0
 
@@ -372,7 +372,7 @@ public final class ChatModel {
             // 快照接不上本地尾部，时间线中间会留一个永远补不上的洞。
             syncPlan = TranscriptSyncPlan.plan(
                 localThrough: stored.newest, hostCursor: summary.asOfSeq)
-            ChatProbe.probeNote?("transcript.window", [
+            ChatProbe.shared.probeNote?("transcript.window", [
                 "local": String(stored.newest ?? -1),
                 "host": String(summary.asOfSeq),
                 "maxMessages": String(syncPlan.maxMessages),
@@ -398,7 +398,7 @@ public final class ChatModel {
                              hasMore: stored.hasOlder)
                 phase = .ready
                 scrollSignal += 1
-                ChatProbe.probeNote?("transcript.loaded", [
+                ChatProbe.shared.probeNote?("transcript.loaded", [
                     "session": key,
                     "records": String(stored.records.count),
                     // 诊断用：读回来的"最老一条"必须等于记录里的第一条
@@ -503,14 +503,14 @@ public final class ChatModel {
             usable = stored.filter { $0.event.seq < windowOldest }
         }
         guard !usable.isEmpty else {
-            ChatProbe.probeNote?("search.restore.skipped", ["stored": "0"], false)
+            ChatProbe.shared.probeNote?("search.restore.skipped", ["stored": "0"], false)
             return
         }
         searchRecords = usable
         searchOldestSeq = usable.first?.event.seq
         cachedSearchItems = nil
         searchScopeVersion += 1
-        ChatProbe.probeNote?("search.restore", [
+        ChatProbe.shared.probeNote?("search.restore", [
             "records": String(usable.count),
             "oldest": String(searchOldestSeq ?? -1),
             "hasOlder": hasOlder ? "1" : "0",
@@ -546,8 +546,8 @@ public final class ChatModel {
     private var effectiveCapabilities: Set<String> {
         var capabilities = store?.capabilities ?? []
         #if DEBUG
-        if ChatProbe.noHistoryWindow { capabilities.remove("history-window") }
-        if ChatProbe.noSessionSearch { capabilities.remove("session-search") }
+        if ChatProbe.shared.noHistoryWindow { capabilities.remove("history-window") }
+        if ChatProbe.shared.noSessionSearch { capabilities.remove("session-search") }
         #endif
         return capabilities
     }
@@ -622,7 +622,7 @@ public final class ChatModel {
             }
         }
         guard !records.isEmpty else {
-            ChatProbe.probeNote?("search.rebase", ["seq": String(seq), "records": "0"], true)
+            ChatProbe.shared.probeNote?("search.rebase", ["seq": String(seq), "records": "0"], true)
             return nil
         }
         timeline.reset(with: records)
@@ -634,7 +634,7 @@ public final class ChatModel {
         hostHasMore = (oldest ?? 1) > 1
         syncOlderState()
         let landed = TranscriptHitLocator.row(forSeq: seq, in: timeline.items)?.id
-        ChatProbe.probeNote?("search.rebase", [
+        ChatProbe.shared.probeNote?("search.rebase", [
             "seq": String(seq), "records": String(records.count), "source": source,
             "oldest": String(oldest ?? -1), "newest": String(newest ?? -1),
             "landed": landed ?? "-",
@@ -661,7 +661,7 @@ public final class ChatModel {
         // 目标上面还有一段（`leading` 行）才有滚动余量；顺序按 seq 升序给管道。
         await bridge.absorb(records: records.sorted { $0.event.seq < $1.event.seq })
         let covers = records.contains { $0.event.seq == seq }
-        ChatProbe.probeNote?("search.rebase.local", [
+        ChatProbe.shared.probeNote?("search.rebase.local", [
             "seq": String(seq), "records": String(records.count), "covers": covers ? "1" : "0",
             "oldest": String(records.first?.event.seq ?? -1),
             "newest": String(records.last?.event.seq ?? -1),
@@ -765,7 +765,7 @@ public final class ChatModel {
         // run 20261011-210558：`list.settle anchor=reasoning-1643-0` 之后 rows 100→98）。
         // 本地库读出来的记录是"已经存在的事实"，交给管道与磁盘水合同一条理（0 网络）。
         await pipelineBridge?.absorb(records: records)
-        ChatProbe.probeNote?("search.context", [
+        ChatProbe.shared.probeNote?("search.context", [
             "around": String(lowest), "records": String(records.count),
             "pipeline": pipelineBridge == nil ? "0" : "1",
         ], true)
@@ -935,7 +935,7 @@ public final class ChatModel {
         // 管道接管渲染时，下行记录已由 SessionPipeline 经 PendingWriteQueue 落进
         // 同一个 MessageStore（T027 统一落库），这里再写一遍是重复劳动，跳过。
         guard pipelineBridge == nil else { return }
-        ChatProbe.probeNote?("transcript.saved", [
+        ChatProbe.shared.probeNote?("transcript.saved", [
             "session": sessionId,
             "records": String(recentRecords.count),
             "lastSeq": String(recentRecords.last?.event.seq ?? -1),
@@ -1020,7 +1020,7 @@ public final class ChatModel {
             } else if timeline.items.isEmpty || needsReBase {
                 timeline.reset(with: snapshot.records)
                 if needsReBase, !timeline.items.isEmpty, localLastAtSnapshot != nil {
-                    ChatProbe.probeNote?("transcript.rebased", [
+                    ChatProbe.shared.probeNote?("transcript.rebased", [
                         "localLast": String(recentRecords.last?.event.seq ?? -1),
                         "snapshotFirst": String(snapshot.records.first?.event.seq ?? -1),
                     ], true)
@@ -1285,7 +1285,7 @@ public final class ChatModel {
             if let sessionId = session?.sessionId, let scope = sessionScope, !fresh.isEmpty {
                 enqueueAppend(scope: scope, sessionId: sessionId, records: fresh)
             }
-            ChatProbe.probeNote?("pager.page", [
+            ChatProbe.shared.probeNote?("pager.page", [
                 "start": String(page.startSeq), "end": String(page.endSeq),
                 "clamped": page.clamped ? "1" : "0",
                 "fresh": String(fresh.count),
@@ -1293,10 +1293,10 @@ public final class ChatModel {
             ], true)
             if case .none = change {} else { prependSignal += 1 }
         case .endOfLog:
-            ChatProbe.probeNote?("pager.end", ["oldest": String(oldestSeq ?? -1)], true)
+            ChatProbe.shared.probeNote?("pager.end", ["oldest": String(oldestSeq ?? -1)], true)
         case .failed(let reason):
             olderFailure = reason
-            ChatProbe.probeNote?("pager.failed", ["reason": reason], true)
+            ChatProbe.shared.probeNote?("pager.failed", ["reason": reason], true)
             scheduleAutoRetry()
         case .busy:
             break
@@ -1322,7 +1322,7 @@ public final class ChatModel {
         guard !older.isEmpty else { return false }
         let change = timeline.prepend(older: older)
         if case .none = change { return false }
-        ChatProbe.probeNote?("window.backfill", [
+        ChatProbe.shared.probeNote?("window.backfill", [
             "from": String(firstRow), "records": String(older.count),
             "oldest": String(timeline.firstSeq ?? -1),
         ], true)
@@ -1346,7 +1346,7 @@ public final class ChatModel {
     ///   `-DSHProbeWindowRows` flag, which is what case 47 uses.
     public func trimWindowIfNeeded(readerIsFollowing: Bool) {
         #if DEBUG
-        guard ChatProbe.windowRows != nil else { return }
+        guard ChatProbe.shared.windowRows != nil else { return }
         #else
         return
         #endif
@@ -1358,7 +1358,7 @@ public final class ChatModel {
         guard excess > 0 else { return }
         let dropped = timeline.dropOldestRows(excess)
         guard dropped > 0 else { return }
-        ChatProbe.probeNote?("window.trimmed", [
+        ChatProbe.shared.probeNote?("window.trimmed", [
             "dropped": String(dropped), "items": String(timeline.items.count),
             "oldest": String(timeline.firstSeq ?? -1),
         ], true)
@@ -1379,9 +1379,9 @@ public final class ChatModel {
         didAutoRetry = true
         autoRetryTask?.cancel()
         autoRetryTask = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(ChatProbe.autoRetryMs))
+            try? await Task.sleep(for: .milliseconds(ChatProbe.shared.autoRetryMs))
             guard !Task.isCancelled, let self, self.olderFailure != nil else { return }
-            ChatProbe.probeNote?("older.autoRetry", [:], true)
+            ChatProbe.shared.probeNote?("older.autoRetry", [:], true)
             await self.loadOlder()
         }
     }
@@ -1512,7 +1512,7 @@ public final class ChatModel {
     /// 否则真实会话永远达不到预算、"丢弃"这条路在用例里就永远看不到。
     public static var payloadBudgetBytes: Int {
         #if DEBUG
-        if let kb = ChatProbe.payloadBudgetKB { return kb * 1024 }
+        if let kb = ChatProbe.shared.payloadBudgetKB { return kb * 1024 }
         #endif
         return 32 * 1024 * 1024
     }
@@ -1521,7 +1521,7 @@ public final class ChatModel {
         guard let client = store?.client, let address else { return nil }
         let capabilities = effectiveCapabilities
         #if DEBUG
-        let shortfall = ChatProbe.pageShortfall
+        let shortfall = ChatProbe.shared.pageShortfall
         #else
         let shortfall = 0
         #endif
@@ -1600,7 +1600,7 @@ public final class ChatModel {
                 searchOldestSeq = fresh.first?.event.seq
                 searchScopeVersion += 1
                 persistSearchHistory()
-                ChatProbe.probeNote?("search.extended", [
+                ChatProbe.shared.probeNote?("search.extended", [
                     "from": String(from), "records": String(fresh.count),
                     "source": "disk", "searchOldest": String(searchOldestSeq ?? -1),
                 ], true)
@@ -1618,7 +1618,7 @@ public final class ChatModel {
         searchOldestSeq = fresh.first?.event.seq
         searchScopeVersion += 1
         persistSearchHistory()
-        ChatProbe.probeNote?("search.extended", [
+        ChatProbe.shared.probeNote?("search.extended", [
             "from": String(from),
             "records": String(fresh.count),
             "searchOldest": String(searchOldestSeq ?? -1),
@@ -1647,7 +1647,7 @@ public final class ChatModel {
         }
         if case .none = change { return false }
         prependSignal += 1
-        ChatProbe.probeNote?("search.committed", [
+        ChatProbe.shared.probeNote?("search.committed", [
             "records": String(fresh.count),
             "oldest": String(oldestSeq ?? -1),
         ], true)

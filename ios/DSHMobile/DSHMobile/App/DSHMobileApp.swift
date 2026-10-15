@@ -45,38 +45,38 @@ struct DSHMobileApp: App {
         // App 的 `ViewportProbe`（调试仪器）与 `ProbeVariants`（读启动参数），
         // 所以日志、视口几何与变体开关逐项注入；每一项都直接转发给原实现，
         // 带 `-DSHViewportProbe` / `-DSHProbe*` 启动时的行为与搬迁前逐字一致。
-        ChatProbe.probeNote = note
-        ChatProbe.setContent = { items, streaming in
+        ChatProbe.shared.probeNote = note
+        ChatProbe.shared.setContent = { items, streaming in
             ViewportProbe.setContent(items: items, streaming: streaming)
         }
-        ChatProbe.setViewport = { rect in ViewportProbe.setViewport(rect) }
-        ChatProbe.markReady = { ViewportProbe.markReady() }
-        ChatProbe.start = { ViewportProbe.start() }
-        ChatProbe.pause = { ViewportProbe.pause() }
-        ChatProbe.resume = { ViewportProbe.resume() }
-        ChatProbe.scrollFacts = { ViewportProbe.scrollFacts }
-        ChatProbe.topVisibleRow = { ViewportProbe.topVisibleRow() }
-        ChatProbe.visibleRowIds = { ViewportProbe.visibleRowIds() }
-        ChatProbe.enterRow = { id, rect in ViewportProbe.enter(id, rect) }
-        ChatProbe.updateRow = { id, rect in ViewportProbe.update(id, rect) }
-        ChatProbe.leaveRow = { id in ViewportProbe.leave(id) }
-        ChatProbe.setScroll = { offset, content in ViewportProbe.lastScroll = (offset, content) }
-        ChatProbe.olderScrollRounds = ViewportProbe.olderScrollRounds
-        ChatProbe.olderDriveSkipsReclaimed = ViewportProbe.olderDriveSkipsReclaimed
-        ChatProbe.listHost = ProbeVariants.listHost
-        ChatProbe.listSpike = ProbeVariants.listSpike
-        ChatProbe.lazyStack = ProbeVariants.lazyStack
-        ChatProbe.windowRows = ProbeVariants.windowRows
-        ChatProbe.payloadBudgetKB = ProbeVariants.payloadBudgetKB
-        ChatProbe.failPageAttempts = ProbeVariants.failPageAttempts
-        ChatProbe.pageShortfall = ProbeVariants.pageShortfall
-        ChatProbe.autoRetryMs = ProbeVariants.autoRetryMs
-        ChatProbe.noHistoryWindow = ProbeVariants.noHistoryWindow
-        ChatProbe.noSessionSearch = ProbeVariants.noSessionSearch
-        ChatProbe.reclaimScreens = ProbeVariants.reclaimScreens
-        ChatProbe.rehydrateScreens = ProbeVariants.rehydrateScreens
-        ChatProbe.forceRehydrate = ProbeVariants.forceRehydrate
-        ChatProbe.noteDriveBegan = { ProbeVariants.noteDriveBegan() }
+        ChatProbe.shared.setViewport = { rect in ViewportProbe.setViewport(rect) }
+        ChatProbe.shared.markReady = { ViewportProbe.markReady() }
+        ChatProbe.shared.start = { ViewportProbe.start() }
+        ChatProbe.shared.pause = { ViewportProbe.pause() }
+        ChatProbe.shared.resume = { ViewportProbe.resume() }
+        ChatProbe.shared.scrollFacts = { ViewportProbe.scrollFacts }
+        ChatProbe.shared.topVisibleRow = { ViewportProbe.topVisibleRow() }
+        ChatProbe.shared.visibleRowIds = { ViewportProbe.visibleRowIds() }
+        ChatProbe.shared.enterRow = { id, rect in ViewportProbe.enter(id, rect) }
+        ChatProbe.shared.updateRow = { id, rect in ViewportProbe.update(id, rect) }
+        ChatProbe.shared.leaveRow = { id in ViewportProbe.leave(id) }
+        ChatProbe.shared.setScroll = { offset, content in ViewportProbe.lastScroll = (offset, content) }
+        ChatProbe.shared.olderScrollRounds = ViewportProbe.olderScrollRounds
+        ChatProbe.shared.olderDriveSkipsReclaimed = ViewportProbe.olderDriveSkipsReclaimed
+        ChatProbe.shared.listHost = ProbeVariants.listHost
+        ChatProbe.shared.listSpike = ProbeVariants.listSpike
+        ChatProbe.shared.lazyStack = ProbeVariants.lazyStack
+        ChatProbe.shared.windowRows = ProbeVariants.windowRows
+        ChatProbe.shared.payloadBudgetKB = ProbeVariants.payloadBudgetKB
+        ChatProbe.shared.failPageAttempts = ProbeVariants.failPageAttempts
+        ChatProbe.shared.pageShortfall = ProbeVariants.pageShortfall
+        ChatProbe.shared.autoRetryMs = ProbeVariants.autoRetryMs
+        ChatProbe.shared.noHistoryWindow = ProbeVariants.noHistoryWindow
+        ChatProbe.shared.noSessionSearch = ProbeVariants.noSessionSearch
+        ChatProbe.shared.reclaimScreens = ProbeVariants.reclaimScreens
+        ChatProbe.shared.rehydrateScreens = ProbeVariants.rehydrateScreens
+        ChatProbe.shared.forceRehydrate = ProbeVariants.forceRehydrate
+        ChatProbe.shared.noteDriveBegan = { ProbeVariants.noteDriveBegan() }
         ChatViewSeams.runTyping = { target, focus in
             await ViewportProbe.runTyping(into: target, focus: focus)
         }

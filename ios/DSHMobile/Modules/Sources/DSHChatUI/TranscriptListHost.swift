@@ -165,7 +165,7 @@ struct TranscriptListRepresentable: UIViewRepresentable {
         /// `-DSHProbeForceRehydrate`：把第一条已回收的行按**真实路径**要回来。
         /// 这条链与"读者滑回去"完全同源（同一个 `onNeedRehydrate` 回调），只是触发点不同。
         func maybeForceRehydrate(host: TranscriptListHost) {
-            guard ChatProbe.forceRehydrate, !forcedRehydrate else { return }
+            guard ChatProbe.shared.forceRehydrate, !forcedRehydrate else { return }
             guard let reclaimed = host.rows.firstIndex(where: { $0.isReclaimed }) else { return }
             guard case .reclaimed(let seq, _, _) = host.rows[reclaimed].state else { return }
             forcedRehydrate = true
@@ -228,7 +228,7 @@ struct TranscriptListRepresentable: UIViewRepresentable {
             driveStarted = true
             Task { @MainActor [weak self] in
                 try? await Task.sleep(for: .seconds(6))   // 与 007 的驱动一致：等首屏钉底
-                ChatProbe.noteDriveBegan?()  // -DSHProbeFailPageOnDrive 的武装点（用例 48）
+                ChatProbe.shared.noteDriveBegan?()  // -DSHProbeFailPageOnDrive 的武装点（用例 48）
                 self?.onDriveBegin?()
                 for round in 1...rounds {
                     guard let self, let host = self.host else { return }
@@ -253,7 +253,7 @@ struct TranscriptListRepresentable: UIViewRepresentable {
                     // 驱动还要能"滑回被回收的那一段"：只在两端跳的话，被回收的往往在中间，
                     // `near` 永远是 0，水合这条路在仿真器里就永远验不到（2026-10-08 实测）。
                     // 胶囊类用例用 -DSHProbeOlderNoReclaim 关掉这段绕行（它会把视口带回底部）。
-                    if !ChatProbe.olderDriveSkipsReclaimed,
+                    if !ChatProbe.shared.olderDriveSkipsReclaimed,
                        let reclaimed = host.rows.first(where: { $0.isReclaimed })?.id {
                         self.onDiagnostic?("older.drive", ["round": String(round), "phase": "reclaimed"])
                         host.scrollTo(id: reclaimed)
@@ -877,8 +877,8 @@ final class TranscriptListHost: UIView, UICollectionViewDelegate {
     /// 契约里的两个距离：**回收 5 屏 / 水合 4 屏**（真值口径在 `contracts/list-host.md` §4，
     /// 常量在 DSHKit 的 `TranscriptWindowPlanner.Distances`；水合那一档是 009 修闪白时调宽的）。
     /// 这里读探针覆盖（DEBUG 才可能非零），缺省就是契约值。
-    static var reclaimDistanceScreens: Int { ChatProbe.reclaimScreens }
-    static var rehydrateDistanceScreens: Int { ChatProbe.rehydrateScreens }
+    static var reclaimDistanceScreens: Int { ChatProbe.shared.reclaimScreens }
+    static var rehydrateDistanceScreens: Int { ChatProbe.shared.rehydrateScreens }
 
     func scrollTo(id: String, animated: Bool = false) {
         guard let index = rows.firstIndex(where: { $0.id == id }) else { return }

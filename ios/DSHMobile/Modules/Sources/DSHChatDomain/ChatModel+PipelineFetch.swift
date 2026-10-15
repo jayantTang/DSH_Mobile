@@ -47,7 +47,7 @@ public extension ChatPipelineBridge {
             didAutoRetry = false
             // 009 取页链路原来没有任何探针事件（pager.page 只在旧 pager 路径上），
             // 失败语义不可观测。按同一名字补回（用例按「逐页落地、首尾相接」验收）。
-            ChatProbe.probeNote?("pager.page", [
+            ChatProbe.shared.probeNote?("pager.page", [
                 "start": String(lower), "end": String(oldest - 1),
                 "pages": String(Self.pagesPerFetch),
                 "oldest": String(records.keys.min() ?? -1),
@@ -56,7 +56,7 @@ public extension ChatPipelineBridge {
             // 失败绝不写成「没有更多」（T016）：顶部行转「点击重试」，并补试一次。
             olderFailure = String(localized: "读取更早的记录失败，点按重试")
             model.notePipelineOlderFailure(olderFailure)
-            ChatProbe.probeNote?("pager.failed", [
+            ChatProbe.shared.probeNote?("pager.failed", [
                 "start": String(lower), "end": String(oldest - 1),
                 "reason": String(describing: error),
             ], true)
@@ -79,7 +79,7 @@ public extension ChatPipelineBridge {
         olderFailure = nil
         model.notePipelineLoadingOlder(true)
         model.notePipelineOlderFailure(nil)
-        ChatProbe.probeNote?("pager.pending", ["reason": "no-anchor"], true)
+        ChatProbe.shared.probeNote?("pager.pending", ["reason": "no-anchor"], true)
         refold(messagesChanged: false, gapsChanged: true)
     }
 
@@ -92,7 +92,7 @@ public extension ChatPipelineBridge {
         olderFailure = nil
         model.notePipelineLoadingOlder(false)
         model.notePipelineOlderFailure(nil)
-        ChatProbe.probeNote?("pager.end", ["oldest": String(records.keys.min() ?? 1)], true)
+        ChatProbe.shared.probeNote?("pager.end", ["oldest": String(records.keys.min() ?? 1)], true)
         refold(messagesChanged: true, gapsChanged: true)
     }
 
@@ -131,11 +131,11 @@ public extension ChatPipelineBridge {
             let lower = max(1, oldest - Self.pageSize * Self.pagesPerFetch)
             try? await session.retry(range: lower...(oldest - 1))
             // 顶部行的恢复不走 loadOlder，pager.page 打不到；恢复动作要可观测（用例 48）。
-            ChatProbe.probeNote?("pager.retry", ["start": String(lower), "end": String(oldest - 1)], true)
+            ChatProbe.shared.probeNote?("pager.retry", ["start": String(lower), "end": String(oldest - 1)], true)
             return
         }
         try? await session.retry(range: start...end)
-        ChatProbe.probeNote?("pager.retry", ["start": String(start), "end": String(end)], true)
+        ChatProbe.shared.probeNote?("pager.retry", ["start": String(start), "end": String(end)], true)
     }
 
     /// 顶部合成行：已到最早（仅 topExhausted）> 失败可重试 > 加载中。
