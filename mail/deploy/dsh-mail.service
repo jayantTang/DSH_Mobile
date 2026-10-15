@@ -1,0 +1,70 @@
+[Unit]
+Description=DSH mail service (feedback threads + notices)
+Documentation=https://github.com/deepseek-ai/dsh
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=dsh-mail
+Group=dsh-mail
+WorkingDirectory=/opt/dsh-mail
+
+# Like the relay, the mail service listens on loopback only; Caddy terminates
+# TLS and routes /dsh-link/feedback/* here (deploy/Caddyfile.snippet strips
+# the /dsh-link prefix, and MAIL_BASE_PATH keeps the un-stripped form working).
+Environment=MAIL_HOST=127.0.0.1
+Environment=MAIL_PORT=8788
+Environment=MAIL_DB=/var/lib/dsh-mail/mail.db
+Environment=MAIL_BASE_PATH=/dsh-link
+Environment=MAIL_LOG_LEVEL=INFO
+# The relay's loopback address for /internal/tokens/resolve — the single
+# runtime dependency of the split (DESIGN-20261015 I-1). If the relay is down
+# this service degrades paired submissions to anonymous; anonymous fk_-ticket
+# flows do not touch the relay at all.
+Environment=MAIL_RELAY_INTERNAL_URL=http://127.0.0.1:8787
+Environment=MAIL_RELAY_TIMEOUT_S=2.0
+# Never write .pyc files (ProtectSystem=strict makes the tree read-only).
+Environment=PYTHONDONTWRITEBYTECODE=1
+
+ExecStart=/opt/dsh-mail/.venv/bin/python /opt/dsh-mail/mail.py --host 127.0.0.1 --port 8788 --db /var/lib/dsh-mail/mail.db
+ExecReload=/bin/kill -HUP $MAINPID
+
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=15
+
+# ── sandboxing (mirrors dsh-relay.service; this service needs even less) ────
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallFilter=@system-service
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0077
+
+# The only writable location: the SQLite database directory.
+StateDirectory=dsh-mail
+StateDirectoryMode=0700
+ReadWritePaths=/var/lib/dsh-mail
+
+LimitNOFILE=4096
+
+[Install]
+WantedBy=multi-user.target

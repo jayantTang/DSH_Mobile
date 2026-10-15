@@ -100,6 +100,39 @@ def test_splicing_is_idempotent():
     assert once.count(cs.BEGIN) == 1 and once.count(cs.END) == 1
 
 
+def test_the_fragment_never_nests_inside_another_services_marked_block():
+    """两个服务往同一个站点块里发片段（relay + mail，DESIGN-20261015）。
+
+    屏障规则：站点里已有别的服务的标记块时，插到它**前面**，绝不嵌进去——
+    每个服务重部署都按自己的标记整段替换，嵌在里面的片段会被无声吞掉。
+    文件次序无关紧要（Caddy 按路径特异性选 handle），嵌套才是要防的。
+    """
+    with_mail = PRODUCTION_LIKE.replace(
+        "\tencode gzip\n",
+        "\tencode gzip\n"
+        "\t# >>> dsh-mail managed block (managed by mail/deploy/deploy.sh) >>>\n"
+        "\thandle /dsh-link/feedback/* {\n"
+        "\t\turi strip_prefix /dsh-link\n"
+        "\t\treverse_proxy 127.0.0.1:8788\n"
+        "\t}\n"
+        "\t# <<< dsh-mail managed block <<<\n")
+    updated, action = cs.splice(with_mail, snippet(), "relay.example.com")
+    assert action == "inserted"
+    lines = updated.splitlines()
+    relay_begin = next(i for i, line in enumerate(lines) if cs.BEGIN in line)
+    relay_end = next(i for i, line in enumerate(lines) if cs.END in line)
+    mail_begin = next(i for i, line in enumerate(lines) if "dsh-mail managed block" in line
+                      and ">>>" in line)
+    mail_end = next(i for i, line in enumerate(lines) if "dsh-mail managed block" in line
+                    and "<<<" in line)
+    # relay 的整块落在 mail 的块之外（这里在前）；mail 的指令一个不少。
+    assert relay_end < mail_begin
+    mail_directives = [line.strip() for line in lines[mail_begin:mail_end + 1]
+                       if line.strip() and not line.strip().startswith("#")]
+    assert any("handle /dsh-link/feedback/*" in line for line in mail_directives)
+    assert any("reverse_proxy 127.0.0.1:8788" in line for line in mail_directives)
+
+
 def test_removing_restores_the_original_file_exactly():
     updated, _ = cs.splice(PRODUCTION_LIKE, snippet(), "relay.example.com")
     restored, action = cs.remove(updated)

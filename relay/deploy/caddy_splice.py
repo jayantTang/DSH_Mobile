@@ -122,8 +122,35 @@ def block_end(lines: list[str], open_index: int) -> int:
     raise SpliceError("unbalanced braces: the site block never closes")
 
 
+
+def _is_managed_begin(line: str) -> bool:
+    """Any service's managed-block opener ("# >>> ... managed block ... >>>").
+
+    Two services publish route fragments into the same site block (relay +
+    mail, DESIGN-20261015). A fragment must NEVER be nested inside another
+    service's marked region: the owner of that region replaces it between its
+    own markers on every redeploy, and anything nested inside would be wiped.
+    """
+    stripped = line.strip()
+    return stripped.startswith("# >>>") and "managed block" in stripped and stripped.endswith(">>>")
+
 def insertion_index(lines: list[str], open_index: int, close_index: int) -> int:
-    """Where the fragment goes: before the first order-sensitive directive."""
+    """Where the fragment goes.
+
+    Two rules, in order:
+
+    1. **Never nest inside another managed block.** If any service's marked
+       block already sits in this site, insert before the first of them —
+       each redeploy replaces the region between that service's own markers,
+       so a nested fragment would be silently wiped by the other service's
+       next deploy. File order between the blocks does not matter to Caddy
+       (the most specific `handle` path wins), only nesting does.
+    2. Otherwise, before the first order-sensitive directive, so an earlier
+       catch-all `handle` cannot swallow our prefix.
+    """
+    for index in range(open_index + 1, close_index + 1):
+        if _is_managed_begin(lines[index]):
+            return index
     depth = 0
     for index in range(open_index, close_index + 1):
         stripped = lines[index].strip()
