@@ -263,6 +263,12 @@
       "file": "ios/DSHMobile/Modules/Sources/DSHChatUI/ChatView+Panels.swift",
       "reason": "会话转写页的文案出口（026 P4 从 ChatView.swift 拆出，沿用同一豁免口径）",
       "backlog": "i18n-backlog-app-chatview"
+    },
+    {
+      "rule": "hardcoded-string",
+      "file": "ios/DSHMobile/Modules/Tests/DSHSettingsDomainTests/SettingsValueTextTests.swift",
+      "reason": "测试断言的期望值：中文分隔符「、」与「N 项」正是被测格式化函数的输出契约（产品侧键在 SettingsModels.swift，已有同口径豁免先例）",
+      "backlog": "i18n-test-expectations"
     }
   ]
 }

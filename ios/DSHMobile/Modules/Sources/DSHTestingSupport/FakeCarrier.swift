@@ -18,11 +18,30 @@ public final class FakeCarrier: DSHCarrier, @unchecked Sendable {
         }
     }
 
-    public private(set) var calls: [RecordedCall] = []
+    /// 全部调用，按发生顺序。
+    ///
+    /// 记录本身加了锁：产品代码会在并发任务里发 RPC（冷启动预取瀑布就是并发 3 取页），
+    /// 而 `calls` 又是在**后台任务跑着的时候**被读的（"等到安静下来再断言"那条路）。
+    /// 裸数组在这种用法下两个方向都不安全：并发 `append` 会互相覆盖（丢记录），
+    /// 读到一半的 `append` 会让计数变成随机值。锁只护这一处，不动任何产品语义。
+    public var calls: [RecordedCall] {
+        callLock.lock()
+        defer { callLock.unlock() }
+        return recordedCalls
+    }
+
+    private let callLock = NSLock()
+    private var recordedCalls: [RecordedCall] = []
     public var unaryResponses: [String: Result<JSONValue, Error>] = [:]
     public var streamResponses: [String: [JSONValue]] = [:]
 
     public init() {}
+
+    private func record(_ call: RecordedCall) {
+        callLock.lock()
+        defer { callLock.unlock() }
+        recordedCalls.append(call)
+    }
 
     /// 按方法名筛记录：调用顺序里掺着后台任务，按下标取不稳。
     public func calls(to method: String) -> [RecordedCall] {
@@ -38,7 +57,7 @@ public final class FakeCarrier: DSHCarrier, @unchecked Sendable {
     public func unary<Args: Encodable & Sendable, Value: Decodable & Sendable>(
         method: String, args: Args, as valueType: Value.Type
     ) async throws -> Value {
-        calls.append(RecordedCall(method: method, args: Self.encoded(args)))
+        record(RecordedCall(method: method, args: Self.encoded(args)))
         guard let response = unaryResponses[method] else {
             throw NSError(domain: "FakeCarrier", code: 1, userInfo: [NSLocalizedDescriptionKey: "no stub for \(method)"])
         }
@@ -54,7 +73,7 @@ public final class FakeCarrier: DSHCarrier, @unchecked Sendable {
     public func stream<Args: Encodable & Sendable>(
         endpoint: String, args: Args
     ) async -> AsyncThrowingStream<JSONValue, any Error> {
-        calls.append(RecordedCall(method: endpoint, args: Self.encoded(args)))
+        record(RecordedCall(method: endpoint, args: Self.encoded(args)))
         let values = streamResponses[endpoint] ?? []
         return AsyncThrowingStream { continuation in
             for v in values { continuation.yield(v) }
