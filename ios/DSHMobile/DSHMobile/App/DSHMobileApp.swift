@@ -28,16 +28,11 @@ struct DSHMobileApp: App {
         let note: (String, [String: String], Bool) -> Void = { kind, fields, force in
             ViewportProbe.note(kind, fields, force: force)
         }
-        ConnectionHooks.pairingChanged = { await APNSRegistrar.shared.pairingChanged() }
-        KeyboardProbe.isOn = { ViewportProbe.isOn }
+        KeyboardProbe.shared.isOn = { ViewportProbe.isOn }
         SessionAlertPrefs.shared.onChange = { await APNSRegistrar.shared.switchesChanged() }
-        KeyboardProbe.note = { kind, fields in ViewportProbe.note(kind, fields) }
+        KeyboardProbe.shared.note = { kind, fields in ViewportProbe.note(kind, fields) }
         // 025：会话单元的信箱钩子（信箱单元尚未迁入模块前由 App 提供实现）。
         // FIXME(025-阶段4b)：信箱单元迁入 DSHFeedbackDomain 后改为注入其模型。
-        SessionsHooks.refreshFeedback = { await FeedbackCenter.shared.applicationBecameActive() }
-        SessionsHooks.feedbackUnreadCount = { FeedbackCenter.shared.unreadCount }
-        SessionsHooks.feedbackView = { AnyView(FeedbackCenterView()) }
-        FeedbackHooks.renderMarkdown = { AnyView(MarkdownText(text: $0)) }
         // 025 阶段4b：聊天单元的探针端口。`DSHChatDomain` / `DSHChatUI` 不认识
         // App 的 `ViewportProbe`（调试仪器）与 `ProbeVariants`（读启动参数），
         // 所以日志、视口几何与变体开关逐项注入；每一项都直接转发给原实现，
@@ -74,7 +69,7 @@ struct DSHMobileApp: App {
         ChatProbe.shared.rehydrateScreens = ProbeVariants.rehydrateScreens
         ChatProbe.shared.forceRehydrate = ProbeVariants.forceRehydrate
         ChatProbe.shared.noteDriveBegan = { ProbeVariants.noteDriveBegan() }
-        ChatViewSeams.runTyping = { target, focus in
+        ChatViewSeams.shared.runTyping = { target, focus in
             await ViewportProbe.runTyping(into: target, focus: focus)
         }
         // 启动清扫：删掉 `Caches/outgoing-files/` 下 24 小时以上的残留。

@@ -172,8 +172,13 @@ public enum FeedbackThreadSide: Hashable {
 ///
 /// 装配钩子（025 方案 B）：信件正文与聊天正文共用一套 markdown 渲染，
 /// 但信箱单元不直接依赖聊天单元，由 App 装配层注入渲染闭包。
-public enum FeedbackHooks {
-    nonisolated(unsafe) public static var renderMarkdown: (String) -> AnyView = { AnyView(Text($0)) }
+@Observable
+public final class FeedbackServices {
+    /// 信件正文的 markdown 渲染（由 App 注入，默认纯文本）。
+    public var renderMarkdown: (String) -> AnyView
+    public init(renderMarkdown: @escaping (String) -> AnyView = { AnyView(Text($0)) }) {
+        self.renderMarkdown = renderMarkdown
+    }
 }
 
 public struct FeedbackThreadView: View {
@@ -299,6 +304,7 @@ private struct LetterHeader: View {
 /// 收件与发件**共用这一个组件**，所以边距、圆角、描边、字号只在这里定一次；两张卡
 /// 除了署名与头像字符之外没有差别（FR-032）。通知也用它（署名换成「服务通知」）。
 public struct LetterCard: View {
+    @Environment(FeedbackServices.self) private var services
 
     public let sender: String
     /// 我发出的用灰头像，对方用品牌色。
@@ -322,7 +328,7 @@ public struct LetterCard: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             Hairline()
-            bodyContent(format)
+            bodyContent(format, services: services)
         }
         .padding(DSHTheme.Spacing.standard)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -341,10 +347,10 @@ public struct LetterCard: View {
     ///   不会坏：段落里的 `<`、`|`、换行都按原样留下（只有真正的 Markdown 记号才被解释）。
     /// - `html`（报告类）：``HTMLMessageView``——锁死的 WebKit 容器，见它的头注。
     @ViewBuilder
-    private func bodyContent(_ format: FeedbackBodyFormat) -> some View {
+    private func bodyContent(_ format: FeedbackBodyFormat, services: FeedbackServices) -> some View {
         switch format {
         case .text:
-            FeedbackHooks.renderMarkdown(text)
+            services.renderMarkdown(text)
                 // 无障碍标识：用例靠它断言"这一封走的是 Markdown 那条路"
                 // （HTML 那条在 `HTMLMessageView` 里，标识是 `feedback.body.html`）。
                 .accessibilityElement(children: .contain)

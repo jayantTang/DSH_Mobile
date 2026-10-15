@@ -11,6 +11,7 @@ import DSHConnectionUI
 import DSHFilesDomain
 import DSHSettingsDomain
 import DSHFeedbackDomain
+import DSHFeedbackUI
 import DSHDesign
 import DSHFoundation
 import DSHKit
@@ -24,6 +25,12 @@ struct RootView: View {
     @State private var hub = HostEventHub()
     @State private var updates = UpdateChecker()
     @State private var alertPrefs = SessionAlertPrefs.shared
+    @State private var feedbackServices = FeedbackServices(renderMarkdown: { AnyView(MarkdownText(text: $0)) })
+    @State private var sessionsServices = SessionsServices(
+        refreshFeedback: { await FeedbackCenter.shared.applicationBecameActive() },
+        feedbackUnreadCount: { FeedbackCenter.shared.unreadCount },
+        feedbackView: { AnyView(FeedbackCenterView()) }
+    )
     @State private var alerts = SessionAlerts()
     @State private var attachmentImages = AttachmentImages()
     @State private var viewLog = SessionViewLog()
@@ -65,6 +72,8 @@ struct RootView: View {
             .environment(updates)
             .environment(alerts)
             .environment(alertPrefs)
+            .environment(sessionsServices)
+            .environment(feedbackServices)
             .environment(attachmentImages)
             .tint(DSHTheme.brand)
             .alert("连接失败", isPresented: Binding(
@@ -334,7 +343,7 @@ struct RootView: View {
                 automationFilesDir: Self.automationFilesDir()
             )
         } else {
-            ConnectionView()
+            ConnectionView(onPairingChanged: { await APNSRegistrar.shared.pairingChanged() })
         }
     }
 
@@ -777,7 +786,7 @@ private struct MainView: View {
         }
         .sheet(isPresented: $isShowingConnections) {
             NavigationStack {
-                ConnectionView()
+                ConnectionView(onPairingChanged: { await APNSRegistrar.shared.pairingChanged() })
                     .toolbar {
                         ToolbarItem(placement: .confirmationAction) {
                             Button("完成") { isShowingConnections = false }

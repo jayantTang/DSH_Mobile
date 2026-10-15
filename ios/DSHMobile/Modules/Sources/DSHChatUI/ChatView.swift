@@ -150,7 +150,7 @@ public struct ChatView: View {
             ChatProbe.shared.resume?()
             // 端口在调用点构造（spec 024 / FR-005）：调试工具只认这三个动作，
             // 不再直接持有 `ChatModel`，基础设施与工具目录都不认识业务类型。
-            await ChatViewSeams.runTyping?(
+            await ChatViewSeams.shared.runTyping?(
                 TypingTarget(isRunning: { model.isRunning },
                              draft: { model.draft },
                              setDraft: { model.draft = $0 }),

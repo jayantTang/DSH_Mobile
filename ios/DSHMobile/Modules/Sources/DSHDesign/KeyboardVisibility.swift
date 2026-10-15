@@ -19,9 +19,11 @@ import UIKit
 /// 用通知而不是 `@FocusState`：焦点只反映"输入框是否聚焦"，而这里要跟的是**视口尺寸
 /// 真的变了**——外接键盘、快捷指令切换输入法、分屏等都只改键盘高度而不改焦点。
 /// 探针钩子（025）：设计系统不认识 App 的调试仪器 ViewportProbe。
-public enum KeyboardProbe {
-    nonisolated(unsafe) public static var isOn: () -> Bool = { false }
-    nonisolated(unsafe) public static var note: (String, [String: String]) -> Void = { _, _ in }
+public final class KeyboardProbe: @unchecked Sendable {
+    public static let shared = KeyboardProbe()
+    public init() {}
+    public var isOn: () -> Bool = { false }
+    public var note: (String, [String: String]) -> Void = { _, _ in }
 }
 
 public struct KeyboardVisibilityObserver: ViewModifier {
@@ -46,10 +48,10 @@ public struct KeyboardVisibilityObserver: ViewModifier {
             // 但改键盘高度、也就是改转写区的视口高度。
             .onReceive(NotificationCenter.default.publisher(
                 for: UIResponder.keyboardWillChangeFrameNotification)) { note in
-                guard KeyboardProbe.isOn(),
+                guard KeyboardProbe.shared.isOn(),
                       let frame = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect
                 else { return }
-                KeyboardProbe.note("keyboard.frame", ["h": String(format: "%.0f", frame.height)])
+                KeyboardProbe.shared.note("keyboard.frame", ["h": String(format: "%.0f", frame.height)])
             }
     }
 

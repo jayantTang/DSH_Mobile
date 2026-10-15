@@ -13,18 +13,31 @@ import SwiftUI
 /// handful of rows, so anything that is reference material rather than current
 /// work — subagent transcripts, sessions with no workspace — stays collapsed
 /// until asked for.
-/// 装配钩子（025）：会话单元不认识信箱单元，入口与计数由 App 注入。
-public enum SessionsHooks {
+/// 装配服务（026）：会话单元不认识信箱单元，入口与计数由 App 注入。
+/// 默认值是 no-op：预览与测试里不注入也不崩。
+@Observable
+public final class SessionsServices {
     /// 拉一次信箱（冷启动/前台时）。
-    nonisolated(unsafe) public static var refreshFeedback: () async -> Void = {}
+    public var refreshFeedback: () async -> Void
     /// 未读数。
-    nonisolated(unsafe) public static var feedbackUnreadCount: () -> Int = { 0 }
-    /// 信箱页内容（AnyView 包装，信箱单元在另一个 target 里由 App 注入）。
-    nonisolated(unsafe) public static var feedbackView: () -> AnyView = { AnyView(EmptyView()) }
+    public var feedbackUnreadCount: () -> Int
+    /// 信箱页内容（AnyView 包装）。
+    public var feedbackView: () -> AnyView
+
+    public init(
+        refreshFeedback: @escaping () async -> Void = {},
+        feedbackUnreadCount: @escaping () -> Int = { 0 },
+        feedbackView: @escaping () -> AnyView = { AnyView(EmptyView()) }
+    ) {
+        self.refreshFeedback = refreshFeedback
+        self.feedbackUnreadCount = feedbackUnreadCount
+        self.feedbackView = feedbackView
+    }
 }
 
 public struct SessionListView: View {
     @Environment(\.openURL) private var openURL
+    @Environment(SessionsServices.self) private var services
     @Environment(ConnectionStore.self) private var store
     @Environment(HostEventHub.self) private var hub
     @Environment(UpdateChecker.self) private var updates
@@ -83,7 +96,7 @@ public struct SessionListView: View {
         // 不等连接：离线冷启动也要先把上次的列表画出来（否则就是空白+转圈）。
         .task { model.loadCachedList() }
         // 反馈未读：冷启动不会触发 `ScenePhase` 变化事件，所以列表出现时就拉一次（SC-003）。
-        .task { await SessionsHooks.refreshFeedback() }
+        .task { await services.refreshFeedback() }
         // 待答集合的唯一来源是 `$events` 的 waterfall（host 的会话摘要里没有这个
         // 信息：等回答时它照样报 running）。把它同步进 model，行状态与计数才看得见它；
         // hub 是 @Observable，这里读一下就等于订阅了变化。
@@ -113,7 +126,7 @@ public struct SessionListView: View {
             }
         }
         .sheet(isPresented: $isShowingFeedback) {
-            SessionsHooks.feedbackView()
+            services.feedbackView()
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if let archived = justArchived { archivedNotice(archived) }
@@ -141,7 +154,7 @@ public struct SessionListView: View {
                 } label: {
                     Image(systemName: "text.bubble")
                         .overlay(alignment: .topTrailing) {
-                            if SessionsHooks.feedbackUnreadCount() > 0 {
+                            if services.feedbackUnreadCount() > 0 {
                                 Text(unreadBadgeText)
                                     .font(DSHTheme.Typography.micro)
                                     .foregroundStyle(.white)
@@ -174,7 +187,7 @@ public struct SessionListView: View {
 
     /// 角标上的数字：超过两位数显示 `99+`。没数字就没角标（`unreadCount == 0` 时不占位）。
     private var unreadBadgeText: String {
-        let count = SessionsHooks.feedbackUnreadCount()
+        let count = services.feedbackUnreadCount()
         return count > 99 ? "99+" : "\(count)"
     }
 
