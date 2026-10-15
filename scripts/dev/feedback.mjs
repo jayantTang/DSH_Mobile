@@ -562,6 +562,8 @@ function resultId(raw) {
 
 /// 存档正文：头部元数据 + 信件全文。日报是 HTML 文件不是一段文本，塞进 text 通知只会
 /// 得到一屏源码，所以那类存标识与落点（标题 + 本地文件），足够查证。
+/// HTML 信件同理不能塞进 text（2026-10-15 owner 实测：存档成了源码乱码），html 原件
+/// 按 html 存档：元数据横幅插在 `<body>` 之后，正文原样跟在后面渲染。
 export function archiveBody(parsed, info = {}) {
   const { sub, opts } = parsed
   const sender = opts.ownerApproved
@@ -578,10 +580,28 @@ export function archiveBody(parsed, info = {}) {
   if (sub === 'report') {
     lines.push(`信件全文：HTML 日报「${info.reportSubject ?? opts.subject ?? ''}」，`
       + `本地文件 ${info.reportFile ?? ''}；收件人收到的是同一条通知`)
-  } else {
-    lines.push('', '――― 信件全文 ―――', '', opts.bodyText ?? '')
+    return lines.join('\n')
   }
+  if (opts.format === 'html') {
+    const banner = '<div style="margin:0 0 10px;padding:8px 12px;border:1px solid #e2e8f0;'
+      + 'border-radius:10px;background:#f8fafc;color:#475569;font-size:12px;line-height:1.6;'
+      + 'font-family:&quot;PingFang SC&quot;,&quot;Helvetica Neue&quot;,Arial,sans-serif">'
+      + lines.map((line) => escapeArchiveHtml(line)).join('<br>') + '</div>'
+    const body = String(opts.bodyText ?? '')
+    const openBody = /<body[^>]*>/i.exec(body)
+    return openBody
+      ? body.slice(0, openBody.index + openBody[0].length) + banner
+        + body.slice(openBody.index + openBody[0].length)
+      : banner + body
+  }
+  lines.push('', '――― 信件全文 ―――', '', opts.bodyText ?? '')
   return lines.join('\n')
+}
+
+/// 存档横幅用的最小转义（内容是工具拼的元数据，但要进 HTML 就必须转义）。
+function escapeArchiveHtml(text) {
+  return String(text).replaceAll('&', '&amp;').replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;').replaceAll('"', '&quot;')
 }
 
 /// 发送成功后调用：向 owner 账号投一条存档通知。收件人只有 owner，不过审批门；
@@ -597,7 +617,7 @@ export function archiveSentLetter(parsed, owner, info, { env, exists, run, io })
     all: false,
     yes: true,
     dryRun: false,
-    format: 'text',
+    format: parsed.opts.format === 'html' ? 'html' : 'text',
     subject: archiveSubject(parsed, info),
     bodyText: archiveBody(parsed, info),
     bodyFileArg: undefined,

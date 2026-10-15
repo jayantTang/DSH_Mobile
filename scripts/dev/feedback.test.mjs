@@ -256,6 +256,23 @@ test('notify --yes 才落库；delete 同理', () => {
   assert.ok(!preview.calls[0].at(-1).includes('--yes'))
 })
 
+test('notify --format html 的发件存档也按 html 投递（横幅 + 原件正文渲染，不是源码）', () => {
+  const html = '<!DOCTYPE html><html><head><title>x</title></head><body><p>海报正文</p></body></html>'
+  const fake = spy('{"ok":true,"noticeId":"nt_h"}')
+  const { code } = run(['notify', '--body', html, '--subject', '专题', '--format', 'html',
+    '--account', 'acc_b', '--yes', ...APPROVED], { runner: fake.runner, approvalLog: approvalLogFile() })
+  assert.equal(code, 0)
+  assert.equal(fake.calls.length, 2, '发信一次 + 发件存档一次')
+  const archive = fake.calls[1].at(-1)
+  assert.match(archive, /feedback-notify --body /)
+  assert.match(archive, /--format html/, '存档跟随原件格式，否则 owner 收到一屏源码')
+  assert.match(archive, /【发件存档】/)
+  assert.match(archive, /发送对象：acc_b/)
+  assert.match(archive, /<body><div style=/, '元数据横幅插在 body 之后')
+  assert.match(archive, /<p>海报正文<\/p>/, '原件正文原样保留')
+  assert.match(archive, /发件存档：通知「专题」/)
+})
+
 test('report / report-data 走双侧取数：中转 ops-report + mail feedback-stats', () => {
   const fake = spy(JSON.stringify(fixture()))
   const out = run(['report-data', '--days', '7'], { runner: fake.runner })
