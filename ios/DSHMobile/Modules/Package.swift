@@ -28,6 +28,7 @@ let package = Package(
         .library(name: "DSHCore", targets: ["DSHCore"]),
         .library(name: "DSHConnectionAPI", targets: ["DSHConnectionAPI"]),
         .library(name: "DSHConnectionDomain", targets: ["DSHConnectionDomain"]),
+        .library(name: "DSHConnectionUI", targets: ["DSHConnectionUI"]),
         .library(name: "DSHTestingSupport", targets: ["DSHTestingSupport"]),
     ],
     dependencies: [
@@ -50,6 +51,9 @@ let package = Package(
 
         // L1 连接单元领域层：实现 LinkService（禁 UI）
         .target(name: "DSHConnectionDomain", dependencies: ["DSHConnectionAPI", "DSHFoundation", dshKit, relayKit]),
+
+        // L1 连接单元界面层
+        .target(name: "DSHConnectionUI", dependencies: ["DSHConnectionDomain", "DSHDesign", "DSHCore"]),
 
         // 测试辅助：仅测试依赖
         .target(name: "DSHTestingSupport", dependencies: ["DSHCore", "DSHConnectionAPI", dshKit]),

@@ -13,7 +13,14 @@ import SwiftUI
 /// could supply there was not already in the code. What is left on this screen
 /// is 扫码配对, the saved connections, and a deliberately quiet manual entry for
 /// the case the camera cannot be used at all (spec 010 FR-011/FR-012).
-struct ConnectionView: View {
+/// 装配钩子（025）：单元不认识 App 级 APNSRegistrar，由 App 在启动时注入。
+public enum ConnectionHooks {
+    /// 配对完成后回调（通知令牌上报）。
+    nonisolated(unsafe) public static var pairingChanged: () async -> Void = {}
+}
+
+public struct ConnectionView: View {
+    public init() {}
     @Environment(ConnectionStore.self) private var store
 
     // Relay pairing state
@@ -34,7 +41,7 @@ struct ConnectionView: View {
     /// 手输配对码默认收起来：扫码是主路径，打字是兜底。
     @State private var showsManualInput = false
 
-    var body: some View {
+    public var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: DSHTheme.Spacing.section) {
@@ -332,7 +339,7 @@ struct ConnectionView: View {
             pairCode = ""
             // 刚配上的这台电脑在中转上是一条全新的设备记录，`apnsToken` 必然是空的：
             // 立刻把本机令牌报过去，否则用户要等到下一次启动才收得到推送。
-            await APNSRegistrar.shared.pairingChanged()
+            await ConnectionHooks.pairingChanged()
             await store.connect(to: profile)
             if case .failed(let message) = store.state { error = message }
         } catch {

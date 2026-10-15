@@ -1,4 +1,5 @@
 import DSHConnectionDomain
+import DSHConnectionUI
 import DSHCore
 import DSHKit
 import RelayKit
@@ -22,6 +23,7 @@ struct DSHMobileApp: App {
             ViewportProbe.note(kind, fields, force: force)
         }
         ConnectionStore.probeNote = note
+        ConnectionHooks.pairingChanged = { await APNSRegistrar.shared.pairingChanged() }
         HostEventHub.probeNote = note
         SessionRouter.probeNote = note
         // 启动清扫：删掉 `Caches/outgoing-files/` 下 24 小时以上的残留。

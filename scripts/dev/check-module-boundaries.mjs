@@ -102,8 +102,10 @@ while ((m = targetRe.exec(pkgText))) {
   if (!rule) { err(`[C1] ${name}: 该 target 没有边界白名单规则`); continue; }
   if (rule[1] === null) continue;
   for (const d of deps) {
-    if (d === name) err(`[C1] ${name}: 自依赖`);
-    else if (!rule[1].has(d)) err(`[C1] ${name} → ${d}: 禁止的依赖边`);
+    if (d === name) { err(`[C1] ${name}: 自依赖`); continue; }
+    // 同单元 UI → 同单元 Domain：架构允许的配对边
+    if (/UI$/.test(name) && d === name.replace(/UI$/, 'Domain')) continue;
+    if (!rule[1].has(d)) err(`[C1] ${name} → ${d}: 禁止的依赖边`);
   }
 }
 

@@ -11,14 +11,14 @@ import VisionKit
 /// than present a black rectangle. The parse → pair half is the same code the
 /// pasted-code field and the `dsh://pair?…` launch hook use, so the scanner is
 /// never the only way in.
-struct PairScannerView: View {
+public struct PairScannerView: View {
     /// Called with the payload a scanner read.
     let onPayload: (String) -> Void
 
     @Environment(\.dismiss) private var dismiss
     @State private var message: String?
 
-    var body: some View {
+    public var body: some View {
         NavigationStack {
             Group {
                 if DataScannerViewController.isSupported && DataScannerViewController.isAvailable {
@@ -135,7 +135,7 @@ private struct CameraScanner: UIViewControllerRepresentable {
 /// a bare URL, or a pairing code someone printed next to a relay address. The
 /// strict form wins; the loose forms are accepted because a hand-made label
 /// should not be a dead end.
-enum PairPayload {
+public enum PairPayload {
     enum Parsed: Equatable {
         case link(ConnectLink)
         case code(String)

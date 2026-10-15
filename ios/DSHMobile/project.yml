@@ -67,6 +67,8 @@ targets:
         product: DSHConnectionAPI
       - package: Modules
         product: DSHConnectionDomain
+      - package: Modules
+        product: DSHConnectionUI
 
   DSHMobileTests:
     type: bundle.unit-test
