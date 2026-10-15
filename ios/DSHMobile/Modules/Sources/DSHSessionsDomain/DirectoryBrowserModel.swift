@@ -1,6 +1,6 @@
+import DSHFoundation
 import DSHConnectionAPI
 import DSHCore
-import DSHDesign
 import DSHKit
 import Foundation
 import Observation

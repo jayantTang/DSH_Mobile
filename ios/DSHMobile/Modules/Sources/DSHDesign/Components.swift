@@ -261,18 +261,6 @@ public struct SelectableRow<Content: View>: View {
 /// Formats an absolute path relative to the host's home directory.
 ///
 /// The desktop client abbreviates paths this way; matching it keeps the two
-/// clients readable side by side.
-public enum PathFormat {
-    public static func short(_ path: String, home: String?) -> String {
-        guard let home, !home.isEmpty, path.hasPrefix(home) else { return path }
-        return "~" + path.dropFirst(home.count)
-    }
-
-    public static func directory(_ path: String, home: String?) -> String {
-        (short(path, home: home) as NSString).lastPathComponent
-    }
-}
-
 /// Formats token counts the way the desktop client does.
 public enum TokenFormat {
     public static func compact(_ count: Int) -> String {

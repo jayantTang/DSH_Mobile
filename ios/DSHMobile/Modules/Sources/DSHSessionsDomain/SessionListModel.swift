@@ -1,6 +1,5 @@
 import DSHConnectionAPI
 import DSHCore
-import DSHDesign
 import DSHFoundation
 import DSHKit
 import Foundation

@@ -73,13 +73,14 @@ for (const t of noUI) {
 const allow = [
   [/^DSHDesign$/, new Set(['DSHFoundation'])],
   [/^DSHCore$/, new Set(['DSHConnectionAPI', 'DSHFoundation', 'DSHKit', 'RelayKit'])],
-  [/^DSHConnectionAPI$/, new Set()],
+  [/^(\w+)API$/, new Set(['DSHKit'])],
   [/^DSHFoundation$/, new Set()],
   [/^DSHTestingSupport$/, new Set(['DSHCore', 'DSHConnectionAPI', 'DSHKit', 'RelayKit', 'DSHFoundation'])],
   // Domain 层只许经 DSHConnectionAPI 协议拿连接能力；具体实现 ConnectionStore 只在
   // DSHConnectionDomain 自身与 App 装配层出现（026 FR-006 收紧）。
   [/^(\w+)Domain$/, new Set(['DSHCore', 'DSHConnectionAPI', 'DSHFoundation', 'DSHKit', 'RelayKit'])],
-  [/^(\w+)UI$/, new Set(['DSHDesign', 'DSHCore', 'DSHFoundation', 'DSHConnectionDomain'])],
+  // UI 允许跳级到 L3 协议层（DSHKit/RelayKit 的公开类型经 Domain 外露时 UI 直接引用）
+  [/^(\w+)UI$/, new Set(['DSHDesign', 'DSHCore', 'DSHFoundation', 'DSHConnectionDomain', 'DSHKit', 'RelayKit'])],
   // 测试 target 自由依赖被测目标 + 辅助
   [/Tests$/, null],
 ];
@@ -108,6 +109,30 @@ while ((m = targetRe.exec(pkgText))) {
     // 同单元 UI → 同单元 Domain：架构允许的配对边
     if (/UI$/.test(name) && d === name.replace(/UI$/, 'Domain')) continue;
     if (!rule[1].has(d)) err(`[C1] ${name} → ${d}: 禁止的依赖边`);
+  }
+}
+
+// ---------- 2.5 C1 源码级：Sources/<Target> 里 import 了白名单外的本包 target 即判红 ----------
+// （声明级检查拦不住「import 了但没声明」的越层，025 曾被这条漏过：Domain import 了 DSHDesign）
+{
+  const moduleTargets = targetsUnder('Sources');
+  for (const t of moduleTargets) {
+    const d = path.join(modulesDir, 'Sources', t);
+    const rule = allow.find(([re]) => re.test(t));
+    const allowed = rule?.[1] ?? null;
+    for (const e of readdirSync(d, { withFileTypes: true })) {
+      if (!e.isFile() || !e.name.endsWith('.swift')) continue;
+      const p = path.join(d, e.name);
+      const text = readFileSync(p, 'utf8');
+      for (const m2 of text.matchAll(/^\s*(?:@_exported\s+)?import\s+(\w+)/gm)) {
+        const dep = m2[1];
+        if (!moduleTargets.includes(dep) && dep !== 'DSHKit' && dep !== 'RelayKit') continue;
+        if (dep === t) continue;
+        if (/UI$/.test(t) && dep === t.replace(/UI$/, 'Domain')) continue;
+        if (allowed === null) continue;
+        if (allowed && !allowed.has(dep)) err(`[C1] ${t}: 源码 import 白名单外模块「${dep}」→ ${path.relative(root, p)}`);
+      }
+    }
   }
 }
 
