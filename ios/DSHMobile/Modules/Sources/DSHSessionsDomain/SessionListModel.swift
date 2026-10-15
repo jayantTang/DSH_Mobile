@@ -74,7 +74,9 @@ public final class SessionListModel {
     public private(set) var isShowingSnapshot = false
 
     /// 上一次写盘的快照内容指纹（内容没变就不重写）。
-    private var lastSavedFingerprint: Int?
+    /// 指纹按 scope 分开记（028 缺陷6）：单值记在换电脑时会压住新电脑的第一份快照——
+    /// 它的内容恰好与旧电脑一样时，用户看到的是「没有缓存」而不是「上次的缓存」。
+    private var lastSavedFingerprint: [String: Int] = [:]
     public private(set) var groups: [Group] = []
     /// The desktop client's explicit workspace list, in its own order.
     public private(set) var workspaces: [Workspace] = []
@@ -358,7 +360,12 @@ public final class SessionListModel {
     /// starts working without a client change.
     @discardableResult
     public func setArchived(_ archived: Bool, sessionId: String) async -> Bool {
-        guard let link = store?.link, link.isConnected else { return false }
+        // 028 缺陷4：未连接时也必须给出用户可见的原因——静默返回 false 会让
+        // 右滑手势看起来「没反应」（视图只在有文案时弹提示）。
+        guard let link = store?.link, link.isConnected else {
+            archiveError = String(localized: "尚未连接")
+            return false
+        }
         do {
             let ids = try await link.archiveSession(sessionId, archived: archived)
             archivedSessionIds = Set(ids)
@@ -458,7 +465,7 @@ public final class SessionListModel {
         // 换了电脑：指纹与"显示的是缓存"都必须复位，否则新一轮刷新可能因为
         // 指纹相同而跳过落盘（缓存文件已经不属于这台的语义），状态行也会一直
         // 说"显示上次数据"。
-        lastSavedFingerprint = nil
+        lastSavedFingerprint = [:]
         isShowingSnapshot = false
         coldStartSnippets = [:]
         lastPrefetchScope = nil
@@ -530,7 +537,7 @@ public final class SessionListModel {
         // 里的更新时间打底，等真数据回来再算（否则一冷启动整屏都是绿的）。
         seedFirstSightings()
         isShowingSnapshot = true
-        lastSavedFingerprint = snapshot.contentFingerprint
+        lastSavedFingerprint[scope] = snapshot.contentFingerprint
         phase = .loaded
         // T010：快照首帧之上叠加 009 磁盘层的摘要（异步，磁盘读，不阻塞首帧）。
         Task { await overlayMessageStoreSnippets() }
@@ -554,11 +561,11 @@ public final class SessionListModel {
             archivedSessionIds: Array(archivedSessionIds)
         )
         let fingerprint = snapshot.contentFingerprint
-        guard fingerprint != lastSavedFingerprint else {
+        guard fingerprint != lastSavedFingerprint[scope] else {
             probeNote?("snapshot.unchanged", ["items": String(allSessions.count)], false)
             return
         }
-        lastSavedFingerprint = fingerprint
+        lastSavedFingerprint[scope] = fingerprint
         snapshotStore.save(snapshot)
         // 规模可见：会话上千时这个 RPC 的载荷会开始咬人（协议里没有分页可用，
         // 见 DSHClient.sessions 的注释），到时候能在日志里先看见。
@@ -574,7 +581,7 @@ public final class SessionListModel {
     /// 设置页里的"清除缓存"。
     public func clearCachedSnapshot() {
         if let scope = store?.scopeId { snapshotStore.clear(scope: scope) }
-        lastSavedFingerprint = nil
+        lastSavedFingerprint = [:]
         isShowingSnapshot = false
         coldStartSnippets = [:]
     }

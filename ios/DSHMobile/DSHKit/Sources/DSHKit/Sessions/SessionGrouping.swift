@@ -148,8 +148,13 @@ public enum SessionGrouping {
                       children: byParent)
             }
 
+        // 028 缺陷5：loose 要与分组口径互斥。有 workspace 列表时，未归档的进 loose；
+        // 没有时（目录兜底），所有顶层会话都已被目录组覆盖，loose 里只剩孤儿子代理——
+        // 否则同一行在目录组和 loose 各渲染一次（会话列表双行）。
+        let looseSessions = built.isEmpty ? orphans : unfiled + orphans
+
         return Partition(workspaceGroups: built,
                          directoryGroups: byDirectory,
-                         loose: unfiled + orphans)
+                         loose: looseSessions)
     }
 }

@@ -125,4 +125,21 @@ final class SessionListSnapshotTests: SessionsDomainTestCase {
         XCTAssertTrue(otherMac.allSessions.isEmpty)
         XCTAssertTrue(otherMac.groups.isEmpty)
     }
+    /// 028 缺陷6回归：换一台电脑后，即使内容指纹与旧电脑相同，也必须写新电脑的快照。
+    func testSwitchingComputersStillWritesTheNewScopeSnapshot() async throws {
+        stubStandardList()
+        await model.refresh()
+        let scopeA = scope
+        XCTAssertNotNil(snapshotStore.load(scope: scopeA))
+
+        // 换电脑：profile 换掉（新 id = 新 scope），宿主内容完全一样。
+        let other = TestFixtures.relayProfile(name: "Other Mac")
+        pair(other)
+        await model.refresh()
+
+        XCTAssertNotNil(snapshotStore.load(scope: scope),
+                            "a fresh computer must get its own snapshot even when content matches the old one")
+        XCTAssertNotEqual(scope, scopeA)
+    }
+
 }

@@ -69,8 +69,7 @@ final class SessionListArchiveTests: SessionsDomainTestCase {
         XCTAssertFalse(accepted)
         XCTAssertTrue(carrier.calls(to: "workspace/archiveSession").isEmpty)
         XCTAssertEqual(sessionIds(model.groups[0].sessions), ["s1", "s2"])
-        // pin（已知问题，本次不改产品代码）：未连接时 `archiveError` 留在 nil，而列表视图
-        // 只在有错误文案时才弹提示 → 这一下右滑在界面上完全没有反应。缺口记在汇报里。
-        XCTAssertNil(model.archiveError)
+        // 028 缺陷4已修：未连接也必须给出原因，否则右滑看起来毫无反应。
+        XCTAssertEqual(model.archiveError, "尚未连接")
     }
 }

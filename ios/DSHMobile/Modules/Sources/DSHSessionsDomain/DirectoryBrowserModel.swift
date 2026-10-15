@@ -67,7 +67,7 @@ public final class DirectoryBrowserModel {
         } catch {
             // The level on screen stays where it was: a failed jump should not
             // also throw away the directory the user was looking at.
-            failure = LinkErrors.describe(error)
+            failure = Self.describe(error)
         }
     }
 
@@ -101,7 +101,7 @@ public final class DirectoryBrowserModel {
             await open(created)
             return created
         } catch {
-            failure = LinkErrors.describe(error)
+            failure = Self.describe(error)
             return nil
         }
     }

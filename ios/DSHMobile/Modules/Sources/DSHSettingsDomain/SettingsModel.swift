@@ -243,7 +243,7 @@ public final class SettingsModel {
             await loadCredentials()
         } catch {
             if document == nil {
-                phase = .failed(LinkErrors.describe(error))
+                phase = .failed(Self.describe(error))
             }
         }
         await loadAbout()
@@ -338,8 +338,8 @@ public final class SettingsModel {
             devicesError = nil
             devicesPhase = .loaded
         } catch {
-            devicesError = LinkErrors.describe(error)
-            devicesPhase = .failed(LinkErrors.describe(error))
+            devicesError = Self.describe(error)
+            devicesPhase = .failed(Self.describe(error))
         }
     }
 
@@ -377,7 +377,7 @@ public final class SettingsModel {
             devices.removeAll { $0.deviceId == device.deviceId }
             devicesPhase = .loaded
         } catch {
-            devicesError = LinkErrors.describe(error)
+            devicesError = Self.describe(error)
         }
     }
 
@@ -517,7 +517,7 @@ public final class SettingsModel {
                 await reloadDocument()
             }
         } catch {
-            saveStates[ns] = .failed(LinkErrors.describe(error))
+            saveStates[ns] = .failed(Self.describe(error))
         }
     }
 
@@ -560,7 +560,7 @@ public final class SettingsModel {
             }
             credentialsPhase = .loaded
         } catch {
-            credentialsPhase = .failed(LinkErrors.describe(error))
+            credentialsPhase = .failed(Self.describe(error))
         }
     }
 
@@ -673,7 +673,9 @@ public final class SettingsModel {
             case "gateway/lookup-not-found", "settings/unavailable":
                 return String(localized: "本部署没有可用的设置提供方。")
             default:
-                return failure.message
+                // 未列出的错误码走通用传输文案（与 028 之前 LinkErrors.describe 的
+                // 行为一致）；直接透传 failure.message 会把宿主的英文实现细节推给用户。
+                break
             }
         }
         return LinkErrors.describe(error)

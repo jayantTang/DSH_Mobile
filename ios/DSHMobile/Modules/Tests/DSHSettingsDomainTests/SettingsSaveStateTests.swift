@@ -93,12 +93,8 @@ final class SettingsSaveStateTests: XCTestCase {
             return
         }
         XCTAssertFalse(message.isEmpty)
-        // Pinned as it is, not as it should be: `save` reports through
-        // `LinkErrors.describe`, which passes a code it does not know straight
-        // through, so the badge shows the host's own sentence. The
-        // settings-specific copy for `settings-conflict` lives in
-        // `SettingsModel.describe` and nothing on this path calls it.
-        XCTAssertEqual(message, raw)
+        // 028：失败出口已接到 SettingsModel.describe 的专用码表。
+        XCTAssertEqual(message, "设置已在其他位置更新。请刷新后重试。")
         XCTAssertEqual(harness.model.value(namespace: ns, path: ["preference"]), .string("dark"),
                        "a refused write must not eat the edit")
 

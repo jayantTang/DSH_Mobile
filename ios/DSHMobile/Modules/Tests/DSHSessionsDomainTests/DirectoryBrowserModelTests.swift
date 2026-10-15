@@ -68,7 +68,7 @@ final class DirectoryBrowserModelTests: SessionsDomainTestCase {
         carrier.unaryResponses[Self.listMethod] = .failure(refusal)
         await browser.open("/Users/tester/locked")
 
-        XCTAssertEqual(browser.failure, refusal.localizedDescription)
+        XCTAssertEqual(browser.failure, "这个目录读不了：permission denied")
         XCTAssertFalse(browser.failure?.isEmpty ?? true)
         XCTAssertEqual(browser.currentPath, "/Users/tester",
                        "a failed jump must not throw away the level the user was looking at")

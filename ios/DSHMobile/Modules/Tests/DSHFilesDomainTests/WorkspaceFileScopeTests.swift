@@ -99,9 +99,8 @@ final class WorkspaceFileScopeTests: XCTestCase {
         XCTAssertEqual(rootless.displayPath("/Users/tester/notes.txt"), "~/notes.txt")
         XCTAssertEqual(rootless.displayPath("/Users/tester"), "~", "the home itself is one tilde")
         XCTAssertEqual(rootless.displayPath("/opt/data/x"), "/opt/data/x")
-        // Same prefix trap one level down: a home directory that is a prefix of
-        // the user name shortens a neighbour's path.
-        XCTAssertEqual(rootless.displayPath("/Users/tester2/notes.txt"), "~2/notes.txt")
+        // 028 缺陷3已修：按路径分量比较，前缀相同的兄弟路径不再被误缩。
+        XCTAssertEqual(rootless.displayPath("/Users/tester2/notes.txt"), "/Users/tester2/notes.txt")
 
         // No home either: nothing is shortened, and nothing is trimmed.
         XCTAssertEqual(WorkspaceFileScope(sessionId: "s-1", hostHome: nil).displayPath("/Users/tester/notes.txt"),

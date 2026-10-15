@@ -76,3 +76,27 @@ final class FoundationSmokeTests: XCTestCase {
         XCTAssertNil(log.lastViewed("s1"))
     }
 }
+
+// MARK: - PathFormat（028 缺陷3：分量比较，不是字符串前缀）
+
+extension FoundationSmokeTests {
+    func test_short_replaces_home_at_component_boundary() {
+        XCTAssertEqual(PathFormat.short("/Users/tester/work/x", home: "/Users/tester"), "~/work/x")
+    }
+
+    func test_short_does_not_shrink_sibling_prefix() {
+        // /Users/testerworkshop 以 /Users/tester 开头但不是它的子路径
+        XCTAssertEqual(PathFormat.short("/Users/testerworkshop/x", home: "/Users/tester"), "/Users/testerworkshop/x")
+        XCTAssertEqual(PathFormat.short("/Users/tester2/x", home: "/Users/tester"), "/Users/tester2/x")
+    }
+
+    func test_short_home_itself_and_trailing_slash() {
+        XCTAssertEqual(PathFormat.short("/Users/tester", home: "/Users/tester"), "~")
+        XCTAssertEqual(PathFormat.short("/Users/tester/work", home: "/Users/tester/"), "~/work")
+    }
+
+    func test_short_no_home_passthrough() {
+        XCTAssertEqual(PathFormat.short("/tmp/x", home: nil), "/tmp/x")
+        XCTAssertEqual(PathFormat.short("/tmp/x", home: ""), "/tmp/x")
+    }
+}

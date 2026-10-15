@@ -51,17 +51,22 @@ final class SessionGroupingTests: XCTestCase {
                                   query: query, currentSessionId: current, lastCreatedSessionId: lastCreated)
     }
 
+    /// 会在列表上出现的行 = loose + 目录兜底组（028：口径互斥后的合集断言）。
+    private func visibleIds(_ result: SessionGrouping.Partition) -> [String] {
+        result.loose.map(\.sessionId) + result.directoryGroups.flatMap(\.sessions).map(\.sessionId)
+    }
+
     // MARK: - 谁上列表
 
     func testArchivedSessionsAreHidden() {
         let result = partition([summary("a"), summary("b")], archived: ["a"])
-        XCTAssertEqual(result.loose.map(\.sessionId), ["b"])
+        XCTAssertEqual(visibleIds(result), ["b"])
     }
 
     func testBlankSessionsAreHiddenExceptCurrentAndJustCreated() {
         let sessions = [summary("blank", blank: true), summary("current", blank: true), summary("created", blank: true)]
         let result = partition(sessions, current: "current", lastCreated: "created")
-        XCTAssertEqual(Set(result.loose.map(\.sessionId)), ["current", "created"])
+        XCTAssertEqual(Set(visibleIds(result)), ["current", "created"])
     }
 
     func testShowsInListIsTheOneSharedPredicate() {
@@ -82,15 +87,30 @@ final class SessionGroupingTests: XCTestCase {
             summary("g", cwd: "/b", objective: "把结算跑通"),
             summary("n", cwd: "/c", title: "无关"),
         ]
-        XCTAssertEqual(partition(sessions, query: "登录").loose.map(\.sessionId), ["t"])
-        XCTAssertEqual(partition(sessions, query: "支付").loose.map(\.sessionId), ["c"])
-        XCTAssertEqual(partition(sessions, query: "结算").loose.map(\.sessionId), ["g"])
+        XCTAssertEqual(visibleIds(partition(sessions, query: "登录")), ["t"])
+        XCTAssertEqual(visibleIds(partition(sessions, query: "支付")), ["c"])
+        XCTAssertEqual(visibleIds(partition(sessions, query: "结算")), ["g"])
     }
 
     func testSearchIsTrimmedAndCaseInsensitive() {
         let sessions = [summary("t", cwd: "/a", title: "Fix Login")]
-        XCTAssertEqual(partition(sessions, query: "  fix LOGIN  ").loose.map(\.sessionId), ["t"])
-        XCTAssertTrue(partition(sessions, query: "   ").loose.count == 1, "全是空白等于不过滤")
+        XCTAssertEqual(visibleIds(partition(sessions, query: "  fix LOGIN  ")), ["t"])
+        XCTAssertTrue(visibleIds(partition(sessions, query: "   ")).count == 1, "全是空白等于不过滤")
+    }
+
+    // MARK: - 目录兜底口径（028 缺陷5）
+
+    /// 没有 workspace 列表时，所有顶层会话归目录组，loose 里只剩孤儿子代理；
+    /// 不允许同一行既在目录组又在 loose（界面上双行）。
+    func testFallbackModePutsTopLevelRowsInDirectoryGroupsAndLooseHoldsOnlyOrphans() {
+        let sessions = [summary("a", cwd: "/x"), summary("b", cwd: "/x"),
+                        summary("child", parent: "ghost", origin: "subagent")]
+        let result = partition(sessions)
+        let directoryIds = Set(result.directoryGroups.flatMap(\.sessions).map(\.sessionId))
+        XCTAssertEqual(directoryIds, ["a", "b"])
+        XCTAssertEqual(result.loose.map(\.sessionId), ["child"])
+        XCTAssertTrue(directoryIds.isDisjoint(with: result.loose.map(\.sessionId)),
+                      "a row must not appear in both a directory group and loose")
     }
 
     // MARK: - 子代理
@@ -98,8 +118,8 @@ final class SessionGroupingTests: XCTestCase {
     func testSubagentsRideUnderTheirParentAndDoNotTakeARow() {
         let sessions = [summary("p"), summary("child", parent: "p", origin: "subagent")]
         let result = partition(sessions)
-        XCTAssertEqual(result.loose.map(\.sessionId), ["p"], "子代理不单独占行")
-        XCTAssertEqual(result.loose.isEmpty, false)
+        XCTAssertEqual(visibleIds(result), ["p"], "子代理不单独占行")
+        XCTAssertFalse(visibleIds(result).isEmpty)
     }
 
     func testOrphanSubagentFallsIntoTheLooseBucket() {
@@ -167,6 +187,6 @@ final class SessionGroupingTests: XCTestCase {
     func testPartitionDoesNotSort() {
         // 排序是 `SessionListOrder` 的事；这里返回**原样的输入顺序**，谁排序谁负责。
         let sessions = [summary("a", updatedAt: 1), summary("b", updatedAt: 999)]
-        XCTAssertEqual(partition(sessions).loose.map(\.sessionId), ["a", "b"])
+        XCTAssertEqual(visibleIds(partition(sessions)), ["a", "b"])
     }
 }

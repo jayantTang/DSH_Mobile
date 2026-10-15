@@ -106,10 +106,8 @@ final class SessionListGroupingTests: SessionsDomainTestCase {
         XCTAssertFalse(try XCTUnwrap(model.groups.first { $0.id == "__none__" }).title.isEmpty,
                        "the group with no directory carries the 'unfiled' wording")
 
-        // pin（已知问题，本次不改产品代码）：兜底路径下 DSHKit 的 partition 把每一行都算进
-        // 折叠桶（`assigned` 只由 workspace 填），而装配层无条件渲染折叠桶 → 同一行在目录分组
-        // 里出现一次、在"未分组"里又一次。这里钉现状，缺口记在汇报里。
-        XCTAssertEqual(sessionIds(model.loose).sorted(), ["s1", "s2", "s3"])
+        // 028 缺陷5已修：兜底路径下所有行归目录组，折叠桶为空（不再双渲染）。
+        XCTAssertTrue(model.loose.isEmpty, "fallback mode must not double-render rows into the loose bucket")
         XCTAssertEqual(model.ungroupedRunningCount, 0)
     }
 }
