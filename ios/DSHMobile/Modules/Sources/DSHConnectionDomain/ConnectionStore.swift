@@ -216,7 +216,7 @@ public final class ConnectionStore {
     /// the same store the live object persists to keeps the two in step without
     /// a second copy of the profile list.
     public static func persistedProfiles() -> [ConnectionProfile] {
-        loadProfiles()
+        ConnectionProfile.persistedProfiles()
     }
 
     private func persist() {
@@ -495,7 +495,7 @@ public final class ConnectionStore {
     /// connection that was never established has nothing to show, and that is
     /// the one case the pairing screen is for.
     private func attemptFailed(_ error: any Error, repairing: Bool) {
-        lastError = Self.describe(error)
+        lastError = LinkErrors.describe(error)
         if repairing {
             state = .connecting("连接中断，正在重连…")
             startWatching()
@@ -836,7 +836,7 @@ public final class ConnectionStore {
                 let pairing = try await Self.claimPairingCode(
                     relayURL: relay,
                     code: code,
-                    deviceName: Self.deviceName
+                    deviceName: DeviceInfo.deviceName
                 )
                 let transport = ConnectionProfile.Transport.relay(
                     relayURL: pairing.relayURL,
@@ -852,7 +852,7 @@ public final class ConnectionStore {
                 }
                 await connect(to: profile)
             } catch {
-                return Self.describe(error)
+                return LinkErrors.describe(error)
             }
 
         case .direct(let baseURL, let launchToken):
@@ -878,7 +878,7 @@ public final class ConnectionStore {
                 await connect(to: profile)
             } catch {
                 await carrier.close()
-                return Self.describe(error)
+                return LinkErrors.describe(error)
             }
 
         #if DEBUG
@@ -956,8 +956,8 @@ public final class ConnectionStore {
         let body: [String: String] = [
             "pairCode": code.uppercased().trimmingCharacters(in: .whitespacesAndNewlines),
             "deviceName": deviceName,
-            "deviceModel": Self.deviceModel,
-            "appVersion": Self.appVersion,
+            "deviceModel": DeviceInfo.deviceModel,
+            "appVersion": DeviceInfo.appVersion,
         ]
         request.httpBody = try JSONEncoder().encode(body)
 
@@ -990,80 +990,6 @@ public final class ConnectionStore {
 
     // MARK: - Diagnostics
 
-    /// Turns a transport failure into something a person can act on.
-    ///
-    /// The relay and connector already speak in codes; showing those raw is how
-    /// "DSh 响应格式异常：中转没有返回落盘路径" ended up in front of a user. Every
-    /// branch below answers "what happened, and what can I do" — and the last one
-    /// deliberately keeps the original wording rather than flattening an unknown
-    /// failure into a generic sentence.
-    public static func describe(_ error: any Error) -> String {
-        if let failure = error as? DSHRPCFailure {
-            switch failure.code {
-            case "file/unsupported":
-                // 连接器没有桥接帧（版本旧）：relay 已经在给这个语义，这里与
-                // `RelayFileTransfer.Unavailable.connectorTooOld` 共用同一条文案键。
-                return String(localized: "电脑上的连接器版本过旧，请更新后重发")
-            case "host/offline":
-                return String(localized: "电脑上的连接器不在线，请确认电脑开着 DSH 后再试")
-            case "auth/invalid-token", "auth/unauthorized":
-                return String(localized: "这个连接的凭据已失效，请重新配对")
-            // 配对失败原来只有一句"配对码无效、已用或过期"，用户没法判断是打错了
-            // 还是拿着屏幕上那张旧码又扫了一次。中转现在把三种原因分开报（`pair/...`），
-            // 这里各给一句话，而且都说清下一步：回电脑刷新二维码页。
-            case "pair/used-code":
-                return String(localized: "这个配对码已经用过了，请在电脑「移动端连接」里点「换一张」，再扫新出现的那张")
-            case "pair/expired-code":
-                return String(localized: "这个配对码已经过期，请在电脑「移动端连接」里点「换一张」，再扫新出现的那张")
-            case "pair/invalid-code":
-                return String(localized: "配对码不对，请核对电脑上显示的配对码")
-            default:
-                break
-            }
-        }
-        if let url = error as? URLError {
-            switch url.code {
-            case .timedOut:
-                return String(localized: "网络超时，可以再点一次发送")
-            case .networkConnectionLost, .notConnectedToInternet, .cannotConnectToHost,
-                 .cannotFindHost, .dataNotAllowed:
-                return String(localized: "网络中断，可以再点一次发送")
-            default:
-                break
-            }
-        }
-        if let error = error as? LocalizedError, let description = error.errorDescription {
-            return description
-        }
-        return error.localizedDescription
-    }
-
-    public static var deviceModel: String {
-        #if canImport(UIKit)
-        var info = utsname()
-        uname(&info)
-        let machine = withUnsafeBytes(of: &info.machine) { bytes in
-            String(cString: bytes.bindMemory(to: CChar.self).baseAddress!)
-        }
-        return machine
-        #else
-        return "macOS"
-        #endif
-    }
-
-    public static var appVersion: String {
-        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
-        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1"
-        return "\(version) (\(build))"
-    }
-
-    public static var deviceName: String {
-        #if canImport(UIKit)
-        return UIDevice.current.name
-        #else
-        return Host.current().localizedName ?? "Device"
-        #endif
-    }
 }
 
 // MARK: - LinkService 协议符合

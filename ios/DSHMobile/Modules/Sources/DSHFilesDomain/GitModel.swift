@@ -1,4 +1,4 @@
-import DSHConnectionDomain
+import DSHConnectionAPI
 import DSHCore
 import DSHKit
 import Foundation
@@ -42,7 +42,7 @@ public final class GitModel {
 
     public var searchText: String = ""
 
-    private weak var store: ConnectionStore?
+    private weak var store: (any LinkService)?
     private var client: GitClient { GitClient(carrier: store!.client!.carrier) }
 
     public init(scope: WorkspaceFileScope) {
@@ -53,7 +53,7 @@ public final class GitModel {
         self.init(scope: WorkspaceFileScope(summary: summary, hostHome: hostHome))
     }
 
-    public func attach(to store: ConnectionStore) {
+    public func attach(to store: any LinkService) {
         self.store = store
     }
 
@@ -188,7 +188,7 @@ public final class GitModel {
         // 并给每一种配上话术——话术属于界面，`check:i18n` 管着它们。
         guard let kind = GitFailureClassifier.classify(error) else {
             // 传输类失败（电脑不应答）：不许被装扮成"不是仓库"。
-            return .failed(ConnectionStore.describe(error))
+            return .failed(LinkErrors.describe(error))
         }
         switch kind {
         case .notARepository: return .notARepository
@@ -207,7 +207,7 @@ public final class GitModel {
         case .notARepository: return "这个目录不在 git 仓库里。"
         case .unsupported: return "电脑上的连接器版本较旧，还不支持查看 git。"
         case .failed(let message): return message
-        case .idle, .loading, .loaded: return ConnectionStore.describe(error)
+        case .idle, .loading, .loaded: return LinkErrors.describe(error)
         }
     }
 }

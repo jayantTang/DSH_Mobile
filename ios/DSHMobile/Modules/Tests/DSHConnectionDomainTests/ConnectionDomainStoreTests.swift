@@ -112,16 +112,16 @@ final class ConnectionDomainStoreTests: XCTestCase {
     }
 
     func test_a_localized_error_keeps_its_own_wording() {
-        XCTAssertEqual(ConnectionStore.describe(StubError()), "stub description")
+        XCTAssertEqual(LinkErrors.describe(StubError()), "stub description")
     }
 
     func test_each_pairing_failure_gets_its_own_wording() {
         // The defect this pins: every pairing failure used to read "the code is
         // invalid, used or expired", so a user holding a stale code could not
         // tell which of the three it was — or what to do next.
-        let used = ConnectionStore.describe(DSHRPCFailure(code: "pair/used-code", message: "used"))
-        let expired = ConnectionStore.describe(DSHRPCFailure(code: "pair/expired-code", message: "expired"))
-        let invalid = ConnectionStore.describe(DSHRPCFailure(code: "pair/invalid-code", message: "bad"))
+        let used = LinkErrors.describe(DSHRPCFailure(code: "pair/used-code", message: "used"))
+        let expired = LinkErrors.describe(DSHRPCFailure(code: "pair/expired-code", message: "expired"))
+        let invalid = LinkErrors.describe(DSHRPCFailure(code: "pair/invalid-code", message: "bad"))
 
         for message in [used, expired, invalid] {
             XCTAssertFalse(message.isEmpty)
@@ -130,17 +130,17 @@ final class ConnectionDomainStoreTests: XCTestCase {
     }
 
     func test_a_connector_failure_is_told_apart_from_a_credential_failure() {
-        let offline = ConnectionStore.describe(DSHRPCFailure(code: "host/offline", message: "offline"))
-        let stale = ConnectionStore.describe(DSHRPCFailure(code: "auth/invalid-token", message: "stale"))
-        let oldConnector = ConnectionStore.describe(DSHRPCFailure(code: "file/unsupported", message: "old"))
+        let offline = LinkErrors.describe(DSHRPCFailure(code: "host/offline", message: "offline"))
+        let stale = LinkErrors.describe(DSHRPCFailure(code: "auth/invalid-token", message: "stale"))
+        let oldConnector = LinkErrors.describe(DSHRPCFailure(code: "file/unsupported", message: "old"))
 
         XCTAssertFalse(offline.isEmpty)
         XCTAssertEqual(Set([offline, stale, oldConnector]).count, 3)
     }
 
     func test_a_timeout_and_a_dead_network_are_worded_differently() {
-        let timeout = ConnectionStore.describe(URLError(.timedOut))
-        let offline = ConnectionStore.describe(URLError(.notConnectedToInternet))
+        let timeout = LinkErrors.describe(URLError(.timedOut))
+        let offline = LinkErrors.describe(URLError(.notConnectedToInternet))
 
         XCTAssertFalse(timeout.isEmpty)
         XCTAssertFalse(offline.isEmpty)
@@ -152,6 +152,6 @@ final class ConnectionDomainStoreTests: XCTestCase {
         // into a generic sentence: an accurate unknown beats a wrong summary.
         let unknown = DSHRPCFailure(code: "something/else", message: "something else")
 
-        XCTAssertEqual(ConnectionStore.describe(unknown), unknown.localizedDescription)
+        XCTAssertEqual(LinkErrors.describe(unknown), unknown.localizedDescription)
     }
 }

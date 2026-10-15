@@ -1,4 +1,4 @@
-import DSHConnectionDomain
+import DSHConnectionAPI
 import DSHCore
 import DSHFoundation
 import DSHKit
@@ -6,9 +6,6 @@ import Foundation
 import Observation
 import RelayKit
 
-#if canImport(UIKit)
-import UIKit
-#endif
 
 /// 反馈通道在 App 侧的状态与动作：地址与令牌的来源、提交、拉取、未读口径。
 ///
@@ -84,7 +81,8 @@ public final class FeedbackCenter {
     }
 
     private static func pairedRelay() -> (url: URL, token: String)? {
-        ConnectionStore.persistedProfiles()
+        // 026：跨模块后这条链推导变慢，分两段（与 025 的断点同理）。
+        let candidates: [(URL, String, ConnectionProfile)] = ConnectionProfile.persistedProfiles()
             .compactMap { profile -> (URL, String, ConnectionProfile)? in
                 guard case .relay(let relayURL, _) = profile.transport,
                       let secret = Keychain.get(profile.secretAccount),
@@ -92,23 +90,18 @@ public final class FeedbackCenter {
                 else { return nil }
                 return (relayURL, secret, profile)
             }
-            .sorted { ($0.2.lastConnectedAt ?? .distantPast) > ($1.2.lastConnectedAt ?? .distantPast) }
-            .first
-            .map { (url: $0.0, token: $0.1) }
+        let newest = candidates.sorted {
+            ($0.2.lastConnectedAt ?? .distantPast) > ($1.2.lastConnectedAt ?? .distantPast)
+        }.first
+        return newest.map { (url: $0.0, token: $0.1) }
     }
 
     /// 提交前给用户看的三项技术信息；提交时用的也是这三项，两处不会漂移。
     public static var technicalInfo: (appVersion: String, deviceModel: String, systemVersion: String) {
-        (ConnectionStore.appVersion, ConnectionStore.deviceModel, systemVersion)
+        (DeviceInfo.appVersion, DeviceInfo.deviceModel, systemVersion)
     }
 
-    static var systemVersion: String {
-        #if canImport(UIKit)
-        return UIDevice.current.systemVersion
-        #else
-        return ProcessInfo.processInfo.operatingSystemVersionString
-        #endif
-    }
+    static var systemVersion: String { DeviceInfo.systemVersion }
 
     // MARK: - 提交
 

@@ -1,4 +1,4 @@
-import DSHConnectionDomain
+import DSHConnectionAPI
 import DSHCore
 import DSHDesign
 import DSHKit
@@ -32,9 +32,9 @@ public final class DirectoryBrowserModel {
     /// so the field is not merely a label: it is a jump target.
     public var pathDraft = ""
 
-    private weak var store: ConnectionStore?
+    private weak var store: (any LinkService)?
 
-    public func attach(to store: ConnectionStore) {
+    public func attach(to store: any LinkService) {
         self.store = store
     }
 
@@ -67,7 +67,7 @@ public final class DirectoryBrowserModel {
         } catch {
             // The level on screen stays where it was: a failed jump should not
             // also throw away the directory the user was looking at.
-            failure = Self.describe(error)
+            failure = LinkErrors.describe(error)
         }
     }
 
@@ -101,7 +101,7 @@ public final class DirectoryBrowserModel {
             await open(created)
             return created
         } catch {
-            failure = Self.describe(error)
+            failure = LinkErrors.describe(error)
             return nil
         }
     }
@@ -135,6 +135,6 @@ public final class DirectoryBrowserModel {
                 break
             }
         }
-        return ConnectionStore.describe(error)
+        return LinkErrors.describe(error)
     }
 }

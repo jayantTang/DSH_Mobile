@@ -451,7 +451,7 @@ public struct NewSessionView: View {
                 dismiss()
             } catch {
                 creating = nil
-                failure = ConnectionStore.describe(error)
+                failure = LinkErrors.describe(error)
             }
         }
     }

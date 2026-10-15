@@ -1,4 +1,4 @@
-import DSHConnectionDomain
+import DSHConnectionAPI
 import DSHCore
 import DSHFoundation
 import DSHKit
@@ -164,7 +164,7 @@ public final class ChatModel {
     public private(set) var sendSignal: Int = 0
 
     /// internal(set)：ChatModel+Follow 的可见性兜底要读 client（T019）。
-    public private(set) var store: ConnectionStore?
+    public private(set) var store: (any LinkService)?
     private var hub: HostEventHub?
     /// 009 消息层（T012：MessageStore 有数据时优先用它画进会话首帧）。
     /// internal：冷启动半边在 ChatModel+ColdStart.swift（文件按职责拆分）。
@@ -291,7 +291,7 @@ public final class ChatModel {
 
     // MARK: - Lifecycle
 
-    public func attach(store: ConnectionStore, hub: HostEventHub) {
+    public func attach(store: any LinkService, hub: HostEventHub) {
         self.store = store
         self.hub = hub
     }
@@ -993,9 +993,9 @@ public final class ChatModel {
             } catch {
                 guard !Task.isCancelled else { return }
                 if self.phase == .loading {
-                    self.phase = .failed(ConnectionStore.describe(error))
+                    self.phase = .failed(LinkErrors.describe(error))
                 } else {
-                    self.lastError = ConnectionStore.describe(error)
+                    self.lastError = LinkErrors.describe(error)
                 }
             }
         }
@@ -1231,7 +1231,7 @@ public final class ChatModel {
             // the value, and the picker marks whichever model it reports.
             await refreshCatalog(link: link)
         } catch {
-            defaultModelError = ConnectionStore.describe(error)
+            defaultModelError = LinkErrors.describe(error)
         }
     }
 
@@ -1745,7 +1745,7 @@ public final class ChatModel {
                 if draft.isEmpty { draft = text }
                 if draftImages.isEmpty { draftImages = images }
             }
-            lastError = ConnectionStore.describe(error)
+            lastError = LinkErrors.describe(error)
         }
     }
 
@@ -1774,7 +1774,7 @@ public final class ChatModel {
         } catch {
             // 行已由管道标 failed（可点重发）；错误同时上错误条。
             isAwaitingTurnStart = false
-            lastError = ConnectionStore.describe(error)
+            lastError = LinkErrors.describe(error)
         }
     }
 
@@ -1800,7 +1800,7 @@ public final class ChatModel {
             await sendFile(named: name, fileURL: url)
         } catch {
             lastError = String(
-                localized: "文件「\(name)」没发出去：\(ConnectionStore.describe(error))。可以再点一次发送。"
+                localized: "文件「\(name)」没发出去：\(LinkErrors.describe(error))。可以再点一次发送。"
             )
         }
     }
@@ -1841,11 +1841,11 @@ public final class ChatModel {
             // 连接器落盘），失败只会体现在输入框没动静。没有这一行时，真机上
             // 「发了没反应」与「后端没收到」无法区分。
             DSHLog.push("file send failed: \(name) "
-                + "(\(FileTransferAdapter.fileSize(fileURL)) bytes) — \(ConnectionStore.describe(error))")
+                + "(\(FileTransferAdapter.fileSize(fileURL)) bytes) — \(LinkErrors.describe(error))")
             // 给用户的那句话：说清**哪个文件**、**为什么**、**能做什么**。
             // 不再把内部错误原文丢出去（"中转没有返回落盘路径"就是反面样本）。
             lastError = String(
-                localized: "文件「\(name)」没发出去：\(ConnectionStore.describe(error))。可以再点一次发送。"
+                localized: "文件「\(name)」没发出去：\(LinkErrors.describe(error))。可以再点一次发送。"
             )
         }
     }
@@ -1897,7 +1897,7 @@ public final class ChatModel {
             try await client.cancel(sessionId: session.sessionId)
             isAwaitingTurnStart = false
         } catch {
-            lastError = ConnectionStore.describe(error)
+            lastError = LinkErrors.describe(error)
         }
     }
 
@@ -1907,7 +1907,7 @@ public final class ChatModel {
             try await client.rename(sessionId: session.sessionId, title: title)
             await refreshSummary()
         } catch {
-            lastError = ConnectionStore.describe(error)
+            lastError = LinkErrors.describe(error)
         }
     }
 
@@ -1918,7 +1918,7 @@ public final class ChatModel {
             let value = try await client.forkSession(sessionId: session.sessionId)
             return value["sessionId"]?.stringValue ?? value["id"]?.stringValue
         } catch {
-            lastError = ConnectionStore.describe(error)
+            lastError = LinkErrors.describe(error)
             return nil
         }
     }
@@ -1931,7 +1931,7 @@ public final class ChatModel {
             try await client.selectModel(sessionId: session.sessionId, selection: selection)
         } catch {
             currentSelection = previous
-            lastError = ConnectionStore.describe(error)
+            lastError = LinkErrors.describe(error)
         }
     }
 
@@ -1955,7 +1955,7 @@ public final class ChatModel {
         do {
             try await hub.answer(item, with: .result(try JSONValue(from: answers)))
         } catch {
-            lastError = ConnectionStore.describe(error)
+            lastError = LinkErrors.describe(error)
         }
     }
 

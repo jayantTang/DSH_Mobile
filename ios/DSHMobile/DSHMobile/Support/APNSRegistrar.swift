@@ -1,3 +1,4 @@
+import DSHConnectionAPI
 import DSHConnectionDomain
 import DSHCore
 import DSHFoundation
@@ -339,7 +340,7 @@ final class APNSRegistrar: NSObject, UIApplicationDelegate {
         } catch {
             // Not fatal and not retried in a tight loop: the next foreground, the
             // next token change and the next switch flip all call back in.
-            DSHLog.push("push report failed: \(ConnectionStore.describe(error))")
+            DSHLog.push("push report failed: \(LinkErrors.describe(error))")
         }
     }
 

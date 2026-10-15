@@ -1,4 +1,5 @@
-import DSHConnectionDomain
+import DSHFoundation
+import DSHConnectionAPI
 import DSHCore
 import DSHKit
 import Foundation
@@ -124,7 +125,7 @@ public final class SettingsModel {
     private var resetKeys: [String: Set<String>] = [:]
     private var saveTasks: [String: Task<Void, Never>] = [:]
 
-    private weak var store: ConnectionStore?
+    private weak var store: (any LinkService)?
 
     /// How long typing pauses before a write goes out.
     private let debounce = Duration.milliseconds(650)
@@ -135,7 +136,7 @@ public final class SettingsModel {
 
     // MARK: - Lifecycle
 
-    public func attach(to store: ConnectionStore) {
+    public func attach(to store: any LinkService) {
         self.store = store
     }
 
@@ -242,7 +243,7 @@ public final class SettingsModel {
             await loadCredentials()
         } catch {
             if document == nil {
-                phase = .failed(Self.describe(error))
+                phase = .failed(LinkErrors.describe(error))
             }
         }
         await loadAbout()
@@ -337,8 +338,8 @@ public final class SettingsModel {
             devicesError = nil
             devicesPhase = .loaded
         } catch {
-            devicesError = Self.describe(error)
-            devicesPhase = .failed(Self.describe(error))
+            devicesError = LinkErrors.describe(error)
+            devicesPhase = .failed(LinkErrors.describe(error))
         }
     }
 
@@ -356,7 +357,7 @@ public final class SettingsModel {
     /// resolved transport is the relay". `endpoint(from:)` already resolves which
     /// profile this phone is on — including the fallback to a single saved
     /// profile before the handshake — so the two cannot drift apart.
-    private static func canManageDevices(_ store: ConnectionStore?) -> Bool {
+    private static func canManageDevices(_ store: (any LinkService)?) -> Bool {
         if case .relay = endpoint(from: store).transport { return true }
         return false
     }
@@ -376,7 +377,7 @@ public final class SettingsModel {
             devices.removeAll { $0.deviceId == device.deviceId }
             devicesPhase = .loaded
         } catch {
-            devicesError = Self.describe(error)
+            devicesError = LinkErrors.describe(error)
         }
     }
 
@@ -516,7 +517,7 @@ public final class SettingsModel {
                 await reloadDocument()
             }
         } catch {
-            saveStates[ns] = .failed(Self.describe(error))
+            saveStates[ns] = .failed(LinkErrors.describe(error))
         }
     }
 
@@ -559,7 +560,7 @@ public final class SettingsModel {
             }
             credentialsPhase = .loaded
         } catch {
-            credentialsPhase = .failed(Self.describe(error))
+            credentialsPhase = .failed(LinkErrors.describe(error))
         }
     }
 
@@ -596,7 +597,7 @@ public final class SettingsModel {
 
     private func loadAbout() async {
         var facts = About.empty
-        facts.appVersion = ConnectionStore.appVersion
+        facts.appVersion = DeviceInfo.appVersion
         facts.writable = document?.writable ?? false
         facts.hasDocument = document?.hasDocument ?? false
         // The host publishes its home on the event stream, so prefer that and
@@ -638,7 +639,7 @@ public final class SettingsModel {
     /// `ConnectionStore.activeProfile` is authoritative once connected; before
     /// that, a single saved profile is unambiguous enough to name, and anything
     /// less is reported as undetermined rather than guessed.
-    private static func endpoint(from store: ConnectionStore?) -> (endpoint: String?, transport: Transport) {
+    private static func endpoint(from store: (any LinkService)?) -> (endpoint: String?, transport: Transport) {
         guard let store else { return (nil, .unknown) }
         if let active = store.activeProfile {
             return (store.activeBaseURL?.absoluteString ?? active.subtitle, active.isDirect ? .direct : .relay)
@@ -675,6 +676,6 @@ public final class SettingsModel {
                 return failure.message
             }
         }
-        return ConnectionStore.describe(error)
+        return LinkErrors.describe(error)
     }
 }

@@ -60,7 +60,7 @@ let package = Package(
         ]),
 
         // L2 纯协议：连接服务接口
-        .target(name: "DSHConnectionAPI"),
+        .target(name: "DSHConnectionAPI", dependencies: [dshKit]),
 
         // L2 核心服务：事件分发 / 传输编排 / 路由意图（禁 UI）
         .target(name: "DSHCore", dependencies: ["DSHConnectionAPI", "DSHFoundation", dshKit, relayKit]),
@@ -78,16 +78,16 @@ let package = Package(
         .target(name: "DSHConnectionUI", dependencies: ["DSHConnectionDomain", "DSHDesign", "DSHCore"]),
 
         // L1 会话单元
-        .target(name: "DSHSessionsDomain", dependencies: ["DSHCore", "DSHFoundation", "DSHConnectionDomain", dshKit]),
+        .target(name: "DSHSessionsDomain", dependencies: ["DSHCore", "DSHConnectionAPI", "DSHFoundation", dshKit]),
         .target(name: "DSHSessionsUI", dependencies: ["DSHSessionsDomain", "DSHDesign", "DSHCore"]),
 
         // L1 聊天单元：转写/流式/分页的领域层，与转写界面层
-        .target(name: "DSHChatDomain", dependencies: ["DSHCore", "DSHFoundation", "DSHConnectionDomain", dshKit]),
+        .target(name: "DSHChatDomain", dependencies: ["DSHCore", "DSHConnectionAPI", "DSHFoundation", dshKit]),
         .testTarget(name: "DSHChatDomainTests", dependencies: ["DSHChatDomain", dshKit]),
         .target(name: "DSHChatUI", dependencies: ["DSHChatDomain", "DSHDesign", "DSHCore"]),
 
         // L1 设置单元
-        .target(name: "DSHSettingsDomain", dependencies: ["DSHCore", "DSHFoundation", "DSHConnectionDomain", dshKit, relayKit]),
+        .target(name: "DSHSettingsDomain", dependencies: ["DSHCore", "DSHConnectionAPI", "DSHFoundation", dshKit, relayKit]),
         .target(name: "DSHSettingsUI", dependencies: ["DSHSettingsDomain", "DSHDesign", "DSHCore", "DSHConnectionDomain"]),
 
         // L1 信箱单元
@@ -98,7 +98,7 @@ let package = Package(
         .target(name: "DSHPluginUI", dependencies: ["DSHCore", "DSHDesign", "DSHConnectionDomain", dshKit]),
 
         // L1 文件单元
-        .target(name: "DSHFilesDomain", dependencies: ["DSHCore", "DSHFoundation", "DSHConnectionDomain", dshKit]),
+        .target(name: "DSHFilesDomain", dependencies: ["DSHCore", "DSHConnectionAPI", "DSHFoundation", dshKit]),
         .target(name: "DSHFilesUI", dependencies: ["DSHFilesDomain", "DSHDesign", "DSHCore"]),
 
         // 测试辅助：仅测试依赖

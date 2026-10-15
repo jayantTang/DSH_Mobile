@@ -92,3 +92,12 @@ public enum ConnectionState: Sendable, Equatable {
     }
 }
 
+public extension ConnectionProfile {
+    /// 落盘的连接档案（UserDefaults 读取，纯数据解码）。
+    ///
+    /// 026：从 ConnectionStore 下沉——信箱等单元只需要读档案，不该依赖连接实现。
+    static func persistedProfiles(defaults: UserDefaults = .standard) -> [ConnectionProfile] {
+        guard let data = defaults.data(forKey: "dsh.connection.profiles") else { return [] }
+        return (try? JSONDecoder().decode([ConnectionProfile].self, from: data)) ?? []
+    }
+}

@@ -1,4 +1,4 @@
-import DSHConnectionDomain
+import DSHConnectionAPI
 import DSHCore
 import DSHDesign
 import DSHFoundation
@@ -184,7 +184,7 @@ public final class SessionListModel {
 
     private var eventTask: Task<Void, Never>?
     private var refreshDebounce: Task<Void, Never>?
-    private(set) weak var store: ConnectionStore?
+    private(set) weak var store: (any LinkService)?
     private weak var hub: HostEventHub?
 
     // MARK: 冷启动 009 叠加（T010/T011；逻辑在 SessionListModel+ColdStart.swift）
@@ -298,7 +298,7 @@ public final class SessionListModel {
 
     // MARK: - Lifecycle
 
-    public func attach(to store: ConnectionStore, hub: HostEventHub, viewLog: SessionViewLog? = nil,
+    public func attach(to store: any LinkService, hub: HostEventHub, viewLog: SessionViewLog? = nil,
                 messageLayer: MessageLayer? = nil) {
         self.store = store
         self.hub = hub
@@ -498,7 +498,7 @@ public final class SessionListModel {
             // Keep any previously loaded rows visible: a transient failure
             // should not blank out a list the user is reading.
             if groups.isEmpty {
-                phase = .failed(ConnectionStore.describe(error))
+                phase = .failed(LinkErrors.describe(error))
             }
         }
     }

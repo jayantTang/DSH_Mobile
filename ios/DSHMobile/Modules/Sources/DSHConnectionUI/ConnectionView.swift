@@ -329,7 +329,7 @@ public struct ConnectionView: View {
             let pairing = try await ConnectionStore.claimPairingCode(
                 relayURL: url,
                 code: code,
-                deviceName: ConnectionStore.deviceName
+                deviceName: DeviceInfo.deviceName
             )
             let profile = ConnectionProfile(
                 name: pairing.agentName,
@@ -343,7 +343,7 @@ public struct ConnectionView: View {
             await store.connect(to: profile)
             if case .failed(let message) = store.state { error = message }
         } catch {
-            self.error = ConnectionStore.describe(error)
+            self.error = LinkErrors.describe(error)
         }
     }
 

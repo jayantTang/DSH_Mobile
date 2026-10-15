@@ -1,4 +1,4 @@
-import DSHConnectionDomain
+import DSHConnectionAPI
 import DSHCore
 import DSHKit
 import Foundation
@@ -128,7 +128,7 @@ public final class WorkspaceFilesModel {
 
     public var searchText: String = ""
 
-    private weak var store: ConnectionStore?
+    private weak var store: (any LinkService)?
 
     /// The live client, for the views that fetch their own content — the web
     /// preview pulls a page and its pictures, and has no business knowing how
@@ -156,7 +156,7 @@ public final class WorkspaceFilesModel {
 
     // MARK: - Lifecycle
 
-    public func attach(to store: ConnectionStore) {
+    public func attach(to store: any LinkService) {
         self.store = store
     }
 
@@ -217,7 +217,7 @@ public final class WorkspaceFilesModel {
             self.browsingPath = Self.relative(listing.path, root: scope.workspaceRoot)
             self.phase = .loaded
         } catch {
-            phase = .failed(Self.describe(error))
+            phase = .failed(LinkErrors.describe(error))
         }
     }
 
@@ -299,7 +299,7 @@ public final class WorkspaceFilesModel {
             if (error as? DSHRPCFailure)?.code == "workspace-file/not-text" {
                 fileRefusedAsText = true
             }
-            filePhase = .failed(Self.describe(error))
+            filePhase = .failed(LinkErrors.describe(error))
         }
     }
 
@@ -465,9 +465,9 @@ public final class WorkspaceFilesModel {
                         continue
                     }
                     if Self.isWorthResuming(error) {
-                        self?.pause(key: key, reason: Self.describe(error))
+                        self?.pause(key: key, reason: LinkErrors.describe(error))
                     } else {
-                        self?.transfers[key] = .failed(Self.describe(error))
+                        self?.transfers[key] = .failed(LinkErrors.describe(error))
                     }
                     return nil
                 }
@@ -749,7 +749,7 @@ public final class WorkspaceFilesModel {
     /// The desktop client's wording for each workspace-file failure code.
     public static func describe(_ error: any Error) -> String {
         guard let failure = error as? DSHRPCFailure else {
-            return ConnectionStore.describe(error)
+            return LinkErrors.describe(error)
         }
         switch failure.code {
         case "workspace-file/not-found":

@@ -1,4 +1,5 @@
 import DSHConnectionAPI
+import DSHKit
 import Foundation
 
 /// 假连接服务：LinkService 的可编程实现，供各单元 DomainTests 注入。
@@ -21,7 +22,25 @@ public final class FakeLinkService: LinkService {
         self.capabilities = capabilities
     }
 
+    public var hostHome: String?
+    public var activeBaseURL: URL? {
+        guard let t = activeProfile?.transport else { return nil }
+        switch t {
+        case .direct(let baseURL, _): return baseURL
+        case .relay(let relayURL, _): return relayURL
+        }
+    }
+    public var scopeId: String? { activeProfile?.id.uuidString }
+    public var client: DSHClient? { nil }
+    public var link: LinkGateway { fatalError("FakeLinkService.link: 测试不应走到这里") }
+
     public func supports(_ capability: String) -> Bool { capabilities.contains(capability) }
+    public func uploadFile(fileURL: URL, name: String, sessionId: String) async throws -> StagedFile {
+        throw NSError(domain: "FakeLinkService", code: 2, userInfo: [NSLocalizedDescriptionKey: "uploadFile not stubbed"])
+    }
+    public func fileTransferTarget() throws -> (relayURL: URL, deviceToken: String) {
+        throw NSError(domain: "FakeLinkService", code: 2, userInfo: [NSLocalizedDescriptionKey: "no transfer target in fake"])
+    }
 }
 
 /// 常用夹具。
