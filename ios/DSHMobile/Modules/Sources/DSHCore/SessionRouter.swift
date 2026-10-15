@@ -52,6 +52,13 @@ public final class SessionRouter {
     /// The take-once rule lives here, where it can be unit tested (015).
     private let box = SessionRequestBox()
 
+    /// 以 RouteIntent 形式取走待处理意图（026：意图类型的正式出口）。
+    ///
+    /// 与 ``take()`` 是同一个动作的两个视角：要原始请求用 ``take()``，要路由语义用这个。
+    public func takeIntent() -> RouteIntent? {
+        take().map { .openSession($0.sessionId) }
+    }
+
     /// The relay's push payload calls the session id `sid`; everything else in
     /// the app calls it `sessionId`. Both are accepted so a change of transport
     /// (local notification today, push tomorrow) cannot silently stop routing.

@@ -239,6 +239,30 @@
       "file": "ios/DSHMobile/Modules/Sources/DSHChatUI/TranscriptListSpikeView.swift",
       "snippet": "内容",
       "reason": "spec 008 的 Phase 0 spike 屏专用：只有 -DSHProbeListSpike 打开时才显示，行内容是合成的假数据，不进产品界面；spike 收尾后连同这个文件一起删。"
+    },
+    {
+      "rule": "hardcoded-string",
+      "file": "ios/DSHMobile/Modules/Sources/DSHChatUI/ChatView+Toolbar.swift",
+      "reason": "会话转写页的文案出口（026 P4 从 ChatView.swift 拆出，沿用同一豁免口径）",
+      "backlog": "i18n-backlog-app-chatview"
+    },
+    {
+      "rule": "unlocalized-binding",
+      "file": "ios/DSHMobile/Modules/Sources/DSHChatUI/ChatView+Toolbar.swift",
+      "reason": "会话转写页的文案出口（026 P4 从 ChatView.swift 拆出，沿用同一豁免口径）",
+      "backlog": "i18n-backlog-app-chatview"
+    },
+    {
+      "rule": "hardcoded-string",
+      "file": "ios/DSHMobile/Modules/Sources/DSHChatUI/ChatView+Panels.swift",
+      "reason": "会话转写页的文案出口（026 P4 从 ChatView.swift 拆出，沿用同一豁免口径）",
+      "backlog": "i18n-backlog-app-chatview"
+    },
+    {
+      "rule": "unlocalized-binding",
+      "file": "ios/DSHMobile/Modules/Sources/DSHChatUI/ChatView+Panels.swift",
+      "reason": "会话转写页的文案出口（026 P4 从 ChatView.swift 拆出，沿用同一豁免口径）",
+      "backlog": "i18n-backlog-app-chatview"
     }
   ]
 }

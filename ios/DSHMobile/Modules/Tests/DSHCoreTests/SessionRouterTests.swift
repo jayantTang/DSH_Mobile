@@ -145,3 +145,16 @@ final class SessionRouterTests: XCTestCase {
         XCTAssertEqual(SessionRouter.automationRequestedSession(), expected.isEmpty ? nil : expected)
     }
 }
+
+// MARK: - RouteIntent (026)
+
+extension SessionRouterTests {
+    /// 意图出口与 take() 是同一个动作：取走即拥有，意图形状是 openSession。
+    func test_takeIntent_maps_to_openSession_and_is_take_once() {
+        let router = SessionRouter()
+        router.request(sessionId: "session-42")
+        XCTAssertEqual(router.takeIntent(), .openSession("session-42"))
+        XCTAssertNil(router.takeIntent())
+        XCTAssertNil(router.take())
+    }
+}
