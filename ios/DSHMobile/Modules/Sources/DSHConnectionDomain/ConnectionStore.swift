@@ -195,15 +195,18 @@ public final class ConnectionStore {
     }
 
     private let defaultsKey = "dsh.connection.profiles"
+    private let defaults: UserDefaults
 
-    public init() {
-        profiles = Self.loadProfiles()
+    /// `defaults` 仅测试注入隔离域；生产默认 `.standard`，行为不变。
+    public init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        profiles = Self.loadProfiles(defaults: defaults)
     }
 
     // MARK: - Persistence
 
-    private static func loadProfiles() -> [ConnectionProfile] {
-        guard let data = UserDefaults.standard.data(forKey: "dsh.connection.profiles") else { return [] }
+    private static func loadProfiles(defaults: UserDefaults = .standard) -> [ConnectionProfile] {
+        guard let data = defaults.data(forKey: "dsh.connection.profiles") else { return [] }
         return (try? JSONDecoder().decode([ConnectionProfile].self, from: data)) ?? []
     }
 
@@ -221,7 +224,7 @@ public final class ConnectionStore {
 
     private func persist() {
         guard let data = try? JSONEncoder().encode(profiles) else { return }
-        UserDefaults.standard.set(data, forKey: defaultsKey)
+        defaults.set(data, forKey: defaultsKey)
     }
 
     /// Whether a profile has a usable secret in the keychain.

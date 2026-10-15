@@ -15,7 +15,10 @@ import Observation
 @MainActor
 @Observable
 public final class SessionListModel {
-    public init() {}
+    /// `snapshotStore` 仅测试注入临时目录；生产默认与原来一致，行为不变。
+    public init(snapshotStore: SessionListSnapshotStore = SessionListSnapshotStore()) {
+        self.snapshotStore = snapshotStore
+    }
     /// App 注入的探针钩子（025）。
     public var probeNote: ((String, [String: String], Bool) -> Void)? = nil
 
@@ -63,7 +66,7 @@ public final class SessionListModel {
     public private(set) var phase: Phase = .idle
 
     /// 上一次成功刷新落盘的快照（冷启动先拿它把行画出来，再和 host 对账）。
-    private let snapshotStore = SessionListSnapshotStore()
+    private let snapshotStore: SessionListSnapshotStore
 
     /// 屏幕上这些行是"上次的数据"还是"刚问来的"。
     ///

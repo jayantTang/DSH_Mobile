@@ -239,6 +239,12 @@ public final class ChatModel {
         public var text: String = ""
         public var images: [DraftImage] = []
 
+        /// 测试与外部构造入口（memberwise init 对 public struct 是 internal，026 补齐）。
+        public init(text: String = "", images: [DraftImage] = []) {
+            self.text = text
+            self.images = images
+        }
+
         public var isEmpty: Bool {
             text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && images.isEmpty
         }
