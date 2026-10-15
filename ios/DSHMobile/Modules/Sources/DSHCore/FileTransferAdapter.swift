@@ -8,35 +8,39 @@ import RelayKit
 /// 让 `WorkspaceFilesModel` 拿到 App 自己的值类型。
 ///
 /// 它是守卫白名单文件之一（≤8）：白名单就是给这种"必须碰实现层"的适配器准备的。
-enum FileTransferAdapter {
+public enum FileTransferAdapter {
 
     /// 下载结果（App 自己的形状，不带 RelayKit 类型）。
-    struct Downloaded {
-        let url: URL
-        let bytes: Int
+    public struct Downloaded {
+        public let url: URL
+        public let bytes: Int
+        public init(url: URL, bytes: Int) {
+            self.url = url
+            self.bytes = bytes
+        }
     }
 
     /// 本地文件有多少字节（诊断日志用；读不出来按 0）。
-    static func fileSize(_ url: URL) -> Int { RelayFileTransfer.fileSize(url) }
+    public static func fileSize(_ url: URL) -> Int { RelayFileTransfer.fileSize(url) }
 
     /// 后台会话的身份（系统唤醒时用它判断事件是不是我们的）。
-    static var sessionIdentifier: String { RelayFileTransfer.sessionIdentifier }
+    public static var sessionIdentifier: String { RelayFileTransfer.sessionIdentifier }
 
     /// 冷启动时把后台会话重新挂上（只建会话、不发请求）。
-    static func reassociate() { _ = RelayFileTransfer.reassociate() }
+    public static func reassociate() { _ = RelayFileTransfer.reassociate() }
 
     /// 注入 RelayKit 的日志出口（它自己没有 logger）。
-    static func setLogger(_ sink: (@Sendable (String) -> Void)?) {
+    public static func setLogger(_ sink: (@Sendable (String) -> Void)?) {
         RelayFileTransfer.BackgroundEvents.setLogger(sink)
     }
 
     /// 交付系统给的后台事件完成回调。
-    static func setHandler(_ action: (() -> Void)?) {
+    public static func setHandler(_ action: (() -> Void)?) {
         RelayFileTransfer.BackgroundEvents.setHandler(action)
     }
 
     /// 经中转把工作区文件拉到 `destination`（后台 `URLSession` 任务，进程挂起也能完成）。
-    static func download(
+    public static func download(
         to destination: URL,
         scopeId: String,
         path: String,

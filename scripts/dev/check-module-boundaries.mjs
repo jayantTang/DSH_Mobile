@@ -23,6 +23,21 @@ const stateFile = path.join(root, '.lanes/module-boundaries-count.json');
 const issues = [];
 const err = (m) => issues.push(m);
 
+// C2 例外：BOUNDARY-EXCEPTIONS.md 第一列登记过的文件豁免
+const c2ExemptFiles = new Set();
+if (existsSync(exceptionsFile)) {
+  const text = readFileSync(exceptionsFile, 'utf8');
+  for (const line of text.split('\n')) {
+    if (!line.trim().startsWith('|')) continue;
+    const first = line.split('|')[1]?.trim() ?? '';
+    if (first && !/位置|----/.test(first)) {
+      // 取括号前的文件路径部分
+      const m = first.match(/^(.*?\.swift)/);
+      if (m) c2ExemptFiles.add(m[1]);
+    }
+  }
+}
+
 // ---------- 1. C2 禁 UI ----------
 const noUI = new Set(['DSHCore', 'DSHConnectionAPI', 'DSHFoundation', 'DSHTestingSupport']);
 // *Domain 目标（未来单元迁移后出现，规则先行）
@@ -40,7 +55,12 @@ function scanDir(dir, label) {
     if (e.isDirectory()) { scanDir(p, label); continue; }
     if (!p.endsWith('.swift')) continue;
     const text = readFileSync(p, 'utf8');
-    if (UI_RE.test(text)) err(`[C2] ${label}: 禁 UI import → ${path.relative(root, p)}`);
+    if (UI_RE.test(text)) {
+      const rel = path.relative(root, p);
+      if (!c2ExemptFiles.has(path.resolve(rel)) && ![...c2ExemptFiles].some(f => rel.endsWith(f))) {
+        err(`[C2] ${label}: 禁 UI import → ${rel}`);
+      }
+    }
   }
 }
 for (const t of noUI) {
@@ -97,7 +117,8 @@ if (existsSync(exceptionsFile)) {
   exceptionCount = text.split('\n')
     .filter(l => l.trim().startsWith('|'))
     .filter(l => !/^\|\s*[-—|:\s]+\|\s*$/.test(l.trim()))
-    .filter(l => !/位置|条款|原因|收敛|暂无/.test(l))
+    .map(l => (l.split('|')[1] ?? '').trim())
+    .filter(cell => cell && !/位置|暂无/.test(cell))
     .length;
 } else {
   err('[C5] 缺少 BOUNDARY-EXCEPTIONS.md');

@@ -1,3 +1,5 @@
+import DSHConnectionAPI
+import DSHFoundation
 import DSHKit
 import Foundation
 import Observation
@@ -9,7 +11,11 @@ import Observation
 /// owns the only stream, so answering stays unambiguous.
 @MainActor
 @Observable
-final class HostEventHub {
+public final class HostEventHub {
+    /// App 注入的可观测探针钩子（默认无操作）。
+    public static var probeNote: ((_ kind: String, _ fields: [String: String], _ force: Bool) -> Void)? = nil
+
+    public init() {}
 
     /// A host prompt waiting for a human answer.
     ///
@@ -19,12 +25,12 @@ final class HostEventHub {
     ///
     /// 形状与集合判定在 DSHKit（`PendingPrompts`，spec 023 的边界收敛）；这里保留 `Pending`
     /// 这个名字，视图侧用法不变。
-    typealias Pending = PendingPrompts.Item
+    public typealias Pending = PendingPrompts.Item
 
-    private(set) var hostHome: String?
+    public private(set) var hostHome: String?
     /// 待答集合：waterfall 推进来、cancelled 拿掉（判定在 DSHKit，可在秒级单测里钉住）。
-    private(set) var pending = PendingPrompts()
-    private(set) var isLive = false
+    public private(set) var pending = PendingPrompts()
+    public private(set) var isLive = false
 
     private var clientId: String?
     private var task: Task<Void, Never>?
@@ -34,7 +40,7 @@ final class HostEventHub {
     private var linkProvider: (@MainActor () -> LinkGateway?)?
 
     /// Subscribes to the raw event feed.
-    func events() -> AsyncStream<HostEvent> {
+    public func events() -> AsyncStream<HostEvent> {
         let id = UUID()
         let (stream, continuation) = AsyncStream<HostEvent>.makeStream(bufferingPolicy: .bufferingNewest(512))
         observers[id] = continuation
@@ -48,7 +54,7 @@ final class HostEventHub {
     ///
     /// A repair replaces the carrier underneath the app, so the feed cannot keep
     /// a client of its own: it has to ask again each time it reopens.
-    func attach(provider: @escaping @MainActor () -> LinkGateway?) {
+    public func attach(provider: @escaping @MainActor () -> LinkGateway?) {
         linkProvider = provider
     }
 
@@ -59,7 +65,7 @@ final class HostEventHub {
     /// the first time the socket failed: the task returned, `isLive` went false,
     /// and nothing reopened it until the app was foregrounded — which is exactly
     /// the moment a background notification should already have been sent.
-    func start(link: LinkGateway?) {
+    public func start(link: LinkGateway?) {
         guard task == nil else {
             // Already feeding: only the client it should use may have changed.
             self.link = linkProvider?() ?? link ?? self.link
@@ -94,7 +100,7 @@ final class HostEventHub {
         }
     }
 
-    func stop() {
+    public func stop() {
         task?.cancel()
         task = nil
         link = nil
@@ -110,7 +116,7 @@ final class HostEventHub {
         case .ready(let clientId, let home):
             // 每次重连都会拿到新的 clientId——补投是否发生，就看 ready 之后有没有
             // hub.waterfall。
-            ViewportProbe.note("hub.ready", ["client": String(clientId.prefix(8))], force: true)
+            Self.probeNote?("hub.ready", ["client": String(clientId.prefix(8))], true)
             self.clientId = clientId
             if !home.isEmpty { hostHome = home }
             isLive = true
@@ -119,17 +125,17 @@ final class HostEventHub {
             // 待答状态是"手机看不看得出 agent 在等你"的唯一来源，所以这里留一行
             // 诊断日志（只在 -DSHViewportProbe 时写文件）：排查"host 明明挂着提问、
             // 手机却没反应"时，第一件事就是看这行有没有出现。
-            ViewportProbe.note("hub.waterfall", [
+            Self.probeNote?("hub.waterfall", [
                 "event": waterfall.event,
                 "agent": waterfall.agentId,
                 "pending": String(pending.count + 1),
-            ], force: true)
+            ], true)
             // A waterfall blocks the host until answered, so it is promoted
             // into the pending list rather than merely forwarded.
             pending.apply(event)
 
         case .cancelled(let eventId):
-            ViewportProbe.note("hub.cancelled", ["id": eventId], force: true)
+            Self.probeNote?("hub.cancelled", ["id": eventId], true)
             pending.apply(event)
 
         case .emit, .unknown:
@@ -144,7 +150,7 @@ final class HostEventHub {
     // MARK: - Answering
 
     /// Answers one pending prompt and clears it locally.
-    func answer(_ item: Pending, with outcome: EventAnswer.Outcome) async throws {
+    public func answer(_ item: Pending, with outcome: EventAnswer.Outcome) async throws {
         guard let link, let clientId else {
             throw DSHTransportError.carrierClosed
         }
@@ -156,26 +162,26 @@ final class HostEventHub {
     /// Declines to handle a prompt, letting the host continue to other clients.
     ///
     /// Used when the desktop client is the better place to answer.
-    func pass(_ item: Pending) async {
+    public func pass(_ item: Pending) async {
         try? await answer(item, with: .next)
     }
 
     /// The pending prompts addressed to one session.
-    func pending(for sessionId: String) -> [Pending] {
+    public func pendingPrompts(for sessionId: String) -> [Pending] {
         pending.forSession(sessionId)
     }
 }
 
-extension HostEventHub.Pending {
+public extension HostEventHub.Pending {
     /// Decodes this prompt as a multiple-choice question, when it is one.
-    var userQuestions: UserQuestionsRequest? {
+    public var userQuestions: UserQuestionsRequest? {
         guard event == "user-questions/request" else { return nil }
         guard let data = try? JSONEncoder().encode(request) else { return nil }
         return try? JSONDecoder().decode(UserQuestionsRequest.self, from: data)
     }
 
     /// A human label for the prompt kind.
-    var title: String {
+    public var title: String {
         switch event {
         case "user-questions/request": return "需要你确认"
         case "approval/asked", "approval/request": return "请求授权"

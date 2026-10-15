@@ -8,76 +8,8 @@ import RelayKit
 import UIKit
 #endif
 
-/// One saved way to reach a DSH host.
-public struct ConnectionProfile: Codable, Identifiable, Sendable, Hashable {
-    /// How frames reach the host.
-    public enum Transport: Codable, Sendable, Hashable {
-        /// Straight to a DSH host on the same network. Fastest path: no relay
-        /// hop, no server bandwidth, full WebSocket streaming.
-        case direct(baseURL: URL, cookieName: String)
-        /// Through the relay, which is what works from cellular.
-        case relay(relayURL: URL, agentId: String)
-    }
-
-    public var id: UUID
-    public var name: String
-    public var transport: Transport
-    /// The host's home directory, learned on first connect; used to shorten
-    /// displayed paths the same way the desktop client does.
-    public var hostHome: String?
-    public var relayName: String?
-    public var lastConnectedAt: Date?
-
-    /// The version that made the user dismiss the "connector is out of date"
-    /// notice on this profile, so it is not shown again for the same version.
-    ///
-    /// Optional on purpose: the synthesized `Codable` decoding treats a missing
-    /// optional key as `nil`, so profiles already on disk keep decoding (a
-    /// non-optional field here would fail the whole array and lose the user's
-    /// connections). Storing the version — rather than a bare `Bool` — is what
-    /// makes the notice come back when the app's baseline moves past it.
-    public var outdatedNoticeDismissedFor: String?
-
-    public init(
-        id: UUID = UUID(),
-        name: String,
-        transport: Transport,
-        hostHome: String? = nil,
-        relayName: String? = nil,
-        lastConnectedAt: Date? = nil,
-        outdatedNoticeDismissedFor: String? = nil
-    ) {
-        self.id = id
-        self.name = name
-        self.transport = transport
-        self.hostHome = hostHome
-        self.relayName = relayName
-        self.lastConnectedAt = lastConnectedAt
-        self.outdatedNoticeDismissedFor = outdatedNoticeDismissedFor
-    }
-
-    /// Keychain account holding this profile's bearer secret.
-    var secretAccount: String { "profile-\(id.uuidString)" }
-
-    /// Whether this path avoids the relay entirely.
-    public var isDirect: Bool {
-        if case .direct = transport { return true }
-        return false
-    }
-
-    /// A short description for the connection list.
-    public var subtitle: String {
-        switch transport {
-        case .direct(let baseURL, _):
-            return baseURL.absoluteString
-        case .relay(let relayURL, _):
-            // The whole line is one key (`%@ · 中转`), not string concatenation:
-            // this value is painted on the settings screen as「主机地址」, and an
-            // English phone used to show the Chinese「中转」here.
-            return String(localized: "\(relayURL.host() ?? relayURL.absoluteString) · 中转")
-        }
-    }
-}
+@_exported import DSHConnectionAPI
+@_exported import DSHFoundation
 
 /// The app's live connection to one DSH host.
 ///
@@ -87,26 +19,11 @@ public struct ConnectionProfile: Codable, Identifiable, Sendable, Hashable {
 @MainActor
 @Observable
 public final class ConnectionStore {
+    public typealias State = ConnectionState
 
-    /// What the UI needs to know about the current link.
-    public enum State: Sendable, Equatable {
-        case disconnected
-        case connecting(String)
-        case connected(hostHome: String?)
-        case failed(String)
-
-        public var isConnected: Bool {
-            if case .connected = self { return true }
-            return false
-        }
-
-        /// Whether this is a link that dropped after working, rather than a
-        /// connection that was never established.
-        public var isConnecting: Bool {
-            if case .connecting = self { return true }
-            return false
-        }
-    }
+    /// App 注入的可观测探针钩子（默认无操作）。
+    /// RootView 在启动时把它接到 ViewportProbe.note。
+    public static var probeNote: ((_ kind: String, _ fields: [String: String], _ force: Bool) -> Void)? = nil
 
     /// A DSH instance discovered through pairing, awaiting a name.
     public struct Pairing: Sendable {
@@ -125,7 +42,7 @@ public final class ConnectionStore {
     ///
     /// Published by the host on its event stream; used to abbreviate paths the
     /// same way the desktop client does.
-    public internal(set) var hostHome: String?
+    public var hostHome: String?
 
     /// The origin the desktop web UI would be served from, for the WebView
     /// fallback. Nil on a relay connection, where the reachable origin is the
@@ -835,10 +752,6 @@ public final class ConnectionStore {
         guard let profile = preferredProfile else {
             // 没有可用的历史（首次安装、或密钥被清）：仍然显示连接页。留一行日志，
             // 排查"为什么没直接进列表"时不用再猜。
-            ViewportProbe.note("adopt.none", [
-                "profiles": String(profiles.count),
-                "withSecret": String(profiles.filter { hasSecret(for: $0) }.count),
-            ], force: true)
             return false
         }
         activeProfile = profile
@@ -895,7 +808,7 @@ public final class ConnectionStore {
     /// closed, the app is left non-connected with a profile still active, and
     /// everything after that — keeping the screen, reconnecting, refreshing the
     /// status — is the product's own code.
-    func dropLinkForTesting() async {
+    public func dropLinkForTesting() async {
         guard activeProfile != nil else { return }
         statusTask?.cancel()
         statusTask = nil
@@ -916,7 +829,7 @@ public final class ConnectionStore {
     /// Profiles are de-duplicated by their transport so re-scanning the same
     /// computer updates the existing entry instead of piling up copies.
     @discardableResult
-    func connect(link: ConnectLink) async -> String? {
+    public func connect(link: ConnectLink) async -> String? {
         switch link {
         case .pair(let relay, let code):
             do {
@@ -1125,7 +1038,7 @@ public final class ConnectionStore {
         return error.localizedDescription
     }
 
-    static var deviceModel: String {
+    public static var deviceModel: String {
         #if canImport(UIKit)
         var info = utsname()
         uname(&info)
@@ -1138,13 +1051,13 @@ public final class ConnectionStore {
         #endif
     }
 
-    static var appVersion: String {
+    public static var appVersion: String {
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
         let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1"
         return "\(version) (\(build))"
     }
 
-    static var deviceName: String {
+    public static var deviceName: String {
         #if canImport(UIKit)
         return UIDevice.current.name
         #else
@@ -1152,3 +1065,6 @@ public final class ConnectionStore {
         #endif
     }
 }
+
+// MARK: - LinkService 协议符合
+extension ConnectionStore: LinkService {}

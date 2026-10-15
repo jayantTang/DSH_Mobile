@@ -1,3 +1,5 @@
+import DSHConnectionDomain
+import DSHCore
 import DSHKit
 import RelayKit
 import SwiftUI
@@ -14,6 +16,14 @@ struct DSHMobileApp: App {
     @UIApplicationDelegateAdaptor(APNSRegistrar.self) private var appDelegate
 
     init() {
+        // 探针接线（025）：模块层的 Core/Domain 不认识 App 的调试仪器 ViewportProbe，
+        // 由装配层把 note 注入它们的 probeNote 钩子，行为与搬迁前一致。
+        let note: (String, [String: String], Bool) -> Void = { kind, fields, force in
+            ViewportProbe.note(kind, fields, force: force)
+        }
+        ConnectionStore.probeNote = note
+        HostEventHub.probeNote = note
+        SessionRouter.probeNote = note
         // 启动清扫：删掉 `Caches/outgoing-files/` 下 24 小时以上的残留。
         // 正常一次发送由 `ChatModel.sendFile` 自己删拷贝，这里兜的是「上传中途被
         // 杀」那一种 —— 否则暂存区只增不减（P-3）。放在 App 的初始化里、不放进

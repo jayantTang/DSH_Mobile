@@ -1,3 +1,5 @@
+import DSHConnectionDomain
+import DSHCore
 #if DEBUG
 import Foundation
 import UserNotifications

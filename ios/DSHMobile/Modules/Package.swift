@@ -16,6 +16,7 @@
 import PackageDescription
 
 let dshKit: Target.Dependency = .product(name: "DSHKit", package: "DSHKit")
+let relayKit: Target.Dependency = .product(name: "RelayKit", package: "DSHKit")
 
 let package = Package(
     name: "DSHMobileModules",
@@ -26,6 +27,7 @@ let package = Package(
         .library(name: "DSHDesign", targets: ["DSHDesign"]),
         .library(name: "DSHCore", targets: ["DSHCore"]),
         .library(name: "DSHConnectionAPI", targets: ["DSHConnectionAPI"]),
+        .library(name: "DSHConnectionDomain", targets: ["DSHConnectionDomain"]),
         .library(name: "DSHTestingSupport", targets: ["DSHTestingSupport"]),
     ],
     dependencies: [
@@ -43,8 +45,11 @@ let package = Package(
         .target(name: "DSHConnectionAPI"),
 
         // L2 核心服务：事件分发 / 传输编排 / 路由意图（禁 UI）
-        .target(name: "DSHCore", dependencies: ["DSHConnectionAPI", "DSHFoundation", dshKit]),
+        .target(name: "DSHCore", dependencies: ["DSHConnectionAPI", "DSHFoundation", dshKit, relayKit]),
         .testTarget(name: "DSHCoreTests", dependencies: ["DSHCore", "DSHTestingSupport"]),
+
+        // L1 连接单元领域层：实现 LinkService（禁 UI）
+        .target(name: "DSHConnectionDomain", dependencies: ["DSHConnectionAPI", "DSHFoundation", dshKit, relayKit]),
 
         // 测试辅助：仅测试依赖
         .target(name: "DSHTestingSupport", dependencies: ["DSHCore", "DSHConnectionAPI", dshKit]),

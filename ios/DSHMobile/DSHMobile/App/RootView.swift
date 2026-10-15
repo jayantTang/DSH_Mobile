@@ -1,3 +1,5 @@
+import DSHConnectionDomain
+import DSHCore
 import DSHDesign
 import DSHFoundation
 import DSHKit
@@ -29,6 +31,11 @@ struct RootView: View {
     @State private var connectionError: String?
 
     var body: some View {
+        // 模块化后这条修饰链跨模块解析变慢，拆成两个计算属性分段推导（025）。
+        stageTwo
+    }
+
+    private var stageOne: some View {
         content
             .environment(store)
             .environment(hub)
@@ -203,6 +210,10 @@ struct RootView: View {
             .onChange(of: store.state.isConnected) { _, isConnected in
                 syncConnectionState(isConnected)
             }
+    }
+
+    private var stageTwo: some View {
+        stageOne
             .onChange(of: scenePhase) { _, phase in
                 // 退到后台/被挂起：把转写尾部立刻写盘——此刻之后进程可能就没了。
                 if phase != .active {

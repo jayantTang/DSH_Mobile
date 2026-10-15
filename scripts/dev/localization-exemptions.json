@@ -108,21 +108,21 @@
     },
     {
       "rule": "hardcoded-string",
-      "file": "ios/DSHMobile/DSHMobile/Support/ConnectionStore.swift",
+      "file": "ios/DSHMobile/Modules/Sources/DSHConnectionDomain/ConnectionStore.swift",
       "snippet": "正在连接",
       "reason": "直连时写入 state 的连接状态文案（「正在连接 …」），由连接页/状态胶囊显示；不含设置页的「主机地址」值（那一处已在 ConnectionStore.subtitle 本地化）。不在本轮范围（G5 backlog）",
       "backlog": "i18n-backlog-app-connectionstore"
     },
     {
       "rule": "unlocalized-binding",
-      "file": "ios/DSHMobile/DSHMobile/Support/ConnectionStore.swift",
+      "file": "ios/DSHMobile/Modules/Sources/DSHConnectionDomain/ConnectionStore.swift",
       "snippet": "无法从启动令牌|我的电脑",
       "reason": "连接层的内部错误文案与默认设备名兜底；设置页显示值不在这里（「主机地址」已本地化）。不在本轮范围（G5 backlog）",
       "backlog": "i18n-backlog-app-connectionstore"
     },
     {
       "rule": "unlocalized-binding",
-      "file": "ios/DSHMobile/DSHMobile/Design/CodeHighlighting.swift",
+      "file": "ios/DSHMobile/Modules/Sources/DSHDesign/CodeHighlighting.swift",
       "reason": "代码高亮的语言名文案，不在本轮范围（G5 backlog）",
       "backlog": "i18n-backlog-app-codehighlighting"
     },
@@ -212,13 +212,13 @@
     },
     {
       "rule": "unlocalized-binding",
-      "file": "ios/DSHMobile/DSHMobile/Support/HostEventHub.swift",
+      "file": "ios/DSHMobile/Modules/Sources/DSHCore/HostEventHub.swift",
       "reason": "宿主事件诊断文案，不在本轮范围（G5 backlog）",
       "backlog": "i18n-backlog-app-hosteventhub"
     },
     {
       "rule": "unlocalized-binding",
-      "file": "ios/DSHMobile/DSHMobile/Support/Keychain.swift",
+      "file": "ios/DSHMobile/Modules/Sources/DSHFoundation/Keychain.swift",
       "reason": "钥匙串错误的文案出口，不在本轮范围（G5 backlog）",
       "backlog": "i18n-backlog-app-keychain"
     },

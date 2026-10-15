@@ -1,3 +1,5 @@
+import DSHConnectionDomain
+import DSHCore
 import DSHDesign
 import DSHKit
 import SwiftUI

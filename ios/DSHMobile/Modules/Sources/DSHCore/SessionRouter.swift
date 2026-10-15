@@ -1,3 +1,5 @@
+import DSHConnectionAPI
+import DSHFoundation
 import DSHKit
 import Foundation
 import Observation
@@ -28,10 +30,12 @@ import Observation
 /// 上面两个属性只是给视图观察用的镜像。
 @MainActor
 @Observable
-final class SessionRouter {
+public final class SessionRouter {
+    /// App 注入的可观测探针钩子（默认无操作）。
+    public static var probeNote: ((_ kind: String, _ fields: [String: String], _ force: Bool) -> Void)? = nil
     /// App-wide instance. A notification response is delivered to the delegate,
     /// which has no reference to any view, so this cannot be per-view.
-    static let shared = SessionRouter()
+    public static let shared = SessionRouter()
 
     /// The session a tap asked for, until someone takes it — **read-only**.
     ///
@@ -43,7 +47,7 @@ final class SessionRouter {
     ///
     /// An id rather than the session id itself: two taps on the same session are
     /// still two events, and `.task(id:)` must re-run for the second one.
-    private(set) var routingToken = "0"
+    public private(set) var routingToken = "0"
 
     /// The take-once rule lives here, where it can be unit tested (015).
     private let box = SessionRequestBox()
@@ -54,7 +58,7 @@ final class SessionRouter {
     nonisolated static let sessionKeys = ["sessionId", "sid"]
 
     /// Reads a session id out of a notification or launch payload.
-    nonisolated static func sessionId(in userInfo: [AnyHashable: Any]) -> String? {
+    public nonisolated static func sessionId(in userInfo: [AnyHashable: Any]) -> String? {
         for key in sessionKeys {
             if let value = userInfo[key] as? String {
                 let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -68,14 +72,14 @@ final class SessionRouter {
     ///
     /// The only writer there is: the notification delegate, the launch payload
     /// and the automation hooks all come through here (FR-007).
-    func request(sessionId: String) {
+    public func request(sessionId: String) {
         let request = box.put(sessionId: sessionId)
         requestedSessionId = request.sessionId
         routingToken = "\(request.generation)"
-        ViewportProbe.note("route.request", [
+        Self.probeNote?("route.request", [
             "sid": request.sessionId,
             "generation": "\(request.generation)",
-        ], force: true)
+        ], true)
     }
 
     /// Takes the pending request, clearing it in the same call (015).
@@ -83,13 +87,13 @@ final class SessionRouter {
     /// `nil` means "someone else owns it, or nothing is pending". A caller that
     /// gets `nil` does nothing at all — it must not look for the same intent in
     /// another property, which is how one tap used to become two pushes.
-    func take() -> SessionRequest? {
+    public func take() -> SessionRequest? {
         guard let request = box.take() else { return nil }
         requestedSessionId = nil
-        ViewportProbe.note("route.take", [
+        Self.probeNote?("route.take", [
             "sid": request.sessionId,
             "generation": "\(request.generation)",
-        ], force: true)
+        ], true)
         return request
     }
 
@@ -106,7 +110,7 @@ final class SessionRouter {
     ///
     /// `-DSHNotifySession <id>` mirrors `-DSHOpenSession`; the difference is the
     /// path, not the destination. Debug only.
-    nonisolated static func automationRequestedSession() -> String? {
+    public nonisolated static func automationRequestedSession() -> String? {
         let arguments = CommandLine.arguments
         guard let index = arguments.firstIndex(of: "-DSHNotifySession"),
               index + 1 < arguments.count
@@ -119,7 +123,7 @@ final class SessionRouter {
     /// 兼容保留：老调用点按"取走会话 id"的语义用它（用例台与诊断）。
     ///
     /// 与 ``take()`` 是同一个动作，只是丢掉代次。
-    func consume() -> String? {
+    public func consume() -> String? {
         take()?.sessionId
     }
 }

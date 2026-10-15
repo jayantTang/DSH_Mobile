@@ -1,3 +1,5 @@
+import DSHConnectionDomain
+import DSHCore
 import DSHFoundation
 import DSHKit
 import Foundation
@@ -271,7 +273,7 @@ final class ChatModel {
     /// Host prompts waiting for the human on this session.
     var pendingPrompts: [HostEventHub.Pending] {
         guard let session, let hub else { return [] }
-        return hub.pending(for: session.sessionId)
+        return hub.pendingPrompts(for: session.sessionId)
     }
 
     // MARK: - Lifecycle
