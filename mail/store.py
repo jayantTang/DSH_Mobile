@@ -55,7 +55,6 @@ CREATE TABLE IF NOT EXISTS feedbackThreads (
 CREATE INDEX IF NOT EXISTS feedbackThreadsByDevice ON feedbackThreads(deviceId);
 CREATE INDEX IF NOT EXISTS feedbackThreadsByAccount ON feedbackThreads(accountId);
 CREATE INDEX IF NOT EXISTS feedbackThreadsByStatus ON feedbackThreads(status, lastMessageAt);
-CREATE INDEX IF NOT EXISTS feedbackThreadsByTeam ON feedbackThreads(teamAccountId, lastMessageAt);
 
 CREATE TABLE IF NOT EXISTS feedbackMessages (
   messageId  TEXT PRIMARY KEY,
@@ -157,14 +156,14 @@ class Store:
         列一律追加在表末（SQLite 的 ALTER 语义如此），与 relay 侧 subject/format
         的处理同一条约定：新建库与迁移库列序一致（有测试钉住）。
         """
-        for table, column, ddl in (
-            ("feedbackThreads", "teamAccountId",
-             "ALTER TABLE feedbackThreads ADD COLUMN teamAccountId TEXT"),
-        ):
-            existing = {row[1] for row in self._conn.execute(f"PRAGMA table_info({table})")}
-            if column not in existing:
-                self._conn.execute(ddl)
-                logging.getLogger("mail.store").info("mail: added column %s.%s", table, column)
+        columns = {row[1] for row in self._conn.execute("PRAGMA table_info(feedbackThreads)")}
+        if "teamAccountId" not in columns:
+            # 老库补列（新建库由 SCHEMA 直接带上）。索引必须等列存在之后建——
+            # 放在 SCHEMA 里会在老库上先炸（2026-10-15 生产实测）。
+            self._conn.execute("ALTER TABLE feedbackThreads ADD COLUMN teamAccountId TEXT")
+            logging.getLogger("mail.store").info("mail: added column feedbackThreads.teamAccountId")
+        self._conn.execute("CREATE INDEX IF NOT EXISTS feedbackThreadsByTeam"
+                           " ON feedbackThreads(teamAccountId, lastMessageAt)")
 
     def close(self) -> None:
         with self._lock:
