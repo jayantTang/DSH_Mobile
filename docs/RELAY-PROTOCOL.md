@@ -43,7 +43,7 @@ Relay 只做两件事：**鉴权**与**按 `agentId` 转发**。它不解析 DLP
 | `GET`  | `/healthz` | 健康检查，返回 `{"ok":true,"version":1}` |
 | `GET`  | `/stats` | **运维侧**实时负载与流量（不属于协议，见 §5.3）；**仅回环可达**（回环校验 + 网关显式拒绝，两半缺一不可） |
 | `WS`   | `/link/agent?agentId=<id>` | 电脑侧连接器接入；`Authorization: Bearer <agentToken>` |
-| `WS`   | `/link/device?agentId=<id>` | 手机侧接入；`Authorization: Bearer <deviceToken>` |
+| `WS`   | `/link/device?agentId=<id>` | 手机侧接入；`Authorization: Bearer <deviceToken>`；浏览器客户端可在 `Sec-WebSocket-Protocol` 里携带 `dsh.device.<deviceToken>`（头优先，子协议仅在无头时生效；握手响应显式回显该子协议） |
 | `POST` | `/pair/claim` | 手机用配对码换取 `deviceToken` |
 | `POST` | `/pair/refresh` | 刷新 `deviceToken`（长期使用） |
 | `POST` | `/pair/code` | 电脑侧用 agent secret 铸一次性配对码 |
@@ -88,6 +88,7 @@ Relay 只做两件事：**鉴权**与**按 `agentId` 转发**。它不解析 DLP
 ### 2.2 鉴权失败
 
 WS 升级阶段失败直接回 HTTP `401` / `403`（不进入 WS 状态机）。
+两条凭据通道的优先级：`Authorization: Bearer` 头存在且格式正确时一律以头为准、完全忽略子协议；头缺失时子协议缺失/前缀不符/后缀为空/令牌无效均回 401，文案与既有通道一致。令牌字符必须是合法 token 字符（当前 `token_urlsafe` 产物只含 `A-Za-z0-9-_`）。
 进入 WS 后鉴权失败回 `{"t":"error","code":"auth/...","fatal":true}` 并关闭。
 
 ---

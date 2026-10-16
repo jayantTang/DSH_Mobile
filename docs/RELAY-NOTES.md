@@ -185,6 +185,23 @@ order with the real `caddy adapt` when a `caddy` binary is available.
   and an explicit length check in `dlp.parse_frame`.
 * `/pair/claim` is rate-limited per client IP (10 failures / 5 minutes) and
   scrypt verification is capped at 2 concurrent executions.
-* `/healthz` returns exactly `{"ok":true,"version":1}` as specified; richer
-  state is available from the agent's `/mobile-link/status` and from the relay
-  logs, so the spec'd shape is preserved for uptime probes.
+* `/healthz` keeps `ok`/`version` and adds a `capabilities` array
+  (`device-subprotocol-auth` etc.); uptime probes reading `ok` are unaffected,
+  and clients gate browser-only features on the capability flag instead of
+  probing version numbers.
+
+## 6. Browser clients may authenticate `/link/device` via subprotocol
+
+* Rationale: browsers cannot set custom headers on a WebSocket handshake, so a
+  web client sends its device token as `Sec-WebSocket-Protocol:
+  dsh.device.<token>`. Header `Authorization: Bearer` always wins when present
+  (iOS and the connector see zero change); `/link/agent` does not accept the
+  subprotocol channel at all. The relay echoes the accepted subprotocol in the
+  handshake response, so browser behaviour is unambiguous.
+* The token is a header, never a query parameter (URLs end up in logs and
+  Referer). Relay logs must not print it (FR-006).
+* CORS preflight additionally allows `PUT` (file upload) and `if-range`
+  (resume), and exposes `content-range`/`etag` so a browser can resume a
+  partial download without splicing a stale prefix onto a changed file.
+* Registered in `docs/relay-contract.json` capabilities as
+  `device-subprotocol-auth`.

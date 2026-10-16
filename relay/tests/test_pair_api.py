@@ -4,13 +4,20 @@ from __future__ import annotations
 
 import pytest
 
+import asyncio
+
+import aiohttp
 from conftest import agent_headers
 
 
 async def test_healthz_matches_the_spec_contract(client):
     response = await client.get("/healthz")
     assert response.status == 200
-    assert await response.json() == {"ok": True, "version": 1}
+    body = await response.json()
+    assert body["ok"] is True
+    assert body["version"] == 1
+    # FR-005 预期变更：能力清单是增量字段，不做全等断言
+    assert isinstance(body.get("capabilities"), list)
 
 
 async def test_options_preflight(client):
@@ -336,3 +343,98 @@ async def test_devices_push_defaults_the_switches_on(client, provisioned, store)
     assert response.status == 200, await response.text()
     row = store.device_by_id(device_id)
     assert row["pushTurnEnd"] == 1 and row["pushAttention"] == 1
+
+
+# ── Web client relay support（子协议凭据 / CORS / 能力标志）────────────────
+#
+# 浏览器无法在 WebSocket 握手设自定义头：设备接入额外接受 Sec-WebSocket-Protocol
+# 里的 `dsh.device.<token>`。头优先——iOS 与连接器零感知。
+
+
+async def test_device_subprotocol_token_is_accepted(client, provisioned):
+    token = await _paired_device(client, provisioned, name="WebKit")
+    agent_id = provisioned["agent"]["agentId"]
+    ws = await client.ws_connect(
+        f"/link/device?agentId={agent_id}",
+        protocols=[f"dsh.device.{token}"],
+    )
+    try:
+        # FR-002：回显被接受的子协议；只断言「连上」不足以覆盖回显。
+        assert ws.protocol == f"dsh.device.{token}"
+        await ws.send_str('{"t":"ping","ts":1}')
+        # 心跳或 hostStatus 任一先到都算握手成功后的正常流量
+        import json as _json
+        async with asyncio.timeout(5):
+            msg = await ws.receive()
+        assert msg.type in (aiohttp.WSMsgType.TEXT,), msg
+    finally:
+        await ws.close()
+
+
+async def test_device_subprotocol_with_an_unknown_token_is_rejected(client):
+    response = await client.get("/link/device",
+                                headers={"Sec-WebSocket-Protocol": "dsh.device.nope"})
+    assert response.status == 401
+
+
+async def test_device_header_wins_over_subprotocol(client, provisioned, store):
+    # 头与子协议指向不同设备时，一律以头为准（子协议完全被忽略）。
+    token_a = await _paired_device(client, provisioned, name="A")
+    # 配对码一次性：第二台设备用新码（同一 agent）。
+    code_b = store.mint_pair_code(provisioned["agent"]["agentId"], ttl_ms=60_000)
+    claim_b = await client.post("/pair/claim", json={
+        "pairCode": code_b["code"], "deviceName": "B", "model": "iPhone17,1", "appVersion": "1.0",
+    })
+    assert claim_b.status == 200, await claim_b.text()
+    token_b = (await claim_b.json())["deviceToken"]
+    agent_id = provisioned["agent"]["agentId"]
+    ws = await client.ws_connect(
+        f"/link/device?agentId={agent_id}",
+        headers={"Authorization": f"Bearer {token_a}"},
+        protocols=[f"dsh.device.{token_b}"],
+    )
+    try:
+        assert ws.protocol == f"dsh.device.{token_b}"  # 回显的是请求项，与凭据来源无关
+    finally:
+        await ws.close()
+
+
+async def test_agent_link_does_not_accept_subprotocol(client, provisioned):
+    # FR-001 边界：/link/agent 只认头，子协议通道不存在于连接器侧。
+    response = await client.get(
+        f"/link/agent?agentId={provisioned['agent']['agentId']}",
+        headers={"Sec-WebSocket-Protocol": f"dsh.device.{provisioned['agent']['agentSecret']}"},
+    )
+    assert response.status == 401
+
+
+async def test_cors_preflight_allows_put_and_exposes_range_headers(client):
+    response = await client.options("/files/up")
+    assert response.status == 204
+    methods = response.headers.get("access-control-allow-methods", "")
+    assert "PUT" in methods
+    exposed = response.headers.get("access-control-expose-headers", "")
+    assert "content-range" in exposed
+    assert "etag" in exposed
+    allowed_headers = response.headers.get("access-control-allow-headers", "")
+    assert "range" in allowed_headers
+    assert "if-range" in allowed_headers
+
+
+async def test_healthz_advertises_subprotocol_capability(client):
+    response = await client.get("/healthz")
+    assert response.status == 200
+    body = await response.json()
+    assert body["ok"] is True
+    assert "device-subprotocol-auth" in body["capabilities"]
+
+
+async def test_devices_list_echoes_the_callers_device_id(client, provisioned):
+    token = await _paired_device(client, provisioned, name="EchoCheck")
+    response = await client.get("/devices", headers={"Authorization": f"Bearer {token}"})
+    assert response.status == 200
+    body = await response.json()
+    # FR-004b：回带调用方自己的设备 id（字段名沿用既有的 currentDeviceId）。
+    assert body["currentDeviceId"]
+    ids = [d["deviceId"] for d in body["devices"]]
+    assert body["currentDeviceId"] in ids

@@ -363,7 +363,7 @@ console.log('RPC catalog 自洽（端点计数与分类计数对得上）：')
 // 已知限制（不必修）：CHANGELOG.md 缺 `## 连接器 0.2.0` 条目，所以将来若要把基线
 // 降到 0.2.0，得先补那条变更记录，(b2) 才会绿。
 
-const CONNECTOR_BASELINE_SWIFT = 'ios/DSHMobile/DSHMobile/Support/ConnectorBaseline.swift'
+const CONNECTOR_BASELINE_SWIFT = 'ios/DSHMobile/Modules/Sources/DSHFoundation/ConnectorBaseline.swift'
 
 /** 与 `HostVersion` 同口径的数字段比较：`split('-')[0].split('.').map(Number)`，缺段补 0。 */
 const versionSegments = (value) => value.split('-')[0].split('.').map(Number)

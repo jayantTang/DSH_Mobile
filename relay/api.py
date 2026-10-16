@@ -57,8 +57,9 @@ _FINGERPRINT_KEY = secrets.token_bytes(16)
 
 CORS_HEADERS = {
     "access-control-allow-origin": "*",
-    "access-control-allow-methods": "GET, POST, OPTIONS",
-    "access-control-allow-headers": "authorization, content-type, range",
+    "access-control-allow-methods": "GET, POST, PUT, OPTIONS",
+    "access-control-allow-headers": "authorization, content-type, range, if-range",
+    "access-control-expose-headers": "content-range, etag",
     "access-control-max-age": "600",
 }
 
@@ -69,6 +70,22 @@ def bearer_token(request: web.Request) -> str | None:
     if scheme.lower() != "bearer" or not value.strip():
         return None
     return value.strip()
+
+
+#: 浏览器无法在 WebSocket 握手设自定义头，因此设备接入额外接受子协议形式的凭据。
+#: 前缀固定，后缀是令牌原文（secrets.token_urlsafe 产物只含 A-Za-z0-9-_，是合法 token 字符）。
+DEVICE_SUBPROTOCOL_PREFIX = "dsh.device."
+
+
+def device_subprotocol_token(request: web.Request) -> str | None:
+    """从 Sec-WebSocket-Protocol 里取出设备令牌；没有或不合法时返回 None。"""
+    raw = request.headers.get("Sec-WebSocket-Protocol", "")
+    for item in raw.split(","):
+        candidate = item.strip()
+        if candidate.startswith(DEVICE_SUBPROTOCOL_PREFIX):
+            token = candidate[len(DEVICE_SUBPROTOCOL_PREFIX):].strip()
+            return token or None
+    return None
 
 
 def json_error(status: int, code: str, message: str, **extra: Any) -> web.Response:
@@ -260,7 +277,13 @@ class ClaimLimiter:
 
 
 async def healthz(_request: web.Request) -> web.Response:
-    return web.json_response({"ok": True, "version": dlp.PROTOCOL_VERSION})
+    return web.json_response({
+        "ok": True,
+        "version": dlp.PROTOCOL_VERSION,
+        # 能力清单（与连接器 status 的 capabilities 同一术语）：
+        # 客户端读不到这个字段就按"中转需升级"提示，不静默降级。
+        "capabilities": ["device-subprotocol-auth"],
+    })
 
 
 async def stats(request: web.Request) -> web.Response:
@@ -408,7 +431,11 @@ async def cors_preflight(request: web.Request, handler: Any) -> web.StreamRespon
     """
     if request.method == "OPTIONS":
         return web.Response(status=204, headers=CORS_HEADERS)
-    return await handler(request)
+    # 浏览器拿跨域响应也必须有 ACAO，否则预检通过了正文仍读不到
+    # （真实浏览器取证发现：预检放行 ≠ 响应可读）。
+    response = await handler(request)
+    response.headers["access-control-allow-origin"] = "*"
+    return response
 
 
 async def pair_claim(request: web.Request) -> web.Response:

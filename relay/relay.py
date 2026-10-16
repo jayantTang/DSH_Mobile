@@ -22,7 +22,7 @@ from aiohttp import WSMsgType, web
 
 import dlp
 import push
-from api import bearer_token, cors_preflight, register_http_routes
+from api import DEVICE_SUBPROTOCOL_PREFIX, bearer_token, device_subprotocol_token, cors_preflight, register_http_routes
 from hub import CLOSE_DEVICE_LIMIT, DeviceLimitReached, Limits, RelayHub
 from store import DEFAULT_DEVICE_TTL_MS, DEFAULT_PAIR_TTL_MS, Store
 
@@ -47,12 +47,20 @@ def normalize_base_path(raw: str | None) -> str:
 
 
 def _make_socket(request: web.Request, limits: Limits) -> web.WebSocketResponse:
+    # FR-002：显式回显被接受的子协议。aiohttp 在「服务端未声明协议」时不回显，
+    # 规范允许客户端接受不回显，但把这条不确定性留在链路里不值得。
+    echoed = [
+        item.strip()
+        for item in request.headers.get("Sec-WebSocket-Protocol", "").split(",")
+        if item.strip().startswith(DEVICE_SUBPROTOCOL_PREFIX)
+    ]
     return web.WebSocketResponse(
         max_msg_size=limits.max_frame_bytes,
         heartbeat=30.0,
         receive_timeout=None,
         autoping=True,
         compress=False,
+        protocols=echoed,  # 空列表等价于现状：不回显
     )
 
 
@@ -72,7 +80,8 @@ async def _agent_identity(request: web.Request) -> dict[str, Any]:
 
 async def _device_identity(request: web.Request) -> dict[str, Any]:
     store: Store = request.app["store"]
-    token = bearer_token(request)
+    # 浏览器无法在 WS 握手设自定义头：头优先（iOS/连接器零感知），子协议兜底。
+    token = bearer_token(request) or device_subprotocol_token(request)
     if not token:
         raise web.HTTPUnauthorized(text="missing bearer token")
     device = await asyncio.to_thread(store.device_by_token, token)

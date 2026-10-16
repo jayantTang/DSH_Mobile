@@ -73,7 +73,7 @@ export const SERVER_CAPABILITIES = [
   // history-scan-boundary: such a page also carries `scanBoundary` — the seq the
   // scan actually reached — so a caller whose page was filtered empty can still
   // advance instead of asking for the same stretch forever (spec 009 T039).
-  'history-scan-boundary',
+  'history-scan-boundary', 'device-subprotocol-auth',
 ]
 
 export function isHelloMethod(method) {

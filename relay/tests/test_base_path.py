@@ -43,7 +43,9 @@ async def test_healthz_is_served_with_and_without_the_prefix(prefixed_client):
     for path in ("/healthz", "/dsh-link/healthz"):
         response = await prefixed_client.get(path)
         assert response.status == 200, path
-        assert await response.json() == {"ok": True, "version": 1}
+        body = await response.json()
+        # FR-005 预期变更：capabilities 是增量字段，不做全等断言。
+        assert body["ok"] is True and body["version"] == 1
 
 
 async def test_pair_claim_works_under_the_prefix(prefixed_client, store, provisioned):

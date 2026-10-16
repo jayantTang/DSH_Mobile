@@ -4,6 +4,14 @@
 [语义化版本](https://semver.org/lang/zh-CN/)。三处部署（App / 连接器 / 中转）的组合见
 [`docs/VERSIONING.md`](docs/VERSIONING.md)。
 
+## 中转 — 2026-10-16（浏览器客户端可直连）
+
+Web 端需求落地（CHANGE-REQUEST-web-client-relay-support）：浏览器不能在 WebSocket 握手设自定义头，
+设备接入因此接受子协议凭据 `dsh.device.<token>`（头优先，iOS/连接器零感知），握手显式回显；
+CORS 预检放行 `PUT` 与 `if-range`、暴露 `content-range`/`etag`（浏览器续传与防错拼版本）；
+`/healthz` 增加 `capabilities` 能力清单；`/devices` 本就回带 `currentDeviceId`。不改帧格式、
+不改数据库、不改限流额度口径；契约能力词表同步登记。
+
 ## 连接器 0.6.5 — 2026-10-13（会话历史：过滤读取快 20–35 倍）
 
 "我问过的"灌库要按角色读会话历史，原来一页 2.5–4.1 秒、一个 13k 会话要翻 12 页（38 秒）。

@@ -14,7 +14,8 @@
     "session-search",
     "session-digest",
     "history-role-filter",
-    "history-scan-boundary"
+    "history-scan-boundary",
+    "device-subprotocol-auth"
   ],
   "deviceToAgent": [
     "req",
