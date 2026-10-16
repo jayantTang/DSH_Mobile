@@ -557,6 +557,8 @@ struct RootView: View {
             enteredWorkspace = true
             // "Already read" marks belong to one computer.
             viewLog.useScope(connectionScope)
+            // 032：已读水位同时是**账户级**状态——装配同步（另一台设备读过的，这里也要看到）。
+            AccountStateSync.shared.attach(viewLog: viewLog, link: { [weak store] in store })
             hub.startIfNeeded(link: store.link)
             Task { await listModel.start() }
             // Whatever was on screen when the link went away is stale by the
@@ -578,6 +580,7 @@ struct RootView: View {
             Task { await chatModel.forgetConnection() }
             attachmentImages.reset()
             viewLog.useScope(nil)
+            AccountStateSync.shared.stop()
         }
         // Otherwise the link dropped under a workspace the user is still in.
         // Nothing is torn down: the feed restarts itself, the rows stay put,
@@ -892,6 +895,7 @@ private struct MainView: View {
         ], force: true)
         await chatModel.open(summary)
         listModel.markViewed(request.sessionId)
+        AccountStateSync.shared.sessionViewed()
     }
 
     /// Waits for `sessionId` to appear in the list, up to the 20-second budget
@@ -936,6 +940,7 @@ private struct MainView: View {
                     // Opening is what "viewed" means: the row's marker clears
                     // here and nowhere else, so scrolling past does not count.
                     listModel.markViewed(sessionId)
+                    AccountStateSync.shared.sessionViewed()
                 }
         } else {
             SessionDetailView(model: chatModel)
@@ -953,6 +958,7 @@ private struct MainView: View {
         guard let summary = listModel.session(withId: sessionId) else { return }
         Task { await chatModel.open(summary) }
         listModel.markViewed(sessionId)
+        AccountStateSync.shared.sessionViewed()
         paths.append(sessionId)
     }
 

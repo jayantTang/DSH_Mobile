@@ -18,6 +18,7 @@
 		5C5B9606E67C26BBA5847EB7 /* DSHSessionsUI in Frameworks */ = {isa = PBXBuildFile; productRef = DD60306C76409F3032FA514B /* DSHSessionsUI */; };
 		5D5E9F45A493892379F5987D /* DSHFeedbackUI in Frameworks */ = {isa = PBXBuildFile; productRef = 5FFED3839962FD9ED05FE45D /* DSHFeedbackUI */; };
 		61B55FA169525351CFA007B5 /* RunKeepAlive.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFA758713F0F4217EFCD7A9A /* RunKeepAlive.swift */; };
+		65336B276F18FDBD4275D958 /* AccountStateSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = E81D7EA8C25588CA49E849FA /* AccountStateSync.swift */; };
 		73821BF9D6FD31005CB7FB28 /* DSHSessionsDomain in Frameworks */ = {isa = PBXBuildFile; productRef = F59D0246693203AA19695964 /* DSHSessionsDomain */; };
 		76EB973FB394D2B70D657AA2 /* DSHConnectionDomain in Frameworks */ = {isa = PBXBuildFile; productRef = E537E38B1E9A4966CDE8CAD4 /* DSHConnectionDomain */; };
 		7A5DBF56A82D9E6A1E08CA4E /* DSHMobileApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFF59C8B75008DE0FF3FC446 /* DSHMobileApp.swift */; };
@@ -84,6 +85,7 @@
 		CFA758713F0F4217EFCD7A9A /* RunKeepAlive.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunKeepAlive.swift; sourceTree = "<group>"; };
 		D1EB5F02211A37D06CE0F9EE /* Modules */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Modules; path = Modules; sourceTree = SOURCE_ROOT; };
 		D2814EB65E020031427D4B48 /* P13ResumeProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = P13ResumeProbe.swift; sourceTree = "<group>"; };
+		E81D7EA8C25588CA49E849FA /* AccountStateSync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountStateSync.swift; sourceTree = "<group>"; };
 		F5CF8CBD7D933E73F23B1594 /* MetricKitCrashObserver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetricKitCrashObserver.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -198,6 +200,7 @@
 		EE2371AD5E7CC7F36B1B1507 /* Support */ = {
 			isa = PBXGroup;
 			children = (
+				E81D7EA8C25588CA49E849FA /* AccountStateSync.swift */,
 				C975AD70ED569A5CA4717F6B /* APNSRegistrar.swift */,
 				0F4E908B435CC83454A6512C /* MessageLayerProbes.swift */,
 				F5CF8CBD7D933E73F23B1594 /* MetricKitCrashObserver.swift */,
@@ -364,6 +367,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				815A977B9321D3BDFADD0B8F /* APNSRegistrar.swift in Sources */,
+				65336B276F18FDBD4275D958 /* AccountStateSync.swift in Sources */,
 				7A5DBF56A82D9E6A1E08CA4E /* DSHMobileApp.swift in Sources */,
 				F4A6E969CBAE4CC8ABEE8C27 /* MessageLayerProbes.swift in Sources */,
 				E6B220D37AF428C377E17818 /* MetricKitCrashObserver.swift in Sources */,
