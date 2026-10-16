@@ -4,6 +4,22 @@
 [语义化版本](https://semver.org/lang/zh-CN/)。三处部署（App / 连接器 / 中转）的组合见
 [`docs/VERSIONING.md`](docs/VERSIONING.md)。
 
+## 中转 — 2026-10-16（配对码改持久、账户限 8 台 client）
+
+配对码原来是"10 分钟、一次性"：重装、换机、再加一个浏览器都要回到电脑前重新出码。这一版把
+**不带 `ttlMs` 的 `/pair/code` 换成持久码**（一直有效，直到用户点「重新生成」），新增
+`POST /pair/code/regenerate`——它**只作废旧码，不碰已配对设备**（设备靠各自的 `deviceToken`
+活着，要下线走 `/devices/revoke`）。认领可以反复进行，同一张码能配多台。
+
+配套两条约束：**一个账户最多 8 台已配对的 client**（iOS / Web 一起算，`DLP_MAX_PAIRED_DEVICES`），
+到顶返回 `409 limit/devices` 并提示去设备列表删一台——不自动替换任何已有设备；请求带
+`deviceKey`（iOS 钥匙串 / Web localStorage）且命中一台未撤销设备时**复用它的 deviceId**、
+只换发新 token（`reused: true`），所以重装与换机不占新名额。老连接器仍带 `ttlMs`，走的还是
+"限时码"那条老路径；老 App 不带 `deviceKey` 行为不变。
+
+数据库迁移到 v6：`pairCodes` 加 `revokedAt`/`lastUsedAt`/`useCount`，`devices` 加 `deviceKey`
+与 `(accountId, deviceKey)` 部分索引；`purge` 同时收走两小时前作废的码。
+
 ## 测试台与发布脚本 — 2026-10-16（安装页给出前两个旧版本）
 
 开发版发出去才发现问题时的退路：安装页除了最新版，再列出**前两个旧版本**，点一下就能覆盖安装回到

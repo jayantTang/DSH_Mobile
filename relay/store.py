@@ -65,7 +65,11 @@ CREATE TABLE IF NOT EXISTS devices (
   apnsEnv         TEXT,
   pushTurnEnd     INTEGER NOT NULL DEFAULT 1,
   pushAttention   INTEGER NOT NULL DEFAULT 1,
-  pushUpdatedAt   INTEGER
+  pushUpdatedAt   INTEGER,
+  -- 同一台 client 的持久标识（032）。重装后带着同一个 key 回来即"复用原来那台"，
+  -- 不再占新名额。**必须是本表最后一列**：迁移靠 `ALTER TABLE` 追加（`_migrate_to_6`）。
+  -- 老设备没有这个值（NULL），认领时按新设备处理。
+  deviceKey       TEXT
 );
 CREATE INDEX IF NOT EXISTS devices_agent ON devices(agentId);
 
@@ -74,9 +78,16 @@ CREATE TABLE IF NOT EXISTS pairCodes (
   agentId   TEXT NOT NULL,
   accountId TEXT NOT NULL,
   createdAt INTEGER NOT NULL,
-  expiresAt INTEGER NOT NULL,
+  -- 持久码没有过期时间（032）：NULL = 永久，直到用户点「重新生成」把它 `revokedAt`。
+  expiresAt INTEGER,
+  -- 首次认领审计。持久码可以被反复认领，所以它**不再是**认领门槛（见 `claim_pair_code`）。
   usedAt    INTEGER,
-  deviceId  TEXT
+  deviceId  TEXT,
+  -- 032：作废时刻（重新生成）、最后一次认领时刻、认领次数。
+  -- 三列都必须是本表最后几列，迁移靠 `ALTER TABLE` 追加（`_migrate_to_6`）。
+  revokedAt  INTEGER,
+  lastUsedAt INTEGER,
+  useCount   INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS pair_codes_agent ON pairCodes(agentId);
 
@@ -182,6 +193,14 @@ CREATE TABLE IF NOT EXISTS noticeDeliveries (
 DEFAULT_PAIR_TTL_MS = 10 * 60 * 1000
 DEFAULT_DEVICE_TTL_MS = 365 * 24 * 60 * 60 * 1000
 
+#: 一个账户最多能有多少台**未撤销**的 client（iOS / Web，032）。
+#:
+#: 为什么要有这个数（owner 2026-10-16 定为 8）：日流量额度是按**设备**算的
+#: （`hub.DailyQuota`），连接器又为每台接入过的设备各留一条 `$events` 值班流；
+#: 再加一个"泄漏的 deviceToken 就是一个入口"，设备数需要有上限。
+#: 上限在**认领**处拦（这里），"同时连接数"上限在 attach 处拦（`hub`），两层都要。
+DEFAULT_MAX_PAIRED_DEVICES = 8
+
 #: How far back a *rejected* pairing claim looks for the row it actually hit,
 #: and how many rows it is willing to scrypt-verify to find it.
 #:
@@ -218,7 +237,7 @@ DEFAULT_FEEDBACK_FORMAT = "text"
 #: "no such column" — on a relay that had otherwise reported itself healthy.
 #: Bumping this number and adding a step to ``_MIGRATIONS`` is what turns that
 #: into a startup migration.
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 
 def _migrate_to_1(conn: sqlite3.Connection) -> None:
@@ -345,10 +364,44 @@ def _migrate_to_5(conn: sqlite3.Connection) -> None:
 
 #: ``generation → function``, applied in order. Each step must be idempotent:
 #: a migration that fails after a partial commit is retried on the next start.
+def _migrate_to_6(conn: sqlite3.Connection) -> None:
+    """持久配对码与设备标识（032）。
+
+    `pairCodes` 加三列：`revokedAt`（用户点"重新生成"作废旧码）、`lastUsedAt`、
+    `useCount`（持久码可反复认领，得留下使用痕迹）。`expiresAt` 允许为 NULL =
+    永久有效——SQLite 的列类型本来就是灵活的，老行与非空约束都不受影响。
+
+    `devices` 加 `deviceKey`（同设备重装复用），并为"按账户找这台设备"建一条部分索引：
+    只索引未撤销的行，撤销掉的历史不参与查找。索引只在这里建，不写进 `SCHEMA`——
+    理由同 `_migrate_to_5` 那条注释：老库里 `deviceKey` 列还不存在时，`CREATE INDEX`
+    会让"打开一个老库"当场报 `no such column`。
+
+    幂等性照既有口径：`ADD COLUMN` 没有 `IF NOT EXISTS`，所以先查列。
+    """
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(pairCodes)")}
+    for column, declaration in (
+        ("revokedAt", "INTEGER"),
+        ("lastUsedAt", "INTEGER"),
+        ("useCount", "INTEGER NOT NULL DEFAULT 0"),
+    ):
+        if column not in existing:
+            conn.execute(f"ALTER TABLE pairCodes ADD COLUMN {column} {declaration}")
+
+    device_columns = {row[1] for row in conn.execute("PRAGMA table_info(devices)")}
+    if "deviceKey" not in device_columns:
+        conn.execute("ALTER TABLE devices ADD COLUMN deviceKey TEXT")
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS devices_account_deviceKey"
+        " ON devices(accountId, deviceKey) WHERE deviceKey IS NOT NULL AND revokedAt IS NULL"
+    )
+
+
 _MIGRATIONS: dict[int, Any] = {
     1: _migrate_to_1,
     2: _migrate_to_2,
     3: _migrate_to_3,
+    6: _migrate_to_6,
     4: _migrate_to_4,
     5: _migrate_to_5,
 }
@@ -386,6 +439,21 @@ class InviteRejected(StoreError):
     def __init__(self, reason: str, message: str):
         super().__init__(message)
         self.reason = reason
+
+
+class PairedDeviceLimitReached(Conflict):
+    """一个账户已配对的 client 到顶了（032 FR-003）。
+
+    跟着"拒绝新认领"走（owner 选择的策略），不自动替换任何已有设备：被悄悄踢掉的
+    那台可能是用户唯一在用的。带 ``limit`` 与 ``live`` 两个数字，接口层据此给出
+    "去设备列表先删一台"的可执行提示。
+    """
+
+    def __init__(self, limit: int, live: int):
+        super().__init__(
+            f"this account already has {live} paired devices (limit {limit})")
+        self.limit = limit
+        self.live = live
 
 
 class PairCodeClaimRejected(NotFound):
@@ -670,7 +738,13 @@ class Store:
 
     # ── pairing ─────────────────────────────────────────────────────────────
 
-    def mint_pair_code(self, agent_id: str, ttl_ms: int = DEFAULT_PAIR_TTL_MS) -> dict[str, Any]:
+    def mint_pair_code(self, agent_id: str, ttl_ms: int | None = None) -> dict[str, Any]:
+        """铸一枚配对码。``ttl_ms=None`` = **持久码**（032）：不过期，直到用户重新生成。
+
+        为什么默认改成持久：owner 2026-10-16 要求"码长期有效，直到用户点重新生成"，
+        这样重装、换机、加一台 Web 都不用回到电脑前出码。老连接器仍在请求里带 `ttlMs`，
+        那条路径一字未改（带 TTL 的码行为与今天完全一致）。
+        """
         agent = self.agent_by_id(agent_id)
         if agent is None:
             raise NotFound(f"agent {agent_id} does not exist")
@@ -681,24 +755,58 @@ class Store:
         raw = "".join(secrets.choice(alphabet) for _ in range(8))
         code = f"{raw[:4]}-{raw[4:]}"
         created = now_ms()
-        expires = created + int(ttl_ms)
+        expires = None if ttl_ms is None else created + int(ttl_ms)
         self._write(
-            "INSERT INTO pairCodes(codeHash, agentId, accountId, createdAt, expiresAt) VALUES(?,?,?,?,?)",
+            "INSERT INTO pairCodes(codeHash, agentId, accountId, createdAt, expiresAt)"
+            " VALUES(?,?,?,?,?)",
             (hash_pair_code(code), agent_id, agent["accountId"], created, expires),
         )
-        return {"code": code, "expiresAt": expires, "agentId": agent_id, "ttlMs": int(ttl_ms)}
+        return {"code": code, "expiresAt": expires, "agentId": agent_id,
+                "ttlMs": None if ttl_ms is None else int(ttl_ms), "persistent": ttl_ms is None}
+
+    def regenerate_pair_code(self, agent_id: str, ttl_ms: int | None = None) -> dict[str, Any]:
+        """用户点「重新生成」：作废该 agent 现存的所有码，再铸一枚新的。
+
+        **只作废码，不碰 devices**（032 FR-002）：已经在用的手机/浏览器靠各自的
+        deviceToken 活着，换码不该把它们踢下线。返回里带 `revoked` 条数，便于日志与用例断言。
+        """
+        agent = self.agent_by_id(agent_id)
+        if agent is None:
+            raise NotFound(f"agent {agent_id} does not exist")
+        if agent["disabled"]:
+            raise Conflict(f"agent {agent_id} is disabled")
+        stamp = now_ms()
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE pairCodes SET revokedAt=? WHERE agentId=? AND revokedAt IS NULL",
+                (stamp, agent_id),
+            )
+            revoked = cur.rowcount or 0
+            self._conn.commit()
+        minted = self.mint_pair_code(agent_id, ttl_ms=ttl_ms)
+        return {**minted, "revoked": revoked}
 
     def claim_pair_code(self, code: str, *, device_name: str, model: str | None = None,
                         app_version: str | None = None,
-                        ttl_ms: int = DEFAULT_DEVICE_TTL_MS) -> dict[str, Any]:
-        """Consume a pairing code and mint a long-lived device token.
+                        ttl_ms: int = DEFAULT_DEVICE_TTL_MS,
+                        device_key: str | None = None,
+                        max_paired_devices: int = DEFAULT_MAX_PAIRED_DEVICES) -> dict[str, Any]:
+        """Redeem a pairing code and mint a long-lived device token.
 
-        The lookup has to scan live unused codes because each row carries its
-        own scrypt salt; the candidate set is tiny (codes expire in minutes).
+        **可以反复认领**（032）：持久码不是一次性的，所以门槛是"未撤销且未过期"
+        （没有 ``expiresAt`` 的行 = 永久）。第一次认领仍会写 ``usedAt``/``deviceId``
+        留痕，但那是审计，不是门槛。
 
-        A miss is not simply "not found": see :meth:`_pair_code_rejection`, which
-        re-checks the bounded recent history so the caller can say whether the
-        code was already spent or had run out.
+        两条去重/限额规则：
+
+        * 带 ``device_key``（同一台 client 重装、或浏览器的 localStorage）且命中一台
+          **未撤销**的设备 → **复用它的 deviceId、只换发 token**，不占新名额；
+        * 否则按账户统计未撤销设备数，达到 ``max_paired_devices`` 就拒绝
+          （``PairedDeviceLimitReached``），**不铸 token**。
+
+        The lookup has to scan live codes because each row carries its own scrypt
+        salt; the candidate set is the non-revoked, non-expired tail of the table.
+        A miss is not simply "not found": see :meth:`_pair_code_rejection`.
         """
         normalized = normalize_pair_code(code)
         if not normalized:
@@ -706,7 +814,8 @@ class Store:
         stamp = now_ms()
         with self._lock:
             rows = self._conn.execute(
-                "SELECT * FROM pairCodes WHERE usedAt IS NULL AND expiresAt > ? ORDER BY createdAt DESC LIMIT 200",
+                "SELECT * FROM pairCodes WHERE revokedAt IS NULL"
+                " AND (expiresAt IS NULL OR expiresAt > ?) ORDER BY createdAt DESC LIMIT 200",
                 (stamp,),
             ).fetchall()
             match = next((row for row in rows if _verify_pair_code(normalized, row["codeHash"])), None)
@@ -717,17 +826,46 @@ class Store:
             ).fetchone()
             if agent is None or agent["disabled"]:
                 raise NotFound("the agent for this pairing code is unavailable")
-            device_id = new_id("dev")
+
+            reused = None
+            if device_key:
+                reused = self._conn.execute(
+                    "SELECT * FROM devices WHERE accountId=? AND deviceKey=? AND revokedAt IS NULL"
+                    " ORDER BY createdAt DESC LIMIT 1",
+                    (agent["accountId"], device_key),
+                ).fetchone()
+
+            if reused is None:
+                live = self._conn.execute(
+                    "SELECT COUNT(*) FROM devices WHERE accountId=? AND revokedAt IS NULL",
+                    (agent["accountId"],),
+                ).fetchone()[0]
+                if int(max_paired_devices) > 0 and live >= int(max_paired_devices):
+                    raise PairedDeviceLimitReached(int(max_paired_devices), int(live))
+
             token = new_token("dt")
             expires = stamp + int(ttl_ms)
+            if reused is not None:
+                device_id = reused["deviceId"]
+                self._conn.execute(
+                    "UPDATE devices SET deviceTokenHash=?, name=?, model=?, appVersion=?,"
+                    " expiresAt=?, lastSeenAt=? WHERE deviceId=?",
+                    (sha256_hex(token), device_name or reused["name"], model or reused["model"],
+                     app_version or reused["appVersion"], expires, stamp, device_id),
+                )
+            else:
+                device_id = new_id("dev")
+                self._conn.execute(
+                    "INSERT INTO devices(deviceId, deviceTokenHash, agentId, accountId, name, model,"
+                    " appVersion, createdAt, expiresAt, deviceKey) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                    (device_id, sha256_hex(token), agent["agentId"], agent["accountId"],
+                     device_name or "iOS device", model, app_version, stamp, expires, device_key),
+                )
             self._conn.execute(
-                "INSERT INTO devices(deviceId, deviceTokenHash, agentId, accountId, name, model,"
-                " appVersion, createdAt, expiresAt) VALUES(?,?,?,?,?,?,?,?,?)",
-                (device_id, sha256_hex(token), agent["agentId"], agent["accountId"],
-                 device_name or "iOS device", model, app_version, stamp, expires),
+                "UPDATE pairCodes SET useCount=useCount+1, lastUsedAt=?,"
+                " usedAt=COALESCE(usedAt, ?), deviceId=COALESCE(deviceId, ?) WHERE codeHash=?",
+                (stamp, stamp, device_id, match["codeHash"]),
             )
-            self._conn.execute("UPDATE pairCodes SET usedAt=?, deviceId=? WHERE codeHash=?",
-                               (stamp, device_id, match["codeHash"]))
             self._conn.commit()
         return {
             "ok": True,
@@ -737,40 +875,55 @@ class Store:
             "deviceId": device_id,
             "deviceToken": token,
             "expiresAt": expires,
+            "reused": reused is not None,
         }
 
     def _pair_code_rejection(self, normalized: str, stamp: int) -> PairCodeClaimRejected:
-        """Why a claim missed every live code: spent, expired, or never issued.
+        """Why a claim missed every live code: revoked, expired, or never issued.
 
         Called only from the failure path of :meth:`claim_pair_code`, with the
         lock held. The candidate query deliberately excludes rows that are still
         live — those were already scanned and did not match, so a hit here can
-        only mean used or expired, and the answer can never contradict the
+        only mean revoked or expired, and the answer can never contradict the
         decision that produced it. Bounded by both time and row count; see
         ``_PAIR_REJECT_LOOKBACK_MS``.
+
+        **`used` 不再是原因**（032）：持久码可以反复认领，一条已经被认领过的码
+        仍然是有效码。留着"已使用"这条原因只会把正常行为报成失败。
         """
         rows = self._conn.execute(
-            "SELECT * FROM pairCodes WHERE createdAt > ? AND (usedAt IS NOT NULL OR expiresAt <= ?)"
+            "SELECT * FROM pairCodes WHERE createdAt > ?"
+            " AND (revokedAt IS NOT NULL OR (expiresAt IS NOT NULL AND expiresAt <= ?))"
             " ORDER BY createdAt DESC LIMIT ?",
             (stamp - _PAIR_REJECT_LOOKBACK_MS, stamp, _PAIR_REJECT_LIMIT),
         ).fetchall()
         hit = next((row for row in rows if _verify_pair_code(normalized, row["codeHash"])), None)
         if hit is None:
             return PairCodeClaimRejected("unknown", "that pairing code is not valid")
-        if hit["usedAt"] is not None:
+        if hit["revokedAt"] is not None:
             return PairCodeClaimRejected(
-                "used", "that pairing code has already been used",
+                "revoked", "that pairing code was replaced by a newer one",
                 agentId=hit["agentId"], createdAt=int(hit["createdAt"]),
-                usedAt=int(hit["usedAt"]), deviceId=hit["deviceId"])
+                revokedAt=int(hit["revokedAt"]))
         return PairCodeClaimRejected(
             "expired", "that pairing code has expired",
             agentId=hit["agentId"], createdAt=int(hit["createdAt"]),
             expiresAt=int(hit["expiresAt"]))
 
     def purge_expired(self, at: int | None = None) -> int:
+        """删掉过期码，以及**早就作废**的码（032）。
+
+        作废码（用户点了"重新生成"）自己不会过期（持久码 `expiresAt IS NULL`），如果一直留着，
+        每点一次"重新生成"就永久多一行。留到"拒绝原因查找窗口"之外再删：窗口内还要靠它把
+        `pair/revoked-code` 与"打错字"分开，删早了用户只会看到 `pair/invalid-code`。
+        """
         stamp = at or now_ms()
         with self._lock:
-            cursor = self._conn.execute("DELETE FROM pairCodes WHERE expiresAt < ?", (stamp,))
+            cursor = self._conn.execute(
+                "DELETE FROM pairCodes WHERE (expiresAt IS NOT NULL AND expiresAt < ?)"
+                " OR (revokedAt IS NOT NULL AND revokedAt < ?)",
+                (stamp, stamp - _PAIR_REJECT_LOOKBACK_MS),
+            )
             self._conn.commit()
             return cursor.rowcount or 0
 

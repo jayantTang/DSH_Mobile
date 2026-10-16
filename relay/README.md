@@ -344,6 +344,7 @@ Overridable: `DSH_RELAY_USER`, `DSH_RELAY_DIR`, `DSH_RELAY_DATA`,
 | `--device-ttl-days` | `365` | device-token lifetime |
 | `--queue-depth` | `512` | per-device backpressure bound |
 | `--max-devices-per-agent` / `DLP_MAX_DEVICES_PER_AGENT` | `0` (unlimited) | how many devices one agent may keep attached; a reconnect never counts twice |
+| `--max-paired-devices` / `DLP_MAX_PAIRED_DEVICES` | `8` | 一个账户最多多少台**已配对**的 client（iOS / Web），`0` = 不限。与上一行是两层：这一层在**认领配对码**时拦（`409 limit/devices`，`details.maxPairedDevices`），上一行在**同时连接**时拦。持久配对码可以反复认领（032），所以它同时是"一枚持久码最多能给多少台设备用" |
 | `--device-rate-kbps` / `DLP_DEVICE_RATE_KBPS` | `0` (no pacing) | per-device egress pacing, in **kilobits per second** |
 | `--device-daily-mb` / `DLP_DEVICE_DAILY_MB` | `0` (unlimited) | per-device egress allowance per **local** day, in megabytes; the count is read from `usageDaily`, so a reconnect or a restart does not reset it |
 | `--dead-device-warn-threshold` / `DLP_DEAD_DEVICE_WARN_THRESHOLD` | `200` | 一个 agent 名下的死设备记录（已撤销 ∪ 已过期）超过它就在该连接器连上时记一条 WARNING；`0` = 不告警。只告警、不自动删——清理见「Dead device records」 |
@@ -369,6 +370,11 @@ perfectly ordinary session not ruining everybody else's:
   than the connection's: reconnecting, or a relay restart, continues where it left
   off. Set it to a comfortable multiple of a heavy day (a few hundred MB) rather
   than to a typical day.
+* **`--max-paired-devices`**（默认 8，032）— 账户里"配过几台 client"的上限，含 Web。
+  为什么要它：日流量额度是按**设备**算的，连接器又为每台接入过的设备各留一条 `$events`
+  值班流，而一枚持久配对码可以反复认领——没有这个数，一枚流出去的码就是无限个入口。
+  到顶时**拒绝新认领**（不自动替换任何已有设备：被悄悄踢掉的那台可能是用户唯一在用的），
+  提示用户到设置里删一台。同一台设备带 `deviceKey` 回来（重装/换机）复用原身份，不占新名额。
 * **`--max-devices-per-agent`** — one computer, one person. This is what stops a
   leaked device token (or a pairing script) from filling the relay with sockets
   that all multiplex onto one connector. A device reconnecting is counted once,

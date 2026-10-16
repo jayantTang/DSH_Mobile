@@ -68,9 +68,9 @@ def test_a_fresh_database_creates_the_four_feedback_tables(tmp_path):
     Store(path).close()
     for table, expected in EXPECTED_COLUMNS.items():
         assert columns(path, table) == expected, table
-    # 版本号是 5（019 把 `noticeDeliveries` 的收件人从设备换成账号时 bump 的，
-    # 见 test_store_schema_version.py）。
-    assert user_version(path) == SCHEMA_VERSION == 5
+    # 版本号跟着 SCHEMA_VERSION 走：019 那次（`noticeDeliveries` 收件人从设备换成账号）
+    # 是 5，032（持久配对码 + deviceKey）是 6。断言不写死数字，避免每加一列就要改这里。
+    assert user_version(path) == SCHEMA_VERSION
 
 
 def test_indexes_the_readers_rely_on_exist(tmp_path):

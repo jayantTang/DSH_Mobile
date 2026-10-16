@@ -25,7 +25,8 @@ import push
 from api import DEVICE_SUBPROTOCOL_PREFIX, bearer_token, device_subprotocol_token, cors_preflight, register_http_routes
 from hub import (CLOSE_DEVICE_LIMIT, DeviceLimitReached, Limits, RelayHub,
                  dead_device_warn_threshold_from_env)
-from store import DEFAULT_DEVICE_TTL_MS, DEFAULT_PAIR_TTL_MS, Store
+from store import (DEFAULT_DEVICE_TTL_MS, DEFAULT_MAX_PAIRED_DEVICES, DEFAULT_PAIR_TTL_MS,
+                  Store)
 
 LOGGER = logging.getLogger("relay")
 
@@ -236,6 +237,7 @@ async def link_device(request: web.Request) -> web.WebSocketResponse:
 def create_app(*, store: Store, limits: Limits | None = None,
                pair_ttl_ms: int = DEFAULT_PAIR_TTL_MS,
                device_ttl_ms: int = DEFAULT_DEVICE_TTL_MS,
+               max_paired_devices: int = DEFAULT_MAX_PAIRED_DEVICES,
                base_path: str = "",
                logger: logging.Logger | None = None) -> web.Application:
     limits = limits or Limits()
@@ -245,6 +247,7 @@ def create_app(*, store: Store, limits: Limits | None = None,
     app["limits"] = limits
     app["pair_ttl_ms"] = pair_ttl_ms
     app["device_ttl_ms"] = device_ttl_ms
+    app["max_paired_devices"] = max(0, int(max_paired_devices))
     app["base_path"] = base_path
     app["hub"] = RelayHub(store, logger=logger or LOGGER, limits=limits)
 
@@ -293,6 +296,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-devices-per-agent", type=int,
                         default=int(os.environ.get("DLP_MAX_DEVICES_PER_AGENT", "0")),
                         help="how many devices one agent may keep attached (0 = unlimited)")
+    parser.add_argument("--max-paired-devices", type=int,
+                        default=int(os.environ.get(
+                            "DLP_MAX_PAIRED_DEVICES", str(DEFAULT_MAX_PAIRED_DEVICES))),
+                        help="一个账户最多能有多少台未撤销的 client（032；0 = 不限）。"
+                             "与 --max-devices-per-agent 是两层：这里拦“认领”，那里拦“同时连接”")
     parser.add_argument("--device-rate-kbps", type=float,
                         default=float(os.environ.get("DLP_DEVICE_RATE_KBPS", "0")),
                         help="per-device egress pacing in kilobits per second (0 = no pacing). "
@@ -334,6 +342,9 @@ def main(argv: list[str] | None = None) -> int:
         ),
         pair_ttl_ms=int(args.pair_ttl_seconds) * 1000,
         device_ttl_ms=int(args.device_ttl_days) * 86_400_000,
+        # 账户级"已配对"上限（032）。与 limits 里的"同时连接"上限是两层，
+        # 所以它属于应用配置（认领时用）而不是 hub 的 Limits。
+        max_paired_devices=int(args.max_paired_devices),
         base_path=args.base_path,
     )
 

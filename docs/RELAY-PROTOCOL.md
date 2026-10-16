@@ -46,7 +46,8 @@ Relay 只做两件事：**鉴权**与**按 `agentId` 转发**。它不解析 DLP
 | `WS`   | `/link/device?agentId=<id>` | 手机侧接入；`Authorization: Bearer <deviceToken>`；浏览器客户端可在 `Sec-WebSocket-Protocol` 里携带 `dsh.device.<deviceToken>`（头优先，子协议仅在无头时生效；握手响应显式回显该子协议） |
 | `POST` | `/pair/claim` | 手机用配对码换取 `deviceToken` |
 | `POST` | `/pair/refresh` | 刷新 `deviceToken`（长期使用） |
-| `POST` | `/pair/code` | 电脑侧用 agent secret 铸一次性配对码 |
+| `POST` | `/pair/code` | 电脑侧用 agent secret 铸配对码；**不带 `ttlMs` = 持久码**（不过期） |
+| `POST` | `/pair/code/regenerate` | 用户点「重新生成」：作废该电脑现存的所有码并铸一枚新的（**不影响已配对设备**） |
 | `POST` | `/agents/enroll` | 用邀请码自助登记，换 `agentId` / `agentSecret` |
 | `GET`  | `/devices` | 用 device token 列出**自己的**配对设备 |
 | `POST` | `/devices/revoke` | 用 device token 撤销自己的某台配对设备 |
@@ -59,30 +60,40 @@ Relay 只做两件事：**鉴权**与**按 `agentId` 转发**。它不解析 DLP
 请求：
 
 ```json
-{ "pairCode": "7F3K-9Q2M", "deviceName": "Example iPhone", "deviceModel": "iPhone17,1", "appVersion": "1.0.0" }
+{ "pairCode": "7F3K-9Q2M", "deviceName": "Example iPhone", "deviceModel": "iPhone17,1",
+  "appVersion": "1.0.0", "deviceKey": "9f2c…（可选，同一台 client 的持久标识）" }
 ```
 
 响应 `200`：
 
 ```json
 { "ok": true, "agentId": "agt_...", "deviceToken": "dt_...", "accountId": "acc_...",
-  "agentName": "Example 的 MacBook Pro", "expiresAt": 1790000000000 }
+  "agentName": "Example 的 MacBook Pro", "expiresAt": 1790000000000, "reused": false }
 ```
 
 失败：`{"ok":false,"error":{"code":"pair/invalid-code","message":"..."}}`
 
-`error.code` 区分三种失败（HTTP 状态都是 `404`），因为三者的下一步动作不同：
+`error.code` 区分几种失败（**除限额是 `409`，其余都是 `404`**），因为下一步动作不同：
 
-| `error.code` | 含义 | 该做什么 |
-|---|---|---|
-| `pair/invalid-code` | 没有这张码（打错，或早于判定窗口） | 重新生成一张 |
-| `pair/used-code` | 这张码已经被兑换过 | 重新生成一张；一张码只能配一台设备 |
-| `pair/expired-code` | 这张码过了有效期 | 重新生成一张 |
+| `error.code` | HTTP | 含义 | 该做什么 |
+|---|---|---|---|
+| `pair/invalid-code` | 404 | 没有这张码（打错，或早于判定窗口） | 核对屏幕上的码 |
+| `pair/expired-code` | 404 | 限时码过了有效期 | 重新生成一张 |
+| `pair/revoked-code` | 404 | 这张码被「重新生成」顶掉了 | 看屏幕上现在那张 |
+| `limit/devices` | 409 | 该账户已配对的 client 到上限（默认 8） | 到设置里删掉一台再用；`details` 带 `maxPairedDevices` / `pairedDevices` |
 
-判定「已用 / 过期」要逐行核对最近两小时内的码，因此超出这个窗口的码一律按
+判定「过期 / 作废」要逐行核对最近两小时内的码，因此超出这个窗口的码一律按
 `pair/invalid-code` 回答；判定失败同样计入限流桶。
 
-- 配对码一次性、有时效（默认 10 分钟），由电脑侧连接器生成并展示（二维码 / 终端）。
+- **配对码可以反复认领**：持久码（`/pair/code` 不带 `ttlMs` 铸出来的那种）一直有效，
+  直到用户点「重新生成」。带 `ttlMs` 的限时码（老连接器走这条路）语义与以前一致。
+- **一个账户最多 8 台已配对的 client**（含 Web，`DLP_MAX_PAIRED_DEVICES`）。上限在**认领**处拦，
+  与「同时连接数」上限（`DLP_MAX_DEVICES_PER_AGENT`）是两层。
+- **`deviceKey`**：同一台 client 的持久标识（iOS 放钥匙串、Web 放 localStorage）。带了它并命中一台
+  未撤销的设备，就复用那台的 `deviceId`、只换发新 token，响应里 `reused: true`——重装/换机不占新名额。
+  格式非法按「没带」处理（不因一个坏字段拒绝整次认领）。
+- **重新生成不影响已连接的设备**：`/pair/code/regenerate` 只把旧码置为作废；设备靠各自的
+  `deviceToken` 活着，要下线一台走 `POST /devices/revoke`。
 - `deviceToken` 长期有效（默认 365 天），并随 `/pair/refresh` 轮换。
 
 ### 2.2 鉴权失败

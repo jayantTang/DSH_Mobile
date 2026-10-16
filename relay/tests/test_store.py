@@ -8,7 +8,7 @@ import time
 import pytest
 
 from store import (Conflict, InviteRejected, NotFound, PairCodeClaimRejected, Store,
-                   normalize_pair_code)
+                   hash_pair_code, normalize_pair_code, now_ms)
 
 
 def test_pair_codes_are_stored_hashed(store: Store):
@@ -29,7 +29,8 @@ def test_agent_secret_is_stored_hashed_and_looked_up(store: Store):
     assert store.agent_by_secret("as_wrong") is None
 
 
-def test_pair_code_is_single_use_and_normalized(store: Store):
+def test_pair_code_is_reusable_and_normalized(store: Store):
+    """032：认领**不再**是一次性的；大小写与空格仍然照旧归一。"""
     account = store.create_account("a")
     agent = store.register_agent(account["accountId"], "mac")
     minted = store.mint_pair_code(agent["agentId"], ttl_ms=60_000)
@@ -38,13 +39,18 @@ def test_pair_code_is_single_use_and_normalized(store: Store):
     assert claimed["ok"] is True
     assert claimed["agentId"] == agent["agentId"]
     assert claimed["deviceToken"].startswith("dt_")
-    with pytest.raises(PairCodeClaimRejected) as rejection:
-        store.claim_pair_code(minted["code"], device_name="iPhone")
-    # "已用" 与 "过期" 是两件事：用户拿着屏幕上那张码再扫一次时，
-    # 只有前一种能解释发生了什么。
-    assert rejection.value.reason == "used"
-    assert rejection.value.details["deviceId"] == claimed["deviceId"]
-    assert rejection.value.details["agentId"] == agent["agentId"]
+    assert claimed["reused"] is False
+
+    # 同一张码再认领：**成功**，且是另一台设备（持久码的用例：重装、换机、加浏览器）。
+    again = store.claim_pair_code(minted["code"], device_name="iPhone")
+    assert again["deviceId"] != claimed["deviceId"]
+
+    row = store._conn.execute(  # noqa: SLF001
+        "SELECT useCount, usedAt, deviceId FROM pairCodes LIMIT 1").fetchone()
+    assert row["useCount"] == 2
+    # `usedAt`/`deviceId` 仍记**第一次**认领，作为审计信息。
+    assert row["deviceId"] == claimed["deviceId"]
+    assert row["usedAt"] is not None
 
 
 def test_pair_code_expiry(store: Store):
@@ -139,6 +145,26 @@ def test_unknown_account_and_agent_raise(store: Store):
         store.mint_pair_code("agt_nope")
     with pytest.raises(NotFound):
         store.revoke_device("dev_nope")
+
+
+def test_purge_expired_also_drops_long_revoked_codes(store: Store):
+    """032：作废码自己不会过期，得由清理收走；但窗口内的要留着解释"被重新生成"。"""
+    account = store.create_account("a")
+    agent = store.register_agent(account["accountId"], "mac")
+    store.regenerate_pair_code(agent["agentId"])      # 码 A（活）
+    older = store.mint_pair_code(agent["agentId"])    # 码 B（活）
+    store.regenerate_pair_code(agent["agentId"])      # A、B 作废，铸出 C
+
+    # 刚作废：留在窗口里，`pair/revoked-code` 才解释得出来。
+    assert store.purge_expired() == 0
+
+    # 把"现在"推到查找窗口之外：作废码该被删掉，别让"每点一次重新生成就多一行"永远攒着。
+    later = now_ms() + 3 * 60 * 60 * 1000
+    assert store.purge_expired(at=later) >= 1
+    hashed = hash_pair_code(normalize_pair_code(older["code"]))
+    remaining = store._conn.execute(  # noqa: SLF001
+        "SELECT COUNT(*) FROM pairCodes WHERE codeHash=?", (hashed,)).fetchone()[0]
+    assert remaining == 0
 
 
 def test_purge_expired_removes_only_stale_codes(store: Store):

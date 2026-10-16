@@ -44,16 +44,40 @@ async def test_pair_claim_happy_path(client, provisioned):
     assert body["expiresAt"] > 0
 
 
-async def test_pair_claim_is_one_time(client, provisioned):
+async def test_a_persistent_code_can_be_claimed_more_than_once(client, provisioned, store):
+    # 032：持久码可以反复认领（重装、换机、加一个浏览器都靠它），每次都是**新设备**。
     payload = {"pairCode": provisioned["code"]["code"], "deviceName": "iPhone"}
-    assert (await client.post("/pair/claim", json=payload)).status == 200
+    first = await client.post("/pair/claim", json=payload)
+    assert first.status == 200
     second = await client.post("/pair/claim", json=payload)
-    assert second.status == 404
-    body = await second.json()
-    # 同一张码再扫一次，与"打错字"必须能分开：前者是拿屏幕上那张旧码
-    # 给第二台手机扫，后者才是真的输错。
-    assert body["error"]["code"] == "pair/used-code"
-    assert "already been used" in body["error"]["message"]
+    assert second.status == 200
+    assert (await second.json())["deviceId"] != (await first.json())["deviceId"]
+
+    row = store._conn.execute(  # noqa: SLF001 - 断言计数用，读的是这张表的公开契约
+        "SELECT useCount, lastUsedAt, usedAt FROM pairCodes LIMIT 1").fetchone()
+    assert row["useCount"] == 2
+    assert row["lastUsedAt"] is not None
+    # 首次认领的时刻留痕，仍是审计信息（`usedAt` 不再是门槛）。
+    assert row["usedAt"] is not None
+
+
+async def test_a_regenerated_code_no_longer_claims(client, provisioned, store):
+    # 032：重新生成把旧码作废；拒绝原因要与"打错字"分开（`pair/revoked-code`）。
+    old_code = provisioned["code"]["code"]
+    regenerated = await client.post("/pair/code/regenerate", json={},
+                                    headers=agent_headers(provisioned["agent"]))
+    assert regenerated.status == 200
+    body = await regenerated.json()
+    assert body["revoked"] >= 1
+    assert body["persistent"] is True
+
+    stale = await client.post("/pair/claim", json={"pairCode": old_code, "deviceName": "iPhone"})
+    assert stale.status == 404
+    assert (await stale.json())["error"]["code"] == "pair/revoked-code"
+
+    fresh = await client.post("/pair/claim",
+                              json={"pairCode": body["code"], "deviceName": "iPhone"})
+    assert fresh.status == 200
 
 
 async def test_pair_claim_says_an_expired_code_expired(client, provisioned, store):

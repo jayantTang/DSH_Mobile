@@ -188,7 +188,7 @@ def test_v1_gains_the_push_columns_without_losing_rows(tmp_path):
 
     store = Store(path)
     try:
-        assert user_version(path) == SCHEMA_VERSION == 5
+        assert user_version(path) == SCHEMA_VERSION
         columns = {row[1] for row in store._rows("PRAGMA table_info(devices)")}
         assert PUSH_COLUMNS <= columns, f"缺列：{PUSH_COLUMNS - columns}"
 
@@ -300,7 +300,7 @@ def test_v2_gains_the_subject_column_without_touching_the_old_rows(tmp_path):
 
     store = Store(path)
     try:
-        assert user_version(path) == SCHEMA_VERSION == 5
+        assert user_version(path) == SCHEMA_VERSION
         columns = {row[1] for row in store._rows("PRAGMA table_info(feedbackThreads)")}
         assert "subject" in columns, "缺列：subject"
 
@@ -462,7 +462,7 @@ def test_v3_gains_the_format_column_on_both_tables_without_touching_the_old_rows
 
     store = Store(path)
     try:
-        assert user_version(path) == SCHEMA_VERSION == 5
+        assert user_version(path) == SCHEMA_VERSION
         for table in ("feedbackMessages", "notices"):
             columns = [row[1] for row in store._rows(f"PRAGMA table_info({table})")]
             assert FORMAT_COLUMN in columns, f"{table} 缺列：format"
@@ -576,7 +576,7 @@ def test_v4_deliveries_are_backfilled_and_merged_into_the_account(tmp_path):
 
     store = Store(path)
     try:
-        assert user_version(path) == SCHEMA_VERSION == 5
+        assert user_version(path) == SCHEMA_VERSION
 
         rows = [dict(row) for row in store._rows(
             "SELECT noticeId, accountId, readAt FROM noticeDeliveries ORDER BY noticeId")]

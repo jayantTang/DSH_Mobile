@@ -22,7 +22,8 @@ from typing import Any
 from aiohttp import web
 
 import dlp
-from store import (InviteRejected, PairCodeClaimRejected, PairCodeRejected, Store,
+from store import (InviteRejected, PairedDeviceLimitReached, PairCodeClaimRejected,
+                   PairCodeRejected, Store,
                    StoreError, hash_invite_code, normalize_pair_code, now_ms)
 
 LOGGER = logging.getLogger("relay.api")
@@ -43,8 +44,11 @@ _CLAIM_WINDOW_S = 300
 #: scan of a spent code from a code that ran out of time.
 _PAIR_REJECTION_CODES = {
     "unknown": "pair/invalid-code",
+    # `used` 保留给老库/老日志（032 之后认领不再是门槛，正常路径不会再产生它）。
     "used": "pair/used-code",
     "expired": "pair/expired-code",
+    # 032：用户点了「重新生成」，旧码作废。与"打错字"分开，人才知道该回去看新码。
+    "revoked": "pair/revoked-code",
 }
 
 #: Salt for :func:`code_fingerprint`. Random per process, so a fingerprint
@@ -467,6 +471,13 @@ async def pair_claim(request: web.Request) -> web.Response:
     device_name = body.get("deviceName")
     model = body.get("deviceModel")
     app_version = body.get("appVersion")
+    # `deviceKey`：同一台 client 的持久标识（032）。带了它，重装/再配对就是"复用原来
+    # 那台"而不是新增一台；格式非法按没带来处理，不因为一个坏字段拒绝整次认领。
+    raw_key = body.get("deviceKey")
+    device_key = raw_key.strip() if isinstance(raw_key, str) else None
+    if device_key and not (8 <= len(device_key) <= 128 and all(
+            c.isalnum() or c in "-_" for c in device_key)):
+        device_key = None
     try:
         async with _SCRYPT_SLOTS:
             result = await asyncio.to_thread(
@@ -476,7 +487,17 @@ async def pair_claim(request: web.Request) -> web.Response:
                 model=model if isinstance(model, str) else None,
                 app_version=app_version if isinstance(app_version, str) else None,
                 ttl_ms=int(request.app["device_ttl_ms"]),
+                device_key=device_key,
+                max_paired_devices=int(request.app["max_paired_devices"]),
             )
+    except PairedDeviceLimitReached as error:
+        limiter.reset(peer)
+        LOGGER.info("relay: pair claim refused for %s: %d paired devices (limit %d)",
+                    peer, error.live, error.limit)
+        return json_error(409, "limit/devices",
+                          "this account already has as many paired devices as it allows;"
+                          " remove one in the app's device list and try again",
+                          maxPairedDevices=error.limit, pairedDevices=error.live)
     except PairCodeClaimRejected as error:
         limiter.record_failure(peer)
         normalized = normalize_pair_code(code)
@@ -498,6 +519,9 @@ async def pair_claim(request: web.Request) -> web.Response:
         "deviceId": result["deviceId"],
         "deviceToken": result["deviceToken"],
         "expiresAt": result["expiresAt"],
+        # 032：`reused=true` 表示这台 client 之前就配过（带同一个 deviceKey 回来的），
+        # 这次只是换了枚 token、没有占新名额。App 用它给"已重新连接"而不是"新设备"。
+        "reused": bool(result.get("reused")),
     })
 
 
@@ -515,7 +539,12 @@ async def pair_refresh(request: web.Request) -> web.Response:
 
 
 async def pair_code(request: web.Request) -> web.Response:
-    """Mint a one-time pairing code for the authenticated agent (docs/RELAY-NOTES.md §2)."""
+    """Mint a pairing code for the authenticated agent (docs/RELAY-NOTES.md §2).
+
+    **持久码是默认**（032）：请求不带 `ttlMs`、或显式带 `persistent: true`，都铸一枚
+    不过期的码——它一直有效，直到用户点「重新生成」（见 :func:`pair_code_regenerate`）。
+    老连接器每次都会带 `ttlMs`，走的仍是"限时一次性"那条老路径，行为一字未变。
+    """
     store: Store = request.app["store"]
     body = await read_json(request) or {}
     token = bearer_token(request)
@@ -525,11 +554,42 @@ async def pair_code(request: web.Request) -> web.Response:
     wanted = body.get("agentId")
     if isinstance(wanted, str) and wanted and wanted != agent["agentId"]:
         return json_error(403, "auth/agent-mismatch", "token does not belong to that agent")
-    ttl_ms = body.get("ttlMs")
-    if not isinstance(ttl_ms, int) or ttl_ms <= 0:
-        ttl_ms = int(request.app["pair_ttl_ms"])
-    ttl_ms = min(ttl_ms, 60 * 60 * 1000)
+    wants_persistent = body.get("persistent") is True or "ttlMs" not in body
+    ttl_ms: int | None = None
+    if not wants_persistent:
+        requested = body.get("ttlMs")
+        ttl_ms = requested if isinstance(requested, int) and requested > 0 \
+            else int(request.app["pair_ttl_ms"])
+        ttl_ms = min(ttl_ms, 60 * 60 * 1000)
     minted = await asyncio.to_thread(store.mint_pair_code, agent["agentId"], ttl_ms)
+    return web.json_response({"ok": True, **minted})
+
+
+async def pair_code_regenerate(request: web.Request) -> web.Response:
+    """用户点「重新生成」：作废该 agent 现存的所有码，再铸一枚新的持久码（032 FR-002）。
+
+    **不碰 devices**：已经在用的手机/浏览器靠各自的 deviceToken 活着，换码不该把它们
+    踢下线；要下线一台设备走 `POST /devices/revoke`（设备侧撤销）。
+    """
+    store: Store = request.app["store"]
+    body = await read_json(request) or {}
+    token = bearer_token(request)
+    agent = await asyncio.to_thread(store.agent_by_secret, token) if token else None
+    if agent is None:
+        return json_error(401, "auth/invalid-agent", "a valid agent bearer token is required")
+    wanted = body.get("agentId")
+    if isinstance(wanted, str) and wanted and wanted != agent["agentId"]:
+        return json_error(403, "auth/agent-mismatch", "token does not belong to that agent")
+    wants_persistent = body.get("persistent") is not False
+    ttl_ms: int | None = None
+    if not wants_persistent:
+        requested = body.get("ttlMs")
+        ttl_ms = requested if isinstance(requested, int) and requested > 0 \
+            else int(request.app["pair_ttl_ms"])
+        ttl_ms = min(ttl_ms, 60 * 60 * 1000)
+    minted = await asyncio.to_thread(store.regenerate_pair_code, agent["agentId"], ttl_ms)
+    LOGGER.info("relay: regenerated pairing code for agent %s (revoked %d old code(s))",
+                agent["agentId"], minted.get("revoked", 0))
     return web.json_response({"ok": True, **minted})
 
 
@@ -1223,6 +1283,7 @@ def register_http_routes(app: web.Application, route: Any, base_path: str) -> No
     route("POST", "/pair/refresh", pair_refresh)
     route("POST", "/pair/code", pair_code)
     route("GET", "/devices", devices_list)
+    route("POST", "/pair/code/regenerate", pair_code_regenerate)
     route("POST", "/devices/revoke", devices_revoke)
     route("POST", "/devices/push", devices_push)
     route("PUT", "/files/up", files_up)

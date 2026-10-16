@@ -15,7 +15,8 @@
     "session-digest",
     "history-role-filter",
     "history-scan-boundary",
-    "device-subprotocol-auth"
+    "device-subprotocol-auth",
+    "persistent-pair-code"
   ],
   "deviceToAgent": [
     "req",
