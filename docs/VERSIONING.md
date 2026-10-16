@@ -46,6 +46,12 @@
 | **公网中转** | `relay/` | `relay/deploy/deploy.sh` | 服务重启 | `/healthz` 的 `version` |
 | skill | `skills/` | `./scripts/install/install-skills.sh` | 重启 DSH | 无 |
 
+安装页除了最新版，还列出**前两个旧版本**作为回退入口：最新版装不上、或一打开就退出时，
+用旧版本覆盖安装即可回到能用的状态（覆盖安装保留本机数据，不必先卸载）。服务器上因此保留
+最近三份版本化产物（`.ipa`、manifest、图标成套），由 `deploy-ota.sh` 每次发布后自动裁剪；
+份数用 `DSH_OTA_KEEP` 调整，默认为 3。改安装页或回退清单时用
+`./scripts/release/deploy-ota.sh --dry-run` 在本机生成页面自检，不碰服务器。
+
 ## 三、兼容性约束（最重要）
 
 三者通过 DLP 协议对话，**独立升级，因此必须明确什么可以单独升、什么必须一起升**。

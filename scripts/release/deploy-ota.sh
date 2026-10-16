@@ -42,6 +42,11 @@ HOST="${DSH_OTA_HOST:-relay.example.com}"
 REMOTE_DIR="${DSH_OTA_DIR:-/opt/dsh-relay/public/ios}"
 PUBLIC_BASE="https://${HOST}/ios"
 
+# 线上保留几份版本化产物 = 当前 + 回退候选。3 份是 owner 2026-10-16 定的：
+# 「最新版装不上或一启动就崩」时，测试者要能在手机上退回上一个能用的版本，
+# 而只留 1 份旧版时那次回退本身也没得选。页面上列出的回退项就是这个数的后 KEEP-1 份。
+KEEP_VERSIONS="${DSH_OTA_KEEP:-3}"
+
 # 手工签名用的开发描述文件名字。由 scripts/release/asc-dev-signing.mjs 创建并装入
 # Xcode 的描述文件目录，名字是固定契约：脚本按名字找它，两处改要一起改。
 OTA_PROFILE_NAME="${DSH_OTA_PROFILE:-DSH Mobile Development Push}"
@@ -49,11 +54,15 @@ OTA_PROFILE_NAME="${DSH_OTA_PROFILE:-DSH Mobile Development Push}"
 SKIP_BUILD=0
 SKIP_PROFILE=0
 PLAN_ONLY=0
+DRY_RUN=0
 for arg in "$@"; do
   case "$arg" in
     --plan) PLAN_ONLY=1 ;;
     --no-build) SKIP_BUILD=1 ;;
     --skip-profile) SKIP_PROFILE=1 ;;
+    # 只在本机生成 manifest/安装页并打印版本清单，不 ssh、不上传、不删旧产物。
+    # 改安装页文案或回退清单时用它自检（发布脚本本身没法"小改一下试试"）。
+    --dry-run) DRY_RUN=1; SKIP_BUILD=1 ;;
     *) printf 'error: 未知参数 %s\n' "$arg" >&2; exit 2 ;;
   esac
 done
@@ -159,12 +168,52 @@ echo "版本 $SHORT_VERSION ($BUILD_VERSION)"
 
 # 真正决定"装得上装不上"的是归档里那个号（`--no-build` 时它来自旧归档，可能没变）。
 # 不大于线上就当场停下：发上去的结果是用户点了安装什么都不发生，而原因在服务器上看不出来。
-if [ -n "$PUBLISHED_BUILD" ] && ! "$NODE_BIN" "$OTA_VERSION" --compare "$BUILD_VERSION" "$PUBLISHED_BUILD"; then
+if [ "$DRY_RUN" -eq 0 ] && [ -n "$PUBLISHED_BUILD" ] \
+   && ! "$NODE_BIN" "$OTA_VERSION" --compare "$BUILD_VERSION" "$PUBLISHED_BUILD"; then
   die "这次要发的构建号 ${BUILD_VERSION} 不大于线上 ${PUBLISHED_BUILD}：iOS 只会静默不装（看起来像「必须先删掉旧 App」）。去掉 --no-build 重新归档，或先确认线上 version.json。"
 fi
 
 step "生成 manifest 与安装页"
 rm -rf "$STAGE_DIR"; mkdir -p "$STAGE_DIR"
+
+# 回退候选 = 线上现存的版本化产物里，除当前这次之外最靠前的 (KEEP_VERSIONS-1) 份。
+#
+# 为什么要在页面上列出来：最新版「装不上」或「一打开就崩」时，人手里只有一个安装按钮，
+# 唯一出路是删掉 App 重装——而删掉就丢了本机记录。列出旧版本后，覆盖安装旧版即可回退。
+# 远端只跑一条 `find -printf`，列表在本地解析（远端循环的引号嵌套极易写错）。
+FALLBACK_ROWS=""
+FALLBACK_SECTION=""
+if [ "$KEEP_VERSIONS" -gt 1 ]; then
+  REMOTE_IPAS="$(ssh -q -o BatchMode=yes "root@${HOST}" \
+    "cd '$REMOTE_DIR' 2>/dev/null && find . -maxdepth 1 -name 'DSHMobile-*.ipa' -printf '%T@ %f\n' | sort -rn" \
+    2>/dev/null || true)"
+  REMOTE_MANIFESTS="$(ssh -q -o BatchMode=yes "root@${HOST}" \
+    "cd '$REMOTE_DIR' 2>/dev/null && find . -maxdepth 1 -name 'manifest-*.plist' -printf '%f\n'" \
+    2>/dev/null || true)"
+  kept=0
+  while read -r stamp file; do
+    [ -n "${file:-}" ] || continue
+    build="${file##*/}"
+    build="${build#DSHMobile-}"
+    build="${build%.ipa}"
+    [ "$build" = "$BUILD_VERSION" ] && continue
+    # 没有配套 manifest 的包装不上（iOS 靠 manifest 才认识它），不列出来。
+    printf '%s\n' "$REMOTE_MANIFESTS" | grep -qx "manifest-${build}.plist" || continue
+    when="$(date -r "${stamp%%.*}" '+%Y-%m-%d %H:%M' 2>/dev/null || true)"
+    FALLBACK_ROWS="${FALLBACK_ROWS}  <a class=\"fallback\" href=\"itms-services://?action=download-manifest&amp;url=${PUBLIC_BASE}/manifest-${build}.plist\">安装 ${build}${when:+ · ${when}}</a>
+"
+    kept=$((kept + 1))
+    [ "$kept" -ge "$((KEEP_VERSIONS - 1))" ] && break
+  done <<< "$REMOTE_IPAS"
+  if [ -n "$FALLBACK_ROWS" ]; then
+    FALLBACK_SECTION="  <h2>回退安装（旧版本）</h2>
+  <p class="hint">最新版装不上、或一打开就退出时，用下面的旧版本直接覆盖安装即可回到能用的状态（数据保留，不用先卸载）。</p>
+${FALLBACK_ROWS}"
+    echo "回退候选 $(printf '%s' "$FALLBACK_ROWS" | grep -c 'class=') 份（保留上限 ${KEEP_VERSIONS} 份）"
+  else
+    echo "线上还没有可回退的旧版本（首次发布时正常）"
+  fi
+fi
 
 # Every publish gets its own file names.
 #
@@ -267,6 +316,12 @@ cat > "$STAGE_DIR/index.html" <<HTML
     background: #4d6bfe; color: #fff; font-weight: 500;
     padding: 15px; border-radius: 12px;
   }
+  a.fallback {
+    display: block; text-align: center; text-decoration: none;
+    background: #2a2c31; color: #f9fafb; font-weight: 500;
+    padding: 13px; border-radius: 12px; margin-bottom: 8px;
+    border: 1px solid #3a3d43;
+  }
   ol { color: #cfd3d6; font-size: 14px; padding-left: 20px; margin: 26px 0 0; }
   li { margin-bottom: 8px; }
   code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; color: #adb2b8; }
@@ -276,8 +331,9 @@ cat > "$STAGE_DIR/index.html" <<HTML
 </style>
 <div class="card">
   <h1>${APP_NAME}</h1>
-  <div class="meta">版本 ${SHORT_VERSION} (${BUILD_VERSION})<br>构建于 $(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M')（北京时间）</div>
-  <a class="install" data-build="${BUILD_VERSION}" href="itms-services://?action=download-manifest&amp;url=${PUBLIC_BASE}/${MANIFEST_NAME}">安装 / 更新</a>
+  <div class="meta">最新版本 ${SHORT_VERSION} (${BUILD_VERSION})<br>构建于 $(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M')（北京时间）</div>
+  <a class="install" data-build="${BUILD_VERSION}" href="itms-services://?action=download-manifest&amp;url=${PUBLIC_BASE}/${MANIFEST_NAME}">安装 / 更新（最新版）</a>
+${FALLBACK_SECTION}
   <ol>
     <li>用 <strong>Safari</strong> 打开本页（微信、Chrome 内不支持直接安装）。</li>
     <li>点上面的按钮，系统会提示「安装」。</li>
@@ -342,6 +398,15 @@ cat > "$STAGE_DIR/version.json" <<JSON
 }
 JSON
 
+if [ "$DRY_RUN" -eq 1 ]; then
+  step "（--dry-run：跳过上传与裁剪）"
+  echo "  安装页与 manifest 已生成在 ${STAGE_DIR}"
+  echo "  页面里的回退项读的是线上现状，本次没有改动服务器"
+  grep -o 'class="fallback"' "$STAGE_DIR/index.html" | wc -l | xargs echo "  回退安装项数量："
+  grep -o 'itms-services[^"]*manifest-[0-9.]*\.plist' "$STAGE_DIR/index.html" | sed 's/^/  /' | head -5
+  exit 0
+fi
+
 step "上传到 $HOST:$REMOTE_DIR"
 scp -q -o BatchMode=yes "$STAGE_DIR/$IPA_NAME" "$STAGE_DIR/DSHMobile.ipa" \
   "$STAGE_DIR/$MANIFEST_NAME" "$STAGE_DIR/manifest.plist" \
@@ -349,12 +414,13 @@ scp -q -o BatchMode=yes "$STAGE_DIR/$IPA_NAME" "$STAGE_DIR/DSHMobile.ipa" \
   "$STAGE_DIR/index.html" "$STAGE_DIR/version.json" \
   "root@${HOST}:${REMOTE_DIR}/"
 
-# 只留最近两份版本化产物：页面永远指向当前那份，旧的只是在占服务器空间。
-ssh -q -o BatchMode=yes "root@${HOST}" "cd '$REMOTE_DIR' && \
-  ls -t DSHMobile-*.ipa 2>/dev/null | tail -n +3 | xargs -r rm -f && \
-  ls -t manifest-*.plist 2>/dev/null | tail -n +3 | xargs -r rm -f && \
-  ls -t icon-*-57.png 2>/dev/null | tail -n +3 | xargs -r rm -f && \
-  ls -t icon-*-512.png 2>/dev/null | tail -n +3 | xargs -r rm -f"
+# 只留最近 $KEEP_VERSIONS 份版本化产物（当前 + 回退候选）：页面靠它们给出回退安装。
+# `tail -n +$((KEEP_VERSIONS + 1))` 保留前 KEEP_VERSIONS 行，其余删掉。
+ssh -q -o BatchMode=yes "root@${HOST}" "cd '$REMOTE_DIR' && KEEP='$KEEP_VERSIONS' && \
+  ls -t DSHMobile-*.ipa 2>/dev/null | tail -n +\$((KEEP + 1)) | xargs -r rm -f && \
+  ls -t manifest-*.plist 2>/dev/null | tail -n +\$((KEEP + 1)) | xargs -r rm -f && \
+  ls -t icon-*-57.png 2>/dev/null | tail -n +\$((KEEP + 1)) | xargs -r rm -f && \
+  ls -t icon-*-512.png 2>/dev/null | tail -n +\$((KEEP + 1)) | xargs -r rm -f"
 
 # scp creates the destination directory with a restrictive mode, and Caddy runs
 # as an unprivileged user: without an explicit chmod it answers 403 because it
