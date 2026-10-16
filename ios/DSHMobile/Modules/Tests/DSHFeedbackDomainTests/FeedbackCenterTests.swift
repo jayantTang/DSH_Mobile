@@ -22,61 +22,15 @@ import XCTest
 /// * the window's *expired* side. `refreshInbox` reads `Date()` directly and the
 ///   clock is not injectable, so "waited long enough" cannot be tested without
 ///   sleeping; `minimumRefreshInterval: 0` stands in for "always allowed".
-/// * `submit` succeeding. It writes the pickup credential straight to the real
-///   keychain and `FeedbackLocalStore.save(_ ticket:)` has no injection seam —
-///   a unit test would leave `feedback.tickets` on the developer's machine. The
-///   failure path (no endpoint) is covered instead; the success path stays with
-///   the simulator lanes.
+/// * the window *before* a pull: what a pull right after a submit does to the
+///   locally inserted thread and to the local read set — `FeedbackCombinationTests`.
+/// * `submit` over the wire: the success path is driven there too, with an
+///   in-memory ticket store (`FeedbackLocalStore` takes `ticketReader` /
+///   `ticketWriter`, so a case never writes the real keychain). The failure path
+///   (no endpoint) is covered here as well; the App-level composer flow stays
+///   with the simulator lanes.
 @MainActor
-final class FeedbackCenterTests: XCTestCase {
-
-    private var stub: LoopbackHTTPStub!
-    /// Every case gets its own mirror root; they are all removed in `tearDown`,
-    /// so no case leaves a directory behind even if it fails halfway.
-    private var roots: [TempFeedbackRoot] = []
-
-    override func tearDown() {
-        stub?.stop()
-        stub = nil
-        for root in roots { root.remove() }
-        roots = []
-        super.tearDown()
-    }
-
-    private func makeRoot(_ label: String) -> TempFeedbackRoot {
-        let root = TempFeedbackRoot(label: label)
-        roots.append(root)
-        return root
-    }
-
-    private func makeStub() throws -> LoopbackHTTPStub {
-        let stub = try LoopbackHTTPStub()
-        self.stub = stub
-        return stub
-    }
-
-    /// A center pointed at one loopback endpoint; `interval` is the throttle.
-    private func center(
-        store: FeedbackLocalStore,
-        interval: TimeInterval = 0,
-        url: URL? = nil,
-        token: String? = nil
-    ) -> FeedbackCenter {
-        let target = url ?? stub.baseURL
-        return FeedbackCenter(store: store, minimumRefreshInterval: interval, endpointProvider: {
-            FeedbackCenter.Endpoint(url: target, deviceToken: token)
-        })
-    }
-
-    /// A mirror with one owner reply it has not read and one unread notice.
-    private func unreadMirror() -> FeedbackMirror {
-        var mirror = FeedbackMirror()
-        mirror.threads = [mirrorThread("th_1", subject: Zh.threadSubject, lastMessageAt: 2_000,
-                                       messages: [mirrorUserMessage("m_u1", at: 1_000),
-                                                  mirrorOwnerMessage("m_1", at: 2_000)])]
-        mirror.notices = [mirrorNotice("n_1", body: Zh.noticeBody, at: 3_000)]
-        return mirror
-    }
+final class FeedbackCenterTests: FeedbackCenterTestCase {
 
     // MARK: - Offline
 

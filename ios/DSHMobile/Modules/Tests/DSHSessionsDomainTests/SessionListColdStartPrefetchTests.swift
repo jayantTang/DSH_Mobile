@@ -11,12 +11,9 @@ import XCTest
 /// "后台悄悄拉了几百个会话"的形式出现（后者真的发生过，见 `MessageLayer` 的
 /// 注记）。所以"挑哪些目标"必须钉住，而它只能从取页请求上看出来。
 ///
-/// 为什么会碰真实 `Caches`：预取瀑布住在 `MessageLayer` 里，而它只有一条装配路径
-/// `attach(client:)`——`store` / `pipeline` 都是 `private(set)`，没有注入临时目录的缝
-/// （027 不许改产品代码）。所以这条用例会让 `MessageLayer` 在默认位置建一次空的
-/// `message-store` 库（`~/Library/Caches/message-store/`，缓存目录，非用户数据）。
-/// 除了建库本身，用例不往里写：scope 是本轮新生成的一份档案 id，取页全部失败，
-/// 既没有记录也没有区间落库。
+/// 存储走临时目录：`MessageLayer.attach(client:storePath:)` 的缝（028 加的）在这里够得着
+/// ——瀑布就住在这个 layer 上，用例自己装配它，所以直接把库指到本用例的临时目录，
+/// 不再往 `~/Library/Caches/message-store/` 建空库。
 @MainActor
 final class SessionListColdStartPrefetchTests: SessionsDomainTestCase {
 
@@ -36,13 +33,16 @@ final class SessionListColdStartPrefetchTests: SessionsDomainTestCase {
         })
         stubWorkspaces([Wire.workspace("w1", path: "/Users/me/proj", title: "proj", sessions: ids)])
 
-        // 消息层挂上之后才有瀑布。
+        // 消息层挂上之后才有瀑布。库文件指到本用例的临时目录：真实 Caches 那份一个字都不碰。
         let client = DSHClient(carrier: carrier)
+        let storeURL = temp.url.appendingPathComponent("messages.sqlite3")
         let layer = MessageLayer()
-        layer.attach(client: { client })
+        layer.attach(client: { client }, storePath: storeURL)
         guard layer.store != nil, layer.pipeline != nil else {
             throw XCTSkip("MessageLayer could not open its message store in this environment")
         }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: storeURL.path),
+                      "the layer must have opened the store at the injected path")
         model.attach(to: fake, hub: hub, messageLayer: layer)
 
         await model.refresh()

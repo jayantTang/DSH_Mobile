@@ -1,5 +1,6 @@
 @testable import DSHFeedbackDomain
 import DSHFoundation
+import DSHTestingSupport
 import Foundation
 import RelayKit
 import XCTest
@@ -81,6 +82,85 @@ final class TempFeedbackRoot {
         // running in parallel would have left something in it, and the failure
         // to remove is silent on purpose.
         try? FileManager.default.removeItem(at: url.deletingLastPathComponent())
+    }
+}
+
+/// 取件凭据放哪儿：用例注入的内存实现。
+///
+/// `FeedbackLocalStore` 默认把凭据写进**真实钥匙串**（account `feedback.tickets`），
+/// 所以只有需要走通"提交成功"那条路的用例才注入它——提交成功必须能测，但绝不能
+/// 在开发者机器上留下一条 Keychain 项。读写都在锁里，闭包是 `@Sendable` 的。
+final class TicketBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: String?
+
+    var text: String? {
+        lock.lock()
+        defer { lock.unlock() }
+        return stored
+    }
+
+    func write(_ value: String) {
+        lock.lock()
+        stored = value
+        lock.unlock()
+    }
+}
+
+/// Shared scaffolding for the cases that drive a real `FeedbackCenter` over the
+/// loopback stub.
+///
+/// One stub and one mirror root per case, both torn down whichever way the case
+/// ended: the stub is what makes the request count observable, and the root is
+/// what keeps a case off the developer's real `Caches/feedback/inbox.json`.
+@MainActor
+class FeedbackCenterTestCase: XCTestCase {
+    /// The loopback relay this case talks to. Set by ``makeStub()``.
+    private(set) var stub: LoopbackHTTPStub!
+    /// 每条用例自己的镜像根，`tearDown` 里全部删掉。
+    private var roots: [TempFeedbackRoot] = []
+
+    override func tearDown() {
+        stub?.stop()
+        stub = nil
+        for root in roots { root.remove() }
+        roots = []
+        super.tearDown()
+    }
+
+    func makeRoot(_ label: String) -> TempFeedbackRoot {
+        let root = TempFeedbackRoot(label: label)
+        roots.append(root)
+        return root
+    }
+
+    func makeStub() throws -> LoopbackHTTPStub {
+        let stub = try LoopbackHTTPStub()
+        self.stub = stub
+        return stub
+    }
+
+    /// A center pointed at one loopback endpoint; `interval` is the throttle.
+    func center(
+        store: FeedbackLocalStore,
+        interval: TimeInterval = 0,
+        url: URL? = nil,
+        token: String? = nil
+    ) -> FeedbackCenter {
+        let target = url ?? stub.baseURL
+        return FeedbackCenter(store: store, minimumRefreshInterval: interval, endpointProvider: {
+            FeedbackCenter.Endpoint(url: target, deviceToken: token)
+        })
+    }
+
+    /// A mirror with one owner reply it has not read and one unread notice.
+    func unreadMirror() -> FeedbackMirror {
+        var mirror = FeedbackMirror()
+        mirror.threads = [mirrorThread("th_1", subject: Zh.threadSubject, lastMessageAt: 2_000,
+                                       messages: [mirrorUserMessage("m_u1", at: 1_000),
+                                                  mirrorOwnerMessage("m_1", at: 2_000)])]
+        mirror.notices = [mirrorNotice("n_1", body: Zh.noticeBody, at: 3_000)]
+        return mirror
     }
 }
 
