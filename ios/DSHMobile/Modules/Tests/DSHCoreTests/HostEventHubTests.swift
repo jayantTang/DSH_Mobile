@@ -170,9 +170,12 @@ final class HostEventHubTests: XCTestCase {
     func test_a_waiting_prompt_is_promoted_and_kept_by_session() async {
         hub.start(link: makeGateway())
 
-        await eventually("the feed to be folded") { hub.pending.count == 1 }
+        // 等的是**最终态的特征值**，不是计数：帧序是 event-1 → event-2 → cancel event-1，
+        // 于是 `pending.count == 1` 在帧 2 之后同样成立（只剩被撤回的那条）。
+        // 轮询每 5ms 一次，落进帧间挂起点就会提前返回、随后按最终态断言而失败
+        // （2026-10-16 实测：iOS 上 7 次执行失败 2 次，失败值恰为"只剩 event-1"的中间态）。
+        await eventually("the feed to be folded") { hub.pending.first?.id == "event-2" }
 
-        XCTAssertEqual(hub.pending.first?.id, "event-2", "the withdrawal must have removed event-1")
         XCTAssertEqual(hub.pending.first?.event, "approval/asked")
         XCTAssertEqual(hub.pendingPrompts(for: "session-2").map(\.id), ["event-2"])
         XCTAssertTrue(hub.pendingPrompts(for: "session-1").isEmpty)
@@ -183,12 +186,22 @@ final class HostEventHubTests: XCTestCase {
         // The loop re-subscribes whenever the stream ends, and the relay
         // replays what is still waiting: the set must not grow a duplicate for
         // the same event id.
-        hub.start(link: makeGateway())
+        //
+        // 这条用例要看的是**重放本身**，所以要等的事实是"订阅发生了第二次"
+        // （`$events` 的调用计数 >= 2），而不是固定睡一段时间：宿主流结束后
+        // hub 会在 `EventStreamRetry.delay(afterAttempt: 1) = 0.5s` 之后重新订阅，
+        // 固定 600ms 是否与重放窗口错开取决于调度（同一天实测同类写法在 iOS 上会偶发）。
+        let carrier = FakeCarrier()
+        carrier.streamResponses["$events"] = Self.feed()
+        let client = DSHClient(carrier: carrier)
+        hub.start(link: LinkGateway(clientProvider: { client }))
 
-        await eventually("the feed to be folded") { hub.pending.count == 1 }
+        await eventually("the first round to settle") { hub.pending.first?.id == "event-2" }
+        await eventually("the feed to be replayed", deadline: 5) {
+            carrier.calls(to: "$events").count >= 2 && hub.pending.first?.id == "event-2"
+        }
 
-        try? await Task.sleep(for: .milliseconds(600))
-        XCTAssertEqual(hub.pending.count, 1)
+        XCTAssertEqual(hub.pending.count, 1, "a replayed frame must not duplicate the pending item")
         XCTAssertEqual(hub.pending.first?.id, "event-2")
     }
 
