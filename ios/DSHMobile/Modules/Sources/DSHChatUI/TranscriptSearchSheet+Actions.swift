@@ -98,7 +98,7 @@ extension TranscriptSearchSheet {
             // 完整性标记与命中同属一次本地读路径：先问标记，灌全时状态行不会闪。
             await refreshUserInputSyncState(rerunOnSync: false)
             found = await model.localUserInputHits(query: query)
-        } else if model.connectorSearchesWholeSession, keyword.count >= 2 {
+        } else if model.connectorSearchesWholeSession, keyword.count >= 1 {
             // 只有"搜全部内容"才走连接器；`onlyMine` 恒为 false（上面已独占），
             // 所以这里不再带 roles 过滤。
             //
