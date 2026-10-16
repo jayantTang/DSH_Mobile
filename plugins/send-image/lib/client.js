@@ -245,32 +245,49 @@ function registerShortcut(ctx, state) {
  * 输入区左侧按钮：给不知道快捷键的人一个入口，也是热键冲突时的唯一出路。
  *
  * 外观交给**官方 primitives 的 `Button`**（与旁边的官方按钮同一套 CSS-module 类）：宿主换主题、
- * 改按钮样式都自动跟随，不需要插件去猜 token。拿不到 primitives 时退回自带 class 的裸 `button`
- * （样式见 CSS 里那几条兜底规则），保证按钮在任何宿主上都还在。
+ * 改按钮样式都自动跟随，不需要插件去猜 token。
+ *
+ * 悬停说明交给**官方 primitives 的 `Tooltip`**，不要用原生 `title`：原生提示的出现时机由
+ * WebKit 决定（指针要停够久、同一时刻只允许一条、前一条刚消失后常被抑制），所以看起来
+ * "有时有、有时没有"；宿主自己的按钮走的就是 `Tooltip`（`side: 'bottom'`、`delayMs: 500`），
+ * 换成同一个组件后行为与旁边一致。拿不到 `Tooltip` 时保留原生 `title` 作为退路。
+ *
+ * 两样都拿不到（老宿主）时退回自带 class 的裸 `button`（样式见 CSS 里那几条兜底规则），
+ * 保证按钮在任何宿主上都还在。
  */
 function registerButton(ctx, state, React, primitives) {
   const title = shortcutTitle(detectMac())
   const aria = `${BUTTON_TEXT}（${title}）`
   const OfficialButton = primitives?.Button
+  const OfficialTooltip = primitives?.Tooltip
   try {
     ctx.slots.inject(SLOT_NAME, () => ctx.slots.register(
       { name: SLOT_NAME, id: SLOT_ID, order: 40, label: () => LABEL },
       (props) => {
         state.session = props?.sessionId ?? state.session
+        const onClick = () => state.runCapture()
         if (typeof OfficialButton === 'function') {
-          return React.createElement(OfficialButton, {
+          const hasTooltip = typeof OfficialTooltip === 'function'
+          const button = React.createElement(OfficialButton, {
             variant: 'ghost',
-            title,
+            // 有官方 Tooltip 时不能再挂 `title`：两套提示会互相压制，反而更容易"不出现"。
+            ...(hasTooltip ? {} : { title }),
             'aria-label': aria,
-            onClick: () => state.runCapture(),
+            onClick,
           }, BUTTON_TEXT)
+          if (!hasTooltip) return button
+          return React.createElement(OfficialTooltip, {
+            label: title,
+            side: 'bottom',
+            delayMs: 500,
+          }, button)
         }
         return React.createElement('button', {
           type: 'button',
           className: BUTTON_CLASS,
           title,
           'aria-label': aria,
-          onClick: () => state.runCapture(),
+          onClick,
         }, BUTTON_TEXT)
       },
     ))
