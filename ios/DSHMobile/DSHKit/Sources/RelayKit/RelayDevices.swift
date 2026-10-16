@@ -85,9 +85,12 @@ public struct RelayDevice: Sendable, Hashable, Identifiable, Decodable {
 public struct RelayDeviceList: Sendable, Hashable {
     public let devices: [RelayDevice]
     public let currentDeviceId: String?
+    /// 032：这个账户最多能配几台（0/nil = 不限）。设备页用它显示「已配对 N/8」。
+    public let maxPairedDevices: Int?
 
-    public init(devices: [RelayDevice], currentDeviceId: String?) {
+    public init(devices: [RelayDevice], currentDeviceId: String?, maxPairedDevices: Int? = nil) {
         self.currentDeviceId = currentDeviceId
+        self.maxPairedDevices = maxPairedDevices
         self.devices = devices.map { device in
             var copy = device
             copy.isCurrent = device.deviceId == currentDeviceId
@@ -97,6 +100,15 @@ public struct RelayDeviceList: Sendable, Hashable {
 
     /// The devices worth showing, newest pairing first.
     public var active: [RelayDevice] { devices.filter { !$0.revoked } }
+
+    /// 还剩几个名额；上限不限时是 nil。
+    public var remainingSlots: Int? {
+        guard let maxPairedDevices, maxPairedDevices > 0 else { return nil }
+        return max(0, maxPairedDevices - active.count)
+    }
+
+    /// 已经到顶了吗（到顶时"再加一台"要先撤销）。
+    public var isFull: Bool { remainingSlots == 0 }
 }
 
 /// Device management over the relay's HTTP API.
@@ -131,6 +143,7 @@ public struct RelayDeviceAdmin: Sendable {
     private struct ListEnvelope: Decodable {
         let ok: Bool?
         let currentDeviceId: String?
+        let maxPairedDevices: Int?
         let devices: [RelayDevice]?
         let error: DSHRPCFailure?
     }
@@ -152,7 +165,8 @@ public struct RelayDeviceAdmin: Sendable {
         guard envelope.ok == true, let devices = envelope.devices else {
             throw envelope.error ?? DSHTransportError.malformedResponse("中转没有返回设备列表")
         }
-        return RelayDeviceList(devices: devices, currentDeviceId: envelope.currentDeviceId)
+        return RelayDeviceList(devices: devices, currentDeviceId: envelope.currentDeviceId,
+                               maxPairedDevices: envelope.maxPairedDevices)
     }
 
     /// Revokes one pairing.

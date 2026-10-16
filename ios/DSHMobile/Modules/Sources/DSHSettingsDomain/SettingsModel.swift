@@ -108,6 +108,9 @@ public final class SettingsModel {
 
     /// Devices paired to this computer, as the relay knows them.
     public private(set) var devices: [RelayDevice] = []
+    /// 032：账户允许的已配对上限（nil = 不限）。设备页显示「已配对 N/8」，
+    /// 到顶时要告诉用户"先撤一台才能加新的"。
+    public private(set) var maxPairedDevices: Int?
     public private(set) var devicesPhase: Phase = .idle
     /// Set while one revoke is in flight, so its row can show a spinner and the
     /// rest can disable rather than queue up competing revocations.
@@ -329,12 +332,14 @@ public final class SettingsModel {
         guard let admin else {
             devicesAvailable = false
             devices = []
+            maxPairedDevices = nil
             devicesPhase = .idle
             return
         }
         do {
             let list = try await admin.devices()
             devices = list.active
+            maxPairedDevices = list.maxPairedDevices
             devicesError = nil
             devicesPhase = .loaded
         } catch {

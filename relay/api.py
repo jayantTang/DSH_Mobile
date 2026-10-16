@@ -614,9 +614,13 @@ async def devices_list(request: web.Request) -> web.Response:
     if device is None:
         return json_error(401, "auth/invalid-token", "a valid device token is required")
     devices = await asyncio.to_thread(store.list_devices, device["agentId"])
+    paired = await asyncio.to_thread(store.count_paired_devices, device["accountId"])
     return web.json_response({
         "ok": True,
         "currentDeviceId": device["deviceId"],
+        # 032：设备页要显示「已配对 N/8」并在满额时告诉用户先撤一台，两个数都从中转拿。
+        "maxPairedDevices": int(request.app["max_paired_devices"]),
+        "pairedDevices": paired,
         "devices": [
             {
                 "deviceId": row["deviceId"],

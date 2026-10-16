@@ -698,3 +698,10 @@ It is registered as a workspace first, so a new group appears in the desktop sid
 
 /* Team inbox: placeholder for the reply editor (030 phase 2) */
 "写下你的回信…" = "Write your reply…";
+
+/* Devices page: paired count against the cap (032) */
+"已配对的设备 %lld/%lld" = "Paired devices %lld/%lld";
+/* Devices page: guidance when the cap is reached (032) */
+"已经配满 %lld 台。要再加一台（手机或浏览器），先在这里撤销一台不再用的。" = "All %lld slots are taken. To add another phone or browser, revoke one you no longer use.";
+/* Devices page: footer when there is room (032, mentions the web client) */
+"这些是能通过中转到这台电脑的设备（手机或浏览器）。撤销一台后，它需要重新配对。" = "These are the devices paired to this computer through the relay (phones and browsers). Revoking one makes it pair again.";

@@ -141,14 +141,22 @@ public struct SettingsView: View {
                 }
             } header: {
                 HStack {
-                    Text("已配对的设备")
+                    // 032：把"还能配几台"摆出来——到顶时新增设备会被中转拒绝，
+                    // 事先让用户知道要撤一台，比事后看错误好。
+                    Text(model.maxPairedDevices.map {
+                        String(localized: "已配对的设备 \(model.devices.count)/\($0)")
+                    } ?? "已配对的设备")
                     Spacer()
                     if model.revokingDeviceId != nil {
                         ProgressView().controlSize(.mini)
                     }
                 }
             } footer: {
-                Text("这些是能通过中转到这台电脑的手机。撤销一台设备后，它需要重新配对。")
+                if let cap = model.maxPairedDevices, model.devices.count >= cap {
+                    Text("已经配满 \(cap) 台。要再加一台（手机或浏览器），先在这里撤销一台不再用的。")
+                } else {
+                    Text("这些是能通过中转到这台电脑的设备（手机或浏览器）。撤销一台后，它需要重新配对。")
+                }
             }
             .accessibilityIdentifier("settings.devices")
         }
