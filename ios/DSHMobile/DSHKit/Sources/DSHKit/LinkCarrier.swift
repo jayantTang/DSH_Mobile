@@ -573,7 +573,9 @@ public actor LinkCarrier: DSHCarrier {
         startHeartbeat(on: task)
         socketOpenedAt = Date()
         updateSocketState(.up)
+        #if DEBUG
         scheduleFlapIfRequested()
+        #endif
     }
 
     #if DEBUG
