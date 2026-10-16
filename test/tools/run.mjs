@@ -24,7 +24,7 @@ import { claimedRelayLink, pairDevice, revokeDevice } from './relaypair.mjs'
 import {
   BUILD, BUNDLE_ID, DEFAULT_CASE, DEFAULT_SIM, DERIVED, HERE, PROJECT, ROOT, TEST_DIR,
   appBuild, appVersion, bootSimulator, build, ensureRunDir, environmentFacts, gitCommit, host,
-  installRunner, log, parseArgs, pickSession, readEvents, run, screens, stagePlan, stamp, warn,
+  clearEvents, installRunner, log, parseArgs, pickSession, readEvents, run, screens, stagePlan, stamp, warn,
 } from './context.mjs'
 
 /// The name this runner pairs under, and the reason it is not `DSH-Test`.
@@ -122,6 +122,37 @@ function probeVerdicts({ simId, detailDir, verdicts, log }) {
     })
   }
   void log
+}
+
+/// Pulls the event stream out of the result bundle when the live tail missed it.
+function harvestEventsAttachment({ resultBundle, detailDir, verdicts, applyEvent }) {
+  const target = join(detailDir, 'attachments')
+  let listed = []
+  try {
+    listed = JSON.parse(readFileSync(join(target, 'manifest.json'), 'utf8'))
+  } catch { return }
+  for (const group of listed) {
+    for (const attachment of group.attachments ?? []) {
+      const name = attachment.suggestedHumanReadableName ?? ''
+      if (!name.startsWith('events~')) continue
+      const file = join(target, attachment.exportedFileName ?? '')
+      let text = ''
+      try { text = readFileSync(file, 'utf8') } catch { continue }
+      if (!text.trim()) continue
+      const existing = (() => {
+        try { return readFileSync(join(detailDir, 'events.ndjson'), 'utf8') } catch { return '' }
+      })()
+      if (existing.trim().length >= text.trim().length) return
+      writeFileSync(join(detailDir, 'events.ndjson'), text)
+      verdicts.length = 0
+      for (const line of text.split('\n')) {
+        if (!line.trim()) continue
+        try { applyEvent(JSON.parse(line)) } catch { /* a torn last line is not a verdict */ }
+      }
+      log('事件流取自 xcresult 附件（实时通道为空）')
+      return
+    }
+  }
 }
 
 /// Brings the evidence out of the result bundle and files it under the names the
@@ -479,14 +510,10 @@ async function runCase(flags, positional, pairing) {
     warn(`App 不在前台（${state}）—— 这一屏的判定不可信`)
   }
 
-  const drain = () => {
-    const lines = readEvents(simId).split('\n')
-    for (const line of lines.slice(0, -1)) {
-      if (!line.trim()) continue
-      let event
-      try { event = JSON.parse(line) } catch { continue }
-
-      if (event.event === 'screen') { currentScreen = event.id; continue }
+  /// One parsed event drives the manifest and the verdict list. Split out of
+  /// ``drain`` so the same logic can replay the attachment copy of the stream.
+  const applyEvent = (event) => {
+      if (event.event === 'screen') { currentScreen = event.id; return }
 
       if (event.event === 'verdict' && event.kind === 'screen'
           && event.status !== 'pass' && event.id
@@ -535,15 +562,31 @@ async function runCase(flags, positional, pairing) {
                        blocked: '\x1b[33m–\x1b[0m' }[event.status] ?? '·'
         console.log(`    ${mark} ${event.id || event.seq}  ${event.detail}`)
       }
+  }
+
+  const drain = () => {
+    const lines = readEvents(simId).split('\n')
+    for (const line of lines.slice(0, -1)) {
+      if (!line.trim()) continue
+      try { applyEvent(JSON.parse(line)) } catch { continue }
     }
   }
 
+  // The plan travels **in the environment**, not just as a file in the runner's
+  // container: `xcodebuild test` reinstalls the runner into a fresh container on
+  // every run (measured 2026-10-16: staged into 1DB62B78, ran in 3664F46A), so a
+  // file staged beforehand is never the one the test sees. XCTest forwards
+  // `TEST_RUNNER_*` variables to the test process with the prefix stripped, which
+  // is how `DSH_PLAN_JSON` reaches `Engine`. The file is still staged as a
+  // fallback for hand-run flows that predate this.
+  clearEvents(simId)
   const child = spawn('xcodebuild', ['-project', join(PROJECT, 'DSHMobile.xcodeproj'),
     '-scheme', 'DSHMobile', '-configuration', 'Debug',
     '-destination', `platform=iOS Simulator,id=${simId}`, '-derivedDataPath', DERIVED,
     '-resultBundlePath', resultBundle, 'test-without-building',
     '-only-testing:DSHMobileUITests/Engine'],
-    { env: { ...process.env, DSH_RUN: runId }, stdio: ['ignore', 'inherit', 'inherit'] })
+    { env: { ...process.env, DSH_RUN: runId, TEST_RUNNER_DSH_PLAN_JSON: JSON.stringify(plan) },
+      stdio: ['ignore', 'inherit', 'inherit'] })
   const startedAt = new Date()
   const tailer = setInterval(drain, 150)
   const exitCode = await new Promise((done) => child.on('close', done))
@@ -555,6 +598,10 @@ async function runCase(flags, positional, pairing) {
   analyzeProbe({ simId, detailDir, verdicts, log })
 
   exportScreenshots({ resultBundle, shotsDir, manifest })
+  // The runner's own container is not the one the test writes in, so the live
+  // tail can come up empty. The same export carries the full stream as an
+  // attachment; prefer it whenever it is non-empty.
+  harvestEventsAttachment({ resultBundle, detailDir, verdicts, applyEvent })
   for (const entry of manifest) {
     if (entry.verdict) continue
     const verdict = [...verdicts].reverse().find((item) => item.seq === entry.seq)

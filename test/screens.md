@@ -11,6 +11,7 @@
 | 工作区文件 | `files.root` | `-DSHConnectURL <url> -DSHOpenScreen files` | 取会话列表里第一个会话的工作区 |
 | 设置 | `settings.root` | `-DSHConnectURL <url> -DSHOpenScreen settings` | 弹层 |
 | 连接管理 | `connection.scan` | `-DSHConnectURL <url> -DSHOpenScreen connections` | 弹层，含扫码入口 |
+| 记录页（反馈） | `feedback.center` | `-DSHConnectURL <url> -DSHOpenScreen feedback` | 弹层；收件箱/已发送两栏。团队账号下收件箱是**用户来信**（030 二期） |
 
 `-DSHOpenScreen` 支持的值由 `RootView.swift` 的 `automationScreen()` 决定，
 新增页面时同时改这里和 `test/cases/fixed/01-全部独立页面逐屏核对.md`。

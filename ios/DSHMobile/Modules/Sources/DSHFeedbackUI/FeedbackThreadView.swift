@@ -235,7 +235,28 @@ public struct FeedbackThreadView: View {
         VStack(alignment: .leading, spacing: DSHTheme.Spacing.tight) {
             Hairline()
             TextEditor(text: $replyText)
-                .frame(minHeight: 72)
+                .font(DSHTheme.Typography.body)
+                .scrollContentBackground(.hidden)
+                .frame(minHeight: 96)
+                .padding(DSHTheme.Spacing.tight)
+                .background(DSHTheme.layer2,
+                            in: RoundedRectangle(cornerRadius: DSHTheme.Radius.medium, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: DSHTheme.Radius.medium, style: .continuous)
+                        .strokeBorder(DSHTheme.border2)
+                }
+                .overlay(alignment: .topLeading) {
+                    if replyText.isEmpty {
+                        Text("写下你的回信…")
+                            .font(DSHTheme.Typography.body)
+                            .foregroundStyle(DSHTheme.labelTertiary)
+                            .padding(.leading, 13)
+                            .padding(.top, 13)
+                            .allowsHitTesting(false)
+                    }
+                }
+                // 容器上不要再挂 id：SwiftUI 会把整块当成一个无障碍元素，子元素的 id 就找不到了
+                // （2026-10-16 实测：外层 feedback.reply.box 在时 feedback.reply.input 查不到）。
                 .accessibilityIdentifier("feedback.reply.input")
             HStack {
                 if let replyError {
@@ -264,7 +285,6 @@ public struct FeedbackThreadView: View {
                 .accessibilityIdentifier("feedback.reply.send")
             }
         }
-        .accessibilityIdentifier("feedback.reply.box")
     }
 
     /// 这一页要呈现的那封信。旧数据里同一线程可能有多封我方留言（append 时代留下的），

@@ -29,6 +29,15 @@ final class Engine: XCTestCase {
     /// `xcodebuild test` reinstalls the runner and a reinstall can hand it a
     /// fresh container: a path captured before the run is not always the path
     /// during it. Explicit `DSH_PLAN` / `DSH_EVENTS` win when they are set.
+    /// 计划内容直接经环境变量传入：`xcodebuild test` 每次会把 runner 重装到**新容器**，
+    /// 事先写进旧容器的计划文件它看不到（2026-10-16 实测：文件在 1DB62B78，测试跑在
+    /// 3664F46A）。XCTest 会把 `TEST_RUNNER_*` 前缀的环境变量去掉前缀转给测试进程，
+    /// 所以 `TEST_RUNNER_DSH_PLAN_JSON` 在这里读作 `DSH_PLAN_JSON`。
+    private static var inlinePlan: Data? {
+        guard let raw = ProcessInfo.processInfo.environment["DSH_PLAN_JSON"], !raw.isEmpty else { return nil }
+        return raw.data(using: .utf8)
+    }
+
     private static var planPath: String {
         if let named = ProcessInfo.processInfo.environment["DSH_PLAN"], !named.isEmpty {
             return resolve(named)
@@ -65,7 +74,7 @@ final class Engine: XCTestCase {
         // decide a case, and a run that stops early cannot say which steps
         // passed — so keep going and let the final assertion speak.
         continueAfterFailure = true
-        try XCTSkipIf(!FileManager.default.fileExists(atPath: Self.planPath),
+        try XCTSkipIf(Self.inlinePlan == nil && !FileManager.default.fileExists(atPath: Self.planPath),
                       "找不到执行计划 \(Self.planPath)；请用 test/run.sh 运行")
     }
 
@@ -132,6 +141,12 @@ final class Engine: XCTestCase {
     // MARK: - Running
 
     func testPlan() throws {
+        // The event stream also rides back as a **test attachment**: the harness
+        // reads the runner's container to tail events live, but `xcodebuild test`
+        // runs the test in a container of its own (measured 2026-10-16: the
+        // harness sees 1DB62B78 while the test writes in 3664F46A), so the file
+        // alone is not a dependable channel. The attachment always is.
+        defer { attachEvents() }
         let plan = try loadPlan()
         if plan.screens.isEmpty {
             // A capture with nothing to drive: the current screen is the subject.
@@ -1099,8 +1114,20 @@ final class Engine: XCTestCase {
         try? handle.close()
     }
 
+    /// Hands the whole event stream to the result bundle as one attachment.
+    private func attachEvents() {
+        let path = Self.eventsPath
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+              !data.isEmpty,
+              let text = String(data: data, encoding: .utf8) else { return }
+        let attachment = XCTAttachment(string: text)
+        attachment.name = "events~dsh-events.ndjson"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
     private func loadPlan() throws -> Plan {
-        let data = try Data(contentsOf: URL(fileURLWithPath: Self.planPath))
+        let data = try Self.inlinePlan ?? Data(contentsOf: URL(fileURLWithPath: Self.planPath))
         return try JSONDecoder().decode(Plan.self, from: data)
     }
 }

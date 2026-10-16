@@ -134,6 +134,8 @@ export const screens = {
   // What this device actually has: font families, and whether the system font
   // can draw a CJK glyph. Answers questions a screenshot cannot.
   diagnostics: { root: 'text:system font', args: () => ['-DSHOpenScreen', 'diagnostics'] },
+  // 记录页（收件箱/已发送）。团队视角下收件箱是用户来信，见 `-DSHOpenScreen feedback`。
+  feedback: { root: 'id:feedback.center', args: () => ['-DSHOpenScreen', 'feedback'] },
 }
 
 // ---------------------------------------------------------------- host
@@ -380,7 +382,53 @@ export function stagePlan(simId, plan) {
   return documents
 }
 
+/// Reads the runner's event stream from whichever container actually has it.
+///
+/// `simctl get_app_container` answers with the copy **this tool** installed,
+/// while `xcodebuild test` runs the test in a container of its own — measured
+/// 2026-10-16: the tool resolved 1DB62B78, the test wrote 71 events into
+/// 91F5D61C. Rather than guess, look in every application container and take the
+/// freshest stream.
+/// Empties every runner event stream on the device before a run starts.
+///
+/// `readEvents` picks the freshest file, and a stale one from an earlier case is
+/// freshest until the new test writes its first line — which replaying shows up
+/// as the *previous* case's steps (measured 2026-10-16). Clearing first makes the
+/// "freshest" rule safe.
+export function clearEvents(simId) {
+  const root = join(simulatorDataRoot(simId), 'Containers/Data/Application')
+  try {
+    for (const entry of readdirSync(root)) {
+      const file = join(root, entry, 'Documents/dsh-events.ndjson')
+      try { writeFileSync(file, '') } catch { /* not every container has one */ }
+    }
+  } catch { /* no containers yet */ }
+}
+
 export function readEvents(simId) {
-  try { return readFileSync(join(runnerDocuments(simId), 'dsh-events.ndjson'), 'utf8') }
-  catch { return '' }
+  const direct = join(runnerDocuments(simId), 'dsh-events.ndjson')
+  let best = ''
+  let bestTime = -1
+  const consider = (file) => {
+    try {
+      const stat = statSync(file)
+      if (stat.mtimeMs > bestTime) {
+        bestTime = stat.mtimeMs
+        best = readFileSync(file, 'utf8')
+      }
+    } catch { /* not there */ }
+  }
+  consider(direct)
+  const root = join(simulatorDataRoot(simId), 'Containers/Data/Application')
+  try {
+    for (const entry of readdirSync(root)) consider(join(root, entry, 'Documents/dsh-events.ndjson'))
+  } catch { /* no containers yet */ }
+  return best
+}
+
+function simulatorDataRoot(simId) {
+  const device = run('xcrun', ['simctl', 'list', 'devices', '-j'], { quiet: true })
+  const parsed = JSON.parse(device)
+  void parsed
+  return join(process.env.HOME ?? '', 'Library/Developer/CoreSimulator/Devices', simId, 'data')
 }
