@@ -38,7 +38,8 @@ front end.
 | `store.py` | SQLite persistence (accounts, agents, devices, pair codes), hashes only |
 | `hub.py` | agent/device registry, routing, per-device backpressure |
 | `admin.py` | operator CLI (accounts, agents, pairing codes, devices) |
-| `deploy/` | systemd unit, Caddy route fragment, `caddy_splice.py`, idempotent `deploy.sh` |
+| `purge-revoked-devices.py` | 清理库里"已撤销 / 已过期"的设备行；默认预演，`--apply` 才删，由 `deploy/dsh-relay-purge.timer` 每天调一次 |
+| `deploy/` | systemd unit 与 timer、Caddy route fragment、`caddy_splice.py`, idempotent `deploy.sh` |
 | `tests/` | pytest unit tests, `integration_e2e.py` (the full middle-tier run) and its `e2e_support.py` helpers |
 
 ## Endpoints
@@ -46,7 +47,7 @@ front end.
 | Method | Path | Auth | Notes |
 |---|---|---|---|
 | `GET` | `/healthz` | — | `{"ok":true,"version":1}` |
-| `GET` | `/stats` | — (loopback only) | operator view: live load, effective limits, egress per device. JSON, or an HTML page when the client sends `Accept: text/html` |
+| `GET` | `/stats` | — (loopback only) | operator view: live load, effective limits, egress per device, and how many device records are dead (`deviceRecords`: counts only, never device ids). JSON, or an HTML page when the client sends `Accept: text/html` |
 | `WS` | `/link/agent?agentId=<id>` | `Bearer <agentSecret>` | one live connection per `agentId`; a new one supersedes the old (close `4001`) |
 | `WS` | `/link/device?agentId=<id>` | `Bearer <deviceToken>` | up to `--max-devices-per-agent` per agent (past it: an `error` frame `limit/devices`, then close `4012`) |
 | `POST` | `/pair/claim` | — | `{pairCode, deviceName, deviceModel, appVersion}` → device token |
@@ -136,6 +137,7 @@ $A admin.py --db $DB agent-rotate --agent agt_x              # new secret, same 
 $A admin.py --db $DB agent-disable --agent agt_x
 $A admin.py --db $DB device-list --agent agt_x
 $A admin.py --db $DB device-revoke --device dev_x            # or --token dt_x
+$A admin.py --db $DB device-hygiene --agent agt_x            # 在用/已撤销/已过期各多少条
 $A admin.py --db $DB purge                                   # drop expired codes
 $A admin.py --db $DB usage --days 7 --by account             # 最近 7 天的出口用量
 ```
@@ -166,6 +168,74 @@ curl -s localhost:8787/stats | python3 -m json.tool | head -40   # 今天的汇�
 `agent-register --write-config` writes `agent.json` with mode `0600`. Run it as
 *your* desktop user so the file lands in your own home directory. The pairing
 code is shown as `XXXX-XXXX` plus a `dsh://pair?relay=…&code=…` QR payload.
+
+### Dead device records
+
+每配一台手机就多一行 `devices`；撤销之后（`device-revoke`、App 里解除配对）或配对满
+365 天（`--device-ttl-days`）之后，那一行**永远回不来了**——`device_by_token` 两种都拒。
+留着行的代价在**连接器每次连上时**：中转会把该 agent 名下所有这种行逐条重放给它
+（`hub.py:_tell_agent_about_the_gone`，一条一帧 `deviceDetach`），连接器要为每条放下一条
+值班流。2026-10-12 库里攒到 **2012 条**（历次用例与调试设备留下的），一次重连灌 2012 帧，
+把连接器的处理链堵住，手机跟着断断续续（那次的分析记在本机
+`maintainers/ANALYSIS-20261012-connector-flap.md`，不随仓库发布）。每跑一次仿真器用例
+就会新配一台、再撤销一台，所以这个数字只会涨，得有人清。
+
+**看得到**（三个出口；设备明细不外露）：
+
+```bash
+curl -s localhost:8787/stats | python3 -c 'import json,sys;print(json.load(sys.stdin)["deviceRecords"])'
+# {"total": 436, "live": 87, "revoked": 349, "expired": 0, "dead": 349}
+$A admin.py --db $DB device-hygiene                  # 全库
+$A admin.py --db $DB device-hygiene --agent agt_x    # 单个 agent，多给一个 overThreshold 结论
+```
+
+`dead` 才是会被重放的条数（已撤销 ∪ 已过期，去重后）；一条记录可以既撤销又过期，
+所以 `revoked + expired` 可能比它大。`/stats` 的 `deviceRecords` 只有计数，
+没有 `deviceId`、没有设备名——要看明细是 `admin.py device-list --all`。
+
+**告警**：一个 agent 的死记录超过 `--dead-device-warn-threshold`
+（`DLP_DEAD_DEVICE_WARN_THRESHOLD`，默认 200，`0` = 不告警）时，它下次连上会记一条 WARNING，
+里面带条数、阈值与清理命令：
+
+```
+relay: agent agt_x has 349 dead device records (revoked or expired), over the 200 threshold;
+every reconnect replays that many deviceDetach frames — purge them with
+`purge-revoked-devices.py --agent agt_x --apply`
+```
+
+**清理**：`purge-revoked-devices.py`。默认只预演；`--apply` 才真删，删前做一份 SQLite 备份
+（`.backup` API，含 WAL 内容）并把待删行导出成 JSON，落在库文件旁边的 `backups/`。
+它只删已撤销 / 已过期的行，**在用的设备一行都不碰**（预演输出里会把它们逐条列出来核对），
+也不碰 `usageDaily` / `feedbackThreads` / `noticeDeliveries`。
+
+```bash
+$A purge-revoked-devices.py --db $DB --agent agt_x                     # 预演
+$A purge-revoked-devices.py --db $DB --agent agt_x --apply             # 真删
+$A purge-revoked-devices.py --db $DB --all-agents --apply --keep 14    # 清全部 agent，留 14 组备份
+```
+
+**每天自动清**：`deploy/dsh-relay-purge.timer` 配 `deploy/dsh-relay-purge.service`，
+每天 04:30 以 `dsh-relay` 用户跑一次
+`--all-agents --apply --backup-dir /var/lib/dsh-relay/backups --keep 14`。
+`deploy.sh` 只负责把脚本装进 `/opt/dsh-relay/`，timer 需要单独装一次：
+
+```bash
+sudo install -m 0644 relay/deploy/dsh-relay-purge.service /etc/systemd/system/
+sudo install -m 0644 relay/deploy/dsh-relay-purge.timer   /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now dsh-relay-purge.timer
+systemctl list-timers dsh-relay-purge.timer        # 下次触发时刻
+journalctl -u dsh-relay-purge -n 20                # 上一轮清了多少
+sudo systemctl start dsh-relay-purge.service       # 手动跑一次，不等 04:30
+sudo systemctl disable --now dsh-relay-purge.timer # 不想要了就这一条
+```
+
+一条待删行都没有时脚本**不写备份、不动库**，所以常态下不会每天多一份库；真有东西可清时
+每次一份全库备份，`--keep N` 决定留几组（备份放在 `--backup-dir`，默认是库文件旁边的
+`backups/`；磁盘紧就调小或设 0）。
+
+`device-hygiene`、`/stats` 与清理脚本用的是同一个判据：`revoked` = `revokedAt IS NOT NULL`，
+`expired` = `expiresAt <= now`，`live` = 两者都不成立。
 
 ### Feedback and notices
 
@@ -240,6 +310,9 @@ and `https://relay.example.com/dsh-link/healthz`.
 
 Nothing else in the Caddyfile is rewritten, reordered or deleted.
 
+`deploy.sh` 同时把 `purge-revoked-devices.py` 装进 `/opt/dsh-relay/`，但**不装也不开**
+清理 timer——那是一次独立决定，装法见上面「Dead device records」一节。
+
 **Enabling / reverting the Caddy change**
 
 * Enable: `sudo relay/deploy/deploy.sh` (or re-run it after an edit).
@@ -273,6 +346,7 @@ Overridable: `DSH_RELAY_USER`, `DSH_RELAY_DIR`, `DSH_RELAY_DATA`,
 | `--max-devices-per-agent` / `DLP_MAX_DEVICES_PER_AGENT` | `0` (unlimited) | how many devices one agent may keep attached; a reconnect never counts twice |
 | `--device-rate-kbps` / `DLP_DEVICE_RATE_KBPS` | `0` (no pacing) | per-device egress pacing, in **kilobits per second** |
 | `--device-daily-mb` / `DLP_DEVICE_DAILY_MB` | `0` (unlimited) | per-device egress allowance per **local** day, in megabytes; the count is read from `usageDaily`, so a reconnect or a restart does not reset it |
+| `--dead-device-warn-threshold` / `DLP_DEAD_DEVICE_WARN_THRESHOLD` | `200` | 一个 agent 名下的死设备记录（已撤销 ∪ 已过期）超过它就在该连接器连上时记一条 WARNING；`0` = 不告警。只告警、不自动删——清理见「Dead device records」 |
 | `--base-path` / `DLP_BASE_PATH` | *(empty)* | optional mount prefix; every route is served with and without it |
 | `--log-level` / `DLP_LOG_LEVEL` | `INFO` | log verbosity |
 
@@ -319,6 +393,10 @@ The host's own interface counters cannot answer "which device is using the
 bandwidth" — they mix in SSH, OTA downloads and everything else on the machine.
 These numbers are the relay's, so they can.
 
+同一份响应里的 `deviceRecords` 是设备行的卫生计数（在用 / 已撤销 / 已过期 / 死记录
+`dead`，以及 `limits.deadDeviceWarnThreshold`）；只有计数，没有设备明细。
+为什么这个数字重要、怎么清，见「Dead device records」。
+
 ### Security posture
 
 * Secrets are generated with `secrets.token_urlsafe(32)` and stored **hashed**:
@@ -349,6 +427,7 @@ These numbers are the relay's, so they can.
 | `https://relay.example.com/dsh-link/healthz` is 404 | the marked block is missing from the right site block; run `caddy_splice.py check` then `deploy.sh` |
 | `admin.py device-revoke` 之后手机还连着 | 等一个对账周期；仍连着就看 `journalctl -u dsh-relay` 有没有 `was revoked in the database but still connected; detaching`——没有就是 `DLP_REVOKE_RECONCILE_S=0` 或对账任务挂了（日志里有 `revoke reconcile tick failed`） |
 | WebSockets close every 30–60s through Caddy | `read_timeout`/`write_timeout` were overridden; they must stay `0` (no timeout) in the reverse_proxy transport |
+| 手机每隔几十秒就断一下、日志里有 `has N dead device records` | 库里攒的已撤销/已过期设备行太多，连接器每次重连都被灌 N 帧；清掉它们（见「Dead device records」），再看 `journalctl -u dsh-relay-purge` |
 
 ### Database
 

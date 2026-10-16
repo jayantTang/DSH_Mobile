@@ -147,3 +147,22 @@ def test_purge_keep_prunes_only_its_own_backups(store):
     assert keep_me.exists(), "不是本脚本写的文件不许碰"
     # 这一轮自己写的那组备份当然也留着。
     assert len(list(backups.glob("purged-devices-all-*.json"))) == 1
+
+
+def test_the_purge_units_call_this_script_with_apply():
+    """定时任务与脚本必须是同一套：路径、参数、沙箱可写目录都对得上。
+
+    这条不是"文档检查"，而是接线检查——unit 里少一个 `--apply` 就是每天空跑一次，
+    备份目录写成 `/root` 就是每晚以 `dsh-relay` 身份写不进去（沙箱有 ProtectHome）。
+    """
+    unit = (RELAY_DIR / "deploy" / "dsh-relay-purge.service").read_text(encoding="utf-8")
+    timer = (RELAY_DIR / "deploy" / "dsh-relay-purge.timer").read_text(encoding="utf-8")
+
+    assert "purge-revoked-devices.py" in unit
+    assert "--all-agents" in unit and "--apply" in unit
+    assert "--db /var/lib/dsh-relay/state.db" in unit
+    assert "--backup-dir /var/lib/dsh-relay/backups" in unit
+    assert "StateDirectory=dsh-relay" in unit and "ReadWritePaths=/var/lib/dsh-relay" in unit
+    assert "User=dsh-relay" in unit
+    assert "OnCalendar=" in timer and "Persistent=true" in timer
+    assert "WantedBy=timers.target" in timer
