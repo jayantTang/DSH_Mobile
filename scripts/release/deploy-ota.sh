@@ -176,6 +176,11 @@ fi
 step "生成 manifest 与安装页"
 rm -rf "$STAGE_DIR"; mkdir -p "$STAGE_DIR"
 
+# 页面上那行"构建于"写**归档**的时间，而不是这次跑脚本的时间：`--dry-run` 与
+# `--no-build` 复用旧归档时（例如只更新安装页），写脚本时间会把 10-13 的包标成今天。
+BUILT_AT="$(date -r "$ARCHIVE" '+%Y-%m-%d %H:%M' 2>/dev/null \
+  || TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M')"
+
 # 回退候选 = 线上现存的版本化产物里，除当前这次之外最靠前的 (KEEP_VERSIONS-1) 份。
 #
 # 为什么要在页面上列出来：最新版「装不上」或「一打开就崩」时，人手里只有一个安装按钮，
@@ -331,7 +336,7 @@ cat > "$STAGE_DIR/index.html" <<HTML
 </style>
 <div class="card">
   <h1>${APP_NAME}</h1>
-  <div class="meta">最新版本 ${SHORT_VERSION} (${BUILD_VERSION})<br>构建于 $(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M')（北京时间）</div>
+  <div class="meta">最新版本 ${SHORT_VERSION} (${BUILD_VERSION})<br>构建于 ${BUILT_AT}（北京时间）</div>
   <a class="install" data-build="${BUILD_VERSION}" href="itms-services://?action=download-manifest&amp;url=${PUBLIC_BASE}/${MANIFEST_NAME}">安装 / 更新（最新版）</a>
 ${FALLBACK_SECTION}
   <ol>
