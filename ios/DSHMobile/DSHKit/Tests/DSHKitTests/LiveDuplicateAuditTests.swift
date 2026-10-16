@@ -42,7 +42,9 @@ final class LiveDuplicateAuditTests: XCTestCase {
         defer { Task { await carrier.close() } }
 
         let sessions = try await client.sessions()
-        let candidates = sessions.items
+        // 被隔离的会话（宿主打不开的 v0 档案等）先滤掉，见 `TestQuarantine`：
+        // 它们的取页会失败，混在候选里只会让这一轮白跑。
+        let candidates = TestQuarantine.shared.usable(sessions.items)
             .filter { !$0.blank && !$0.isSubagent && $0.asOfSeq > 0 }
             .sorted { $0.asOfSeq > $1.asOfSeq }
             .prefix(10)

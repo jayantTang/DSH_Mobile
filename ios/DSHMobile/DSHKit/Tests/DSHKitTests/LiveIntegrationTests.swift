@@ -122,10 +122,12 @@ final class LiveIntegrationTests: XCTestCase {
         let sessions = try await client.sessions()
         // Prefer a top-level session that has actually run, so there is real
         // history to read and no subagent addressing to satisfy.
-        guard let target = sessions.items.first(where: { !$0.blank && !$0.isSubagent && ($0.projections?.asOfSeq ?? 0) > 0 })
-                ?? sessions.items.first(where: { !$0.blank })
+        // 被隔离的会话（宿主打不开的 v0 档案等）先滤掉，见 `TestQuarantine`。
+        let candidates = TestQuarantine.shared.usable(sessions.items)
+        guard let target = candidates.first(where: { !$0.blank && !$0.isSubagent && ($0.projections?.asOfSeq ?? 0) > 0 })
+                ?? candidates.first(where: { !$0.blank })
         else {
-            throw XCTSkip("no non-blank session available to page through")
+            throw XCTSkip("no non-blank session available to page through（被隔离的已排除）")
         }
 
         let throughSeq = target.asOfSeq
@@ -159,9 +161,11 @@ final class LiveIntegrationTests: XCTestCase {
         let client = DSHClient(carrier: carrier)
 
         let sessions = try await client.sessions()
-        guard let child = sessions.items.first(where: { $0.isSubagent && $0.parentSessionId != nil })
+        // 子代理的子会话也可能落在被隔离的父会话/目录里，同样先滤掉。
+        let candidates = TestQuarantine.shared.usable(sessions.items)
+        guard let child = candidates.first(where: { $0.isSubagent && $0.parentSessionId != nil })
         else {
-            throw XCTSkip("no subagent transcript present in this DSH home")
+            throw XCTSkip("no subagent transcript present in this DSH home（被隔离的已排除）")
         }
 
         let address = child.address
@@ -276,11 +280,13 @@ final class LiveIntegrationTests: XCTestCase {
         let client = DSHClient(carrier: carrier)
 
         let sessions = try await client.sessions()
-        guard let target = sessions.items
+        // "历史最长"必须先滤掉被隔离的：本机历史最长的恰恰可能是宿主打不开的那条
+        // （2026-10-16：取到 v0 迁移被拒的 session-9d676f2d…，该文件因此每次必红）。
+        guard let target = TestQuarantine.shared.usable(sessions.items)
             .filter({ !$0.blank && !$0.isSubagent })
             .max(by: { $0.asOfSeq < $1.asOfSeq })
         else {
-            throw XCTSkip("no run session with history available")
+            throw XCTSkip("no run session with history available（被隔离的已排除）")
         }
 
         // Walk back until a page actually contains a tool call, so the
@@ -354,11 +360,12 @@ final class LiveIntegrationTests: XCTestCase {
         let client = DSHClient(carrier: carrier)
 
         let sessions = try await client.sessions()
-        guard let target = sessions.items.first(where: { !$0.blank && !$0.isSubagent && !$0.running })
-                ?? sessions.items.first(where: { !$0.blank && !$0.isSubagent })
-                ?? sessions.items.first(where: { !$0.blank })
+        let candidates = TestQuarantine.shared.usable(sessions.items)
+        guard let target = candidates.first(where: { !$0.blank && !$0.isSubagent && !$0.running })
+                ?? candidates.first(where: { !$0.blank && !$0.isSubagent })
+                ?? candidates.first(where: { !$0.blank })
         else {
-            throw XCTSkip("no non-blank session available to follow")
+            throw XCTSkip("no non-blank session available to follow（被隔离的已排除）")
         }
 
         let stream = await client.follow(
