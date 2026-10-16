@@ -50,6 +50,8 @@ public final class FeedbackCenter {
     private let store: FeedbackLocalStore
     private let minimumRefreshInterval: TimeInterval
     private let endpointProvider: () -> Endpoint?
+    /// 待投递的崩溃报告（MetricKit 在下次启动交给我们）。
+    private let crashArchive: CrashReportArchive
     private var mirror: FeedbackMirror
     private var serverUnreadCount = 0
     /// 镜像文件不存在（首次安装、换机、刚清过缓存）：下一次拉取要以服务端补种已读。
@@ -60,11 +62,13 @@ public final class FeedbackCenter {
     init(
         store: FeedbackLocalStore = FeedbackLocalStore(),
         minimumRefreshInterval: TimeInterval = 15,
-        endpointProvider: (() -> Endpoint?)? = nil
+        endpointProvider: (() -> Endpoint?)? = nil,
+        crashArchive: CrashReportArchive = CrashReportArchive()
     ) {
         self.store = store
         self.minimumRefreshInterval = minimumRefreshInterval
         self.endpointProvider = endpointProvider ?? { FeedbackCenter.systemEndpoint() }
+        self.crashArchive = crashArchive
         self.mirror = store.mirror()
         self.needsSeed = !store.mirrorExists
         recomputeUnread()
@@ -142,6 +146,41 @@ public final class FeedbackCenter {
         persistMirror()
         lastError = nil
         return ticket
+    }
+
+    /// 把待投递的崩溃报告交出去（每次进前台都可以调）。
+    ///
+    /// 一次崩溃一封信，靠 ``CrashReport/id`` 去重：同一构建上的同一个崩溃只发一次，
+    /// 不会因为「每次启动都崩」而把收件箱刷满。网络不通就整批留在本地等下次——
+    /// 这是与传统上报 SDK 的区别：这里没有重试风暴，最多留 20 条。
+    ///
+    /// 返回这次真正投出去的条数，供用例与日志判断。
+    @discardableResult
+    public func flushCrashReports() async -> Int {
+        let pending = crashArchive.pending()
+        guard !pending.isEmpty else { return 0 }
+        guard let endpoint = endpointProvider() else { return 0 }
+        var sent = 0
+        for report in pending {
+            do {
+                _ = try await client(endpoint).submit(
+                    text: CrashReportDigest.body(for: report),
+                    subject: CrashReportDigest.subject(for: report),
+                    appVersion: report.appVersion,
+                    deviceModel: report.deviceModel,
+                    systemVersion: report.systemVersion,
+                    clientRef: report.id
+                )
+                crashArchive.markSent(id: report.id)
+                sent += 1
+            } catch {
+                // 一条发不出去，后面的同样发不出去（同一个端点）；留到下次，
+                // 不在这里重试，免得把"上报"变成新的重连来源。
+                feedbackLog("crash report queued: \(error)")
+                break
+            }
+        }
+        return sent
     }
 
     /// 团队回信（030 二期 FR-5）：往既有线程追加一封回信。
@@ -232,6 +271,8 @@ public final class FeedbackCenter {
 
     /// App 回到前台时调用（`ScenePhase` 变成 `.active`）。
     public func applicationBecameActive() async {
+        // 崩溃报告先走：它不依赖收件箱拉取，网络不通时留在本地等下次。
+        await flushCrashReports()
         await refreshInbox()
     }
 

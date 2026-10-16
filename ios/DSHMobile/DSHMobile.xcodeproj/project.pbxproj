@@ -37,6 +37,7 @@
 		D0E3123F12FFDF65CB904400 /* NotificationProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 612505CABA9C3923B812C93F /* NotificationProbe.swift */; };
 		D990DB0A8389A0E1DAEFCD77 /* DSHFilesDomain in Frameworks */ = {isa = PBXBuildFile; productRef = 591834F656729023198922C3 /* DSHFilesDomain */; };
 		E1723D1EB6DDF63BC8517672 /* DSHConnectionAPI in Frameworks */ = {isa = PBXBuildFile; productRef = C29304114E257F7E8E053027 /* DSHConnectionAPI */; };
+		E6B220D37AF428C377E17818 /* MetricKitCrashObserver.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5CF8CBD7D933E73F23B1594 /* MetricKitCrashObserver.swift */; };
 		F3294DFA7E328EB4C26CEEE7 /* DSHKit in Frameworks */ = {isa = PBXBuildFile; productRef = 1FBAAD58CC59038A6E26F015 /* DSHKit */; };
 		F4A6E969CBAE4CC8ABEE8C27 /* MessageLayerProbes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F4E908B435CC83454A6512C /* MessageLayerProbes.swift */; };
 		FA9FDA6AB018EF6551789A60 /* Engine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1070BF66610D38AECBC868D4 /* Engine.swift */; };
@@ -83,6 +84,7 @@
 		CFA758713F0F4217EFCD7A9A /* RunKeepAlive.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunKeepAlive.swift; sourceTree = "<group>"; };
 		D1EB5F02211A37D06CE0F9EE /* Modules */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Modules; path = Modules; sourceTree = SOURCE_ROOT; };
 		D2814EB65E020031427D4B48 /* P13ResumeProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = P13ResumeProbe.swift; sourceTree = "<group>"; };
+		F5CF8CBD7D933E73F23B1594 /* MetricKitCrashObserver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetricKitCrashObserver.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -198,6 +200,7 @@
 			children = (
 				C975AD70ED569A5CA4717F6B /* APNSRegistrar.swift */,
 				0F4E908B435CC83454A6512C /* MessageLayerProbes.swift */,
+				F5CF8CBD7D933E73F23B1594 /* MetricKitCrashObserver.swift */,
 				612505CABA9C3923B812C93F /* NotificationProbe.swift */,
 				CFA758713F0F4217EFCD7A9A /* RunKeepAlive.swift */,
 				00DCD00E8C914B6C4BDA1A0E /* SessionAlerts.swift */,
@@ -213,13 +216,6 @@
 				1F8851C894491769E7244907 /* RootView.swift */,
 			);
 			path = App;
-			sourceTree = "<group>";
-		};
-		"TEMP_1867C064-7A02-4D0D-8D6A-E8D7D808BF35" /* Features */ = {
-			isa = PBXGroup;
-			children = (
-			);
-			path = Features;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -370,6 +366,7 @@
 				815A977B9321D3BDFADD0B8F /* APNSRegistrar.swift in Sources */,
 				7A5DBF56A82D9E6A1E08CA4E /* DSHMobileApp.swift in Sources */,
 				F4A6E969CBAE4CC8ABEE8C27 /* MessageLayerProbes.swift in Sources */,
+				E6B220D37AF428C377E17818 /* MetricKitCrashObserver.swift in Sources */,
 				D0E3123F12FFDF65CB904400 /* NotificationProbe.swift in Sources */,
 				36D223A28FCC59DCD68A4EE2 /* P13ResumeObserver.swift in Sources */,
 				932DFAF2F6B4F7A7F0BB2FA1 /* P13ResumeProbe.swift in Sources */,

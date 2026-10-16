@@ -37,6 +37,15 @@ struct DSHMobileApp: App {
         // App 的 `ViewportProbe`（调试仪器）与 `ProbeVariants`（读启动参数），
         // 所以日志、视口几何与变体开关逐项注入；每一项都直接转发给原实现，
         // 带 `-DSHViewportProbe` / `-DSHProbe*` 启动时的行为与搬迁前逐字一致。
+        // 崩溃诊断：MetricKit 在**下次启动**把它交回来，这里只负责收进本地存档，
+        // 投递交给 FeedbackCenter.flushCrashReports()（前台时跑）。单测宿主不注册——
+        // 那个进程不起界面、也没有中转凭据，收下来只会留在沙箱里。
+        if !Self.isUnitTestHost {
+            MetricKitCrashObserver.shared.start { report in
+                ViewportProbe.note("crash.captured", ["id": report.id, "exception": report.exceptionType], force: false)
+                Task { await FeedbackCenter.shared.flushCrashReports() }
+            }
+        }
         ChatProbe.shared.probeNote = note
         ChatProbe.shared.setContent = { items, streaming in
             ViewportProbe.setContent(items: items, streaming: streaming)

@@ -275,6 +275,24 @@
       "file": "ios/DSHMobile/Modules/Tests/DSHSessionsDomainTests/DirectoryBrowserModelTests.swift",
       "reason": "测试断言的期望值：钉的是 DirectoryBrowserModel 码表的中文输出（键在 Localizable.strings，值为格式串）",
       "backlog": "i18n-test-expectations"
+    },
+    {
+      "rule": "hardcoded-string",
+      "file": "ios/DSHMobile/Modules/Sources/DSHFoundation/CrashReport.swift",
+      "reason": "崩溃报告的信件正文与主题：这是发给团队收件箱的**报文内容**（与用户来信一样属于数据），不是界面文案；收到它的客户端按原文显示，不随设备语言翻译",
+      "backlog": "i18n-crash-report-payload"
+    },
+    {
+      "rule": "hardcoded-string",
+      "file": "ios/DSHMobile/Modules/Tests/DSHFoundationTests/CrashReportTests.swift",
+      "reason": "测试断言的期望值：钉的是 CrashReportDigest 的报文格式（产品侧同口径豁免见上一条）",
+      "backlog": "i18n-test-expectations"
+    },
+    {
+      "rule": "hardcoded-string",
+      "file": "ios/DSHMobile/Modules/Tests/DSHFeedbackDomainTests/CrashReportFlushTests.swift",
+      "reason": "测试断言的期望值：钉的是崩溃报告的主题格式（产品侧同口径豁免见 CrashReport.swift）",
+      "backlog": "i18n-test-expectations"
     }
   ]
 }
