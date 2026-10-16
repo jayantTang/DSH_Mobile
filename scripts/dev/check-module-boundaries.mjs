@@ -136,6 +136,67 @@ while ((m = targetRe.exec(pkgText))) {
   }
 }
 
+// ---------- 2.6 C6 声明级：import 了谁就必须声明谁 ----------
+// 源码 import 了本包的 target、而 `.target(dependencies:)` 里没有它，Debug 构建靠
+// **传递依赖**照样能编过，Release 归档却会以 `Unable to find module dependency` 或
+// `cannot find type` 失败——2026-10-16 实测：12 个 target 是这种状态，下一次发版必挂。
+{
+  const allTargets = [...targetsUnder('Sources'), ...targetsUnder('Tests')];
+  const moduleNames = new Set([...allTargets, 'DSHKit', 'RelayKit']);
+  const alias = { dshKit: 'DSHKit', relayKit: 'RelayKit' };
+  const declaredDeps = new Map();
+  const declRe = /\.(?:target|testTarget)\(\s*name:\s*"(\w+)"/g;
+  while ((m = declRe.exec(pkgText))) {
+    const name = m[1];
+    const deps = new Set();
+    const declEnd = m.index + m[0].length;
+    const head = pkgText.slice(declEnd, declEnd + 400);
+    const dm = /^\s*,\s*dependencies:\s*\[/.exec(head);
+    if (dm) {
+      const start = declEnd + dm[0].length - 1;
+      let depth = 0;
+      let end = -1;
+      for (let i = start; i < pkgText.length; i += 1) {
+        if (pkgText[i] === '[') depth += 1;
+        else if (pkgText[i] === ']') { depth -= 1; if (depth === 0) { end = i; break; } }
+      }
+      if (end > start) {
+        for (const t of pkgText.slice(start + 1, end)
+          .matchAll(/"(\w+)"|\b(dshKit|relayKit)\b/g)) {
+          const value = t[1] || alias[t[2]];
+          if (value) deps.add(value);
+        }
+      }
+    }
+    declaredDeps.set(name, deps);
+  }
+  for (const t of allTargets) {
+    const deps = declaredDeps.get(t);
+    if (!deps) continue;
+    const seen = new Set();
+    const walk = (dir) => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        const p = path.join(dir, e.name);
+        if (e.isDirectory()) { walk(p); continue; }
+        if (!e.name.endsWith('.swift')) continue;
+        for (const m2 of readFileSync(p, 'utf8')
+          .matchAll(/^\s*(?:@_exported\s+)?import\s+(\w+)/gm)) {
+          const dep = m2[1];
+          if (dep === t || !moduleNames.has(dep) || seen.has(dep)) continue;
+          seen.add(dep);
+          if (!deps.has(dep)) {
+            err(`[C6] ${t}: 源码 import 了「${dep}」，Package.swift 却没声明这个依赖`
+              + '（Debug 靠传递依赖能过，Release 归档必挂）');
+          }
+        }
+      }
+    };
+    for (const dir of [path.join(modulesDir, 'Sources', t), path.join(modulesDir, 'Tests', t)]) {
+      if (existsSync(dir)) walk(dir);
+    }
+  }
+}
+
 // ---------- 3. C5 例外清单 ----------
 let exceptionCount = 0;
 if (existsSync(exceptionsFile)) {
