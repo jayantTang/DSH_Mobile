@@ -15,6 +15,7 @@
     "session-digest",
     "history-role-filter",
     "history-scan-boundary",
+    "search-progress",
     "device-subprotocol-auth",
     "persistent-pair-code",
     "account-state",

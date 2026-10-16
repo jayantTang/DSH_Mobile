@@ -46,6 +46,10 @@ export const FIND_METHOD = '_link/sessionFind'
 /// does not read the field keeps the old cursor rule.
 export const HISTORY_CAPABILITIES = [
   'history-window', 'session-search', 'history-role-filter', 'history-scan-boundary',
+  // search-progress: a scanned page also carries `totalChunks` / `remainingChunks`,
+  // so the reader can be told "已扫 k/N 片" from the first page on. Purely additive:
+  // `totalChunks` comes from the log's newest seq, which a scan already fetches.
+  'search-progress',
 ]
 
 export function isHistoryMethod(method) {
@@ -262,7 +266,10 @@ export function createHistoryService({ logger = console } = {}) {
         }
       }
       const from = parseSearchCursor(args.cursor)
-      const ceiling = from !== undefined ? from : await newestSeq(sessionId)
+      // `newestSeq` also carries the progress denominator below; it is cached for
+      // 5s, and a scan would have fetched it anyway on the first page.
+      const newest = await newestSeq(sessionId)
+      const ceiling = from !== undefined ? from : newest
       const hits = []
       let to = ceiling
       let scanned = 0
@@ -307,6 +314,11 @@ export function createHistoryService({ logger = console } = {}) {
           cursor: hasMore ? String(to) : null,
           hasMore,
           scannedChunks: scanned,
+          // 进度：片数是**扫描单位**（一段 `chunk` 个 seq，从新往旧），不是命中页数。
+          // `totalChunks` 由日志最新 seq 算出，所以从第一页起就是精确的；命中的**条数**
+          // 仍然要扫到最早那一片才定稿（不开宿主全文索引的必然结果）。
+          totalChunks: newest >= 0 ? Math.floor(newest / chunk) + 1 : 0,
+          remainingChunks: to >= 0 ? Math.floor(to / chunk) + 1 : 0,
           source: 'scan',
         },
       }

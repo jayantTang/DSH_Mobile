@@ -73,7 +73,11 @@ export const SERVER_CAPABILITIES = [
   // history-scan-boundary: such a page also carries `scanBoundary` — the seq the
   // scan actually reached — so a caller whose page was filtered empty can still
   // advance instead of asking for the same stretch forever (spec 009 T039).
-  'history-scan-boundary', 'device-subprotocol-auth', 'persistent-pair-code', 'account-state', 'account-state-push',
+  'history-scan-boundary',
+  // search-progress: 扫描式搜索的每一页都带 `totalChunks` / `remainingChunks`，
+  // 界面据此从第一页起就能显示「已扫 k/N 片」（026 之后的 App 才读）。
+  'search-progress',
+  'device-subprotocol-auth', 'persistent-pair-code', 'account-state', 'account-state-push',
 ]
 
 export function isHelloMethod(method) {

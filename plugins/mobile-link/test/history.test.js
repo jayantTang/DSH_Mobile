@@ -273,12 +273,27 @@ test('sessionFind pages older hits through the cursor', async () => {
   assert.equal(first.value.hits.length, 4)
   assert.equal(first.value.hasMore, true)
   assert.ok(first.value.cursor !== null)
+  // 进度：40 条 seq、片宽 10 → 4 片；一页扫了一片，还剩 3 片。
+  assert.equal(first.value.totalChunks, 4, '片数由日志最新 seq 算出，第一页就该是精确的')
+  assert.equal(first.value.remainingChunks, 3, '第一页扫完还剩 3 片')
   const second = await service.handle(FIND_METHOD, { ...FIND_ARGS, limit: 4, chunk: 10, cursor: first.value.cursor })
   assert.equal(second.ok, true)
   const seqs = [...first.value.hits, ...second.value.hits].map((hit) => hit.seq)
   assert.equal(new Set(seqs).size, seqs.length, '两页不重复')
   assert.ok(Math.max(...second.value.hits.map((h) => h.seq)) < Math.min(...first.value.hits.map((h) => h.seq)),
     '第二页更旧')
+  assert.equal(second.value.totalChunks, 4, '总数不随翻页变')
+  assert.equal(second.value.remainingChunks, 2, '第二页之后还剩 2 片')
+})
+
+test('sessionFind reports the scan as finished only when it reached the oldest chunk', async () => {
+  // 界面只有在 `hasMore === false` 时才敢写"已搜全部历史"；这里钉住这个前提。
+  const service = bound(createHistoryService({ logger: { warn() {}, info() {} } }), fakeSearchQuery(searchLog(5)))
+  const result = await service.handle(FIND_METHOD, { ...FIND_ARGS, limit: 50, chunk: 10 })
+  assert.equal(result.ok, true)
+  assert.equal(result.value.totalChunks, 1, '5 条 seq → 1 片')
+  assert.equal(result.value.remainingChunks, 0, '扫完最老一片之后剩余为 0')
+  assert.equal(result.value.hasMore, false, '到底了才允许界面说"全部历史"')
 })
 
 test('sessionFind honours the role filter (only my own questions)', async () => {

@@ -628,6 +628,8 @@ test('_link/hello reports what this connector can do, without asking the Host', 
   assert.ok(Array.isArray(reply.value.capabilities), 'no capability list reported')
   // The one the app gates its file entry on.
   assert.ok(reply.value.capabilities.includes('file-transfer'))
+  // 扫描式搜索的进度：界面据此从第一页起显示「已扫 k/N 片」。
+  assert.ok(reply.value.capabilities.includes('search-progress'))
   assert.equal(reply.value.protocolVersion, 1)
   assert.deepEqual(
     dsh.calls.filter((call) => call.method === '_link/hello'),
