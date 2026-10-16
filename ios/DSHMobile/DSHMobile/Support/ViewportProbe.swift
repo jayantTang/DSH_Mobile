@@ -596,7 +596,15 @@ enum ViewportProbe {
     static func setContent(items: Int, streaming: Int) {}
     static func markReady() {}
     static func start() {}
-    static func runTyping(into target: TypingTarget, focus: FocusState<Bool>.Binding) async {}
+    static func enter(_ id: String, _ rect: CGRect) {}
+    static func update(_ id: String, _ rect: CGRect) {}
+    static func leave(_ id: String) {}
+    static var lastScroll: (offset: CGFloat, content: CGFloat) {
+        get { (0, 0) }
+        set {}
+    }
+    // 没有 `runTyping`：它要过的 `TypingTarget` 只在 DEBUG 的 DSHFoundation 里存在
+    // （见 `TypingTarget.swift` 顶部的 `#if DEBUG`），Release 里没有这个消费者。
 }
 
 enum ProbeVariants {

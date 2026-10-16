@@ -25,12 +25,19 @@ struct DSHMobileApp: App {
     init() {
         // 探针接线（025）：模块层的 Core/Domain 不认识 App 的调试仪器 ViewportProbe，
         // 由装配层把 note 注入它们的 probeNote 钩子，行为与搬迁前一致。
+        //
+        // 整段在 `#if DEBUG` 里：`ViewportProbe` 与 `ProbeVariants` 在 Release 只有空桩
+        // （`Support/ViewportProbe.swift`），发布构建里这些消费者一个都不该存在——
+        // 少了这道门，Release 归档会以 `has no member 'enter'` 之类的报错失败，
+        // 而模拟器 Debug 全绿（2026-10-16 由 `./test/run.sh release` 抓出）。
+        #if DEBUG
         let note: (String, [String: String], Bool) -> Void = { kind, fields, force in
             ViewportProbe.note(kind, fields, force: force)
         }
         KeyboardProbe.shared.isOn = { ViewportProbe.isOn }
-        SessionAlertPrefs.shared.onChange = { await APNSRegistrar.shared.switchesChanged() }
         KeyboardProbe.shared.note = { kind, fields in ViewportProbe.note(kind, fields) }
+        #endif
+        SessionAlertPrefs.shared.onChange = { await APNSRegistrar.shared.switchesChanged() }
         // 025：会话单元的信箱钩子（信箱单元尚未迁入模块前由 App 提供实现）。
         // FIXME(025-阶段4b)：信箱单元迁入 DSHFeedbackDomain 后改为注入其模型。
         // 025 阶段4b：聊天单元的探针端口。`DSHChatDomain` / `DSHChatUI` 不认识
@@ -56,10 +63,13 @@ struct DSHMobileApp: App {
         #endif
         if !Self.isUnitTestHost {
             MetricKitCrashObserver.shared.start { report in
+                #if DEBUG
                 ViewportProbe.note("crash.captured", ["id": report.id, "exception": report.exceptionType], force: false)
+                #endif
                 Task { await FeedbackCenter.shared.flushCrashReports() }
             }
         }
+        #if DEBUG
         ChatProbe.shared.probeNote = note
         ChatProbe.shared.setContent = { items, streaming in
             ViewportProbe.setContent(items: items, streaming: streaming)
@@ -95,6 +105,7 @@ struct DSHMobileApp: App {
         ChatViewSeams.shared.runTyping = { target, focus in
             await ViewportProbe.runTyping(into: target, focus: focus)
         }
+        #endif
         // 启动清扫：删掉 `Caches/outgoing-files/` 下 24 小时以上的残留。
         // 正常一次发送由 `ChatModel.sendFile` 自己删拷贝，这里兜的是「上传中途被
         // 杀」那一种 —— 否则暂存区只增不减（P-3）。放在 App 的初始化里、不放进
