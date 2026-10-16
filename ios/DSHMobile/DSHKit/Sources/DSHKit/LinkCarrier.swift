@@ -573,7 +573,45 @@ public actor LinkCarrier: DSHCarrier {
         startHeartbeat(on: task)
         socketOpenedAt = Date()
         updateSocketState(.up)
+        scheduleFlapIfRequested()
     }
+
+    #if DEBUG
+    /// `-DSHLinkFlap <次数>`：连着之后按次数把链路**从这一侧**掐断，用来在仿真器里
+    /// 复现"链路抖动"（仿真器没有蜂窝/Wi-Fi 切换，真实断链只能这样造）。
+    ///
+    /// 为什么放在协议层而不是 App：`-DSHInterruptDownload` 已经在 `DSHFilesDomain`
+    /// 里读过启动参数，同一口径；而"断链后能不能自己接回来、会不会叠出第二条 socket"
+    /// 正是 `LinkCarrier` 自己的契约，用例要压的就是它。
+    ///
+    /// 每次掐断间隔 1.5 秒：让界面先走到"已连接"，再观察它掉线、重拨、恢复。
+    private func scheduleFlapIfRequested() {
+        let wanted = Self.flapBudget()
+        guard wanted > 0 else { return }
+        let done = Self.flapDone.withLock { count -> Int in
+            count += 1
+            return count
+        }
+        guard done <= wanted else { return }
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1.5))
+            guard let self else { return }
+            await self.handleDisconnect(reason: "flap-hook \(done)/\(wanted)")
+        }
+    }
+
+    /// 读取 `-DSHLinkFlap <次数>`；没有就是 0。
+    static func flapBudget() -> Int {
+        let arguments = CommandLine.arguments
+        guard let index = arguments.firstIndex(of: "-DSHLinkFlap"),
+              index + 1 < arguments.count,
+              let value = Int(arguments[index + 1])
+        else { return 0 }
+        return max(0, value)
+    }
+
+    private static let flapDone = LockedCounter()
+    #endif
 
     private func startReceiveLoop(on task: any RelaySocketTask) {
         receiveLoop?.cancel()
@@ -850,3 +888,19 @@ extension Duration {
         return Double(components.seconds) + Double(components.attoseconds) / 1e18
     }
 }
+
+
+#if DEBUG
+/// 只在 `-DSHLinkFlap` 下用到的计数器（进程级，跨重拨累计）。放在文件级是因为
+/// `LinkCarrier` 的 `#if DEBUG` 成员需要一个类型，而它没有别的用途。
+final class LockedCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = 0
+
+    func withLock<T>(_ body: (inout Int) -> T) -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return body(&value)
+    }
+}
+#endif
