@@ -868,19 +868,30 @@ def _usage_scan(store: Store, days: int, debug_ids: set[str],
     for account_id, account in merged.items():
         account["devices"] = len(seen_devices.get(account_id, ()))
     ranked = sorted(merged.values(), key=lambda entry: entry["egressBytes"], reverse=True)
+    # 每天的「活跃用户」= 那天有中转连接的账号数（同一账号的多台手机只算一个）。owner
+    # 2026-10-17 定的口径：活跃用户按账号算，日报头牌的 `devices` 仍是设备行数（重装会多行）。
+    for day, entry in per_day.items():
+        entry["accounts"] = len(active_by_day[day])
     return ([{"day": day, **per_day[day]} for day in sorted(per_day)], ranked, active_by_day)
 
 
 def _usage_report(series: list[dict[str, Any]],
-                  ranked: list[dict[str, Any]]) -> dict[str, Any]:
+                  ranked: list[dict[str, Any]],
+                  active_by_day: dict[int, set[str]]) -> dict[str, Any]:
     """用量板块的 JSON：每日用量、账号排名（合并到一行）、窗口总计与派生指标。
 
     合并与剔除都在 `_usage_scan` 里做过：同一个账号在窗口里出现多次要并成一行再排名
     （2026-10-12 第一版日报的"出口流量前几名"是一长串同名条目），并且只留前
     `REPORT_TOP_ACCOUNTS` 名——原始数据是给人看的，不是导库。
+
+    `activeAccounts` / `activeAccounts7d` 是窗口内（与最近 7 天内）**账号**口径的活跃用户：
+    一天的账号数不能相加求并集，所以两个数字都在这里按账号集合算，渲染层不自己拼。
     """
     peak = max(series, key=lambda entry: int(entry["egressBytes"])) if series else None
     total = sum(int(entry["egressBytes"]) for entry in series)
+    active_all: set[str] = set().union(*active_by_day.values()) if active_by_day else set()
+    last7 = sorted(active_by_day)[-7:]
+    active_7d: set[str] = set().union(*[active_by_day[day] for day in last7]) if last7 else set()
     return {
         "perDay": series,
         "topAccounts": ranked[:REPORT_TOP_ACCOUNTS],
@@ -890,6 +901,8 @@ def _usage_report(series: list[dict[str, Any]],
         "averagePerDay": round(total / len(series)) if series else 0,
         "peakDay": ({"day": peak["day"], "egressBytes": int(peak["egressBytes"])} if peak else None),
         "activeDays": len([entry for entry in series if int(entry["egressBytes"]) > 0]),
+        "activeAccounts": len(active_all),
+        "activeAccounts7d": len(active_7d),
     }
 
 
@@ -1121,6 +1134,9 @@ def _today_report(store: Store, *, stamp: int, threads: list[dict[str, Any]],
             "egressBytes": egress,
             "connections": connections,
             "devices": len(by_device),
+            # 活跃用户（账号口径，owner 2026-10-17 定）：这一天的账号数，同一账号的多台手机
+            # 只算一个；`devices` 仍是设备行数，两者不相等是常态（重装会多出行）。
+            "accounts": len([key for key in by_account if key]),
             "firstSeenAt": first_seen or None,
             "lastSeenAt": last_seen or None,
             "builds": sorted(({"build": build, "devices": entry["devices"],
@@ -1260,7 +1276,7 @@ def _ops_report(store: Store, days: int, *, as_of: int | None = None) -> dict[st
                      sorted(live, key=lambda row: int(row.get("lastSeenAt") or row["createdAt"]),
                             reverse=True)[:REPORT_DEVICE_LIMIT]],
         },
-        "usage": _usage_report(series, ranked),
+        "usage": _usage_report(series, ranked, active_by_day),
         "retention": _retention_report(store, days=days, stamp=stamp, external=external,
                                        active_by_day=active_by_day,
                                        first_seen=_first_seen_days(store, debug_ids=debug_ids,

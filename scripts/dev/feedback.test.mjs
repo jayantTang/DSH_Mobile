@@ -35,7 +35,7 @@ function fixture() {
     days: 30,
     today: {
       day: 20261012, dayStartAt: GENERATED_AT - 9 * 3600_000,
-      usage: { egressBytes: 2 * 1024 * 1024, connections: 9, devices: 2,
+      usage: { egressBytes: 2 * 1024 * 1024, connections: 9, devices: 2, accounts: 2,
         firstSeenAt: GENERATED_AT - 5 * 3600_000, lastSeenAt: GENERATED_AT,
         builds: [{ build: '1.0 20261012.1056', devices: 2, accounts: 2 },
           { build: '1.0 20260924.1925', devices: 1, accounts: 1 }] },
@@ -73,13 +73,13 @@ function fixture() {
         push: { registered: true } }],
     },
     usage: {
-      perDay: [{ day: '2026-10-11', egressBytes: 1024 * 1024, connections: 3, devices: 1 },
-        { day: '2026-10-12', egressBytes: 2 * 1024 * 1024, connections: 9, devices: 2 }],
+      perDay: [{ day: '2026-10-11', egressBytes: 1024 * 1024, connections: 3, devices: 1, accounts: 1 },
+        { day: '2026-10-12', egressBytes: 2 * 1024 * 1024, connections: 9, devices: 2, accounts: 2 }],
       topAccounts: [{ accountId: 'acc_a', name: 'jayant', egressBytes: 3 * 1024 * 1024,
         connections: 12, lastSeenAt: GENERATED_AT, lastBuild: '1.0 20261012.1056' }],
       totals: { egressBytes: 3 * 1024 * 1024, connections: 12 },
       averagePerDay: 1024 * 1024, peakDay: { day: '2026-10-12', egressBytes: 2 * 1024 * 1024 },
-      activeDays: 2,
+      activeDays: 2, activeAccounts: 2, activeAccounts7d: 2,
     },
     retention: {
       scope: 'external',
@@ -343,56 +343,56 @@ test('buildInvocation 的远端命令按 POSIX 引号化', () => {
 
 test('日报分「今日」与「最近 30 天」两段，正文被转义', () => {
   const html = renderReport(fixture())
-  // 两段的板块标题与图：今日有对比条，30 天有两张折线/柱状图。
+  // 两段：概览 + 趋势与留存。页面只有两张图（每日活跃用户、每日出口流量）。
   assert.ok(html.includes('<span class="tag ">今日</span>概览'), '今日板块')
-  assert.ok(html.includes('<span class="tag range">最近 30 天</span>趋势与明细'), '30 天板块')
-  assert.equal((html.match(/<svg /g) ?? []).length, 2, '只有每日出口与每日新增手机两张图')
-  assert.ok(html.includes('每日出口流量') && html.includes('每日新增手机'))
-  // 头牌是价值指标（活跃手机）；出口流量降级为成本口径的 KPI。
-  assert.ok(html.includes('今日活跃手机') && html.includes('较昨日') && html.includes('近 7 日均值'))
-  assert.ok(html.includes('今日出口（成本）') && html.includes('较昨日 ↑ 100.0%'), '流量只留一行成本小字')
-  assert.ok(!html.includes('今日出口流量'), '流量不再当头牌')
+  assert.ok(html.includes('<span class="tag range">最近 30 天</span>趋势与留存'), '30 天板块')
+  assert.equal((html.match(/<svg /g) ?? []).length, 2, '只有每日活跃用户与每日出口流量两张图')
+  assert.ok(html.includes('每日活跃用户') && html.includes('每日出口流量'))
+  // 头牌是账号口径的活跃用户（owner 2026-10-17 定的口径），活跃手机降为状态行里的一个数。
+  assert.ok(html.includes('今日活跃用户（电脑账号）') && html.includes('较昨日'))
+  assert.ok(html.includes('活跃手机 2 台'), '状态行里给出同一天的设备行口径')
+  assert.ok(!html.includes('今日活跃手机'), '头牌不再写活跃手机')
+  assert.ok(html.includes('今日出口流量') && html.includes('较昨日 ↑ 100.0%'))
   assert.ok(html.includes('3.0 MB'), '出口字节应换算成 MB')
-  assert.ok(html.includes('今日电脑') && html.includes('今日手机') && html.includes('今日反馈'))
-  assert.ok(html.includes('电脑排名') && html.includes('邀请码登记'))
-  // 留存：外部账号（页面写「电脑」）口径、D1/D7 与分周队列、登记激活都要在页面上。
+  // 近 7 天表：活跃用户与新增手机各一列。
+  assert.ok(html.includes('活跃用户') && html.includes('新增手机'))
+  // 留存：外部账号（页面写「电脑」）口径、D1/D7 与登记激活都要在页面上。
   assert.ok(html.includes('外部电脑 · 活跃=当天有中转连接'))
-  for (const label of ['今日活跃电脑', '近 7 天活跃', '近 30 天活跃', '次日留存', '7 日留存', '登记激活']) {
+  for (const label of ['登记激活', '次日留存', '7 日留存']) {
     assert.ok(html.includes(label), `留存缺 ${label}`)
   }
   assert.ok(html.includes('62%') && html.includes('n=13'), '留存率要带队列人数')
-  assert.ok(html.includes('2026-W40') && html.includes('60%'), '分周队列')
-  // 今日版本分布：版本 / 手机 / 电脑 三列。
-  assert.ok(html.includes('今日版本分布') && html.includes('20261012.1056'))
   assert.ok(html.includes('已剔除测试提交 3 条'))
+  // 2026-10-17 精简掉的那几块不再出现：版本分布、邀请码登记清单、分周队列表。
+  for (const gone of ['今日版本分布', '邀请码登记', '2026-W40', '今日电脑']) {
+    assert.ok(!html.includes(gone), `已精简的块不该再渲染：${gone}`)
+  }
   assert.ok(!html.includes('<script>'), '正文里的 script 必须被转义')
   assert.ok(html.includes('&lt;script&gt;'))
-  assert.ok(html.includes('&lt;A&gt;'), '邀请码备注同样要转义')
 })
 
-test('手机上不写死宽表：长清单有上限，且提示"前几条"', () => {
+test('手机上不写死宽表：长清单有上限', () => {
   const many = fixture()
   many.devices.list = Array.from({ length: 40 }, (_, i) => ({
     deviceId: `dvc_${i}`, name: `iPhone ${i}`, model: 'iPhone 17 Pro', appVersion: '1.2.3',
     createdAt: GENERATED_AT, lastSeenAt: GENERATED_AT, revoked: 0, push: { registered: true } }))
-  many.invites.enrollments = Array.from({ length: 40 }, (_, i) => ({
-    usedAt: GENERATED_AT, inviteNote: '试用', accountId: `acc_${i}`, accountName: `用户 ${i}`,
-    agentId: `agt_${i}`, agentName: 'MacBook', devices: 1 }))
+  many.usage.perDay = Array.from({ length: 30 }, (_, i) => ({
+    day: 20260901 + i, egressBytes: 1024 * 1024, connections: 3, devices: 1, accounts: 1 }))
   const html = renderReport(many)
-  // 每一类清单只渲染前几条：手机 6、登记 6——正文长度因此不随库里的历史行数增长。
+  // 清单只渲染前 6 台：正文长度因此不随库里的历史行数增长。
   assert.ok(html.includes('iPhone 5') && !html.includes('iPhone 39'), '手机清单只列前 6 台')
   assert.ok(html.includes('最近在线前 6 台'), '清单要说明只列了前几条')
-  assert.ok(html.includes('用户 5') && !html.includes('用户 39'), '登记清单只列前 6 条')
-  assert.ok(html.includes('最近 6 条'), '登记清单同理')
+  // 近 7 天表只留最近 7 行，不是整个 30 天窗口。
+  assert.ok(html.includes('2026-09-30') && !html.includes('2026-09-01'), '表只列最近 7 天')
 })
 
 test('空数据也能渲染出可看的整页', () => {
   const html = renderReport({ ok: true, generatedAt: GENERATED_AT, days: 30 })
   assert.match(html, /<span class="tag ">今日<\/span>概览/)
-  assert.match(html, /今天还没有中转流量/)
+  assert.match(html, /今日活跃用户（电脑账号）/)
   assert.match(html, /窗口内没有数据/)
-  assert.match(html, /今天没有新反馈/)
-  assert.match(html, /还没有人用邀请码登记/)
+  assert.match(html, /窗口内没有反馈/)
+  assert.match(html, /窗口内没有用量记录/)
   assert.ok(!html.includes('NaN') && !html.includes('undefined'), '缺字段不能漏成 NaN/undefined')
 })
 
@@ -422,9 +422,15 @@ test('「关注」板块把待办提到整页最上面，阈值越线才报警',
   assert.match(renderReport(quiet), /没有待回复反馈，余量与指标都在常态区间内/)
 })
 
-test('新增低于周目标时「关注」给缺口提示，达成就不吱声', () => {
-  const html = renderReport(fixture()) // fixture 一周只新增 3 台，目标 30
-  assert.match(html, /本周新增手机 3 台，目标 30 台（达成 10%）/)
+test('「关注」区只留要 owner 动作的待办，自动观察不再堆上去', () => {
+  // fixture 的形状：2 条待回复、邀请码剩 9（≤10）——两条 warn 必须在关注区里。
+  const html = renderReport(fixture())
+  assert.match(html, /2 件待办/)
+  // 2026-10-17 删掉的 info 级自动观察（周目标缺口、版本分裂、单日波动、背离）都不再出现。
+  for (const gone of ['本周新增手机', '个 App 版本同时在用', '偏离超过', '核对重连逻辑']) {
+    assert.ok(!html.includes(gone), `自动观察不该再出现在关注区：${gone}`)
+  }
+  assert.ok(!html.includes('<span class="chip up">提示</span>'), '关注区不再有 info 级提示条目')
 })
 
 test('待回复反馈超过 24h SLA 时文案升级', () => {
@@ -445,21 +451,16 @@ test('同一条待办连续挂三天，文案升级为「已连续 N 天未处�
   assert.match(sameDay, /已连续 4 天未处理/)
 })
 
-test('活跃手机有上周同期对照；历史快照给留存漏斗补上目标与 WoW', () => {
+test('活跃用户有上周同期对照；留存漏斗不再写目标与上周小字', () => {
   const data = fixture()
   data.usage.perDay = Array.from({ length: 9 }, (_, i) => ({
-    day: 20261004 + i, egressBytes: 1024 * 1024 * (i + 1), connections: 3, devices: i + 1 }))
+    day: 20261004 + i, egressBytes: 1024 * 1024 * (i + 1), connections: 3,
+    devices: i + 1, accounts: i + 1 }))
+  data.today.usage.accounts = 9
   const html = renderReport(data)
-  assert.match(html, /较上周同期 [↑→]/, '窗口满 8 天就有 WoW chip')
-
-  const dayStartAt = data.today.dayStartAt
-  const history = { days: { '20261005': { day: 20261005,
-    dayStartAt: dayStartAt - 7 * 86_400_000, dau: 2, d7: 0.5, d1: 0.5 } }, alerts: {} }
-  const withHistory = renderReport(data, { history })
-  assert.match(withHistory, /上周同日 2/, '活跃电脑卡片给上周同日')
-  assert.match(withHistory, /目标 30% · 上周 50%/, '7 日留存带目标与上周')
-  // 没有历史文件：照常渲染，只是没有 WoW 小字。
-  assert.ok(!html.includes('上周同日'))
+  assert.match(html, /较上周同期 [↑→]/, '窗口满 8 天就有 WoW chip')  // 漏斗只留率与队列人数（小字删了），目标/WoW 这类对照线不再占位。
+  assert.ok(!html.includes('目标 30%') && !html.includes('上周 50%'), '漏斗不再写目标与上周')
+  assert.ok(!html.includes('上周同日'), '没有历史文件时也不写上周同日')
 })
 
 test('发版日在流量图上标注（构建号第一次出现在历史快照里的那天）', () => {
@@ -519,18 +520,6 @@ test('report --full-day 落盘时把当天摘要写进 .ops-history.json', () =>
   assert.ok(!existsSync(join(outDir2, '.ops-history.json')), '部分数据不记账')
 })
 
-test('连接翻倍而出口反降会被标注为背离', () => {
-  const data = fixture()
-  data.today.usage.connections = 2_800
-  data.today.usage.egressBytes = 700 * 1024
-  data.usage.perDay[1].connections = 2_800
-  data.usage.perDay[1].egressBytes = 700 * 1024
-  data.usage.perDay[0].connections = 900
-  const html = renderReport(data)
-  assert.match(html, /连接 2,800 次是昨日的 3\.1 倍，出口却降 32%/)
-  assert.match(html, /核对重连逻辑/)
-})
-
 test('机型代码转人话，查不到的原样保留', () => {
   assert.equal(humanModel('iPhone15,4'), 'iPhone 15')
   assert.equal(humanModel('iPhone11,8'), 'iPhone XR')
@@ -542,17 +531,11 @@ test('机型代码转人话，查不到的原样保留', () => {
   assert.ok(renderReport(data).includes('iPhone 15'))
 })
 
-test('邀请码登记去重：今日板块列过的账号不在窗口清单重复出现', () => {
-  const data = fixture()
-  // 同一个账号既在今天登记、又在窗口登记清单里。
-  data.invites.enrollments[0].accountId = 'acc_b'
-  data.invites.enrollments[0].accountName = 'Sam'
-  const html = renderReport(data)
-  // 「Sam 的 MacBook」里也有 Sam 这个名字，所以数的是行标题那一处。
-  assert.equal((html.match(/<span class="t">Sam<\/span>/g) ?? []).length, 1,
-    '同一账号只在今日板块出现一次')
-  assert.match(html, /已扣除今日列过的/)
-  assert.match(html, /窗口内更早的登记已列在上方今日板块/, '扣完后给明确交代，不是空白')
+test('日报不再渲染邀请码登记清单（登记只在关注区作为余量提醒出现）', () => {
+  const html = renderReport(fixture())
+  assert.ok(!html.includes('邀请码登记'), '窗口登记清单已删')
+  assert.ok(!html.includes('Sam 的 MacBook'), '登记明细不再上页面')
+  assert.match(html, /邀请码只剩 9 张（21\/30 已用）/, '余量提醒仍在关注区')
 })
 
 test('活跃时段接近一整天时写「全天有连接」', () => {
@@ -654,14 +637,13 @@ test('覆盖整天的日报按覆盖日写日期、标题与「全天」标签',
   assert.ok(html.includes('2026-10-12 周一'), '周几也要按覆盖日算')
   assert.ok(html.includes('<span class="tag ">全天</span>概览'), '过完的那一天叫「整天」')
   assert.ok(html.includes('10-12 自然日 00:00–23:59（已过完）'))
-  assert.ok(html.includes('全天活跃手机') && html.includes('较前一日'))
-  assert.ok(html.includes('全天出口（成本）'), '成本口径跟着覆盖日的叫法')
+  assert.ok(html.includes('全天活跃用户（电脑账号）') && html.includes('较前一日'))
+  assert.ok(html.includes('全天出口流量'), '成本口径跟着覆盖日的叫法')
   assert.ok(html.includes('本地日窗口（含 10-12）'))
-  assert.ok(html.includes('本报告覆盖 2026-10-12 一整个服务器本地自然日'))
+  assert.ok(html.includes('活跃用户 = 当天有中转连接的电脑'))
   assert.ok(html.includes('活跃时段 05:00–23:59'), '跨零点的时间要夹到 23:59')
   assert.ok(!/23:59–00:00/.test(html), '不能出现回到 00:00 的时段')
-  assert.ok(!html.includes('今日出口流量') && !html.includes('较昨日'),
-    '10-13 生成的页面上不能把 10-12 写成"今日"')
+  assert.ok(!html.includes('较昨日'), '10-13 生成的页面上不能把 10-12 写成"今日"')
 })
 
 test('reply / notify 的 --format 透传；不传就不出现在 argv 里', () => {
@@ -1166,7 +1148,7 @@ test('过渡期：mail 未部署时日报照常出（反馈板块用中转的旧
   assert.equal(code, 0, '定时日报在切换前不许挂')
   assert.match(err, /（回退）服务器上还没有 mail 服务/)
   const html = readFileSync(join(outDir, '2026-10-12.html'), 'utf8')
-  assert.match(html, /新建会话转圈/, '反馈板块用的还是中转那份数据')
+  assert.ok(html.includes('&lt;script&gt;'), '反馈板块用的还是中转那份数据（且照样转义）')
 })
 
 test('过渡期回退只认目标缺失：线程不存在等真错误不回退', () => {

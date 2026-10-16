@@ -153,7 +153,8 @@ def test_ops_report_counts_devices_usage_and_invites(tmp_path, capsys):
     assert report["devices"]["debug"] == 1, "被剔除的调试设备数要单独报出来"
 
     today = report["usage"]["perDay"][-1]
-    assert today == {"day": local_day(), "egressBytes": 1250, "connections": 3, "devices": 2}
+    assert today == {"day": local_day(), "egressBytes": 1250, "connections": 3, "devices": 2,
+                     "accounts": 1}, "两台手机同属一个账号：活跃用户（账号口径）只算一个"
     assert report["usage"]["totals"] == {"egressBytes": 1250, "connections": 3}
     assert report["invites"]["minted"] == 1 and report["invites"]["remaining"] == 1
     assert report["invites"]["enrollments"] == []
@@ -401,6 +402,48 @@ def test_ops_report_excludes_debug_devices_from_the_window_usage(tmp_path, capsy
     assert report["today"]["usage"]["egressBytes"] == report["usage"]["perDay"][-1]["egressBytes"]
 
 
+def test_ops_report_counts_active_users_per_account(tmp_path, capsys):
+    """活跃用户按**账号**算（owner 2026-10-17 定的口径）：同一账号的多台手机只算一个。
+
+    一天的账号数不能相加求并集，所以窗口级（`activeAccounts`）与近 7 天级
+    （`activeAccounts7d`）都在服务端按账号集合算，渲染层不自己拼。设备行数
+    （`devices`）保持原样，两者不等是常态：重装会多出行。
+    """
+    db = str(tmp_path / "state.db")
+    store = Store(db)
+    first = store.create_account("房主")
+    first_agent = store.register_agent(first["accountId"], "mac")
+    one = store.claim_pair_code(
+        store.mint_pair_code(first_agent["agentId"], ttl_ms=60_000)["code"], device_name="iPhone")
+    two = store.claim_pair_code(
+        store.mint_pair_code(first_agent["agentId"], ttl_ms=60_000)["code"], device_name="iPad")
+    second = store.create_account("旧用户")
+    second_agent = store.register_agent(second["accountId"], "pc")
+    old = store.claim_pair_code(
+        store.mint_pair_code(second_agent["agentId"], ttl_ms=60_000)["code"], device_name="iPhone")
+    eight_days_ago = local_day(now_ms() / 1000 - 8 * 86_400)
+    store.add_usage([
+        {"day": local_day(), "deviceId": one["deviceId"], "agentId": first_agent["agentId"],
+         "accountId": first["accountId"], "egressBytes": 100, "connections": 1,
+         "at": now_ms(), "lastBuild": "1.2.3"},
+        {"day": local_day(), "deviceId": two["deviceId"], "agentId": first_agent["agentId"],
+         "accountId": first["accountId"], "egressBytes": 200, "connections": 2,
+         "at": now_ms(), "lastBuild": "1.2.3"},
+        {"day": eight_days_ago, "deviceId": old["deviceId"], "agentId": second_agent["agentId"],
+         "accountId": second["accountId"], "egressBytes": 300, "connections": 3,
+         "at": now_ms() - 8 * 86_400_000, "lastBuild": "1.2.0"},
+    ])
+    store.close()
+
+    code, report = run_cli(db, "ops-report", "--days", "30", capsys=capsys)
+    assert code == 0
+    today = report["usage"]["perDay"][-1]
+    assert today["devices"] == 2 and today["accounts"] == 1
+    assert report["today"]["usage"]["accounts"] == 1
+    assert report["usage"]["activeAccounts"] == 2, "30 天窗口里有两个账号来过"
+    assert report["usage"]["activeAccounts7d"] == 1, "8 天前那位不算近 7 天活跃"
+
+
 def test_ops_report_drops_internal_orphan_usage_rows(tmp_path, capsys):
     """设备行已被清理工具删掉的**内部账号**用量行不进报表；外部账号的孤儿行保留。
 
@@ -543,7 +586,7 @@ def test_ops_report_today_is_empty_on_a_quiet_day(tmp_path, capsys):
     code, report = run_cli(db, "ops-report", "--days", "30", capsys=capsys)
     assert code == 0
     today = report["today"]
-    assert today["usage"] == {"egressBytes": 0, "connections": 0, "devices": 0,
+    assert today["usage"] == {"egressBytes": 0, "connections": 0, "devices": 0, "accounts": 0,
                               "firstSeenAt": None, "lastSeenAt": None, "builds": []}
     assert today["topAccounts"] == [] and today["devices"]["list"] == []
     # 设备是今天刚配的，所以「今日新增」是 1；流量、活跃、反馈、登记仍是 0。
