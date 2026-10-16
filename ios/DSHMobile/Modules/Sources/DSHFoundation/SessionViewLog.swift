@@ -64,6 +64,40 @@ public final class SessionViewLog {
         persist()
     }
 
+    // MARK: - 账户级同步（032）
+
+    /// 这个日志当前绑在哪台电脑上（拼账户状态的 key 用），没绑时为 nil。
+    public var hostScope: String? { scope }
+
+    /// 把远端读到的已读水位并进来：**逐会话取 max**。
+    ///
+    /// 为什么是 max 而不是"远端覆盖本地"：两台设备各读各的，谁也不能把别人读过的标记抹掉；
+    /// 而一台设备时钟慢一拍时，它的旧时间戳也不该让已读回退。返回是否有变化（调用方据此决定要不要落盘/刷新）。
+    @discardableResult
+    public func mergeRemote(viewedAt remote: [String: Double]) -> Bool {
+        var changed = false
+        for (sessionId, stamp) in remote {
+            let target = key(sessionId)
+            if let existing = viewedAt[target], existing >= stamp { continue }
+            viewedAt[target] = stamp
+            changed = true
+        }
+        guard changed else { return false }
+        trim()
+        persist()
+        return true
+    }
+
+    /// 上传用的快照：只含当前这台电脑的会话，键是**裸 sessionId**（去掉 scope 前缀）。
+    public func accountSnapshot() -> [String: Double] {
+        guard let scope else { return [:] }
+        let prefix = "\(scope)|"
+        return viewedAt.reduce(into: [:]) { result, pair in
+            guard pair.key.hasPrefix(prefix) else { return }
+            result[String(pair.key.dropFirst(prefix.count))] = pair.value
+        }
+    }
+
     /// Forgets sessions the list no longer shows.
     public func prune(keeping ids: Set<String>) {
         let wanted = Set(ids.map(key))

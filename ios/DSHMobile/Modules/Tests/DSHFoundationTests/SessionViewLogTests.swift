@@ -151,3 +151,63 @@ final class SessionViewLogTests: XCTestCase {
         XCTAssertNil(reloaded.lastViewed("s2"), "the prune is persisted, not memory only")
     }
 }
+
+// MARK: - 032：账户级已读水位
+
+extension SessionViewLogTests {
+    /// 本文件用的都是同一个 defaults 域（在 setUp 里清空）；scope 用参数区分"哪台电脑"。
+    private func scoped(_ scope: String? = "agt_1") -> SessionViewLog {
+        let log = SessionViewLog(defaults: defaults)
+        log.useScope(scope)
+        return log
+    }
+
+    /// 远端更大的水位被采纳；远端更小的不会把本地已读抹掉（取 max）。
+    func test_remote_watermarks_merge_by_maximum() {
+        let log = scoped()
+        log.markViewed("sess_a", at: 1_000)
+        log.markViewed("sess_b", at: 5_000)
+
+        let changed = log.mergeRemote(viewedAt: ["sess_a": 9_000, "sess_b": 2_000])
+
+        XCTAssertTrue(changed)
+        XCTAssertEqual(log.lastViewed("sess_a"), 9_000, "the newer remote watermark wins")
+        XCTAssertEqual(log.lastViewed("sess_b"), 5_000, "an older remote value must not erase it")
+    }
+
+    /// 远端多出来的会话要并进来（另一台设备读过、这台还没见过）。
+    func test_remote_sessions_are_added() {
+        let log = scoped()
+        XCTAssertTrue(log.mergeRemote(viewedAt: ["sess_new": 1_234]))
+        XCTAssertEqual(log.lastViewed("sess_new"), 1_234)
+        // 再来一次同样的水位：没有变化，调用方据此省掉一次刷新。
+        XCTAssertFalse(log.mergeRemote(viewedAt: ["sess_new": 1_234]))
+    }
+
+    /// 合并后要落盘：另开一个日志读同一份 defaults 能看到。
+    func test_merged_watermarks_persist() {
+        scoped().mergeRemote(viewedAt: ["sess_a": 42])
+        XCTAssertEqual(scoped().lastViewed("sess_a"), 42)
+    }
+
+    /// 换一台电脑：并进来的水位只属于那台电脑的 scope，不串到另一台。
+    func test_merging_is_scoped_to_one_host() {
+        let first = scoped("agt_1")
+        first.mergeRemote(viewedAt: ["sess_a": 42])
+        let second = scoped("agt_2")
+        XCTAssertNil(second.lastViewed("sess_a"), "another host must not see it")
+        XCTAssertEqual(second.mergeRemote(viewedAt: ["sess_a": 7]), true)
+    }
+
+    /// 快照只含本机的会话，键去掉 scope 前缀（上传用的形状）。
+    func test_the_snapshot_drops_the_scope_prefix() {
+        let first = scoped("agt_1")
+        first.markViewed("sess_a", at: 100)
+        scoped("agt_2").markViewed("sess_a", at: 200)
+
+        XCTAssertEqual(first.accountSnapshot(), ["sess_a": 100])
+        // 没绑 scope 时没有可上传的东西（不该把别人的会话传上去）。
+        let unscoped = SessionViewLog(defaults: defaults)
+        XCTAssertTrue(unscoped.accountSnapshot().isEmpty)
+    }
+}

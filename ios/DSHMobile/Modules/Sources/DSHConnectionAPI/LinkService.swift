@@ -30,6 +30,8 @@ public protocol LinkService: AnyObject {
     var client: DSHClient? { get }
     /// 链路门面（读状态、发事件应答）。
     var link: LinkGateway { get }
+    /// 账户级状态变化（032）：给出变了的 key；值要去 `/account/state` 拉。
+    func accountStateStream() async -> AsyncStream<[String]>
 
     /// 能力探测：对端是否支持某个能力 id。
     func supports(_ capability: String) -> Bool

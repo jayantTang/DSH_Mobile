@@ -303,6 +303,12 @@ public final class ConnectionStore {
                     }
                     continuation.onTermination = { _ in task.cancel() }
                 }
+            },
+            accountStateStreamProvider: { [weak self] in
+                guard let carrier = self?.client?.carrier as? LinkCarrier else {
+                    return AsyncStream { $0.finish() }
+                }
+                return await carrier.accountStateStream()
             }
         )
     }
@@ -1020,4 +1026,9 @@ public final class ConnectionStore {
 }
 
 // MARK: - LinkService 协议符合
-extension ConnectionStore: LinkService {}
+extension ConnectionStore: LinkService {
+    /// 032：把 carrier 的 `accountState` 帧透出来（实现只有这一条：网关转发）。
+    public func accountStateStream() async -> AsyncStream<[String]> {
+        await link.accountStateStream()
+    }
+}

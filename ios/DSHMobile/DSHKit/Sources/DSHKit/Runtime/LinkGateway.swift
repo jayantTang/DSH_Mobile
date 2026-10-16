@@ -35,13 +35,23 @@ public struct LinkGateway: Sendable {
 
     private let clientProvider: @MainActor @Sendable () -> DSHClient?
     private let statusStreamProvider: @MainActor @Sendable () async -> AsyncStream<HostStatus>
+    private let accountStateStreamProvider: @MainActor @Sendable () async -> AsyncStream<[String]>
 
     public init(clientProvider: @escaping @MainActor @Sendable () -> DSHClient?,
                 statusStreamProvider: @escaping @MainActor @Sendable () async -> AsyncStream<HostStatus> = {
                     AsyncStream { $0.finish() }
+                },
+                accountStateStreamProvider: @escaping @MainActor @Sendable () async -> AsyncStream<[String]> = {
+                    AsyncStream { $0.finish() }
                 }) {
         self.clientProvider = clientProvider
         self.statusStreamProvider = statusStreamProvider
+        self.accountStateStreamProvider = accountStateStreamProvider
+    }
+
+    /// 账户级状态变了（032）：给出变了的 key 列表。中转只推"哪些 key"，值由调用方去拉。
+    @MainActor public func accountStateStream() async -> AsyncStream<[String]> {
+        await accountStateStreamProvider()
     }
 
     /// 现在有没有可用的链路。

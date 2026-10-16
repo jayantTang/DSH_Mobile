@@ -38,6 +38,19 @@ public final class FakeLinkService: LinkService {
         LinkGateway(clientProvider: { [clientOverride] in clientOverride })
     }
 
+    /// 032：测试可以往这条流里塞"账户状态变了"的通知。
+    public var accountStateYields: [String] = []
+    public var accountStateStreamCallCount = 0
+
+    public func accountStateStream() async -> AsyncStream<[String]> {
+        accountStateStreamCallCount += 1
+        let yields = accountStateYields
+        return AsyncStream { continuation in
+            for keys in yields { continuation.yield([keys].flatMap { $0.split(separator: ",").map(String.init) }) }
+            continuation.finish()
+        }
+    }
+
     public func supports(_ capability: String) -> Bool { capabilities.contains(capability) }
     public func uploadFile(fileURL: URL, name: String, sessionId: String) async throws -> StagedFile {
         throw NSError(domain: "FakeLinkService", code: 2, userInfo: [NSLocalizedDescriptionKey: "uploadFile not stubbed"])

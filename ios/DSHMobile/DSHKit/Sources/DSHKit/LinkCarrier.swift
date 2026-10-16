@@ -128,6 +128,8 @@ public actor LinkCarrier: DSHCarrier {
         let code: String?
         let message: String?
         let fatal: Bool?
+        /// 032：`accountState` 帧带的是"哪几个 key 变了"，不是值本身——收到的一方自己去拉。
+        let keys: [String]?
     }
 
     private struct RequestFrame<Args: Encodable & Sendable>: Encodable {
@@ -204,6 +206,8 @@ public actor LinkCarrier: DSHCarrier {
     }
 
     private var socketStateObservers: [UUID: AsyncStream<SocketState>.Continuation] = [:]
+    /// 032：`accountState` 帧的订阅者（key 列表）。
+    private var accountStateObservers: [UUID: AsyncStream<[String]>.Continuation] = [:]
     private var lastSocketState: SocketState = .reconnecting
 
     /// App 侧的生命周期流水（`app.*`）。**永远不参与连接主路径**：记录失败只记一次，
@@ -285,6 +289,22 @@ public actor LinkCarrier: DSHCarrier {
 
     private func removeStatusObserver(_ id: UUID) {
         statusObservers[id] = nil
+    }
+
+    /// 订阅"账户级状态变了"（032）。每次给出一组变了的 key；首帧不预置任何东西
+    /// （没有"当前值"可回放——值要去 `/account/state` 拉）。
+    public func accountStateStream() -> AsyncStream<[String]> {
+        let id = UUID()
+        let (stream, continuation) = AsyncStream<[String]>.makeStream()
+        accountStateObservers[id] = continuation
+        continuation.onTermination = { [weak self] _ in
+            Task { await self?.removeAccountStateObserver(id) }
+        }
+        return stream
+    }
+
+    private func removeAccountStateObserver(_ id: UUID) {
+        accountStateObservers[id] = nil
     }
 
     /// 订阅 socket 三态（T005b）。首帧回放当前状态，与 `statusStream()` 同约定。
@@ -830,6 +850,13 @@ public actor LinkCarrier: DSHCarrier {
             var online = false
             if let flag = frame.info?["online"]?.boolValue { online = flag }
             updateStatus(HostStatus(online: online, info: frame.info))
+
+        case "accountState":
+            // 032：账户级状态变了（同账户的另一台设备改的）。只广播"哪些 key 变了"，
+            // 收到的一方自己决定要不要去拉——中转不推值，省得两边对不上。
+            for observer in accountStateObservers.values {
+                observer.yield(frame.keys ?? [])
+            }
 
         case "pong", "ping":
             break
