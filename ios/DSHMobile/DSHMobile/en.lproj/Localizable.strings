@@ -695,3 +695,6 @@ It is registered as a workspace first, so a new group appears in the desktop sid
 "发送太频繁，请稍后重试。" = "Too many attempts. Please try again shortly.";
 "内容太长了，请精简后重试。" = "That is too long. Please shorten it and try again.";
 "服务器返回了无法识别的内容，请稍后重试。" = "The server sent something we could not read. Please try again later.";
+
+/* Team inbox: placeholder for the reply editor (030 phase 2) */
+"写下你的回信…" = "Write your reply…";
