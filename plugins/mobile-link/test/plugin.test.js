@@ -110,7 +110,7 @@ test('the plugin advertises no required services', () => {
 test('apply registers every route through ctx.inject and starts the agent', () => {
   const { ctx, routes, effects, injected } = fakeContext()
   plugin.apply(ctx, BASE_CONFIG)
-  assert.deepEqual([...routes.keys()].sort(), ['/mobile-link/pair-code', '/mobile-link/status'])
+  assert.deepEqual([...routes.keys()].sort(), ['/mobile-link/pair-code', '/mobile-link/pair-code/regenerate', '/mobile-link/status'])
   // `sessionQuery` is injected **optionally**: history reads fall back to
   // `session/page` when the Host does not have the service (spec 007 FR-002).
   assert.deepEqual(injected, [['webServer'], ['webServer', 'connection'], ['sessionQuery']])
@@ -334,16 +334,18 @@ test('the status snapshot carries the host form the plugin set', () => {
 test('with no connection service the routes stay registered and the privileged ones fail closed', async () => {
   const { ctx, routes } = fakeContext({ fence: 'missing' })
   assert.doesNotThrow(() => plugin.apply(ctx, BASE_CONFIG))
-  assert.equal(routes.size, 2, 'connection 缺失不该让路由消失')
+  assert.equal(routes.size, 3, 'connection 缺失不该让路由消失')
 
   const status = fakeResponse()
   await routes.get('/mobile-link/status').handler(fakeRequest('GET'), status)
   assert.equal(status.statusCode, 200, '/status 是诊断用的，栅栏缺失时仍要能读')
 
-  const pair = fakeResponse()
-  await routes.get('/mobile-link/pair-code').handler(fakeRequest('POST', {}), pair)
-  assert.equal(pair.statusCode, 403, '铸造凭据的路由必须失败关闭')
-  assert.match(pair.body, /connection service is unavailable/)
+  for (const path of ['/mobile-link/pair-code', '/mobile-link/pair-code/regenerate']) {
+    const pair = fakeResponse()
+    await routes.get(path).handler(fakeRequest('POST', {}), pair)
+    assert.equal(pair.statusCode, 403, `${path} 必须失败关闭`)
+    assert.match(pair.body, /connection service is unavailable/)
+  }
 })
 
 test('a fence that says yes (undefined) is a pass, not a missing service', async () => {

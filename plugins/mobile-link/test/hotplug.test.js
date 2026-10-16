@@ -64,7 +64,7 @@ test('disabling the plugin takes every route with it', () => {
   const { ctx, routes, effects } = fakeContext()
   plugin.apply(ctx, BASE_CONFIG)
   assert.deepEqual([...routes.keys()].sort(),
-    ['/mobile-link/pair-code', '/mobile-link/status'])
+    ['/mobile-link/pair-code', '/mobile-link/pair-code/regenerate', '/mobile-link/status'])
   dispose(effects)
   assert.equal(routes.size, 0, '禁用后不许留悬空路由')
 })
@@ -85,7 +85,7 @@ test('enabling again after a disable restores exactly the same surface', () => {
   const second = fakeContext()
   plugin.apply(second.ctx, BASE_CONFIG)
   assert.deepEqual([...second.routes.keys()].sort(), before, '启用一次的入口与首次完全一致')
-  assert.equal(second.routes.size, 2)
+  assert.equal(second.routes.size, 3)
 })
 
 test('apply never throws, even with no web server to register on', () => {

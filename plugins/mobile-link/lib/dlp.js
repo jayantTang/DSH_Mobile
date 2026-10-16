@@ -167,6 +167,11 @@ export function pairCodeEndpoint(relayUrl) {
   return joinRelayPath(normalizeRelayUrl(relayUrl).httpBase, 'pair/code')
 }
 
+/** 重新生成配对码（032）：作废旧码、铸一枚新的，不影响已配对设备。 */
+export function pairCodeRegenerateEndpoint(relayUrl) {
+  return joinRelayPath(normalizeRelayUrl(relayUrl).httpBase, 'pair/code/regenerate')
+}
+
 /** The relay's self-service enrollment endpoint (`POST /agents/enroll`). */
 export function enrollEndpoint(relayUrl) {
   return joinRelayPath(normalizeRelayUrl(relayUrl).httpBase, 'agents/enroll')

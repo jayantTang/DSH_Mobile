@@ -562,7 +562,12 @@ async def pair_code(request: web.Request) -> web.Response:
             else int(request.app["pair_ttl_ms"])
         ttl_ms = min(ttl_ms, 60 * 60 * 1000)
     minted = await asyncio.to_thread(store.mint_pair_code, agent["agentId"], ttl_ms)
-    return web.json_response({"ok": True, **minted})
+    # 把"这枚码还能配几台"的口径一起给出去：连接器面板要显示「已配对 N/8」，
+    # 而 N 必须以**中转的库**为准（连接器只知道自己这次见过的设备）。
+    paired = await asyncio.to_thread(store.count_paired_devices, agent["accountId"])
+    return web.json_response({"ok": True, **minted,
+                              "maxPairedDevices": int(request.app["max_paired_devices"]),
+                              "pairedDevices": paired})
 
 
 async def pair_code_regenerate(request: web.Request) -> web.Response:
@@ -590,7 +595,10 @@ async def pair_code_regenerate(request: web.Request) -> web.Response:
     minted = await asyncio.to_thread(store.regenerate_pair_code, agent["agentId"], ttl_ms)
     LOGGER.info("relay: regenerated pairing code for agent %s (revoked %d old code(s))",
                 agent["agentId"], minted.get("revoked", 0))
-    return web.json_response({"ok": True, **minted})
+    paired = await asyncio.to_thread(store.count_paired_devices, agent["accountId"])
+    return web.json_response({"ok": True, **minted,
+                              "maxPairedDevices": int(request.app["max_paired_devices"]),
+                              "pairedDevices": paired})
 
 
 async def devices_list(request: web.Request) -> web.Response:

@@ -11,6 +11,7 @@
 /** 路由用相对路径：宿主把插件路由挂在同一个源上。 */
 const STATUS_ROUTE = 'mobile-link/status'
 const PAIR_ROUTE = 'mobile-link/pair-code'
+const REGENERATE_ROUTE = 'mobile-link/pair-code/regenerate'
 const SLOT_ENTRY = 'sidebar.footer.action'
 const SLOT_OVERLAY = 'shell.overlay'
 const ENTRY_ID = 'mobile-link-entry'
@@ -176,41 +177,44 @@ function createPanel() {
     lastStatusAt: 0,
   }
 }
-/**
- * 这张码是不是已经被兑换掉了：只看"在线手机台数比取码时多了"（问中转要动 relay，spec 010 禁止）。
- * 只用来触发换码，不承担旧实现那种"猜这张码还能不能用"的职责。
- */
-function swapIfSpent(panel) {
-  const code = panel.store.get().code
-  if (!code || panel.disposed) return
-  const count = Number(panel.store.get().status?.deviceCount ?? 0)
-  if (count > code.mintedDeviceCount) void refreshCode(panel)
-}
-
 async function loadStatus(panel) {
   try {
     const status = await requestJson(STATUS_ROUTE, { method: 'GET' })
     if (panel.disposed) return
     panel.store.set({ status, statusError: null })
-    swapIfSpent(panel)
   } catch (error) {
     if (panel.disposed) return
     panel.store.set({ statusError: describe(error) })
   }
 }
-/** 取一张新码。**不复用上一张**：复用正是"扫到已兑换的码"的来源。 */
-async function refreshCode(panel) {
+/**
+ * 取一张码。
+ *
+ * 032 起默认是**持久码**：它一直有效，直到用户点「重新生成」。所以这里有两个与旧实现
+ * 相反的行为，都是有意的：
+ *
+ * * **复用已有的那张**——旧实现每次"换一张"，因为一次性码用过就废；持久码换掉等于
+ *   把用户刚发给别人的那张悄悄作废。
+ * * **不再因为"配过一台"就自动换码**——同一张码本来就是要给多台设备用的。
+ */
+async function refreshCode(panel, { regenerate = false } = {}) {
   if (panel.disposed || panel.store.get().busy) return
   if (needsEnroll(panel.store.get().status)) {
     panel.store.set({ code: null, codeError: null })
     return
   }
+  // 只有**持久码**才复用：限时码到期就得重新取一张（老行为），否则屏幕上会留一张死码。
+  if (!regenerate && panel.store.get().code?.persistent) return
   panel.store.set({ busy: true, codeError: null })
   try {
-    const body = await requestJson(PAIR_ROUTE, {
+    // 两条意图分得很清楚：
+    // * `regenerate`：用户点「重新生成」→ 让中转**作废旧码**再铸一张（新端点）。
+    // * 其余（首次取码、限时码到期续期）→ 走原来的取码端点。老中转没有 regenerate，
+    //   续期这条路必须留在老端点上，否则连着老中转的连接器会在这里失败。
+    const body = await requestJson(regenerate ? REGENERATE_ROUTE : PAIR_ROUTE, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ ttlMs: CODE_TTL_MS }),
+      body: JSON.stringify({}),
     })
     if (panel.disposed) return
     panel.store.set({
@@ -218,9 +222,13 @@ async function refreshCode(panel) {
         code: body.code,
         qrPayload: body.qrPayload,
         svg: body.svg,
-        expiresAt: Number(body.expiresAt),
-        ttlMs: Number(body.ttlMs) || CODE_TTL_MS,
-        mintedDeviceCount: Number(panel.store.get().status?.deviceCount ?? 0),
+        // 持久码没有 expiresAt：界面上不再有倒计时（见 codeSection）。
+        expiresAt: body.expiresAt == null ? null : Number(body.expiresAt),
+        ttlMs: Number(body.ttlMs) || null,
+        persistent: body.persistent === true || body.expiresAt == null,
+        maxPairedDevices: Number(body.maxPairedDevices ?? 0) || null,
+        pairedDevices: Number(body.pairedDevices ?? 0),
+        revoked: Number(body.revoked ?? 0),
       },
       codeError: null,
     })
@@ -241,8 +249,12 @@ function tick(panel) {
     panel.lastStatusAt = now
     void loadStatus(panel)
   }
+  // 持久码不因时间换码（032）：只有用户点「重新生成」才换。限时码（老中转/老调用方）
+  // 仍然按原来的规则在快过期时换一张，免得把一张马上就要失效的码摆在屏幕上。
   const code = panel.store.get().code
-  if (code && code.expiresAt - now <= CODE_FLOOR_MS) void refreshCode(panel)
+  if (code && !code.persistent && code.expiresAt != null && code.expiresAt - now <= CODE_FLOOR_MS) {
+    void refreshCode(panel)
+  }
 }
 function openPanel(panel) {
   if (panel.disposed) return
@@ -253,7 +265,9 @@ function openPanel(panel) {
 }
 function closePanel(panel) {
   if (panel.disposed) return
-  panel.store.set({ open: false, code: null, codeError: null, copied: false })
+  // 032：**不丢码**。持久码要一直有效，关掉面板再打开必须还是同一张——否则用户刚发给
+  // 别人的码就被这次开关悄悄换掉了（旧实现丢码是对的，因为那时码是一次性的）。
+  panel.store.set({ open: false, codeError: null, copied: false })
 }
 function disposePanel(panel) {
   panel.disposed = true
@@ -295,14 +309,20 @@ function copyCode(panel) {
     done()
   }
 }
-/** 控制器：视图只读它的 store、只调它的动作；"码什么时候作废"只在 tick/swapIfSpent 定义。 */
+/**
+ * 控制器：视图只读它的 store、只调它的动作。
+ *
+ * 032 起"码什么时候换"只有一处：用户点「重新生成」（`refreshCode({regenerate:true})`）。
+ * 以前还有一条"配过一台就自动换一张"的规则，持久码下那条是错的——同一张码本来就
+ * 要配多台设备。
+ */
 function createController() {
   const panel = createPanel()
   return {
     store: panel.store,
     open: () => openPanel(panel),
     close: () => closePanel(panel),
-    refreshCode: () => refreshCode(panel),
+    refreshCode: (options) => refreshCode(panel, options),
     copy: () => copyCode(panel),
     toggleError: () => panel.store.set({ showError: !panel.store.get().showError }),
     start: () => startPanel(panel),
@@ -351,22 +371,35 @@ function enrollSection(React, status) {
     React.createElement('div', { className: 'dsh-mobile-link-mono dsh-mobile-link-v', style: { textAlign: 'left' } },
       status?.enroll?.command ?? 'dsh-mobile-link enroll --invite <邀请码> --relay <中转地址>'))
 }
-/** 二维码卡：明文码、图案、倒数条，以及换一张与复制。 */
+/**
+ * 二维码卡。
+ *
+ * 032 之前这里是"倒计时 + 换一张"（一次性码，10 分钟）。现在默认是**持久码**：
+ * 所以卡片上写"长期有效，直到你点重新生成"，并且不再有进度条——一个永远走不到头的
+ * 倒计时只会让人以为码快过期了。限时码（老中转/显式请求）仍然显示倒计时与剩余时间。
+ */
 function codeSection(React, controller, ui, state) {
   const code = state.code
   const children = []
   if (code) {
-    const remaining = Math.max(0, code.expiresAt - state.now)
-    const percent = Math.max(0, Math.min(100, (remaining / (code.ttlMs || CODE_TTL_MS)) * 100))
     children.push(React.createElement('div', { className: 'dsh-mobile-link-code', key: 'code' }, code.code))
     // 二维码：宿主给的 SVG 直接进 data URI，界面不碰图案本身。
     children.push(React.createElement('img', {
       key: 'qr', className: 'dsh-mobile-link-qr', alt: '配对二维码',
       src: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(String(code.svg))}`,
     }))
-    children.push(React.createElement('div', { className: 'dsh-mobile-link-count', key: 'count' },
-      React.createElement('div', { className: 'dsh-mobile-link-bar' }, React.createElement('i', { style: { width: `${percent.toFixed(1)}%` } })),
-      React.createElement('span', null, `有效期至 ${clockText(code.expiresAt)}（还剩 ${remainingText(remaining)}）`)))
+    if (code.persistent || code.expiresAt == null) {
+      children.push(React.createElement('div', { className: 'dsh-mobile-link-count', key: 'count' },
+        React.createElement('span', null,
+          `长期有效 · 直到你点「重新生成」${code.maxPairedDevices
+            ? `（已配对 ${code.pairedDevices ?? 0}/${code.maxPairedDevices}）` : ''}`)))
+    } else {
+      const remaining = Math.max(0, code.expiresAt - state.now)
+      const percent = Math.max(0, Math.min(100, (remaining / (code.ttlMs || CODE_TTL_MS)) * 100))
+      children.push(React.createElement('div', { className: 'dsh-mobile-link-count', key: 'count' },
+        React.createElement('div', { className: 'dsh-mobile-link-bar' }, React.createElement('i', { style: { width: `${percent.toFixed(1)}%` } })),
+        React.createElement('span', null, `有效期至 ${clockText(code.expiresAt)}（还剩 ${remainingText(remaining)}）`)))
+    }
   } else if (state.codeError) {
     children.push(React.createElement('div', { className: 'dsh-mobile-link-note dsh-mobile-link-error', key: 'err' }, state.codeError))
   } else {
@@ -375,8 +408,9 @@ function codeSection(React, controller, ui, state) {
   }
   const buttons = [React.createElement(ui.Button, {
     key: 'swap', variant: 'primary', type: 'button', disabled: Boolean(state.busy),
-    onClick: () => void controller.refreshCode(),
-  }, state.busy ? '取码中…' : (state.codeError ? '重试' : '换一张'))]
+    onClick: () => void controller.refreshCode({ regenerate: Boolean(state.code) }),
+  }, state.busy ? '取码中…'
+    : (state.codeError ? '重试' : (state.code ? '重新生成' : '取一张码')))]
   if (code) {
     buttons.push(React.createElement(ui.Button, {
       key: 'copy', variant: 'outline', type: 'button', onClick: () => controller.copy(),
@@ -421,7 +455,8 @@ function panelBody(React, controller, ui, state) {
   const error = errorSection(React, controller, ui, state.status, state.showError)
   if (error) children.push(error)
   children.push(React.createElement('div', { className: 'dsh-mobile-link-note', key: 'hint' },
-    '用 DSH Mobile App 扫码配对：一张码只能配一台手机，被兑换或剩余不足 1 分钟会自动换新。'
+    '用 DSH Mobile App 扫码配对：这串码长期有效，可以配多台设备（手机／浏览器）。'
+    + '换掉它点「重新生成」——已经在用的设备不会掉线，只有拿旧码来配的人需要重新扫。'
     + '相机不方便时，也可以把上面那串配对码手动输进 App 连接页底部的手输入口。'))
   return React.createElement('div', { className: 'dsh-mobile-link-body' }, children)
 }

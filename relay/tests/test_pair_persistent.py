@@ -27,6 +27,21 @@ async def _claim(client, code: str, **fields):
 
 # ── 持久码本身 ──────────────────────────────────────────────────────────────
 
+async def test_the_mint_response_carries_the_paired_device_budget(client, provisioned, store):
+    # 连接器面板要显示「已配对 N/8」，两个数都必须来自中转（它才知道库里的实数）。
+    response = await client.post("/pair/code", json={},
+                                 headers=agent_headers(provisioned["agent"]))
+    body = await response.json()
+    from store import DEFAULT_MAX_PAIRED_DEVICES
+    assert body["maxPairedDevices"] == DEFAULT_MAX_PAIRED_DEVICES
+    assert body["pairedDevices"] == 0
+
+    await _claim(client, body["code"])
+    again = await (await client.post("/pair/code/regenerate", json={},
+                                     headers=agent_headers(provisioned["agent"]))).json()
+    assert again["pairedDevices"] == 1
+
+
 async def test_a_code_without_ttl_is_persistent(client, provisioned, store):
     # 不带 ttlMs 的请求 = 持久码（032 的默认）：没有 expiresAt。
     response = await client.post("/pair/code", json={},

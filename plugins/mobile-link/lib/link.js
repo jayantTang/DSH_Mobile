@@ -22,7 +22,7 @@ import { enrollAgent, enrollCommand, inviteFrom } from './enroll.js'
 import { handoffFromEndpoint, writeHandoff } from './handoff.js'
 import { LinkJournal, defaultJournalPath } from './journal.js'
 import { statusSnapshot } from './status.js'
-import { mintPairCode } from './pairing.js'
+import { mintPairCode, regeneratePairCode } from './pairing.js'
 import {
   DEFAULT_EVENTS_BACKLOG, DEFAULT_SLOW_REQUEST_MS,
   EVENTS_ENDPOINT, EVENTS_RESULT, DeviceRouter, messageOf,
@@ -653,10 +653,20 @@ export class MobileLinkAgent extends EventEmitter {
 
   // ── relay-side helpers ──────────────────────────────────────────────────
 
-  /** Ask the relay to mint a pairing code for this agent (relay NOTES.md §2). */
-  async mintPairCode({ ttlMs = 10 * 60 * 1000, fetchImpl = fetch } = {}) {
+  /**
+   * Ask the relay to mint a pairing code for this agent (relay NOTES.md §2).
+   *
+   * 032：默认持久（`ttlMs: null`）；传秒数得到限时码。
+   */
+  async mintPairCode({ ttlMs = null, fetchImpl = fetch } = {}) {
     const identity = this.identity ?? await resolveIdentity(this.config)
     return mintPairCode({ identity, ttlMs, fetchImpl })
+  }
+
+  /** 用户点「重新生成」：作废旧码、铸新的，**不碰已配对设备**（032）。 */
+  async regeneratePairCode({ fetchImpl = fetch } = {}) {
+    const identity = this.identity ?? await resolveIdentity(this.config)
+    return regeneratePairCode({ identity, fetchImpl })
   }
 
   /** Snapshot for `GET /mobile-link/status`（载荷本身在 status.js，便于守住"只增不改"）。 */

@@ -94,6 +94,7 @@ export function registerMobileLinkRoutes(ctx, { agent, logger, config = {}, hist
   const guard = makeGuard(ctx, logger)
   const STATUS_ROUTE = '/mobile-link/status'
   const PAIR_ROUTE = '/mobile-link/pair-code'
+  const REGENERATE_ROUTE = '/mobile-link/pair-code/regenerate'
   const disposers = []
 
   disposers.push(ctx.webServer.register({
@@ -131,16 +132,47 @@ export function registerMobileLinkRoutes(ctx, { agent, logger, config = {}, hist
         sendJson(res, 400, { ok: false, message: 'invalid JSON body' })
         return
       }
-      const ttlMs = ttlFrom(body.ttlMs, Number(config.pairTtlMs) || 10 * 60 * 1000)
+      // 032：调用方**没提** ttlMs 就要一张持久码（面板走这条路）；显式给了才限时，
+      // 那是老行为，留给还在用的调用方。
+      const wantsTtl = Object.prototype.hasOwnProperty.call(body, 'ttlMs')
+      const ttlMs = wantsTtl ? ttlFrom(body.ttlMs, Number(config.pairTtlMs) || 10 * 60 * 1000) : null
       try {
         const minted = await agent.mintPairCode({ ttlMs })
-        logger.info?.(`mobile-link: minted a pairing code for ${minted.agentId}`)
+        logger.info?.(`mobile-link: minted a ${minted.persistent ? 'persistent' : 'time-limited'}`
+          + ` pairing code for ${minted.agentId}`)
         // The picture travels with the code. It used to be a route of its own
         // (`GET /mobile-link/qr`) that a person opened in a browser; the pairing
         // entry is now the connector's own panel in the DSH client, so the one
         // caller left is that panel, and it wants the code and the symbol in the
         // same answer. No caption: the panel runs its own countdown, and a
         // server-rendered "还剩 N 分钟" freezes the moment the window is up.
+        sendJson(res, 200, { ok: true, ...minted, svg: qrSvg(minted.qrPayload) })
+      } catch (error) {
+        sendJson(res, 502, { ok: false, code: 'relay/unavailable', message: String(error?.message ?? error) })
+      }
+    },
+  }))
+
+  disposers.push(ctx.webServer.register({
+    kind: 'exact',
+    path: REGENERATE_ROUTE,
+    handler: async (req, res) => {
+      if (guard(req, res, { requireFence: true })) return
+      if (req.method !== 'POST') {
+        res.statusCode = 405
+        res.setHeader('allow', 'POST')
+        res.end()
+        return
+      }
+      const body = await readJsonBody(req)
+      if (body === undefined) {
+        sendJson(res, 400, { ok: false, message: 'invalid JSON body' })
+        return
+      }
+      try {
+        const minted = await agent.regeneratePairCode()
+        logger.info?.(`mobile-link: regenerated the pairing code for ${minted.agentId}`
+          + ` (revoked ${minted.revoked})`)
         sendJson(res, 200, { ok: true, ...minted, svg: qrSvg(minted.qrPayload) })
       } catch (error) {
         sendJson(res, 502, { ok: false, code: 'relay/unavailable', message: String(error?.message ?? error) })

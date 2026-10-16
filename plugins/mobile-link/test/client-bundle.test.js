@@ -92,7 +92,8 @@ const HEALTHY_STATUS = {
  * fetch 替身：按路径分派，记录每次调用，可按需让状态或取码失败。
  * 取码每次给一张**不同的**码与图案——"每次都新签"正是被断言的行为。
  */
-function makeFetch({ status = HEALTHY_STATUS, failStatus = false, failCode = false } = {}) {
+function makeFetch({ status = HEALTHY_STATUS, failStatus = false, failCode = false,
+                     ttlMs = null, maxPairedDevices = 8, pairedDevices = 0 } = {}) {
   const calls = []
   let mints = 0
   const impl = async (path, init) => {
@@ -104,13 +105,19 @@ function makeFetch({ status = HEALTHY_STATUS, failStatus = false, failCode = fal
     }
     if (failCode) return json({ ok: false, message: '中转不可达' })
     mints += 1
+    // 032：面板请求的是**持久码**（不带 ttlMs），中转回 expiresAt:null。
+    // 要测限时码那条分支就用 `ttlMs` 选项。
+    const persistent = ttlMs == null
     return json({
       ok: true,
+      persistent,
       code: `CODE-000${mints}`,
       qrPayload: `dsh://pair?relay=wss%3A%2F%2Frelay.test%2Fdsh-link&code=CODE-000${mints}`,
       svg: `<svg id="qr-${mints}"></svg>`,
-      expiresAt: Date.now() + 600_000,
-      ttlMs: 600_000,
+      expiresAt: persistent ? null : Date.now() + ttlMs,
+      ttlMs: ttlMs ?? null,
+      maxPairedDevices,
+      pairedDevices,
     })
   }
   return { impl, calls, mintCount: () => mints }
@@ -360,36 +367,42 @@ test('the panel is the official Modal: closed until the entry is clicked, then c
   assert.match(markup, /dsh-mobile-link-qr/)
   assert.match(markup, /data:image\/svg\+xml/)
   assert.match(markup, /CODE-0001/, '配对码文本也要露出来，供手输')
-  assert.match(markup, /还剩 10:00|还剩 9:5/, '剩余时间必须是活的')
-  assert.match(markup, /dsh-mobile-link-bar/, '倒数条跟着剩余时间走')
+  // 032：面板拿到的默认是持久码——没有倒计时，改为写"长期有效"与「已配对 N/8」。
+  assert.match(markup, /长期有效/, '持久码要写清楚它不会自己过期')
+  assert.match(markup, /已配对 0\/8/, '上限口径来自中转')
   assert.equal(fetch.calls.filter((call) => call.path.includes('pair-code')).length, 1)
 })
 
-test('the panel offers the official Button for swap and copy', async () => {
+test('a time-limited code still shows a live countdown and swaps before it dies', async () => {
   const { document } = makeDom()
-  const fetch = makeFetch()
-  const { api } = loadBundle({ document, fetchImpl: fetch.impl })
+  const clock = { value: Date.now() }
+  const fetch = makeFetch({ ttlMs: 600_000 })
+  const { api, tick } = loadBundle({ document, fetchImpl: fetch.impl, clock })
   const { ctx, state } = makeCtx()
   api.apply(ctx)
   await flush()
   const { entry, panel } = components(state)
+
   render(entry.component({})).props.onClick()
   await flush()
+  let markup = JSON.stringify(render(panel.component({})))
+  assert.match(markup, /CODE-0001/)
+  assert.match(markup, /还剩 10:00|还剩 9:5/, '限时码才有剩余时间')
+  assert.match(markup, /dsh-mobile-link-bar/, '倒数条跟着剩余时间走')
 
-  const tree = render(panel.component({}))
-  const swap = findByText(tree, 'button', '换一张')
-  const copy = findByText(tree, 'button', '复制配对码')
-  assert.ok(swap, '主按钮是官方 Button')
-  assert.equal(swap.props.variant, 'primary')
-  assert.ok(copy)
-  assert.equal(copy.props.variant, 'outline')
-
-  copy.props.onClick()
+  // 只剩 30 秒（不足以再扫一次），下一拍就该换一张。
+  clock.value += 570_000
+  tick()
   await flush()
-  assert.match(JSON.stringify(render(panel.component({}))), /已复制/, '复制后按钮自己变文案')
+  markup = JSON.stringify(render(panel.component({})))
+  assert.match(markup, /CODE-0002/, '限时码快过期要换一张')
+  assert.equal(fetch.calls.filter((call) => call.path.includes('pair-code')).length, 2)
+  // 换码走的是同一个取码路由，不是「重新生成」：老语义下这里没有"作废旧码"这回事。
+  assert.ok(!fetch.calls.some((call) => call.path.includes('regenerate')))
 })
 
-test('opening again mints again: a spent code is never handed out twice', async () => {
+
+test('the regenerate button asks the relay for a new code and shows it', async () => {
   const { document } = makeDom()
   const fetch = makeFetch()
   const { api } = loadBundle({ document, fetchImpl: fetch.impl })
@@ -402,14 +415,66 @@ test('opening again mints again: a spent code is never handed out twice', async 
   await flush()
   assert.match(JSON.stringify(render(panel.component({}))), /CODE-0001/)
 
-  // 关掉再开：不复用上一张，因为上一张可能已经被手机兑换掉了。
+  const regenerate = findByText(render(panel.component({})), 'button', '重新生成')
+  regenerate.props.onClick()
+  await flush()
+
+  const markup = JSON.stringify(render(panel.component({})))
+  assert.match(markup, /CODE-0002/, '点了重新生成要换成新码')
+  const regenerated = fetch.calls.filter((call) => call.path.includes('regenerate'))
+  assert.equal(regenerated.length, 1, '走的是 /pair-code/regenerate')
+  assert.equal(fetch.mintCount(), 2)
+})
+
+
+test('the panel offers the official Button for regenerate and copy', async () => {
+  const { document } = makeDom()
+  const fetch = makeFetch()
+  const { api } = loadBundle({ document, fetchImpl: fetch.impl })
+  const { ctx, state } = makeCtx()
+  api.apply(ctx)
+  await flush()
+  const { entry, panel } = components(state)
+  render(entry.component({})).props.onClick()
+  await flush()
+
+  const tree = render(panel.component({}))
+  // 032：拿到码之后主按钮是「重新生成」（持久码不会自己过期，没必要"换一张"）。
+  const swap = findByText(tree, 'button', '重新生成')
+  const copy = findByText(tree, 'button', '复制配对码')
+  assert.ok(swap, '主按钮是官方 Button')
+  assert.equal(swap.props.variant, 'primary')
+  assert.ok(copy)
+  assert.equal(copy.props.variant, 'outline')
+
+  copy.props.onClick()
+  await flush()
+  assert.match(JSON.stringify(render(panel.component({}))), /已复制/, '复制后按钮自己变文案')
+})
+
+test('closing and reopening keeps the same persistent code', async () => {
+  const { document } = makeDom()
+  const fetch = makeFetch()
+  const { api } = loadBundle({ document, fetchImpl: fetch.impl })
+  const { ctx, state } = makeCtx()
+  api.apply(ctx)
+  await flush()
+  const { entry, panel } = components(state)
+
+  render(entry.component({})).props.onClick()
+  await flush()
+  assert.match(JSON.stringify(render(panel.component({}))), /CODE-0001/)
+
+  // 032：持久码要跨开关保持——否则用户刚发给别人的那张码会被这次开关悄悄换掉。
   render(panel.component({})).props.onClose()
   render(entry.component({})).props.onClick()
   await flush()
-  assert.match(JSON.stringify(render(panel.component({}))), /CODE-0002/)
+  const tree = render(panel.component({}))
+  assert.match(JSON.stringify(tree), /CODE-0001/, '重开还是同一张')
+  assert.equal(fetch.mintCount(), 1, '重开不该再向中转要一张')
 })
 
-test('a phone pairing (device count growth) makes the panel mint the next code', async () => {
+test('a phone pairing does not rotate a persistent code', async () => {
   const { document } = makeDom()
   const clock = { value: Date.now() }
   const status = { ...HEALTHY_STATUS }
@@ -429,28 +494,9 @@ test('a phone pairing (device count growth) makes the panel mint the next code',
   tick()
   await flush()
   await flush()
-  assert.match(JSON.stringify(render(panel.component({}))), /CODE-0002/, '码被兑换后必须换一张')
-})
-
-test('a code close to expiry is replaced before the user can scan a dead one', async () => {
-  const { document } = makeDom()
-  const clock = { value: Date.now() }
-  const fetch = makeFetch()
-  const { api, tick } = loadBundle({ document, fetchImpl: fetch.impl, clock })
-  const { ctx, state } = makeCtx()
-  api.apply(ctx)
-  await flush()
-  const { entry, panel } = components(state)
-
-  render(entry.component({})).props.onClick()
-  await flush()
-  assert.match(JSON.stringify(render(panel.component({}))), /CODE-0001/)
-
-  // 第一张码默认 10 分钟；把时钟推到只剩 30 秒（不足以再扫一次），下一拍就该换。
-  clock.value += 570_000
-  tick()
-  await flush()
-  assert.match(JSON.stringify(render(panel.component({}))), /CODE-0002/)
+  assert.match(JSON.stringify(render(panel.component({}))), /CODE-0001/,
+    '持久码不因为"配上一台"而换：同一张码本来就要配多台')
+  assert.equal(fetch.mintCount(), 1)
 })
 
 test('a failed mint is visible and the dead code is taken off the screen', async () => {

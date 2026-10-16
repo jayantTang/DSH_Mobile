@@ -854,10 +854,10 @@ class Store:
                 ).fetchone()
 
             if reused is None:
-                live = self._conn.execute(
+                live = int(self._conn.execute(
                     "SELECT COUNT(*) FROM devices WHERE accountId=? AND revokedAt IS NULL",
                     (agent["accountId"],),
-                ).fetchone()[0]
+                ).fetchone()[0])
                 if int(max_paired_devices) > 0 and live >= int(max_paired_devices):
                     raise PairedDeviceLimitReached(int(max_paired_devices), int(live))
 
@@ -929,6 +929,12 @@ class Store:
             expiresAt=int(hit["expiresAt"]))
 
     # ── 账户级状态（032）────────────────────────────────────────────────────
+
+    def count_paired_devices(self, account_id: str) -> int:
+        """该账户未撤销的 client 台数（032 的 8 台上限就是比它）。"""
+        return int(self._conn.execute(
+            "SELECT COUNT(*) FROM devices WHERE accountId=? AND revokedAt IS NULL",
+            (account_id,)).fetchone()[0])
 
     def account_state(self, account_id: str, keys: list[str] | None = None) -> dict[str, dict[str, Any]]:
         """读一个账户的状态条目。``keys=None`` 读全部。
