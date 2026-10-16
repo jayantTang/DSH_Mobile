@@ -671,6 +671,46 @@ public final class ChatModel {
         return (oldest, newest)
     }
 
+    /// 会话内搜索走哪条通道（spec 007 FR-010/FR-015/FR-036）。
+    ///
+    /// 抽成纯函数放在模型里，是为了让这条**选路规则**能单测：它原来埋在 SwiftUI 视图的
+    /// `performSearch` 里，测试碰不到，于是"单字符查询仍走本地窗口"这类问题只能靠真机发现
+    /// （2026-10-17 的返工就是这么来的）。
+    public enum SearchChannel: String, Sendable, Equatable {
+        /// 「只看我的提问」：读本机全量库（T040 起不再走连接器）。
+        case localStore
+        /// 关键词 ≥1 个字符且连接器能搜整个会话：交给连接器扫描。
+        case connector
+        /// 其余：只搜手机上已加载的那一段（老连接器的降级）。
+        case localWindow
+    }
+
+    /// 选路规则：`onlyMine` 独占本机库；有关键词（≥1 个字符）且连接器有 `session-search`
+    /// 才走连接器；空关键词、纯空白、或没有该能力都落本地窗口。
+    ///
+    /// 空关键词走本地而不是连接器，是因为连接器把"空关键词且没带 roles"当成没有范围的
+    /// 全表扫描直接拒绝（`link/query-too-short`）。
+    public static func searchChannel(onlyMine: Bool, query: String,
+                                     connectorSearchesWholeSession: Bool) -> SearchChannel {
+        if onlyMine { return .localStore }
+        let keyword = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard connectorSearchesWholeSession, keyword.count >= 1 else { return .localWindow }
+        return .connector
+    }
+
+    /// 最近一次搜索被连接器拒绝的原因（成功、走本地、或还没搜过时为 nil）。
+    ///
+    /// 为什么要有它：连接器拒绝（`link/unsupported` / `link/query-too-short` / 超时）
+    /// 原来被 `try?` 吞成 nil，界面把它当成"没有命中"——正是 spec 007 FR-013 要求区分开的
+    /// 两件事。现在界面据此显示一条提示，而不是假装搜到了零条。
+    public private(set) var searchRefusalReason: String?
+
+    /// 连接器拒绝时给读者的一句话（原因来自连接器，这里只包一层说明）。
+    public var searchRefusalNotice: String? {
+        guard let reason = searchRefusalReason else { return nil }
+        return String(localized: "搜索没跑起来：\(reason)")
+    }
+
     /// 连接器能不能搜整个会话（有 `session-search` 能力）。没有时面板必须退回
     /// 本地搜索，并且如实告诉读者"只搜到手机上已有的这一段"（FR-015/FR-036）。
     public var connectorSearchesWholeSession: Bool {
@@ -735,15 +775,23 @@ public final class ChatModel {
                                               capabilities: effectiveCapabilities)
         switch service.source {
         case .connector:
-            guard let value = try? await service.page(query: needle, onlyMine: onlyMine,
-                                                     cursor: cursor, limit: limit) else {
+            let value: HistorySearchValue
+            do {
+                value = try await service.page(query: needle, onlyMine: onlyMine,
+                                               cursor: cursor, limit: limit)
+            } catch {
+                // 拒绝 ≠ 没有结果（FR-013）：留一条原因给界面，别退化成"命中 0 条"。
+                searchRefusalReason = (error as? TranscriptSearchService.Failure)?.description
+                    ?? String(describing: error)
                 return nil
             }
+            searchRefusalReason = nil
             await loadContextForHits(value.hits)
             return SearchPage(hits: TranscriptHitLocator.attach(hits: value.hits, to: timeline.items),
                               cursor: value.cursor, hasMore: value.hasMore, scope: "connector",
                               progress: Self.progress(of: value))
         case .local:
+            searchRefusalReason = nil
             let local = TranscriptSearch.hits(in: searchItems, query: needle, onlyMine: onlyMine)
             return SearchPage(hits: local, cursor: nil, hasMore: false, scope: "local",
                               progress: nil)
@@ -757,8 +805,10 @@ public final class ChatModel {
     static func progress(of value: HistorySearchValue) -> SearchPage.SearchProgress? {
         guard let total = value.totalChunks, total > 0,
               let remaining = value.remainingChunks else { return nil }
-        return SearchPage.SearchProgress(scannedChunks: max(0, total - max(0, remaining)),
-                                         totalChunks: total)
+        // 夹在 [0, total]：连接器已经夹过一次，这里再兜一层——旧连接器给的越界数字
+        // 不该让界面显示"已扫 996/2 片"。
+        let scanned = min(total, max(0, total - max(0, remaining)))
+        return SearchPage.SearchProgress(scannedChunks: scanned, totalChunks: total)
     }
 
     /// 跳到一条很久以前的命中：把时间线的**窗口整个换掉**（spec 007 FR-011）。

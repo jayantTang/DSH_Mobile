@@ -70,6 +70,20 @@ final class ChatModelSearchProgressTests: XCTestCase {
         XCTAssertTrue(page.hasMore)
     }
 
+    func testHalfAProgressReportIsTreatedAsUnknown() async throws {
+        // 只给 totalChunks、不给 remainingChunks（半个报告）不许当成"已扫 0 片"。
+        try await openSession()
+        carrier.unaryResponses["_link/sessionFind"] = .success(
+            .object(["hits": .array([]), "hasMore": .bool(true), "source": .string("scan"),
+                     "totalChunks": .int(7)]))
+
+        let returned = await model.searchPage(query: "needle", onlyMine: false)
+        let page = try XCTUnwrap(returned)
+
+        XCTAssertNil(page.progress, "half a progress report must stay unknown")
+        XCTAssertTrue(page.hasMore)
+    }
+
     // MARK: - 夹具
 
     /// 一页 `_link/sessionFind` 的应答。留空 `totalChunks`/`remainingChunks` 就是老连接器的形状。

@@ -34,6 +34,33 @@ final class HistorySearchTests: XCTestCase {
         XCTAssertEqual(value.source, "scan")
     }
 
+    func testAResponseCarriesScanProgressAndAnOlderOneDoesNot() throws {
+        // 扫描应答带片数（界面据此说「已扫 k/N 片」）；老连接器不发这两个字段时是**缺失**，
+        // 不是 0——界面按"进度未知"处理。
+        let scannedJSON = #"{"hits":[],"cursor":"1200","hasMore":true,"source":"scan","totalChunks":7,"remainingChunks":5}"#
+        let scanned = try JSONDecoder().decode(HistorySearchValue.self, from: Data(scannedJSON.utf8))
+        XCTAssertEqual(scanned.totalChunks, 7)
+        XCTAssertEqual(scanned.remainingChunks, 5)
+
+        let indexedJSON = #"{"hits":[],"cursor":null,"hasMore":false,"source":"index"}"#
+        let indexed = try JSONDecoder().decode(HistorySearchValue.self, from: Data(indexedJSON.utf8))
+        XCTAssertNil(indexed.totalChunks, "the indexed path has no chunk concept")
+        XCTAssertNil(indexed.remainingChunks)
+
+        let partialJSON = #"{"hits":[],"hasMore":true,"source":"scan","totalChunks":7}"#
+        let partial = try JSONDecoder().decode(HistorySearchValue.self, from: Data(partialJSON.utf8))
+        XCTAssertEqual(partial.totalChunks, 7)
+        XCTAssertNil(partial.remainingChunks, "half a progress report is not a progress report")
+    }
+
+    func testASingleCharacterQueryIsSentAsIs() throws {
+        // 下限由连接器掌握（2026-10-17 起 1 个字符）；客户端不偷偷改写查询。
+        let request = HistorySearchRequest(address: .session(sessionId: "s1"), query: "我", limit: 50)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(request)) as? [String: Any])
+        XCTAssertEqual(object["query"] as? String, "我")
+        XCTAssertEqual(Set(object.keys), ["address", "query", "limit"])
+    }
+
     func testAHitLandsOnTheRowThatOwnsItsSeq() {
         let items = ChatTimeline()
         var timeline = items

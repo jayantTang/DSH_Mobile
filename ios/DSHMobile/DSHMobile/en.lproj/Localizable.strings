@@ -632,6 +632,7 @@ It is registered as a workspace first, so a new group appears in the desktop sid
 "没有更早的了" = "No earlier messages";
 "读取更早的记录失败，点按重试" = "Could not read earlier messages — tap to retry";
 "要搜索整个会话，需要把电脑上的连接器升级到 %@ 及以上" = "Searching the whole conversation needs connector %@ or newer on your computer.";
+"搜索没跑起来：%@" = "Search did not run: %@";
 "正在读取更早的记录" = "Reading earlier messages";
 
 /* 014 反馈通道：发送窗口（T021/T024） */

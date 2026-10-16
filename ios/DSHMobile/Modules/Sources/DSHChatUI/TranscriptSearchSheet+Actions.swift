@@ -88,7 +88,13 @@ extension TranscriptSearchSheet {
         let started = Date()
         var found: [TranscriptSearchHit] = []
         let keyword = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        if mine {
+        // 选路规则在模型里（`ChatModel.searchChannel`），这里只按它的结论执行——规则本身
+        // 有单测；埋在视图里时，"单字符仍走本地"这类问题只能靠真机发现。
+        let channel = ChatModel.searchChannel(
+            onlyMine: mine, query: keyword,
+            connectorSearchesWholeSession: model.connectorSearchesWholeSession)
+        switch channel {
+        case .localStore:
             // 来源先落定再 await：否则这段窗口里 `requestLoad()` 可能按上一次的
             // `.connector` 去要一页「我的提问」（那正是要删掉的那条路）。
             searchSource = .localStore
@@ -98,7 +104,7 @@ extension TranscriptSearchSheet {
             // 完整性标记与命中同属一次本地读路径：先问标记，灌全时状态行不会闪。
             await refreshUserInputSyncState(rerunOnSync: false)
             found = await model.localUserInputHits(query: query)
-        } else if model.connectorSearchesWholeSession, keyword.count >= 1 {
+        case .connector:
             // 只有"搜全部内容"才走连接器；`onlyMine` 恒为 false（上面已独占），
             // 所以这里不再带 roles 过滤。
             //
@@ -111,7 +117,7 @@ extension TranscriptSearchSheet {
             searchCursor = page?.cursor
             pageHasMore = page?.hasMore ?? false
             searchProgress = page?.progress
-        } else {
+        case .localWindow:
             // 没有这个能力：老办法（本地、只搜已加载的那一段），并且**离开主线程**匹配。
             found = await Task.detached(priority: .userInitiated) {
                 TranscriptSearch.hits(in: items, query: query, onlyMine: mine)

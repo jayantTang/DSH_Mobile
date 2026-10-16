@@ -110,6 +110,26 @@ struct TranscriptSearchSheet: View {
         }
     }
 
+    /// 连接器拒绝这次搜索时的提示（FR-013：拒绝 ≠ 没有结果）。原因来自连接器，
+    /// 没有它的话读者只会看到空列表，以为"确实没搜到"。
+    @ViewBuilder
+    private var refusalNotice: some View {
+        if let notice = model.searchRefusalNotice {
+            HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.triangle")
+                    .font(.caption)
+                Text(notice)
+                    .font(.caption)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .foregroundStyle(DSHTheme.labelSecondary)
+            .padding(.horizontal, 16)
+            .padding(.bottom, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityIdentifier("search.refusal")
+        }
+    }
+
     /// 未灌全（`user_inputs_synced_at` 为空）时的一等状态行（T040）：面板照常显示
     /// 本地已有的命中，同时明说"这份列表还没灌全"。
     ///
@@ -139,6 +159,7 @@ struct TranscriptSearchSheet: View {
                 filter
                 syncNotice
                 upgradeNotice
+                refusalNotice
                 Hairline()
                 results
             }
