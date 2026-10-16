@@ -229,9 +229,21 @@ final class ChatModelDisruptionTests: XCTestCase {
             if await arrivals.note() == 1 { await gate.wait() }
         }
         carrier = gated.inner
+        // 用**不结束**的活流，而不是一次性回放：一次性回放的流在 0.5s 后会被重新订阅
+        // 并重放同一批帧，而空快照在 reBase 计划下会 `timeline.reset`——它会把刚发出的
+        // 乐观行抹掉，于是"两条在飞的提示各自留住自己的行"这条断言会取决于重放时机。
+        // 真机上的 socket 本来也不会自己结束，所以活流才是这个场景更贴近真实的夹具。
+        gated.inner.registerLiveStream("session/follow")
         attachFakeLink(carrier: gated)
-        gated.inner.streamResponses["session/follow"] = [ChatSeam.snapshot(cursor: 0)]
         await model.open(try ChatSeam.summary())
+        await gated.inner.waitForLiveStream("session/follow")
+        gated.inner.liveStreams["session/follow"]?.yield(ChatSeam.snapshot(cursor: 0))
+        // 先等开头的快照折完再发提示：这个夹具没有 messageLayer，`syncPlan` 恒为 reBase，
+        // 于是**任何**快照（包括开头这个空快照）都会 `timeline.reset`；它若在两条乐观行
+        // 之后才折进来，就会把刚发出的行抹掉（2026-10-16 实测：iOS 全量跑偶发失败一次、
+        // 单独复跑通过；改用活流后 macOS 上也稳定复现）。真机上开头的快照也早于用户打字。
+        let settled = await eventually { self.model.phase == .ready }
+        XCTAssertTrue(settled, "the opening snapshot never settled the transcript")
         let subscribed = await eventually { self.carrier.calls(to: "session/follow").count == 1 }
         XCTAssertTrue(subscribed, "the session never subscribed")
         gated.inner.unaryResponses["session/prompt"] = .success(.object([:]))
