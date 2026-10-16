@@ -23,7 +23,8 @@ from aiohttp import WSMsgType, web
 import dlp
 import push
 from api import DEVICE_SUBPROTOCOL_PREFIX, bearer_token, device_subprotocol_token, cors_preflight, register_http_routes
-from hub import CLOSE_DEVICE_LIMIT, DeviceLimitReached, Limits, RelayHub
+from hub import (CLOSE_DEVICE_LIMIT, DeviceLimitReached, Limits, RelayHub,
+                 dead_device_warn_threshold_from_env)
 from store import DEFAULT_DEVICE_TTL_MS, DEFAULT_PAIR_TTL_MS, Store
 
 LOGGER = logging.getLogger("relay")
@@ -302,6 +303,12 @@ def build_parser() -> argparse.ArgumentParser:
                         help="per-device egress allowance per local day, in megabytes "
                              "(0 = unlimited). The count comes from `usageDaily`, so a "
                              "reconnect or a restart does not reset it")
+    parser.add_argument("--dead-device-warn-threshold", type=int,
+                        default=dead_device_warn_threshold_from_env(),
+                        help="warn when one agent has more than this many revoked/expired "
+                             "device records (they are replayed to the connector on every "
+                             "reconnect; 0 = never warn). Purge them with "
+                             "purge-revoked-devices.py")
     parser.add_argument("--base-path", default=os.environ.get("DLP_BASE_PATH", ""),
                         help="optional mount prefix, e.g. /dsh-link; both the prefixed and the "
                              "already-stripped forms are served")
@@ -323,6 +330,7 @@ def main(argv: list[str] | None = None) -> int:
             max_devices_per_agent=int(args.max_devices_per_agent),
             device_bytes_per_second=float(args.device_rate_kbps) * 1000 / 8,
             device_daily_bytes=int(float(args.device_daily_mb) * 1024 * 1024),
+            dead_device_warn_threshold=int(args.dead_device_warn_threshold),
         ),
         pair_ttl_ms=int(args.pair_ttl_seconds) * 1000,
         device_ttl_ms=int(args.device_ttl_days) * 86_400_000,

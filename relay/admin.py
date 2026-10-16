@@ -25,6 +25,7 @@ import sys
 from typing import Any
 from urllib.parse import quote
 
+from hub import dead_device_warn_threshold_from_env
 from push import PushSender
 from store import (DEFAULT_FEEDBACK_FORMAT, DEFAULT_INVITE_TTL_MS, DEFAULT_PAIR_TTL_MS,
                    FEEDBACK_FORMATS, Store, StoreError, local_day, now_ms)
@@ -171,6 +172,11 @@ def build_parser() -> argparse.ArgumentParser:
     device_list = subs.add_parser("device-list", help="list devices")
     device_list.add_argument("--agent")
     device_list.add_argument("--all", action="store_true", help="include revoked devices")
+
+    device_hygiene = subs.add_parser(
+        "device-hygiene",
+        help="count in-use / revoked / expired device records (read-only)")
+    device_hygiene.add_argument("--agent", help="only this agent (default: the whole database)")
 
     device_revoke = subs.add_parser("device-revoke", help="revoke a device")
     device_revoke.add_argument("--device")
@@ -385,6 +391,9 @@ def run(args: argparse.Namespace, store: Store) -> int:
         ])
         return 0
 
+    if command == "device-hygiene":
+        return _device_hygiene(store, args)
+
     if command == "push-test":
         return _push_test(store, args)
 
@@ -492,6 +501,33 @@ def run(args: argparse.Namespace, store: Store) -> int:
         return 0
 
     raise StoreError(f"unhandled command {command}")
+
+
+def _device_hygiene(store: Store, args: argparse.Namespace) -> int:
+    """数一数设备记录：在用 / 已撤销 / 已过期（只读，不删任何东西）。
+
+    为什么需要它：已撤销与已过期的设备行会在**每次连接器连上时**被逐条重放给
+    连接器（`hub.py:_tell_agent_about_the_gone`），2012 条曾把连接器的处理链堵住
+    （maintainers/ANALYSIS-20261012-connector-flap.md）。`device-list --all` 能看到
+    明细，但"现在攒了多少、离告警线还有多远"需要一个数字——这就是那个数字。
+    真删是另一件事：`purge-revoked-devices.py`（默认预演，`--apply` 才删）。
+
+    阈值是**按 agent** 判的（告警发生在某个 agent 的连接器连上时），所以只有
+    `--agent` 点名了才给 `overThreshold` 的结论；全局视图里它是 `None`，不是 `false`
+    ——"没判"和"没超"在运维读日志时是两回事。
+    """
+    agent_id = _resolve_agent(store, args.agent)["agentId"] if args.agent else None
+    counts = store.device_hygiene(agent_id)
+    threshold = dead_device_warn_threshold_from_env()
+    _emit({
+        "ok": True,
+        **counts,
+        "warnThreshold": threshold,
+        "overThreshold": (counts["dead"] > threshold) if (agent_id and threshold) else None,
+        "hint": "purge-revoked-devices.py --db <db> --all-agents --apply "
+                "（去掉 --apply 只是预演）",
+    })
+    return 0
 
 
 def _push_test(store: Store, args: argparse.Namespace) -> int:

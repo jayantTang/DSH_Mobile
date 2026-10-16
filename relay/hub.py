@@ -154,12 +154,40 @@ class DeviceLimitReached(Exception):
     pass
 
 
+#: 已撤销/已过期设备记录的告警阈值。超了就在连接器连上时记一条 WARNING。
+#:
+#: 阈值管的是"重连时会被重放的帧数"：`_tell_agent_about_the_gone` 会把该 agent
+#: 名下每一条死记录重放成一帧 `deviceDetach`，2012 条曾把连接器的处理链堵住
+#: （maintainers/ANALYSIS-20261012-connector-flap.md）。这是个卫生问题，不是安全
+#: 问题，所以只告警、不自动删——真删由 `purge-revoked-devices.py` 或
+#: `deploy/dsh-relay-purge.timer` 做（见 README「Dead device records」）。
+#: 默认 200 沿用这条告警原本写死的那个数：正常用量下死记录是几十条量级，
+#: 上百就意味着有人在反复配对/撤销（用例、调试设备）。
+DEFAULT_DEAD_DEVICE_WARN_THRESHOLD = 200
+
+
+def dead_device_warn_threshold_from_env() -> int:
+    """``DLP_DEAD_DEVICE_WARN_THRESHOLD``; garbage falls back to the default.
+
+    ``0`` disables the warning (the same convention as the other limits: leave
+    it at zero to turn the thing off).
+    """
+    raw = os.environ.get("DLP_DEAD_DEVICE_WARN_THRESHOLD", "")
+    if not raw:
+        return DEFAULT_DEAD_DEVICE_WARN_THRESHOLD
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return DEFAULT_DEAD_DEVICE_WARN_THRESHOLD
+
+
 class Limits:
     """Tunables for the hub; the spec's numbers are the defaults."""
 
     def __init__(self, *, max_frame_bytes: int = dlp.MAX_FRAME_BYTES, queue_depth: int = 512,
                  agent_queue_depth: int = 4096, max_devices_per_agent: int = 0,
-                 device_bytes_per_second: float = 0.0, device_daily_bytes: int = 0):
+                 device_bytes_per_second: float = 0.0, device_daily_bytes: int = 0,
+                 dead_device_warn_threshold: int = DEFAULT_DEAD_DEVICE_WARN_THRESHOLD):
         self.max_frame_bytes = max_frame_bytes
         self.queue_depth = queue_depth
         self.agent_queue_depth = agent_queue_depth
@@ -171,6 +199,9 @@ class Limits:
         #: it. The day is ``store.local_day()`` — the same one the accounting and
         #: the operator's report use (see :class:`DailyQuota`).
         self.device_daily_bytes = max(0, int(device_daily_bytes))
+        #: 一个 agent 名下多少条死设备记录（已撤销 ∪ 已过期）算"太多了"。
+        #: 超过就记一条 WARNING；``0`` = 不告警。
+        self.dead_device_warn_threshold = max(0, int(dead_device_warn_threshold))
 
     def describe(self) -> dict[str, Any]:
         """The limits as they should appear in an operator-facing report."""
@@ -181,6 +212,7 @@ class Limits:
             "maxDevicesPerAgent": self.max_devices_per_agent or None,
             "deviceBytesPerSecond": self.device_bytes_per_second or None,
             "deviceDailyBytes": self.device_daily_bytes or None,
+            "deadDeviceWarnThreshold": self.dead_device_warn_threshold or None,
         }
 
 
@@ -735,11 +767,14 @@ class RelayHub:
             self.logger.info(
                 "relay: told the connector about %d device(s) that can never come back",
                 len(stale))
-            if len(stale) > 200:
+            threshold = self.limits.dead_device_warn_threshold
+            if threshold and len(stale) > threshold:
                 self.logger.warning(
-                    "relay: agent %s has %d dead device records; that is a lot — "
-                    "`admin.py device-list --all` shows them",
-                    agent["agentId"], len(stale))
+                    "relay: agent %s has %d dead device records (revoked or expired), "
+                    "over the %d threshold; every reconnect replays that many "
+                    "deviceDetach frames — purge them with `purge-revoked-devices.py "
+                    "--agent %s --apply` (see relay/README.md, \"Dead device records\")",
+                    agent["agentId"], len(stale), threshold, agent["agentId"])
 
     async def detach_agent(self, link: AgentLink) -> None:
         if self.agents.get(link.agent_id) is not link:
@@ -1378,6 +1413,20 @@ class RelayHub:
         }
 
     # ── introspection ───────────────────────────────────────────────────────
+
+    def device_hygiene(self) -> dict[str, Any]:
+        """库里设备记录的计数（在用 / 已撤销 / 已过期），给 `/stats` 与运维看。
+
+        纯读库、没有内存里的那一半，所以只是把 :meth:`Store.device_hygiene`
+        转出来；放在 hub 上是为了让 `/stats` 只有一个取数入口（traffic /
+        snapshot / usage_today 都从这里拿）。查不动库不该让运维面板 500——
+        记一条日志、把这一段留空。
+        """
+        try:
+            return self.store.device_hygiene()
+        except Exception:  # noqa: BLE001 - 与 usage_today 同一个理由
+            self.logger.warning("relay: could not count dead device records", exc_info=True)
+            return {}
 
     def device_count(self, agent_id: str | None = None) -> int:
         if agent_id is None:

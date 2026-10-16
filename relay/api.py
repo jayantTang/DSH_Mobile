@@ -331,6 +331,12 @@ async def stats(request: web.Request) -> web.Response:
         },
         "traffic": hub.traffic(),
         "snapshot": hub.snapshot(),
+        # 设备记录卫生：在用 / 已撤销 / 已过期各多少条。死记录（已撤销 ∪ 已过期）
+        # 会在每次连接器连上时被逐条重放（`hub.py:_tell_agent_about_the_gone`），
+        # 2012 条曾把连接器的处理链堵住；这里让那个数字在爆掉之前就看得见。
+        # **只有计数，没有 deviceId / 设备名**——这一页虽然在回环上，但运维面板
+        # 泄露设备明细是没必要的（设备明细看 `admin.py device-list`）。
+        "deviceRecords": hub.device_hygiene(),
         # 今天（服务器本地日）按账号与按设备的出口字节。库里那份 + 还没冲盘的那部分
         # 合起来才是"此刻为止"；完整历史用 `relay/admin.py usage --days 7`。
         "today": hub.usage_today(),
@@ -344,6 +350,14 @@ def _stats_page(payload: dict[str, Any]) -> str:
     """The same numbers as a small self-refreshing page."""
     limits = payload["limits"]
     load = payload["load"]
+    records = payload.get("deviceRecords") or {}
+    dead_line = ""
+    if records:
+        dead_line = (
+            f"<p>死设备记录 <span class=big>{records['dead']}</span> 条"
+            f"<span class=muted>（已撤销 {records['revoked']} · 已过期 {records['expired']} ·"
+            f" 在用 {records['live']}；一个 agent 超"
+            f" {limits.get('deadDeviceWarnThreshold') or '∞'} 条会在它连上时记 WARNING）</span></p>")
     rows = []
     for device in payload["traffic"]["devices"]:
         quota = device["quotaRemainingBytes"]
@@ -372,7 +386,7 @@ def _stats_page(payload: dict[str, Any]) -> str:
 <h1>DLP relay — 实时负载与流量</h1>
 <p>agent <span class=big>{load['agents']}</span> 个 · 连接设备 <span class=big>{load['devices']}</span> 台 ·
    本次启动累计出口 <span class=big>{payload['traffic']['totalEgressBytes'] / 1024 / 1024:.2f} MB</span>
-   <span class=muted>（页面每 5 秒自刷新；数字是 relay 自己算的，不含 SSH 与 OTA 流量）</span></p>
+   <span class=muted>（页面每 5 秒自刷新；数字是 relay 自己算的，不含 SSH 与 OTA 流量）</span></p>{dead_line}
 <p class=muted>限制：每设备 {limits['deviceBytesPerSecond'] or '不限'} B/s ·
    每日 {limits['deviceDailyBytes'] or '不限'} B · 每 agent 设备数 {limits['maxDevicesPerAgent'] or '不限'}</p>
 <table><thead><tr><th>设备</th><th>deviceId</th><th class=num>本次出口</th>

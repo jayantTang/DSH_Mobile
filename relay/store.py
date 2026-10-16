@@ -1031,6 +1031,39 @@ class Store:
             (agent_id, now_ms()))
         return {row["deviceId"] for row in rows}
 
+    def device_hygiene(self, agent_id: str | None = None) -> dict[str, int]:
+        """设备记录的健康计数：在用 / 已撤销 / 已过期 / 合计。
+
+        为什么要有这个数：中转在每次连接器连上时会把该 agent 名下所有"永远回不来"
+        的设备逐条重放给连接器（`hub.py:_tell_agent_about_the_gone`），2012 条曾把
+        连接器的处理链堵住（maintainers/ANALYSIS-20261012-connector-flap.md）。
+        所以"现在攒了多少"必须一眼看得到：运维从 `/stats` 读它，阈值告警也从同
+        一个判据去比。
+
+        口径与清理工具（`purge-revoked-devices.py`）**逐字相同**，两处并用：
+        `revoked` 是 `revokedAt IS NOT NULL`，`expired` 是 `expiresAt <= now`，
+        `live` 是两者都不成立（= 唯一还会被 `device_by_token` 接受的那些）。
+        撤销过的行也可能同时过期，所以 `revoked + expired >= dead`——`dead` 才是
+        真正会被重放的条数（并集去重后），不要拿前两个相加当它。
+        """
+        stamp = now_ms()
+        clause = " WHERE agentId=?" if agent_id else ""
+        row = self._row(
+            "SELECT COUNT(*) AS total,"
+            " COALESCE(SUM(CASE WHEN revokedAt IS NOT NULL THEN 1 ELSE 0 END), 0) AS revoked,"
+            " COALESCE(SUM(CASE WHEN expiresAt <= ? THEN 1 ELSE 0 END), 0) AS expired,"
+            " COALESCE(SUM(CASE WHEN revokedAt IS NULL AND expiresAt > ? THEN 1 ELSE 0 END), 0)"
+            "   AS live,"
+            " COALESCE(SUM(CASE WHEN revokedAt IS NOT NULL OR expiresAt <= ? THEN 1 ELSE 0 END), 0)"
+            "   AS dead"
+            f" FROM devices{clause}",
+            # 占位符按 SQL 里出现的顺序绑定：expired、live、dead、agentId
+            [stamp, stamp, stamp, agent_id] if agent_id else [stamp, stamp, stamp])
+        counts = {key: int(row[key]) for key in ("total", "live", "revoked", "expired", "dead")}
+        if agent_id:
+            counts["agentId"] = agent_id
+        return counts
+
     def list_devices(self, agent_id: str | None = None, *, include_revoked: bool = False) -> list[dict[str, Any]]:
         clauses: list[str] = []
         params: list[Any] = []
