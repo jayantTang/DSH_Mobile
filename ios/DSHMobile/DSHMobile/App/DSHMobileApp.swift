@@ -40,6 +40,20 @@ struct DSHMobileApp: App {
         // 崩溃诊断：MetricKit 在**下次启动**把它交回来，这里只负责收进本地存档，
         // 投递交给 FeedbackCenter.flushCrashReports()（前台时跑）。单测宿主不注册——
         // 那个进程不起界面、也没有中转凭据，收下来只会留在沙箱里。
+        // 仿真器里 MetricKit 不投递崩溃诊断（真机才给），所以「收下来之后怎么发出去」
+        // 这半条链路用一个 DEBUG 播种钩子验证：`-DSHCrashReportSeed <名字>` 在启动时
+        // 往存档里放一条合成的崩溃报告，下一次前台就会按真实路径投出去。
+        #if DEBUG
+        if let seed = Self.automationCrashSeed() {
+            CrashReportArchive().append(CrashReport(
+                id: "seed-\(seed)", exceptionType: "EXC_BAD_ACCESS", signal: "SIGSEGV",
+                scene: .unknown, frames: ["DSHMobile @0x\(seed)", "libswiftCore.dylib @0x9f"],
+                appVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0",
+                buildVersion: Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "0",
+                systemVersion: ProcessInfo.processInfo.operatingSystemVersionString,
+                deviceModel: "simulator", occurredAt: Date()))
+        }
+        #endif
         if !Self.isUnitTestHost {
             MetricKitCrashObserver.shared.start { report in
                 ViewportProbe.note("crash.captured", ["id": report.id, "exception": report.exceptionType], force: false)
@@ -120,6 +134,17 @@ struct DSHMobileApp: App {
     /// 注意它**不是**"零模拟器"：`xcodebuild test` 仍会拉起模拟器进程。界面回归照旧走
     /// `scripts/dev/verify-simulator.sh` 与 `test/run.sh` 的逐屏核对。
     static let isUnitTestHost = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+
+    #if DEBUG
+    /// `-DSHCrashReportSeed <名字>`：播种一条合成崩溃报告，用于验证投递链路。
+    static func automationCrashSeed() -> String? {
+        let arguments = CommandLine.arguments
+        guard let index = arguments.firstIndex(of: "-DSHCrashReportSeed"),
+              index + 1 < arguments.count
+        else { return nil }
+        return arguments[index + 1]
+    }
+    #endif
 
     var body: some Scene {
         WindowGroup {
