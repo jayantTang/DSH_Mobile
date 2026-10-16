@@ -70,16 +70,39 @@ function report(ctx, message) {
 function describe(error) {
   return error instanceof Error ? error.message : String(error)
 }
-/** 样式表：页面上只留一份，退场时随插件 fiber 一起清掉。 */
+/** 样式节点上的"认领者"标记：谁最后认领，谁负责撤。 */
+const STYLE_OWNER_ATTR = 'data-owner'
+/** 认领序号：同一次 enable 一个 token，跨热更两代不会撞。 */
+let styleOwnerSeq = 0
+
+/**
+ * 样式表：页面上只留一份，**但所有权要认**。
+ *
+ * 为什么不能"存在就复用、退场就删"：热更时两代插件可能同时在世，且顺序可能是
+ * "新一代先起来认领同一个 `<style>`、上一代后退场"。上一代若无条件删节点，新面板就
+ * 变成没有样式的裸 HTML——2026-10-17 owner 看到配对面板"突然不像原版"就是这个。
+ * 所以认领时写下自己的 token，退场时只撤自己认领的那一份。
+ */
 function ensureStyle() {
   if (typeof document === 'undefined' || !document.head) return null
-  const existing = document.getElementById(STYLE_ID)
-  if (existing) return existing
-  const style = document.createElement('style')
-  style.id = STYLE_ID
-  style.textContent = CSS
-  document.head.appendChild(style)
-  return style
+  const token = `o${++styleOwnerSeq}-${Date.now()}`
+  let node = document.getElementById(STYLE_ID)
+  if (!node) {
+    node = document.createElement('style')
+    node.id = STYLE_ID
+    node.textContent = CSS
+    document.head.appendChild(node)
+  }
+  node.setAttribute?.(STYLE_OWNER_ATTR, token)
+  return { node, token }
+}
+
+/** 退场：只有这个节点仍归本次 enable 时才撤掉它。 */
+function releaseStyle(style) {
+  const node = style?.node
+  if (!node) return
+  if (node.getAttribute?.(STYLE_OWNER_ATTR) !== style.token) return
+  node.remove?.()
 }
 /** 极小的外部状态容器：按钮与小窗是两个独立注册项，需要共享的只有几个字段。 */
 function createStore(initial) {
@@ -258,6 +281,8 @@ function tick(panel) {
 }
 function openPanel(panel) {
   if (panel.disposed) return
+  // 自愈：样式若在某次热更里被带走（见 ensureStyle 的头注），打开面板时补回来。
+  if (!panel.style?.node?.isConnected) panel.style = ensureStyle()
   panel.store.set({ open: true, now: Date.now(), copied: false })
   panel.lastStatusAt = Date.now()
   void loadStatus(panel)
@@ -277,7 +302,7 @@ function disposePanel(panel) {
   panel.idleTimer = null
   panel.tickTimer = null
   panel.copiedTimer = null
-  panel.style?.remove?.()
+  releaseStyle(panel.style)
   panel.style = null
 }
 /** 插件启用时建立的页面资源；返回退场时用的清理函数。 */

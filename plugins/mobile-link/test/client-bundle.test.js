@@ -35,7 +35,9 @@ function makeDom() {
       id: '',
       textContent: '',
       style: {},
-      setAttribute(key, value) { this[key] = value },
+      attrs: {},
+      setAttribute(key, value) { this.attrs[key] = String(value); this[key] = value },
+      getAttribute(key) { return this.attrs[key] ?? null },
       remove() {
         const index = nodes.indexOf(this)
         if (index >= 0) nodes.splice(index, 1)
@@ -595,6 +597,33 @@ test('disabling the plugin takes the entry, the panel and the timers with it', a
   second.api.apply(ctxTwo.ctx)
   await flush()
   assert.equal(ctxTwo.state.slots.length, 2)
+})
+
+test('a hot reload does not steal the new panel stylesheet', async () => {
+  // 热更的真实顺序可能是"新一代先起来、上一代后退场"：两代认领的是同一个 `<style>` 节点。
+  // 上一代退场时若无条件节点删除，新面板就变成没有样式的裸 HTML（2026-10-17 实测到）。
+  const { document, nodes } = makeDom()
+  const fetch = makeFetch()
+  const first = loadBundle({ document, fetchImpl: fetch.impl })
+  const ctxOne = makeCtx()
+  first.api.apply(ctxOne.ctx)
+  await flush()
+
+  const second = loadBundle({ document, fetchImpl: fetch.impl })
+  const ctxTwo = makeCtx()
+  second.api.apply(ctxTwo.ctx)
+  await flush()
+  assert.equal(nodes.filter((node) => node.id === STYLE_ID).length, 1)
+
+  ctxOne.state.dispose()
+
+  assert.equal(nodes.filter((node) => node.id === STYLE_ID).length, 1,
+    '上一代的清理不得带走新一代仍在用的样式')
+  assert.equal(ctxTwo.state.slots.length, 2, '新一代的入口不受上一代退场影响')
+
+  ctxTwo.state.dispose()
+  assert.equal(nodes.filter((node) => node.id === STYLE_ID).length, 0,
+    '真正禁用之后样式仍要归零')
 })
 
 test('apply never throws when a slot registry refuses, and the other entry survives', async () => {
