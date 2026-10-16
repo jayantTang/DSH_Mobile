@@ -278,7 +278,13 @@ export function createHistoryService({ logger = console } = {}) {
       // `newestSeq` also carries the progress denominator below; it is cached for
       // 5s, and a scan would have fetched it anyway on the first page.
       const newest = await newestSeq(sessionId)
-      const ceiling = from !== undefined ? from : newest
+      // 游标是上一页留下的 seq，可能**越过**当前最新（日志被裁剪过、或手机拿着旧游标回来）。
+      // 越界时不夹住的话，扫描会从一个不存在的 seq 往下空跑满 4 块，`remainingChunks`
+      // 还会算出比 `totalChunks` 更大的数（实测 996/2），界面的"已扫 k/N"随即变成假的。
+      const cursorSeq = from !== undefined && newest >= 0 ? Math.min(from, newest) : from
+      const ceiling = cursorSeq !== undefined ? cursorSeq : newest
+      // 片数（进度的分母）：由日志最新 seq 算出，与游标无关，所以第一页就是精确的。
+      const total = newest >= 0 ? Math.floor(newest / chunk) + 1 : 0
       const hits = []
       let to = ceiling
       let scanned = 0
@@ -326,8 +332,9 @@ export function createHistoryService({ logger = console } = {}) {
           // 进度：片数是**扫描单位**（一段 `chunk` 个 seq，从新往旧），不是命中页数。
           // `totalChunks` 由日志最新 seq 算出，所以从第一页起就是精确的；命中的**条数**
           // 仍然要扫到最早那一片才定稿（不开宿主全文索引的必然结果）。
-          totalChunks: newest >= 0 ? Math.floor(newest / chunk) + 1 : 0,
-          remainingChunks: to >= 0 ? Math.floor(to / chunk) + 1 : 0,
+          totalChunks: total,
+          // 剩余片数不可能多于总片数：越界游标、被裁剪的日志都不该让进度超过 100%。
+          remainingChunks: to >= 0 ? Math.min(Math.floor(to / chunk) + 1, total) : 0,
           source: 'scan',
         },
       }

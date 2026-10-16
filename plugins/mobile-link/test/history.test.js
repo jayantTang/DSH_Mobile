@@ -209,6 +209,60 @@ test('in-session search is answered once the service is bound', async () => {
   assert.notEqual(result.error?.code, 'link/not-implemented')
 })
 
+// ── 异常路径（进度与来源要如实，不许把"没扫到"说成"没有"） ─────────────────────
+
+test('a session with no events reports zero chunks instead of guessing', async () => {
+  const service = bound(createHistoryService({ logger: { warn() {}, info() {} } }), fakeSearchQuery(searchLog(0)))
+  const result = await service.handle(FIND_METHOD, { ...FIND_ARGS })
+  assert.equal(result.ok, true)
+  assert.equal(result.value.hits.length, 0)
+  assert.equal(result.value.totalChunks, 0, '空会话没有片可扫')
+  assert.equal(result.value.remainingChunks, 0)
+  assert.equal(result.value.hasMore, false)
+})
+
+test('the indexed path carries no scan progress (and says so by omission)', async () => {
+  // 走了宿主索引就没有"片"这个概念：字段缺失 = 进度未知，界面据此改口，不许拿 0 冒充。
+  const query = {
+    async searchEvents() {
+      return { items: [{ seq: 12, type: 'user/message', data: { text: 'a needle' } }], hasMore: false }
+    },
+  }
+  const service = bound(createHistoryService({ logger: { warn() {}, info() {} } }), query)
+  const result = await service.handle(FIND_METHOD, { ...FIND_ARGS, limit: 10 })
+  assert.equal(result.ok, true)
+  assert.equal(result.value.source, 'index')
+  assert.equal(result.value.totalChunks, undefined)
+  assert.equal(result.value.remainingChunks, undefined)
+})
+
+test('a cursor past the newest event is clamped instead of scanning nothing', async () => {
+  // 旧游标（日志被裁剪过、或手机拿着上次的游标回来）原来会让扫描从一个不存在的 seq
+  // 往下空跑满 4 块，remainingChunks 还算出 996 这种比 totalChunks 更大的数。
+  const service = bound(createHistoryService({ logger: { warn() {}, info() {} } }), fakeSearchQuery(searchLog(20)))
+  const result = await service.handle(FIND_METHOD, { ...FIND_ARGS, cursor: '9999', limit: 5, chunk: 10 })
+  assert.equal(result.ok, true, '越界游标不该报错')
+  assert.equal(result.value.totalChunks, 2, '片数按日志最新 seq 算，与游标无关')
+  assert.ok(result.value.remainingChunks <= result.value.totalChunks,
+    `剩余片数不得超过总数，实得 ${result.value.remainingChunks}/${result.value.totalChunks}`)
+  assert.equal(result.value.remainingChunks, 1, '夹到最新之后只扫了一片，还剩一片')
+  assert.equal(result.value.hits.length, 5, '夹住之后这一页是真的有命中的')
+})
+
+test('the scan cap is visible as remaining chunks, not as "you have reached the start"', async () => {
+  // 命中少于 limit 时循环靠"最多 4 块"停下：这时必须 hasMore=true 且剩余片数 > 0，
+  // 否则读者会以为已经搜完（与"已搜全部历史"那句文案直接相关）。
+  const service = bound(createHistoryService({ logger: { warn() {}, info() {} } }),
+    fakeSearchQuery(searchLog(200)))
+  const result = await service.handle(FIND_METHOD, { ...FIND_ARGS, query: 'nowhere', limit: 50, chunk: 10 })
+  assert.equal(result.ok, true)
+  assert.equal(result.value.hits.length, 0)
+  assert.equal(result.value.scannedChunks, 4, '一次调用扫满上限')
+  assert.equal(result.value.totalChunks, 20)
+  assert.equal(result.value.remainingChunks, 16, '还剩 16 片：没搜完')
+  assert.equal(result.value.hasMore, true, '没搜完就不许说"到底了"')
+})
+
 // ---------------------------------------------------------------------------
 // _link/sessionFind（spec 007 T034/T035）
 // ---------------------------------------------------------------------------

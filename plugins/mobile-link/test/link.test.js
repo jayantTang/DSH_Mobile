@@ -18,6 +18,7 @@ process.env.DSH_HOME = TEST_HOME
 process.on('exit', () => rmSync(TEST_HOME, { recursive: true, force: true }))
 
 import { MobileLinkAgent } from '../lib/link.js'
+import { createHistoryService } from '../lib/history.js'
 import { SESSION_DIGEST_METHOD } from '../lib/session-digest.js'
 
 const setTimeoutFnReal = setTimeout
@@ -1274,4 +1275,76 @@ test('sessionDigest：宿主失败时返回与老方法同形的错误', async (
   assert.equal(res.ok, false)
   assert.equal(res.error.code, 'host/unavailable')
   assert.match(res.error.message, /DSH is not connected/)
+})
+
+// ---------------------------------------------------------------------------
+// 会话内搜索的**链路级**集成：设备帧经连接器的路由表落到历史服务，再回来带上片数进度。
+// 这一层盖住"单元测试各自过、拼起来却不对"的位置：方法名路由、args 解包、响应字段出网。
+// ---------------------------------------------------------------------------
+
+/// 宿主的 `sessionQuery` 替身：只实现扫描路径需要的两个方法
+/// （没有 `searchEvents` → 连接器直接走扫描，正好是当前部署的形状）。
+function fakeSessionQuery(count) {
+  const log = Array.from({ length: count }, (_, seq) => ({
+    seq,
+    type: seq % 2 === 0 ? 'user/message' : 'assistant/message',
+    time: 1_700_000_000_000 + seq,
+    data: { text: `第 ${seq} 条，含关键词我` },
+  }))
+  return {
+    async listEvents() {
+      return log.map(({ seq, type, time }) => ({ seq, type, time }))
+    },
+    async filterEvents(sessionId, filters) {
+      const range = (filters ?? []).find((filter) => filter.kind === 'seq')
+      const text = (filters ?? []).find((filter) => filter.kind === 'text')
+      if (range === undefined) return []
+      return log
+        .filter((event) => event.seq >= range.from && event.seq <= range.to)
+        .filter((event) => text === undefined || event.data.text.includes(text.text))
+        .map((event) => ({ sessionId, seq: event.seq, type: event.type, time: event.time,
+                           data: event.data }))
+    },
+  }
+}
+
+test('a device-frame sessionFind lands on the history service and carries chunk progress', async () => {
+  const { agent, socket } = makeAgent()
+  const history = createHistoryService({ logger: { warn() {}, info() {} } })
+  history.bindQuery(fakeSessionQuery(20))
+  agent.setHistoryService(history)
+  await agent.handleRelayFrame(attach())
+
+  // 一个字的查询（owner 2026-10-17 把下限降到 1）也要走通，并且带回片数进度。
+  await agent.handleRelayFrame({
+    t: 'req', id: 'find1', method: '_link/sessionFind',
+    args: { address: { kind: 'session', sessionId: 's-1' }, query: '我', limit: 3, chunk: 10 },
+    deviceId: 'dev_1',
+  })
+
+  const reply = socket.frames('res').find((frame) => frame.id === 'find1')
+  assert.ok(reply?.ok, `sessionFind 失败：${JSON.stringify(reply)}`)
+  assert.equal(reply.value.hits.length, 3, '命中要回给设备')
+  assert.equal(reply.value.source, 'scan', '没有索引就走扫描')
+  assert.equal(reply.value.totalChunks, 2, '片数：20 条 seq、片宽 10')
+  assert.ok(reply.value.remainingChunks <= reply.value.totalChunks, '剩余片数不得超过总数')
+  assert.equal(reply.value.hasMore, true)
+})
+
+test('a device-frame sessionFind with no query and no roles is refused', async () => {
+  const { agent, socket } = makeAgent()
+  const history = createHistoryService({ logger: { warn() {}, info() {} } })
+  history.bindQuery(fakeSessionQuery(20))
+  agent.setHistoryService(history)
+  await agent.handleRelayFrame(attach())
+
+  await agent.handleRelayFrame({
+    t: 'req', id: 'find2', method: '_link/sessionFind',
+    args: { address: { kind: 'session', sessionId: 's-1' }, query: '' },
+    deviceId: 'dev_1',
+  })
+
+  const reply = socket.frames('res').find((frame) => frame.id === 'find2')
+  assert.equal(reply.ok, false)
+  assert.equal(reply.error.code, 'link/query-too-short', '空查询不是搜索')
 })
