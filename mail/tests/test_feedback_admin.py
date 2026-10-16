@@ -482,3 +482,71 @@ def test_feedback_delete_with_yes_removes_the_thread_and_its_messages(relay, cap
     code, report = run_cli(relay["db"], "feedback-delete", "--thread", relay["threadId"],
                            "--yes", capsys=capsys)
     assert code == 1 and report == {"ok": False, "error": "thread not found"}
+
+
+# ── 032 FR-009：owner 侧写下的新信也要通知收件账户 ────────────────────────────
+
+class _RecordingNotifier:
+    """替掉 `admin.AccountStateNotifier`：只记"通知了谁"，不发环回请求。"""
+
+    def __init__(self, calls: list) -> None:
+        self._calls = calls
+
+    async def __call__(self, account_id, keys=None) -> None:  # noqa: ANN001 - 与生产同签名
+        if account_id:
+            self._calls.append(account_id)
+
+    async def aclose(self) -> None:
+        return None
+
+
+@pytest.fixture
+def notified(monkeypatch):
+    calls: list = []
+    monkeypatch.setattr(admin, "AccountStateNotifier", lambda *a, **k: _RecordingNotifier(calls))
+    return calls
+
+
+def _thread_with_account(db: str, account_id: str) -> str:
+    store = Store(db)
+    try:
+        thread = store.create_feedback_thread(ticket_hash=sha256_hex("fk_badge"), text="来信正文",
+                                              account_id=account_id, device_id="dev_one")
+        return thread["threadId"]
+    finally:
+        store.close()
+
+
+def test_feedback_reply_tells_the_sender(tmp_path, capsys, notified):
+    """回信落库后通知来信账户：那台手机当场去拉，角标不必等下次前台刷新。"""
+    db = str(tmp_path / "mail.db")
+    thread_id = _thread_with_account(db, "acc_user")
+
+    code, out = run_cli(db, "feedback-reply", "--thread", thread_id,
+                        "--body", "看到了，正在修", capsys=capsys)
+    assert code == 0, out
+    assert out["ok"] is True
+    assert notified == ["acc_user"]
+
+
+def test_feedback_notify_tells_every_recipient(tmp_path, capsys, notified):
+    """群发通知落库后逐个点名通知；重复点名的账户只通知一次。"""
+    db = str(tmp_path / "mail.db")
+
+    code, out = run_cli(db, "feedback-notify", "--body", "服务通知", "--subject", "服务通知",
+                        "--account", "acc_b", "--account", "acc_a", "--account", "acc_a",
+                        "--yes", capsys=capsys)
+    assert code == 0, out
+    assert out["ok"] is True
+    assert notified == ["acc_a", "acc_b"]
+
+
+def test_feedback_notify_dry_run_tells_nobody(tmp_path, capsys, notified):
+    """预演不写库，也不该发通知：状态压根没变。"""
+    db = str(tmp_path / "mail.db")
+
+    code, out = run_cli(db, "feedback-notify", "--body", "服务通知",
+                        "--account", "acc_a", capsys=capsys)
+    assert code == 0, out
+    assert out["dryRun"] is True
+    assert notified == []

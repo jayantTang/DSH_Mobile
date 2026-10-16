@@ -14,12 +14,14 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import datetime
 import json
 import sys
 import time
-from typing import Any
+from typing import Any, Iterable
 
+from internal import AccountStateNotifier
 from store import DEFAULT_FEEDBACK_FORMAT, Store, StoreError
 
 #: `feedback-reply --template` 的默认署名（契约：署名默认 `DSH Mobile 团队`）。
@@ -275,6 +277,31 @@ def main(argv: list[str] | None = None) -> int:
         store.close()
 
 
+def _notify_account_state(account_ids: Iterable[str | None]) -> None:
+    """告诉中转"这些账户的信件状态变了"，让它借在线连接扇一帧（032 FR-009）。
+
+    CLI 没有请求上下文，只能自己起一次环回调用（与 mail 服务里那条通知同一个实现）。
+    失败**不影响命令本身**：真值在 mail 库里，客户端前台刷新仍能拉到，只是角标晚一点；
+    所以这里只往 stderr 记一行，退出码照旧。
+    """
+    ids = sorted({account for account in account_ids if account})
+    if not ids:
+        return
+    notifier = AccountStateNotifier()
+
+    async def run() -> None:
+        try:
+            for account_id in ids:
+                await notifier(account_id)
+        finally:
+            await notifier.aclose()
+
+    try:
+        asyncio.run(run())
+    except Exception as error:  # noqa: BLE001 - 通知是尽力而为，不能连累命令
+        print(json.dumps({"notifyError": str(error), "accounts": len(ids)}), file=sys.stderr)
+
+
 def _dispatch(store: Store, args: argparse.Namespace) -> int:
     command = args.command
 
@@ -309,6 +336,10 @@ def _dispatch(store: Store, args: argparse.Namespace) -> int:
         if written is None:
             _emit({"ok": False, "error": "thread not found"})
             return 1
+        # 回信是一封新信：让来信账户的那几台设备当场去拉，而不是等下次前台刷新。
+        thread = store.feedback_thread(args.thread, None, messages_per_thread=0)
+        if thread is not None:
+            _notify_account_state([thread.get("accountId")])
         _emit({"ok": True, "threadId": args.thread, "messageId": written["messageId"],
                "createdAt": int(written["createdAt"])})
         return 0
@@ -326,6 +357,7 @@ def _dispatch(store: Store, args: argparse.Namespace) -> int:
             return 0
         notice = store.create_notice(body, args.subject, args.account,
                                      format=args.format, created_by="admin.py")
+        _notify_account_state(args.account)
         _emit({"ok": True, "noticeId": notice["noticeId"], "recipients": notice["recipients"],
                "createdAt": int(notice["createdAt"])})
         return 0

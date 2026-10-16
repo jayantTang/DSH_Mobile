@@ -12,8 +12,8 @@ import json
 import pytest
 
 import mail as mail_module
-from conftest import (device_headers, device_of, feedback_ticket, register_device,
-                      unregister_device)
+from conftest import (TEAM_ACCOUNT, device_headers, device_of, feedback_ticket,
+                      register_device, unregister_device)
 
 #: 一个格式合法但没人用过的取件凭据（`fk_` + 43 字符）。
 TICKET = "fk_" + "A" * 43
@@ -538,6 +538,43 @@ async def test_read_tells_the_account_so_the_other_devices_refresh(client, store
     assert marked.status == 200, await marked.text()
 
     assert client.app["test_notified"] == [(provisioned["account"]["accountId"], None)]
+
+
+async def test_a_new_ticket_tells_the_team_account(client, store):
+    """032 FR-009 的另一半：不止"已读"，**新信**也要让对面那几台设备当场去拉。
+
+    在此之前只有已读会通知，新信悄无声息——团队的手机要等回前台才看到角标（owner 2026-10-17 反馈）。
+    """
+    client.app["test_notified"].clear()
+    await feedback_ticket(client, text="新来信", deviceModel="iPhone15,4")
+    assert client.app["test_notified"] == [(TEAM_ACCOUNT, None)]
+
+
+async def test_an_owner_reply_tells_the_submitter(client, store):
+    """团队回信是一封新信：来信账户的设备要当场知道，角标立刻动。"""
+    user = register_device(client, account_id="acc_user")
+    submitted = await client.post("/feedback/submit", json={
+        "text": "来信正文", "deviceModel": "iPhone15,4"}, headers=device_headers(user))
+    assert submitted.status == 200, await submitted.text()
+    ticket = await submitted.json()
+    team = register_device(client, account_id=TEAM_ACCOUNT)
+
+    client.app["test_notified"].clear()
+    replied = await client.post("/feedback/append", json={
+        "threadId": ticket["threadId"], "text": "我们看一下", "format": "text"},
+        headers=device_headers(team))
+    assert replied.status == 200, await replied.text()
+    assert client.app["test_notified"] == [("acc_user", None)]
+
+
+async def test_a_user_note_tells_the_team_again(client, store):
+    """用户往线程里补一句也是新信：团队收件箱的角标要跟着动，不能只在自己设备上变。"""
+    ticket = await feedback_ticket(client, text="来信", deviceModel="iPhone15,4")
+    client.app["test_notified"].clear()
+    appended = await client.post("/feedback/append", json={
+        "threadId": ticket["threadId"], "ticketKey": ticket["ticketKey"], "text": "补充一句"})
+    assert appended.status == 200, await appended.text()
+    assert client.app["test_notified"] == [(TEAM_ACCOUNT, None)]
 
 
 async def test_read_without_a_device_token_notifies_nobody(client, store):

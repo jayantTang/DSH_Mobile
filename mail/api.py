@@ -414,6 +414,19 @@ async def _authorized_threads(store: Store, pairs: list[tuple[str, str]],
     return allowed
 
 
+async def _notify_account_state(request: web.Request, account_id: str | None) -> None:
+    """告诉中转"这个账户的信件状态变了"，让它借在线连接扇一帧（032 FR-009）。
+
+    `notify_account_state` 是生产实现（环回 POST 到中转）；失败语义全在它里面：短超时、
+    不重试、不抛错。这里只负责"该不该发、发给谁"——信件状态变了却不发，另一台设备就只能
+    等到下次前台刷新，这正是角标慢一拍的原因。
+    """
+    notifier = request.app.get("notify_account_state")
+    if notifier is None or not account_id:
+        return
+    await notifier(account_id)
+
+
 async def feedback_submit(request: web.Request) -> web.Response:
     """新建一条线程并把取件凭据返回一次（库里只留它的 SHA-256）。"""
     store: Store = request.app["store"]
@@ -465,6 +478,8 @@ async def feedback_submit(request: web.Request) -> web.Response:
     except StoreError:
         LOGGER.exception("mail: storing a feedback thread failed")
         return json_error(500, "feedback/store-error", "the mail service could not store the feedback")
+    # 新信进了团队收件箱：团队的其他设备（含主人自己的手机）当场就知道，不必等前台刷新。
+    await _notify_account_state(request, team_binding)
     return web.json_response({"ok": True, "threadId": thread["threadId"],
                               "ticketKey": ticket, "createdAt": thread["createdAt"]})
 
@@ -550,6 +565,10 @@ async def feedback_append(request: web.Request) -> web.Response:
         return json_error(500, "feedback/store-error", "the mail service could not store the message")
     if message is None:                      # 与上面同一条 404：不泄露线程是否存在
         return _not_found()
+    # 收信方 = 写的人对面那一方：团队回信 → 通知来信账户；用户/匿名补一句 → 通知团队收件箱。
+    await _notify_account_state(
+        request,
+        thread.get("accountId") if team_side else _team_account(request))
     return web.json_response({"ok": True, "threadId": thread_id,
                               "messageId": message["messageId"], "createdAt": message["createdAt"]})
 
@@ -590,9 +609,7 @@ async def feedback_read(request: web.Request) -> web.Response:
         await asyncio.to_thread(store.mark_notices_read, device["accountId"], notice_ids)
     # 032 FR-009：已读落库后通知同账户的其他在线设备。只是"去看看信件"的一声招呼，
     # 失败不重试（同账户另一台最迟在下次前台刷新时对齐）；匿名调用没有账户，跳过。
-    notifier = request.app.get("notify_account_state")
-    if notifier is not None and device is not None:
-        await notifier(device.get("accountId"))
+    await _notify_account_state(request, device.get("accountId") if device else None)
     payload = await _collect(store, pairs, device, 0, team_account=_team_account(request))
     return web.json_response({"ok": True, "unreadCount": payload["unreadCount"]})
 
