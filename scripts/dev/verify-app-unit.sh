@@ -48,12 +48,18 @@ xcodebuild build \
   -quiet
 
 printf '\n\033[1;36m>>>\033[0m 跑 DSHMobileTests（不含 UI，不截图）\n' 
-# 用单测专用 scheme：它只构建 App + DSHMobileTests，不带 UI 测试包（省掉整包构建时间）。
+# 用主 scheme + `-only-testing` 限定执行范围。项目里**没有**单测专用 scheme：
+# `project.yml` 的 `schemes:` 只定义 `DSHMobile`（其 test 目标含 `DSHMobileTests` 与
+# `DSHMobileUITests`），此前这里写的 `DSHMobileUnitTests` 不存在，入口直接以
+# `does not contain a scheme named "DSHMobileUnitTests"` 失败（2026-10-16 实测）。
+# `-only-testing` 只限定**执行**范围，UI 测试包仍会被构建；要省这部分构建时间，
+# 应在 `project.yml` 新增一个只含 `DSHMobileTests` 的 scheme 并重新生成工程。
 xcodebuild test \
   -project DSHMobile.xcodeproj \
-  -scheme DSHMobileUnitTests \
+  -scheme DSHMobile \
   -configuration Debug \
   -destination "platform=iOS Simulator,id=$SIM_ID" \
   -derivedDataPath "$DERIVED" \
   -only-testing:DSHMobileTests \
+  -skip-testing:DSHMobileUITests \
   "$@"
