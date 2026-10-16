@@ -108,11 +108,27 @@ public final class FakeCarrier: DSHCarrier, @unchecked Sendable {
 
     /// 等某条活流被订阅（防止测试帧在订阅前丢出）。
     public func waitForLiveStream(_ endpoint: String) async {
-        if withStore({ liveStreamsStorage[endpoint] }) != nil { return }
         await withCheckedContinuation { c in
-            // 追加必须在锁内一次做完：`default: []` 的读-改-写分两步的话，
-            // 两个等待者同时进来会丢掉一个（那个测试就永远等下去）。
-            withStore { liveStreamWaitersStorage[endpoint, default: []].append(c) }
+            // 流程只有一句：登记成功就等订阅来唤醒，不成功说明流已经在了（立刻继续）。
+            if !claimWaiter(endpoint, c) { c.resume() }
+        }
+    }
+
+    /// 登记一个等待者。返回 false = 这条端点的流已经注册，调用方不该再挂起。
+    ///
+    /// 为什么必须把"看有没有流"和"挂上等待者"放进**同一把锁**：原来的写法是
+    /// 先查 `liveStreams`、再进锁登记。两步之间恰好来一次订阅（`stream()` 会一次性
+    /// 取走当时的等待者列表），这个等待者就再也没人唤醒——表现为**整套用例无声挂死**
+    /// （2026-10-17 两次实测：`sample` 显示卡在 `XCTWaiter`，一次 23 分钟、一次 50 分钟）。
+    /// 抽成同步函数是为了让这段竞态能被单测直接钉住，不必靠调度碰运气。
+    @discardableResult
+    func claimWaiter(_ endpoint: String,
+                     _ continuation: CheckedContinuation<Void, Never>) -> Bool {
+        withStore {
+            guard liveStreamsStorage[endpoint] == nil else { return false }
+            // 追加在锁内一次做完：`default: []` 的读-改-写分两步会丢掉同时进来的等待者。
+            liveStreamWaitersStorage[endpoint, default: []].append(continuation)
+            return true
         }
     }
 
