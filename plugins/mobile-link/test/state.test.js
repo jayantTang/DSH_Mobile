@@ -150,6 +150,30 @@ test('mintPairCode posts to the prefixed relay and builds the dsh:// payload', a
     'dsh://pair?relay=wss%3A%2F%2Frelay.example.com%2Fdsh-link&code=7F3K-9Q2M')
 })
 
+test('mintPairCode asks for a persistent code without putting ttlMs on the wire', async () => {
+  // 032：持久码那条路必须**不带** ttlMs——中转按 `"ttlMs" not in body` 判持久
+  // （relay/api.py 的 pair_code）。带一个 `ttlMs: null` 会被读成"限时、但没给时长"，
+  // 于是落到中转默认的 10 分钟：面板显示出倒计时，码十分钟后就废
+  // （owner 2026-10-17 报的就是这个）。
+  const calls = []
+  const fetchImpl = async (url, options) => {
+    calls.push({ url, options })
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ ok: true, code: 'AAAA-BBBB', expiresAt: null, persistent: true }),
+    }
+  }
+  const minted = await mintPairCode({
+    identity: { agentId: 'agt_1', agentSecret: 'as_1',
+      relayUrl: 'wss://relay.example.com/dsh-link' },
+    fetchImpl,
+  })
+  assert.deepEqual(JSON.parse(calls[0].options.body), { agentId: 'agt_1' })
+  assert.equal(minted.persistent, true)
+  assert.equal(minted.expiresAt, null)
+})
+
 test('mintPairCode tolerates a trailing slash on the relay URL', async () => {
   const calls = []
   const fetchImpl = async (url, options) => {
