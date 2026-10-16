@@ -32,8 +32,44 @@ public final class FakeCarrier: DSHCarrier, @unchecked Sendable {
 
     private let callLock = NSLock()
     private var recordedCalls: [RecordedCall] = []
-    public var unaryResponses: [String: Result<JSONValue, Error>] = [:]
-    public var streamResponses: [String: [JSONValue]] = [:]
+
+    /// 可编程响应的**存储**，一律经 `storeLock` 读写。
+    ///
+    /// 为什么测试直接读写的那几个字典也要上锁：`DSHCarrier` 的方法是被产品代码在
+    /// **别的线程**上调的（`ChatModel.startFollowing` → `DSHClient.follow` → `stream`，
+    /// 那个 await 之后已经不在主线程），而测试是在主线程上读写这些字典的
+    /// （`carrier.streamResponses[…] = …`、`carrier.liveStreams[…]`）。裸字典这样用
+    /// 两个方向都不安全：一边插入、另一边查找，字典的存储会被写坏。
+    ///
+    /// 2026-10-16 实测到一次：`-[NSIndirectTaggedPointerString objectForKey:]`
+    /// （字典查找把字符串当成了字典）崩在 `FakeCarrier.stream` 里，整个 xctest 进程随之退出，
+    /// XCTest 只报一句"Restarting after unexpected exit, crash, or test timeout"。
+    /// 这是测试替身自己的缺陷，与产品代码无关（本模块不进 App 目标）。
+    private let storeLock = NSLock()
+    private var unaryResponsesStorage: [String: Result<JSONValue, Error>] = [:]
+    private var streamResponsesStorage: [String: [JSONValue]] = [:]
+    private var streamScriptsStorage: [String: [StreamEvent]] = [:]
+    private var liveStreamsStorage: [String: AsyncThrowingStream<JSONValue, any Error>.Continuation] = [:]
+    private var liveStreamWaitersStorage: [String: [CheckedContinuation<Void, Never>]] = [:]
+    private var liveStreamEndpointsStorage: Set<String> = []
+
+    /// 一次加锁完成一段读或写；不得在锁内 await，也不得在锁内调测试代码。
+    private func withStore<T>(_ body: () -> T) -> T {
+        storeLock.lock()
+        defer { storeLock.unlock() }
+        return body()
+    }
+
+    /// 一元方法的可编程应答。按值读写（get-modify-set 的写法照旧可用）。
+    public var unaryResponses: [String: Result<JSONValue, Error>] {
+        get { withStore { unaryResponsesStorage } }
+        set { withStore { unaryResponsesStorage = newValue } }
+    }
+
+    public var streamResponses: [String: [JSONValue]] {
+        get { withStore { streamResponsesStorage } }
+        set { withStore { streamResponsesStorage = newValue } }
+    }
 
     /// 流事件：值 / 中途出错 / 悬挂（永不结束，用来测「断线中」的定格）。
     /// 029 场景测试批次：断线中途与重连续传需要「流到一半坏掉」的形状。
@@ -42,21 +78,41 @@ public final class FakeCarrier: DSHCarrier, @unchecked Sendable {
         case failure(Error)
         case hang
     }
+
     /// 逐事件回放。设置后优先于 streamResponses。
-    public var streamScripts: [String: [StreamEvent]] = [:]
+    public var streamScripts: [String: [StreamEvent]] {
+        get { withStore { streamScriptsStorage } }
+        set { withStore { streamScriptsStorage = newValue } }
+    }
 
     /// 手工推进的活流：测试拿 continuation 往里补帧（重连、迟到帧场景）。
-    public private(set) var liveStreams: [String: AsyncThrowingStream<JSONValue, any Error>.Continuation] = [:]
-    public private(set) var liveStreamWaiters: [String: [CheckedContinuation<Void, Never>]] = [:]
+    public private(set) var liveStreams: [String: AsyncThrowingStream<JSONValue, any Error>.Continuation] {
+        get { withStore { liveStreamsStorage } }
+        set { withStore { liveStreamsStorage = newValue } }
+    }
+
+    public private(set) var liveStreamWaiters: [String: [CheckedContinuation<Void, Never>]] {
+        get { withStore { liveStreamWaitersStorage } }
+        set { withStore { liveStreamWaitersStorage = newValue } }
+    }
+
     /// 声明「这条端点给活流」——只在显式注册后生效，否则保持静态回放语义。
-    public private(set) var liveStreamEndpoints: Set<String> = []
-    public func registerLiveStream(_ endpoint: String) { liveStreamEndpoints.insert(endpoint) }
+    public private(set) var liveStreamEndpoints: Set<String> {
+        get { withStore { liveStreamEndpointsStorage } }
+        set { withStore { liveStreamEndpointsStorage = newValue } }
+    }
+
+    public func registerLiveStream(_ endpoint: String) {
+        withStore { _ = liveStreamEndpointsStorage.insert(endpoint) }
+    }
 
     /// 等某条活流被订阅（防止测试帧在订阅前丢出）。
     public func waitForLiveStream(_ endpoint: String) async {
-        if liveStreams[endpoint] != nil { return }
+        if withStore({ liveStreamsStorage[endpoint] }) != nil { return }
         await withCheckedContinuation { c in
-            liveStreamWaiters[endpoint, default: []].append(c)
+            // 追加必须在锁内一次做完：`default: []` 的读-改-写分两步的话，
+            // 两个等待者同时进来会丢掉一个（那个测试就永远等下去）。
+            withStore { liveStreamWaitersStorage[endpoint, default: []].append(c) }
         }
     }
 
@@ -83,7 +139,7 @@ public final class FakeCarrier: DSHCarrier, @unchecked Sendable {
         method: String, args: Args, as valueType: Value.Type
     ) async throws -> Value {
         record(RecordedCall(method: method, args: Self.encoded(args)))
-        guard let response = unaryResponses[method] else {
+        guard let response = withStore({ unaryResponsesStorage[method] }) else {
             throw NSError(domain: "FakeCarrier", code: 1, userInfo: [NSLocalizedDescriptionKey: "no stub for \(method)"])
         }
         switch response {
@@ -99,7 +155,12 @@ public final class FakeCarrier: DSHCarrier, @unchecked Sendable {
         endpoint: String, args: Args
     ) async -> AsyncThrowingStream<JSONValue, any Error> {
         record(RecordedCall(method: endpoint, args: Self.encoded(args)))
-        if let script = streamScripts[endpoint] {
+        // 一次加锁把这三种路由依据都取出来：分三次查等于给并发写留三个窗口。
+        let (script, responses, isLiveEndpoint) = withStore {
+            (streamScriptsStorage[endpoint], streamResponsesStorage[endpoint],
+             liveStreamEndpointsStorage.contains(endpoint))
+        }
+        if let script {
             return AsyncThrowingStream { continuation in
                 for event in script {
                     switch event {
@@ -112,15 +173,20 @@ public final class FakeCarrier: DSHCarrier, @unchecked Sendable {
             }
         }
         // 已注册的活流端点：测试可 waitForLiveStream 后往里推。
-        if streamScripts[endpoint] == nil, streamResponses[endpoint] == nil, liveStreamEndpoints.contains(endpoint) {
+        if script == nil, responses == nil, isLiveEndpoint {
             let key = endpoint
             return AsyncThrowingStream { continuation in
-                liveStreams[key] = continuation
-                for w in liveStreamWaiters[key] ?? [] { w.resume() }
-                liveStreamWaiters[key] = nil
+                // 登记与唤醒在锁内一次做完，续体在锁外恢复（恢复会执行测试代码）。
+                let pending: [CheckedContinuation<Void, Never>] = withStore {
+                    liveStreamsStorage[key] = continuation
+                    let waiters = liveStreamWaitersStorage[key] ?? []
+                    liveStreamWaitersStorage[key] = nil
+                    return waiters
+                }
+                for w in pending { w.resume() }
             }
         }
-        let values = streamResponses[endpoint] ?? []
+        let values = responses ?? []
         return AsyncThrowingStream { continuation in
             for v in values { continuation.yield(v) }
             continuation.finish()
