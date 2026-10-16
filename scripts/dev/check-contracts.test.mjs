@@ -42,6 +42,20 @@ function withBrokenFile(relative, mutate, assert_) {
   }
 }
 
+/**
+ * 按文件名在 `ios/` 下定位一个 Swift 源文件（相对仓库根）。
+ *
+ * 025 的模块化重构把一批文件从 `DSHMobile/` 搬进了 `Modules/Sources/`，用例里写死的
+ * 路径会随着下一次搬迁再断一次。按名字找，且要求**正好一处**——多了少了都说明
+ * 这条用例该跟着改，而不是让它静默指错文件。
+ */
+function swiftFileNamed(name) {
+  const found = execFileSync('find', [join(REPO_ROOT, 'ios'), '-name', name, '-not', '-path', '*/.build/*'],
+    { encoding: 'utf8' }).split('\n').map((line) => line.trim()).filter(Boolean)
+  assert.equal(found.length, 1, `${name} 应当正好一处，实得 ${found.length}：${found.join(', ')}`)
+  return found[0].slice(REPO_ROOT.length + 1)
+}
+
 test('check-contracts passes on the current tree', () => {
   const result = runChecker()
   assert.equal(result.code, 0, `契约检查本应通过，实得：\n${result.output}`)
@@ -76,7 +90,7 @@ test('a swapped anchor order in one copy is reported', () => {
 })
 
 test('a debug hook moved outside #if DEBUG is reported', () => {
-  withBrokenFile('ios/DSHMobile/DSHMobile/Support/DemoMode.swift', (source) => {
+  withBrokenFile(swiftFileNamed('DemoMode.swift'), (source) => {
     const gated = `        #if DEBUG
         ProcessInfo.processInfo.arguments.contains("-DSHDemoMode")
         #else

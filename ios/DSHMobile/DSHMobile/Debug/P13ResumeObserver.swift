@@ -49,8 +49,10 @@ enum P13ResumeObserver {
             totalBytesWritten: Int64,
             totalBytesExpectedToWrite: Int64
         ) {
-            P13ResumeObserver.bytesWritten = Int(totalBytesWritten)
-            P13ResumeObserver.totalBytesWritten = Int(totalBytesWritten)
+            // `Int(clamping:)` 而不是 `Int(...)`：URLSession 报的是 Int64，越界时前者
+            // 收敛到 Int.max/min，后者是进程级 trap（check-traps 的 dbl2int 规则）。
+            P13ResumeObserver.bytesWritten = Int(clamping: totalBytesWritten)
+            P13ResumeObserver.totalBytesWritten = Int(clamping: totalBytesWritten)
             P13ResumeObserver.lastURL = downloadTask.originalRequest?.url?.absoluteString
             P13ResumeObserver.lastRangeHeader = downloadTask.originalRequest?
                 .value(forHTTPHeaderField: "Range")

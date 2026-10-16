@@ -267,7 +267,9 @@ enum P13ResumeProbe {
     /// network result.
     struct ProbeTimeout: Error, CustomStringConvertible {
         let seconds: Double
-        var description: String { "probe step timed out after \(Int(seconds))s" }
+        // 不用 `Int(seconds)`：那是 Double→Int 的 trap 写法（NaN/越界直接 SIGTRAP），
+        // 而这只是一行给人看的诊断文案（check-traps 的 dbl2int 规则）。
+        var description: String { "probe step timed out after \(String(format: "%.1f", seconds))s" }
     }
 
     /// Runs `work`, failing with a timeout instead of hanging.

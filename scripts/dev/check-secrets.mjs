@@ -63,6 +63,12 @@ const isPlaceholderHost = (host) => {
 const ALLOWED_HOMES = new Set([
   'example', 'you', 'your', 'yourname', 'user', 'username', 'me', 'someone',
   'name', 'placeholder', 'x', 'dev', '...',
+  // 028 的路径前缀折叠用例要两个**互不为前缀**的家目录名：`/Users/tester` 与
+  // `/Users/tester2`（DSHFoundationTests/FoundationSmokeTests.swift 把它当边界值，
+  // 另有 `/Users/testerworkshop` 验"前缀相同但不是子路径"），
+  // `/Users/second` 是 HostEventHub 并发用例里的第二台主机（DSHCoreTests）。
+  // 这四个都是夹具，不是任何人的家目录。
+  'tester', 'tester2', 'testerworkshop', 'second',
 ])
 
 function loadLocalEnv() {

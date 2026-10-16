@@ -1,5 +1,5 @@
 {
-  "note": "App 里允许直接依赖整个 DSHKit 包（含 RelayKit）的文件。只列具体文件，不允许通配；每条必须写 note 说明为什么它可以碰整包。上限 8 个（spec 023 SC-002）。2026-10-14：按 owner 决定只登记调试仪器与适配器，也就是必须碰实现层的那几种文件；产品路径（模型/视图/会话等）一律走门面，进度见 specs/023-app-dshkit-boundary/half-two-evidence.md。",
+  "note": "App 里允许直接依赖整个 DSHKit 包（含 RelayKit）的文件。只列具体文件，不允许通配；每条必须写 note 说明为什么它可以碰整包。上限 8 个（spec 023 SC-002）。2026-10-14：按 owner 决定只登记调试仪器与适配器，也就是必须碰实现层的那几种文件；产品路径（模型/视图/会话等）一律走门面，进度见 specs/023-app-dshkit-boundary/half-two-evidence.md。 2026-10-17：025 把 ConnectionStore.swift 与 FileTransferAdapter.swift 搬进了 Modules（DSHConnectionDomain / DSHCore），已不在 R2/R3 的扫描范围（scope 只扫 DSHMobile/App），两条白名单随之删除；扫描范围是否该扩到 Modules 是另一个问题，见 check-layers 的注释。",
   "files": [
     {
       "path": "ios/DSHMobile/DSHMobile/Support/ViewportProbe.swift",
@@ -8,14 +8,6 @@
     {
       "path": "ios/DSHMobile/DSHMobile/Debug/P13ResumeProbe.swift",
       "note": "调试仪器（探针）：后台续传的 P-13 复核要直接构造 RelayFileTransfer 观察 resumeData 落盘时机，产品接口观测不到。产品路径不经过它。"
-    },
-    {
-      "path": "ios/DSHMobile/DSHMobile/Support/ConnectionStore.swift",
-      "note": "连接适配器：client 与 carrier 的所有者（档案、钥匙串、自愈都在这）。门面 LinkGateway 由它构造并交给其余文件，实现层类型名只应留在这里。"
-    },
-    {
-      "path": "ios/DSHMobile/DSHMobile/Support/FileTransferAdapter.swift",
-      "note": "传输适配器：RelayFileTransfer 在 RelayKit 里，RelayKit 反过来依赖 DSHKit，所以 DSHKit 内包不了它；这层皮只做转发与形状转换，产品路径不出现 RelayKit 类型名。"
     }
   ]
 }

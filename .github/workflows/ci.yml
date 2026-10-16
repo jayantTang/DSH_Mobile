@@ -57,7 +57,9 @@ jobs:
           # 文档与样例统一写占位家目录（/Users/example、/Users/you、/Users/...）。
           # 除此之外的 /Users/<名字> 都当成真实家目录——白名单而不是黑名单，
           # 免得把真实名字写进这个文件，那本身就是泄漏。
-          allowed='example|you|your|yourname|user|username|me|someone|name|placeholder|x|dev|\.\.\.'
+          # tester/tester2/testerworkshop/second 是 028 路径前缀折叠与并发用例的夹具
+          # （与 scripts/dev/check-secrets.mjs 的 ALLOWED_HOMES 同一份名单）。
+          allowed='example|you|your|yourname|user|username|me|someone|name|placeholder|x|dev|\.\.\.|tester|tester2|testerworkshop|second'
           if git grep -n -I -o -E '/Users/[A-Za-z0-9._-]+' -- . | grep -v -E "/Users/($allowed)$"; then
             echo "::error::上面这些行里有真实家目录路径"; exit 1
           fi
