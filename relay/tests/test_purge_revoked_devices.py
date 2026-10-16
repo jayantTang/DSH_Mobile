@@ -1,4 +1,4 @@
-"""`purge-revoked-devices.py`：只删该死的那两类，在用的设备一行不碰。
+"""`purge-revoked-devices.py`：只删该死的那两类，an in-use device row is never deleted。
 
 背景（已确认的事实）：中转在**连接器每次连上时**会把该 agent 名下所有"永远回不来"的设备
 逐条重放给它（`hub.py:_tell_agent_about_the_gone`，一条一帧 `deviceDetach`）。2026-10-12
@@ -56,11 +56,11 @@ def test_purge_dry_run_changes_nothing_at_all(store):
     result = run_purge(store.path, "--all-agents")
     assert result.returncode == 0, result.stderr
     assert "将删除 2 行" in result.stdout
-    assert f"KEEP {live['deviceId']}" in result.stdout, "在用的设备要列出来核对"
+    assert f"KEEP {live['deviceId']}" in result.stdout, "in-use devices are listed so they can be checked by eye"
     assert "预演结束" in result.stdout
     for row in (live, revoked, expired):
-        assert store.device_by_id(row["deviceId"]) is not None, "预演不许动库"
-    assert not (pathlib.Path(store.path).parent / "backups").exists(), "预演不写备份"
+        assert store.device_by_id(row["deviceId"]) is not None, "a dry run must not touch the database"
+    assert not (pathlib.Path(store.path).parent / "backups").exists(), "a dry run must not write a backup"
 
 
 def test_purge_apply_deletes_only_revoked_and_expired(store):
@@ -82,20 +82,20 @@ def test_purge_apply_deletes_only_revoked_and_expired(store):
     assert result.returncode == 0, result.stderr
     assert store.device_by_id(revoked["deviceId"]) is None
     assert store.device_by_id(expired["deviceId"]) is None
-    assert store.device_by_id(live["deviceId"]) is not None, "在用的设备一行不碰"
+    assert store.device_by_id(live["deviceId"]) is not None, "an in-use device row is never deleted"
     assert store.device_by_token(live["deviceToken"]) is not None, \
-        "清理只删行，不该顺手改在用设备的令牌"
+        "the purge only deletes rows; it never touches a live device token"
     assert store.list_devices(provisioned["agent"]["agentId"]) != [], \
-        "在用的设备仍然列得出来（剩下的就是它）"
-    assert store.usage_rows(day), "usageDaily 必须原样留住"
+        "the in-use device is still listed (it is all that is left)"
+    assert store.usage_rows(day), "usageDaily rows must survive the purge"
 
     backups = pathlib.Path(store.path).parent / "backups"
     dumps = sorted(backups.glob("purged-devices-all-*.json"))
-    assert len(list(backups.glob("state-*.db"))) == 1, "删之前要有一份全库备份"
+    assert len(list(backups.glob("state-*.db"))) == 1, "a full database backup is taken before the delete"
     assert len(dumps) == 1
     exported = json.loads(dumps[0].read_text(encoding="utf-8"))
     assert sorted(row["deviceId"] for row in exported) == sorted(
-        [revoked["deviceId"], expired["deviceId"]]), "导出的正是将要删除的那些行"
+        [revoked["deviceId"], expired["deviceId"]]), "the JSON dump holds exactly the rows that are about to be deleted"
 
 
 def test_purge_with_one_agent_leaves_another_agents_rows_alone(store):
@@ -110,7 +110,7 @@ def test_purge_with_one_agent_leaves_another_agents_rows_alone(store):
     assert result.returncode == 0, result.stderr
     assert store.device_by_id(mine_dead["deviceId"]) is None
     assert store.device_by_id(theirs_dead["deviceId"]) is not None, \
-        "--agent 只清点名的那个（--all-agents 才是全清）"
+        "--agent purges only the named agent; --all-agents is the whole database"
 
 
 def test_purge_writes_no_backup_when_there_is_nothing_to_purge(store):
@@ -121,7 +121,7 @@ def test_purge_writes_no_backup_when_there_is_nothing_to_purge(store):
     result = run_purge(store.path, "--all-agents", "--apply")
     assert result.returncode == 0, result.stderr
     assert "没有待删行" in result.stdout
-    assert store.list_devices() != [], "没事可做也不许顺手删别的"
+    assert store.list_devices() != [], "nothing else is deleted when there is nothing to purge"
     assert not (pathlib.Path(store.path).parent / "backups").exists()
 
 
@@ -136,15 +136,15 @@ def test_purge_keep_prunes_only_its_own_backups(store):
     keep_me.write_text("not ours", encoding="utf-8")
     for stamp in ("20200101-000000", "20200102-000000", "20200103-000000"):
         (backups / f"state-{stamp}.db").write_text("", encoding="utf-8")
-        (backups / f"purged-devices-agt_x-{stamp}.json").write_text("[]", encoding="utf-8")
+        (backups / f"purged-devices-other-{stamp}.json").write_text("[]", encoding="utf-8")
 
     result = run_purge(store.path, "--all-agents", "--apply", "--keep", "2")
     assert result.returncode == 0, result.stderr
     assert "清理旧备份" in result.stdout
-    assert not (backups / "state-20200101-000000.db").exists(), "最老的一组该删"
-    assert (backups / "state-20200103-000000.db").exists(), "最近的一组该留"
-    assert not (backups / "purged-devices-agt_x-20200101-000000.json").exists()
-    assert keep_me.exists(), "不是本脚本写的文件不许碰"
+    assert not (backups / "state-20200101-000000.db").exists(), "the oldest backup group is pruned"
+    assert (backups / "state-20200103-000000.db").exists(), "the newest backup group is kept"
+    assert not (backups / "purged-devices-other-20200101-000000.json").exists()
+    assert keep_me.exists(), "a file this script did not write is never touched"
     # 这一轮自己写的那组备份当然也留着。
     assert len(list(backups.glob("purged-devices-all-*.json"))) == 1
 

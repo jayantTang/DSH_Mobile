@@ -76,7 +76,7 @@ def test_device_hygiene_splits_live_revoked_and_expired(store):
 
     counts = store.device_hygiene()
     assert counts == {"total": 3, "live": 1, "revoked": 1, "expired": 1, "dead": 2}, \
-        "在用/已撤销/已过期必须各算各的，死记录是前两类的并集"
+        "in-use, revoked and expired are counted separately; dead is the union of the two"
     assert store.device_by_id(live["deviceId"])["revokedAt"] is None
 
     scoped = store.device_hygiene(provisioned["agent"]["agentId"])
@@ -93,7 +93,7 @@ def test_device_hygiene_ignores_another_agents_rows_when_scoped(store):
 
     assert store.device_hygiene()["total"] == 2
     assert store.device_hygiene(mine["agent"]["agentId"])["dead"] == 0, \
-        "按 agent 取数时别人的设备行一条都不该算进来"
+        "an agent-scoped count must not include another agent's device rows"
     assert store.device_hygiene(theirs["agent"]["agentId"])["dead"] == 1
 
 
@@ -106,7 +106,7 @@ def test_a_device_that_is_both_revoked_and_expired_counts_once_as_dead(store):
 
     counts = store.device_hygiene()
     assert (counts["revoked"], counts["expired"]) == (1, 1)
-    assert counts["dead"] == 1, "重放帧数是并集去重后的条数，不是两类相加"
+    assert counts["dead"] == 1, "the replay count is the deduplicated union, not revoked + expired"
 
 
 # ── /stats 出口：计数与库一致，且不含设备明细 ────────────────────────────────
@@ -123,13 +123,13 @@ async def test_stats_device_records_match_the_database(client, store):
     assert response.status == 200
     body = await response.json()
     assert body["deviceRecords"] == store.device_hygiene(), \
-        "面板上的数字必须就是库里的数字（每次现查，不许缓存出偏差）"
+        "/stats must report the numbers in the database (read live, never cached)"
     assert body["deviceRecords"]["dead"] == 2
 
     raw = await response.text()
-    assert "deviceId" not in json.dumps(body["deviceRecords"]), "计数出口不许带设备明细"
+    assert "deviceId" not in json.dumps(body["deviceRecords"]), "the counts endpoint must not carry device details"
     assert revoked["deviceId"] not in raw and expired["deviceId"] not in raw, \
-        "/stats 是回环页面，但设备明细没必要出现在这里（明细看 admin.py device-list）"
+        "/stats is loopback-only, but device details do not belong here (use admin.py device-list)"
 
 
 async def test_stats_page_shows_the_dead_device_count(client, store):
@@ -141,7 +141,7 @@ async def test_stats_page_shows_the_dead_device_count(client, store):
     response = await client.get("/stats", headers={"Accept": "text/html"})
     assert response.status == 200
     page = await response.text()
-    assert "死设备记录" in page, "运维看的就是这一页，数字不上页面等于没做"
+    assert "死设备记录" in page, "the operator reads this page, so the number has to be on it"
     assert "<span class=big>1</span> 条" in page
 
 
@@ -161,14 +161,14 @@ async def test_a_dead_record_burst_over_the_threshold_logs_a_warning(store, capl
         await drain(link)
 
     detaches = [frame for frame in ws.sent if frame.get("t") == "deviceDetach"]
-    assert len(detaches) == 3, "告警说的就是这条重放：3 条死记录 = 3 帧"
+    assert len(detaches) == 3, "the warning is about this replay: 3 dead records = 3 deviceDetach frames"
     warnings = [record for record in caplog.records if record.levelno == logging.WARNING]
-    assert len(warnings) == 1, "超阈值只该落一条 WARNING，不要每条设备各喊一遍"
+    assert len(warnings) == 1, "over the threshold it logs exactly one warning, not one per device"
     message = warnings[0].getMessage()
     assert "3 dead device records" in message
     assert "over the 2 threshold" in message
-    assert provisioned["agent"]["agentId"] in message, "日志要指出是哪个 agent"
-    assert "purge-revoked-devices.py" in message, "告警要能直接照着做"
+    assert provisioned["agent"]["agentId"] in message, "the log line names the agent"
+    assert "purge-revoked-devices.py" in message, "the warning carries the command that fixes it"
 
 
 async def test_the_warning_stays_quiet_at_or_below_the_threshold(store, caplog):
@@ -183,7 +183,7 @@ async def test_the_warning_stays_quiet_at_or_below_the_threshold(store, caplog):
         await drain(link)
 
     assert [r for r in caplog.records if r.levelno == logging.WARNING] == [], \
-        "恰好等于阈值不算超（与旧实现的 > 200 逐字一致）"
+        "equal to the threshold is not over it (same rule as the old hard-coded > 200)"
 
 
 async def test_a_zero_threshold_turns_the_warning_off(store, caplog):
@@ -198,7 +198,7 @@ async def test_a_zero_threshold_turns_the_warning_off(store, caplog):
         await drain(link)
 
     assert [r for r in caplog.records if r.levelno == logging.WARNING] == [], \
-        "0 = 关掉告警（与其它 limit 的约定一致）"
+        "0 turns the warning off, like the other limits"
 
 
 def test_the_threshold_defaults_to_the_old_hard_coded_value():
@@ -243,7 +243,7 @@ def test_admin_device_hygiene_prints_the_counts(tmp_path, capsys):
     assert (payload["total"], payload["live"], payload["dead"]) == (2, 1, 1)
     assert payload["warnThreshold"] == DEFAULT_DEAD_DEVICE_WARN_THRESHOLD
     assert payload["overThreshold"] is None, \
-        "阈值是按 agent 判的，全局视图只能说'没判'，不能说'没超'"
+        "the threshold is per agent, so the global view reports null (not judged), not false"
 
     code = admin.main(["--db", db, "device-hygiene", "--agent", agent_id])
     scoped = json.loads(capsys.readouterr().out)
