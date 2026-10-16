@@ -43,7 +43,7 @@ const ROUTE = 'send-image/screenshot'
 const HOTKEY = { code: 'KeyS', modifiers: ['primary', 'alt'] }
 const COMMAND_ID = 'send-image.screenshot'
 const LABEL = '截图并附上'
-/** 按钮上的字。只写「截图」：热键写在 `title` 里，不占按钮正面（owner 2026-10-17 要求）。 */
+/** 按钮正面的固定前缀；热键拼在它后面（`截图 ⌥⌘S`，owner 2026-10-17 要求）。 */
 const BUTTON_TEXT = '截图'
 const SLOT_NAME = 'conversation.input.left'
 const SLOT_ID = 'send-image-screenshot'
@@ -53,7 +53,7 @@ const BUTTON_CLASS = 'dsh-send-image-button'
 const TOAST_MS = 9000
 
 /**
- * 当前是不是 macOS：热键写法跟平台走（`⌥⌘S` / `Ctrl+Alt+S`），`title` 里要写对。
+ * 当前是不是 macOS：热键写法跟平台走（`⌥⌘S` / `Ctrl+Alt+S`），按钮正面要写对。
  *
  * 先读宿主自己在 `<html data-platform>` 上写的判定（官方同一处），取不到再看 UA；
  * 两者都没有时按 macOS 处理（本机与官方桌面版都是 macOS）。
@@ -70,9 +70,14 @@ function detectMac() {
   }
 }
 
-/** `title`：光标放上来看到的就这一句，不写别的（owner 2026-10-17 要求）。 */
-function shortcutTitle(isMac) {
-  return `快捷键：${isMac ? '⌥⌘S' : 'Ctrl+Alt+S'}`
+/** 按钮正面：`截图 ⌥⌘S`（Windows 为 `截图 Ctrl+Alt+S`）——热键直接写在字上，不做悬停提示。 */
+function buttonText(isMac) {
+  return `${BUTTON_TEXT} ${isMac ? '⌥⌘S' : 'Ctrl+Alt+S'}`
+}
+
+/** 读屏用的名字：把"这是截图按钮、热键是什么"说全（不是可见的悬停提示）。 */
+function buttonAria(isMac) {
+  return `${BUTTON_TEXT}（快捷键：${isMac ? '⌥⌘S' : 'Ctrl+Alt+S'}）`
 }
 
 /**
@@ -247,19 +252,16 @@ function registerShortcut(ctx, state) {
  * 外观交给**官方 primitives 的 `Button`**（与旁边的官方按钮同一套 CSS-module 类）：宿主换主题、
  * 改按钮样式都自动跟随，不需要插件去猜 token。
  *
- * 悬停说明交给**官方 primitives 的 `Tooltip`**，不要用原生 `title`：原生提示的出现时机由
- * WebKit 决定（指针要停够久、同一时刻只允许一条、前一条刚消失后常被抑制），所以看起来
- * "有时有、有时没有"；宿主自己的按钮走的就是 `Tooltip`（`side: 'bottom'`、`delayMs: 500`），
- * 换成同一个组件后行为与旁边一致。拿不到 `Tooltip` 时保留原生 `title` 作为退路。
- *
- * 两样都拿不到（老宿主）时退回自带 class 的裸 `button`（样式见 CSS 里那几条兜底规则），
+ * 热键直接写在按钮正面（`截图 ⌥⌘S`），**不做悬停提示**（owner 2026-10-17 要求：光标提示的
+ * 出现时机不由插件掌握，写在字上最稳）。因此这里既不挂原生 `title`，也不用官方 `Tooltip`。
+ * 拿不到 `Button`（老宿主）时退回自带 class 的裸 `button`（样式见 CSS 里那几条兜底规则），
  * 保证按钮在任何宿主上都还在。
  */
 function registerButton(ctx, state, React, primitives) {
-  const title = shortcutTitle(detectMac())
-  const aria = `${BUTTON_TEXT}（${title}）`
+  const isMac = detectMac()
+  const text = buttonText(isMac)
+  const aria = buttonAria(isMac)
   const OfficialButton = primitives?.Button
-  const OfficialTooltip = primitives?.Tooltip
   try {
     ctx.slots.inject(SLOT_NAME, () => ctx.slots.register(
       { name: SLOT_NAME, id: SLOT_ID, order: 40, label: () => LABEL },
@@ -267,28 +269,18 @@ function registerButton(ctx, state, React, primitives) {
         state.session = props?.sessionId ?? state.session
         const onClick = () => state.runCapture()
         if (typeof OfficialButton === 'function') {
-          const hasTooltip = typeof OfficialTooltip === 'function'
-          const button = React.createElement(OfficialButton, {
+          return React.createElement(OfficialButton, {
             variant: 'ghost',
-            // 有官方 Tooltip 时不能再挂 `title`：两套提示会互相压制，反而更容易"不出现"。
-            ...(hasTooltip ? {} : { title }),
             'aria-label': aria,
             onClick,
-          }, BUTTON_TEXT)
-          if (!hasTooltip) return button
-          return React.createElement(OfficialTooltip, {
-            label: title,
-            side: 'bottom',
-            delayMs: 500,
-          }, button)
+          }, text)
         }
         return React.createElement('button', {
           type: 'button',
           className: BUTTON_CLASS,
-          title,
           'aria-label': aria,
           onClick,
-        }, BUTTON_TEXT)
+        }, text)
       },
     ))
   } catch (error) {

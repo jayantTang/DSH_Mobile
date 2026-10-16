@@ -43,7 +43,7 @@ function makeDom() {
   return { document, nodes, dispatched }
 }
 
-function loadBundle({ document, fetchImpl, withPrimitives = true, withTooltip = true } = {}) {
+function loadBundle({ document, fetchImpl, withPrimitives = true } = {}) {
   const specs = []
   const sandbox = {
     window: { __ModuleLoader__: { load: (spec) => specs.push(spec) } },
@@ -64,20 +64,19 @@ function loadBundle({ document, fetchImpl, withPrimitives = true, withTooltip = 
   vm.runInNewContext(SOURCE, sandbox, { filename: 'client.js' })
   const spec = specs[0]
   const fakeReact = { createElement: (type, props, children) => ({ type, props, children }) }
-  // 官方界面件的替身：只认得「按钮交给了官方 Button、提示交给了官方 Tooltip」这两件事。
+  // 官方界面件的替身：只认得「按钮交给了官方 Button」这一件事。
   const officialButton = function OfficialButton() {}
-  const officialTooltip = function OfficialTooltip() {}
   const api = spec.factory((name) => {
     if (name === 'react') return fakeReact
     if (name === '@deepseek-ai/dsh-client-ui-primitives') {
       if (!withPrimitives) {
         throw new Error('require("@deepseek-ai/dsh-client-ui-primitives") missed the module table')
       }
-      return withTooltip ? { Button: officialButton, Tooltip: officialTooltip } : { Button: officialButton }
+      return { Button: officialButton }
     }
     assert.fail(`factory 只允许 require 平台 seed 字，实得 ${name}`)
   })
-  return { spec, api, officialButton, officialTooltip }
+  return { spec, api, officialButton }
 }
 
 /** 一个插件实例（fiber）的 stub：退出时按官方语义把注册与资源都收回去。 */
@@ -144,9 +143,9 @@ test('⌥⌘S is registered in page and editable regions, never inside modals', 
   assert.equal(command.resolve().status, 'handled')
 })
 
-test('the composer button says 截图 and hangs its shortcut hint on the official tooltip', () => {
+test('the composer button writes 截图 and the shortcut on its face, with no hover hint', () => {
   const { document } = makeDom()
-  const { api, officialButton, officialTooltip } = loadBundle({ document })
+  const { api, officialButton } = loadBundle({ document })
   const { ctx, state } = makeCtx()
   api.apply(ctx)
   assert.deepEqual(state.slotKeys, ['conversation.input.left'])
@@ -154,29 +153,13 @@ test('the composer button says 截图 and hangs its shortcut hint on the officia
   assert.equal(spec.name, 'conversation.input.left')
   assert.equal(spec.id, 'send-image-screenshot')
   const element = component({ sessionId: 'session-1' })
-  // 提示走官方 Tooltip：原生 `title` 的出现时机由 WebKit 决定，会出现"时有时无"
-  assert.equal(element.type, officialTooltip, '提示必须交给官方 primitives 的 Tooltip')
-  assert.equal(element.props.label, '快捷键：⌥⌘S', '提示只写快捷键')
-  assert.equal(element.props.side, 'bottom', '与官方按钮同一朝向')
-  assert.equal(element.props.delayMs, 500, '与官方按钮同一延迟，避免忽快忽慢')
   // 外观交给官方 Button（与旁边原生按钮同一套类），插件不再自带按钮样式
-  const button = element.children
-  assert.equal(button.type, officialButton, '按钮必须交给官方 primitives 的 Button')
-  assert.equal(button.children, '截图', '按钮正面只写「截图」')
-  assert.equal(button.props.title, undefined, '有官方 Tooltip 时不能再挂原生 title')
-  assert.equal(button.props['aria-label'], '截图（快捷键：⌥⌘S）')
-  assert.equal(button.props.className, undefined, '自有 class 不该出现在原生路径上')
-})
-
-test('a host with Button but no Tooltip still gets a hover hint', () => {
-  // 老宿主的 primitives 可能只有 `Button`：这时退回原生 `title`，提示不能整块消失。
-  const { document } = makeDom()
-  const { api, officialButton } = loadBundle({ document, withTooltip: false })
-  const { ctx, state } = makeCtx()
-  api.apply(ctx)
-  const element = state.slots[0].component({ sessionId: 'session-1' })
-  assert.equal(element.type, officialButton)
-  assert.equal(element.props.title, '快捷键：⌥⌘S')
+  assert.equal(element.type, officialButton, '按钮必须交给官方 primitives 的 Button')
+  assert.equal(element.children, '截图 ⌥⌘S', '热键直接写在按钮正面')
+  // 不挂任何悬停提示：原生 title 与官方 Tooltip 都不要（owner 2026-10-17 要求）
+  assert.equal(element.props.title, undefined, '不要光标提示')
+  assert.equal(element.props['aria-label'], '截图（快捷键：⌥⌘S）', '读屏名字仍要说清热键')
+  assert.equal(element.props.className, undefined, '自有 class 不该出现在原生路径上')
 })
 
 test('a host without the official primitives still gets a working button', () => {
@@ -189,7 +172,8 @@ test('a host without the official primitives still gets a working button', () =>
   const element = state.slots[0].component({ sessionId: 'session-1' })
   assert.equal(element.type, 'button')
   assert.equal(element.props.className, 'dsh-send-image-button')
-  assert.equal(element.children, '截图')
+  assert.equal(element.children, '截图 ⌥⌘S')
+  assert.equal(element.props.title, undefined, '降级路径也不做悬停提示')
   const css = nodes.find((node) => node.id === STYLE_ID).textContent
   assert.match(css, /\.dsh-send-image-button:hover:not\(:disabled\)\{[^}]*--dsw-alias-interactive-bg-hover/)
   assert.match(css, /\.dsh-send-image-button:focus-visible\{[^}]*--dsw-focus-ring-color/)
