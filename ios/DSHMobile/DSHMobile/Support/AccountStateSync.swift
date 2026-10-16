@@ -32,6 +32,7 @@ final class AccountStateSync {
 
     private var subscription: Task<Void, Never>?
     private var pushTask: Task<Void, Never>?
+    private var retryTask: Task<Void, Never>?
 
     private init() {}
 
@@ -85,6 +86,16 @@ final class AccountStateSync {
 
     /// 回前台/刚连上时拉一次，兜住丢掉的推送。
     func refresh() async {
+        guard currentClient() != nil else {
+            // 档案还没定下来（刚配对、正在连）：有界重试几次，别就此放弃。
+            pullWithRetry { [weak self] in
+                guard let self, self.currentClient() != nil else { return false }
+                await self.pullSessionRead()
+                await self.pullAlertPrefs()
+                return true
+            }
+            return
+        }
         await pullSessionRead()
         await pullAlertPrefs()
     }
@@ -92,7 +103,7 @@ final class AccountStateSync {
     // MARK: - 收发
 
     private func pullSessionRead() async {
-        guard let client = Self.activeRelayClient(),
+        guard let client = currentClient(),
               let log = viewLog,
               let scope = log.hostScope
         else { return }
@@ -110,19 +121,31 @@ final class AccountStateSync {
     static let alertPrefsKey = "alertPrefs"
 
     private func pullAlertPrefs() async {
-        guard let client = Self.activeRelayClient(), let prefs = alertPrefs else { return }
-        guard let entries = try? await client.fetch(keys: [Self.alertPrefsKey]),
-              case .object(let map)? = entries[Self.alertPrefsKey]?.value
-        else { return }
-        // 缺字段就当没说过（老中转/旧版本写的状态），保留本机值。
-        let turnEnd = map["turnEnd"]?.boolValue ?? prefs.notifyOnTurnEnd
-        let attention = map["attention"]?.boolValue ?? prefs.notifyOnAttention
-        prefs.applyRemote(turnEnd: turnEnd, attention: attention)
+        guard let client = currentClient(), let prefs = alertPrefs else { return }
+        do {
+            let entries = try await client.fetch(keys: [Self.alertPrefsKey])
+            guard case .object(let map)? = entries[Self.alertPrefsKey]?.value else {
+                ViewportProbe.note("accountState.pull", ["key": Self.alertPrefsKey, "result": "absent"])
+                return
+            }
+            ViewportProbe.note("accountState.pull",
+                               ["key": Self.alertPrefsKey, "result": "ok",
+                                "turnEnd": String(map["turnEnd"]?.boolValue ?? true)])
+            let turnEnd = map["turnEnd"]?.boolValue ?? prefs.notifyOnTurnEnd
+            let attention = map["attention"]?.boolValue ?? prefs.notifyOnAttention
+            prefs.applyRemote(turnEnd: turnEnd, attention: attention)
+            return
+        } catch {
+            ViewportProbe.note("accountState.pull",
+                               ["key": Self.alertPrefsKey, "result": "failed",
+                                "error": String(describing: error)])
+            return
+        }
     }
 
     /// 用户在本机改了开关：推到账户级。时间戳用本机现在，配合中转"只前进"。
     func pushAlertPrefs() async {
-        guard let client = Self.activeRelayClient(), let prefs = alertPrefs else { return }
+        guard let client = currentClient(), let prefs = alertPrefs else { return }
         let snapshot = prefs.accountSnapshot
         let entry = AccountStateClient.Entry(
             key: Self.alertPrefsKey,
@@ -134,7 +157,7 @@ final class AccountStateSync {
     }
 
     private func pushSessionRead() async {
-        guard let client = Self.activeRelayClient(),
+        guard let client = currentClient(),
               let log = viewLog,
               let scope = log.hostScope
         else { return }
@@ -149,15 +172,43 @@ final class AccountStateSync {
         _ = try? await client.put([entry])
     }
 
-    /// 当前配对的中转凭据（与 `FeedbackCenter` 取法一致：最近连过的那个档案）。
+    /// 当前该跟哪台中转说话：**先用这条链路正在用的档案**，没有才退回"最近连过的那个"。
     ///
-    /// 拿不到（没配对、钥匙串里没有令牌）就返回 nil——账户级同步是**增强**，
-    /// 没有它，本地已读照旧工作。
-    static func activeRelayClient() -> AccountStateClient? {
-        guard let credential = activeRelayCredential() else { return nil }
-        return AccountStateClient(relayURL: credential.url, deviceToken: credential.token)
+    /// 为什么不能只用"最近连过"：切到另一个中转（或刚配对完正在连）时，`lastConnectedAt`
+    /// 还是上一个档案的，于是状态会被写到**另一台中转**的同一个账户号上——2026-10-16 的
+    /// 仿真器端到端就是这么发现的（本地中转预置了 `alertPrefs.turnEnd=false`，App 却把它
+    /// 拉到了生产档案上，开关没变）。
+    private func currentClient() -> AccountStateClient? {
+        guard let link = linkProvider?() else { return nil }
+        // **有链路门面时只认它当前用的档案**：档案还没定下来（刚配对、正在切换）就等下一次，
+        // 不回退到"最近连过的那个"——那会把状态写到另一台中转上去（2026-10-16 端到端实测：
+        // 本地中转预置了开关，App 却拉到了生产档案）。
+        guard let profile = link.activeProfile,
+              case .relay(let relayURL, _) = profile.transport,
+              let secret = Keychain.get(profile.secretAccount), !secret.isEmpty
+        else {
+            ViewportProbe.note("accountState.client", ["source": "waiting"])
+            return nil
+        }
+        ViewportProbe.note("accountState.client", ["source": "active", "url": relayURL.absoluteString])
+        return AccountStateClient(relayURL: relayURL, deviceToken: secret)
     }
 
+    /// 档案还没定下来时，隔一会儿再试几次（连上之后 `activeProfile` 才会被写）。
+    /// 次数有界：这是一次对齐，不是常驻轮询——真拿不到就等回前台那次。
+    private func pullWithRetry(_ operation: @escaping () async -> Bool) {
+        guard retryTask == nil else { return }
+        retryTask = Task { [weak self] in
+            for _ in 0..<6 {
+                if Task.isCancelled { break }
+                if await operation() { break }
+                try? await Task.sleep(for: .seconds(2))
+            }
+            self?.retryTask = nil
+        }
+    }
+
+    /// 退回用：最近连过的那个中转档案（与 `FeedbackCenter` 取法一致）。
     static func activeRelayCredential() -> (url: URL, token: String)? {
         let candidates: [(URL, String, ConnectionProfile)] = ConnectionProfile.persistedProfiles()
             .compactMap { profile -> (URL, String, ConnectionProfile)? in
@@ -177,6 +228,8 @@ final class AccountStateSync {
     func stop() {
         subscription?.cancel()
         pushTask?.cancel()
+        retryTask?.cancel()
+        retryTask = nil
         subscription = nil
         pushTask = nil
     }

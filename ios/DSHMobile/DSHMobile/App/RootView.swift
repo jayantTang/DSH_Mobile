@@ -90,8 +90,18 @@ struct RootView: View {
             .onChange(of: store.state.isConnected) { _, isConnected in
                 if isConnected { attachmentImages.clearFailures() }
             }
+            .onChange(of: store.activeProfile?.id) { _, _ in
+                // 032：档案一换（刚配对、切到另一台电脑）就去对齐账户级状态。
+                // 挂在"主机在线"上是不够的：电脑睡着时也应当能对齐已读与开关。
+                Task { await AccountStateSync.shared.refresh() }
+            }
             .task {
                 // 冷启动进前台：与"从后台回来"分开记（现场诊断发现的缺口）。
+                // 032：账户级状态只依赖**中转**，与"主机在不在线"无关，所以在这里就装配
+                // （不能等到 isConnected——电脑睡着时手机也要能对齐已读与开关）。
+                AccountStateSync.shared.attach(viewLog: viewLog, alertPrefs: alertPrefs,
+                                               link: { [weak store] in store })
+                await AccountStateSync.shared.refresh()
                 await store.noteColdLaunch()
                 messageLayer.attach(link: store.link)
                 listModel.attach(to: store, hub: hub, viewLog: viewLog, messageLayer: messageLayer)
@@ -259,6 +269,8 @@ struct RootView: View {
                     Task { await store.noteScene(.background) }
                 } else if phase == .active {
                     Task { await store.noteScene(.foreground) }
+                    // 032：推送是尽力而为的；回前台补拉一次账户级状态。
+                    Task { await AccountStateSync.shared.refresh() }
                 }
                 // Re-checked on every return to the foreground: that is when a
                 // user who just installed an update comes back to look.
@@ -557,9 +569,9 @@ struct RootView: View {
             enteredWorkspace = true
             // "Already read" marks belong to one computer.
             viewLog.useScope(connectionScope)
-            // 032：已读水位同时是**账户级**状态——装配同步（另一台设备读过的，这里也要看到）。
-            AccountStateSync.shared.attach(viewLog: viewLog, alertPrefs: alertPrefs,
-                                           link: { [weak store] in store })
+            // 032：连上之后再对齐一次账户级状态。启动时那次拉取可能早于配对完成
+            // （那时还没有可用档案/令牌，请求要么发不出、要么用旧令牌被 401 掉）。
+            Task { await AccountStateSync.shared.refresh() }
             hub.startIfNeeded(link: store.link)
             Task { await listModel.start() }
             // Whatever was on screen when the link went away is stale by the
