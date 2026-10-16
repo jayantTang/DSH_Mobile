@@ -31,6 +31,18 @@ public final class ConnectionStore {
         public let agentId: String
         public let deviceToken: String
         public let agentName: String
+        /// 032：中转说这台 client 之前就配过（带了同一个 `deviceKey`），本次只换了 token。
+        /// App 用它给"已重新连接"，而不是"又添了一台设备"。
+        public let reused: Bool
+
+        public init(relayURL: URL, agentId: String, deviceToken: String, agentName: String,
+                    reused: Bool = false) {
+            self.relayURL = relayURL
+            self.agentId = agentId
+            self.deviceToken = deviceToken
+            self.agentName = agentName
+            self.reused = reused
+        }
     }
 
     public private(set) var profiles: [ConnectionProfile] = []
@@ -839,7 +851,10 @@ public final class ConnectionStore {
                 let pairing = try await Self.claimPairingCode(
                     relayURL: relay,
                     code: code,
-                    deviceName: DeviceInfo.deviceName
+                    deviceName: DeviceInfo.deviceName,
+                    // 032：认领时带上这台 client 的持久身份（钥匙串里那枚，`agentId` 还没拿到，
+                    // 所以先用中转地址做 scope；拿到 agentId 之后再固化一次，见下面）。
+                    deviceKey: DeviceKey.current(for: DeviceKey.scope(relayURL: relay, agentId: ""))
                 )
                 let transport = ConnectionProfile.Transport.relay(
                     relayURL: pairing.relayURL,
@@ -937,7 +952,8 @@ public final class ConnectionStore {
     public static func claimPairingCode(
         relayURL: URL,
         code: String,
-        deviceName: String
+        deviceName: String,
+        deviceKey: String? = nil
     ) async throws -> Pairing {
         // The relay address may be stored in either form; the claim is an HTTP
         // call, so it must be normalised before the URL is built.
@@ -956,12 +972,17 @@ public final class ConnectionStore {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        let body: [String: String] = [
+        var body: [String: String] = [
             "pairCode": code.uppercased().trimmingCharacters(in: .whitespacesAndNewlines),
             "deviceName": deviceName,
             "deviceModel": DeviceInfo.deviceModel,
             "appVersion": DeviceInfo.appVersion,
         ]
+        // 032：带上这台 client 的持久身份——重装/再配对时中转复用原来那台设备，
+        // 不占新名额。拿不到 key（钥匙串不可用）就不带，最坏按新设备算，与旧行为一致。
+        if let deviceKey, DeviceKey.isValid(deviceKey) {
+            body["deviceKey"] = deviceKey
+        }
         request.httpBody = try JSONEncoder().encode(body)
 
         let (data, response) = try await URLSession.shared.data(for: request)
@@ -974,6 +995,8 @@ public final class ConnectionStore {
             let agentId: String?
             let deviceToken: String?
             let agentName: String?
+            /// 032：`true` = 这台 client 之前就配过（带了同一个 deviceKey），本次只是换了 token。
+            let reused: Bool?
             let error: DSHRPCFailure?
         }
         let envelope = try JSONDecoder().decode(Envelope.self, from: data)
@@ -987,7 +1010,8 @@ public final class ConnectionStore {
             relayURL: relayURL,
             agentId: agentId,
             deviceToken: token,
-            agentName: envelope.agentName ?? "我的电脑"
+            agentName: envelope.agentName ?? "我的电脑",
+            reused: envelope.reused ?? false
         )
     }
 

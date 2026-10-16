@@ -329,7 +329,8 @@ public struct ConnectionView: View {
             let pairing = try await ConnectionStore.claimPairingCode(
                 relayURL: url,
                 code: code,
-                deviceName: DeviceInfo.deviceName
+                deviceName: DeviceInfo.deviceName,
+                deviceKey: DeviceKey.current(for: DeviceKey.scope(relayURL: url, agentId: ""))
             )
             let profile = ConnectionProfile(
                 name: pairing.agentName,
