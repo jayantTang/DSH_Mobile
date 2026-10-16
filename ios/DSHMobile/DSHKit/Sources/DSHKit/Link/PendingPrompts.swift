@@ -109,6 +109,15 @@ public struct PendingPrompts: Sendable, Equatable, RandomAccessCollection {
         items.removeAll { $0.id == id }
     }
 
+    /// 一次去掉多条（032：别的设备答掉的那批）。返回是否真的动了集合。
+    @discardableResult
+    public mutating func remove(ids: Set<String>) -> Bool {
+        guard !ids.isEmpty else { return false }
+        let before = items.count
+        items.removeAll { ids.contains($0.id) }
+        return items.count != before
+    }
+
     /// 断开链路时清空：链路上的待答已经不可达了。
     public mutating func removeAll() {
         items.removeAll()

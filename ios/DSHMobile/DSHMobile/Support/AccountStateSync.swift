@@ -28,6 +28,8 @@ final class AccountStateSync {
 
     private var viewLog: SessionViewLog?
     private var alertPrefs: SessionAlertPrefs?
+    private var answerLog: PromptAnswerLog?
+    private var hub: HostEventHub?
     private var linkProvider: (@MainActor () -> (any LinkService)?)?
 
     private var subscription: Task<Void, Never>?
@@ -39,9 +41,17 @@ final class AccountStateSync {
     /// 装配：链路可用时把订阅接上。重复调用只保留最后一次（RootView 的前后台钩子会调多次）。
     func attach(viewLog: SessionViewLog,
                 alertPrefs: SessionAlertPrefs,
+                answerLog: PromptAnswerLog,
+                hub: HostEventHub,
                 link: @escaping @MainActor () -> (any LinkService)?) {
         self.viewLog = viewLog
         self.alertPrefs = alertPrefs
+        self.answerLog = answerLog
+        self.hub = hub
+        // 本机答掉一条 → 推账户级；别的设备答掉的 → 拉回来从待回应里去掉。
+        hub.onPromptAnswered = { [weak self] promptId in
+            await self?.promptAnswered(promptId)
+        }
         self.linkProvider = link
         // 用户在本机改开关 → 推到账户级（远端并进来的值不会走到这里，见 SessionAlertPrefs）。
         alertPrefs.onLocalChange = { [weak self] in await self?.pushAlertPrefs() }
@@ -66,6 +76,9 @@ final class AccountStateSync {
                     }
                     if keys.contains(Self.alertPrefsKey) {
                         await self.pullAlertPrefs()
+                    }
+                    if keys.contains(Self.answeredPromptsKey) {
+                        await self.pullAnsweredPrompts()
                     }
                 }
                 try? await Task.sleep(for: .seconds(3))
@@ -98,6 +111,7 @@ final class AccountStateSync {
         }
         await pullSessionRead()
         await pullAlertPrefs()
+        await pullAnsweredPrompts()
     }
 
     // MARK: - 收发
@@ -119,6 +133,42 @@ final class AccountStateSync {
 
     /// 提醒开关在账户状态里的 key。
     static let alertPrefsKey = "alertPrefs"
+    /// 已作答的待回应提示（032 FR-008）。
+    static let answeredPromptsKey = "answeredPrompts"
+
+    /// 本机答掉一条提示：记台账 → 推账户级（**带全量台账**，因为 PUT 是整体替换）。
+    func promptAnswered(_ promptId: String) async {
+        answerLog?.markAnswered(promptId)
+        await pushAnsweredPrompts()
+    }
+
+    func pushAnsweredPrompts() async {
+        guard let client = currentClient(), let log = answerLog else { return }
+        let snapshot = log.accountSnapshot()
+        guard !snapshot.isEmpty else { return }
+        let entry = AccountStateClient.Entry(
+            key: Self.answeredPromptsKey,
+            value: .object(snapshot.mapValues { .double($0) }),
+            updatedAt: Int(Date().timeIntervalSince1970 * 1000)
+        )
+        _ = try? await client.put([entry])
+    }
+
+    private func pullAnsweredPrompts() async {
+        guard let client = currentClient(), let log = answerLog, let hub else { return }
+        guard let entries = try? await client.fetch(keys: [Self.answeredPromptsKey]) else { return }
+        guard case .object(let map)? = entries[Self.answeredPromptsKey]?.value else {
+            ViewportProbe.note("answeredPrompts.pull", ["result": "absent"])
+            return
+        }
+        let remote = map.compactMapValues { $0.doubleValue }
+        log.mergeRemote(answeredAt: remote)
+        // 把账户里已知答过的从本机待回应里去掉（宿主没撤回的那条也一并清掉）。
+        let changed = hub.applyRemoteAnswers(Set(remote.keys))
+        ViewportProbe.note("answeredPrompts.pull",
+                           ["result": "ok", "count": String(remote.count),
+                            "dropped": changed ? "1" : "0"])
+    }
 
     private func pullAlertPrefs() async {
         guard let client = currentClient(), let prefs = alertPrefs else { return }

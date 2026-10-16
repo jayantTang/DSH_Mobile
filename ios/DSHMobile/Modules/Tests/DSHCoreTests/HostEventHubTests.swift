@@ -208,3 +208,44 @@ final class HostEventHubTests: XCTestCase {
         XCTAssertTrue(hub.pending.isEmpty)
     }
 }
+
+// MARK: - 032：作答跨设备互斥
+
+extension HostEventHubTests {
+    /// 别的设备答掉的提示要从本机待回应里去掉（宿主不一定撤回）。
+    ///
+    /// 夹具本身撤回过 event-1，所以这里剩的是 event-2（approval/asked）。
+    func test_remote_answers_drop_matching_prompts() async {
+        hub.start(link: makeGateway())
+        try? await Task.sleep(for: .milliseconds(120))
+        XCTAssertEqual(hub.pending.map(\.id), ["event-2"], "fixture leaves one prompt after the cancel")
+
+        XCTAssertTrue(hub.applyRemoteAnswers(["event-2"]))
+
+        XCTAssertTrue(hub.pending.isEmpty)
+        XCTAssertFalse(hub.applyRemoteAnswers(["event-2"]), "already gone -> no change")
+        XCTAssertFalse(hub.applyRemoteAnswers([]), "empty set is a no-op")
+    }
+
+    /// 本机答掉一条要通知账户级同步；重复应答不该再通知（本地认领在先）。
+    func test_answering_fires_the_account_hook_once() async {
+        hub.start(link: makeGateway())
+        try? await Task.sleep(for: .milliseconds(120))
+        var reported: [String] = []
+        hub.onPromptAnswered = { reported.append($0) }
+
+        let first = try? XCTUnwrap(hub.pending.first)
+        if let first { try? await hub.answer(first, with: .result(.object(["ok": .bool(true)]))) }
+        await settle()
+        XCTAssertEqual(reported, ["event-2"])
+
+        // 再答一次同一条：抛 promptAlreadyAnswered，且**不再**通知。
+        if let first { _ = try? await hub.answer(first, with: .result(.object(["ok": .bool(true)]))) }
+        await settle()
+        XCTAssertEqual(reported, ["event-2"], "a second tap must not report again")
+    }
+
+    private func settle() async {
+        try? await Task.sleep(for: .milliseconds(60))
+    }
+}

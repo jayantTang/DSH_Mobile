@@ -34,6 +34,8 @@ struct RootView: View {
     @State private var alerts = SessionAlerts()
     @State private var attachmentImages = AttachmentImages()
     @State private var viewLog = SessionViewLog()
+    /// 032：本机答过哪些待回应提示（跨设备互斥用）。
+    @State private var answerLog = PromptAnswerLog()
     @State private var listModel = SessionListModel()
 
     /// 026：探针从 static 改实例后，由装配点在构造期注入（行为与 static 版一致）。
@@ -100,6 +102,7 @@ struct RootView: View {
                 // 032：账户级状态只依赖**中转**，与"主机在不在线"无关，所以在这里就装配
                 // （不能等到 isConnected——电脑睡着时手机也要能对齐已读与开关）。
                 AccountStateSync.shared.attach(viewLog: viewLog, alertPrefs: alertPrefs,
+                                               answerLog: answerLog, hub: hub,
                                                link: { [weak store] in store })
                 await AccountStateSync.shared.refresh()
                 await store.noteColdLaunch()
@@ -569,6 +572,7 @@ struct RootView: View {
             enteredWorkspace = true
             // "Already read" marks belong to one computer.
             viewLog.useScope(connectionScope)
+            answerLog.useScope(connectionScope)
             // 032：连上之后再对齐一次账户级状态。启动时那次拉取可能早于配对完成
             // （那时还没有可用档案/令牌，请求要么发不出、要么用旧令牌被 401 掉）。
             Task { await AccountStateSync.shared.refresh() }
@@ -593,6 +597,7 @@ struct RootView: View {
             Task { await chatModel.forgetConnection() }
             attachmentImages.reset()
             viewLog.useScope(nil)
+            answerLog.useScope(nil)
             // 这里**不**停订阅：配对/切换档案过程中必然有一次"断开→连上"，
             // 停了就再也没人把它接回来（2026-10-16 真机实测：推送一直没反应，
             // 根因就是这里）。订阅本身按"流结束就 3 秒后重订"工作，链路回来自会恢复。

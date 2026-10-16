@@ -170,6 +170,24 @@ public final class HostEventHub {
         pending.remove(id: item.id)
         let answer = EventAnswer(clientId: clientId, eventId: item.id, outcome: outcome)
         try await link.answer(answer)
+        // 032：答过之后告诉账户级状态（同账户其他设备要把这条从待回应里去掉）。
+        await onPromptAnswered?(item.id)
+    }
+
+    /// 一条提示被本机答掉之后的通知（App 装配到账户级同步）。
+    public var onPromptAnswered: ((String) async -> Void)?
+
+    /// 别的设备答掉了这些提示：从本机待回应里去掉。
+    ///
+    /// 为什么不能只等宿主撤回：宿主只把结果发给**提问到达过**的客户端，另一台设备
+    /// 可能压根没收到过这条，也可能收到后一直挂着——这正是 owner 说的"用户选择点击"
+    /// 要跨设备一致的那一类。返回是否有变化（调用方据此决定要不要刷新界面）。
+    @discardableResult
+    public func applyRemoteAnswers(_ ids: Set<String>) -> Bool {
+        guard !ids.isEmpty else { return false }
+        let before = pending.count
+        pending.remove(ids: ids)
+        return pending.count != before
     }
 
     /// Declines to handle a prompt, letting the host continue to other clients.
