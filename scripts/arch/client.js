@@ -109,21 +109,14 @@
   }
 
   /**
-   * 模块图：两级分带。大带是部署位置，大带内的子块**横向并排**，一行摆不下再换行。
-   * 子块各自按最长路径分列，所以单个子块内部依然是从左到右的依赖方向。
+   * 模块图：两级分带，大带上下排，大带内的子块也上下排——iOS 的六个层从上往下读就是依赖方向
+   * （App 壳 → Feature UI → Domain → Core/Design/Foundation → RelayKit → DSHKit）。
    */
   const SECTION_HEADER = 22
-
-  /** 子块换行宽度跟着画布走：太宽会逼出横向滚动，太窄子块会挤成一根竖条。 */
-  function rowBudget() {
-    const width = $('canvas') ? $('canvas').clientWidth - 40 : 1400
-    return Math.max(1100, Math.min(2600, width))
-  }
 
   function layoutModuleGraph(nodes, edges) {
     const positions = new Map()
     const bands = []
-    const maxRowWidth = rowBudget()
     let yBase = 24
     let width = 0
     const bandIds = state.groupByLayer ? ROLE_ORDER.filter((id) => nodes.some((node) => node.band === id)) : ['*']
@@ -135,39 +128,51 @@
         : [bandId]
       const bandTop = yBase + 30 // 留出大带标题
 
-      // 先把每个子块各自排好，再按行打包
-      const blocks = []
+      const sections = []
+      let sectionY = bandTop
       for (const sectionId of sectionIds) {
         const list = bandNodes.filter((node) => node.section === sectionId)
         if (!list.length) continue
-        const placed = placeColumns(list, edges, { nodeWidth: 210, gapX: 250, gapY: 78, pad: 24, maxRows: 12 })
+        const header = sectionIds.length > 1 ? SECTION_HEADER : 0
+        const placed = placeRows(list, edges, { nodeWidth: 210, gapX: 250, gapY: 78, pad: 24 })
+        for (const [id, point] of placed.positions) positions.set(id, { x: point.x, y: point.y + sectionY + header })
         const label = definition?.sections.find((section) => section.id === sectionId)?.label || ''
-        blocks.push({ id: sectionId, label, placed, height: placed.height - 48 + SECTION_HEADER })
+        sections.push({ label, y: sectionY, height: placed.height - 48 + header })
+        sectionY += placed.height - 48 + header + 10
+        width = Math.max(width, placed.width)
       }
-
-      const sections = []
-      let rowY = bandTop
-      let rowX = 0
-      let rowHeight = 0
-      for (const block of blocks) {
-        if (rowX > 0 && rowX + block.placed.width > maxRowWidth) {
-          rowY += rowHeight + 10
-          rowX = 0
-          rowHeight = 0
-        }
-        for (const [id, point] of block.placed.positions) {
-          positions.set(id, { x: point.x + rowX, y: point.y + rowY + SECTION_HEADER })
-        }
-        sections.push({ label: block.label, color: COLORS[block.id] || '#6b7280', x: rowX + 8, y: rowY, width: block.placed.width - 16, height: block.height })
-        rowX += block.placed.width + 14
-        rowHeight = Math.max(rowHeight, block.height)
-        width = Math.max(width, rowX)
-      }
-      const bandHeight = rowY + rowHeight - yBase
+      const bandHeight = sectionY - yBase - 10
       bands.push({ label: definition ? definition.label : bandId, y: yBase, height: bandHeight, sections })
       yBase += bandHeight + 26
     }
+    // 子块统一占满大带宽度（现在都是整行）
+    for (const band of bands) {
+      for (const section of band.sections) {
+        section.x = 8
+        section.width = width - 16
+      }
+    }
     return { positions, bands, width: width + 24, height: yBase + 10 }
+  }
+
+  /**
+   * 分层行布局：rank 当「层」，rank 0 在最上行，行内节点并排。
+   * 与 placeColumns（列布局，文件级子图用）相对：模块图要的是自上而下的层序感。
+   */
+  function placeRows(nodes, edges, options) {
+    const { nodeWidth, gapX, gapY, pad } = options
+    const rank = rankNodes(nodes, edges)
+    const ranks = [...new Set([...rank.values()])].sort((a, b) => a - b)
+    const rows = ranks.map((value) => nodes.filter((node) => (rank.get(node.id) || 0) === value)
+      .sort((a, b) => (b.lines || 0) - (a.lines || 0)))
+    const positions = new Map()
+    rows.forEach((row, rowIndex) => {
+      row.forEach((node, index) => {
+        positions.set(node.id, { x: pad + 20 + index * gapX, y: pad + 20 + rowIndex * gapY })
+      })
+    })
+    const widest = Math.max(1, ...rows.map((row) => row.length))
+    return { positions, width: pad * 2 + 40 + (widest - 1) * gapX + nodeWidth, height: pad * 2 + 40 + rows.length * gapY }
   }
 
   function layoutFileGraph(nodes, edges) {
@@ -178,6 +183,16 @@
   // ---------------------------------------------------------------- 绘制
 
   function edgePath(a, b, nodeWidth, nodeHeight) {
+    const vertical = (b.y - a.y) > nodeHeight * 0.6
+    if (vertical) {
+      // 上层 → 下层：从源底边中点到目标顶边中点
+      const x1 = a.x + nodeWidth / 2
+      const y1 = a.y + nodeHeight
+      const x2 = b.x + nodeWidth / 2
+      const y2 = b.y
+      const bend = Math.max(26, (y2 - y1) / 2)
+      return `M ${x1} ${y1} C ${x1} ${y1 + bend}, ${x2} ${y2 - bend}, ${x2} ${y2}`
+    }
     const x1 = a.x + nodeWidth
     const y1 = a.y + nodeHeight / 2
     const x2 = b.x

@@ -210,3 +210,58 @@ struct LinkCarrierSocketLifecycleTests {
         await carrier.close()
     }
 }
+
+// MARK: - 032：账户级状态推送
+
+extension LinkCarrierSocketLifecycleTests {
+    /// 中转推来的 `accountState` 必须原样到达订阅者。
+    ///
+    /// 这条用例守的是 `DLPFrames.agentToDevice` 那道**准入闸**：漏一个帧类型不报错，
+    /// 只是把那一类推送静默丢掉——2026-10-16 真机上就是这么"一点反应都没有"的。
+    /// `npm run check:contracts` 另有一条守卫比对它与 `docs/relay-contract.json`，
+    /// 这里再钉一次"到了订阅者手里"的行为。
+    @Test("accountState 帧到达订阅者")
+    func accountStateFramesReachSubscribers() async throws {
+        let factory = FakeSocketFactory()
+        let carrier = LinkCarrier(
+            configuration: configuration(),
+            timeout: .seconds(1),
+            reconnect: policy(),
+            makeSocket: { _ in factory.make() }
+        )
+        await carrier.connect()
+        #expect(await eventually { factory.count == 1 })
+        let socket = try #require(factory.sockets.first)
+
+        let stream = await carrier.accountStateStream()
+        var iterator = stream.makeAsyncIterator()
+        socket.deliver(#"{"t":"accountState","keys":["alertPrefs","sessionRead.agt_1"]}"#)
+
+        let keys = await iterator.next()
+        #expect(keys == ["alertPrefs", "sessionRead.agt_1"])
+    }
+
+    /// 白名单之外的帧仍然要被丢掉（这道闸不能因为上面那条放宽成"什么都收"）。
+    @Test("不在白名单里的帧不会到达订阅者")
+    func unknownFramesStayDropped() async throws {
+        let factory = FakeSocketFactory()
+        let carrier = LinkCarrier(
+            configuration: configuration(),
+            timeout: .seconds(1),
+            reconnect: policy(),
+            makeSocket: { _ in factory.make() }
+        )
+        await carrier.connect()
+        #expect(await eventually { factory.count == 1 })
+        let socket = try #require(factory.sockets.first)
+
+        let stream = await carrier.accountStateStream()
+        var iterator = stream.makeAsyncIterator()
+        socket.deliver(#"{"t":"somethingElse","keys":["alertPrefs"]}"#)
+        // 紧跟一条合法的，用来判断"前面那条确实被丢了"而不是"还在排队"。
+        socket.deliver(#"{"t":"accountState","keys":["after"]}"#)
+
+        let keys = await iterator.next()
+        #expect(keys == ["after"], "未知帧必须被丢掉，不能顶替")
+    }
+}

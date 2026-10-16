@@ -12,6 +12,12 @@ name: DSHMobile
 configs:
   Debug: debug
   Release: release
+  # OTA（开发版无线安装）克隆自 Release，只多一层签名差异（见 Config.local.xcconfig 的
+  # `[config=OTA]` 段）。**必须在 spec 里声明**：原先它是手工加进 project.pbxproj 的，
+  # 2026-10-16 一次 `xcodegen generate` 就把它冲掉了，`deploy-ota.sh` 归档随即报
+  # 「Unable to find module dependency: DSHSessionsDomain」——OTA 配置不在时，
+  # 包产物会按 Debug 编，与 App 的 OTA 配置对不上。
+  OTA: release
 
 settings:
   base:
@@ -39,7 +45,6 @@ targets:
         MARKETING_VERSION: "1.0"
         CURRENT_PROJECT_VERSION: "1"
         TARGETED_DEVICE_FAMILY: "1"
-        CODE_SIGN_STYLE: Automatic
         INFOPLIST_FILE: DSHMobile-Info.plist
         CODE_SIGN_ENTITLEMENTS: DSHMobile.entitlements
         GENERATE_INFOPLIST_FILE: YES
@@ -49,9 +54,19 @@ targets:
         LD_RUNPATH_SEARCH_PATHS:
           - $(inherited)
           - "@executable_path/Frameworks"
+      # 签名**按配置**给：Debug/Release 自动签名，OTA 交给 Config.local.xcconfig 的
+      # `[config=OTA]`（Manual + 开发证书 + 推送描述文件）。不能写在 base 里——项目里的
+      # buildSettings 优先于 xcconfig，base 写 Automatic 会把 OTA 的 Manual 压掉，归档报
+      # 「automatically signed, but provisioning profile … manually specified」。
+      configs:
+        Debug:
+          CODE_SIGN_STYLE: Automatic
+        Release:
+          CODE_SIGN_STYLE: Automatic
     configFiles:
       Debug: Config.xcconfig
       Release: Config.xcconfig
+      OTA: Config.xcconfig
     dependencies:
       - package: DSHKit
         product: DSHKit

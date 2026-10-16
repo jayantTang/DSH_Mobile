@@ -212,19 +212,44 @@ def test_migration_adds_the_new_columns_to_an_old_database(tmp_path):
     legacy.close()
 
     # 手工把库降级成 v5 的样子：删掉本次新增的列与表。
+    #
+    # **必须写完整的建表语句**，不能用 `CREATE TABLE … AS SELECT`：后者会把
+    # `expiresAt` 的 NOT NULL 一起丢掉，于是"持久码要写 NULL"这条约束在测试里消失——
+    # 2026-10-16 生产上就是这么挂的（v6 只加了列，没改约束）。照抄当时线上那份 DDL。
     conn = sqlite3.connect(path)
     conn.executescript("""
         PRAGMA foreign_keys=OFF;
-        CREATE TABLE pairCodes_v5 AS
-            SELECT codeHash, agentId, accountId, createdAt, expiresAt, usedAt, deviceId FROM pairCodes;
         DROP TABLE pairCodes;
-        ALTER TABLE pairCodes_v5 RENAME TO pairCodes;
-        CREATE TABLE devices_v5 AS
-            SELECT deviceId, deviceTokenHash, agentId, accountId, name, model, appVersion,
-                   createdAt, expiresAt, lastSeenAt, revokedAt, apnsToken, apnsEnv,
-                   pushTurnEnd, pushAttention, pushUpdatedAt FROM devices;
+        CREATE TABLE pairCodes (
+          codeHash  TEXT PRIMARY KEY,
+          agentId   TEXT NOT NULL,
+          accountId TEXT NOT NULL,
+          createdAt INTEGER NOT NULL,
+          expiresAt INTEGER NOT NULL,
+          usedAt    INTEGER,
+          deviceId  TEXT
+        );
+        CREATE INDEX pair_codes_agent ON pairCodes(agentId);
         DROP TABLE devices;
-        ALTER TABLE devices_v5 RENAME TO devices;
+        CREATE TABLE devices (
+          deviceId        TEXT PRIMARY KEY,
+          deviceTokenHash TEXT NOT NULL UNIQUE,
+          agentId         TEXT NOT NULL,
+          accountId       TEXT NOT NULL,
+          name            TEXT NOT NULL,
+          model           TEXT,
+          appVersion      TEXT,
+          createdAt       INTEGER NOT NULL,
+          expiresAt       INTEGER NOT NULL,
+          lastSeenAt      INTEGER,
+          revokedAt       INTEGER,
+          apnsToken       TEXT,
+          apnsEnv         TEXT,
+          pushTurnEnd     INTEGER NOT NULL DEFAULT 1,
+          pushAttention   INTEGER NOT NULL DEFAULT 1,
+          pushUpdatedAt   INTEGER
+        );
+        CREATE INDEX devices_agent ON devices(agentId);
         PRAGMA user_version=5;
     """)
     conn.commit()
@@ -240,6 +265,14 @@ def test_migration_adds_the_new_columns_to_an_old_database(tmp_path):
         device_columns = {row[1] for row in
                           upgraded._conn.execute("PRAGMA table_info(devices)")}  # noqa: SLF001
         assert "deviceKey" in device_columns
+        # 关键：`expiresAt` 必须真的可空——生产上就是这里挂了（v6 只加列没改约束）。
+        notnull = {row[1]: bool(row[3]) for row in
+                   upgraded._conn.execute("PRAGMA table_info(pairCodes)")}  # noqa: SLF001
+        assert notnull["expiresAt"] is False, "persistent codes need a nullable expiresAt"
+        upgraded._conn.execute(  # noqa: SLF001
+            "INSERT INTO pairCodes(codeHash, agentId, accountId, createdAt, expiresAt)"
+            " VALUES('h', 'a', 'acc', 1, NULL)")
+        upgraded._conn.commit()  # noqa: SLF001
     finally:
         upgraded.close()
 

@@ -286,7 +286,10 @@ async def healthz(_request: web.Request) -> web.Response:
         "version": dlp.PROTOCOL_VERSION,
         # 能力清单（与连接器 status 的 capabilities 同一术语）：
         # 客户端读不到这个字段就按"中转需升级"提示，不静默降级。
-        "capabilities": ["device-subprotocol-auth"],
+        # 032 起加上账户/配对模型的三项：持久码、账户级状态读、账户级状态推送。
+        # Web 与 App 靠这个字段决定要不要显示"设备页 / 已配对 N/8"这类界面。
+        "capabilities": ["device-subprotocol-auth", "persistent-pair-code",
+                         "account-state", "account-state-push"],
     })
 
 

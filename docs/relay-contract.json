@@ -36,7 +36,8 @@
     "event",
     "hostStatus",
     "pong",
-    "error"
+    "error",
+    "accountState"
   ],
   "relayControl": [
     "deviceAttach",

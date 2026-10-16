@@ -593,7 +593,9 @@ struct RootView: View {
             Task { await chatModel.forgetConnection() }
             attachmentImages.reset()
             viewLog.useScope(nil)
-            AccountStateSync.shared.stop()
+            // 这里**不**停订阅：配对/切换档案过程中必然有一次"断开→连上"，
+            // 停了就再也没人把它接回来（2026-10-16 真机实测：推送一直没反应，
+            // 根因就是这里）。订阅本身按"流结束就 3 秒后重订"工作，链路回来自会恢复。
         }
         // Otherwise the link dropped under a workspace the user is still in.
         // Nothing is torn down: the feed restarts itself, the rows stay put,

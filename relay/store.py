@@ -255,7 +255,7 @@ DEFAULT_FEEDBACK_FORMAT = "text"
 #: "no such column" — on a relay that had otherwise reported itself healthy.
 #: Bumping this number and adding a step to ``_MIGRATIONS`` is what turns that
 #: into a startup migration.
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 
 def _migrate_to_1(conn: sqlite3.Connection) -> None:
@@ -415,11 +415,57 @@ def _migrate_to_6(conn: sqlite3.Connection) -> None:
     )
 
 
+def _paircodes_expires_at_allows_null(conn: sqlite3.Connection) -> bool:
+    """`pairCodes.expiresAt` 现在允许 NULL 了吗（持久码没有过期时间）。"""
+    for row in conn.execute("PRAGMA table_info(pairCodes)"):
+        if row[1] == "expiresAt":
+            return not bool(row[3])
+    return True
+
+
+def _migrate_to_7(conn: sqlite3.Connection) -> None:
+    """`pairCodes.expiresAt` 从 NOT NULL 改成可空（持久码要写 NULL）。
+
+    为什么必须重建表：SQLite 的 `ALTER TABLE` 改不了列的 NOT NULL，只能
+    「建新表 → 拷数据 → 删旧表 → 改名」。**这是 2026-10-16 生产上当场暴露的**：
+    v6 迁移只加了列，没改约束，于是第一枚持久码在服务器上 `NOT NULL constraint failed`。
+    本机测试没抓到，因为造"老库"用的是 `CREATE TABLE … AS SELECT`（它把约束一起丢了）。
+
+    幂等：先看 `PRAGMA table_info` 的 notnull 标志，已经可空就什么都不做。
+    """
+    if _paircodes_expires_at_allows_null(conn):
+        return
+    conn.execute(
+        """CREATE TABLE pairCodes_new (
+             codeHash  TEXT PRIMARY KEY,
+             agentId   TEXT NOT NULL,
+             accountId TEXT NOT NULL,
+             createdAt INTEGER NOT NULL,
+             expiresAt INTEGER,
+             usedAt    INTEGER,
+             deviceId  TEXT,
+             revokedAt  INTEGER,
+             lastUsedAt INTEGER,
+             useCount   INTEGER NOT NULL DEFAULT 0
+           )"""
+    )
+    conn.execute(
+        "INSERT INTO pairCodes_new(codeHash, agentId, accountId, createdAt, expiresAt,"
+        " usedAt, deviceId, revokedAt, lastUsedAt, useCount)"
+        " SELECT codeHash, agentId, accountId, createdAt, expiresAt,"
+        " usedAt, deviceId, revokedAt, lastUsedAt, useCount FROM pairCodes"
+    )
+    conn.execute("DROP TABLE pairCodes")
+    conn.execute("ALTER TABLE pairCodes_new RENAME TO pairCodes")
+    conn.execute("CREATE INDEX IF NOT EXISTS pair_codes_agent ON pairCodes(agentId)")
+
+
 _MIGRATIONS: dict[int, Any] = {
     1: _migrate_to_1,
     2: _migrate_to_2,
     3: _migrate_to_3,
     6: _migrate_to_6,
+    7: _migrate_to_7,
     4: _migrate_to_4,
     5: _migrate_to_5,
 }

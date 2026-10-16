@@ -16,7 +16,8 @@ enum DLPFrames {
     static let eventResult = "eventResult"
     static let ping = "ping"
     static let deviceToAgent: Set<String> = [request, open, cancel, eventResult, ping, "hello"]
-    static let agentToDevice: Set<String> = ["res", "item", "end", "streamError", "event", "hostStatus", "pong", "error"]
+    static let agentToDevice: Set<String> = ["res", "item", "end", "streamError", "event", "hostStatus",
+                                             "pong", "error", "accountState"]
     static let idFrames: Set<String> = [request, open, cancel, "res", "item", "end", "streamError", eventResult]
 }
 

@@ -67,6 +67,9 @@ public final class ConnectionStore {
 
     /// The profile currently connected, if any.
     public private(set) var activeProfile: ConnectionProfile?
+    /// 032：账户级状态推送的订阅者（key 列表）与当前帧源任务。
+    private var accountStateObservers: [UUID: AsyncStream<[String]>.Continuation] = [:]
+    private var accountStateFrameTask: Task<Void, Never>?
 
     /// What identifies "the computer we are talking to", for caches that must
     /// not survive a switch: the agent id when there is one, otherwise the
@@ -304,11 +307,11 @@ public final class ConnectionStore {
                     continuation.onTermination = { _ in task.cancel() }
                 }
             },
+            // 账户级状态的订阅由**本类**持有（见 `accountStateStream()`）：它必须跨重连活着。
+            // 直接订阅当时那个 carrier 是不行的——配对/重连都会换 carrier，换完之后
+            // 旧 carrier 的流既不结束也不再来帧，订阅方永远等在那里（2026-10-16 真机实测）。
             accountStateStreamProvider: { [weak self] in
-                guard let carrier = self?.client?.carrier as? LinkCarrier else {
-                    return AsyncStream { $0.finish() }
-                }
-                return await carrier.accountStateStream()
+                await self?.accountStateStream() ?? AsyncStream { $0.finish() }
             }
         )
     }
@@ -548,6 +551,8 @@ public final class ConnectionStore {
         let client = DSHClient(carrier: carrier, capabilities: capabilities)
         self.client = client
         self.activeProfile = profile
+        // 新 carrier 来了：把账户级推送的帧源接过去（见 `rewireAccountStateFrames`）。
+        rewireAccountStateFrames()
         self.hostHome = profile.hostHome
         // Asked once per connection. A failure is not fatal: it just means the
         // app falls back to showing nothing that depends on a capability.
@@ -1027,8 +1032,44 @@ public final class ConnectionStore {
 
 // MARK: - LinkService 协议符合
 extension ConnectionStore: LinkService {
-    /// 032：把 carrier 的 `accountState` 帧透出来（实现只有这一条：网关转发）。
+    /// 032：账户级状态推送的**稳定**订阅口。
+    ///
+    /// 为什么要经过 store 而不是直接订阅 carrier：一条链路一个 carrier，配对、重连、切档案
+    /// 都会换新的，而旧 carrier 的流既不会结束也不会再来帧——订阅方就此永远沉默。
+    /// 这里由 store 持有订阅者名单，每次装上新 carrier（`install`）就把帧源接过去。
     public func accountStateStream() async -> AsyncStream<[String]> {
-        await link.accountStateStream()
+        await MainActor.run {
+            let id = UUID()
+            let (stream, continuation) = AsyncStream<[String]>.makeStream()
+            accountStateObservers[id] = continuation
+            continuation.onTermination = { [weak self] _ in
+                Task { @MainActor in self?.accountStateObservers.removeValue(forKey: id) }
+            }
+            return stream
+        }
+    }
+
+    /// 把帧源接到当前 carrier 上（`install` 每次装新 carrier 都调）。旧的那条先取消。
+    @MainActor
+    private func rewireAccountStateFrames() {
+        accountStateFrameTask?.cancel()
+        guard let carrier = client?.carrier as? LinkCarrier else {
+            accountStateFrameTask = nil
+            return
+        }
+        probeNote?("accountState.wire", ["observers": String(accountStateObservers.count)], false)
+        accountStateFrameTask = Task { [weak self] in
+            let raw = await carrier.accountStateStream()
+            for await keys in raw {
+                guard let self else { return }
+                guard !Task.isCancelled else { return }
+                self.probeNote?("accountState.frame",
+                                ["keys": keys.joined(separator: ","),
+                                 "observers": String(self.accountStateObservers.count)], false)
+                for continuation in self.accountStateObservers.values {
+                    continuation.yield(keys)
+                }
+            }
+        }
     }
 }

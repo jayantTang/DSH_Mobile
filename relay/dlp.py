@@ -28,7 +28,10 @@ PROTOCOL_VERSION = 1
 MAX_FRAME_BYTES = 32 * 1024 * 1024
 
 DEVICE_TO_AGENT = frozenset({"req", "open", "cancel", "eventResult", "ping", "hello"})
-AGENT_TO_DEVICE = frozenset({"res", "item", "end", "streamError", "event", "hostStatus", "pong", "error"})
+#: 朝设备方向走的帧。`accountState` 由**中转自己**发出（032：账户级状态变了），
+#: 与连接器发的那些同属这一类；契约表 `docs/relay-contract.json` 是同一份口径。
+AGENT_TO_DEVICE = frozenset({"res", "item", "end", "streamError", "event", "hostStatus", "pong", "error",
+                            "accountState"})
 RELAY_TO_AGENT = frozenset({"deviceAttach", "deviceDetach"})
 
 #: Agent-side control frames: connector → relay, **never forwarded to a device**

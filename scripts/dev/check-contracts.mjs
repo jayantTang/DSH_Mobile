@@ -78,6 +78,28 @@ for (const vector of vectors.vectors) {
   }
 }
 
+/**
+ * iOS 的 `DLPFrames.agentToDevice` 必须与契约的 `agentToDevice` 一字不差。
+ *
+ * 为什么加这条：这处白名单是**准入闸**（`LinkCarrier` 里 `guard contains(frame.t) else { return }`），
+ * 漏一个帧类型不会报错，只会把那一类推送静默丢掉——032 的 `accountState` 就是这么在真机上
+ * 一点反应都没有的（2026-10-16 实测）。契约表当时已经写了这个帧，但没人比对 Swift 那份常量。
+ */
+const swiftCarrier = read('ios/DSHMobile/DSHKit/Sources/DSHKit/LinkCarrier.swift')
+const swiftSet = swiftCarrier.match(/agentToDevice:\s*Set<String>\s*=\s*\[([^\]]*)\]/)
+if (!swiftSet) {
+  fail('LinkCarrier.swift: 找不到 DLPFrames.agentToDevice 的字面量（改过形状就同步这条检查）')
+} else {
+  const swiftFrames = swiftSet[1].split(',').map((part) => part.trim().replace(/^"|"$/g, ''))
+    .filter(Boolean).sort()
+  const contractFrames = [...contract.agentToDevice].sort()
+  if (swiftFrames.join('|') !== contractFrames.join('|')) {
+    fail(`LinkCarrier.swift 的 agentToDevice 与契约不一致：\n`
+      + `    契约: ${contractFrames.join(', ')}\n`
+      + `    Swift: ${swiftFrames.join(', ')}`)
+  }
+}
+
 /** 六个 knownDrift 一条不少。 */
 const DRIFT_IDS = ['hello-unused', 'ping-3-ways', 'validation-asymmetric',
                    'two-error-code-sets', 'hostStatus-fields', 'reassembly-only-ios']

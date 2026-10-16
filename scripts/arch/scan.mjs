@@ -36,13 +36,14 @@ const BANDS = [
     id: 'ios',
     label: 'iOS 侧（iPhone App）',
     match: (id) => id.startsWith('ios/'),
+    // 子块顺序就是纵向层序：上面的依赖下面的，读图自上而下即依赖方向
     sections: [
-      { id: 'ios-shell', label: 'App 壳与装配（App target 剩余）', match: (id) => id.startsWith('ios/app/') },
-      { id: 'ios-domain', label: 'Domain 层（业务规则，禁 UI）', match: (id) => id.startsWith('ios/mod/') && /Domain|API$/.test(id) },
+      { id: 'ios-shell', label: 'App 壳与装配（组合根）', match: (id) => id.startsWith('ios/app/') },
       { id: 'ios-ui', label: 'Feature UI 层', match: (id) => id.startsWith('ios/mod/') && /UI$/.test(id) },
+      { id: 'ios-domain', label: 'Domain 层（业务规则，禁 UI）', match: (id) => id.startsWith('ios/mod/') && /Domain|API$/.test(id) },
       { id: 'ios-shared', label: 'Core / Design / Foundation / 测试支撑', match: (id) => id.startsWith('ios/mod/') },
-      { id: 'ios-protocol', label: '协议与数据层（DSHKit）', match: (id) => id === 'ios/kit/DSHKit' },
       { id: 'ios-relaykit', label: '中转客户端（RelayKit）', match: (id) => id === 'ios/kit/RelayKit' },
+      { id: 'ios-protocol', label: '协议与数据层（DSHKit）', match: (id) => id === 'ios/kit/DSHKit' },
     ],
   },
   { id: 'relay', label: '中转（公网主机）', match: (id) => id === 'relay', sections: [] },
