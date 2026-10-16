@@ -452,6 +452,7 @@ THRESHOLDS.alertEscalateDays 天还没处理，文案升级为「已连续 N 天
 function attentionItems(report, { completed = false, generatedAt = 0, history = null } = {}) {
   const items = []
   const push = (level, text_, key = '') => items.push({ level, text: text_, key })
+  const dayStartAt = num(report.today.dayStartAt)
 
   // 待回复反馈：全窗口的开口线程（不止今天新增的），这是日报里唯一有时效的事。
   const open = num(report.feedback.open)
@@ -479,19 +480,23 @@ function attentionItems(report, { completed = false, generatedAt = 0, history = 
     push('warn', `7 日留存 ${percent(d7.rate)}（n=${formatInt(d7.cohort)}）低于 `
       + `${Math.round(THRESHOLDS.d7Low * 100)}% 警戒线，该查首日体验`, 'd7-low')
   }
-  // 推送注册率：没注册的手机收不到「待你回应」，直接影响活跃。
-  const phones = (report.devices.list ?? []).filter((row) => !row.revoked)
+  // 推送注册率：没注册的手机收不到「待你回应」，直接影响活跃。分母只算**近 7 天活跃**的
+  // 手机（owner 2026-10-17 定）：在册设备里躺着大量早已不用的旧行，全算进来这条告警就没有
+  // 指向（2026-10-17 实测 78/89 未注册，其中多数是废弃设备）。
+  const windowEnd = dayStartAt ? dayStartAt + 86_400_000 - 1 : generatedAt
+  const windowStart = windowEnd - 7 * 86_400_000
+  const phones = (report.devices.list ?? []).filter((row) => !row.revoked
+    && num(row.lastSeenAt) >= windowStart && num(row.lastSeenAt) <= windowEnd)
   if (phones.length >= THRESHOLDS.pushMinDevices) {
     const registered = phones.filter((row) => row.push?.registered).length
     const rate = registered / phones.length
     if (rate < THRESHOLDS.pushLow) {
-      push('warn', `${formatInt(phones.length - registered)}/${formatInt(phones.length)} 台手机没注册推送`
-        + `（${Math.round((1 - rate) * 100)}%），「待你回应」提醒到不了这些手机`, 'push-low')
+      push('warn', `近 7 天活跃的 ${formatInt(phones.length)} 台手机里 ${formatInt(phones.length - registered)} 台`
+        + `没注册推送（${Math.round((1 - rate) * 100)}%），「待你回应」提醒到不了这些手机`, 'push-low')
     }
   }
   // 连续天数：history.alerts[key] = { lastStart, count }。与上一次覆盖日相邻则 +1，
   // 同一天重复渲染不重复计数（00:02 的定时任务一天只跑这一次）。
-  const dayStartAt = num(report.today.dayStartAt)
   for (const item of items) {
     const prev = item.key ? history?.alerts?.[item.key] : null
     const diff = prev && dayStartAt ? dayStartAt - num(prev.lastStart) : null

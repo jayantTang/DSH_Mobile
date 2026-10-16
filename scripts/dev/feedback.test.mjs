@@ -433,6 +433,24 @@ test('「关注」区只留要 owner 动作的待办，自动观察不再堆上�
   assert.ok(!html.includes('<span class="chip up">提示</span>'), '关注区不再有 info 级提示条目')
 })
 
+test('推送注册率只算近 7 天活跃的手机（owner 2026-10-17 定）', () => {
+  // 6 台未注册推送、但一个月没上线：废弃设备不进分母，不报警。
+  const quiet = fixture()
+  quiet.devices.list = Array.from({ length: 6 }, (_, i) => ({
+    deviceId: `dvc_old_${i}`, name: 'iPhone', model: 'iPhone 17', appVersion: '1.2.3',
+    createdAt: GENERATED_AT - 40 * 86_400_000, lastSeenAt: GENERATED_AT - 30 * 86_400_000,
+    revoked: 0, push: { registered: false } }))
+  assert.ok(!renderReport(quiet).includes('没注册推送'), '废弃设备不进分母')
+
+  // 近 7 天活跃的 6 台里 4 台没注册：报警，文案写明分母是「近 7 天活跃」。
+  const loud = fixture()
+  loud.devices.list = Array.from({ length: 6 }, (_, i) => ({
+    deviceId: `dvc_${i}`, name: 'iPhone', model: 'iPhone 17', appVersion: '1.2.3',
+    createdAt: GENERATED_AT, lastSeenAt: GENERATED_AT - i * 3_600_000,
+    revoked: 0, push: { registered: i < 2 } }))
+  assert.match(renderReport(loud), /近 7 天活跃的 6 台手机里 4 台没注册推送（67%）/)
+})
+
 test('待回复反馈超过 24h SLA 时文案升级', () => {
   const data = fixture()
   data.feedback.threads[0].createdAt = GENERATED_AT - 30 * 3_600_000
