@@ -50,6 +50,44 @@ lint 自己也有测试——改了 `report.py` 的规则就跑一遍：
 test/.venv/bin/python test/tools/test_report.py    # 每条规则一个反例，全部通过才算可用
 ```
 
+## 测试术语（四维度）与入口归属
+
+术语按四个**正交**维度定义；使用术语前先按此定义，不得自造说法（如"安全档"之类的临时叫法）。
+
+| 维度 | 回答的问题 | 取值与定义 |
+|---|---|---|
+| 一、类别 | 测的是什么 | **单元测试**：进程内调用类型或函数，外部依赖以测试替身替代。<br>**集成测试**：至少一个真实外部部件参与（真实磁盘、真实子进程、真实 Caddy、真实 DSH 实例）。<br>**UI 测试**：XCUITest 驱动真实 App 界面，经中转连接本机实例，含截图与人工核对。<br>**静态检查**：不执行被测程序，读取源码与配置做规则校验。 |
+| 二、实例影响 | 能否与业务并行 | **无接触**：不连接本机 DSH 实例；可与业务并行。<br>**只读接触**：连接实例仅查询，不写状态、不建会话；可与业务并行，代价是占用一个客户端连接。<br>**写接触**：在实例上建会话、发提示词、改已读或归档或工作区登记、删会话；不得与业务并行。 |
+| 三、执行位置 | 占用什么资源 | **macOS 进程**：不占模拟器；可并行。<br>**模拟器进程（无 UI 驱动）**：独占模拟器，不能与 UI 测试或手工操作并行。<br>**模拟器 + UI 驱动**：独占模拟器与屏幕，并需人工核对截图。 |
+| 四、证据渠道 | 证据在哪一级环境取得 | **L1 同机隔离**（同机、临时 `HOME`/`DSH_HOME`，验本机行为）；**L2 Linux 容器**（另一内核与文件系统，代码复制进卷，验跨平台可复现）；**L3 干净环境**（客体 VM 或干净机器，验从零启用）。判定入口 `scripts/verify/lanes.json`。 |
+
+渠道与类别正交：同一个组件可以在不同渠道取证（例如 relay 的 L1 与 L2）。矩阵以"被测对象 × 渠道"给出必跑等级，用 `npm run check:lanes -- --changed <文件>` 查询。
+
+### 各测试入口的被测对象与代码位置
+
+被测对象一栏按**产品组件**标注，取值固定为：手机 iOS、DSH 本体、连接器、中转服务、邮件服务（信件线程与通知投递，含 APNs 推送）、图片插件、非产品组件。矩阵内部的 `protocol`/`plugin`/`relay`/`e2e` 等标识只用于 `check:lanes` 判定，不作为被测对象名称。
+
+| 入口 | 被测对象（产品组件） | 代码位置 | 验证内容 |
+|---|---|---|---|
+| DSHKit 单元测试 | 手机 iOS（协议层，与 DSH 本体的通信口径） | `ios/DSHMobile/DSHKit/Tests` | 协议、编解码、契约向量 |
+| DSHKit `Live*`（4 个文件） | 手机 iOS × DSH 本体（集成） | `ios/DSHMobile/DSHKit/Tests/DSHKitTests/Live*.swift` | 与真实实例交互：`LiveIntegrationTests`、`LiveDuplicateAuditTests`、`LiveWorkspaceFileVersionTests` 为只读接触；`LiveTurnTests` 需 `DSH_LIVE_TURN=1`，为写接触（建会话并发提示词） |
+| Modules `swift test` | 手机 iOS | `ios/DSHMobile/Modules/Tests` | 领域逻辑：会话、聊天、连接、文件、反馈、设置 |
+| `check:ios-modules` 的 iOS 半边 | 手机 iOS | `ios/DSHMobile/Modules/Tests` | 同上，在 iOS 运行时下执行 |
+| `test:app-unit` | 手机 iOS | `ios/DSHMobile/DSHMobileTests` | 测试宿主检测、钥匙串往返、平台相邻代码可测性 |
+| `plugins/mobile-link` `npm test` | 连接器 | `plugins/mobile-link/test` | 端点发现、配对、文件传输、journal、安装路径解析 |
+| `plugins/send-image`、`plugins/doubao-image` `npm test` | 图片插件（手机 iOS 与 DSH 本体之间的图片投递） | `plugins/send-image/test`、`plugins/doubao-image/test` | 图片生成、编码与投递 |
+| `relay` `pytest`（非 e2e） | 中转服务 | `relay/tests/test_*.py` | 中转协议、账户与配额、管理 CLI |
+| `relay` 信件与推送相关测试 | 邮件服务（中转侧信件线程、通知投递、APNs 注册与推送） | `relay/tests/test_feedback_*.py`、`test_push.py`、`test_notify_push.py`、`test_admin_push.py`、`test_app_push_registration.py` | 信件读写、未读、报告、通知投递、推送登记 |
+| 手机侧收件箱测试 | 邮件服务 × 手机 iOS | `ios/DSHMobile/Modules/Tests/DSHFeedbackDomainTests`、`ios/DSHMobile/DSHKit/Tests/DSHKitTests/RelayFeedbackTests.swift` | 信件解析、未读与已读、回信组合 |
+| `relay` `*_e2e.py` | 中转服务（渠道 L2） | `relay/tests/e2e_support.py`、`test_account_state_push_e2e.py` | 启动真实 Caddy 与 HTTP 服务的端到端 |
+| `scripts/**/*.test.mjs` | 非产品组件：仓库工具链 | `scripts/dev/*.test.mjs`、`scripts/release/*.test.mjs` | 重启、档案对等、插件热更、调试设备清扫 |
+| `test/cases/**` | 手机 iOS × 中转服务 × 连接器 × DSH 本体（端到端） | `test/cases/`、`test/tools/` | 真机形态界面、手势、真实链路；同时充当 `ios-app × l1` 的逐屏核对证据 |
+| `npm run lane:l1 -- run --scenario …` 的宿主场景 | DSH 本体（命令行 web 版宿主）× 连接器（插件挂载） | `plugins/mobile-link/lib/dsh-client.js`、`scripts/install/install-plugin.sh` | 起停、插件挂载、路由可达 |
+| 桌面版宿主场景（仅 L3 有效） | DSH 本体（官方桌面版宿主） | `plugins/mobile-link/lib/index.js`、`scripts/install/install-all.sh`、`scripts/dev/profile-parity*.mjs` | 安装、档案对等、安装路径；L1/L2 为 `not-applicable` |
+| 13 个 `check:*` | 非产品组件：仓库静态规则（`check:i18n` 另涉手机 iOS 文案与翻译表） | `scripts/dev/check-*.mjs` 等 | 本地化、分层、契约、文档、结构、矩阵 |
+
+定位差别归纳为三句：纵向按边界分层（协议核心定通信口径、模块包实现领域逻辑、App 目标负责装配与平台适配）；横向按产品组件划分（连接器负责电脑侧接入、中转服务负责公网转发、邮件服务负责信件与通知投递、图片插件负责图片投递）；两端为横切（端到端用例把各组件连起来走真实链路，静态检查只校验结构）。
+
 ## 目录
 
 | 路径 | 内容 | 进 git |
