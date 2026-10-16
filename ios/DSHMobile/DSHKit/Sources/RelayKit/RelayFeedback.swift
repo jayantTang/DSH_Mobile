@@ -105,6 +105,43 @@ public struct FeedbackMessage: Sendable, Hashable, Identifiable, Codable {
     }
 }
 
+/// 来信人标识（团队收件箱扩展，2026-10-15 服务端二期）。
+///
+/// 每个叶子字段都可缺省：匿名提交只有 `kind == .anonymous`；团队账号自己的提交
+/// 服务端不会绑给团队，`teamBound` 用来区分"这条线程要不要进团队收件箱"。
+public struct FeedbackThreadSource: Sendable, Hashable, Codable {
+    public enum Kind: String, Sendable, Codable {
+        case device
+        case anonymous
+    }
+
+    public let kind: Kind?
+    public let deviceModel: String?
+    public let appVersion: String?
+    public let systemVersion: String?
+    /// 账号短 id（如 `acc_8627cd67`），用于界面上认人；不是完整 id。
+    public let accountHint: String?
+    /// 这条线程是否绑了团队（属性，不是视角——两侧都看得到）。
+    public let teamBound: Bool?
+
+    public init(kind: Kind? = nil, deviceModel: String? = nil, appVersion: String? = nil,
+                systemVersion: String? = nil, accountHint: String? = nil, teamBound: Bool? = nil) {
+        self.kind = kind
+        self.deviceModel = deviceModel
+        self.appVersion = appVersion
+        self.systemVersion = systemVersion
+        self.accountHint = accountHint
+        self.teamBound = teamBound
+    }
+
+    /// 列表/详情的首行文案：机型 + 账号短 id；信息不足或匿名时给确定文案。
+    public var displayLine: String {
+        if kind == .anonymous { return String(localized: "匿名来信") }
+        let parts = [deviceModel, accountHint].compactMap { $0 }.filter { !$0.isEmpty }
+        return parts.isEmpty ? String(localized: "匿名来信") : parts.joined(separator: " · ")
+    }
+}
+
 /// One feedback thread, as the relay returns it in an inbox answer.
 public struct FeedbackThread: Sendable, Hashable, Identifiable, Codable {
     public let threadId: String
@@ -121,6 +158,10 @@ public struct FeedbackThread: Sendable, Hashable, Identifiable, Codable {
     public let lastMessageAt: Date?
     /// The relay's own count of owner messages newer than `userReadAt`.
     public let unread: Int
+    /// 团队侧口径：这条线程里团队没读的用户来信条数（团队收件箱扩展，缺省 0）。
+    public let teamUnread: Int
+    /// 发件人标识（团队收件箱扩展）；全部字段可缺省，老服务端不下发时为 nil。
+    public let source: FeedbackThreadSource?
     public let messages: [FeedbackMessage]
 
     public var id: String { threadId }
@@ -135,6 +176,8 @@ public struct FeedbackThread: Sendable, Hashable, Identifiable, Codable {
         createdAt: Date?,
         lastMessageAt: Date?,
         unread: Int,
+        teamUnread: Int = 0,
+        source: FeedbackThreadSource? = nil,
         messages: [FeedbackMessage]
     ) {
         self.threadId = threadId
@@ -143,11 +186,13 @@ public struct FeedbackThread: Sendable, Hashable, Identifiable, Codable {
         self.createdAt = createdAt
         self.lastMessageAt = lastMessageAt
         self.unread = unread
+        self.teamUnread = teamUnread
+        self.source = source
         self.messages = messages
     }
 
     private enum CodingKeys: String, CodingKey {
-        case threadId, subject, status, createdAt, lastMessageAt, unread, messages
+        case threadId, subject, status, createdAt, lastMessageAt, unread, teamUnread, source, messages
     }
 
     public init(from decoder: any Decoder) throws {
@@ -159,6 +204,9 @@ public struct FeedbackThread: Sendable, Hashable, Identifiable, Codable {
         createdAt = RelayDevice.date(fromMilliseconds: try? container.decodeIfPresent(Int.self, forKey: .createdAt))
         lastMessageAt = RelayDevice.date(fromMilliseconds: try? container.decodeIfPresent(Int.self, forKey: .lastMessageAt))
         unread = (try? container.decode(Int.self, forKey: .unread)) ?? 0
+        // 团队收件箱扩展：缺字段/类型不对一律退默认，老服务端照常能解。
+        teamUnread = (try? container.decode(Int.self, forKey: .teamUnread)) ?? 0
+        source = try? container.decodeIfPresent(FeedbackThreadSource.self, forKey: .source)
         messages = (try? container.decode([FeedbackMessage].self, forKey: .messages)) ?? []
     }
 }
@@ -215,14 +263,19 @@ public struct FeedbackInbox: Sendable, Hashable {
     public let threads: [FeedbackThread]
     public let notices: [FeedbackNotice]
     public let unreadCount: Int
+    /// 调用方是不是团队账号（服务端判定）：true 时两栏方向对调——
+    /// 收件箱是用户来信、已发送是团队回信。缺省 false（用户侧逐像素不变）。
+    public let teamPerspective: Bool
 
-    public init(threads: [FeedbackThread], notices: [FeedbackNotice], unreadCount: Int) {
+    public init(threads: [FeedbackThread], notices: [FeedbackNotice], unreadCount: Int,
+                teamPerspective: Bool = false) {
         self.threads = threads.sorted {
             ($0.lastMessageAt ?? $0.createdAt ?? .distantPast)
                 > ($1.lastMessageAt ?? $1.createdAt ?? .distantPast)
         }
         self.notices = notices.sorted { ($0.createdAt ?? .distantPast) > ($1.createdAt ?? .distantPast) }
         self.unreadCount = unreadCount
+        self.teamPerspective = teamPerspective
     }
 }
 
@@ -391,6 +444,7 @@ public struct RelayFeedbackClient: Sendable {
             let threads: [FeedbackThread]?
             let notices: [FeedbackNotice]?
             let unreadCount: Int?
+            let teamPerspective: Bool?
             let error: DSHRPCFailure?
         }
         let wire = tickets.map { WireTicket(threadId: $0.threadId, ticketKey: $0.ticketKey) }
@@ -402,7 +456,8 @@ public struct RelayFeedbackClient: Sendable {
         return FeedbackInbox(
             threads: answer.threads ?? [],
             notices: answer.notices ?? [],
-            unreadCount: answer.unreadCount ?? 0
+            unreadCount: answer.unreadCount ?? 0,
+            teamPerspective: answer.teamPerspective ?? false
         )
     }
 

@@ -138,7 +138,7 @@ public struct FeedbackCenterView: View {
             }
             ForEach(sentThreads) { thread in
                 NavigationLink(value: FeedbackDestination.thread(thread.threadId, .sent)) {
-                    FeedbackSentRow(thread: thread)
+                    FeedbackSentRow(thread: thread, teamPerspective: center.teamPerspective)
                 }
                 .accessibilityIdentifier("feedback.row.\(thread.threadId)")
             }
@@ -148,8 +148,14 @@ public struct FeedbackCenterView: View {
     /// 发件箱按**我发信的时间**倒序：`center.threads` 是按 `lastMessageAt` 排的，收到回信之后
     /// 那封信会往前跳，看起来像"我刚发了一封"（2026-10-12 改成单封信模型后一并修）。
     private var sentThreads: [FeedbackThread] {
-        center.threads.sorted { sentAt($0) > sentAt($1) }
+        let mine = center.threads.filter { thread in
+            thread.messages.contains { $0.author == sentAuthor }
+        }
+        return mine.sorted { sentAt($0) > sentAt($1) }
     }
+
+    /// 团队视角的「已发送」＝我们回过的信（线程里有 owner 留言）。
+    private var sentAuthor: FeedbackMessage.Author { center.teamPerspective ? .owner : .user }
 
     /// 空态**只留一行**（owner：参考一般邮箱，无谓的小字不要有）。
     ///
@@ -160,7 +166,7 @@ public struct FeedbackCenterView: View {
     }
 
     private func sentAt(_ thread: FeedbackThread) -> Date {
-        thread.messages.last { $0.author == .user }?.createdAt ?? thread.createdAt ?? .distantPast
+        thread.messages.last { $0.author == sentAuthor }?.createdAt ?? thread.createdAt ?? .distantPast
     }
 
     // MARK: - 收件箱
@@ -177,7 +183,9 @@ public struct FeedbackCenterView: View {
                 switch item {
                 case .reply(let thread, let message):
                     NavigationLink(value: FeedbackDestination.thread(thread.threadId, .inbox)) {
-                        FeedbackMailRow(firstLine: String(localized: "DSH Mobile 团队"),
+                        FeedbackMailRow(firstLine: center.teamPerspective
+                                            ? (thread.source?.displayLine ?? String(localized: "匿名来信"))
+                                            : String(localized: "DSH Mobile 团队"),
                                         // 主题优先用线程自己的 `subject`；没有就退到
                                         // 「关于你的反馈：<用户那句>」，而不是把回信的
                                         // 「你好：」顶到标题行（见 `FeedbackSubject.replyLine`）。
@@ -210,9 +218,12 @@ public struct FeedbackCenterView: View {
     }
 
     /// 回信＝某条线程里最后一次 owner 留言；与通知混排，按时间倒序看先后。
+    /// 团队视角（030 二期）：收件箱是**用户来信**（最后一封 user 留言）。
     private var inboxItems: [InboxItem] {
+        let isTeam = center.teamPerspective
+        let author: FeedbackMessage.Author = isTeam ? .user : .owner
         let replies = center.threads.compactMap { thread in
-            thread.messages.last { $0.author == .owner }.map { InboxItem.reply(thread, $0) }
+            thread.messages.last { $0.author == author }.map { InboxItem.reply(thread, $0) }
         }
         let notices = center.notices.map { InboxItem.notice($0) }
         return (replies + notices).sorted { $0.createdAt > $1.createdAt }
@@ -278,10 +289,14 @@ private struct FeedbackMailRow: View {
 private struct FeedbackSentRow: View {
 
     public let thread: FeedbackThread
+    /// 团队视角：首行写收信人（那位用户）；用户视角写「DSH Mobile 团队」（030 二期）。
+    public var teamPerspective: Bool = false
 
     public var body: some View {
         FeedbackMailRow(
-            firstLine: String(localized: "DSH Mobile 团队"),
+            firstLine: teamPerspective
+                ? (thread.source?.displayLine ?? String(localized: "匿名来信"))
+                : String(localized: "DSH Mobile 团队"),
             subject: subject,
             snippet: summary,
             // 发件箱里显示的是**我发信那一刻**：`lastMessageAt` 在收到回信之后会变成回信时间，
@@ -302,8 +317,9 @@ private struct FeedbackSentRow: View {
         FeedbackSubject.snippet(of: myLetter?.body)
     }
 
+    /// 「我发出的那封」按视角取：用户取 user 留言，团队取 owner 回信（030）。
     private var myLetter: FeedbackMessage? {
-        thread.messages.last { $0.author == .user }
+        thread.messages.last { $0.author == (teamPerspective ? .owner : .user) }
     }
 }
 #endif

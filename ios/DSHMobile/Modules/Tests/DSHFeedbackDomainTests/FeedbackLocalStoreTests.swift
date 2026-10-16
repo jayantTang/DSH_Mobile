@@ -313,3 +313,51 @@ extension FeedbackLocalStoreTests {
         XCTAssertNotNil(memory["feedback.tickets"], "the write must land in the injected store")
     }
 }
+
+// MARK: - 团队视角（030 二期）
+
+extension FeedbackLocalStoreTests {
+    /// FR-4：团队视角的未读数的是用户来信（user），不是 owner 回信。
+    func test_team_perspective_counts_user_letters_as_unread() {
+        var mirror = FeedbackMirror()
+        mirror.teamPerspective = true
+        mirror.threads = [FeedbackMirror.Thread(
+            threadId: "th_1", status: "open", createdAt: Date(timeIntervalSince1970: 1),
+            lastMessageAt: Date(timeIntervalSince1970: 2),
+            messages: [
+                FeedbackMirror.Message(messageId: "u_1", author: "user", body: "question", createdAt: Date(timeIntervalSince1970: 1)),
+                FeedbackMirror.Message(messageId: "o_1", author: "owner", body: "answer", createdAt: Date(timeIntervalSince1970: 2)),
+            ])]
+        XCTAssertEqual(mirror.localUnreadCount, 1, "team side counts the user's letter, not the owner's reply")
+    }
+
+    /// 同一镜像切回用户视角：口径换回 owner 回信，两集合互不干扰。
+    func test_switching_perspective_switches_which_set_counts() {
+        var mirror = FeedbackMirror()
+        mirror.threads = [FeedbackMirror.Thread(
+            threadId: "th_1", status: "open", createdAt: Date(timeIntervalSince1970: 1),
+            lastMessageAt: Date(timeIntervalSince1970: 2),
+            messages: [
+                FeedbackMirror.Message(messageId: "u_1", author: "user", body: "q", createdAt: Date(timeIntervalSince1970: 1)),
+                FeedbackMirror.Message(messageId: "o_1", author: "owner", body: "a", createdAt: Date(timeIntervalSince1970: 2)),
+            ])]
+        XCTAssertEqual(mirror.localUnreadCount, 1, "user side counts the owner reply")
+
+        mirror.teamPerspective = true
+        XCTAssertEqual(mirror.localUnreadCount, 1, "team side counts the user letter")
+
+        mirror.readUserMessageIds = ["u_1"]
+        XCTAssertEqual(mirror.localUnreadCount, 0, "reading the user letter clears the team badge")
+        XCTAssertFalse(mirror.readOwnerMessageIds.contains("o_1"), "the two read sets must not mix")
+    }
+
+    /// FR-4：视角必须随镜像持久化——离线冷启动要靠它定两栏方向。
+    func test_team_perspective_survives_the_mirror_round_trip() throws {
+        let root = TempFeedbackRoot(label: "perspective")
+        defer { root.remove() }
+        var mirror = FeedbackMirror()
+        mirror.teamPerspective = true
+        try root.store().save(mirror)
+        XCTAssertTrue(root.store().mirror().teamPerspective)
+    }
+}

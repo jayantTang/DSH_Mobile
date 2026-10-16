@@ -187,6 +187,9 @@ public struct FeedbackThreadView: View {
     public let side: FeedbackThreadSide
 
     private var center: FeedbackCenter { .shared }
+    @State private var replyText = ""
+    @State private var isReplying = false
+    @State private var replyError: String?
     private var thread: FeedbackThread? { center.thread(threadId) }
 
     public var body: some View {
@@ -205,6 +208,11 @@ public struct FeedbackThreadView: View {
                         .font(DSHTheme.Typography.caption)
                         .foregroundStyle(DSHTheme.labelSecondary)
                 }
+
+                // FR-5：团队视角 + 看的是来信时，底部给回信入口。
+                if center.teamPerspective, side == .inbox, thread != nil {
+                    replyBox
+                }
             }
             .padding(DSHTheme.Spacing.loose)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -221,12 +229,52 @@ public struct FeedbackThreadView: View {
         }
     }
 
+    /// 团队回信输入区（FR-5）：服务端团队账号免凭据，失败按现有错误分类展示。
+    @ViewBuilder
+    private var replyBox: some View {
+        VStack(alignment: .leading, spacing: DSHTheme.Spacing.tight) {
+            Hairline()
+            TextEditor(text: $replyText)
+                .frame(minHeight: 72)
+                .accessibilityIdentifier("feedback.reply.input")
+            HStack {
+                if let replyError {
+                    Text(replyError)
+                        .font(DSHTheme.Typography.caption)
+                        .foregroundStyle(DSHTheme.danger)
+                }
+                Spacer()
+                Button(String(localized: "回信")) {
+                    let text = replyText
+                    isReplying = true
+                    Task {
+                        defer { isReplying = false }
+                        do {
+                            try await center.reply(to: threadId, text: text)
+                            replyText = ""
+                            replyError = nil
+                        } catch {
+                            // 文案由 Domain 产出（030）：界面不认识协议层的错误映射。
+                            replyError = center.replyFailureText(error)
+                        }
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(replyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isReplying)
+                .accessibilityIdentifier("feedback.reply.send")
+            }
+        }
+        .accessibilityIdentifier("feedback.reply.box")
+    }
+
     /// 这一页要呈现的那封信。旧数据里同一线程可能有多封我方留言（append 时代留下的），
     /// 取最近的那封：与列表行的口径一致。
     private func letter(in thread: FeedbackThread) -> FeedbackMessage? {
-        switch side {
-        case .inbox: return thread.messages.last { $0.author == .owner }
-        case .sent: return thread.messages.last { $0.author == .user }
+        // 团队视角（030 二期）：收件箱是用户来信、已发送是我们的回信，两侧对调。
+        let isTeam = center.teamPerspective
+        switch (side, isTeam) {
+        case (.inbox, false), (.sent, true): return thread.messages.last { $0.author == .owner }
+        case (.inbox, true), (.sent, false): return thread.messages.last { $0.author == .user }
         }
     }
 
@@ -235,7 +283,9 @@ public struct FeedbackThreadView: View {
         switch side {
         case .inbox:
             LetterCard(
-                sender: String(localized: "DSH Mobile 团队"),
+                sender: center.teamPerspective
+                    ? (thread.source?.displayLine ?? String(localized: "匿名来信"))
+                    : String(localized: "DSH Mobile 团队"),
                 isMine: false,
                 // 与收件箱那一行用同一个函数：没有主题时退到「关于你的反馈：…」，
                 // 而不是把回信开头的「你好：」当成标题。
@@ -251,7 +301,9 @@ public struct FeedbackThreadView: View {
             // 主题只写用户真填过的那句；没填就不写抬头行——列表里的兜底标题是列表的需要，
             // 在这里会与正文第一句重复。
             LetterCard(
-                sender: String(localized: "我发出的"),
+                sender: center.teamPerspective
+                    ? String(localized: "我发出的")
+                    : String(localized: "我发出的"),
                 isMine: true,
                 subject: writtenSubject(of: thread),
                 text: message.body,

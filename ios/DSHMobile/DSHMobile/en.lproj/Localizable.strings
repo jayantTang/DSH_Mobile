@@ -683,3 +683,15 @@ It is registered as a workspace first, so a new group appears in the desktop sid
 "关于你的反馈：%@" = "About your feedback: %@";
 /* 空态在拉不到内容时替换成这一行（只留一行，不额外加说明） */
 "现在连不上服务器" = "Cannot reach the server";
+
+/* Team inbox: first line for an anonymous letter (030 phase 2) */
+"匿名来信" = "Anonymous report";
+/* Team inbox: reply button on the thread detail */
+"回信" = "Reply";
+
+/* Team inbox: reply failure copy (030 phase 2) */
+"服务器拒绝了这次回信（%lld%@）" = "The server refused this reply (%lld%@).";
+"网络不通，回信没有发出去，正文已保留。" = "No connection, so the reply was not sent. Your text is kept.";
+"发送太频繁，请稍后重试。" = "Too many attempts. Please try again shortly.";
+"内容太长了，请精简后重试。" = "That is too long. Please shorten it and try again.";
+"服务器返回了无法识别的内容，请稍后重试。" = "The server sent something we could not read. Please try again later.";

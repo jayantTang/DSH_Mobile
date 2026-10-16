@@ -756,6 +756,9 @@ private struct MainView: View {
                 // the questions a screenshot cannot answer — which fonts exist,
                 // for instance, when text renders as boxes.
                 isShowingDiagnostics = true
+            case "feedback":
+                // 收件箱的自动化入口：列表页出现后自己把 sheet 拉起来。
+                break
             case "files":
                 // The file browser needs a session to resolve its workspace, and
                 // picking the first one before the list has arrived leaves this
@@ -1036,7 +1039,8 @@ private struct MainView: View {
             model: listModel,
             onOpenConnections: { isShowingConnections = true },
             onOpenSettings: { isShowingSettings = true },
-            onOpenSession: openCreatedSession
+            onOpenSession: openCreatedSession,
+            openFeedbackOnAppear: automationScreen == "feedback"
         )
     }
 }

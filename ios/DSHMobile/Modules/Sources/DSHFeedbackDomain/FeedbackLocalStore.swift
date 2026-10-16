@@ -125,6 +125,30 @@ public struct FeedbackLocalStore: Sendable {
 public struct FeedbackMirror: Codable, Sendable, Equatable {
 
     public struct Thread: Codable, Sendable, Equatable {
+        public init(threadId: String, subject: String? = nil, status: String,
+                    createdAt: Date, lastMessageAt: Date, teamUnread: Int = 0,
+                    source: FeedbackThreadSource? = nil, messages: [Message]) {
+            self.threadId = threadId
+            self.subject = subject
+            self.status = status
+            self.createdAt = createdAt
+            self.lastMessageAt = lastMessageAt
+            self.teamUnread = teamUnread
+            self.source = source
+            self.messages = messages
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            threadId = try container.decode(String.self, forKey: .threadId)
+            subject = try? container.decodeIfPresent(String.self, forKey: .subject)
+            status = (try? container.decode(String.self, forKey: .status)) ?? "open"
+            createdAt = (try? container.decode(Date.self, forKey: .createdAt)) ?? Date(timeIntervalSince1970: 0)
+            lastMessageAt = (try? container.decode(Date.self, forKey: .lastMessageAt)) ?? createdAt
+            teamUnread = (try? container.decode(Int.self, forKey: .teamUnread)) ?? 0
+            source = try? container.decodeIfPresent(FeedbackThreadSource.self, forKey: .source)
+            messages = (try? container.decode([Message].self, forKey: .messages)) ?? []
+        }
         public var threadId: String
         /// 可选，理由同 `RelayKit.FeedbackThread.subject`：老镜像文件与还没有这个
         /// 字段的服务端都要能读，缺字段按未填处理。
@@ -132,6 +156,10 @@ public struct FeedbackMirror: Codable, Sendable, Equatable {
         public var status: String
         public var createdAt: Date
         public var lastMessageAt: Date
+        /// 团队侧口径：这条线程里团队没读的用户来信条数（缺省 0，老镜像可读）。
+        public var teamUnread: Int = 0
+        /// 发件人标识（团队收件箱）；可选——老镜像与无来源的线程都没有。
+        public var source: FeedbackThreadSource? = nil
         public var messages: [Message]
     }
 
@@ -162,6 +190,26 @@ public struct FeedbackMirror: Codable, Sendable, Equatable {
     /// 已读的通知。019 之后通知的已读是**账号级**一份（服务端权威）：这里既记"本机打开过"的，
     /// 也记每次拉取时服务端说已经读过的那批，两者取并集——只增不减。
     public var readNoticeIds: [String] = []
+    /// 团队视角下「已读集合」记的是**用户来信**（与 readOwnerMessageIds 分侧，互不干扰）。
+    public var readUserMessageIds: [String] = []
+    /// 本机视角（团队/用户）。必须持久化：离线冷启动要靠它定两栏方向（FR-4）。
+    public var teamPerspective: Bool = false
+
+    private enum CodingKeys: String, CodingKey {
+        case threads, notices, readOwnerMessageIds, readNoticeIds, readUserMessageIds, teamPerspective
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        threads = (try? container.decode([Thread].self, forKey: .threads)) ?? []
+        notices = (try? container.decode([Notice].self, forKey: .notices)) ?? []
+        readOwnerMessageIds = (try? container.decode([String].self, forKey: .readOwnerMessageIds)) ?? []
+        readNoticeIds = (try? container.decode([String].self, forKey: .readNoticeIds)) ?? []
+        readUserMessageIds = (try? container.decode([String].self, forKey: .readUserMessageIds)) ?? []
+        teamPerspective = (try? container.decode(Bool.self, forKey: .teamPerspective)) ?? false
+    }
+
+    public init() {}
 }
 
 // 转换构造放在 extension 里：结构体内部一旦声明 init，逐成员 init 就会消失，
@@ -176,6 +224,8 @@ public extension FeedbackMirror.Thread {
             status: thread.status,
             createdAt: created,
             lastMessageAt: thread.lastMessageAt ?? created,
+            teamUnread: thread.teamUnread,
+            source: thread.source,
             messages: thread.messages.map(FeedbackMirror.Message.init)
         )
     }
@@ -222,6 +272,7 @@ public extension FeedbackMirror {
     /// 本机那份只是"我打开过哪几条"的补集。
     public func refreshing(with inbox: FeedbackInbox, seedingReadState: Bool) -> FeedbackMirror {
         var next = seedingReadState ? FeedbackMirror.seeded(from: inbox) : self
+        next.teamPerspective = inbox.teamPerspective
         next.threads = inbox.threads.map(Thread.init)
         next.notices = inbox.notices.map(Notice.init)
         for id in inbox.notices.filter(\.read).map(\.noticeId) where !next.readNoticeIds.contains(id) {
@@ -232,6 +283,7 @@ public extension FeedbackMirror {
 
     static func seeded(from inbox: FeedbackInbox) -> FeedbackMirror {
         var mirror = FeedbackMirror()
+        mirror.teamPerspective = inbox.teamPerspective
         for thread in inbox.threads {
             let ownerIds = thread.messages
                 .filter { $0.author == .owner }
@@ -239,6 +291,13 @@ public extension FeedbackMirror {
                 .map(\.messageId)
             let unread = max(0, min(thread.unread, ownerIds.count))
             mirror.readOwnerMessageIds.append(contentsOf: ownerIds.prefix(ownerIds.count - unread))
+            // 团队侧同理，但口径是用户来信 + teamUnread（FR-4）。
+            let userIds = thread.messages
+                .filter { $0.author == .user }
+                .sorted { ($0.createdAt ?? .distantPast) < ($1.createdAt ?? .distantPast) }
+                .map(\.messageId)
+            let teamUnread = max(0, min(thread.teamUnread, userIds.count))
+            mirror.readUserMessageIds.append(contentsOf: userIds.prefix(userIds.count - teamUnread))
         }
         // 通知不在这里补种：`refreshing(with:)` 每次拉取都会把服务端的已读并进来，
         // 两条路径都做同一件事只会让"谁负责"变模糊。
@@ -262,6 +321,10 @@ public extension FeedbackMirror {
             for id in ownerIds where !readOwnerMessageIds.contains(id) {
                 readOwnerMessageIds.append(id)
             }
+            let userIds = threads[index].messages.filter { $0.author == "user" }.map(\.messageId)
+            for id in userIds where !readUserMessageIds.contains(id) {
+                readUserMessageIds.append(id)
+            }
         }
         for id in noticeIds where !readNoticeIds.contains(id) {
             readNoticeIds.append(id)
@@ -270,19 +333,23 @@ public extension FeedbackMirror {
 
     /// 本机口径的未读数：镜像里 owner 的、不在已读集合里的消息 + 未读通知。
     /// 通知部分与账号口径一致（服务端读过的那批已经在 `readNoticeIds` 里）。
+    /// 本机口径的未读数。分侧（FR-4）：用户侧数 owner 回信未读，团队侧数用户来信未读；
+    /// 通知两侧同一份（账号级）。
     public var localUnreadCount: Int {
-        let readMessages = Set(readOwnerMessageIds)
         let readNotices = Set(readNoticeIds)
+        let unreadNotices = notices.filter { !readNotices.contains($0.noticeId) }
+        let author = teamPerspective ? FeedbackMessage.Author.user.rawValue : FeedbackMessage.Author.owner.rawValue
+        let readMessages = Set(teamPerspective ? readUserMessageIds : readOwnerMessageIds)
         let unreadMessages = threads
             .flatMap(\.messages)
-            .filter { $0.author == FeedbackMessage.Author.owner.rawValue && !readMessages.contains($0.messageId) }
-        let unreadNotices = notices.filter { !readNotices.contains($0.noticeId) }
+            .filter { $0.author == author && !readMessages.contains($0.messageId) }
         return unreadMessages.count + unreadNotices.count
     }
 
     /// 显示用的线程：`unread` 按本机已读集合现场算，排序与服务端一致（新的在前）。
     public var displayThreads: [FeedbackThread] {
-        let read = Set(readOwnerMessageIds)
+        let unreadAuthor = teamPerspective ? FeedbackMessage.Author.user.rawValue : FeedbackMessage.Author.owner.rawValue
+        let read = Set(teamPerspective ? readUserMessageIds : readOwnerMessageIds)
         return threads.map { stored in
             let messages = stored.messages.map { message in
                 FeedbackMessage(
@@ -299,7 +366,9 @@ public extension FeedbackMirror {
                 status: stored.status,
                 createdAt: stored.createdAt,
                 lastMessageAt: stored.lastMessageAt,
-                unread: messages.filter { $0.author == .owner && !read.contains($0.messageId) }.count,
+                unread: messages.filter { $0.author.rawValue == unreadAuthor && !read.contains($0.messageId) }.count,
+                teamUnread: stored.teamUnread,
+                source: stored.source,
                 messages: messages
             )
         }
@@ -310,7 +379,9 @@ public extension FeedbackMirror {
     /// 单条 owner 留言是否还没看过。列表的蓝点按**每一封信**标，所以不能只看线程的
     /// `unread`（那是整条线程的合计，一条线程里可能有多封回信）。
     public func isUnread(messageId: String) -> Bool {
-        !readOwnerMessageIds.contains(messageId)
+        teamPerspective
+            ? !readUserMessageIds.contains(messageId)
+            : !readOwnerMessageIds.contains(messageId)
     }
 
     /// 单条通知是否还没看过（账号口径：别的设备读过就等于读过）。

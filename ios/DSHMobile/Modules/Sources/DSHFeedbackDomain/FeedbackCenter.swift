@@ -35,6 +35,9 @@ public final class FeedbackCenter {
     public private(set) var unreadCount = 0
     /// 显示用列表；内容来自镜像，所以离线打开也有东西可看。
     public var threads: [FeedbackThread] { mirror.displayThreads }
+
+    /// 调用方是不是团队账号（030 二期）：true 时两栏方向对调。
+    public var teamPerspective: Bool { mirror.teamPerspective }
     public var notices: [FeedbackNotice] { mirror.displayNotices }
     public private(set) var isRefreshing = false
     public private(set) var isSubmitting = false
@@ -139,6 +142,46 @@ public final class FeedbackCenter {
         persistMirror()
         lastError = nil
         return ticket
+    }
+
+    /// 团队回信（030 二期 FR-5）：往既有线程追加一封回信。
+    ///
+    /// 团队账号在服务端免 `ticketKey`（授权判据是「调用方是线程的团队侧」）；
+    /// 成功后刷新让该线程回到最新口径。失败按现有 ``FeedbackClientError`` 抛出。
+    public func reply(to threadId: String, text: String) async throws {
+        guard let endpoint = endpointProvider() else {
+            lastError = .network("no-relay-endpoint")
+            throw FeedbackClientError.network("no-relay-endpoint")
+        }
+        do {
+            _ = try await client(endpoint).append(threadId: threadId, ticketKey: nil, text: text)
+        } catch {
+            // 用户可见文案在 Domain 层产出：界面只读 `lastError`，不必认识协议层的错误映射。
+            if let classified = error as? FeedbackClientError {
+                lastError = classified
+            } else {
+                lastError = .network(LinkErrors.describe(error))
+            }
+            throw error
+        }
+        lastError = nil
+        await refreshInbox(force: true)
+    }
+
+    /// 回信失败时给用户看的一句话（界面只读这个，不引协议层的错误映射）。
+    public func replyFailureText(_ error: any Error) -> String {
+        if let classified = error as? FeedbackClientError {
+            switch classified {
+            case .notFound: return String(localized: "这条记录在服务器上已不存在，可能已被删除。")
+            case .server(let status, let code):
+                return String(localized: "服务器拒绝了这次回信（\(status)\(code.map { " · " + $0 } ?? "")）")
+            case .network: return String(localized: "网络不通，回信没有发出去，正文已保留。")
+            case .rateLimited: return String(localized: "发送太频繁，请稍后重试。")
+            case .tooLong: return String(localized: "内容太长了，请精简后重试。")
+            case .decoding: return String(localized: "服务器返回了无法识别的内容，请稍后重试。")
+            }
+        }
+        return LinkErrors.describe(error)
     }
 
     /// 重试用的幂等键。草稿在被用户放弃前（或提交成功前）保持不变；界面层不需要

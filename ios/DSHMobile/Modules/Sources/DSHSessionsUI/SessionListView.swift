@@ -47,12 +47,20 @@ public struct SessionListView: View {
     /// Called with a freshly created session's id so the caller can open it.
     public var onOpenSession: (String) -> Void = { _ in }
 
-    public init(model: SessionListModel, onOpenConnections: @escaping () -> Void, onOpenSettings: @escaping () -> Void, onOpenSession: @escaping (String) -> Void = { _ in }) {
+    /// `openFeedbackOnAppear`：`-DSHOpenScreen feedback` 的自动化入口（030），
+    /// 让收件箱这条链路可以被无人值守地截图验证。生产启动恒为 false。
+    public init(model: SessionListModel, onOpenConnections: @escaping () -> Void,
+                onOpenSettings: @escaping () -> Void,
+                onOpenSession: @escaping (String) -> Void = { _ in },
+                openFeedbackOnAppear: Bool = false) {
         self.model = model
         self.onOpenConnections = onOpenConnections
         self.onOpenSettings = onOpenSettings
         self.onOpenSession = onOpenSession
+        self.openFeedbackOnAppear = openFeedbackOnAppear
     }
+
+    public var openFeedbackOnAppear: Bool = false
 
     @State private var isLooseExpanded = false
     @State private var isArchivedExpanded = false
@@ -97,6 +105,11 @@ public struct SessionListView: View {
         .task { model.loadCachedList() }
         // 反馈未读：冷启动不会触发 `ScenePhase` 变化事件，所以列表出现时就拉一次（SC-003）。
         .task { await services.refreshFeedback() }
+        .task {
+            // 030：自动化钩子——打开记录页（收件箱）。
+            guard openFeedbackOnAppear else { return }
+            isShowingFeedback = true
+        }
         // 待答集合的唯一来源是 `$events` 的 waterfall（host 的会话摘要里没有这个
         // 信息：等回答时它照样报 running）。把它同步进 model，行状态与计数才看得见它；
         // hub 是 @Observable，这里读一下就等于订阅了变化。
