@@ -558,7 +558,8 @@ struct RootView: View {
             // "Already read" marks belong to one computer.
             viewLog.useScope(connectionScope)
             // 032：已读水位同时是**账户级**状态——装配同步（另一台设备读过的，这里也要看到）。
-            AccountStateSync.shared.attach(viewLog: viewLog, link: { [weak store] in store })
+            AccountStateSync.shared.attach(viewLog: viewLog, alertPrefs: alertPrefs,
+                                           link: { [weak store] in store })
             hub.startIfNeeded(link: store.link)
             Task { await listModel.start() }
             // Whatever was on screen when the link went away is stale by the

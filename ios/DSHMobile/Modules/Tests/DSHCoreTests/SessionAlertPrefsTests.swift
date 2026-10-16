@@ -86,3 +86,68 @@ final class SessionAlertPrefsTests: XCTestCase {
         XCTAssertFalse(SessionAlertPrefs(defaults: isolated.defaults).isAuthorized)
     }
 }
+
+// MARK: - 032：账户级开关
+
+extension SessionAlertPrefsTests {
+    /// 用户在本机改一次，两个钩子都要动：`onChange` 重新登记设备级推送，`onLocalChange` 推账户级。
+    func test_a_local_change_fires_both_hooks() async {
+        let prefs = SessionAlertPrefs(defaults: isolated.defaults)
+        var onChange = 0
+        var onLocal = 0
+        prefs.onChange = { onChange += 1 }
+        prefs.onLocalChange = { onLocal += 1 }
+
+        prefs.notifyOnTurnEnd = false
+        await settle()
+
+        XCTAssertEqual(onChange, 1)
+        XCTAssertEqual(onLocal, 1)
+    }
+
+    /// 远端并进来的值只走 `onChange`（本机要重新登记推送），**不**回推账户级——
+    /// 否则两台设备会来回推同一份状态。
+    func test_a_remote_change_does_not_echo_back_to_the_account() async {
+        let prefs = SessionAlertPrefs(defaults: isolated.defaults)
+        var onChange = 0
+        var onLocal = 0
+        prefs.onChange = { onChange += 1 }
+        prefs.onLocalChange = { onLocal += 1 }
+
+        prefs.applyRemote(turnEnd: false, attention: true)
+        await settle()
+
+        XCTAssertFalse(prefs.notifyOnTurnEnd)
+        XCTAssertTrue(prefs.notifyOnAttention)
+        XCTAssertEqual(onChange, 1, "a remote change still re-registers the device push")
+        XCTAssertEqual(onLocal, 0, "a merged value must not be pushed back")
+    }
+
+    /// 远端值与本地一致时不产生任何副作用（免得每次拉取都触发一次登记）。
+    func test_an_identical_remote_value_is_a_no_op() async {
+        let prefs = SessionAlertPrefs(defaults: isolated.defaults)
+        var onChange = 0
+        prefs.onChange = { onChange += 1 }
+
+        prefs.applyRemote(turnEnd: true, attention: true)
+        await settle()
+
+        XCTAssertEqual(onChange, 0)
+    }
+
+    /// 远端值也要落盘：下一次冷启动读到的是账户口径。
+    func test_a_remote_value_persists() async {
+        let prefs = SessionAlertPrefs(defaults: isolated.defaults)
+        prefs.applyRemote(turnEnd: false, attention: false)
+        await settle()
+
+        let reloaded = SessionAlertPrefs(defaults: isolated.defaults)
+        XCTAssertFalse(reloaded.notifyOnTurnEnd)
+        XCTAssertFalse(reloaded.notifyOnAttention)
+    }
+
+    /// 钩子是 `Task` 里跑的，给它一拍再断言。
+    private func settle() async {
+        try? await Task.sleep(for: .milliseconds(20))
+    }
+}

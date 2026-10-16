@@ -1,4 +1,5 @@
 import DSHConnectionAPI
+import DSHCore
 import DSHFoundation
 import DSHKit
 import Foundation
@@ -26,16 +27,23 @@ final class AccountStateSync {
     static let sessionReadPrefix = "sessionRead."
 
     private var viewLog: SessionViewLog?
+    private var alertPrefs: SessionAlertPrefs?
     private var linkProvider: (@MainActor () -> (any LinkService)?)?
+
     private var subscription: Task<Void, Never>?
     private var pushTask: Task<Void, Never>?
 
     private init() {}
 
     /// 装配：链路可用时把订阅接上。重复调用只保留最后一次（RootView 的前后台钩子会调多次）。
-    func attach(viewLog: SessionViewLog, link: @escaping @MainActor () -> (any LinkService)?) {
+    func attach(viewLog: SessionViewLog,
+                alertPrefs: SessionAlertPrefs,
+                link: @escaping @MainActor () -> (any LinkService)?) {
         self.viewLog = viewLog
+        self.alertPrefs = alertPrefs
         self.linkProvider = link
+        // 用户在本机改开关 → 推到账户级（远端并进来的值不会走到这里，见 SessionAlertPrefs）。
+        alertPrefs.onLocalChange = { [weak self] in await self?.pushAlertPrefs() }
         startSubscription()
     }
 
@@ -54,6 +62,9 @@ final class AccountStateSync {
                     guard !Task.isCancelled else { return }
                     if keys.contains(where: { $0.hasPrefix(Self.sessionReadPrefix) }) {
                         await self.pullSessionRead()
+                    }
+                    if keys.contains(Self.alertPrefsKey) {
+                        await self.pullAlertPrefs()
                     }
                 }
                 try? await Task.sleep(for: .seconds(3))
@@ -75,6 +86,7 @@ final class AccountStateSync {
     /// 回前台/刚连上时拉一次，兜住丢掉的推送。
     func refresh() async {
         await pullSessionRead()
+        await pullAlertPrefs()
     }
 
     // MARK: - 收发
@@ -92,6 +104,33 @@ final class AccountStateSync {
         let watermarks = map.compactMapValues { $0.doubleValue }
         // `mergeRemote` 内部取 max 并落盘；界面观察 `SessionViewLog`，所以这里不用再通知谁。
         log.mergeRemote(viewedAt: watermarks)
+    }
+
+    /// 提醒开关在账户状态里的 key。
+    static let alertPrefsKey = "alertPrefs"
+
+    private func pullAlertPrefs() async {
+        guard let client = Self.activeRelayClient(), let prefs = alertPrefs else { return }
+        guard let entries = try? await client.fetch(keys: [Self.alertPrefsKey]),
+              case .object(let map)? = entries[Self.alertPrefsKey]?.value
+        else { return }
+        // 缺字段就当没说过（老中转/旧版本写的状态），保留本机值。
+        let turnEnd = map["turnEnd"]?.boolValue ?? prefs.notifyOnTurnEnd
+        let attention = map["attention"]?.boolValue ?? prefs.notifyOnAttention
+        prefs.applyRemote(turnEnd: turnEnd, attention: attention)
+    }
+
+    /// 用户在本机改了开关：推到账户级。时间戳用本机现在，配合中转"只前进"。
+    func pushAlertPrefs() async {
+        guard let client = Self.activeRelayClient(), let prefs = alertPrefs else { return }
+        let snapshot = prefs.accountSnapshot
+        let entry = AccountStateClient.Entry(
+            key: Self.alertPrefsKey,
+            value: .object(["turnEnd": .bool(snapshot.turnEnd),
+                            "attention": .bool(snapshot.attention)]),
+            updatedAt: Int(Date().timeIntervalSince1970 * 1000)
+        )
+        _ = try? await client.put([entry])
     }
 
     private func pushSessionRead() async {
