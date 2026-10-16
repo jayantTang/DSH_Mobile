@@ -63,7 +63,15 @@ export function isHistoryMethod(method) {
 export const SEARCH_CHUNK = 2000
 export const MAX_SEARCH_CHUNKS_PER_CALL = 4
 export const DEFAULT_SEARCH_LIMIT = 50
-export const MIN_QUERY_LENGTH = 2
+/// 查询下限：**1 个字符**（owner 2026-10-17 决定）。
+///
+/// 原来卡在 2 个字，理由是「一个字几乎命中整段历史、翻不完」。这个代价在 2026-10-17
+/// 变成可接受：搜索有了分页与片数进度（`search-progress`，界面显示「已扫 k/N 片」），
+/// 一页仍只回 50 条、一次调用仍最多扫 4 块（≈1.3 秒），所以下限降到 1。
+///
+/// 仍然拒绝的是**空关键词且没带 roles**：那不是搜索，是一次没有范围的全表扫描
+/// （「浏览我的提问」必须带 roles，见 `browsing`）。
+export const MIN_QUERY_LENGTH = 1
 
 function idOfAddress(address) {
   if (address === null || typeof address !== 'object') return undefined
@@ -221,7 +229,8 @@ export function createHistoryService({ logger = console } = {}) {
     // 这时不按文本过滤，只按 seq 段扫，按角色筛。
     const browsing = query.length === 0 && roles !== undefined
     if (!browsing && query.length < MIN_QUERY_LENGTH) {
-      return failure('link/query-too-short', `query must be at least ${MIN_QUERY_LENGTH} characters`)
+      return failure('link/query-too-short',
+        `query must be at least ${MIN_QUERY_LENGTH} character (or pass roles to browse)`)
     }
     const limit = Number.isSafeInteger(Number(args.limit)) && Number(args.limit) > 0
       ? Math.min(Number(args.limit), 200) : DEFAULT_SEARCH_LIMIT

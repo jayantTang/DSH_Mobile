@@ -304,11 +304,14 @@ test('sessionFind honours the role filter (only my own questions)', async () => 
   assert.ok(result.value.hits.every((hit) => hit.role === 'me'))
 })
 
-test('sessionFind refuses a query that is too short', async () => {
+test('sessionFind accepts a single-character query, with progress to go with it', async () => {
+  // owner 2026-10-17 把下限从 2 个字降到 1：一个字也搜全量，「命中太多」靠分页与片数进度兜住。
   const service = bound(createHistoryService({ logger: { warn() {}, info() {} } }), fakeSearchQuery(searchLog(20)))
-  const result = await service.handle(FIND_METHOD, { address: ADDRESS, query: 'x' })
-  assert.equal(result.ok, false)
-  assert.equal(result.error.code, 'link/query-too-short')
+  const result = await service.handle(FIND_METHOD, { address: ADDRESS, query: 'q', limit: 3, chunk: 10 })
+  assert.equal(result.ok, true)
+  assert.ok(result.value.hits.length > 0, '一个字也要能搜出命中')
+  assert.equal(result.value.totalChunks, 2, '片数照报')
+  assert.ok(result.value.remainingChunks <= 2, '剩余片数照报')
 })
 
 test('sessionFind uses the index when the deployment has one', async () => {
