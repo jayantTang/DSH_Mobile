@@ -39,6 +39,20 @@ final class HostSmokeTests: XCTestCase {
         XCTAssertEqual(DSHMobileApp.isUnitTestHost, fromEnvironment)
     }
 
+    /// 032 FR-009：信件状态帧的 key 必须被认出来。认不出就等于没收到——
+    /// 角标只能等下次回前台（owner 2026-10-17 反馈的就是这件事）。
+    @MainActor
+    func testFeedbackAccountStateKeysAreRecognised() {
+        XCTAssertTrue(AccountStateSync.mentionsFeedback(["feedback"]),
+                      "the mail key itself must match")
+        XCTAssertTrue(AccountStateSync.mentionsFeedback(["sessionRead.host", "feedback.notice"]),
+                      "a namespaced mail key must match too")
+        XCTAssertFalse(AccountStateSync.mentionsFeedback(["sessionRead.host"]),
+                       "session-read keys must not pull the mailbox")
+        XCTAssertFalse(AccountStateSync.mentionsFeedback([]),
+                       "an empty frame matches nothing")
+    }
+
     /// 这个 target 该装的正是"平台专有但不含 UI"的代码：这里拿演示模式的脱敏函数做代表。
     /// 它在截图流程里用得上，但本身是纯函数——不需要界面、不需要中转、不需要看图判定。
     func testPlatformAdjacentCodeIsTestableWithoutUILaunch() {

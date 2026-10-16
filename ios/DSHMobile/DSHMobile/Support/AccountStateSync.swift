@@ -1,13 +1,14 @@
 import DSHConnectionAPI
 import DSHCore
+import DSHFeedbackDomain
 import DSHFoundation
 import DSHKit
 import Foundation
 
 /// 账户级状态的 App 侧协调器（032）。
 ///
-/// 它管的是"一台设备改了、同账户其他设备要跟着变"的那几项里**第一项**：会话已读水位。
-/// 规则很窄，但要说清楚：
+/// 它管"一台设备改了、同账户其他设备要跟着变"的那几项，现在有两项：**会话已读水位**
+/// 与**信件（邮件）状态**。规则很窄，但要说清楚：
 ///
 /// * **写**：用户打开某个会话 → 本地先记（`SessionViewLog`，界面立刻不闪）→ 400ms 后
 ///   把整份水位 PUT 上去。用"整份快照"而不是"单个会话增量"，是因为合并规则是**取 max**，
@@ -15,6 +16,11 @@ import Foundation
 /// * **读**：中转推来 `accountState{keys:[sessionRead.…]}` → 拉一次 → 按 max 并进本地。
 ///   值不在推送里（中转只推 key），所以收到通知要自己去拉。
 /// * **兜底**：回前台再拉一次。推送是尽力而为的（丢了不重试），最终一致靠这一下。
+///
+/// 信件那一项形状相同、但方向相反：中转推来 `accountState{keys:["feedback"]}` 时，本机的
+/// 信件未读角标要**去 mail 服务拉一次**（`FeedbackCenter.refreshInbox(force:)`）。
+/// 这条帧是 mail 服务在"新信落库"与"标记已读"之后借中转的在线连接扇过来的（032 FR-009）；
+/// 在此之前 App 只在回前台/打开记录页时拉，所以角标总是慢一拍。
 ///
 /// 为什么住在 App 层：它要同时碰协议客户端（DSHKit）、会话状态（DSHFoundation）与连接门面
 /// （DSHConnectionAPI）；这三样同时可见的位置只有装配层。Domain 层不该认识 HTTP。
@@ -25,6 +31,14 @@ final class AccountStateSync {
 
     /// 会话已读在账户状态里的 key 前缀；`sessionRead.<hostScope>`。
     static let sessionReadPrefix = "sessionRead."
+
+    /// 信件状态的 key（mail 服务发出来的那个）；`feedback` 以及将来的 `feedback.<kind>`。
+    static let feedbackKey = "feedback"
+
+    /// 这一批 key 里有没有信件状态。抽成静态函数是为了能在宿主单测里单独验，不必起整条链路。
+    static func mentionsFeedback(_ keys: [String]) -> Bool {
+        keys.contains { $0 == feedbackKey || $0.hasPrefix(feedbackKey + ".") }
+    }
 
     private var viewLog: SessionViewLog?
     private var alertPrefs: SessionAlertPrefs?
@@ -80,6 +94,9 @@ final class AccountStateSync {
                     if keys.contains(Self.answeredPromptsKey) {
                         await self.pullAnsweredPrompts()
                     }
+                    if Self.mentionsFeedback(keys) {
+                        await self.refreshFeedback()
+                    }
                 }
                 try? await Task.sleep(for: .seconds(3))
             }
@@ -95,6 +112,14 @@ final class AccountStateSync {
             guard !Task.isCancelled else { return }
             await self?.pushSessionRead()
         }
+    }
+
+    /// 收到信件的账户状态帧：立刻去 mail 服务拉一次收件箱（角标与列表都跟着变）。
+    ///
+    /// 不复用 `minimumRefreshInterval` 那道节流：这帧本来就是"刚刚变了"的信号，
+    /// 而且次数很少（一封信一次），节流只会在连收两封时吃掉第二封。
+    private func refreshFeedback() async {
+        await FeedbackCenter.shared.refreshInbox(force: true)
     }
 
     /// 回前台/刚连上时拉一次，兜住丢掉的推送。
