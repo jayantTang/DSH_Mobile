@@ -623,6 +623,116 @@ async def devices_list(request: web.Request) -> web.Response:
     })
 
 
+#: 一个账户状态条目的大小上限（字节）。状态是"水位/开关"级别的小对象，
+#: 不是文件通道；设上限是为了让误用（把整份转写塞进来）当场失败，而不是悄悄把
+#: 中转的 SQLite 撑大。
+MAX_ACCOUNT_STATE_BYTES = 8 * 1024
+#: 一次 PUT 最多带几条。客户端按 key 分批写；一批几十条足够覆盖"一次读了一屏会话"。
+MAX_ACCOUNT_STATE_ENTRIES = 64
+
+
+def _account_state_error(message: str) -> web.Response:
+    return json_error(400, "account-state/bad-request", message)
+
+
+async def account_state_get(request: web.Request) -> web.Response:
+    """读调用方账户的状态条目（032）。
+
+    设备 token 鉴权：一台已配对的 client 只能读**自己账户**的状态，账号从 token 反查，
+    请求里不接受 accountId（否则就是越权读别人）。
+    """
+    store: Store = request.app["store"]
+    token = bearer_token(request)
+    device = await asyncio.to_thread(store.device_by_token, token) if token else None
+    if device is None:
+        return json_error(401, "auth/invalid-token", "a valid device token is required")
+    raw = request.query.get("keys", "")
+    keys = [item for item in (part.strip() for part in raw.split(",")) if item][:MAX_ACCOUNT_STATE_ENTRIES]
+    state = await asyncio.to_thread(store.account_state, device["accountId"], keys or None)
+    return web.json_response({"ok": True, "accountId": device["accountId"], "entries": state})
+
+
+async def account_state_put(request: web.Request) -> web.Response:
+    """写账户状态，只前进不后退；写成功后给同账户其他在线设备发一帧通知（032）。
+
+    请求体：``{"entries": [{"key": "...", "value": <any>, "updatedAt": <ms>}, ...]}``。
+    `updatedAt` 由客户端给（它自己的时钟），中转只比较大小——因此**旧设备回退不了新状态**，
+    这正是我们要的；代价是设备时钟要对得上，所以客户端用"服务端时间优先、本地时间兜底"。
+    """
+    store: Store = request.app["store"]
+    hub = request.app["hub"]
+    # 先认人，再挑 body 的毛病：未认证的调用者不该从错误信息里读出参数校验的细节。
+    token = bearer_token(request)
+    device = await asyncio.to_thread(store.device_by_token, token) if token else None
+    if device is None:
+        return json_error(401, "auth/invalid-token", "a valid device token is required")
+
+    body = await read_json(request)
+    if body is None:
+        return _account_state_error("body must be a JSON object")
+    entries = body.get("entries")
+    if not isinstance(entries, list) or not entries:
+        return _account_state_error("entries must be a non-empty array")
+    if len(entries) > MAX_ACCOUNT_STATE_ENTRIES:
+        return _account_state_error(f"at most {MAX_ACCOUNT_STATE_ENTRIES} entries per request")
+
+    account_id = device["accountId"]
+    applied_keys: list[str] = []
+    stored: dict[str, dict[str, Any]] = {}
+    for entry in entries:
+        if not isinstance(entry, dict):
+            return _account_state_error("each entry must be an object")
+        key = entry.get("key")
+        if not isinstance(key, str) or not key or len(key) > 200:
+            return _account_state_error("each entry needs a short string key")
+        stamp = entry.get("updatedAt")
+        if not isinstance(stamp, int) or stamp <= 0:
+            return _account_state_error("each entry needs an integer updatedAt (ms)")
+        payload = json.dumps(entry.get("value"), ensure_ascii=False, separators=(",", ":"))
+        if len(payload.encode("utf-8")) > MAX_ACCOUNT_STATE_BYTES:
+            return json_error(413, "account-state/too-large",
+                              f"one entry may be at most {MAX_ACCOUNT_STATE_BYTES} bytes")
+        result = await asyncio.to_thread(
+            store.put_account_state, account_id, key, entry.get("value"),
+            updated_at=stamp, device_id=device["deviceId"])
+        stored[key] = result["stored"]
+        if result["applied"]:
+            applied_keys.append(key)
+
+    if applied_keys:
+        # 尽力而为：入队失败就当没发（见 hub.notify_account_state）。
+        hub.notify_account_state(account_id, applied_keys,
+                                 exclude_device_id=device["deviceId"])
+    return web.json_response({"ok": True, "applied": applied_keys, "entries": stored})
+
+
+async def internal_account_state_touch(request: web.Request) -> web.Response:
+    """环回专用：让信件服务在"已读"落库后通知同账户的其他设备（032 FR-009）。
+
+    mail 与 relay 是两个进程、两张库。信件的已读本来就是账户级（`userReadAt`/
+    `ownerReadAt`），这里**不写任何状态**，只是借中转的在线连接扇一帧"去看看信件"——
+    否则同一个人两台手机，一台读过的未读蓝点要在另一台上等到下次前台刷新才消失。
+
+    与 `/internal/tokens/resolve` 同一道门：只认环回来源。
+    """
+    hub = request.app["hub"]
+    if not is_loopback(request.remote):
+        # 与 /internal/tokens/resolve 同一道守卫、同一个理由：公网到达回 404，
+        # 探测者不该分辨得出这个端点是否存在。
+        LOGGER.info("relay: refused /internal/account-state/touch for non-loopback peer %s",
+                    request.remote)
+        return json_error(404, "not-found", "not found")
+    body = await read_json(request) or {}
+    account_id = body.get("accountId")
+    if not isinstance(account_id, str) or not account_id:
+        return json_error(400, "internal/bad-request", 'body must be {"accountId": "..."}')
+    keys = body.get("keys")
+    if not isinstance(keys, list) or not keys:
+        keys = ["feedback"]
+    sent = hub.notify_account_state(account_id, [str(item) for item in keys])
+    return web.json_response({"ok": True, "notified": sent})
+
+
 async def devices_revoke(request: web.Request) -> web.Response:
     """Revoke one device belonging to the caller's own agent.
 
@@ -1284,6 +1394,9 @@ def register_http_routes(app: web.Application, route: Any, base_path: str) -> No
     route("POST", "/pair/code", pair_code)
     route("GET", "/devices", devices_list)
     route("POST", "/pair/code/regenerate", pair_code_regenerate)
+    route("GET", "/account/state", account_state_get)
+    route("PUT", "/account/state", account_state_put)
+    route("POST", "/internal/account-state/touch", internal_account_state_touch)
     route("POST", "/devices/revoke", devices_revoke)
     route("POST", "/devices/push", devices_push)
     route("PUT", "/files/up", files_up)

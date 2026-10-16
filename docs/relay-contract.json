@@ -16,7 +16,9 @@
     "history-role-filter",
     "history-scan-boundary",
     "device-subprotocol-auth",
-    "persistent-pair-code"
+    "persistent-pair-code",
+    "account-state",
+    "account-state-push"
   ],
   "deviceToAgent": [
     "req",

@@ -15,6 +15,7 @@ much larger bound because losing it would drop every device at once.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import time
@@ -1499,6 +1500,29 @@ class RelayHub:
         for link in list(self.agents.values()):
             await link.close(1001, reason)
         self.agents.clear()
+
+    def notify_account_state(self, account_id: str, keys: list[str],
+                             *, exclude_device_id: str | None = None) -> int:
+        """给同账户的在线设备各发一帧 `accountState`（032）。
+
+        **尽力而为**：入队失败（对端太慢）就当没发，不重试、不入队、不阻断写入方——
+        这条通道的意义是"两三秒内其他设备跟上"，最终一致性靠客户端前台拉取兜底。
+        把它做成可靠投递，就等于又给系统加了一条会自己重连/重试的路径，得不偿失。
+
+        排除写入者：那台设备自己刚写完，本机已经改了。
+        """
+        if not account_id or not keys:
+            return 0
+        frame = json.dumps({"t": "accountState", "keys": list(keys)}, ensure_ascii=False)
+        sent = 0
+        for link in list(self._devices.values()):
+            if link.account_id != account_id or link.closed:
+                continue
+            if exclude_device_id and link.device_id == exclude_device_id:
+                continue
+            if link.enqueue_text(frame):
+                sent += 1
+        return sent
 
     def all_devices(self) -> Iterable[DeviceLink]:
         return list(self._devices.values())

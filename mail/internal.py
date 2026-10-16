@@ -60,3 +60,40 @@ class RelayIdentityResolver:
         if self._session is not None and not self._session.closed:
             await self._session.close()
         self._session = None
+
+
+class AccountStateNotifier:
+    """`app["notify_account_state"]` 的生产实现：告诉中转"这个账户的信件状态变了"。
+
+    为什么需要它：信件的已读本来就是**账户级**的（`userReadAt`/`ownerReadAt` 在 mail 库里），
+    但同一个人两台手机时，A 读完只改了 mail 的库；B 的未读蓝点要等它下次前台刷新才消失。
+    这一条调用只是借中转的在线连接扇一帧"去看看信件"（032 FR-009）。
+
+    失败语义与 :class:`RelayIdentityResolver` 完全一致：短超时、失败即放弃、不重试、不抛错——
+    它是一条**通知**，不是状态写入；丢了靠客户端前台拉取兜底。
+    """
+
+    def __init__(self, base_url: str = DEFAULT_RELAY_INTERNAL_URL, timeout_s: float = 2.0):
+        self._base_url = base_url.rstrip("/")
+        self._timeout_s = timeout_s
+        self._session: aiohttp.ClientSession | None = None
+
+    async def __call__(self, account_id: str | None, keys: list[str] | None = None) -> None:
+        if not account_id:
+            return
+        url = f"{self._base_url}/internal/account-state/touch"
+        body = {"accountId": account_id, "keys": keys or ["feedback"]}
+        try:
+            if self._session is None or self._session.closed:
+                self._session = aiohttp.ClientSession(
+                    timeout=aiohttp.ClientTimeout(total=self._timeout_s))
+            async with self._session.post(url, json=body) as response:
+                if response.status != 200:
+                    LOGGER.warning("mail: account state touch returned %d", response.status)
+        except (aiohttp.ClientError, TimeoutError, OSError) as error:
+            LOGGER.warning("mail: account state touch failed (%s); other devices refresh later",
+                           error)
+
+    async def aclose(self) -> None:
+        if self._session is not None and not self._session.closed:
+            await self._session.close()

@@ -14,6 +14,7 @@ These are blocking sqlite3 calls; the HTTP handlers reach them through
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import os
 import secrets
@@ -90,6 +91,23 @@ CREATE TABLE IF NOT EXISTS pairCodes (
   useCount   INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS pair_codes_agent ON pairCodes(agentId);
+
+-- 账户级状态（032）：一台设备改了、同账户其他设备要跟着变的那几项——会话已读水位、
+-- 角标水位、提醒开关、待回应已回答。值是一段 JSON 文本，**服务端只做两件事**：
+-- 按 (accountId, key) 存取，以及保证 `updatedAt` 单调（拒绝更旧的写）。合并语义
+-- （比如已读取最大值、开关后写覆盖）由写入方决定，中转不解释内容——这与 DLP
+-- "不解析任何 DSH 语义"的立场一致。
+--
+-- 为什么不是每台设备各存一份：owner 2026-10-16 要的是"账户为单位"，即"我在这台手机
+-- 上读过的信、关掉的提醒，另一台手机与浏览器看到的是同一份"。
+CREATE TABLE IF NOT EXISTS accountState (
+  accountId         TEXT NOT NULL,
+  key               TEXT NOT NULL,
+  value             TEXT NOT NULL,
+  updatedAt         INTEGER NOT NULL,
+  updatedByDeviceId TEXT,
+  PRIMARY KEY (accountId, key)
+);
 
 -- 按天按设备的出口用量。中转只在内存里记当日额度（断开就丢），"今天谁用了多少"
 -- 这类问题以前只能靠猜；这张表就是那笔账：每台设备每天一行，UPSERT 累加。
@@ -909,6 +927,70 @@ class Store:
             "expired", "that pairing code has expired",
             agentId=hit["agentId"], createdAt=int(hit["createdAt"]),
             expiresAt=int(hit["expiresAt"]))
+
+    # ── 账户级状态（032）────────────────────────────────────────────────────
+
+    def account_state(self, account_id: str, keys: list[str] | None = None) -> dict[str, dict[str, Any]]:
+        """读一个账户的状态条目。``keys=None`` 读全部。
+
+        返回值形状：``{key: {"value": <解析后的 JSON>, "updatedAt": ms, "updatedByDeviceId": id}}``。
+        值解析不出来（手工写坏、旧版本格式）时按字符串原样返回，不抛错——一条坏状态
+        不该让整次读取失败，其他设备还要靠它对齐。
+        """
+        if keys:
+            placeholders = ",".join("?" for _ in keys)
+            rows = self._conn.execute(
+                f"SELECT * FROM accountState WHERE accountId=? AND key IN ({placeholders})",
+                (account_id, *keys),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT * FROM accountState WHERE accountId=?", (account_id,)).fetchall()
+        out: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            try:
+                value = json.loads(row["value"])
+            except (TypeError, ValueError):
+                value = row["value"]
+            out[row["key"]] = {
+                "value": value,
+                "updatedAt": int(row["updatedAt"]),
+                "updatedByDeviceId": row["updatedByDeviceId"],
+            }
+        return out
+
+    def put_account_state(self, account_id: str, key: str, value: Any, *, updated_at: int,
+                          device_id: str | None = None) -> dict[str, Any]:
+        """写一条账户状态，**只前进不后退**。
+
+        单调规则：来件的 ``updatedAt`` 不大于已存的就拒收（`applied: False`），返回已存的
+        那份。为什么必须有这条：多台设备并发写同一项（"两台手机同时把会话标已读"）时，
+        没有它就会出现"旧的那台晚到一步、把新的状态盖回旧值"。相等按幂等处理——同一次
+        写的重试不该被当成冲突。
+
+        合并在写入方做（例如已读水位取 max），中转只看时间戳，不解释值。
+        """
+        serialized = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+        stamp = int(updated_at)
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM accountState WHERE accountId=? AND key=?", (account_id, key),
+            ).fetchone()
+            if row is not None and int(row["updatedAt"]) >= stamp:
+                return {"applied": False, "stored": {
+                    "key": key, "value": json.loads(row["value"]), "updatedAt": int(row["updatedAt"]),
+                    "updatedByDeviceId": row["updatedByDeviceId"]}}
+            self._conn.execute(
+                "INSERT INTO accountState(accountId, key, value, updatedAt, updatedByDeviceId)"
+                " VALUES(?,?,?,?,?)"
+                " ON CONFLICT(accountId, key) DO UPDATE SET"
+                " value=excluded.value, updatedAt=excluded.updatedAt,"
+                " updatedByDeviceId=excluded.updatedByDeviceId",
+                (account_id, key, serialized, stamp, device_id),
+            )
+            self._conn.commit()
+        return {"applied": True, "stored": {
+            "key": key, "value": value, "updatedAt": stamp, "updatedByDeviceId": device_id}}
 
     def purge_expired(self, at: int | None = None) -> int:
         """删掉过期码，以及**早就作废**的码（032）。

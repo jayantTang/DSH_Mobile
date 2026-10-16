@@ -525,6 +525,32 @@ async def test_read_clears_the_unread_count_and_is_idempotent(client, store):
     assert (await inbox(client, [ticket_pair(ticket)]))["unreadCount"] == 0
 
 
+async def test_read_tells_the_account_so_the_other_devices_refresh(client, store, provisioned):
+    """032 FR-009：已读落库后通知同账户的其他在线设备（这里只验"通知了一声、带着账户"）。"""
+    token = await paired_device(client, provisioned["agent"]["agentId"], "DSH-One")
+    ticket = await feedback_ticket(client)
+    store.append_feedback_message(ticket["threadId"], "回信", author="owner")
+    client.app["test_notified"].clear()
+
+    marked = await client.post("/feedback/read", json={
+        "threadIds": [ticket["threadId"]], "tickets": [ticket_pair(ticket)],
+    }, headers={"Authorization": f"Bearer {token}"})
+    assert marked.status == 200, await marked.text()
+
+    assert client.app["test_notified"] == [(provisioned["account"]["accountId"], None)]
+
+
+async def test_read_without_a_device_token_notifies_nobody(client, store):
+    """匿名提交没有账户，"通知其他设备"这件事无从谈起——不能因此报错或发空通知。"""
+    ticket = await feedback_ticket(client)
+    client.app["test_notified"].clear()
+    marked = await client.post("/feedback/read", json={
+        "threadIds": [ticket["threadId"]], "tickets": [ticket_pair(ticket)],
+    })
+    assert marked.status == 200, await marked.text()
+    assert client.app["test_notified"] == []
+
+
 async def test_read_without_a_device_token_ignores_notice_ids(client, store):
     store.create_notice("通知正文", "服务通知", ["acc_x"], at=5_000)
     notice_id = store._rows("SELECT noticeId FROM notices")[0]["noticeId"]

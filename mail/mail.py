@@ -20,7 +20,8 @@ from typing import Any, Awaitable, Callable
 from aiohttp import web
 
 from api import cors_preflight, register_mail_routes
-from internal import DEFAULT_RELAY_INTERNAL_URL, RelayIdentityResolver
+from internal import (DEFAULT_RELAY_INTERNAL_URL, AccountStateNotifier,
+                      RelayIdentityResolver)
 from store import Store
 
 LOGGER = logging.getLogger("mail")
@@ -44,18 +45,24 @@ async def healthz(_request: web.Request) -> web.Response:
 
 
 def create_app(*, store: Store, resolve_device: ResolveDevice | None = None,
-               base_path: str = "", team_account: str = "") -> web.Application:
+               base_path: str = "", team_account: str = "",
+               notify_account_state: Any | None = None) -> web.Application:
     """组装 mail 的 aiohttp 应用。
 
     ``resolve_device`` 不给就用 :class:`RelayIdentityResolver`（生产默认）；
     测试注入假实现。每条路由都注册带前缀与去前缀两种形式——与中转同一条约定：
     前端可能剥前缀（Caddy 的 ``uri strip_prefix``）也可能原样转发。
+
+    ``notify_account_state``（032）：已读之后用它告诉中转"这个账户的信件状态变了"，
+    让同账户的其他在线设备跟着刷新。不给就用 :class:`AccountStateNotifier`；测试注入假实现。
     """
     base_path = normalize_base_path(base_path)
     app = web.Application(client_max_size=64 * 1024, middlewares=[cors_preflight])
     app["store"] = store
     resolver = resolve_device if resolve_device is not None else RelayIdentityResolver()
     app["resolve_device"] = resolver
+    notifier = notify_account_state if notify_account_state is not None else AccountStateNotifier()
+    app["notify_account_state"] = notifier
     app["base_path"] = base_path
     # 团队收件箱（2026-10-15）：团队账号 = owner 的开发者账号；空 = 功能关闭。
     app["team_account"] = str(team_account or "").strip()
@@ -69,9 +76,10 @@ def create_app(*, store: Store, resolve_device: ResolveDevice | None = None,
     register_mail_routes(app, route)
 
     async def _cleanup(_app: web.Application) -> None:
-        aclose = getattr(resolver, "aclose", None)
-        if aclose is not None:
-            await aclose()
+        for target in (resolver, notifier):
+            aclose = getattr(target, "aclose", None)
+            if aclose is not None:
+                await aclose()
 
     app.on_cleanup.append(_cleanup)
     return app
@@ -108,6 +116,8 @@ def main(argv: list[str] | None = None) -> int:
     app = create_app(store=store,
                      resolve_device=RelayIdentityResolver(args.relay_internal_url,
                                                           args.relay_timeout_s),
+                     notify_account_state=AccountStateNotifier(args.relay_internal_url,
+                                                               args.relay_timeout_s),
                      base_path=args.base_path, team_account=args.team_account)
     LOGGER.info("mail: serving on %s:%d (db=%s, relay=%s, team_inbox=%s)",
                 args.host, args.port, args.db, args.relay_internal_url,

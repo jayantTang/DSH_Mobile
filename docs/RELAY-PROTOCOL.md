@@ -48,6 +48,9 @@ Relay 只做两件事：**鉴权**与**按 `agentId` 转发**。它不解析 DLP
 | `POST` | `/pair/refresh` | 刷新 `deviceToken`（长期使用） |
 | `POST` | `/pair/code` | 电脑侧用 agent secret 铸配对码；**不带 `ttlMs` = 持久码**（不过期） |
 | `POST` | `/pair/code/regenerate` | 用户点「重新生成」：作废该电脑现存的所有码并铸一枚新的（**不影响已配对设备**） |
+| `GET` | `/account/state` | 读调用方账户的状态条目（设备令牌鉴权；`?keys=a,b` 取子集） |
+| `PUT` | `/account/state` | 写账户状态（只前进不后退），成功后给同账户其他在线设备发一帧 `accountState` |
+| `POST` | `/internal/account-state/touch` | **仅回环**：信件服务已读落库后，让中转替它向同账户设备扇一声"去看看信件" |
 | `POST` | `/agents/enroll` | 用邀请码自助登记，换 `agentId` / `agentSecret` |
 | `GET`  | `/devices` | 用 device token 列出**自己的**配对设备 |
 | `POST` | `/devices/revoke` | 用 device token 撤销自己的某台配对设备 |
@@ -95,6 +98,44 @@ Relay 只做两件事：**鉴权**与**按 `agentId` 转发**。它不解析 DLP
 - **重新生成不影响已连接的设备**：`/pair/code/regenerate` 只把旧码置为作废；设备靠各自的
   `deviceToken` 活着，要下线一台走 `POST /devices/revoke`。
 - `deviceToken` 长期有效（默认 365 天），并随 `/pair/refresh` 轮换。
+
+### 2.1b `/account/state` 与 `accountState` 帧
+
+账户级状态是"一台设备改了、同账户其他设备要跟着变"的那几项（032）：会话已读水位、
+角标水位、提醒开关、待回应已回答。**中转不解释值**，只做两件事：按 `(accountId, key)` 存取，
+以及保证 `updatedAt` 单调。
+
+读：
+
+```http
+GET /account/state?keys=alertPrefs,badgeWatermark     Authorization: Bearer <deviceToken>
+```
+
+```json
+{ "ok": true, "accountId": "acc_...",
+  "entries": { "alertPrefs": { "value": { "turnEnd": true }, "updatedAt": 1790000000000,
+                               "updatedByDeviceId": "dev_..." } } }
+```
+
+写：
+
+```http
+PUT /account/state     Authorization: Bearer <deviceToken>
+{ "entries": [ { "key": "sessionRead.agt_x", "value": { "sess_a": 42 }, "updatedAt": 1790000000000 } ] }
+```
+
+- **只前进不后退**：来件的 `updatedAt` 不大于已存的就拒收（`applied` 里不出现该 key），
+  返回已存的那份。这条规则是为了让"旧设备晚到一步"盖不掉新状态；相等按幂等处理。
+- **合并在写入方**：例如已读水位取 `max`、开关后写覆盖。中转只看时间戳。
+- 上限：一次最多 64 条，单条值序列化后最多 8 KiB（超了回 `413 account-state/too-large`）。
+- 写入成功后，中转给**同账户其他在线设备**各发一帧（写入者自己不收）：
+
+```json
+{ "t": "accountState", "keys": ["sessionRead.agt_x"] }
+```
+
+这帧是**尽力而为**：不入队、不重试、不确认；收不到的一方靠前台拉取兜底。
+不认识这帧的旧客户端按"未知帧"忽略即可（与 DLP 既有约定一致）。
 
 ### 2.2 鉴权失败
 

@@ -169,7 +169,24 @@ curl -s localhost:8787/stats | python3 -m json.tool | head -40   # 今天的汇�
 *your* desktop user so the file lands in your own home directory. The pairing
 code is shown as `XXXX-XXXX` plus a `dsh://pair?relay=…&code=…` QR payload.
 
-### Dead device records
+### Account state（032）
+
+`GET /account/state` 与 `PUT /account/state` 存"一台设备改了、同账户其他设备要跟着变"的
+那几项：会话已读水位、角标水位、提醒开关、待回应已回答。表是 `accountState(accountId, key,
+value, updatedAt, updatedByDeviceId)`，值是一段 JSON，**中转不解释内容**。
+
+两条要记住的规则：
+
+* **只前进不后退**：`updatedAt` 不大于已存的写会被拒（`applied` 里不出现该 key）。多台设备
+  并发写同一项时，这条防止"旧设备晚到一步把新状态盖回去"。合并在写入方做（已读取 `max`）。
+* **推送是尽力而为**：写成功后给同账户其他在线设备发一帧 `{t:"accountState",keys:[…]}`，
+  不入队、不重试、不确认；收不到的一方靠前台拉取兜底。别把它改成可靠投递——那等于又加一条
+  会自己重连重试的路径。
+
+信件服务（`mail`）在已读落库后调环回端点 `POST /internal/account-state/touch` 借这条通道
+通知同账户设备；它只发通知，不写状态（信件的已读本来就在 mail 库里、且是账户级）。
+
+## Dead device records
 
 每配一台手机就多一行 `devices`；撤销之后（`device-revoke`、App 里解除配对）或配对满
 365 天（`--device-ttl-days`）之后，那一行**永远回不来了**——`device_by_token` 两种都拒。

@@ -13,7 +13,10 @@ import pytest
 
 from store import SCHEMA_VERSION, NotFound, Store, StoreError, sha256_hex
 
-NEW_TABLES = ("feedbackThreads", "feedbackMessages", "notices", "noticeDeliveries")
+#: 当前代码靠 `SCHEMA`（全 `CREATE TABLE IF NOT EXISTS`）在打开老库时补出来的表。
+#: `accountState` 是 032 加的账户级状态表，同样属于"表不需要迁移步骤"这一类。
+NEW_TABLES = ("feedbackThreads", "feedbackMessages", "notices", "noticeDeliveries",
+              "accountState")
 
 OLD_TABLES = {"accounts", "agents", "devices", "pairCodes", "usageDaily", "invites"}
 

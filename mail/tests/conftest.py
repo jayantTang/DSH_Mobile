@@ -95,11 +95,18 @@ def unregister_device(client, token: str) -> None:
 @pytest.fixture
 async def client(aiohttp_client, store: Store):
     registry: dict[str, dict] = {}
+    notified: list[tuple[str | None, list[str] | None]] = []
 
     async def resolve(token: str):
         return registry.get(token)
 
+    async def notify(account_id: str | None, keys: list[str] | None = None) -> None:
+        """032：已读之后那声"去看看信件"。测试里记下来，不发网络请求。"""
+        notified.append((account_id, keys))
+
     app = mail_module.create_app(store=store, resolve_device=resolve,
+                                 notify_account_state=notify,
                                  team_account=TEAM_ACCOUNT)
     app["test_devices"] = registry
+    app["test_notified"] = notified
     return await aiohttp_client(app)

@@ -588,6 +588,11 @@ async def feedback_read(request: web.Request) -> web.Response:
             await asyncio.to_thread(store.mark_thread_read, thread_id)
     if device is not None and notice_ids:
         await asyncio.to_thread(store.mark_notices_read, device["accountId"], notice_ids)
+    # 032 FR-009：已读落库后通知同账户的其他在线设备。只是"去看看信件"的一声招呼，
+    # 失败不重试（同账户另一台最迟在下次前台刷新时对齐）；匿名调用没有账户，跳过。
+    notifier = request.app.get("notify_account_state")
+    if notifier is not None and device is not None:
+        await notifier(device.get("accountId"))
     payload = await _collect(store, pairs, device, 0, team_account=_team_account(request))
     return web.json_response({"ok": True, "unreadCount": payload["unreadCount"]})
 
