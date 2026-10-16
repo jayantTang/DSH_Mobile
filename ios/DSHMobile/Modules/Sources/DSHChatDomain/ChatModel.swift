@@ -20,10 +20,51 @@ public final class ChatModel {
         case failed(String)
     }
 
-    /// The transcript, folded from the journal and the live assistant stream.
-    public private(set) var timeline = ChatTimeline()
+    /// 一次发布的会话可见状态：**开的是哪个会话**与**屏幕上那批行**是同一个值。
+    ///
+    /// 为什么要合成一个值：这两件事分开存、分两次发布时，界面有一次渲染机会落在
+    /// "开的是 B、行还是 A"的中间态上——2026-10-16 用户报的"新建会话先闪一下旧会话"
+    /// 就是它（`open()` 里 `session` 与 `timeline` 的赋值中间隔了两次磁盘等待）。
+    /// 合成一个值之后，这个中间态在类型上就写不出来。
+    public struct VisibleSession {
+        public var summary: SessionSummary
+        public var timeline: ChatTimeline
+
+        public init(summary: SessionSummary, timeline: ChatTimeline) {
+            self.summary = summary
+            self.timeline = timeline
+        }
+    }
+
+    /// 唯一被发布的会话可见状态。
+    ///
+    /// **换会话时只在这里赋值一次**，且这次赋值之前不得有 `await`（先把旧会话要落盘的
+    /// 东西同步脱离出来，落盘的等待排在发布之后）。其余对时间线的改动都落在同一个
+    /// `summary` 之下，因此任何一次发布都是自洽的一对。
+    public private(set) var visible: VisibleSession?
+
+    /// 现在开的是哪个会话（读 `visible`）。
+    public var session: SessionSummary? { visible?.summary }
+
+    /// 屏幕上这批行（读 `visible`）。
+    ///
+    /// 注意：**不要**用它判断"这些行是不是这一屏的"——判断用 `rowsFor(screen:)`。
+    public private(set) var timeline: ChatTimeline {
+        get { visible?.timeline ?? ChatTimeline() }
+        set { visible?.timeline = newValue }
+    }
+
+    /// 这一屏该画哪些行：**只有这批行属于这一屏时才交出去**。
+    ///
+    /// 渲染（`ChatView`）与量具（`StaleRenderWatch`）都读这一个入口，因此
+    /// "屏幕上画了什么"与"判定量到什么"永远是同一件事。换会话期间、以及任何
+    /// "行属于别的会话"的时刻，这里返回空——界面不会把上一个会话的内容画出来。
+    public func rowsFor(screen sessionId: String) -> [TimelineItem] {
+        guard let visible, visible.summary.sessionId == sessionId else { return [] }
+        return visible.timeline.items
+    }
+
     public private(set) var phase: Phase = .idle
-    public private(set) var session: SessionSummary?
     /// What the agent is doing right now.
     ///
     /// This has to come from the turn events on the session's own follow
@@ -276,6 +317,16 @@ public final class ChatModel {
     /// 用例注入：造一帧"上一个会话迟到的帧"（`-DSHProbeStaleFollowFrame`）。
     /// 注入的帧走**同一条守卫**（带陈旧代数），所以它既能证明"守卫在"，也能在守卫被删掉时判红。
     public var staleFrameInjector: (() -> SessionFollowFrame?)?
+
+    /// **测试挂起点**（DEBUG-only，生产恒为 nil）：`open()` 在发布新的可见状态**之前**
+    /// 让出主线程一次。
+    ///
+    /// 为什么必须有它：换会话的两次磁盘等待在单测环境里常常不成立（没有 messageLayer 时
+    /// `loadStoredTail` 立即返回，写链也可能是空的），于是"切换中途"这个状态在单测里根本
+    /// 抓不到——缺陷明明在，测试却只能看到一次原子切换。有了这个挂起点，用例可以停在
+    /// "`open(B)` 已开始、可见状态还是 A"的那一刻，断言渲染入口不会把 A 的行交给 B 那一屏。
+    /// 它只让出主线程，不做任何取舍；生产构建里这个属性不存在，也没有任何调用点。
+    public var beforeVisibleSwap: (@MainActor () async -> Void)?
     #endif
     /// 取页游标状态机：每个会话一份，是全 App 唯一的"更早历史"状态来源。
     private var pager: TranscriptPager?
@@ -343,10 +394,11 @@ public final class ChatModel {
             phase = .failed(String(localized: "尚未连接"))
             return
         }
-        // Persist whatever the previous session had before switching away —
-        // transcript and draft both. `close()` 里会写盘，所以这一步不能省：
-        // 之前只写内存缓存，进程一没，刚才看的那段就没了。
-        await close()
+        // ① **同步脱离**：把上一个会话要落盘的东西（转写尾部、草稿、内存缓存）用**旧 key**
+        //    取出来，并把它的写链尾巴抓在手里稍后 await。这一步从前是 `await close()` 的一部分，
+        //    而 `close()` 里那次等待（等写盘）正是"新会话那一屏先画出旧会话"的成因之一：
+        //    可见状态要等它做完才换。现在等待排在发布之后，见 ③。
+        let outgoing = detachForSwitch()
 
         let key = summary.sessionId
         sessionScope = scopeId == "unknown" ? nil : scopeId
@@ -361,7 +413,6 @@ public final class ChatModel {
         recentRecords = []
         lastDiskSave = .distantPast
         let cached = cache[key]
-        session = summary
         // 换会话：更早历史的搜索缓冲属于上一个会话，任何分支都要清（FR-006）。
         // 以前只在"没有本地数据"那一支清，于是命中缓存/命中落盘时会把上一个会话
         // 的更早记录带进新会话，甚至能并进它的时间线。
@@ -377,14 +428,43 @@ public final class ChatModel {
             ?? summary.projections?.values?.modelSelection?.lastUsed
         permissionOptions = summary.projections?.values?.permissions?.options ?? []
         currentPermission = summary.projections?.values?.permissions?.currentValue
+        // 分页状态同样归上一个会话：在读到这个会话的尾部之前先清掉，
+        // 免得"向上翻页"拿着旧 pager 的游标去问新会话（跨会话取页）。
+        pager = nil
+        hasOlder = false
+
+        #if DEBUG
+        // 测试挂起点（DEBUG-only，生产恒为 nil）：在**发布点之前**让出主线程，
+        // 让单测能停在"open(B) 已开始、可见状态还是 A"这一刻断言不变量。
+        if let beforeVisibleSwap { await beforeVisibleSwap() }
+        #endif
+
+        // ② **一次发布**：开的是哪个会话与屏幕上那批行在这里一起换。
+        //    从这里往下，任何时刻读到的都是一对自洽的 (summary, timeline)——
+        //    "开的是 B、行还是 A"这个中间态在类型上已经写不出来（`VisibleSession`）。
+        //    注意：这一段只能用局部的 `seed`，不得碰 `timeline`——此刻写它等于往
+        //    上一个会话的时间线里写新会话的用量提示。
+        var seed = cached?.timeline ?? ChatTimeline()
+        seed.clearStreaming()
+        seed.record(usage: summary.projections?.values?.tokenUsage)
+        visible = VisibleSession(summary: summary, timeline: seed)
+        if let cached {
+            throughSeq = max(cached.throughSeq, summary.asOfSeq)
+            installPager(sessionId: key, oldest: cached.oldestSeq, newest: throughSeq,
+                         hasMore: cached.hasOlder)
+            phase = .ready
+            scrollSignal += 1
+        } else {
+            throughSeq = summary.asOfSeq
+            phase = .loading
+        }
+
+        // ③ **异步段**：先等上一个会话写完，再读这个会话的本地尾部。
+        //    这两次等待都在发布之后，所以界面看到的永远是自洽的一对。
+        await outgoing.flush()
 
         if let cached {
             // Restore immediately: same rows, same scroll position, no spinner.
-            timeline = cached.timeline
-            timeline.clearStreaming()
-            timeline.record(usage: summary.projections?.values?.tokenUsage)
-            throughSeq = max(cached.throughSeq, summary.asOfSeq)
-            installPager(sessionId: key, oldest: cached.oldestSeq, newest: throughSeq, hasMore: cached.hasOlder)
             // 记录也要一起恢复：否则下一次落盘会把"这个会话只有刚到的这几条"
             // 写进磁盘，之前那段就被截掉了。
             if cached.records.isEmpty, let scope = sessionScope {
@@ -392,8 +472,6 @@ public final class ChatModel {
             } else {
                 recentRecords = cached.records
             }
-            phase = .ready
-            scrollSignal += 1
         } else if let scope = sessionScope,
                   let stored = await loadStoredTail(scope: scope, sessionId: key) {
             // 窗口按"本地落后 host 多少"来定：落后很多时要更大的窗口，否则
@@ -434,9 +512,6 @@ public final class ChatModel {
                 ], true)
             }
         } else {
-            timeline = ChatTimeline()
-            timeline.record(usage: summary.projections?.values?.tokenUsage)
-            throughSeq = summary.asOfSeq
             installPager(sessionId: key, oldest: nil, newest: throughSeq, hasMore: false)
             phase = .loading
         }
@@ -460,6 +535,41 @@ public final class ChatModel {
             }
         }
         #endif
+    }
+
+    /// 换会话时从旧会话"脱离"出来的东西：它的写链尾巴。
+    ///
+    /// 只带这一个句柄是刻意的：转写尾部、草稿、内存缓存都在脱离时**同步**写好了，
+    /// 剩下的只有"等磁盘写完"——那一步必须排在可见状态发布之后。
+    private struct DetachedSwitch {
+        let pendingWrites: Task<Void, Never>?
+
+        func flush() async { await pendingWrites?.value }
+    }
+
+    /// **同步**脱离旧会话：等于把 `close()` 里除"等写盘"之外的事全部做完，且不 await。
+    ///
+    /// 为什么不让 `open()` 直接 `await close()`：`close()` 里的 `await flushTranscript()`
+    /// 会让出主线程，而那时可见状态还没换——界面就有一次机会画出上一个会话的行
+    /// （2026-10-16 用户报的"新建会话先闪旧会话"）。把同步部分与等待拆开之后，
+    /// 等待发生在 `visible` 已经换成新会话之后，界面看到的任何一帧都是自洽的。
+    private func detachForSwitch() -> DetachedSwitch {
+        // 顺序与 `close()` 一致：先写记录与转写，再清状态。
+        persistTranscriptNow()
+        let pending = writeChain
+        saveToCache()
+        stashDraft()
+        followTask?.cancel()
+        followTask = nil
+        eventTask?.cancel()
+        eventTask = nil
+        awaitingTimeout?.cancel()
+        awaitingTimeout = nil
+        streamFlushTask?.cancel()
+        streamFlushTask = nil
+        pendingStreamFrames.removeAll(keepingCapacity: false)
+        isAwaitingTurnStart = false
+        return DetachedSwitch(pendingWrites: pending)
     }
 
     /// Stops the live streams and keeps the transcript warm for a revisit.
@@ -492,8 +602,8 @@ public final class ChatModel {
     public func forgetConnection() async {
         await close()
         sessionScope = nil
-        session = nil
-        timeline = ChatTimeline()
+        // 换电脑：可见状态整体清空（会话与那批行是同一个值，一起没了才不会留下半截状态）。
+        visible = nil
         cache.removeAll()
         cacheOrder.removeAll()
         drafts.removeAll()
@@ -1259,7 +1369,9 @@ public final class ChatModel {
         guard let value = try? await client.sessions(),
               let updated = value.items.first(where: { $0.sessionId == current.sessionId })
         else { return }
-        session = updated
+        // 只换摘要本身（标题/运行态/权限），时间线仍属于同一个会话，所以这一处赋值
+        // 依然是自洽的一对——不要在这里重发 `visible`，否则会把正在流式的时间线冲掉。
+        visible?.summary = updated
         hostReportsRunning = updated.running
         currentPermission = updated.projections?.values?.permissions?.currentValue
         timeline.record(usage: updated.projections?.values?.tokenUsage)

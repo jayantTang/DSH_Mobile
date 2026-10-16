@@ -33,6 +33,30 @@ public struct ChatView: View {
     /// 所以：不是我的会话，就一次都不滚。
     private var ownsTranscript: Bool { model.session?.sessionId == sessionId }
 
+    /// 这一屏**实际交给渲染器**的行。
+    ///
+    /// 唯一来源是 `ChatModel.rowsFor(screen:)`：归属判断在模型里做，渲染与量具读同一处，
+    /// 所以"屏幕上画了什么"与"判定量到什么"永远是同一件事。行不属于这一屏时它返回空——
+    /// 换会话的过渡帧不会把上一个会话的内容画出来。
+    private var rowsHandedToRenderer: [TimelineItem] { model.rowsFor(screen: sessionId) }
+
+    #if DEBUG
+    /// 量具的输入：这一屏是谁、交出去的行属于谁、交出去几条。
+    ///
+    /// 三个一起变才算一次（`Equatable`）——只比条数会漏掉"条数相同但换了会话"。
+    private struct StaleRenderKey: Equatable {
+        let screen: String
+        let owner: String?
+        let rows: Int
+    }
+
+    private var staleRenderKey: StaleRenderKey {
+        // owner 取模型当前发布的那个会话，与 `rowsFor(screen:)` 判的是同一个值。
+        StaleRenderKey(screen: sessionId, owner: model.visible?.summary.sessionId,
+                       rows: rowsHandedToRenderer.count)
+    }
+    #endif
+
     @State var isRenaming = false
     @State var renameText = ""
     @State var isShowingModelPicker = false
@@ -436,6 +460,14 @@ public struct ChatView: View {
     /// （`unable to type-check this expression in reasonable time`）。
     private func transcriptSignals(_ proxy: ScrollViewProxy) -> some View {
         transcriptScroll(proxy)
+        #if DEBUG
+        // 量具：这一屏交给了渲染器哪些行、它们属于谁（`StaleRenderWatch`）。
+        // 用 `onChange(initial: true)` 而不是在 `body` 里直接调用：判定的输入是
+        // "**交出去**的那批行"，与渲染读同一个表达式，两者不会各说各话。
+        .onChange(of: staleRenderKey, initial: true) { _, key in
+            StaleRenderWatch.handed(screen: key.screen, owner: key.owner, rows: key.rows)
+        }
+        #endif
         .onChange(of: model.timeline.items.count) { _, count in
             itemsCountDidChange(count, proxy: proxy)
         }
@@ -550,7 +582,7 @@ public struct ChatView: View {
             // spec 008 US1：新列表宿主渲染真会话。行视图直接复用本视图的 `row(_:)`，
             // 所以两条路的视觉是同一套代码（验收口径：等价，不追逐像素）。
             TranscriptListRepresentable(
-                items: model.timeline.items,
+                items: rowsHandedToRenderer,
                 makeRow: { AnyView(row($0)) },
                 pinToBottom: isFollowing,
                 onDiagnostic: { name, fields in ChatProbe.shared.probeNote?(name, fields, true) },
@@ -690,7 +722,7 @@ public struct ChatView: View {
     @ViewBuilder
     private func stackContent(_ proxy: ScrollViewProxy) -> some View {
         olderSentinel(proxy)
-        ForEach(model.timeline.items) { item in row(item) }
+        ForEach(rowsHandedToRenderer) { item in row(item) }
         tail
         bottomMarker
     }

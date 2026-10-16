@@ -33,6 +33,13 @@ struct DSHMobileApp: App {
         #if DEBUG
         let note: (String, [String: String], Bool) -> Void = { kind, fields, force in
             ViewportProbe.note(kind, fields, force: force)
+            // 模块里的量具报"这一屏画了别的会话的行"（`StaleRenderWatch`）时，顺手存一张
+            // 整屏现场图：这一闪只活在过渡帧里，外部截图追不上（引擎拍延迟截图前会先等
+            // 画面静止），只有 App 自己在报的这一刻能把画面留下来。判定仍以
+            // `switch.stale-render` 那条探针为准，这张图是给人看的证据。
+            if kind == "switch.stale-render" {
+                ViewportProbe.captureForAnomaly("switch-stale-render")
+            }
         }
         KeyboardProbe.shared.isOn = { ViewportProbe.isOn }
         KeyboardProbe.shared.note = { kind, fields in ViewportProbe.note(kind, fields) }

@@ -214,6 +214,10 @@ struct RootView: View {
                 // 仿真器复现「App 在后台时用户点了通知」（`-DSHProbeNotifyTap <sid>@<秒>`）。
                 // 走的完全是产品那条 `didReceive` → `SessionRouter` → `MainView` 的路，
                 // 探针只负责把这一下点出来。DEBUG-only，见 `NotificationProbe`。
+                //
+                // 叠栈那条路（"已经在会话 A 里，通知再把 B 推上来"，用例 102）用
+                // `{{pick}}` 给 B：运行器每轮现挑一条真实会话，只读地推上来，
+                // 开关见 `test/cases/current/102-换会话不闪上一个会话.md`。
                 await ViewportProbe.runNotifyTapProbe(delegate: alerts)
             }
             .task {

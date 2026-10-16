@@ -285,6 +285,17 @@ enum ViewportProbe {
         save(image, name: String(format: "probe-%02d-%@.png", anomalyCount, tag))
     }
 
+    /// 由**别处**的判定（模块里的量具，如 `StaleRenderWatch`）触发一次现场存档。
+    ///
+    /// 为什么不能靠采样器自己发现：`switch.stale-render` 那一类缺陷只活在过渡帧里
+    /// （几十毫秒），500ms 一次的像素采样与"白不白"的判据都看不见它；外部截图更追不上
+    /// ——引擎拍延迟截图之前会先等画面静止。所以由量具在这一刻直接要一张图，
+    /// 命名与空白异常共用同一套（`probe-NN-<tag>.png`，run.sh 会一并取回）。
+    static func captureForAnomaly(_ tag: String) {
+        guard isOn else { return }
+        fullSnapshot(tag)
+    }
+
     // MARK: - 生命周期
 
     /// 转写页不在屏幕上时暂停采样：退回列表后"转写区"本来就什么都没有，

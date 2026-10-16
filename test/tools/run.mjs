@@ -73,6 +73,28 @@ function probeVerdicts({ simId, detailDir, verdicts, log }) {
   rmSync(source, { force: true })
   for (const name of snapshots) rmSync(join(documents, name), { force: true })
 
+  // 「换会话时把上一个会话的行画了出来」（`switch.stale-render`，App 里的量具
+  // `StaleRenderWatch` 直接报的一行）。这条为什么要单独立判定：它只活在过渡帧里
+  // ——下面那套 ink 采样（500ms 一次、还要连续 0.5 秒以上）与外部截图（引擎拍延迟截图前
+  // 先等画面静止）都看不见它，所以判据只能由 App 自己事后交出来。
+  // 判定从简：**出现过就算这一轮没过**——一次就足以说明某一屏画过别人的内容。
+  const logText = readFileSync(join(detailDir, 'probe.log'), 'utf8')
+  const staleRenders = logText.split('\n')
+    .filter((line) => /(?:^| )switch\.stale-render(?: |$)/.test(line))
+    .map((line) => line.trim())
+  const firstStale = staleRenders[0] ?? ''
+  const staleField = (name) =>
+    (new RegExp(`(?:^| )${name}=([^ ]*)`).exec(firstStale) ?? [])[1] ?? ''
+  verdicts.push({
+    seq: -5, id: 'probe.stale-render', kind: 'probe',
+    status: staleRenders.length ? 'fail' : 'pass',
+    detail: staleRenders.length
+      ? `换会话过程中有 ${staleRenders.length} 次把别的会话的行交给了渲染器`
+        + `（第一次：这一屏 ${staleField('screen')}、行属于 ${staleField('owner')}、`
+        + `${staleField('rows')} 条）；现场图见 detail/probe-*switch-stale-render*.png`
+      : '换会话过程中没有把别的会话的行交给渲染器',
+  })
+
   const samples = []
   const content = []
   // 读**取回来的副本**：容器里那份已经删掉了，留着会让下一轮把旧日志当成自己的。
