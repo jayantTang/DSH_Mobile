@@ -706,6 +706,19 @@ public final class ChatModel {
         public let hasMore: Bool
         /// `connector` = 覆盖整个会话；`local` = 只搜已加载的那一段（FR-015）。
         public let scope: String
+        /// 扫描进度（只有连接器扫描来源、且连接器支持 `search-progress` 时才有）。
+        public let progress: SearchProgress?
+
+        /// 片是扫描单位：一段 `chunk`（连接器默认 2000）个 seq 从新往旧扫。
+        public struct SearchProgress: Sendable, Equatable {
+            public let scannedChunks: Int
+            public let totalChunks: Int
+
+            public init(scannedChunks: Int, totalChunks: Int) {
+                self.scannedChunks = scannedChunks
+                self.totalChunks = totalChunks
+            }
+        }
     }
 
     /// 搜索一页：能力在就问宿主要整个会话，否则退回本地（FR-010/FR-015）。
@@ -728,11 +741,24 @@ public final class ChatModel {
             }
             await loadContextForHits(value.hits)
             return SearchPage(hits: TranscriptHitLocator.attach(hits: value.hits, to: timeline.items),
-                              cursor: value.cursor, hasMore: value.hasMore, scope: "connector")
+                              cursor: value.cursor, hasMore: value.hasMore, scope: "connector",
+                              progress: Self.progress(of: value))
         case .local:
             let local = TranscriptSearch.hits(in: searchItems, query: needle, onlyMine: onlyMine)
-            return SearchPage(hits: local, cursor: nil, hasMore: false, scope: "local")
+            return SearchPage(hits: local, cursor: nil, hasMore: false, scope: "local",
+                              progress: nil)
         }
+    }
+
+    /// 把连接器回报的片数换算成"已扫 / 共多少"。
+    ///
+    /// 缺字段（走索引的部署、或支持 `search-progress` 之前的连接器）就是 nil：界面宁可说
+    /// "进度未知"，也不能拿 0 当"第一片"——那会让"已扫 0/N"看起来像没扫。
+    static func progress(of value: HistorySearchValue) -> SearchPage.SearchProgress? {
+        guard let total = value.totalChunks, total > 0,
+              let remaining = value.remainingChunks else { return nil }
+        return SearchPage.SearchProgress(scannedChunks: max(0, total - max(0, remaining)),
+                                         totalChunks: total)
     }
 
     /// 跳到一条很久以前的命中：把时间线的**窗口整个换掉**（spec 007 FR-011）。

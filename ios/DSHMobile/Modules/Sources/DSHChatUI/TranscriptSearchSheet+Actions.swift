@@ -94,6 +94,7 @@ extension TranscriptSearchSheet {
             searchSource = .localStore
             searchCursor = nil
             pageHasMore = false
+            searchProgress = nil
             // 完整性标记与命中同属一次本地读路径：先问标记，灌全时状态行不会闪。
             await refreshUserInputSyncState(rerunOnSync: false)
             found = await model.localUserInputHits(query: query)
@@ -109,6 +110,7 @@ extension TranscriptSearchSheet {
             found = page?.hits ?? []
             searchCursor = page?.cursor
             pageHasMore = page?.hasMore ?? false
+            searchProgress = page?.progress
         } else {
             // 没有这个能力：老办法（本地、只搜已加载的那一段），并且**离开主线程**匹配。
             found = await Task.detached(priority: .userInitiated) {
@@ -116,6 +118,7 @@ extension TranscriptSearchSheet {
             }.value
             searchCursor = nil
             pageHasMore = false
+            searchProgress = nil
             searchSource = .localWindow
         }
         finishSearch(key: key, found: found, items: items, started: started)
@@ -275,6 +278,8 @@ extension TranscriptSearchSheet {
                 hits.append(contentsOf: page.hits.filter { !existing.contains($0.id) })
                 searchCursor = page.cursor
                 pageHasMore = page.hasMore
+                // 翻页后进度往前走：读者看到的是"已扫 k/N 片"在增长，而不是数字不动。
+                searchProgress = page.progress
             }
         case .localWindow:
             await model.extendSearchHistory()

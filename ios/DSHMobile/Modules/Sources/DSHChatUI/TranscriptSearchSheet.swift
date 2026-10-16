@@ -28,6 +28,8 @@ struct TranscriptSearchSheet: View {
     /// 连接器给的续页游标；`source` 说明这一屏命中覆盖到哪儿（spec 007 P2）。
     @State var searchCursor: String?
     @State var pageHasMore = false
+    /// 扫描进度（片）。老连接器不发就是 nil——界面按"进度未知"说，不假装知道。
+    @State var searchProgress: ChatModel.SearchPage.SearchProgress?
     /// 这一屏命中是从哪儿来的。`localStore` = 本地 record 全量库（T034，零网络）；
     /// `connector` = 连接器整会话；`localWindow` = 已加载的那一段。
     ///
@@ -358,6 +360,15 @@ struct TranscriptSearchSheet: View {
         }
         switch searchSource {
         case .connector:
+            // 只有**扫到最老那一片**（`pageHasMore == false`）才配说"全部历史"：这话原来
+            // 在第一页就说了，而扫描一页最多 4 片（2000 seq/片），数字其实还在长。
+            if pageHasMore, let progress = searchProgress, progress.totalChunks > 0 {
+                return String(format: String(localized: "命中 %lld 条 · 已扫 %lld/%lld 片"),
+                              hits.count, progress.scannedChunks, progress.totalChunks)
+            }
+            if pageHasMore {
+                return String(format: String(localized: "命中 %lld 条 · 还在往前找"), hits.count)
+            }
             return String(format: String(localized: "命中 %lld 条（已搜全部历史）"), hits.count)
         case .localStore:
             return String(format: String(localized: "命中 %lld 条（本机记录）"), hits.count)

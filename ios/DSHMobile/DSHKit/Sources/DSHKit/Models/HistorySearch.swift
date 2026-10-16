@@ -50,12 +50,22 @@ public struct HistorySearchValue: Sendable, Codable {
     public let hasMore: Bool
     /// `index` when the deployment's full-text index answered, `scan` otherwise.
     public let source: String?
+    /// 扫描式搜索的进度（连接器能力 `search-progress`）：一共要扫多少片、还剩多少片。
+    ///
+    /// **片**是扫描单位（`chunk` 个 seq 一段，从新往旧），不是命中页数。`totalChunks` 由日志
+    /// 最新 seq 算出，所以第一页就精确；命中**条数**要扫到最老那一片才定稿。
+    /// 走索引的部署不发这两个字段，此时两者为 nil——界面按"进度未知"处理，不许假装知道。
+    public let totalChunks: Int?
+    public let remainingChunks: Int?
 
-    public init(hits: [HistorySearchHit], cursor: String?, hasMore: Bool, source: String? = nil) {
+    public init(hits: [HistorySearchHit], cursor: String?, hasMore: Bool, source: String? = nil,
+                totalChunks: Int? = nil, remainingChunks: Int? = nil) {
         self.hits = hits
         self.cursor = cursor
         self.hasMore = hasMore
         self.source = source
+        self.totalChunks = totalChunks
+        self.remainingChunks = remainingChunks
     }
 }
 
