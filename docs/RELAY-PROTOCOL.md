@@ -46,7 +46,7 @@ Relay 只做两件事：**鉴权**与**按 `agentId` 转发**。它不解析 DLP
 | `WS`   | `/link/device?agentId=<id>` | 手机侧接入；`Authorization: Bearer <deviceToken>`；浏览器客户端可在 `Sec-WebSocket-Protocol` 里携带 `dsh.device.<deviceToken>`（头优先，子协议仅在无头时生效；握手响应显式回显该子协议） |
 | `POST` | `/pair/claim` | 手机用配对码换取 `deviceToken` |
 | `POST` | `/pair/refresh` | 刷新 `deviceToken`（长期使用） |
-| `POST` | `/pair/code` | 电脑侧用 agent secret 铸配对码；**不带 `ttlMs` = 持久码**（不过期） |
+| `POST` | `/pair/code` | 电脑侧用 agent secret 铸配对码；**不带 `ttlMs`（或给 `null`）= 持久码**（不过期） |
 | `POST` | `/pair/code/regenerate` | 用户点「重新生成」：作废该电脑现存的所有码并铸一枚新的（**不影响已配对设备**） |
 | `GET` | `/account/state` | 读调用方账户的状态条目（设备令牌鉴权；`?keys=a,b` 取子集） |
 | `PUT` | `/account/state` | 写账户状态（只前进不后退），成功后给同账户其他在线设备发一帧 `accountState` |
@@ -88,7 +88,7 @@ Relay 只做两件事：**鉴权**与**按 `agentId` 转发**。它不解析 DLP
 判定「过期 / 作废」要逐行核对最近两小时内的码，因此超出这个窗口的码一律按
 `pair/invalid-code` 回答；判定失败同样计入限流桶。
 
-- **配对码可以反复认领**：持久码（`/pair/code` 不带 `ttlMs` 铸出来的那种）一直有效，
+- **配对码可以反复认领**：持久码（`/pair/code` 不带 `ttlMs`、或给 `null` 铸出来的那种）一直有效，
   直到用户点「重新生成」。带 `ttlMs` 的限时码（老连接器走这条路）语义与以前一致。
 - **一个账户最多 8 台已配对的 client**（含 Web，`DLP_MAX_PAIRED_DEVICES`）。上限在**认领**处拦，
   与「同时连接数」上限（`DLP_MAX_DEVICES_PER_AGENT`）是两层。

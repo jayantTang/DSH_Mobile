@@ -57,6 +57,20 @@ async def test_a_code_without_ttl_is_persistent(client, provisioned, store):
     assert (await _claim(client, body["code"])).status == 200
 
 
+async def test_an_explicit_null_ttl_is_persistent_too(client, provisioned, store):
+    # 032 之后的连接器在持久码这条路上发的是显式 `ttlMs: null`
+    # （plugins/mobile-link/lib/pairing.js）。只认"键不存在"会让它落回默认 10 分钟，
+    # 面板于是显示出倒计时——owner 2026-10-17 报的就是这个。
+    response = await client.post("/pair/code", json={"ttlMs": None},
+                                 headers=agent_headers(provisioned["agent"]))
+    body = await response.json()
+    assert body["persistent"] is True
+    assert body["expiresAt"] is None
+    # 仍然是可反复认领的持久码，不是一次性的。
+    assert (await _claim(client, body["code"])).status == 200
+    assert (await _claim(client, body["code"])).status == 200
+
+
 async def test_a_code_with_ttl_keeps_the_old_one_shot_behaviour(client, provisioned):
     # 老连接器每次都带 ttlMs：这条路必须与今天完全一致（FR-005/FR-012）。
     response = await client.post("/pair/code", json={"ttlMs": 60_000},

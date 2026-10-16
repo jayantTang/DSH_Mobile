@@ -544,9 +544,9 @@ async def pair_refresh(request: web.Request) -> web.Response:
 async def pair_code(request: web.Request) -> web.Response:
     """Mint a pairing code for the authenticated agent (docs/RELAY-NOTES.md §2).
 
-    **持久码是默认**（032）：请求不带 `ttlMs`、或显式带 `persistent: true`，都铸一枚
-    不过期的码——它一直有效，直到用户点「重新生成」（见 :func:`pair_code_regenerate`）。
-    老连接器每次都会带 `ttlMs`，走的仍是"限时一次性"那条老路径，行为一字未变。
+    **持久码是默认**（032）：请求不带 `ttlMs`、给 `ttlMs: null`、或显式带 `persistent: true`，
+    都铸一枚不过期的码——它一直有效，直到用户点「重新生成」（见 :func:`pair_code_regenerate`）。
+    带**正数** `ttlMs` 的（老连接器走这条路）仍是"限时一次性"，行为一字未变。
     """
     store: Store = request.app["store"]
     body = await read_json(request) or {}
@@ -557,10 +557,14 @@ async def pair_code(request: web.Request) -> web.Response:
     wanted = body.get("agentId")
     if isinstance(wanted, str) and wanted and wanted != agent["agentId"]:
         return json_error(403, "auth/agent-mismatch", "token does not belong to that agent")
-    wants_persistent = body.get("persistent") is True or "ttlMs" not in body
+    # `ttlMs: null` 与"不带 ttlMs"同义：032 之后的连接器在持久码这条路上发的正是显式 `null`
+    # （`plugins/mobile-link/lib/pairing.js`）。只认"键不存在"会把 `null` 读成
+    # "限时、但没给时长"，于是落到默认的 `pair_ttl_ms`（10 分钟）——用户看到的现象就是
+    # "本该长期有效的码突然有了倒计时"。非整数（字符串等）仍按"没给时长"处理。
+    requested = body.get("ttlMs")
+    wants_persistent = body.get("persistent") is True or requested is None
     ttl_ms: int | None = None
     if not wants_persistent:
-        requested = body.get("ttlMs")
         ttl_ms = requested if isinstance(requested, int) and requested > 0 \
             else int(request.app["pair_ttl_ms"])
         ttl_ms = min(ttl_ms, 60 * 60 * 1000)
