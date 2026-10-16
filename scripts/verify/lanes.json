@@ -110,6 +110,13 @@
       ]
     },
     {
+      "id": "mail",
+      "title": "信件服务 mail",
+      "globs": [
+        "mail/**"
+      ]
+    },
+    {
       "id": "e2e",
       "title": "端到端链路（App → relay → 连接器 → 本机 DSH）",
       "globs": [
@@ -249,6 +256,25 @@
       "lane": "l3",
       "value": "usable",
       "reason": "部署验证可以在 guest 里做，但日常靠 L1 与 L2 足够"
+    },
+    {
+      "subject": "mail",
+      "lane": "l1",
+      "value": "required",
+      "reason": "pytest 在本机就是权威口径，含真 Caddy 的切换演练；用例全用 tmp_path 建库"
+    },
+    {
+      "subject": "mail",
+      "lane": "l2",
+      "value": "required",
+      "reason": "CI 已在干净 Linux 上跑同一套（python 3.12 + 真 Caddy），容器里两服务与真 Caddy 齐全",
+      "prerequisite": "代码必须复制进容器卷"
+    },
+    {
+      "subject": "mail",
+      "lane": "l3",
+      "value": "usable",
+      "reason": "deploy.sh 的安装/回退可以在 guest 里做，日常靠 L1 与 L2 足够"
     },
     {
       "subject": "e2e",

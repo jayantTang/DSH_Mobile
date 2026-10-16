@@ -371,21 +371,28 @@ async def _collect(store: Store, pairs: list[tuple[str, str]], device: dict[str,
     未读分侧（团队收件箱 2026-10-15）：团队账号数**用户来信**未读（teamUnread），
     其余数**团队回信**未读（unread）——同一次响应里两个口径都给，`unreadCount`
     按调用方是哪一侧取对应的那个。
+
+    `team_account` 为空 = 团队收件箱关闭：那条命中路径**整条不参与**（见
+    :meth:`Store.feedback_threads_by_device` 的同名参数），而不是把团队线程按
+    用户视角发出去——后者会把用户的来信显示在 owner 的「已发送」里
+    （2026-10-17 生产事故：部署清空了 MAIL_TEAM_ACCOUNT）。
     """
     hashed = [(thread_id, sha256_hex(ticket)) for thread_id, ticket in pairs]
     threads = await asyncio.to_thread(store.feedback_threads_by_tickets, hashed,
                                       messages_per_thread=messages_per_thread)
+    team = team_account.strip()
     if device is not None:
         bound = await asyncio.to_thread(store.feedback_threads_by_device, device["deviceId"],
                                         device["accountId"],
-                                        messages_per_thread=messages_per_thread)
+                                        messages_per_thread=messages_per_thread,
+                                        team_account=team or None)
         seen = {thread["threadId"] for thread in threads}
         threads.extend(thread for thread in bound if thread["threadId"] not in seen)
     threads.sort(key=lambda thread: thread["lastMessageAt"], reverse=True)
     notices = []
     if with_notices and device is not None:
         notices = await asyncio.to_thread(store.notices_for_account, device["accountId"])
-    team_side = bool(team_account and device and device["accountId"] == team_account)
+    team_side = bool(team and device and device["accountId"] == team)
     side_key = "teamUnread" if team_side else "unread"
     unread = sum(thread.get(side_key, 0) for thread in threads) \
         + sum(1 for row in notices if not row["read"])
@@ -394,13 +401,19 @@ async def _collect(store: Store, pairs: list[tuple[str, str]], device: dict[str,
             "unreadCount": unread,
             # 调用方是不是团队那一侧（团队收件箱 2026-10-15）：App 由此知道该按
             # 哪个视角排收件/已发送——teamBound 是线程的属性，两侧都看得到，
-            # 视角只能由服务端按调用方账号给。
+            # 视角只能由服务端按调用方账号给。开关关闭时恒为 false，且团队线程
+            # 根本不在 `threads` 里，两侧不会出现"半开"的组合。
             "teamPerspective": team_side}
 
 
 async def _authorized_threads(store: Store, pairs: list[tuple[str, str]],
-                              device: dict[str, Any] | None) -> set[str]:
-    """这次调用可以标记的线程：凭据命中 ∪ 设备（或账号）命中。"""
+                              device: dict[str, Any] | None,
+                              team_account: str = "") -> set[str]:
+    """这次调用可以标记的线程：凭据命中 ∪ 设备（或账号）命中。
+
+    与 :func:`_collect` 同一口径：`team_account` 为空时团队命中路径不参与，
+    于是开关关闭时团队侧连"已读"都推不动（与回信 404 一致）。
+    """
     allowed: set[str] = set()
     for thread_id, ticket in pairs:
         thread = await asyncio.to_thread(store.feedback_thread, thread_id, sha256_hex(ticket),
@@ -409,7 +422,8 @@ async def _authorized_threads(store: Store, pairs: list[tuple[str, str]],
             allowed.add(thread_id)
     if device is not None:
         bound = await asyncio.to_thread(store.feedback_threads_by_device, device["deviceId"],
-                                        device["accountId"], messages_per_thread=0)
+                                        device["accountId"], messages_per_thread=0,
+                                        team_account=team_account.strip() or None)
         allowed.update(thread["threadId"] for thread in bound)
     return allowed
 
@@ -593,7 +607,7 @@ async def feedback_read(request: web.Request) -> web.Response:
     if error is not None:
         return error
 
-    allowed = await _authorized_threads(store, pairs, device)
+    allowed = await _authorized_threads(store, pairs, device, _team_account(request))
     for thread_id in thread_ids:
         if thread_id not in allowed:
             continue

@@ -692,3 +692,43 @@ async def test_a_revoked_device_token_is_treated_as_anonymous(client, provisione
 
     # 读取同样按匿名：拿不到东西，但也不是 401。
     assert (await inbox(client, headers=device_headers(token)))["threads"] == []
+
+
+# ── 并发（2026-10-17：单进程多请求同时落到同一个 SQLite 库）───────────────────
+#
+# 生产是单进程 aiohttp + 线程池里的同步 SQLite，App 侧又会并发（别的设备、崩溃上报、
+# 用户连点）。这里只钉"并发不丢写、不串号"这条底线：丢一条留言或把两封信并成一条
+# 都是生产上很难回查的那种坏法。
+
+
+async def test_parallel_appends_to_one_thread_keep_every_message(client, store):
+    import asyncio
+
+    ticket = await feedback_ticket(client, text="原文")
+    sentences = [f"第 {index} 句" for index in range(12)]
+    responses = await asyncio.gather(*[
+        client.post("/feedback/append", json={**ticket_pair(ticket), "text": text})
+        for text in sentences])
+    assert [response.status for response in responses] == [200] * len(sentences), \
+        [await response.text() for response in responses]
+
+    bodies = [message["body"] for message in
+              store.feedback_thread(ticket["threadId"], None)["messages"]]
+    assert sorted(bodies) == sorted(["原文", *sentences]), "并发追加一条都不许丢、不许重复"
+    thread = store.feedback_thread(ticket["threadId"], None)
+    assert thread["status"] == "open", "用户补的话把线程拨回 open"
+    assert thread["lastMessageAt"] is not None
+
+
+async def test_parallel_submits_each_get_their_own_thread(client, store):
+    import asyncio
+
+    payloads = [{"text": f"第 {index} 封"} for index in range(10)]
+    responses = await asyncio.gather(*[client.post("/feedback/submit", json=payload)
+                                       for payload in payloads])
+    assert [response.status for response in responses] == [200] * len(payloads)
+    thread_ids = [(await response.json())["threadId"] for response in responses]
+    assert len(set(thread_ids)) == len(payloads), "每封信一条线程，不许并号"
+    subjects = {store.feedback_thread(thread_id, None)["messages"][0]["body"]
+                for thread_id in thread_ids}
+    assert subjects == {payload["text"] for payload in payloads}

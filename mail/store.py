@@ -322,21 +322,34 @@ class Store:
         return found
 
     def feedback_threads_by_device(self, device_id: str, account_id: str | None = None, *,
-                                   messages_per_thread: int = 50) -> list[dict[str, Any]]:
+                                   messages_per_thread: int = 50,
+                                   team_account: str | None = None) -> list[dict[str, Any]]:
         """绑定到这台设备**或它所属账号**的线程，最近的在前。
 
         账号也算命中：重装后重新配对换来一个新的 `deviceId`，只有账号还是同一个，
         "重装后重新配对即可找回"靠的就是这一条。
+
+        团队绑定（teamAccountId）是第三条命中路径：团队账号由此看到用户的来信
+        （2026-10-15 团队收件箱）。用户自己的可见性不受影响——teamAccountId 只会
+        等于团队账号，不会撞上普通用户的账号。
+
+        **`team_account` 为空 = 团队收件箱关闭**（2026-10-17 生产事故）：那条命中
+        路径整条不参与，而不是"线程照发、视角却是用户侧"。后者会把用户的来信塞进
+        owner 的「已发送」——开关被部署清空的那半天就是这么表现的。开关的真值在
+        `MAIL_TEAM_ACCOUNT`（`api._team_account`），这里只按调用方给的值判定。
+
+        注意第三条的**参数仍取调用方自己的 `account_id`**（不是传进来的团队账号）：
+        团队线程只对"团队账号本人"可见，`team_account` 只回答"这条路径开不开"。
+        否则开关一开，任意账号都会命中所有团队线程——那是把别人的信群发出去。
         """
-        # 团队绑定（teamAccountId）是第三条命中路径：团队账号由此看到用户的来信
-        # （2026-10-15 团队收件箱）。用户自己的可见性不受影响——teamAccountId 只会
-        # 等于团队账号，不会撞上普通用户的账号。
+        clauses = ["deviceId=?", "(accountId IS NOT NULL AND accountId=?)"]
+        params: list[Any] = [device_id, account_id]
+        if team_account:
+            clauses.append("(teamAccountId IS NOT NULL AND teamAccountId=?)")
+            params.append(account_id)
         rows = self._rows(
-            "SELECT * FROM feedbackThreads WHERE deviceId=?"
-            " OR (accountId IS NOT NULL AND accountId=?)"
-            " OR (teamAccountId IS NOT NULL AND teamAccountId=?)"
-            " ORDER BY lastMessageAt DESC",
-            (device_id, account_id, account_id))
+            f"SELECT * FROM feedbackThreads WHERE {' OR '.join(clauses)}"
+            " ORDER BY lastMessageAt DESC", params)
         return [self._feedback_payload(row, messages_per_thread) for row in rows]
 
     def mark_thread_read(self, thread_id: str, upto_ms: int | None = None) -> bool:

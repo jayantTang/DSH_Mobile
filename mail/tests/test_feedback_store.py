@@ -77,7 +77,8 @@ def test_indexes_the_readers_rely_on_exist(tmp_path):
     store = Store(path)
     try:
         assert {row[1] for row in store._rows("PRAGMA index_list(feedbackThreads)")} >= {
-            "feedbackThreadsByDevice", "feedbackThreadsByAccount", "feedbackThreadsByStatus"}
+            "feedbackThreadsByDevice", "feedbackThreadsByAccount", "feedbackThreadsByStatus",
+            "feedbackThreadsByTeam"}
         assert {row[1] for row in store._rows("PRAGMA index_list(feedbackMessages)")} >= {
             "feedbackMessagesByThread"}
         assert {row[1] for row in store._rows("PRAGMA index_list(noticeDeliveries)")} >= {
@@ -256,6 +257,72 @@ def test_threads_are_found_by_ticket_or_by_device(tmp_path):
             paired["threadId"]]
         assert store.feedback_threads_by_device("dev_nope", "acc_nope") == []
         assert store.feedback_threads_by_tickets([]) == []
+    finally:
+        store.close()
+
+
+def test_the_team_clause_of_by_device_is_gated_by_the_callers_switch(tmp_path):
+    """团队绑定只在调用方**给了** `team_account` 时参与命中（2026-10-17 事故）。
+
+    事故形状是"开关被部署清空、库里的绑定还在"：修复前团队设备仍然拿得到用户的
+    来信，于是 App 按用户视角把它们排进 owner 的「已发送」。这里从存储层钉住
+    判据：不给 `team_account` 就没有团队那条路径，且**不影响**写信人自己的命中。
+    """
+    store = Store(str(tmp_path / "state.db"))
+    try:
+        letter = store.create_feedback_thread(ticket_hash=sha256_hex("fk_letter"), text="用户来信",
+                                              device_id="dev_user", account_id="acc_user",
+                                              team_account_id="acc_team", at=1_000)
+        mine = store.create_feedback_thread(ticket_hash=sha256_hex("fk_mine"), text="owner 自己",
+                                            device_id="dev_owner", account_id="acc_team", at=2_000)
+
+        # 开关打开：团队看得到别人的来信，也看得到自己的。
+        assert {t["threadId"] for t in store.feedback_threads_by_device(
+            "dev_owner", "acc_team", team_account="acc_team")} == {letter["threadId"],
+                                                                   mine["threadId"]}
+        # 开关关闭：团队路径不参与，只剩自己那条；用户的来信仍在（写信人看得到）。
+        assert [t["threadId"] for t in store.feedback_threads_by_device(
+            "dev_owner", "acc_team")] == [mine["threadId"]]
+        assert [t["threadId"] for t in store.feedback_threads_by_device(
+            "dev_user", "acc_user")] == [letter["threadId"]], "写信人不受开关影响"
+        # 开着开关也不会把别家的账号当成团队：线索仍按**调用方自己的**账号配对，
+        # 无关账号一条都拿不到（开关只决定这条路径开不开）。
+        assert store.feedback_threads_by_device("dev_other", "acc_other",
+                                                team_account="acc_team") == []
+        # 顺序仍是最近活动在前。
+        assert [t["threadId"] for t in store.feedback_threads_by_device(
+            "dev_owner", "acc_team", team_account="acc_team")] == [mine["threadId"],
+                                                                    letter["threadId"]]
+    finally:
+        store.close()
+
+
+def test_a_migrated_database_gains_the_team_column_and_the_index(tmp_path):
+    """从中转迁过来的库缺 `teamAccountId`：`Store` 打开时补列 + 建索引，
+    补出来的列照常参与团队命中（2026-10-15 的"索引随迁移建"热修）。"""
+    path = str(tmp_path / "mail.db")
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        "CREATE TABLE feedbackThreads (threadId TEXT PRIMARY KEY, ticketHash TEXT NOT NULL UNIQUE,"
+        " accountId TEXT, deviceId TEXT, appVersion TEXT, deviceModel TEXT, systemVersion TEXT,"
+        " createdAt INTEGER NOT NULL, lastMessageAt INTEGER NOT NULL, ownerReadAt INTEGER,"
+        " userReadAt INTEGER, status TEXT NOT NULL DEFAULT 'open', clientRef TEXT UNIQUE,"
+        " subject TEXT);")
+    conn.execute("INSERT INTO feedbackThreads(threadId, ticketHash, accountId, deviceId,"
+                 " createdAt, lastMessageAt, status) VALUES('th_old','h','acc_user','dev_user',1,1,'open')")
+    conn.commit()
+    conn.close()
+
+    store = Store(path)
+    try:
+        assert columns(path, "feedbackThreads") == EXPECTED_COLUMNS["feedbackThreads"]
+        assert "feedbackThreadsByTeam" in {row[1] for row in
+                                           store._rows("PRAGMA index_list(feedbackThreads)")}
+        store._conn.execute("UPDATE feedbackThreads SET teamAccountId='acc_team' WHERE threadId='th_old'")
+        store._conn.commit()
+        assert [t["threadId"] for t in store.feedback_threads_by_device(
+            "dev_owner", "acc_team", team_account="acc_team")] == ["th_old"]
+        assert store.feedback_threads_by_device("dev_owner", "acc_team") == []
     finally:
         store.close()
 

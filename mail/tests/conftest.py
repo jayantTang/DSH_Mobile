@@ -92,8 +92,11 @@ def unregister_device(client, token: str) -> None:
     client.app["test_devices"].pop(token, None)
 
 
-@pytest.fixture
-async def client(aiohttp_client, store: Store):
+async def build_client(aiohttp_client, store: Store, *, team_account: str = TEAM_ACCOUNT):
+    """装一份完整的 mail 应用（与生产同一组装路径），返回 aiohttp 测试客户端。
+
+    `team_account=""` 就是 `MAIL_TEAM_ACCOUNT` 为空的部署形状：团队收件箱关闭。
+    """
     registry: dict[str, dict] = {}
     notified: list[tuple[str | None, list[str] | None]] = []
 
@@ -106,7 +109,23 @@ async def client(aiohttp_client, store: Store):
 
     app = mail_module.create_app(store=store, resolve_device=resolve,
                                  notify_account_state=notify,
-                                 team_account=TEAM_ACCOUNT)
+                                 team_account=team_account)
     app["test_devices"] = registry
     app["test_notified"] = notified
     return await aiohttp_client(app)
+
+
+@pytest.fixture
+async def client(aiohttp_client, store: Store):
+    return await build_client(aiohttp_client, store)
+
+
+@pytest.fixture
+async def client_without_team(aiohttp_client, store: Store):
+    """团队收件箱**关闭**（`MAIL_TEAM_ACCOUNT` 为空）的同一份服务。
+
+    2026-10-17 的生产事故就是"开关关了、库里的团队绑定还在"这个组合，
+    这条夹具让那个组合可复现——它与 `client` 共用同一个 `store`，所以
+    「开关开着时写的信，关掉之后谁看得见」可以在一个用例里演进。
+    """
+    return await build_client(aiohttp_client, store, team_account="")

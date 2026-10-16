@@ -18,8 +18,8 @@ import { join } from 'node:path'
 
 import { realDshHome, whichBinary } from './l1-runtime.mjs'
 import {
-  desktopInstance, freshInstall, iosLinkCarrierLifecycle, linkDiagnostics, pluginInstallHot,
-  relayTests, smoke,
+  desktopInstance, freshInstall, iosLinkCarrierLifecycle, linkDiagnostics, mailTests,
+  pluginInstallHot, relayTests, smoke,
 } from './l1-scenarios.mjs'
 
 export const lane = {
@@ -33,6 +33,10 @@ export const lane = {
     'relay-tests': {
       title: '中转单测（含真 Caddy 的端到端那半）在本机跑一遍，且不动真实数据',
       run: relayTests,
+    },
+    'mail-tests': {
+      title: '信件服务单测（含真 Caddy 的切换演练）在本机跑一遍，且不动真实数据',
+      run: mailTests,
     },
     'plugin-install-hot': { title: '新装一个插件是否需要重启宿主', run: pluginInstallHot },
     'desktop-instance': { title: '官方桌面版能否在隔离 HOME 下起第二个实例', run: desktopInstance },

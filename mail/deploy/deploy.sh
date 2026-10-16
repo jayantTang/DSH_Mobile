@@ -43,10 +43,67 @@ UNINSTALL=0
 [ "${1:-}" = "--uninstall" ] && UNINSTALL=1
 
 say() { printf 'deploy.sh: %s\n' "$*"; }
+note() { printf 'deploy.sh: %s\n' "$*" >&2; }
 die() { printf 'deploy.sh: error: %s\n' "$*" >&2; exit 1; }
+
+# ── 团队收件箱开关的渲染（2026-10-17 生产事故后加固） ───────────────────────
+#
+# MAIL_TEAM_ACCOUNT 是团队收件箱的开关，真值 = owner 账号（本机 `.env.local` 的
+# DSH_ACCOUNT_ID）。2026-10-17 01:47 的一次部署没有导出 `DSH_MAIL_TEAM_ACCOUNT`，
+# 单元被渲染成空的开关；而线程的团队绑定（teamAccountId 列）不归它管——于是
+# owner 的 App 照旧收到用户的来信，却被判成"用户侧视角"，那些信显示在他的
+# 「已发送」里。两条规矩从此写死：
+#
+#   1. 只有**显式**给了 `DSH_MAIL_TEAM_ACCOUNT` 才改这一行；没给就沿用已装单元
+#      里的现值（首次安装 = 空）。要关掉就显式给空值，别靠"忘导出"。
+#   2. 值不是账号 id 的形状（或模板里没有那一行）直接拒部署，不留下半个单元。
+#
+# `--render-unit <path>` 是给测试用的旁路：不需要 root，只渲染单元（同一份代码路径）。
+
+EXISTING_UNIT="${DSH_MAIL_EXISTING_UNIT:-$UNIT_PATH}"
+UNIT_TEMPLATE="$SRC_DIR/deploy/dsh-mail.service"
+
+existing_team_account() {
+  [ -f "$EXISTING_UNIT" ] || return 0
+  sed -n 's/^Environment=MAIL_TEAM_ACCOUNT=//p' "$EXISTING_UNIT" | head -n 1
+}
+
+render_unit() {
+  local out="$1" team
+  [ -n "$out" ] || die "--render-unit needs an output path"
+  [ -f "$UNIT_TEMPLATE" ] || die "$UNIT_TEMPLATE is missing"
+  grep -q '^Environment=MAIL_TEAM_ACCOUNT=$' "$UNIT_TEMPLATE" \
+    || die "$UNIT_TEMPLATE has no empty MAIL_TEAM_ACCOUNT line; refusing to render blind"
+  if [ -n "${DSH_MAIL_TEAM_ACCOUNT+x}" ]; then
+    team="$DSH_MAIL_TEAM_ACCOUNT"
+  else
+    team="$(existing_team_account)"
+    if [ -n "$team" ]; then
+      note "DSH_MAIL_TEAM_ACCOUNT is not set; keeping the installed value ($team)"
+    else
+      note "DSH_MAIL_TEAM_ACCOUNT is not set and no installed value exists; team inbox stays off"
+    fi
+  fi
+  case "$team" in
+    "") ;;
+    # 账号 id 的形状；任何别的字符（空白、换行、shell 元字符）都拒部署。
+    # 用 case 而不是 grep：grep 是逐行匹配，带换行的值能骗过它。
+    *[!A-Za-z0-9_.:@-]*) die "DSH_MAIL_TEAM_ACCOUNT is not an account id: $team" ;;
+  esac
+  sed -e "s/8788/$PORT/g" \
+      -e "s|^Environment=MAIL_TEAM_ACCOUNT=$|Environment=MAIL_TEAM_ACCOUNT=$team|" \
+      "$UNIT_TEMPLATE" > "$out"
+  grep -q "^Environment=MAIL_TEAM_ACCOUNT=$team\$" "$out" \
+    || die "the rendered unit does not carry MAIL_TEAM_ACCOUNT=$team"
+  printf '%s' "$team"
+}
 
 case "${1:-}" in
   -h|--help) sed -n '3,25p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  --render-unit)
+    rendered="$(render_unit "${2:-}")"
+    say "rendered ${2:-} (MAIL_TEAM_ACCOUNT=${rendered:-<empty: team inbox off>})"
+    exit 0 ;;
 esac
 
 [ "$(id -u)" -eq 0 ] || die "run me as root (sudo $0)"
@@ -114,12 +171,11 @@ chown -R root:root "$APP_DIR/.venv"
 say "installing $UNIT_PATH"
 # 端口参数化：模板里的 8788 是默认值，同机可能被别的服务占用（2026-10-15 切换时
 # 8788 就被另一个 node 服务占着）。单元与片段一起替换，保证三处（env、ExecStart、
-# reverse_proxy）永远一致。
-sed -e "s/8788/$PORT/g" \
-    -e "s|^Environment=MAIL_TEAM_ACCOUNT=$|Environment=MAIL_TEAM_ACCOUNT=${DSH_MAIL_TEAM_ACCOUNT:-}|" \
-    "$SRC_DIR/deploy/dsh-mail.service" > "$UNIT_PATH.rendered"
+# reverse_proxy）永远一致。团队收件箱开关由 render_unit 决定（见上面的两条规矩）。
+TEAM_ACCOUNT_RENDERED="$(render_unit "$UNIT_PATH.rendered")"
 install -m 0644 -o root -g root "$UNIT_PATH.rendered" "$UNIT_PATH"
 rm -f "$UNIT_PATH.rendered"
+say "team inbox switch: ${TEAM_ACCOUNT_RENDERED:-off}"
 systemctl daemon-reload
 systemctl enable dsh-mail.service >/dev/null
 if systemctl is-active --quiet dsh-mail.service; then

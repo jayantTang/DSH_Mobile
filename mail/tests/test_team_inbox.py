@@ -10,6 +10,8 @@
    状态翻 replied；用户换机重配后凭账号也能 append（author=user）。
 4. 已读分侧：团队读来信推 ownerReadAt，unreadCount 按侧取 teamUnread。
 5. 团队账号未配置（空）时一切回到拆分时的行为。
+6. 团队账号未配置但库里已有团队绑定（2026-10-17 生产事故）：团队命中路径整条
+   不参与，团队两侧都看不到那些来信——不是"线程照发、视角却是用户侧"。
 """
 
 from __future__ import annotations
@@ -165,3 +167,81 @@ async def test_everything_falls_back_to_the_old_behaviour_without_a_team_account
     assert submitted.status == 200
     thread = store.feedback_thread((await submitted.json())["threadId"], None)
     assert thread["teamAccountId"] is None
+
+
+# ── 开关关闭 + 库里的团队绑定还在（2026-10-17 生产事故的回归用例）─────────────
+#
+# 事故形状：一次部署没导出 `DSH_MAIL_TEAM_ACCOUNT`，单元的开关变成空的；而线程的
+# 团队绑定是**库里的列**，不归开关管。修复前，团队设备仍然拿到那些来信，但
+# `teamPerspective` 是 false——App 按用户视角渲染，用户的信就出现在 owner 的
+# 「已发送」里（"怎么用户的发送邮件到我这来了"）。修复的判据是：开关关闭 = 团队
+# 命中路径整条不参与，团队两侧（收件箱/已发送）都看不到那些信；写信人自己的
+# 可见性、以及 owner 自己的线程不受影响。
+
+
+async def test_letters_bound_while_the_switch_was_on_are_invisible_when_it_is_off(
+        client, client_without_team, store):
+    letter = await feedback_ticket(client, text="开关开着时收到的来信", deviceModel="iPhone15,4")
+    assert store.feedback_thread(letter["threadId"], None)["teamAccountId"] == TEAM
+
+    team_token = register_device(client_without_team, account_id=TEAM)
+    inbox = await client_without_team.post("/feedback/inbox", json={"tickets": []},
+                                           headers=device_headers(team_token))
+    body = await inbox.json()
+    assert body["teamPerspective"] is False, "开关关闭，视角恒为用户侧"
+    assert body["threads"] == [], "团队线程不许按用户视角发出去（事故回归）"
+    assert body["unreadCount"] == 0
+
+    # 那封信还在，凭据持有人照旧取得回来——开关只关掉团队那条命中路径。
+    kept = await client_without_team.post("/feedback/inbox", json={
+        "tickets": [{"threadId": letter["threadId"], "ticketKey": letter["ticketKey"]}]})
+    assert [t["threadId"] for t in (await kept.json())["threads"]] == [letter["threadId"]]
+
+
+async def test_turning_the_switch_off_keeps_the_owners_own_threads_and_the_authors_letter(
+        client, client_without_team, store):
+    """两侧的既有可见性都不受开关影响：写信人凭账号看得见自己那封（只是团队那条
+    命中路径没了），owner 自己的提交（本来就没绑团队）照旧看得见。"""
+    author = register_device(client, account_id="acc_user")
+    submitted = await client.post("/feedback/submit", json={
+        "text": "用户来信", "deviceModel": "iPhone15,4"}, headers=device_headers(author))
+    assert submitted.status == 200, await submitted.text()
+    letter_id = (await submitted.json())["threadId"]
+    assert store.feedback_thread(letter_id, None)["teamAccountId"] == TEAM
+
+    same_user = register_device(client_without_team, account_id="acc_user")
+    team_token = register_device(client_without_team, account_id=TEAM)
+    mine = await client_without_team.post("/feedback/submit", json={
+        "text": "owner 自己的提交", "deviceModel": "iPhone17,1"},
+        headers=device_headers(team_token))
+    assert mine.status == 200, await mine.text()
+    mine_id = (await mine.json())["threadId"]
+    assert store.feedback_thread(mine_id, None)["teamAccountId"] is None
+
+    seen = {}
+    for label, token in (("author", same_user), ("team", team_token)):
+        body = await (await client_without_team.post(
+            "/feedback/inbox", json={"tickets": []}, headers=device_headers(token))).json()
+        seen[label] = [t["threadId"] for t in body["threads"]]
+    assert seen["author"] == [letter_id], "写信人按账号看得到自己那封"
+    assert seen["team"] == [mine_id], "owner 自己的线程照旧，用户的来信不在里面"
+
+
+async def test_the_team_cannot_reply_or_mark_read_while_the_switch_is_off(
+        client, client_without_team, store):
+    letter = await feedback_ticket(client, text="来信", deviceModel="iPhone15,4")
+    team_token = register_device(client_without_team, account_id=TEAM)
+
+    reply = await client_without_team.post("/feedback/append", json={
+        "threadId": letter["threadId"], "text": "开关关闭时不该写得进去"},
+        headers=device_headers(team_token))
+    assert reply.status == 404, "团队侧判定同样归开关管"
+
+    before = store.feedback_thread(letter["threadId"], None)
+    read = await client_without_team.post("/feedback/read", json={
+        "threadIds": [letter["threadId"]]}, headers=device_headers(team_token))
+    assert read.status == 200
+    after = store.feedback_thread(letter["threadId"], None)
+    assert after["ownerReadAt"] is None, "推不动团队侧已读"
+    assert after["userReadAt"] == before["userReadAt"], "也不许顺手推用户侧已读"
+    assert len(after["messages"]) == len(before["messages"]), "回信没有落库"
