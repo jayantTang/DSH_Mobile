@@ -152,14 +152,9 @@ final class ThemeTokenTests: XCTestCase {
         }
     }
 
-    /// 缺陷钉住（不是期望行为，是今天的读数）：三个亮色边框字面量是 `0x0000000A` /
-    /// `0x0000001A` / `0x0000001F`，数值上只有 10 / 26 / 31，落不进 `Color(hex:)` 的
-    /// "八位读 RGBA" 分支（判据是 `hex > 0xFFFFFF`），于是被当六位 RGB 读：
-    /// 期望的"4% 黑"变成了不透明蓝通道 #00000A。
-    /// 修法是把判据换成"字面量有没有写满八位"，或者给这三个 token 换写法；
-    /// 修完这条用例必须改成 `tokenRGB(0, 0, 0, 0.039)` 之类的期望值。
-    func test_light_borders_today_lose_their_alpha_and_gain_a_blue_channel() {
-        let table: [(name: String, blue: Double)] = [
+    /// 029 缺陷7已修：亮色边框是「纯黑 + 4%/10%/12% alpha」（走 adaptiveBlack 显式通道）。
+    func test_light_borders_are_black_at_their_intended_alphas() {
+        let table: [(name: String, alpha: Double)] = [
             ("border1", 0x0A / 255),
             ("border2", 0x1A / 255),
             ("border3", 0x1F / 255),
@@ -167,8 +162,8 @@ final class ThemeTokenTests: XCTestCase {
         let colors: [Color] = [DSHTheme.border1, DSHTheme.border2, DSHTheme.border3]
         for (entry, color) in zip(table, colors) {
             let light = resolvedToken(color, .light)
-            XCTAssertTrue(light.near(TokenRGBA(r: 0, g: 0, b: entry.blue, a: 1), within: 0.003),
-                          "\(entry.name) light resolved \(light) — the intended value is 4/10/12 percent black")
+            XCTAssertTrue(light.near(TokenRGBA(r: 0, g: 0, b: 0, a: entry.alpha), within: 0.003),
+                          "\(entry.name) light resolved \(light), expected black at alpha \(entry.alpha)")
         }
     }
 

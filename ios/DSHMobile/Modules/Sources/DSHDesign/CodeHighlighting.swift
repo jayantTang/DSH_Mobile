@@ -162,6 +162,9 @@ public enum CodeLanguage: String, Sendable {
         }
     }
 
+    /// 块注释是否允许嵌套（Swift 是；C/Java 系否——它们的嵌套写法本来就是不合法的）。
+    public var blockCommentNests: Bool { self == .swift }
+
     public var blockComment: (open: String, close: String)? {
         switch self {
         case .swift, .javascript, .typescript, .go, .rust, .c, .cpp, .java, .kotlin, .css, .sql, .php:
@@ -194,6 +197,8 @@ public enum CodeLanguage: String, Sendable {
 /// Carries cross-line lexer state through a page.
 public struct CodeLexerState: Sendable {
     public var inBlockComment = false
+    /// 块注释嵌套深度（Swift 允许嵌套块注释；029 缺陷9）。0 = 不在块注释里。
+    public var blockCommentDepth = 0
 }
 
 public enum CodeHighlighter {
@@ -226,13 +231,49 @@ public enum CodeHighlighter {
         var index = 0
 
         // Finish a block comment carried over from an earlier line.
-        if state.inBlockComment, let close = language.blockComment?.close {
-            if let range = line.range(of: close) {
-                let text = String(line[line.startIndex ..< range.upperBound])
-                emit(text, .comment)
-                index = line.distance(from: line.startIndex, to: range.upperBound)
-                state.inBlockComment = false
-            } else {
+        if state.inBlockComment, let block = language.blockComment {
+            // 按嵌套深度扫：Swift 的内层 /* 要把深度再抬起来，内层 */ 只降一层。
+            var cursor = line.startIndex
+            while cursor < line.endIndex {
+                let rest = line[cursor...]
+                if let openRange = rest.range(of: block.open),
+                   let closeRange = rest.range(of: block.close) {
+                    if language.blockCommentNests && openRange.lowerBound < closeRange.lowerBound {
+                        state.blockCommentDepth += 1
+                        cursor = openRange.upperBound
+                        continue
+                    }
+                    state.blockCommentDepth -= 1
+                    cursor = closeRange.upperBound
+                    if state.blockCommentDepth <= 0 {
+                        let text = String(line[line.startIndex ..< cursor])
+                        emit(text, .comment)
+                        index = line.distance(from: line.startIndex, to: cursor)
+                        state.inBlockComment = false
+                        break
+                    }
+                    continue
+                }
+                if let closeRange = rest.range(of: block.close) {
+                    state.blockCommentDepth -= 1
+                    cursor = closeRange.upperBound
+                    if state.blockCommentDepth <= 0 {
+                        let text = String(line[line.startIndex ..< cursor])
+                        emit(text, .comment)
+                        index = line.distance(from: line.startIndex, to: cursor)
+                        state.inBlockComment = false
+                        break
+                    }
+                    continue
+                }
+                if language.blockCommentNests, let openRange = rest.range(of: block.open) {
+                    state.blockCommentDepth += 1
+                    cursor = openRange.upperBound
+                    continue
+                }
+                break
+            }
+            if state.inBlockComment {
                 return [(line, .comment)]
             }
         }
@@ -254,13 +295,39 @@ public enum CodeHighlighter {
             // Block comment open.
             if let block, matches(characters, at: index, prefix: block.open) {
                 let rest = String(characters[index...])
-                if let range = rest.range(of: block.close) {
-                    let text = String(rest[rest.startIndex ..< range.upperBound])
+                // 开闭同符（Python 的 """）时，闭合要从开符之后再找，
+                // 否则开符自己被当成闭合（029 缺陷8：docstring 永远不着色）。
+                let afterOpen = rest.index(rest.startIndex, offsetBy: block.open.count)
+                let searchFrom = afterOpen <= rest.endIndex ? afterOpen : rest.endIndex
+                // 嵌套（Swift）：只认第一个闭合会把尾巴漏成正文（029 缺陷9）。
+                var depth = 1
+                var cursor = searchFrom
+                var closedEnd: String.Index?
+                scan: while cursor < rest.endIndex {
+                    let tail = rest[cursor...]
+                    let nextOpen = language.blockCommentNests ? tail.range(of: block.open) : nil
+                    let nextClose = tail.range(of: block.close)
+                    if let nextClose, nextOpen == nil || nextClose.lowerBound < nextOpen!.lowerBound {
+                        depth -= 1
+                        cursor = nextClose.upperBound
+                        if depth == 0 { closedEnd = cursor; break scan }
+                        continue
+                    }
+                    if let nextOpen {
+                        depth += 1
+                        cursor = nextOpen.upperBound
+                        continue
+                    }
+                    break
+                }
+                if let closedEnd {
+                    let text = String(rest[rest.startIndex ..< closedEnd])
                     emit(text, .comment)
                     index += text.count
                 } else {
                     emit(rest, .comment)
                     state.inBlockComment = true
+                    state.blockCommentDepth = depth
                     index = characters.count
                 }
                 continue

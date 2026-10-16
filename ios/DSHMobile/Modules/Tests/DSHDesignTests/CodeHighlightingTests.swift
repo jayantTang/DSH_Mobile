@@ -105,17 +105,13 @@ final class CodeHighlightingTests: XCTestCase {
         XCTAssertFalse(state.inBlockComment)
     }
 
-    /// 缺陷钉住（现状，不是期望）：Swift 的块注释允许嵌套，这个词法器只找第一个 `*/`，
-    /// 剩下的 `*/` 掉进正文。真嵌套要改成计数深度，改完这条用例跟着改。
-    func test_swift_nested_block_comment_is_not_nested_today() {
+    /// 029 缺陷9已修：Swift 块注释按嵌套深度计数，内层 */ 不再漏成正文。
+    func test_swift_nested_block_comment_closes_at_the_outer_close() {
         var state = CodeLexerState()
         let line = "/* outer /* inner */ tail */"
         let segments = lex(line, .swift, state: &state)
-        XCTAssertEqual(texts(segments, kind: .comment), ["/* outer /* inner */"],
-                       "the lexer stops at the first close marker")
-        XCTAssertTrue(texts(segments, kind: .plain).joined().contains("tail */"),
-                      "the leftover close marker falls through as plain text")
-        XCTAssertEqual(joined(segments), line, "no character may be dropped")
+        XCTAssertEqual(texts(segments, kind: .comment).joined(), line,
+                       "the whole nested comment is one comment run")
         XCTAssertFalse(state.inBlockComment)
     }
 
@@ -142,29 +138,23 @@ final class CodeHighlightingTests: XCTestCase {
 
     // MARK: - Python
 
-    /// 缺陷钉住（现状，不是期望）：Python 的块注释开闭是同一个 `"""`，而实现是在 `rest`
-    /// （**含**开引号）里找闭合，于是开引号立刻匹配到自己 —— 三引号永远只是一个三字符注释，
-    /// `inBlockComment` 对 Python 永远为 false，那条 `blockComment` 分支实际是死代码，
-    /// docstring 正文不着色。修法是先跨过开引号再找闭合；改完这几条期望值跟着改。
-    func test_python_triple_quote_is_only_a_three_character_comment_today() {
+    /// 029 缺陷8已修：闭合从开符之后找，未闭合的 docstring 正文整段是注释且跨行延续。
+    func test_python_an_unterminated_docstring_stays_a_comment() {
         var state = CodeLexerState()
         let line = "x = 1  \"\"\"start of the doc"
         let segments = lex(line, .python, state: &state)
-        XCTAssertEqual(texts(segments, kind: .comment), ["\"\"\""],
-                       "the opener matches itself as the close marker, so only three characters are a comment")
         XCTAssertEqual(texts(segments, kind: .number), ["1"], "code before the opener is tokenized normally")
-        XCTAssertTrue(texts(segments, kind: .plain).joined().contains("start of the doc"),
-                      "the body of the docstring stays plain text")
-        XCTAssertFalse(state.inBlockComment, "nothing is carried over to the next line")
+        XCTAssertTrue(texts(segments, kind: .comment).joined().contains("start of the doc"),
+                      "the unterminated docstring body is comment text")
+        XCTAssertTrue(state.inBlockComment, "the comment carries over to the next line")
         XCTAssertEqual(joined(segments), line, "no character may be dropped")
     }
 
-    /// 同一个缺陷的另一面：`"""` 成对出现时，两个引号各自成为一条三字符注释，正文夹在中间。
-    func test_python_a_triple_quote_pair_on_one_line_becomes_two_short_comments() {
+    /// 成对三引号在同一行就是一整条注释（含正文）。
+    func test_python_a_docstring_on_one_line_is_one_comment() {
         let line = "\"\"\"doc\"\"\""
         let segments = lexLine(line, .python)
-        XCTAssertEqual(texts(segments, kind: .comment), ["\"\"\"", "\"\"\""])
-        XCTAssertTrue(texts(segments, kind: .plain).joined().contains("doc"))
+        XCTAssertEqual(texts(segments, kind: .comment).joined(), line)
         XCTAssertEqual(joined(segments), line)
     }
 
@@ -191,15 +181,15 @@ final class CodeHighlightingTests: XCTestCase {
         XCTAssertEqual(joined(segments), line)
     }
 
-    /// 「未闭合的三引号」在 Python 上根本走不到：开引号自己闭合自己，所以下一行照常着色。
-    /// 同上，是缺陷钉住。
-    func test_python_an_unclosed_triple_quote_does_not_swallow_the_next_line() {
+    /// 未闭合的三引号会跨行吞咽，直到找到闭合（029 修复后的正确语义）。
+    func test_python_an_unclosed_docstring_swallows_until_it_closes() {
         var state = CodeLexerState()
         _ = lex("x = 1  \"\"\"open", .python, state: &state)
-        XCTAssertFalse(state.inBlockComment, "the opener closes on itself")
-        let next = lex("def helper():", .python, state: &state)
-        XCTAssertEqual(texts(next, kind: .comment), [], "the next line is not a comment")
-        XCTAssertEqual(texts(next, kind: .keyword), ["def"])
+        XCTAssertTrue(state.inBlockComment, "an unterminated docstring carries over")
+        let next = lex("body line\"\"\"  def helper():", .python, state: &state)
+        XCTAssertTrue(texts(next, kind: .comment).joined().contains("body line"), "the body stays a comment")
+        XCTAssertEqual(texts(next, kind: .keyword), ["def"], "code resumes after the closing quotes")
+        XCTAssertFalse(state.inBlockComment)
     }
 
     // MARK: - JavaScript / TypeScript

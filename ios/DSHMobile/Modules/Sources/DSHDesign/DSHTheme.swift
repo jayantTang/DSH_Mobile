@@ -48,11 +48,11 @@ public enum DSHTheme {
     // six-digit value here would be opaque.
 
     /// The hairline that separates adjacent rows: 4% black, 6% white.
-    public static let border1 = adaptive(light: 0x0000000A, dark: 0xFFFFFF0F)
+    public static let border1 = adaptiveBlack(lightAlpha: 0x0A / 255.0, dark: 0xFFFFFF0F)
     /// The standard control outline: 10% black, 12% white.
-    public static let border2 = adaptive(light: 0x0000001A, dark: 0xFFFFFF1F)
+    public static let border2 = adaptiveBlack(lightAlpha: 0x1A / 255.0, dark: 0xFFFFFF1F)
     /// A stronger outline for focused controls: 12% black, 16% white.
-    public static let border3 = adaptive(light: 0x0000001F, dark: 0xFFFFFF29)
+    public static let border3 = adaptiveBlack(lightAlpha: 0x1F / 255.0, dark: 0xFFFFFF29)
 
     // MARK: - Accents
 
@@ -147,6 +147,24 @@ public enum DSHTheme {
     // MARK: - Helpers
 
     /// Builds a colour that follows the system appearance.
+    /// 亮色侧的「纯黑 + 透明度」：8 位 hex 的最高位是 0 时会被 hexRGBA 当六位 RGB 读
+    /// （029 缺陷7），所以这类值走显式 alpha，不走字面量位数判定。
+    private static func adaptiveBlack(lightAlpha: Double, dark: UInt32) -> Color {
+        #if canImport(UIKit)
+        return Color(uiColor: UIColor { traits in
+            traits.userInterfaceStyle == .dark
+                ? UIColor(hex: dark)
+                : UIColor.black.withAlphaComponent(lightAlpha)
+        })
+        #else
+        return Color(nsColor: NSColor(name: nil) { appearance in
+            appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+                ? NSColor(hex: dark)
+                : NSColor.black.withAlphaComponent(CGFloat(lightAlpha))
+        })
+        #endif
+    }
+
     private static func adaptive(light: UInt32, dark: UInt32) -> Color {
         #if canImport(UIKit)
         return Color(uiColor: UIColor { traits in

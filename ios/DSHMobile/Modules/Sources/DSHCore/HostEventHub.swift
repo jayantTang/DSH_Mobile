@@ -147,6 +147,12 @@ public final class HostEventHub {
         }
     }
 
+    /// 应答侧的错误。
+    public enum HostEventHubError: Error, Equatable {
+        /// 这条提问已不在待答集（已被答过/已被宿主撤回）。
+        case promptAlreadyAnswered
+    }
+
     // MARK: - Answering
 
     /// Answers one pending prompt and clears it locally.
@@ -154,9 +160,16 @@ public final class HostEventHub {
         guard let link, let clientId else {
             throw DSHTransportError.carrierClosed
         }
+        // 029 缺陷10：先本地认领再发。不发就重复应答照发第二帧——宿主端 waterfall
+        // 已经有人答过时，这边再发一帧只会让 host 的日志多一份费解的重复。
+        // 认领先于网络：失败也宁可留下"这个 prompt 没了"（重新来一条 feed 会再出现），
+        // 也不能让两次 tap 变成两个结果帧。
+        guard pending.contains(where: { $0.id == item.id }) else {
+            throw HostEventHubError.promptAlreadyAnswered
+        }
+        pending.remove(id: item.id)
         let answer = EventAnswer(clientId: clientId, eventId: item.id, outcome: outcome)
         try await link.answer(answer)
-        pending.remove(id: item.id)
     }
 
     /// Declines to handle a prompt, letting the host continue to other clients.

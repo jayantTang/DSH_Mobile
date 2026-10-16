@@ -201,20 +201,16 @@ final class HostEventHubConcurrencyTests: XCTestCase {
         XCTAssertEqual(field(carrier.answered[0], "eventId"), "event-1")
         XCTAssertEqual(outcomeKind(carrier.answered[0]), "next")
 
-        // The second answer. The hub keeps no record of what it has answered —
-        // the pending set is the only bookkeeping, and the prompt is no longer
-        // in it — so this call must not throw, must not resurrect the prompt,
-        // and (because the guard against a duplicate lives in the connector)
-        // still produces a frame. That is the semantics: idempotent locally,
-        // first-answer-wins one hop down.
-        try await hub.answer(item, with: .next)
-
+        // 029 缺陷10已修：第二次应答在本地被拒绝（先认领后发），不产生第二帧。
+        do {
+            try await hub.answer(item, with: .next)
+            XCTFail("the second answer must be refused locally")
+        } catch {
+            XCTAssertEqual(error as? HostEventHub.HostEventHubError, .promptAlreadyAnswered)
+        }
         XCTAssertTrue(hub.pending.isEmpty, "the repeat must not put the prompt back")
-        XCTAssertEqual(carrier.answered.count, 2,
-                       "the hub must not pretend locally that it deduplicated")
-        XCTAssertEqual(carrier.answered.compactMap { field($0, "eventId") }, ["event-1", "event-1"])
-        XCTAssertEqual(carrier.answered.compactMap { field($0, "clientId") }, ["client-1", "client-1"])
-        XCTAssertEqual(carrier.answered.compactMap { outcomeKind($0) }, ["next", "next"])
+        XCTAssertEqual(carrier.answered.count, 1,
+                       "the hub claims locally: the second answer never reaches the wire")
     }
 
     func test_two_consumers_answering_one_prompt_both_reach_the_wire_and_the_prompt_goes_once() async throws {
@@ -229,15 +225,9 @@ final class HostEventHubConcurrencyTests: XCTestCase {
         await eventually("the prompt to be promoted") { hub.pending.count == 1 }
         let item = try XCTUnwrap(hub.pending.first)
 
-        // Two screens answer the same prompt with different outcomes; the park
-        // holds both calls inside the carrier so the case can see the pair.
+        // Two screens answer the same prompt; the local claim decides the winner.
         let first = Task { try await hub.answer(item, with: .result(.string("yes"))) }
         let second = Task { try await hub.answer(item, with: .rejected(code: "declined", message: "not me")) }
-
-        await eventually("both answers to reach the wire") { carrier.answered.count == 2 }
-        XCTAssertEqual(carrier.answered.compactMap { field($0, "eventId") }, ["event-1", "event-1"],
-                       "both consumers answered the same prompt")
-        XCTAssertEqual(carrier.answered.compactMap { outcomeKind($0) }, ["result", "rejected"])
 
         await park.open()
         var errors: [String] = []
@@ -245,15 +235,12 @@ final class HostEventHubConcurrencyTests: XCTestCase {
             do { try await task.value } catch { errors.append("\(error)") }
         }
 
-        // Neither caller is told it lost. The host-side rule is enforced one hop
-        // down (the connector's `WaterfallDedupe` claims the event id and drops
-        // the second frame) and `$events/result` is fire-and-forget, so there is
-        // no rejection for the hub to forward. Pinned as-is: what the hub
-        // guarantees is that the pending set loses the prompt exactly once.
-        XCTAssertTrue(errors.isEmpty,
-                      "the losing answer returns normally; got errors: \(errors)")
+        // 029 缺陷10已修：恰好一帧上线；输家在本地拿到 promptAlreadyAnswered。
+        XCTAssertEqual(carrier.answered.count, 1,
+                       "exactly one answer reaches the wire; got \(carrier.answered.count)")
+        XCTAssertEqual(errors.count, 1,
+                       "exactly one caller is told it lost; got \(errors)")
         XCTAssertTrue(hub.pending.isEmpty, "the prompt is answered exactly once from here")
-        XCTAssertTrue(hub.pendingPrompts(for: "session-1").isEmpty)
     }
 
     // MARK: - One subscriber that stops reading
