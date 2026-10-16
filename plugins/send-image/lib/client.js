@@ -43,8 +43,8 @@ const ROUTE = 'send-image/screenshot'
 const HOTKEY = { code: 'KeyS', modifiers: ['primary', 'alt'] }
 const COMMAND_ID = 'send-image.screenshot'
 const LABEL = '截图并附上'
-const TITLE = '截图并附上：拖拽选择矩形范围（⌥⌘S）'
-const ARIA = '截图并附上（⌥⌘S）'
+/** 按钮上的字。只写「截图」：热键写在 `title` 里，不占按钮正面（owner 2026-10-17 要求）。 */
+const BUTTON_TEXT = '截图'
 const SLOT_NAME = 'conversation.input.left'
 const SLOT_ID = 'send-image-screenshot'
 const STYLE_ID = 'dsh-send-image-style'
@@ -53,23 +53,45 @@ const BUTTON_CLASS = 'dsh-send-image-button'
 const TOAST_MS = 9000
 
 /**
- * 注入的样式表。按钮那几条**照抄**输入区里官方按钮的观感（工作区 / 智能体预设 / 模型选择器
- * 用的同一套 token）：同样的圆角、字号、字重、内距，`hover` 换成官方的
- * `--dsw-alias-interactive-bg-hover`，键盘聚焦给同一条 focus ring。用官方 CSS 变量而不是写死颜色，
- * 这样跟随主题，也跟旁边按钮在深浅色下表现一致；变量缺失时有兜底值（插件是独立发布的，可能装在没有
- * 这些 token 的宿主上）。
+ * 当前是不是 macOS：热键写法跟平台走（`⌥⌘S` / `Ctrl+Alt+S`），`title` 里要写对。
+ *
+ * 先读宿主自己在 `<html data-platform>` 上写的判定（官方同一处），取不到再看 UA；
+ * 两者都没有时按 macOS 处理（本机与官方桌面版都是 macOS）。
+ */
+function detectMac() {
+  try {
+    const flag = globalThis.document?.documentElement?.dataset?.platform
+    if (typeof flag === 'string' && flag) return flag === 'darwin'
+  } catch { /* 读不到就往下走 */ }
+  try {
+    return /Mac|iPhone|iPad|iPod/i.test(String(globalThis.navigator?.userAgent ?? ''))
+  } catch {
+    return true
+  }
+}
+
+/** `title`：光标放上来看到的就这一句，不写别的（owner 2026-10-17 要求）。 */
+function shortcutTitle(isMac) {
+  return `快捷键：${isMac ? '⌥⌘S' : 'Ctrl+Alt+S'}`
+}
+
+/**
+ * 注入的样式表。
+ *
+ * 按钮那几条**只在降级路径上生效**：正常路径用官方 primitives 的 `Button`（与输入区里
+ * 官方按钮同一套 CSS-module 类，颜色随主题、也不需要我们猜 token）。只有当宿主没有
+ * `@deepseek-ai/dsh-client-ui-primitives`（老宿主）时，才退回这个自带 class 的裸 `button`，
+ * 此时这几条按官方输入区控件的 token 兜底（变量缺失还有字面兜底值）；
+ * 所以它们不再参与"像不像原生"这件事，不要照着它们调外观。
  */
 const CSS = [
   '#dsh-send-image-toast{position:fixed;z-index:2147483647;left:50%;transform:translateX(-50%);',
   'bottom:88px;max-width:min(560px,86vw);padding:10px 14px;border-radius:10px;',
   'background:rgba(32,32,36,.96);color:#fff;font-size:13px;line-height:1.5;',
   'box-shadow:0 8px 28px rgba(0,0,0,.28)}',
-  // 与输入区里官方那个「权限档位」触发器**逐条对齐**（`ui-permission-presets` 的 `.trigger`）：
-  // 圆角/高度/字号/字重/内距都一样，文字用 `--dsw-alias-label-secondary`（不是 primary——
-  // 用 primary 会让这一个按钮成为整行最亮的一块，与旁边的官方控件明显不是一套），`hover` 用
-  // 官方的 `--dsw-alias-interactive-bg-hover`，键盘聚焦用同一条 focus ring，禁用态用
-  // `--dsw-alias-label-dimmed`。用官方 CSS 变量而不是写死颜色，深浅色主题都跟着走；
-  // 变量缺失时有兜底值（插件是独立发布的，可能装在没有这些 token 的宿主上）。
+  // 降级路径（拿不到官方 primitives 时）的兜底观感：圆角/高度/字号/字重/内距照抄输入区里的
+  // 官方触发器，文字用 `--dsw-alias-label-secondary`，`hover` 用官方交互底色，键盘聚焦用同一条
+  // focus ring，禁用态用 `--dsw-alias-label-dimmed`；变量缺失时有兜底值。
   '.dsh-send-image-button{border-radius:var(--dsw-radius-sm,8px);height:28px;',
   'color:var(--dsw-alias-label-secondary,inherit);background:none;border:none;cursor:pointer;',
   'align-items:center;gap:4px;padding:0 8px;font:inherit;font-size:13px;font-weight:500;',
@@ -219,20 +241,37 @@ function registerShortcut(ctx, state) {
   }
 }
 
-/** 输入区左侧按钮：给不知道快捷键的人一个入口，也是热键冲突时的唯一出路。 */
-function registerButton(ctx, state, React) {
+/**
+ * 输入区左侧按钮：给不知道快捷键的人一个入口，也是热键冲突时的唯一出路。
+ *
+ * 外观交给**官方 primitives 的 `Button`**（与旁边的官方按钮同一套 CSS-module 类）：宿主换主题、
+ * 改按钮样式都自动跟随，不需要插件去猜 token。拿不到 primitives 时退回自带 class 的裸 `button`
+ * （样式见 CSS 里那几条兜底规则），保证按钮在任何宿主上都还在。
+ */
+function registerButton(ctx, state, React, primitives) {
+  const title = shortcutTitle(detectMac())
+  const aria = `${BUTTON_TEXT}（${title}）`
+  const OfficialButton = primitives?.Button
   try {
     ctx.slots.inject(SLOT_NAME, () => ctx.slots.register(
       { name: SLOT_NAME, id: SLOT_ID, order: 40, label: () => LABEL },
       (props) => {
         state.session = props?.sessionId ?? state.session
+        if (typeof OfficialButton === 'function') {
+          return React.createElement(OfficialButton, {
+            variant: 'ghost',
+            title,
+            'aria-label': aria,
+            onClick: () => state.runCapture(),
+          }, BUTTON_TEXT)
+        }
         return React.createElement('button', {
           type: 'button',
           className: BUTTON_CLASS,
-          title: TITLE,
-          'aria-label': ARIA,
+          title,
+          'aria-label': aria,
           onClick: () => state.runCapture(),
-        }, '⌥⌘S')
+        }, BUTTON_TEXT)
       },
     ))
   } catch (error) {
@@ -247,6 +286,13 @@ window.__ModuleLoader__.load({
     const exports = module.exports
     Object.defineProperty(exports, Symbol.toStringTag, { value: 'Module' })
     const React = require('react')
+    // 官方界面件：拿得到就用它的 `Button`（原生观感），拿不到只影响外观，不影响按钮本身。
+    let primitives
+    try {
+      primitives = require('@deepseek-ai/dsh-client-ui-primitives')
+    } catch {
+      primitives = undefined
+    }
 
     /** 挂上本插件的三个入口；每个入口自己负责失败降级，apply 本身不抛。 */
     function apply(ctx) {
@@ -254,7 +300,7 @@ window.__ModuleLoader__.load({
       state.runCapture = makeRunner(state)
       ctx.effect(() => ownPageResources(state), 'send-image: page resources')
       registerShortcut(ctx, state)
-      registerButton(ctx, state, React)
+      registerButton(ctx, state, React, primitives)
     }
 
     exports.inject = ['shortcuts', 'slots']

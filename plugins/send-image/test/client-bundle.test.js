@@ -24,6 +24,7 @@ function makeDom() {
   const nodes = []
   const dispatched = []
   const document = {
+    documentElement: { dataset: { platform: 'darwin' } },
     head: { appendChild: (node) => nodes.push(node) },
     body: { appendChild: (node) => nodes.push(node) },
     getElementById: (id) => nodes.find((node) => node.id === id) ?? null,
@@ -42,7 +43,7 @@ function makeDom() {
   return { document, nodes, dispatched }
 }
 
-function loadBundle({ document, fetchImpl } = {}) {
+function loadBundle({ document, fetchImpl, withPrimitives = true } = {}) {
   const specs = []
   const sandbox = {
     window: { __ModuleLoader__: { load: (spec) => specs.push(spec) } },
@@ -63,11 +64,19 @@ function loadBundle({ document, fetchImpl } = {}) {
   vm.runInNewContext(SOURCE, sandbox, { filename: 'client.js' })
   const spec = specs[0]
   const fakeReact = { createElement: (type, props, children) => ({ type, props, children }) }
+  // 官方界面件的替身：只认得「按钮被交给了官方 Button」这一件事。
+  const officialButton = function OfficialButton() {}
   const api = spec.factory((name) => {
-    assert.equal(name, 'react', 'factory 只允许 require 平台 seed 字')
-    return fakeReact
+    if (name === 'react') return fakeReact
+    if (name === '@deepseek-ai/dsh-client-ui-primitives') {
+      if (!withPrimitives) {
+        throw new Error('require("@deepseek-ai/dsh-client-ui-primitives") missed the module table')
+      }
+      return { Button: officialButton }
+    }
+    assert.fail(`factory 只允许 require 平台 seed 字，实得 ${name}`)
   })
-  return { spec, api }
+  return { spec, api, officialButton }
 }
 
 /** 一个插件实例（fiber）的 stub：退出时按官方语义把注册与资源都收回去。 */
@@ -134,9 +143,9 @@ test('⌥⌘S is registered in page and editable regions, never inside modals', 
   assert.equal(command.resolve().status, 'handled')
 })
 
-test('the composer gets one button that names the shortcut', () => {
+test('the composer button says 截图 and carries the shortcut in its tooltip', () => {
   const { document } = makeDom()
-  const { api } = loadBundle({ document })
+  const { api, officialButton } = loadBundle({ document })
   const { ctx, state } = makeCtx()
   api.apply(ctx)
   assert.deepEqual(state.slotKeys, ['conversation.input.left'])
@@ -144,27 +153,28 @@ test('the composer gets one button that names the shortcut', () => {
   assert.equal(spec.name, 'conversation.input.left')
   assert.equal(spec.id, 'send-image-screenshot')
   const element = component({ sessionId: 'session-1' })
-  assert.equal(element.type, 'button')
-  assert.match(element.props.title, /⌥⌘S/)
-  assert.match(element.props.title, /拖拽选择矩形范围/)
-  assert.equal(element.props['aria-label'], '截图并附上（⌥⌘S）')
-  assert.equal(element.props.className, 'dsh-send-image-button', '按钮靠 class 拿样式，不是内联样式')
+  // 外观交给官方 Button（与旁边原生按钮同一套类），插件不再自带按钮样式
+  assert.equal(element.type, officialButton, '按钮必须交给官方 primitives 的 Button')
+  assert.equal(element.children, '截图', '按钮正面只写「截图」')
+  assert.equal(element.props.title, '快捷键：⌥⌘S', '光标放上来只显示快捷键')
+  assert.equal(element.props['aria-label'], '截图（快捷键：⌥⌘S）')
+  assert.equal(element.props.className, undefined, '自有 class 不该出现在原生路径上')
 })
 
-test('the button carries the same hover/focus treatment as the official composer buttons', () => {
+test('a host without the official primitives still gets a working button', () => {
+  // 老宿主没有 `@deepseek-ai/dsh-client-ui-primitives`：退回裸 button + 自带兜底样式，
+  // 按钮不能因为"拿不到官方组件"就消失（失败隔离那条契约）。
   const { document, nodes } = makeDom()
-  const { api } = loadBundle({ document })
-  const { ctx } = makeCtx()
+  const { api } = loadBundle({ document, withPrimitives: false })
+  const { ctx, state } = makeCtx()
   api.apply(ctx)
+  const element = state.slots[0].component({ sessionId: 'session-1' })
+  assert.equal(element.type, 'button')
+  assert.equal(element.props.className, 'dsh-send-image-button')
+  assert.equal(element.children, '截图')
   const css = nodes.find((node) => node.id === STYLE_ID).textContent
-  // 与官方输入区按钮同一套 token：悬停底色、聚焦环、统一的圆角
   assert.match(css, /\.dsh-send-image-button:hover:not\(:disabled\)\{[^}]*--dsw-alias-interactive-bg-hover/)
   assert.match(css, /\.dsh-send-image-button:focus-visible\{[^}]*--dsw-focus-ring-color/)
-  assert.match(css, /\.dsh-send-image-button\{[^}]*--dsw-radius-sm/)
-  // 与官方「权限档位」触发器同色：拿 primary 会让这一个按钮成为整行最亮的一块。
-  assert.match(css, /\.dsh-send-image-button\{[^}]*--dsw-alias-label-secondary/,
-    '文字色必须是官方次要色，与旁边官方控件一致')
-  assert.match(css, /\.dsh-send-image-button:disabled\{[^}]*--dsw-alias-label-dimmed/)
   assert.doesNotMatch(css, /dsh-send-image-button[^}]*background:#/, '别写死颜色，跟随主题变量')
 })
 
