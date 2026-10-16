@@ -111,6 +111,13 @@ struct RootView: View {
                 attachmentImages.attach(store: store)
                 chatModel.attach(store: store, hub: hub)
                 chatModel.attach(messageLayer: messageLayer)
+                #if DEBUG
+                // 032 用例钩子：`-DSHProbeStaleFollowFrame` 时注入一帧上一个会话的迟到帧，
+                // 用来验证"跨会话的帧不落地"。注入的帧走真实守卫（见 ChatModel）。
+                if ProbeVariants.staleFollowFrame {
+                    chatModel.staleFrameInjector = { StaleFrameInjection.make() }
+                }
+                #endif
                 // The feed asks for the client each time it reopens, so a repair
                 // that swapped the carrier underneath is picked up by itself.
                 hub.attach { [store] in store.link }

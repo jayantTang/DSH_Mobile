@@ -262,6 +262,21 @@ public final class ChatModel {
     private static let windowBackfillLimit = 60
     private var followTask: Task<Void, Never>?
     private var eventTask: Task<Void, Never>?
+    /// 会话代数：每次 `open` 自增，**存活的流必须带自己那一代**。
+    ///
+    /// 为什么要有它：流的归属原先只靠"换会话时 cancel 上一条 Task"保证，而 `open()` 中间有
+    /// 多次 await——两次 open 交错时，后一次会覆盖 `followTask` 引用，前一条流从此没人 cancel，
+    /// 它的帧会落进**新会话**的时间线，并且按当前会话写盘（用户看到的就是"会话末尾混进别的
+    /// 会话的内容，而新载入出现在它前面"：脏行带着旧会话更大的 seq，永远排在最后）。
+    private(set) var openGeneration = 0
+    /// 已经被尾巴污染、做过一次自愈的会话（防抖：一个会话一次运行最多清理一次）。
+    private var selfHealedSessions: Set<String> = []
+
+    #if DEBUG
+    /// 用例注入：造一帧"上一个会话迟到的帧"（`-DSHProbeStaleFollowFrame`）。
+    /// 注入的帧走**同一条守卫**（带陈旧代数），所以它既能证明"守卫在"，也能在守卫被删掉时判红。
+    public var staleFrameInjector: (() -> SessionFollowFrame?)?
+    #endif
     /// 取页游标状态机：每个会话一份，是全 App 唯一的"更早历史"状态来源。
     private var pager: TranscriptPager?
     /// 009 渲染数据源桥（tasks T013）：非 nil 时，时间线由 MessagePipeline 的
@@ -314,6 +329,13 @@ public final class ChatModel {
     /// conversation is the single most common navigation in this app, so it must
     /// not feel like a page load.
     public func open(_ summary: SessionSummary) async {
+        // 换会话的第一件事：作废上一代 + 掐断上一条流。**必须在第一个 await 之前**——
+        // 放到 `close()` 里不够：`close()` 自己也要 await（写盘/清缓存），两次 open 交错时
+        // 上一条流会在窗口期失去 owner，继续往新会话里写。
+        openGeneration &+= 1
+        followTask?.cancel()
+        followTask = nil
+        stopPipelineSubscription()
         // 记下"用户想看的那个会话"：如果此刻还没连上（冷启动刚进列表就点开），
         // 这一屏会停在"尚未连接"——连上之后要能自己回来，而不是让用户点重试。
         pendingOpen = summary
@@ -424,11 +446,20 @@ public final class ChatModel {
         warmMessageLayer(for: summary)
         // T013：渲染数据源切到 MessagePipeline 快照（管道缺位时桥为 nil，走原路径）。
         startPipelineSubscription(for: summary)
-        startFollowing(link: link, summary: summary, maxMessages: syncPlan.maxMessages)
+        startFollowing(link: link, summary: summary, maxMessages: syncPlan.maxMessages,
+                       generation: openGeneration)
         await restoreSearchHistory()
         pendingOpen = nil
         await loadCatalog(link: link)
         subscribeToPrompts()
+        #if DEBUG
+        if ChatProbe.shared.staleFollowFrame {
+            Task { [weak self] in
+                try? await Task.sleep(for: .milliseconds(400))
+                self?.injectStaleFrameForTesting()
+            }
+        }
+        #endif
     }
 
     /// Stops the live streams and keeps the transcript warm for a revisit.
@@ -983,7 +1014,9 @@ public final class ChatModel {
         persistSuspended = true
     }
 
-    private func startFollowing(link: LinkGateway, summary: SessionSummary, maxMessages: Int = 60) {
+    private func startFollowing(link: LinkGateway, summary: SessionSummary, maxMessages: Int = 60,
+                               generation: Int) {
+        let expectedSessionId = summary.sessionId
         followTask = Task { [weak self] in
             guard let self else { return }
             let stream = await link.follow(
@@ -992,6 +1025,12 @@ public final class ChatModel {
             do {
                 for try await frame in stream {
                     if Task.isCancelled { return }
+                    // 这条流属于哪一代、哪个会话，在**每一帧**上都要对：换会话之后残留的流
+                    // 不许再往新会话里写一个字（032 上下文污染的根因）。
+                    guard self.isCurrentGeneration(generation, sessionId: expectedSessionId) else {
+                        await self.handleStaleFrame(from: expectedSessionId)
+                        return
+                    }
                     self.apply(frame)
                 }
                 // The host ended the stream; the session may have been disposed.
@@ -1006,6 +1045,47 @@ public final class ChatModel {
             }
         }
     }
+
+    /// 这一帧还属于当前会话吗（代数 + 会话 id 双条件）。
+    func isCurrentGeneration(_ generation: Int, sessionId: String) -> Bool {
+        openGeneration == generation && session?.sessionId == sessionId
+    }
+
+    /// 收到不属于当前会话的帧：丢弃 + 记账，并清理**已经被写脏**的本地尾巴。
+    ///
+    /// 为什么要顺手清：脏行在落盘时是按当前会话写的（`enqueueAppend` 用的是当前 sessionId），
+    /// 也就是说"混进别的会话"这件事**会被持久化**，只丢内存里的帧修不好已经被写进去的那份。
+    /// 清掉之后下一次快照会把这一屏重新拉回来。一个会话一次运行最多清一次，避免抖动。
+    private func handleStaleFrame(from sessionId: String) async {
+        let current = session?.sessionId ?? "-"
+        ChatProbe.shared.probeNote?("transcript.staleDropped", [
+            "from": sessionId, "now": current,
+        ], true)
+        guard let currentSession = session?.sessionId, let scope = sessionScope,
+              selfHealedSessions.insert(currentSession).inserted else { return }
+        await messageLayer?.clear(scope: scope, sessionId: currentSession)
+        dropPersistedTail()
+        ChatProbe.shared.probeNote?("transcript.selfHealed", ["session": currentSession], true)
+    }
+
+    #if DEBUG
+    /// 用例注入：造一帧陈旧帧，走与真实迟到帧**同一条守卫**。
+    ///
+    /// internal 而不是 private：`DSHChatDomainTests` 要能直接调它（`@testable import`），
+    /// App 侧的 `-DSHProbeStaleFollowFrame` 也走这一条。
+    func injectStaleFrameForTesting() {
+        guard let frame = staleFrameInjector?(), let current = session?.sessionId else { return }
+        ChatProbe.shared.probeNote?("transcript.staleInjected", ["session": current], true)
+        guard isCurrentGeneration(openGeneration, sessionId: current) else { return }
+        // 故意用"上一代"：模拟换会话后残留的流送来的那一帧。
+        guard isCurrentGeneration(openGeneration - 1, sessionId: current) else {
+            ChatProbe.shared.probeNote?("transcript.staleDropped",
+                                        ["from": "injected", "now": current], true)
+            return
+        }
+        apply(frame)
+    }
+    #endif
 
     private func apply(_ frame: SessionFollowFrame) {
         switch frame {

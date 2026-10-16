@@ -1,4 +1,4 @@
-import DSHChatDomain
+@testable import DSHChatDomain
 import DSHConnectionAPI
 import DSHCore
 import DSHKit
@@ -236,5 +236,90 @@ enum ChatSeam {
                 "chunk": .object(["type": .string("text-delta"), "text": .string(text)]),
             ]),
         ])
+    }
+}
+
+// MARK: - 032：跨会话的帧不许落地
+
+extension ChatModelLiveStreamTests {
+    /// 换会话之后，**上一代**的帧必须被丢掉，并且不许写进当前会话的尾巴。
+    ///
+    /// 这是 2026-10-16 现场那个 bug 的最小复现：会话末尾混进别的内容，且它带着旧会话更大的
+    /// seq（新载入只能出现在它前面）。根因是流的归属只靠"换会话时 cancel 上一条 Task"，
+    /// 而 `open()` 中间有 await——两次 open 交错时上一条流会失去 owner。
+    func test_a_frame_from_a_previous_generation_is_dropped() async throws {
+        try await openFollowing([
+            ChatSeam.snapshot(cursor: 2, records: [
+                ChatSeam.userMessage(seq: 1, text: "first session"),
+            ]),
+        ])
+        _ = await eventually { self.model.timeline.items.count == 1 }
+
+        let generationBefore = model.openGeneration
+        let sessionBefore = try XCTUnwrap(model.session?.sessionId)
+
+        // 换到另一个会话：代数必须前进（守卫的判据就是它）。
+        try await openFollowing([
+            ChatSeam.snapshot(cursor: 5, records: [
+                ChatSeam.userMessage(seq: 4, text: "second session"),
+            ]),
+        ])
+        XCTAssertNotEqual(model.openGeneration, generationBefore, "opening a session must advance the generation")
+        XCTAssertFalse(model.isCurrentGeneration(generationBefore, sessionId: sessionBefore),
+                       "an old generation + old session id is stale")
+        XCTAssertTrue(model.isCurrentGeneration(model.openGeneration,
+                                                sessionId: try XCTUnwrap(model.session?.sessionId)),
+                      "the current generation is valid")
+    }
+
+    /// 负数/越界代数一律判过期（注入钩子就是用"当前代数 - 1"造陈旧帧的）。
+    func test_only_the_current_generation_and_session_pass_the_guard() async throws {
+        try await openFollowing([
+            ChatSeam.snapshot(cursor: 1, records: [ChatSeam.userMessage(seq: 1, text: "hi")]),
+        ])
+        let current = try XCTUnwrap(model.session?.sessionId)
+
+        XCTAssertTrue(model.isCurrentGeneration(model.openGeneration, sessionId: current))
+        XCTAssertFalse(model.isCurrentGeneration(model.openGeneration - 1, sessionId: current),
+                       "a stale generation is rejected")
+        XCTAssertFalse(model.isCurrentGeneration(model.openGeneration, sessionId: "some-other-session"),
+                       "another session id is rejected")
+        XCTAssertFalse(model.isCurrentGeneration(999, sessionId: current), "an unknown future generation is rejected")
+    }
+
+    /// 注入的那一帧（走 ChatModel 里同一条守卫）不许出现在时间线里。
+    func test_the_injected_stale_frame_never_renders() async throws {
+        try await openFollowing([
+            ChatSeam.snapshot(cursor: 1, records: [ChatSeam.userMessage(seq: 1, text: "clean")]),
+        ])
+        model.staleFrameInjector = {
+            // 与 App 侧 `StaleFrameInjection` 同形：一条看起来正常、但属于别的会话的用户消息。
+            // `SessionEvent` 没有公开的逐字段构造器（线上就是从 JSON 解出来的），所以这里也走解码。
+            let json: JSONValue = .object([
+                "type": .string("user/message"),
+                "seq": .int(9_999_999),
+                "data": .object([
+                    "id": .string("stale-frame-injection"),
+                    "source": .object(["kind": .string("user")]),
+                    "content": .array([.object(["type": .string("text"),
+                                                "text": .string("STALE-FRAME-INJECTION")])]),
+                ]),
+            ])
+            guard let data = try? JSONEncoder().encode(json),
+                  let event = try? JSONDecoder().decode(SessionEvent.self, from: data)
+            else { return nil }
+            return .event(event)
+        }
+
+        // 走与生产同一条入口：注入函数内部用"当前代数 - 1"，模拟换会话后残留的流。
+        model.injectStaleFrameForTesting()
+
+        let appeared = await eventually(deadline: 0.3) {
+            self.model.timeline.items.contains { item in
+                String(describing: item.kind).contains("STALE-FRAME-INJECTION")
+            }
+        }
+        XCTAssertFalse(appeared, "a stale frame must never reach the transcript")
+        XCTAssertEqual(model.timeline.items.count, 1, "only the original row is there")
     }
 }

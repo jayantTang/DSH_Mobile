@@ -88,6 +88,9 @@ public final class ChatProbe: @unchecked Sendable {
     public var rehydrateScreens: Int = 4
     /// `-DSHProbeForceRehydrate`：强制走一次"回收 → 再水合"。
     public var forceRehydrate: Bool = false
+    /// `-DSHProbeStaleFollowFrame`（032）：打开会话后注入一帧"上一个会话迟到的帧"，
+    /// 用来验证"跨会话的帧不落地"这条守卫（注入走同一条判断）。
+    public var staleFollowFrame: Bool = false
     /// 驱动开始（`-DSHProbeOlderScroll` 第一轮）时由宿主报到（`ProbeVariants.noteDriveBegan`）。
     public var noteDriveBegan: (() -> Void)?
 }

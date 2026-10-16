@@ -25,7 +25,8 @@ public extension ChatModel {
         pipelineBridge = nil
         guard let layer = messageLayer, let scope = sessionScope else { return }
         let ref = layer.sessionRef(scope: scope, sessionId: summary.sessionId)
-        pipelineBridge = ChatPipelineBridge(model: self, layer: layer, ref: ref)
+        pipelineBridge = ChatPipelineBridge(model: self, layer: layer, ref: ref,
+                                            generation: openGeneration)
         // T022 重启恢复：上次没发出去的消息（磁盘 status='pending'）以「未发出」
         // 呈现并进时间线，管道内部各尝试重发一次（重发前按 clientId 查重）。
         Task { await layer.restorePending(for: ref) }
@@ -114,10 +115,15 @@ public final class ChatPipelineBridge {
     /// 点胶囊直跳最新的降级阈值（页）：超过就丢中间段（spec 场景 7）。
     public static let catchUpPageBudget = 5 // internal：+PipelineFetch 要用
 
-    public init(model: ChatModel, layer: MessageLayer, ref: MessageSessionRef) {
+    /// `generation`：这份桥建立时所属的会话代数。换会话后代数变了，迟到的 diff 一律不落地
+    /// （与 `ChatModel.startFollowing` 的同一条守卫，原因见那边的注释）。
+    private let generation: Int
+
+    public init(model: ChatModel, layer: MessageLayer, ref: MessageSessionRef, generation: Int) {
         self.model = model
         self.layer = layer
         self.ref = ref
+        self.generation = generation
         subscribe()
     }
 
@@ -156,6 +162,14 @@ public final class ChatPipelineBridge {
     /// 一次 SnapshotDiff（可能同时含头部插入 + gap 生灭 + 尾部更新）落到
     /// 桥状态，然后触发一次重建——宿主那边由 reconcile 作为一次原子更新提交。
     private func apply(_ diff: MessageSnapshotDiff) {
+        // 用 `owner` 而不是 `model`：后者是 weak 属性，遮蔽它会让下面所有 `model?.`
+        // 变成"对非可选值用可选链"（编译错），而且这里要的只是"还在同一代吗"。
+        guard let owner = model, owner.openGeneration == generation else {
+            ChatProbe.shared.probeNote?("transcript.staleDropped", [
+                "from": ref.sessionId, "kind": "pipeline",
+            ], true)
+            return
+        }
         var messagesChanged = false
         var gapsChanged = false
         var hasRemove = false

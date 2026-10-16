@@ -23,6 +23,7 @@
 		76EB973FB394D2B70D657AA2 /* DSHConnectionDomain in Frameworks */ = {isa = PBXBuildFile; productRef = E537E38B1E9A4966CDE8CAD4 /* DSHConnectionDomain */; };
 		7A5DBF56A82D9E6A1E08CA4E /* DSHMobileApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFF59C8B75008DE0FF3FC446 /* DSHMobileApp.swift */; };
 		815A977B9321D3BDFADD0B8F /* APNSRegistrar.swift in Sources */ = {isa = PBXBuildFile; fileRef = C975AD70ED569A5CA4717F6B /* APNSRegistrar.swift */; };
+		822D8C875BE0535EC64C8DE9 /* StaleFrameInjection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3AA46012EB13A751046C49B0 /* StaleFrameInjection.swift */; };
 		86AFA15B4AD8FFD1B948FE87 /* DSHFoundation in Frameworks */ = {isa = PBXBuildFile; productRef = 0093B7C59F73AB758FD5223C /* DSHFoundation */; };
 		871A2F72F9C7064434B2F4B3 /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = 6D2CDF5A7074B15EA6CCA73A /* Localizable.strings */; };
 		8B03EC608368B2C362311E8E /* DSHFeedbackDomain in Frameworks */ = {isa = PBXBuildFile; productRef = 480451A75A79BA29B45418D8 /* DSHFeedbackDomain */; };
@@ -71,6 +72,7 @@
 		1A75622327FDA1549409A9E8 /* DSHMobileTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = DSHMobileTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		1F8851C894491769E7244907 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
 		2CB7D506F1616F7800D23383 /* DSHMobile.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = DSHMobile.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		3AA46012EB13A751046C49B0 /* StaleFrameInjection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StaleFrameInjection.swift; sourceTree = "<group>"; };
 		5181A227F65FF2C7077C8088 /* DSHKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = DSHKit; path = DSHKit; sourceTree = SOURCE_ROOT; };
 		5A1553C09C1116E41C9AF752 /* DSHMobileUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = DSHMobileUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		5B0F64970D85F0434D6EE44D /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -207,6 +209,7 @@
 				612505CABA9C3923B812C93F /* NotificationProbe.swift */,
 				CFA758713F0F4217EFCD7A9A /* RunKeepAlive.swift */,
 				00DCD00E8C914B6C4BDA1A0E /* SessionAlerts.swift */,
+				3AA46012EB13A751046C49B0 /* StaleFrameInjection.swift */,
 				861940A3134E8682E803F451 /* ViewportProbe.swift */,
 			);
 			path = Support;
@@ -374,6 +377,7 @@
 				9DFBD7131CC4951047D42116 /* RootView.swift in Sources */,
 				61B55FA169525351CFA007B5 /* RunKeepAlive.swift in Sources */,
 				8FE01EE5090241291009EA42 /* SessionAlerts.swift in Sources */,
+				822D8C875BE0535EC64C8DE9 /* StaleFrameInjection.swift in Sources */,
 				39D20051F7BFB821216011AA /* ViewportAutomation.swift in Sources */,
 				A09E74D5EA969B99C0A165F7 /* ViewportProbe.swift in Sources */,
 			);

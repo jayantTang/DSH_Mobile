@@ -469,6 +469,12 @@ enum ProbeVariants {
     static var failPageOnDrive: Bool {
         ProcessInfo.processInfo.arguments.contains("-DSHProbeFailPageOnDrive")
     }
+
+    /// `-DSHProbeStaleFollowFrame`：打开会话后注入一帧"上一个会话迟到的帧"（032）。
+    /// 用例 96 用它把"跨会话帧不许落地"变成可复现的断言——注入的帧走同一条守卫。
+    static var staleFollowFrame: Bool {
+        ProcessInfo.processInfo.arguments.contains("-DSHProbeStaleFollowFrame")
+    }
     nonisolated(unsafe) private static var _driveBegan = false
     /// 驱动开始（`-DSHProbeOlderScroll` 第一轮）时由 TranscriptListHost 报到。
     static func noteDriveBegan() { _driveBegan = true }
@@ -623,6 +629,7 @@ enum ProbeVariants {
     static var failPageAttempts: Int { 0 }
     static var emptyPageAttempts: Int { 0 }
     static var failPageOnDrive: Bool { false }
+    static var staleFollowFrame: Bool { false }
     static func noteDriveBegan() {}
     static var failPageArmed: Bool { false }
     static var lazyStack: Bool { false }
