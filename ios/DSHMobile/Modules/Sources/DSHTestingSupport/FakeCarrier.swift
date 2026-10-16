@@ -35,6 +35,31 @@ public final class FakeCarrier: DSHCarrier, @unchecked Sendable {
     public var unaryResponses: [String: Result<JSONValue, Error>] = [:]
     public var streamResponses: [String: [JSONValue]] = [:]
 
+    /// 流事件：值 / 中途出错 / 悬挂（永不结束，用来测「断线中」的定格）。
+    /// 029 场景测试批次：断线中途与重连续传需要「流到一半坏掉」的形状。
+    public enum StreamEvent: Sendable {
+        case value(JSONValue)
+        case failure(Error)
+        case hang
+    }
+    /// 逐事件回放。设置后优先于 streamResponses。
+    public var streamScripts: [String: [StreamEvent]] = [:]
+
+    /// 手工推进的活流：测试拿 continuation 往里补帧（重连、迟到帧场景）。
+    public private(set) var liveStreams: [String: AsyncThrowingStream<JSONValue, any Error>.Continuation] = [:]
+    public private(set) var liveStreamWaiters: [String: [CheckedContinuation<Void, Never>]] = [:]
+    /// 声明「这条端点给活流」——只在显式注册后生效，否则保持静态回放语义。
+    public private(set) var liveStreamEndpoints: Set<String> = []
+    public func registerLiveStream(_ endpoint: String) { liveStreamEndpoints.insert(endpoint) }
+
+    /// 等某条活流被订阅（防止测试帧在订阅前丢出）。
+    public func waitForLiveStream(_ endpoint: String) async {
+        if liveStreams[endpoint] != nil { return }
+        await withCheckedContinuation { c in
+            liveStreamWaiters[endpoint, default: []].append(c)
+        }
+    }
+
     public init() {}
 
     private func record(_ call: RecordedCall) {
@@ -74,6 +99,27 @@ public final class FakeCarrier: DSHCarrier, @unchecked Sendable {
         endpoint: String, args: Args
     ) async -> AsyncThrowingStream<JSONValue, any Error> {
         record(RecordedCall(method: endpoint, args: Self.encoded(args)))
+        if let script = streamScripts[endpoint] {
+            return AsyncThrowingStream { continuation in
+                for event in script {
+                    switch event {
+                    case .value(let v): continuation.yield(v)
+                    case .failure(let e): continuation.finish(throwing: e)
+                    case .hang: return  // 不结束，调用方悬在流上
+                    }
+                }
+                continuation.finish()
+            }
+        }
+        // 已注册的活流端点：测试可 waitForLiveStream 后往里推。
+        if streamScripts[endpoint] == nil, streamResponses[endpoint] == nil, liveStreamEndpoints.contains(endpoint) {
+            let key = endpoint
+            return AsyncThrowingStream { continuation in
+                liveStreams[key] = continuation
+                for w in liveStreamWaiters[key] ?? [] { w.resume() }
+                liveStreamWaiters[key] = nil
+            }
+        }
         let values = streamResponses[endpoint] ?? []
         return AsyncThrowingStream { continuation in
             for v in values { continuation.yield(v) }
