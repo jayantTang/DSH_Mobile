@@ -20,6 +20,21 @@ async def test_healthz_matches_the_spec_contract(client):
     assert isinstance(body.get("capabilities"), list)
 
 
+async def test_healthz_also_names_the_relay_build(client):
+    """协议版本之外再报一份"这份代码是哪一版"：排障要知道用户撞上的是哪次部署。
+
+    `version` 仍是整数协议版本（老客户端在读它，不能改义）；`relayVersion` 是新键。
+    """
+    import version
+
+    body = await (await client.get("/healthz")).json()
+    assert body["relayVersion"] == version.deployed_version()
+    assert body["version"] == 1
+    # 本机 pytest 没有部署脚本盖的 build.json：键可以不出现，出现了就必须带 commit。
+    if "build" in body:
+        assert set(body["build"]) <= {"commit", "deployedAt"}
+
+
 async def test_options_preflight(client):
     response = await client.options("/pair/claim", headers={"Origin": "https://relay.example.com"})
     assert response.status == 204

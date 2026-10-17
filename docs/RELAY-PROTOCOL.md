@@ -40,7 +40,7 @@ Relay 只做两件事：**鉴权**与**按 `agentId` 转发**。它不解析 DLP
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| `GET`  | `/healthz` | 健康检查，返回 `{"ok":true,"version":1}` |
+| `GET`  | `/healthz` | 健康检查，返回 `{"ok":true,"version":1,"relayVersion":"20261017.1240"}`；`version` 是**协议版本**，`relayVersion` 是这次部署的**构建号**（`yyyyMMdd.HHmm`，北京时间），`build` 另带 commit 与部署时刻 |
 | `GET`  | `/stats` | **运维侧**实时负载与流量（不属于协议，见 §5.3）；**仅回环可达**（回环校验 + 网关显式拒绝，两半缺一不可） |
 | `WS`   | `/link/agent?agentId=<id>` | 电脑侧连接器接入；`Authorization: Bearer <agentToken>` |
 | `WS`   | `/link/device?agentId=<id>` | 手机侧接入；`Authorization: Bearer <deviceToken>`；浏览器客户端可在 `Sec-WebSocket-Protocol` 里携带 `dsh.device.<deviceToken>`（头优先，子协议仅在无头时生效；握手响应显式回显该子协议） |
@@ -172,7 +172,7 @@ WS 升级阶段失败直接回 HTTP `401` / `403`（不进入 WS 状态机）。
 | `end` | `id` | 逻辑流正常结束 |
 | `streamError` | `id`, `error` | 逻辑流失败 |
 | `event` | `value` | 宿主事件（来自 `$events` 流） |
-| `hostStatus` | `info` | agent/DSH 状态变化（上线、离线、版本、工作区） |
+| `hostStatus` | `info` | agent/DSH 状态变化（上线、离线、版本、工作区）。版本三项：连接器发的 `version`（连接器版本）与 `hostVersion`（宿主 DSH 版本），中转发的 `relayVersion`（中转版本）；都只在控制帧上出现，不随业务帧重复 |
 | `pong` | `ts` | 心跳回应 |
 | `error` | `code`, `message`, `fatal`? | 协议级错误 |
 

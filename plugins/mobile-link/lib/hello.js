@@ -11,7 +11,7 @@
  * calling something that would come back as a 404 from the Host.
  */
 
-import { createRequire } from 'node:module'
+import { readFileSync } from 'node:fs'
 
 /** Reserved method the app calls once per connection. */
 export const HELLO_METHOD = '_link/hello'
@@ -22,16 +22,37 @@ export const HELLO_METHOD = '_link/hello'
  * Read from package.json rather than written out twice: the two drifting apart
  * is exactly the kind of thing nobody notices until a support question depends
  * on it (they had drifted: the manifest said 0.1.0 and this said 0.2.0).
+ *
+ * 用 `readFileSync` 而不是 `require('../package.json')`：`require` 会把 JSON 缓存在
+ * CJS 模块表里，而这个文件走热更（模块 URL 带参数重新求值，**缓存表不清**）。实测
+ * 2026-10-17：DSH 进程 10-12 起就一直报 `0.6.0`，而仓库 10-13 已经升到 `0.6.5`——
+ * 报的还是进程启动那天的版本号。读文件没有这层缓存，热更后一问就是真值。
  */
 export const SERVER_VERSION = readManifestVersion()
 
 function readManifestVersion() {
   try {
-    const require = createRequire(import.meta.url)
-    return require('../package.json').version ?? '0.0.0'
+    const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+    return typeof manifest.version === 'string' && manifest.version ? manifest.version : '0.0.0'
   } catch {
     return '0.0.0'
   }
+}
+
+/**
+ * 宿主 DSH 的版本，取不到时为 `null`。
+ *
+ * 为什么读环境变量而不是 package.json：连接器跑在宿主进程里，宿主把自己的版本放在
+ * `DSH_CLIENT_VERSION`（桌面版与 `dsh web` 都设）；而连接器是从仓库 / npm 链接进档案的，
+ * 它自己的 `package.json` 里没有宿主的版本，从 `node_modules` 里猜路径又会随打包形态变
+ * （Electron 的 asar 路径 fs 未必读得到）。读不到就如实报 null，不编一个数。
+ *
+ * 用函数而不是常量：热更会重新求值模块，但环境变量在进程生命周期内可能被测试替换；
+ * 每次问都读一次，代价可以忽略。
+ */
+export function hostVersion() {
+  const value = process.env.DSH_CLIENT_VERSION
+  return typeof value === 'string' && value.trim() ? value.trim() : null
 }
 
 /**
@@ -115,6 +136,9 @@ export function parseClientInfo(args) {
 export function helloPayload({ protocolVersion, agentId, name } = {}) {
   return {
     serverVersion: SERVER_VERSION,
+    // 宿主 DSH 的版本：手机据此显示「DSH 版本」，中转据此记录这台电脑跑的是哪个宿主。
+    // 老客户端不认识这个键，忽略即可；取不到时是 null（如实表示"不知道"）。
+    hostVersion: hostVersion(),
     capabilities: SERVER_CAPABILITIES,
     protocolVersion,
     agentId: agentId ?? null,

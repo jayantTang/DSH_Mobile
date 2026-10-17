@@ -11,6 +11,7 @@ public final class FakeLinkService: LinkService {
     public var lastError: String?
     public var capabilities: Set<String>
     public var connectorVersion: String?
+    public var hostVersion: String?
 
     public init(
         profiles: [ConnectionProfile] = [],

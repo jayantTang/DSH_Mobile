@@ -106,11 +106,28 @@ install -d -m 0750 -o root -g "$SERVICE_USER" /etc/dsh-relay/apns
 
 say "installing relay sources into $APP_DIR"
 for module in relay.py api.py dlp.py store.py hub.py admin.py push.py feedback.py \
-              purge-revoked-devices.py; do
+              version.py purge-revoked-devices.py; do
   [ -f "$SRC_DIR/$module" ] || die "$SRC_DIR/$module is missing"
   install -m 0644 -o root -g root "$SRC_DIR/$module" "$APP_DIR/$module"
 done
 install -m 0644 -o root -g root "$SRC_DIR/requirements.txt" "$APP_DIR/requirements.txt"
+
+# 部署指纹：`/healthz` 的 `relayVersion`/`build` 与启动日志都读它。
+# `version` 是构建号 `yyyyMMdd.HHmm`（北京时间），与 iOS 构建号同口径——中转没有
+# 注册表，构建号本身就是"这是哪一次发布"。没有 git 元数据（从 tarball 部署）时
+# 只写构建号与时刻，不编一个 commit 出来。
+deploy_version="$(TZ=Asia/Shanghai date +%Y%m%d.%H%M)"
+deploy_commit="$(git -C "$SRC_DIR" rev-parse --short HEAD 2>/dev/null || true)"
+deploy_time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+{
+  printf '{\n'
+  printf '  "version": "%s",\n' "$deploy_version"
+  if [ -n "$deploy_commit" ]; then printf '  "commit": "%s",\n' "$deploy_commit"; fi
+  printf '  "deployedAt": "%s"\n}\n' "$deploy_time"
+} > "$APP_DIR/build.json"
+chmod 0644 "$APP_DIR/build.json"
+say "build stamp $deploy_version"
+
 [ -f "$SRC_DIR/README.md" ] && install -m 0644 -o root -g root "$SRC_DIR/README.md" "$APP_DIR/README.md" || true
 [ -f "$SRC_DIR/../docs/RELAY-NOTES.md" ] && install -m 0644 -o root -g root "$SRC_DIR/../docs/RELAY-NOTES.md" "$APP_DIR/NOTES.md" || true
 

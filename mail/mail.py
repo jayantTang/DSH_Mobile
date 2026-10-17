@@ -13,8 +13,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import logging
 import os
+from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 from aiohttp import web
@@ -40,8 +42,27 @@ def normalize_base_path(raw: str | None) -> str:
     return text.rstrip("/")
 
 
+#: 部署构建号 `yyyyMMdd.HHmm`（北京时间），由 `deploy/deploy.sh` 写进同一目录的
+#: `build.json`。与中转的 `relay/version.py` 同一口径：没有注册表就用构建号，
+#: 一眼能看出发布先后；读不到就报 `0.0.0`（= 这不是一次部署）。
+_BUILD_FILE = Path(__file__).with_name("build.json")
+UNVERSIONED = "0.0.0"
+
+
+def deployed_version() -> str:
+    try:
+        payload = json.loads(_BUILD_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return UNVERSIONED
+    if not isinstance(payload, dict):
+        return UNVERSIONED
+    value = payload.get("version")
+    return value.strip() if isinstance(value, str) and value.strip() else UNVERSIONED
+
+
 async def healthz(_request: web.Request) -> web.Response:
-    return web.json_response({"ok": True, "service": "dsh-mail"})
+    # `service` 仍是"这个响应来自哪个服务"的判据（036 拆分时定的），版本只增不改。
+    return web.json_response({"ok": True, "service": "dsh-mail", "version": deployed_version()})
 
 
 def create_app(*, store: Store, resolve_device: ResolveDevice | None = None,

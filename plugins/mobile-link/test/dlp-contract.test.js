@@ -65,7 +65,9 @@ test('every vector row is what this end actually does', () => {
 
     const error = deviceFrameError(frame)
     const expected = vector.js
-    if (expected === 'ok') {
+    // `handled` = 本端认得这一帧、但不在设备方向上校验它（agent→device 这一半
+    // 连接器从不校验，见上面 `knownDrift` 那条）。与 `ok` 同样要求"放行"。
+    if (expected === 'ok' || expected === 'handled') {
       assert.equal(error, undefined, `${vector.name}: deviceFrameError 应放行，实得 ${error}`)
       continue
     }

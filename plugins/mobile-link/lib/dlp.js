@@ -10,7 +10,11 @@
 export const MAX_FRAME_BYTES = 32 * 1024 * 1024
 
 export const DEVICE_TO_AGENT = new Set(['req', 'open', 'cancel', 'eventResult', 'ping', 'hello'])
-export const AGENT_TO_DEVICE = new Set(['res', 'item', 'end', 'streamError', 'event', 'hostStatus', 'pong', 'error'])
+export const AGENT_TO_DEVICE = new Set(['res', 'item', 'end', 'streamError', 'event', 'hostStatus', 'pong', 'error',
+  // 032：账户级状态由**中转自己**发给设备（会话已读水位、提醒开关这类），
+  // 连接器既不产生也不转发它，但这张表是契约镜像，缺一项就与
+  // `docs/relay-contract.json` 对不上（`npm test` 会红）。
+  'accountState'])
 /** Relay-internal control frames carrying device lifecycle (see docs/RELAY-NOTES.md). */
 export const RELAY_CONTROL = new Set(['deviceAttach', 'deviceDetach'])
 /**

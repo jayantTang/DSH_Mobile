@@ -27,7 +27,7 @@ import {
   DEFAULT_EVENTS_BACKLOG, DEFAULT_SLOW_REQUEST_MS,
   EVENTS_ENDPOINT, EVENTS_RESULT, DeviceRouter, messageOf,
 } from './router.js'
-import { SERVER_VERSION, SERVER_CAPABILITIES } from './hello.js'
+import { SERVER_VERSION, SERVER_CAPABILITIES, hostVersion } from './hello.js'
 import { MissingIdentity, resolveIdentity } from './state.js'
 import { connect as wsConnect } from './ws.js'
 
@@ -420,6 +420,10 @@ export class MobileLinkAgent extends EventEmitter {
       agentId: identity.agentId,
       attempt: this.reconnectAttempts,
       sinceCloseMs: this._lastClosedAt === undefined ? undefined : this.now() - this._lastClosedAt,
+      // 这次连接属于哪套版本：连接器 + 宿主 DSH。一连接一行，事后从本机流水就能
+      // 认出"出问题的那天跑的是哪两个版本"，不必再去翻安装记录。
+      serverVersion: SERVER_VERSION,
+      hostVersion: hostVersion(),
     })
     this.emit('status')
 
@@ -606,6 +610,10 @@ export class MobileLinkAgent extends EventEmitter {
         name: this.identity?.agentName || undefined,
         dshPort: this.dsh?.endpoint?.port,
         protocol: PROTOCOL_VERSION,
+        // 这台电脑的两段版本。中转据此按 agent 记一行（变化才写），手机据此
+        // 在「关于」里显示 DSH 版本——只在控制帧上走一次，不进任何业务流。
+        version: SERVER_VERSION,
+        hostVersion: hostVersion(),
       },
     })
   }

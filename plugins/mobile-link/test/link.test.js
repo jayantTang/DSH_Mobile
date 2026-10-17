@@ -18,6 +18,7 @@ process.env.DSH_HOME = TEST_HOME
 process.on('exit', () => rmSync(TEST_HOME, { recursive: true, force: true }))
 
 import { MobileLinkAgent } from '../lib/link.js'
+import { SERVER_VERSION } from '../lib/hello.js'
 import { createHistoryService } from '../lib/history.js'
 import { SESSION_DIGEST_METHOD } from '../lib/session-digest.js'
 
@@ -639,6 +640,44 @@ test('_link/hello reports what this connector can do, without asking the Host', 
   )
 })
 
+test('_link/hello reports the host DSH version too, and says so honestly when unknown', async () => {
+  // 两段版本：连接器自己的（serverVersion）与跑它的宿主 DSH 的（hostVersion）。
+  // 分开报是因为两者独立升级——"用户报的问题该不该在宿主升级后复查"取决于后者。
+  const before = process.env.DSH_CLIENT_VERSION
+  try {
+    process.env.DSH_CLIENT_VERSION = '0.2.0-rc.2'
+    const { agent, socket } = makeAgent()
+    await agent.handleRelayFrame(attach('dev_1'))
+    await agent.handleRelayFrame({ t: 'req', id: 'hv1', method: '_link/hello', args: {}, deviceId: 'dev_1' })
+    const reply = socket.frames('res').find((frame) => frame.id === 'hv1')
+    assert.equal(reply.value.hostVersion, '0.2.0-rc.2')
+
+    delete process.env.DSH_CLIENT_VERSION
+    await agent.handleRelayFrame({ t: 'req', id: 'hv2', method: '_link/hello', args: {}, deviceId: 'dev_1' })
+    const later = socket.frames('res').find((frame) => frame.id === 'hv2')
+    assert.equal(later.value.hostVersion, null, '取不到就报 null，不编一个数')
+  } finally {
+    if (before === undefined) delete process.env.DSH_CLIENT_VERSION
+    else process.env.DSH_CLIENT_VERSION = before
+  }
+})
+
+test('hostStatus carries this computer\'s two versions for the relay to record', async () => {
+  // 中转只在控制帧上看这两段版本（收到 hostStatus 时按 agent 记一行），业务帧一律不看。
+  const before = process.env.DSH_CLIENT_VERSION
+  process.env.DSH_CLIENT_VERSION = '0.2.0-rc.2'
+  try {
+    const { agent, socket } = makeAgent()
+    agent.sendHostStatus()
+    const frame = socket.last('hostStatus')
+    assert.equal(frame.info.version, SERVER_VERSION)
+    assert.equal(frame.info.hostVersion, '0.2.0-rc.2')
+  } finally {
+    if (before === undefined) delete process.env.DSH_CLIENT_VERSION
+    else process.env.DSH_CLIENT_VERSION = before
+  }
+})
+
 test('the phone naming its build is recorded, and visible in the device snapshot', async () => {
   // The relay's device row is written at pairing and never again, so this frame
   // is the only place the *client's* build travels after that. Recording it is
@@ -1090,6 +1129,8 @@ test('链路连上、被拆掉都写进流水，并带上原因', async () => {
   assert.ok(kinds.includes('link.start'), `link.start 不见了：${kinds.join(', ')}`)
   assert.equal(open.agentId, 'agt_1')
   assert.ok(open.relay.startsWith('ws://relay.test'), `link.open 应带上中转地址：${open.relay}`)
+  // 一连接一行版本组合：事后从本机流水就能认出"出问题那天跑的是哪两个版本"。
+  assert.equal(open.serverVersion, SERVER_VERSION)
   const close = entries.find((entry) => entry.kind === 'link.close')
   assert.match(close.reason, /relay closed the socket/, `拆链原因该被记下来：${close.reason}`)
   assert.equal(close.from, 'connected', '拆之前的链路状态要一起记，才能区分"刚连上就掉"和"挂了很久才掉"')

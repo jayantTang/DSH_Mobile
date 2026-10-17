@@ -8,18 +8,24 @@ import Foundation
 /// the direct path is not what users run.
 public struct LinkHandshake: Decodable, Sendable {
     public let serverVersion: String?
+    /// 跑连接器的宿主 DSH 的版本（连接器从 `DSH_CLIENT_VERSION` 读）。
+    ///
+    /// 与 `serverVersion` 是两个命名空间：连接器是 0.x 的插件版本，宿主是 DSH 的版本，
+    /// 两者独立升级。"该不该让用户先升级 DSH"只能看这一项；取不到时为 nil（如实未知）。
+    public let hostVersion: String?
     public let capabilities: [String]
     public let protocolVersion: Int?
     public let agentId: String?
     public let name: String?
 
     private enum CodingKeys: String, CodingKey {
-        case serverVersion, capabilities, protocolVersion, agentId, name
+        case serverVersion, hostVersion, capabilities, protocolVersion, agentId, name
     }
 
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         serverVersion = try? container.decodeIfPresent(String.self, forKey: .serverVersion)
+        hostVersion = try? container.decodeIfPresent(String.self, forKey: .hostVersion)
         // A connector that reports nothing is treated as having nothing, which
         // is what makes the entry points hide rather than fail.
         capabilities = (try? container.decodeIfPresent([String].self, forKey: .capabilities)) ?? []
@@ -28,9 +34,11 @@ public struct LinkHandshake: Decodable, Sendable {
         name = try? container.decodeIfPresent(String.self, forKey: .name)
     }
 
-    public init(capabilities: [String], serverVersion: String? = nil, protocolVersion: Int? = nil) {
+    public init(capabilities: [String], serverVersion: String? = nil, protocolVersion: Int? = nil,
+                hostVersion: String? = nil) {
         self.capabilities = capabilities
         self.serverVersion = serverVersion
+        self.hostVersion = hostVersion
         self.protocolVersion = protocolVersion
         self.agentId = nil
         self.name = nil

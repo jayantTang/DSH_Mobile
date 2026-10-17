@@ -22,6 +22,7 @@ import time
 from typing import Any, Callable, Iterable
 
 import dlp
+import version
 
 #: WebSocket close codes used by the relay (application range).
 #: Reserved method the phone calls once per connection. The connector answers
@@ -443,6 +444,10 @@ class AgentLink(Link):
         self.name: str = agent["name"]
         self.superseded = False
         self.devices: dict[str, DeviceLink] = {}
+        #: 这台电脑**最后一次上报**的两段版本（连接器 + 宿主 DSH）。只在控制帧
+        #: `hostStatus` 上更新，值没变就不写库——见 `_note_agent_versions`。
+        self.connector_version: str | None = None
+        self.host_version: str | None = None
         #: Bytes this agent's devices have received since the relay started. Kept
         #: so an operator can answer "who is using the bandwidth" without a
         #: packet capture — the host's interface counters mix in SSH and OTA
@@ -731,7 +736,10 @@ class RelayHub:
             link.enqueue_frame(dlp.device_attach_frame(
                 device.device_id, name=device.name, model=device.model, agent_id=agent["agentId"]))
             device.enqueue_frame(dlp.host_status(
-                online=True, agent_id=link.agent_id, name=agent["name"]))
+                online=True, agent_id=link.agent_id, name=agent["name"],
+                # 控制帧上带一次中转自己的版本：手机「关于」页据此显示"中转版本"，
+                # 排障时不必再去问运维"现在线上是哪一版"。
+                extra={"relayVersion": version.deployed_version()}))
         if previous is not None and previous is not link:
             previous.devices.clear()
         await self._tell_agent_about_the_gone(link, agent)
@@ -854,7 +862,8 @@ class RelayHub:
         else:
             agent.devices[device["deviceId"]] = link
             link.enqueue_frame(dlp.host_status(
-                online=True, agent_id=agent.agent_id, name=agent.name, version=None))
+                online=True, agent_id=agent.agent_id, name=agent.name, version=None,
+                extra={"relayVersion": version.deployed_version()}))
             agent.enqueue_frame(dlp.device_attach_frame(
                 device["deviceId"], name=link.name, model=link.model, agent_id=agent.agent_id))
         self.logger.info("relay: device %s (%s) attached to agent %s",
@@ -962,9 +971,41 @@ class RelayHub:
             return
         self.logger.info("relay: device %s reports build %s", link.device_id, reported)
 
+    async def _note_agent_versions(self, link: AgentLink, frame: dict[str, Any]) -> None:
+        """记下这台电脑跑的是哪套版本（只认控制帧 `hostStatus`，业务帧一律不看）。
+
+        为什么要在本端留一份：用户报问题时，我们手里只有中转。设备行里写着那台手机的
+        构建号（`_note_client_build`），但没有"电脑上是哪版连接器、哪版 DSH"——而
+        这两段恰恰决定"该不该让用户先升级"。写库只在值变化时发生，一次连接最多一行。
+        """
+        info = frame.get("info")
+        if not isinstance(info, dict):
+            return
+        def text(key: str) -> str | None:
+            value = info.get(key)
+            return value.strip() if isinstance(value, str) and value.strip() else None
+        connector = text("version")
+        host = text("hostVersion")
+        if connector is None and host is None:
+            return
+        if (connector, host) == (link.connector_version, link.host_version):
+            return
+        link.connector_version, link.host_version = connector, host
+        try:
+            await asyncio.to_thread(
+                self.store.set_agent_versions, link.agent_id, connector, host)
+        except Exception:  # noqa: BLE001 - a bookkeeping write must not drop the link
+            self.logger.warning("relay: could not record the versions for agent %s", link.agent_id)
+            return
+        self.logger.info("relay: agent %s runs connector %s on DSH %s",
+                         link.agent_id, connector or "unknown", host or "unknown")
+
     async def route_from_agent(self, link: AgentLink, frame: dict[str, Any]) -> None:
         """Handle one validated agent frame."""
         kind = dlp.frame_type(frame)
+        if kind == "hostStatus":
+            # 控制帧：连接器连上时发一次、其后按需。版本只在这里更新。
+            await self._note_agent_versions(link, frame)
         if kind == "ping":
             link.enqueue_frame({"t": "pong", "ts": frame.get("ts")})
             return

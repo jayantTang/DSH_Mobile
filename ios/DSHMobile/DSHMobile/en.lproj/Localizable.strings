@@ -461,6 +461,9 @@ It is registered as a workspace first, so a new group appears in the desktop sid
 "App 版本" = "App version";
 "连接器版本" = "Connector version";
 "连接器未上报" = "Connector did not report";
+"DSH 版本" = "DSH version";
+"中转版本" = "Relay version";
+"未上报" = "Not reported";
 "连接器" = "Connector";
 "连接器端口" = "Connector port";
 "原始设置文档" = "Raw settings document";

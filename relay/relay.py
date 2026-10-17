@@ -22,6 +22,7 @@ from aiohttp import WSMsgType, web
 
 import dlp
 import push
+import version
 from api import DEVICE_SUBPROTOCOL_PREFIX, bearer_token, device_subprotocol_token, cors_preflight, register_http_routes
 from hub import (CLOSE_DEVICE_LIMIT, DeviceLimitReached, Limits, RelayHub,
                  dead_device_warn_threshold_from_env)
@@ -29,6 +30,22 @@ from store import (DEFAULT_DEVICE_TTL_MS, DEFAULT_MAX_PAIRED_DEVICES, DEFAULT_PA
                   Store)
 
 LOGGER = logging.getLogger("relay")
+
+
+def version_log_line(described: dict[str, Any]) -> str:
+    """启动日志那一行。**不许假设 `build` 里有 `commit`**。
+
+    部署脚本在没有 git 元数据的机器上（例如服务器上那份源码目录）只写 `deployedAt`，
+    这里若直接下标取 `commit`，服务会在启动日志那一行崩掉——2026-10-17 生产上当场发生，
+    中转进入重启循环。键缺就是用已有的那个，都没有就只报版本号。
+    """
+    build = described.get("build") or {}
+    version_text = described.get("relayVersion") or "unknown"
+    if build.get("commit"):
+        return f"relay: version {version_text} (commit {build['commit']})"
+    if build.get("deployedAt"):
+        return f"relay: version {version_text} (deployed {build['deployedAt']})"
+    return f"relay: version {version_text}"
 
 
 def normalize_base_path(raw: str | None) -> str:
@@ -352,8 +369,11 @@ def main(argv: list[str] | None = None) -> int:
         runner = web.AppRunner(app, access_log=None)
         await runner.setup()
         await web.TCPSite(runner, args.host, args.port).start()
+        described = version.describe()
         LOGGER.info("relay: listening on http://%s:%s%s (db=%s)", args.host, args.port,
                     normalize_base_path(args.base_path) or "/", args.db)
+        # 启动日志里留一行版本：事后翻 systemd 日志能直接看出"这段报错属于哪次部署"。
+        LOGGER.info(version_log_line(described))
         stop = asyncio.Event()
         for sig in (signal.SIGINT, signal.SIGTERM):
             try:

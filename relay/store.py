@@ -41,7 +41,13 @@ CREATE TABLE IF NOT EXISTS agents (
   createdAt  INTEGER NOT NULL,
   updatedAt  INTEGER NOT NULL,
   disabled   INTEGER NOT NULL DEFAULT 0,
-  lastSeenAt INTEGER
+  lastSeenAt INTEGER,
+  -- 这台电脑跑的是哪套版本（035）。连接器在控制帧 `hostStatus` 里报，值变了才写；
+  -- 用户报问题时，这三列是"他当时跑的哪版连接器 / 哪版 DSH"的唯一答案。
+  -- **必须是本表最后几列**：迁移靠 `ALTER TABLE` 追加（`_migrate_to_8`）。
+  connectorVersion TEXT,
+  hostVersion      TEXT,
+  versionsAt       INTEGER
 );
 CREATE INDEX IF NOT EXISTS agents_account ON agents(accountId);
 
@@ -255,7 +261,7 @@ DEFAULT_FEEDBACK_FORMAT = "text"
 #: "no such column" — on a relay that had otherwise reported itself healthy.
 #: Bumping this number and adding a step to ``_MIGRATIONS`` is what turns that
 #: into a startup migration.
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 
 def _migrate_to_1(conn: sqlite3.Connection) -> None:
@@ -460,12 +466,31 @@ def _migrate_to_7(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS pair_codes_agent ON pairCodes(agentId)")
 
 
+def _migrate_to_8(conn: sqlite3.Connection) -> None:
+    """版本观测（035）：``agents`` 加三列，记这台电脑的连接器与 DSH 版本。
+
+    幂等性照 ``_migrate_to_2``/``_migrate_to_3`` 的口径：``ADD COLUMN`` 在 SQLite 里
+    没有 ``IF NOT EXISTS``，所以先查列。旧行只是多三个 NULL——"没上报过"就该是 NULL，
+    不编一个默认版本号。
+
+    三列在 ``SCHEMA`` 里也是最后几列：迁移过来的库与新建的库列序必须相同。
+    """
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(agents)")}
+    for column, kind in (("connectorVersion", "TEXT"), ("hostVersion", "TEXT"),
+                         ("versionsAt", "INTEGER")):
+        if column not in existing:
+            # 类型必须与 `SCHEMA` 一致：那边写 `TEXT`／`INTEGER`，这里不写类型会得到
+            # 空类型，而「迁移库与新建库逐列相同」的守卫用例会当场判红。
+            conn.execute(f"ALTER TABLE agents ADD COLUMN {column} {kind}")
+
+
 _MIGRATIONS: dict[int, Any] = {
     1: _migrate_to_1,
     2: _migrate_to_2,
     3: _migrate_to_3,
     6: _migrate_to_6,
     7: _migrate_to_7,
+    8: _migrate_to_8,
     4: _migrate_to_4,
     5: _migrate_to_5,
 }
@@ -799,6 +824,17 @@ class Store:
 
     def touch_agent(self, agent_id: str, at: int | None = None) -> None:
         self._write("UPDATE agents SET lastSeenAt=? WHERE agentId=?", (at or now_ms(), agent_id))
+
+    def set_agent_versions(self, agent_id: str, connector_version: str | None,
+                           host_version: str | None, at: int | None = None) -> None:
+        """记这台电脑的连接器与 DSH 版本（控制帧上报，值变了才调用）。
+
+        ``None`` = 上报方没给这一项（老连接器、或宿主没把版本放进环境）。不拿上一次的
+        值去补：补出来的组合可能是错的，而这一列存在的意义正是"不要猜"。
+        """
+        self._write(
+            "UPDATE agents SET connectorVersion=?, hostVersion=?, versionsAt=? WHERE agentId=?",
+            (connector_version, host_version, at or now_ms(), agent_id))
 
     # ── pairing ─────────────────────────────────────────────────────────────
 

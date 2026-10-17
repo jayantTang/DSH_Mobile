@@ -368,10 +368,14 @@ def run(args: argparse.Namespace, store: Store) -> int:
     if command == "device-list":
         agent_id = _resolve_agent(store, args.agent)["agentId"] if args.agent else None
         rows = store.list_devices(agent_id, include_revoked=bool(args.all))
+        # 一台设备要回答的"版本组合"有三段：手机（下面每行的 appVersion）、
+        # 连接器与 DSH（这台电脑那一行的两列）。三段放在同一份输出里，
+        # 排障时一条命令就够，不必再去 join agent-list。
+        agents = {row["agentId"]: row for row in store.list_agents()}
         # 只**加**字段，不改已有字段名——`scripts/dev/*.mjs` 在解这份 JSON。
         _emit([
             {
-                **row,
+                **_with_versions(row, agents),
                 "deviceTokenHash": row["deviceTokenHash"][:12] + "…",
                 # APNs 令牌同样打码：它是能往这台手机推通知的凭据，而
                 # `device-list` 的输出会进终端记录。排障要的是"有没有登记"，
@@ -386,6 +390,9 @@ def run(args: argparse.Namespace, store: Store) -> int:
                     "attention": bool(row.get("pushAttention")),
                     "updatedAt": row.get("pushUpdatedAt"),
                 },
+                # 这台设备连的那台电脑跑的是哪套版本（见 `_with_versions`）。
+                # None = 连接器还没报过（老版本，或这台设备从没连上过那台电脑）。
+
             }
             for row in rows
         ])
@@ -732,6 +739,22 @@ def _resolve_as_of(value: str | None, *, now: int | None = None) -> int | None:
     except ValueError:
         raise StoreError(f"--as-of 只能是 now / yesterday / YYYY-MM-DD，收到 {value!r}") from None
     return _day_start_ms(_day_shift(day, 1)) - 1
+
+
+def _with_versions(device: dict[str, Any],
+                   agents: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    """把**这台设备连的那台电脑**的版本并进设备行（三段版本要能一条命令看全）。
+
+    手机那段在设备行的 `appVersion`（随每次连接刷新）；连接器与 DSH 在 `agents` 行
+    （控制帧上报，变化才写）。没上报过就是 None——不拿上一次的值补。
+    """
+    agent = agents.get(device.get("agentId")) or {}
+    return {
+        **device,
+        "connectorVersion": agent.get("connectorVersion"),
+        "hostVersion": agent.get("hostVersion"),
+        "versionsAt": agent.get("versionsAt"),
+    }
 
 
 def _device_report_row(row: dict[str, Any]) -> dict[str, Any]:
@@ -1214,6 +1237,7 @@ def _ops_report(store: Store, days: int, *, as_of: int | None = None) -> dict[st
     # 不属于这份报告——不加这一刀，00:00–00:02 之间收到的新反馈会被算进"昨天"。
     listed = [row for row in listed if int(row["createdAt"]) <= stamp]
     devices = store.list_devices(include_revoked=True)
+    agent_versions = {row["agentId"]: row for row in store.list_agents()}
     debug_ids = {row["deviceId"] for row in devices if _is_debug_device(row)}
     names = {row["accountId"]: row.get("name") for row in store.list_accounts()}
     real = [row for row in devices if row["deviceId"] not in debug_ids]
@@ -1271,7 +1295,8 @@ def _ops_report(store: Store, days: int, *, as_of: int | None = None) -> dict[st
             # 全量列表在生产库上是 1900+ 行（历次调试配对都还在），日报会被它撑爆
             # （2026-10-12 第一版 327 KB，正文里 90% 是 DSH-Test/DSH-Sweep 的历史行）。
             # `accountName` 是日报自己加的：手机上设备名常常全是「iPhone」，得靠账号名区分。
-            "list": [{**_device_report_row(row), "accountName": names.get(row["accountId"])}
+            "list": [{**_device_report_row(_with_versions(row, agent_versions)),
+                      "accountName": names.get(row["accountId"])}
                      for row in
                      sorted(live, key=lambda row: int(row.get("lastSeenAt") or row["createdAt"]),
                             reverse=True)[:REPORT_DEVICE_LIMIT]],

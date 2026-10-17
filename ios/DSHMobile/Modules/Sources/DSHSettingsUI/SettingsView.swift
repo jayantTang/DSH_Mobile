@@ -501,6 +501,28 @@ public struct SettingsView: View {
                         .foregroundStyle(DSHTheme.labelTertiary)
                 }
             }
+            // 四段版本各自独立发布：App、连接器、DSH 宿主、中转。用户报问题时，
+            // 这四行就是"他当时跑的是什么"的完整答案（连接断开时后三段为未上报）。
+            AdaptivePair {
+                Text("DSH 版本")
+            } value: {
+                if let version = model.about.hostVersion {
+                    Text(version)
+                } else {
+                    Text("未上报")
+                        .foregroundStyle(DSHTheme.labelTertiary)
+                }
+            }
+            AdaptivePair {
+                Text("中转版本")
+            } value: {
+                if let version = model.about.relayVersion {
+                    Text(version)
+                } else {
+                    Text("未上报")
+                        .foregroundStyle(DSHTheme.labelTertiary)
+                }
+            }
             if let name = model.about.connectorName {
                 AdaptivePair {
                     Text("连接器")

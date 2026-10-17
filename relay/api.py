@@ -22,6 +22,7 @@ from typing import Any
 from aiohttp import web
 
 import dlp
+import version
 from store import (InviteRejected, PairedDeviceLimitReached, PairCodeClaimRejected,
                    PairCodeRejected, Store,
                    StoreError, hash_invite_code, normalize_pair_code, now_ms)
@@ -283,7 +284,11 @@ class ClaimLimiter:
 async def healthz(_request: web.Request) -> web.Response:
     return web.json_response({
         "ok": True,
+        # 协议版本（整数）：回答"能不能对话"。
         "version": dlp.PROTOCOL_VERSION,
+        # 这份代码的版本与部署指纹：回答"用户撞上的是哪一次部署"。
+        # 两者是不同的东西，`version` 这个键为兼容老客户端保持原义不动。
+        **version.describe(),
         # 能力清单（与连接器 status 的 capabilities 同一术语）：
         # 客户端读不到这个字段就按"中转需升级"提示，不静默降级。
         # 032 起加上账户/配对模型的三项：持久码、账户级状态读、账户级状态推送。

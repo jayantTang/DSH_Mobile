@@ -46,7 +46,7 @@ front end.
 
 | Method | Path | Auth | Notes |
 |---|---|---|---|
-| `GET` | `/healthz` | — | `{"ok":true,"version":1}` |
+| `GET` | `/healthz` | — | `{"ok":true,"version":1,"relayVersion":"20261017.1240"}`（`version` 是协议版本；`relayVersion` 是部署构建号 `yyyyMMdd.HHmm`，`build` 带 commit/部署时刻，见 `version.py`） |
 | `GET` | `/stats` | — (loopback only) | operator view: live load, effective limits, egress per device, and how many device records are dead (`deviceRecords`: counts only, never device ids). JSON, or an HTML page when the client sends `Accept: text/html` |
 | `WS` | `/link/agent?agentId=<id>` | `Bearer <agentSecret>` | one live connection per `agentId`; a new one supersedes the old (close `4001`) |
 | `WS` | `/link/device?agentId=<id>` | `Bearer <deviceToken>` | up to `--max-devices-per-agent` per agent (past it: an `error` frame `limit/devices`, then close `4012`) |

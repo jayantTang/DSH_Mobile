@@ -1,6 +1,6 @@
 # 版本与部署策略
 
-> 面向：维护者与部署方 · 状态：stable · 最近核对：2026-10-12
+> 面向：维护者与部署方 · 状态：stable · 最近核对：2026-10-17
 >
 > 日期只表示最后一次人工过目，**内容是否仍然成立以本文件内的 `文件:行` 引用与
 > 第六节那几条命令为准**（见「六、本篇的结论怎么自己验」）。
@@ -43,7 +43,8 @@
 | **iOS App** | `ios/DSHMobile/` | `./scripts/release/deploy-ota.sh` | 手机 Safari 装 OTA | `CFBundleVersion`（时间戳） |
 | **电脑端连接器 + 插件（本机）** | `plugins/` | `./scripts/install/install-plugin.sh` | **重启 DSH** | 各自 `package.json` 的语义化版本，连接器把它当 `SERVER_VERSION` 回显给 App |
 | **电脑端连接器 + 插件（发给别人）** | npm 上的同名包 | `scripts/release/publish-plugins.sh --publish` | 对方 `dsh plugin add` | 同上；线上真值以 `npm view <name> version` 为准 |
-| **公网中转** | `relay/` | `relay/deploy/deploy.sh` | 服务重启 | `/healthz` 的 `version` |
+| **公网中转** | `relay/` | `relay/deploy/deploy.sh` | 服务重启 | `/healthz` 的 `version`（协议版本）与 `relayVersion`（**部署构建号** `yyyyMMdd.HHmm`）+ `build`（commit/部署时刻） |
+| **信件服务** | `mail/` | `mail/deploy/deploy.sh` | 服务重启 | 该服务 `/healthz` 的 `version`（同一个构建号口径） |
 | skill | `skills/` | `./scripts/install/install-skills.sh` | 重启 DSH | 无 |
 
 安装页除了最新版，还列出**前两个旧版本**作为回退入口：最新版装不上、或一打开就退出时，
@@ -58,6 +59,29 @@
 
 **DLP 协议版本**：`/healthz` 返回 `{"ok":true,"version":1}`，连接器在握手中声明
 `protocolVersion`。
+
+**版本号口径**（owner 2026-10-17 定）：**有 npm 注册版本的三件**（连接器、send-image、
+doubao-image）继续语义化 `0.x.y`，每次发布递增——包不可变，版本号就是发布标识；
+**没有注册表的**（iOS App、公网中转、信件服务、Web 客户端）一律用构建号
+`yyyyMMdd.HHmm`（北京时间），与 App 的 `CFBundleVersion` 同口径，一眼能看出发布先后；
+**DSH 宿主**沿用上游版本，只读。skills 随所属插件版本，不单独编号。
+
+**四段版本各自的出口**（只走控制帧，业务帧不重复携带）：
+
+| 部件 | 谁产生 | 手机怎么知道 | 中转怎么知道 |
+|---|---|---|---|
+| iOS App | `CFBundleShortVersionString` + `CFBundleVersion` | 设置「关于」 | 每次连接 `_link/hello` 的 `clientVersion`/`clientBuild` → `devices.appVersion` |
+| 连接器 | `package.json`（`SERVER_VERSION`，读文件、不读 `require` 缓存） | `_link/hello` 的 `serverVersion` → 「关于」 | `hostStatus.info.version` → `agents.connectorVersion` |
+| DSH 宿主 | 进程环境 `DSH_CLIENT_VERSION` | `_link/hello` 的 `hostVersion` → 「关于」 | `hostStatus.info.hostVersion` → `agents.hostVersion` |
+| 公网中转 | 部署构建号 `yyyyMMdd.HHmm`（`deploy.sh` 生成，写进 `build.json`） | 中转发的 `hostStatus.info.relayVersion` → 「关于」 | `/healthz` 的 `relayVersion` + `build` |
+
+中转在**值变化时**才写一次库（`agents.versionsAt` 是最后一次上报时刻）；连接器只在每次
+链路建立时写一行流水（`link.open` 的 `serverVersion`/`hostVersion`）。排障时
+`admin.py device-list` 一行就能看到「手机 / 连接器 / DSH」三段版本。
+
+宿主版本只有一条来源：DSH 进程环境里的 `DSH_CLIENT_VERSION`（桌面版由原生启动器注入）。
+没有设这个变量的宿主，连接器报 `null`，App 如实显示「未上报」——不拿连接器版本或其他
+文件去猜，猜错比空着更难查。
 
 规则：
 
@@ -79,6 +103,9 @@
 | **3. 三方版本无对应关系记录** | **无法核对** | 记录在部署方内部维护、不随仓库发布，所以本仓库的任何断言都无法验证它是否在记。这一条只能在部署方那边核 |
 | **4. 无「一键装齐」入口** | **已解决** | `scripts/install/install-all.sh`（skill + 插件 + 提示重启，第三步逐个核对接了哪些包） |
 | **5. ~~直连与中转能力不同~~** | **已关闭** | 已决策只保留中转一条路，见 `docs/PAIRING.md`；直连退化为 DEBUG-only 测试通道 |
+| **6. 连接器与 DSH 版本在中转查不到** | **已解决** | 连接器在控制帧 `hostStatus` 里报 `version`/`hostVersion`（`plugins/mobile-link/lib/link.js:sendHostStatus`），中转按 agent 记 `agents.connectorVersion`/`hostVersion`（`relay/hub.py:_note_agent_versions`）；`admin.py device-list` 与设备行一起输出 |
+| **7. 中转自身没有版本标识** | **已解决** | 部署构建号（`deploy/deploy.sh` 写进 `build.json`）；`/healthz` 返回 `relayVersion`/`build`，设备经 `hostStatus.info.relayVersion` 在 App「关于」里看到 |
+| **8. Web 客户端版本只在配对时写一次** | **仍然存在** | Web 端每次连接不发 `_link/hello`（本机 journal 记 `missing:["hello"]`），中转的 `devices.appVersion` 停在配对时的 `0.1.0`。修法在 Web 仓库：按 §三 的表发握手字段即可，本仓库无需改动 |
 
 ## 四、发布流程（建议固定下来）
 
@@ -106,7 +133,8 @@
 |---|---|---|
 | iOS App | `yyyyMMdd.HHmm`（**北京时间**） | 由 `deploy-ota.sh` 自动打（规则与用例在 `scripts/release/ota-version.mjs`）：两段整数、都在 `CFBundleVersion` 上限内（早先那个 12 位时间戳越界，iOS 会静默不装，看起来像「必须先删掉旧 App」）；拿线上 `version.json` 的号当下界保证严格递增；安装页、`version.json`、CHANGELOG 与提交信息一律北京时间 |
 | 连接器 / 插件 | 语义化 `0.x.y` | 写在各自 `package.json`；连接器把它当 `SERVER_VERSION` 回显给 App（缺口 1 已解决）。线上真值以 `npm view <name> version` 为准 |
-| 中转 | 整数协议版本 + 部署时间 | `/healthz` 暴露协议版本 |
+| 中转 | 部署构建号 `yyyyMMdd.HHmm`（北京时间） | `/healthz` 暴露 `relayVersion` 与 `build`；`deploy.sh` 写 `/opt/dsh-relay/build.json`（构建号 + commit + 部署时刻），启动日志也打一行。中转没有 npm 注册表，构建号就是发布标识 |
+| 信件服务 | 部署构建号 `yyyyMMdd.HHmm`（与中转同一口径） | `mail/deploy/deploy.sh` 写 `/opt/dsh-mail/build.json`；该服务 `/healthz` 的 `version` 读它 |
 
 ## 六、本篇的结论怎么自己验
 

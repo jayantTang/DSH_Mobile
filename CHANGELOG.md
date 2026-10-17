@@ -4,6 +4,31 @@
 [语义化版本](https://semver.org/lang/zh-CN/)。三处部署（App / 连接器 / 中转）的组合见
 [`docs/VERSIONING.md`](docs/VERSIONING.md)。
 
+## 连接器 0.6.6 / 中转 / 信件服务 — 2026-10-17（四段版本在运行时可知）
+
+用户出问题时，"他当时跑的是哪一版"要能直接查到。四段版本**只经控制帧**搬到位：
+App 每次连接在 `_link/hello` 里说自己（`clientVersion`/`clientBuild`，中转写入
+`devices.appVersion`，一直如此）；连接器在同一个应答里加 **`hostVersion`**（宿主 DSH 版本，
+取自进程环境 `DSH_CLIENT_VERSION`），并在控制帧 `hostStatus.info` 里带上自身 `version` 与
+`hostVersion`——中转收到就按 agent 记进 `agents.connectorVersion`/`hostVersion`/`versionsAt`
+（**值变了才写**，业务帧一律不看）。中转自己也有了标识：`/healthz` 的 `relayVersion`
+是 **部署构建号 `yyyyMMdd.HHmm`**（与 iOS 构建号同口径），部署脚本写进 `build.json`，
+并在发给设备的 `hostStatus` 里带 `relayVersion`；信件服务的 `/healthz` 同样带 `version`。
+
+App 设置「关于」因此从两行变四行：App 版本、连接器版本、DSH 版本、中转版本（连不上时后三段
+显示「未上报」）。连接器本机流水在每次链路建立时记一行 `link.open`（`serverVersion` +
+`hostVersion`），事后不必翻安装记录。
+
+顺带修掉一个真问题：连接器用 `require('../package.json')` 取自身版本，`require` 把 JSON 缓存在
+CJS 表里而热更不清缓存，于是 DSH 进程 10-12 启动后一直上报 `0.6.0`（仓库 10-13 已是 `0.6.5`）；
+改成读文件后热更即报真值。版本号口径同时定死：有 npm 注册版本的三件（连接器、send-image、
+doubao-image）继续语义化递增；没有注册表的（App、中转、信件服务、Web）用构建号
+`yyyyMMdd.HHmm`；DSH 宿主沿用上游版本。
+
+数据库迁移到 v8：`agents` 加三列（`connectorVersion`/`hostVersion`/`versionsAt`）。排障入口
+`admin.py device-list` 每行同时给出手机、连接器、DSH 三段版本。已知未覆盖：Web 客户端不发
+`_link/hello`，它的 `devices.appVersion` 仍停在配对时那一次（修法在 Web 仓库一侧）。
+
 ## 中转 + 信件 — 2026-10-16（账户级状态与设备间同步）
 
 同一账户下的多台 client（手机 / 浏览器）现在共享一份**账户级状态**：会话已读水位、角标水位、

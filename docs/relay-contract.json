@@ -110,16 +110,22 @@
       "agentId",
       "name",
       "dshPort",
-      "protocol"
+      "protocol",
+      "version",
+      "hostVersion"
     ],
     "producedByRelay": [
       "online",
       "agentId",
       "name",
-      "version"
+      "version",
+      "relayVersion"
     ],
     "readByIOS": [
-      "online"
+      "online",
+      "name",
+      "dshPort",
+      "relayVersion"
     ]
   },
   "framing": {

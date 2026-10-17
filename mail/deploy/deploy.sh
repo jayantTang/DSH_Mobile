@@ -157,6 +157,18 @@ for module in mail.py api.py store.py internal.py admin.py; do
 done
 install -m 0644 -o root -g root "$SRC_DIR/requirements.txt" "$APP_DIR/requirements.txt"
 
+# 部署构建号：与中转同一口径（yyyyMMdd.HHmm，北京时间）。信件服务没有注册表，
+# 构建号就是"这是哪一次发布"；`/healthz` 的 `version` 读它。
+mail_build_version="$(TZ=Asia/Shanghai date +%Y%m%d.%H%M)"
+mail_build_time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+{
+  printf '{\n'
+  printf '  "version": "%s",\n' "$mail_build_version"
+  printf '  "deployedAt": "%s"\n}\n' "$mail_build_time"
+} > "$APP_DIR/build.json"
+chmod 0644 "$APP_DIR/build.json"
+say "build stamp $mail_build_version"
+
 if [ ! -x "$APP_DIR/.venv/bin/python" ]; then
   say "creating the virtualenv"
   "$PYTHON" -m venv "$APP_DIR/.venv"

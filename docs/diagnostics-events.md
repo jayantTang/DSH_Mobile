@@ -18,7 +18,7 @@
 | kind | 关键字段 | 含义 |
 |---|---|---|
 | `link.start` | `configuredRelay`、`agentId`、`attempt`、`host` | 链路循环启动 |
-| `link.open` | `relay`、`agentId`、`attempt`、`sinceCloseMs` | 到中转的链路建立（`relay` 是**实际**地址） |
+| `link.open` | `relay`、`agentId`、`attempt`、`sinceCloseMs`、`serverVersion`、`hostVersion` | 到中转的链路建立（`relay` 是**实际**地址）；`serverVersion` 是连接器版本、`hostVersion` 是宿主 DSH 版本（取不到为 null），每次连接各记一行 |
 | `link.close` | `reason`、`from`、`connectedForMs` | `socketError` | 链路被拆（`reason` 来自调用点）；`socketError` 只在 socket 报过系统错误时出现，内容是系统给的原文（判断网络/代理/对端靠它） |
 | `link.backoff` | `attempt`、`delayMs` | 进入重连退避 |
 | `link.failed` | `error`、`attempt` | 一次会话失败 |

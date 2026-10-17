@@ -75,6 +75,10 @@ public final class SettingsModel {
     public struct About: Sendable {
         public var appVersion: String
         public var connectorVersion: String?
+        /// 跑连接器的宿主 DSH 版本（握手带回；未知为 nil）。
+        public var hostVersion: String?
+        /// 中转自身版本（`hostStatus.info.relayVersion`；直连或老中转为 nil）。
+        public var relayVersion: String?
         public var hostHome: String?
         public var endpoint: String?
         public var transport: Transport
@@ -86,6 +90,8 @@ public final class SettingsModel {
         static let empty = About(
             appVersion: "—",
             connectorVersion: nil,
+            hostVersion: nil,
+            relayVersion: nil,
             hostHome: nil,
             endpoint: nil,
             transport: .unknown,
@@ -621,16 +627,18 @@ public final class SettingsModel {
         // its status stream, which is the closest thing to an endpoint the
         // protocol exposes.
         //
-        // 连接器版本不在这里读：`hostStatus.info` 里根本没有版本键（连接器只发
-        // online/agentId/name/dshPort/protocol，relay 那条的 version 是显式 None），
-        // 原来那个「找一个像版本的键」的扫描因此永远命中不了，是死代码。真值来自
-        // 握手（`_link/hello` 的 serverVersion），store 已经存好了，直接读。
+        // 连接器与宿主 DSH 的版本都由握手（`_link/hello`）带回，store 已经存好了，
+        // 直接读——不从 `hostStatus.info` 里"找一个像版本的键"，那种猜测只会读错。
         facts.connectorVersion = store?.connectorVersion
+        facts.hostVersion = store?.hostVersion
         if let link = store?.link, link.isRelay {
             facts.transport = .relay
             if let status = await link.firstHostStatus() {
                 facts.connectorName = status.info?["name"]?.stringValue
                 facts.connectorPort = status.info?["dshPort"]?.intValue
+                // 中转自己的版本只在它发给设备的那一帧 `hostStatus` 上（035）：
+                // 协议版本之外，这是"用户撞上的是哪次部署"的唯一来源。
+                facts.relayVersion = status.info?["relayVersion"]?.stringValue
             }
         }
         about = facts

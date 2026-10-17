@@ -10,6 +10,7 @@ import pytest
 from aiohttp import WSMsgType
 
 import hub as hub_module
+import version
 from conftest import agent_headers
 
 
@@ -67,6 +68,45 @@ async def test_agent_online_is_announced_and_devices_are_attached(client, provis
     assert status["info"]["online"] is True
     assert status["info"]["agentId"] == provisioned["agent"]["agentId"]
     assert status["info"]["name"] == "test mac"
+
+    await agent_ws.close()
+    await device_ws.close()
+
+
+async def test_the_pc_versions_ride_host_status_and_are_recorded(client, provisioned, store):
+    """连接器/DSH 的版本只在控制帧 `hostStatus` 上走，并按 agent 落库（值变了才写）。
+
+    用户报问题时，中转是唯一能回答"他电脑上跑的是哪版连接器、哪版 DSH"的地方：
+    设备行里只有手机那一段（`appVersion`）。
+    """
+    device_ws, device = await open_device(client, provisioned)
+    await recv_json(device_ws)                       # 先收到 offline
+    agent_ws = await open_agent(client, provisioned)
+    await recv_json(agent_ws)                        # deviceAttach
+    status = await recv_json(device_ws)              # 中转自己发的 hostStatus
+    assert status["info"]["relayVersion"] == version.deployed_version()
+
+    frame = {"t": "hostStatus", "info": {"online": True, "version": "0.6.5",
+                                         "hostVersion": "0.2.0-rc.2"}}
+    await agent_ws.send_str(json.dumps(frame))
+    forwarded = await recv_json(device_ws)           # 连接器那份照样广播给设备
+    assert forwarded["info"]["version"] == "0.6.5"
+
+    agent_id = provisioned["agent"]["agentId"]
+    for _ in range(60):
+        row = store.agent_by_id(agent_id)
+        if row["connectorVersion"]:
+            break
+        await asyncio.sleep(0.02)
+    assert (row["connectorVersion"], row["hostVersion"]) == ("0.6.5", "0.2.0-rc.2")
+    stamp = row["versionsAt"]
+    assert stamp
+
+    # 同样的值再来一次：不重复写库（一次连接最多一行，不会每帧一次）。
+    await agent_ws.send_str(json.dumps(frame))
+    await recv_json(device_ws)
+    await asyncio.sleep(0.1)
+    assert store.agent_by_id(agent_id)["versionsAt"] == stamp, "值没变却写了一次库"
 
     await agent_ws.close()
     await device_ws.close()

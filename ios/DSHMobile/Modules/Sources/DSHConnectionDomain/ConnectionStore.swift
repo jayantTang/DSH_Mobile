@@ -105,6 +105,12 @@ public final class ConnectionStore {
     /// (a different namespace) is what makes the notice never appear.
     public private(set) var connectorVersion: String? = nil
 
+    /// 跑连接器的宿主 DSH 版本（`_link/hello` 的 `hostVersion`），未知为 nil。
+    ///
+    /// 只用来显示：`connectorVersion` 走 `ConnectorBaseline` 判断"连接器是否太旧"，
+    /// 而 DSH 的版本是另一个命名空间，拿它去比连接器基线会得出错误的结论。
+    public private(set) var hostVersion: String? = nil
+
 
     private var carrier: (any DSHCarrier)?
     private var statusTask: Task<Void, Never>?
@@ -410,6 +416,7 @@ public final class ConnectionStore {
         // offer entries that host does not serve.
         capabilities = []
         connectorVersion = nil
+        hostVersion = nil
         guard let secret = Keychain.get(profile.secretAccount) else {
             state = .failed("此连接的凭据已丢失，请重新配对。")
             return
@@ -574,6 +581,8 @@ public final class ConnectionStore {
         self.client = DSHClient(carrier: carrier, capabilities: capabilities)
         // Recorded for the out-of-date notice only; never used to refuse the link.
         connectorVersion = handshake?.serverVersion
+        // 宿主 DSH 的版本：同一次握手带回来，只用于显示（见属性注释）。
+        hostVersion = handshake?.hostVersion
         state = .connected(hostHome: profile.hostHome)
         // 连上了：探活失败计数与退避都归零（spec 022 FR-001/FR-004）。
         connectedAt = Date()

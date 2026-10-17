@@ -9,6 +9,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { DSH_HINTS, statusSnapshot } from '../lib/status.js'
+import { SERVER_VERSION } from '../lib/hello.js'
 
 /** 最小假 agent：只有 statusSnapshot 真正读到的字段。 */
 function fakeAgent(overrides = {}) {
@@ -60,6 +61,23 @@ test('the pre-existing fields keep their names and types (only additions allowed
     'startedAt', 'connectedAt', 'reconnectAttempts', 'enroll', 'protocolVersion',
     'serverVersion', 'capabilities', 'enabled', 'ok']) {
     assert.ok(key in status, `老字段 ${key} 不见了`)
+  }
+})
+
+test('状态里同时给出连接器与宿主 DSH 的版本', () => {
+  // 两个命名空间：`serverVersion` 是连接器，`hostVersion` 是跑它的 DSH。
+  // 直接跑 DSH 时后者来自进程环境 `DSH_CLIENT_VERSION`；取不到如实给 null。
+  const before = process.env.DSH_CLIENT_VERSION
+  process.env.DSH_CLIENT_VERSION = '0.2.0-rc.2'
+  try {
+    const status = statusSnapshot(fakeAgent())
+    assert.equal(status.serverVersion, SERVER_VERSION)
+    assert.equal(status.hostVersion, '0.2.0-rc.2')
+    delete process.env.DSH_CLIENT_VERSION
+    assert.equal(statusSnapshot(fakeAgent()).hostVersion, null)
+  } finally {
+    if (before === undefined) delete process.env.DSH_CLIENT_VERSION
+    else process.env.DSH_CLIENT_VERSION = before
   }
 })
 

@@ -6,7 +6,7 @@
  * 函数只读 agent 的字段，不持有状态，因此可以直接被单测调用。
  */
 
-import { SERVER_CAPABILITIES, SERVER_VERSION } from './hello.js'
+import { SERVER_CAPABILITIES, SERVER_VERSION, hostVersion } from './hello.js'
 
 const PROTOCOL_VERSION = 1
 
@@ -93,6 +93,9 @@ export function statusSnapshot(agent) {
     // Same facts as `_link/hello`, which is the channel the app actually uses:
     // this route only exists on the direct path.
     serverVersion: SERVER_VERSION,
+    // 宿主 DSH 的版本（`null` = 这个宿主没把版本放进环境）。与 `serverVersion`
+    // 是两个命名空间：前者是连接器，后者是跑它的 DSH。
+    hostVersion: hostVersion(),
     capabilities: SERVER_CAPABILITIES,
     enroll: {
       // A phone (or the user's browser) can read this to find out that the

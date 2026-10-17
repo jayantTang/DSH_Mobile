@@ -20,6 +20,8 @@ public protocol LinkService: AnyObject {
     var capabilities: Set<String> { get }
     /// 连接器版本号。
     var connectorVersion: String? { get }
+    /// 跑连接器的宿主 DSH 版本（握手带回；未知为 nil）。
+    var hostVersion: String? { get }
     /// 对端家目录（路径缩写用）。
     var hostHome: String? { get set }
     /// 当前连接的基地址。
