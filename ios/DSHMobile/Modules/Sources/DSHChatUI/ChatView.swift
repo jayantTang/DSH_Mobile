@@ -282,7 +282,7 @@ public struct ChatView: View {
                 },
                 // 直接读启动参数，不读 `automationActivity` 状态：同一轮 `.task` 里
                 // 先赋值再呈现时，sheet 内容可能拿到旧值（nil），自动展开就不生效。
-                automation: Self.automationActivityScreen()
+                automation: Self.automationScreenArgument
             )
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
@@ -1528,6 +1528,18 @@ public struct ChatView: View {
 
     private static let bottomAnchor = "transcript-bottom"
     private static let topAnchor = "transcript-top"
+
+    /// 截图入口的取值：Release 恒为 `nil`（`automationActivityScreen()` 只在 DEBUG 里有定义）。
+    ///
+    /// 单独抽一层而不是在 sheet 里直接调：Release 里那次调用会让整个 body 的类型检查
+    /// 超时（`error: the compiler is unable to type-check this expression in reasonable time`）。
+    static var automationScreenArgument: String? {
+        #if DEBUG
+        return automationActivityScreen()
+        #else
+        return nil
+        #endif
+    }
 
 #if DEBUG
     /// `-DSHOpenScreen activity|activity-output`；其它取值返回 nil（交给 `RootView` 处理）。
