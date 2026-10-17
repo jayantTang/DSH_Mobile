@@ -415,7 +415,12 @@ public struct SessionListView: View {
     /// the session and unfolding its subagents never fight over one gesture.
     private func parentRow(session: SessionSummary) -> some View {
         HStack(spacing: DSHTheme.Spacing.hairline) {
-            NavigationLink(value: session.sessionId) {
+            // 用 Button 而不是 NavigationLink：List 会给 NavigationLink 自动加一个
+            // 浅灰「›」配件，行尾还多一截留白（owner 2026-10-17：这个箭头没有意义）。
+            // 跳转仍走装配层注入的 `onOpenSession`，与新建会话后打开是同一条路径。
+            Button {
+                onOpenSession(session.sessionId)
+            } label: {
                 SessionRow(session: session, rowState: model.state(of: session),
                            home: store.hostHome,
                            isJustCreated: session.sessionId == model.lastCreatedSessionId,
@@ -758,14 +763,15 @@ public struct SessionRow: View {
                     if agents > 0 {
                         Text("\(agents) 智能体")
                             .font(DSHTheme.Typography.micro)
-                            .foregroundStyle(DSHTheme.brand)
+                            // owner 2026-10-17：这行是"备注"，不是状态；蓝色太抢眼，用三级灰。
+                            .foregroundStyle(DSHTheme.labelTertiary)
                             .monospacedDigit()
                             .accessibilityIdentifier("session.activity.agents")
                     }
                     if jobs > 0 {
                         Text("\(jobs) 后台任务")
                             .font(DSHTheme.Typography.micro)
-                            .foregroundStyle(DSHTheme.brand)
+                            .foregroundStyle(DSHTheme.labelTertiary)
                             .monospacedDigit()
                             .accessibilityIdentifier("session.activity.jobs")
                     }

@@ -26,6 +26,8 @@ public final class ActivityModel {
     private weak var hub: HostEventHub?
     private weak var service: (any LinkService)?
     private var eventTask: Task<Void, Never>?
+    /// 连接期间的名单轮询（推送不可靠时的兜底）。
+    private var autoRefreshTask: Task<Void, Never>?
     private var outputTask: Task<Void, Never>?
     private var isAttached = false
 
@@ -140,9 +142,33 @@ public final class ActivityModel {
         store.apply(.connection(connected))
         if connected {
             Task { await refresh() }
+            startAutoRefresh()
         } else {
             closeOutput()
+            stopAutoRefresh()
         }
+    }
+
+    /// 连接期间每 10 秒重读一次名单。
+    ///
+    /// 为什么不能只靠 `link/jobs` 推帧：推帧依赖连接器订阅宿主任务事件，任何一个环节
+    /// 断掉（旧连接器、宿主升级、订阅被释放），手机就会一直停在建连那一刻的名单上——
+    /// 2026-10-17 owner 报的就是"任务已经结束，手机还显示在跑"。轮询是兜底，
+    /// 服务端读数是一次内存遍历（实测 60 会话 / 180 个活任务 ≈ 0.02ms）。
+    private func startAutoRefresh() {
+        guard autoRefreshTask == nil else { return }
+        autoRefreshTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(10))
+                guard !Task.isCancelled, let self else { return }
+                await self.refresh()
+            }
+        }
+    }
+
+    private func stopAutoRefresh() {
+        autoRefreshTask?.cancel()
+        autoRefreshTask = nil
     }
 
     /// 重读能力位与整份名单（建连 / 重连 / 下拉 / 回到前台）。
@@ -312,6 +338,46 @@ public final class ActivityModel {
 
     public func clearNotice() {
         notice = nil
+    }
+
+
+    // MARK: - 已结束（面板里展开那一段）
+
+    /// 已结束的任务行（展开「已结束」时按需读一次 `job/list`）。
+    ///
+    /// 名单帧只带"活着的任务 + 已结算计数"，不带明细；面板要让人看见"哪些已经结束、
+    /// 为什么结束"，所以展开时读一次 `job/list`（宿主会回整份名单，含终态），取最近若干条。
+    public private(set) var settledJobs: [Job] = []
+    public private(set) var isLoadingSettled = false
+
+    public func loadSettledJobs(sessionId: String) async {
+        guard let client = service?.client, !isLoadingSettled else { return }
+        isLoadingSettled = true
+        defer { isLoadingSettled = false }
+        settledJobs = []
+        var first: [Job] = []
+        do {
+            for try await frame in await client.jobList(sessionId: sessionId) {
+                first = frame.jobs
+                break
+            }
+        } catch {
+            DSHLog.push("activity: settled jobs read failed \(error)")
+        }
+        settledJobs = first
+            .filter { !$0.isLive }
+            .sorted { ($0.finishedAt ?? $0.startedAt) > ($1.finishedAt ?? $1.startedAt) }
+            .prefix(8)
+            .map { $0 }
+    }
+
+    /// 已结束的子智能体（最近 5 个），来自 `session/list` 的 `subagentTiming`。
+    public func finishedChildren(parentSessionId: String) -> [SessionSummary] {
+        summaries.values
+            .filter { $0.parentSessionId == parentSessionId && !$0.isSubagentActive && $0.subagentTiming?.lastTurnCompleted != nil }
+            .sorted { ($0.projections?.values?.subagentTiming?.settledMs ?? 0) > ($1.projections?.values?.subagentTiming?.settledMs ?? 0) }
+            .prefix(5)
+            .map { $0 }
     }
 
     // MARK: - Internals

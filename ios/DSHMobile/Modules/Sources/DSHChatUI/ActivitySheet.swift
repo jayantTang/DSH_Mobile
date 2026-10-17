@@ -18,6 +18,8 @@ public struct ActivitySheet: View {
     @State private var armedStop: String?
     @State private var disarmTask: Task<Void, Never>?
     @State private var outputJob: Job?
+    /// 「已结束」段是否展开（owner 2026-10-17）。
+    @State private var showsSettled = false
     /// 无人值守截图用：`activity-output` 时自动展开第一个在跑任务的输出（DEBUG 钩子传入）。
     private let automation: String?
 
@@ -25,6 +27,8 @@ public struct ActivitySheet: View {
         self.sessionId = sessionId
         self.onOpenSession = onOpenSession
         self.automation = automation
+        // 截图入口（`-DSHOpenScreen activity-settled`）默认展开「已结束」，人用默认折叠。
+        _showsSettled = State(initialValue: automation == "activity-settled")
     }
 
     public var body: some View {
@@ -57,6 +61,11 @@ public struct ActivitySheet: View {
         .task {
             #if DEBUG
             // 名单可能比这张 sheet 晚到：最多等 10 秒，出现第一个在跑任务就推进输出页。
+            if automation == "activity-settled" {
+                showsSettled = true
+                await activity.loadSettledJobs(sessionId: sessionId)
+                return
+            }
             guard automation == "activity-output" else { return }
             for _ in 0..<40 {
                 if outputJob != nil { return }
@@ -223,26 +232,108 @@ public struct ActivitySheet: View {
     // MARK: - 已结束
 
     @ViewBuilder
+    /// 已结束：默认折叠成一行；展开后逐条列出"哪些结束了、为什么结束"。
+    ///
+    /// owner 2026-10-17：点进来看得见"是已结束还是运行中"。明细不在名单帧里
+    ///（帧只带活任务 + 计数），所以展开时向宿主读一次 `job/list`。
     private var settledSection: some View {
         let settled = activity.settledCount(sessionId: sessionId)
-        if settled > 0 {
-            HStack(spacing: DSHTheme.Spacing.tight) {
-                Text("已结束 \(settled) 个")
-                    .font(DSHTheme.Typography.caption)
-                    .foregroundStyle(DSHTheme.labelSecondary)
-                Spacer(minLength: 0)
-                Button {
-                    activity.clearSettled(sessionId: sessionId)
-                } label: {
-                    Text("清除")
-                        .font(DSHTheme.Typography.micro)
-                        .foregroundStyle(DSHTheme.brand)
+        let finishedChildren = activity.finishedChildren(parentSessionId: sessionId)
+        if settled > 0 || !finishedChildren.isEmpty {
+            VStack(alignment: .leading, spacing: DSHTheme.Spacing.tight) {
+                HStack(spacing: DSHTheme.Spacing.tight) {
+                    Button {
+                        showsSettled.toggle()
+                        if showsSettled { Task { await activity.loadSettledJobs(sessionId: sessionId) } }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: showsSettled ? "chevron.down" : "chevron.right")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(DSHTheme.labelTertiary)
+                            Text("已结束 \(settled) 个")
+                                .font(DSHTheme.Typography.caption)
+                                .foregroundStyle(DSHTheme.labelSecondary)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("activity.settledToggle")
+                    Spacer(minLength: 0)
+                    Button {
+                        activity.clearSettled(sessionId: sessionId)
+                    } label: {
+                        Text("清除")
+                            .font(DSHTheme.Typography.micro)
+                            .foregroundStyle(DSHTheme.brand)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("activity.clearSettled")
                 }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("activity.clearSettled")
+
+                if showsSettled {
+                    // 首帧可能比连接早到（client 还没挂上），展开后补读一次。
+                    Color.clear
+                        .frame(height: 0)
+                        .onAppear {
+                            guard activity.settledJobs.isEmpty else { return }
+                            Task { await activity.loadSettledJobs(sessionId: sessionId) }
+                        }
+                    if activity.isLoadingSettled {
+                        Text("正在读取已结束的任务…")
+                            .font(DSHTheme.Typography.micro)
+                            .foregroundStyle(DSHTheme.labelTertiary)
+                    }
+                    ForEach(activity.settledJobs) { job in
+                        settledRow(kind: "task", label: job.label,
+                                   detail: job.detail ?? ActivitySheet.statusText(job.status),
+                                   id: job.id)
+                    }
+                    ForEach(finishedChildren) { child in
+                        settledRow(kind: "child",
+                                   label: child.subagentLabel ?? child.sessionId,
+                                   detail: "子智能体 · 已结束",
+                                   id: child.sessionId)
+                    }
+                }
             }
             .padding(DSHTheme.Spacing.standard)
             .background(DSHTheme.layer2, in: RoundedRectangle(cornerRadius: DSHTheme.Radius.medium, style: .continuous))
+        }
+    }
+
+    private func settledRow(kind: String, label: String, detail: String, id: String) -> some View {
+        HStack(spacing: DSHTheme.Spacing.tight) {
+            Image(systemName: kind == "child" ? "person.2" : "terminal")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(DSHTheme.labelTertiary)
+                .frame(width: 16)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(label)
+                    .font(DSHTheme.Typography.micro)
+                    .foregroundStyle(DSHTheme.labelSecondary)
+                    .lineLimit(1)
+                Text(detail)
+                    .font(DSHTheme.Typography.micro)
+                    .foregroundStyle(DSHTheme.labelTertiary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+            Text("已结束")
+                .font(DSHTheme.Typography.micro)
+                .foregroundStyle(DSHTheme.labelTertiary)
+        }
+        .padding(.leading, 4)
+        .accessibilityIdentifier("activity.settled.\\(id)")
+    }
+
+    /// 终态文案（与桌面端同一套说法）。
+    static func statusText(_ status: JobStatus) -> String {
+        switch status {
+        case .completed: return String(localized: "已完成")
+        case .killed: return String(localized: "已取消")
+        case .failed: return String(localized: "已失败")
+        case .stopping: return String(localized: "正在停止")
+        case .running: return String(localized: "运行中")
+        case .unknown: return String(localized: "已结束")
         }
     }
 

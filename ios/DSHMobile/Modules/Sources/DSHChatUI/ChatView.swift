@@ -280,7 +280,9 @@ public struct ChatView: View {
                     isShowingActivity = false
                     onOpenSession?(childId)
                 },
-                automation: automationActivity
+                // 直接读启动参数，不读 `automationActivity` 状态：同一轮 `.task` 里
+                // 先赋值再呈现时，sheet 内容可能拿到旧值（nil），自动展开就不生效。
+                automation: Self.automationActivityScreen()
             )
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
@@ -1535,7 +1537,7 @@ public struct ChatView: View {
               arguments.indices.contains(index + 1)
         else { return nil }
         let value = arguments[index + 1]
-        return (value == "activity" || value == "activity-output") ? value : nil
+        return ["activity", "activity-output", "activity-settled"].contains(value) ? value : nil
     }
 #endif
 
