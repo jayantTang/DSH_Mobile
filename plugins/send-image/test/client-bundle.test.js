@@ -64,8 +64,10 @@ function loadBundle({ document, fetchImpl, withPrimitives = true } = {}) {
   vm.runInNewContext(SOURCE, sandbox, { filename: 'client.js' })
   const spec = specs[0]
   const fakeReact = { createElement: (type, props, children) => ({ type, props, children }) }
-  // 官方界面件的替身：只认得「按钮交给了官方 Button」这一件事。
-  const officialButton = function OfficialButton() {}
+  // 官方界面件的替身：**照宿主真实形状**给一个 `forwardRef` 对象——官方 primitives 的
+  // `Button` 是 `forwardRef(...)` 的返回值，不是函数。2026-10-17 的回归正是"替身写成函数、
+  // 真身是对象"：用例全绿，而按钮实际从没走过原生路径。
+  const officialButton = { $$typeof: Symbol.for('react.forward_ref'), render: () => null }
   const api = spec.factory((name) => {
     if (name === 'react') return fakeReact
     if (name === '@deepseek-ai/dsh-client-ui-primitives') {
@@ -155,11 +157,25 @@ test('the composer button writes 截图 and the shortcut on its face, with no ho
   const element = component({ sessionId: 'session-1' })
   // 外观交给官方 Button（与旁边原生按钮同一套类），插件不再自带按钮样式
   assert.equal(element.type, officialButton, '按钮必须交给官方 primitives 的 Button')
+  assert.equal(element.props.variant, 'ghost', '透明底、无描边，悬停才有底色')
+  assert.equal(element.props.size, 'sm', '与输入区那一排官方控件同尺寸（28px）')
   assert.equal(element.children, '截图 ⌥⌘S', '热键直接写在按钮正面')
   // 不挂任何悬停提示：原生 title 与官方 Tooltip 都不要（owner 2026-10-17 要求）
   assert.equal(element.props.title, undefined, '不要光标提示')
   assert.equal(element.props['aria-label'], '截图（快捷键：⌥⌘S）', '读屏名字仍要说清热键')
   assert.equal(element.props.className, undefined, '自有 class 不该出现在原生路径上')
+})
+
+test('a forwardRef-shaped Button counts as the official one (the real host shape)', () => {
+  // 真身不是函数：只认 `$$typeof`，否则又退回裸 button（2026-10-17 的回归）。
+  const { document } = makeDom()
+  const { api, officialButton } = loadBundle({ document })
+  assert.equal(typeof officialButton, 'object', '替身必须是对象，才和宿主一致')
+  const { ctx, state } = makeCtx()
+  api.apply(ctx)
+  const element = state.slots[0].component({ sessionId: 'session-1' })
+  assert.equal(element.type, officialButton, 'forwardRef 组件同样要交给官方 Button')
+  assert.equal(element.props.className, undefined, '原生路径不带自有 class')
 })
 
 test('a host without the official primitives still gets a working button', () => {
@@ -178,6 +194,26 @@ test('a host without the official primitives still gets a working button', () =>
   assert.match(css, /\.dsh-send-image-button:hover:not\(:disabled\)\{[^}]*--dsw-alias-interactive-bg-hover/)
   assert.match(css, /\.dsh-send-image-button:focus-visible\{[^}]*--dsw-focus-ring-color/)
   assert.doesNotMatch(css, /dsh-send-image-button[^}]*background:#/, '别写死颜色，跟随主题变量')
+})
+
+test('the fallback button puts its stylesheet back if a hot swap took it away', () => {
+  // 2026-10-17：热更换代把共享的 `<style>` 撤掉之后，裸 button 没有样式可依，
+  // 于是退化成浏览器默认的灰底描边（按钮"自己变了颜色"就是这么来的）。
+  // 降级路径每次渲染都要确认样式表还在。
+  const { document, nodes } = makeDom()
+  const { api } = loadBundle({ document, withPrimitives: false })
+  const { ctx, state } = makeCtx()
+  api.apply(ctx)
+  const component = state.slots[0].component
+  component({ sessionId: 'session-1' })
+  const style = nodes.find((node) => node.id === STYLE_ID)
+  assert.ok(style, '挂上时应当有样式表')
+  style.remove()
+  assert.equal(nodes.filter((node) => node.id === STYLE_ID).length, 0, '模拟热更换代撤走样式表')
+  component({ sessionId: 'session-1' })
+  const restored = nodes.find((node) => node.id === STYLE_ID)
+  assert.ok(restored, '再渲染一次就该把样式表补回来')
+  assert.equal(nodes.filter((node) => node.id === STYLE_ID).length, 1, '只补一份，不要叠着长')
 })
 
 test('a cancelled capture says nothing and attaches nothing', async () => {

@@ -247,34 +247,57 @@ function registerShortcut(ctx, state) {
 }
 
 /**
+ * 宿主 `Button` 是不是能直接交给 `createElement` 的组件类型。
+ *
+ * **不能用 `typeof === 'function'` 判**：官方 primitives 的 `Button` 是
+ * `forwardRef(...)` 的返回值，那是一个带 `$$typeof` 的对象，不是函数。2026-10-17
+ * 那次"改成原生外观"就是死在这一点上——判断永远为假，插件一直在走自己画的裸
+ * `button`，按钮观感因此和旁边那一排始终不是一套。
+ */
+function isRenderableComponent(value) {
+  if (typeof value === 'function') return true
+  if (value === null || typeof value !== 'object') return false
+  const tag = value.$$typeof
+  return tag === Symbol.for('react.forward_ref')
+    || tag === Symbol.for('react.memo')
+    || tag === Symbol.for('react.lazy')
+}
+
+/**
  * 输入区左侧按钮：给不知道快捷键的人一个入口，也是热键冲突时的唯一出路。
  *
- * 外观交给**官方 primitives 的 `Button`**（与旁边的官方按钮同一套 CSS-module 类）：宿主换主题、
- * 改按钮样式都自动跟随，不需要插件去猜 token。
+ * 外观交给**官方 primitives 的 `Button`**（`ghost` + `sm`，与输入区里那一排官方控件同族）：
+ * 宿主换主题、改按钮样式都自动跟随，不需要插件去猜 token。
  *
  * 热键直接写在按钮正面（`截图 ⌥⌘S`），**不做悬停提示**（owner 2026-10-17 要求：光标提示的
  * 出现时机不由插件掌握，写在字上最稳）。因此这里既不挂原生 `title`，也不用官方 `Tooltip`。
  * 拿不到 `Button`（老宿主）时退回自带 class 的裸 `button`（样式见 CSS 里那几条兜底规则），
- * 保证按钮在任何宿主上都还在。
+ * 保证按钮在任何宿主上都还在；那条路径**每次渲染都补一次样式表**——热更换代会把共享的
+ * `<style>` 一起撤掉，撤掉之后裸按钮就退化成浏览器默认的灰底描边（2026-10-17 就是这样）。
  */
 function registerButton(ctx, state, React, primitives) {
   const isMac = detectMac()
   const text = buttonText(isMac)
   const aria = buttonAria(isMac)
   const OfficialButton = primitives?.Button
+  const official = isRenderableComponent(OfficialButton)
   try {
     ctx.slots.inject(SLOT_NAME, () => ctx.slots.register(
       { name: SLOT_NAME, id: SLOT_ID, order: 40, label: () => LABEL },
       (props) => {
         state.session = props?.sessionId ?? state.session
         const onClick = () => state.runCapture()
-        if (typeof OfficialButton === 'function') {
+        if (official) {
           return React.createElement(OfficialButton, {
+            // ghost = 透明底、无描边、悬停才有底色；sm = 28px 高，与输入区那一排同尺寸。
             variant: 'ghost',
+            size: 'sm',
             'aria-label': aria,
             onClick,
           }, text)
         }
+        // 兜底路径：每次渲染确认样式表还在（热更换代会撤掉共享的 <style>）。
+        ensureStyle()
         return React.createElement('button', {
           type: 'button',
           className: BUTTON_CLASS,
