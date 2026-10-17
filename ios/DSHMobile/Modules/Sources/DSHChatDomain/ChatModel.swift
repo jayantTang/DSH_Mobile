@@ -1056,6 +1056,18 @@ public final class ChatModel {
         guard let sessionId = session?.sessionId, let scope = sessionScope,
               let store = messageBacking,
               let lowest = hits.map(\.seq).min() else { return }
+        // 命中落在连接器折好下发的过程段里：那一行还没取回来，先按摘要的 seq 段
+        // 展开（普通窗口、不带 fold）。不展开的话搜索能搜到、却跳不过去。
+        if let header = timeline.items.compactMap({ item -> TimelineProcessHeader? in
+            if case .processHeader(let header) = item.kind, header.isPrefetched,
+               header.startSeq <= lowest, lowest <= header.endSeq { return header }
+            return nil
+        }).first {
+            await loadPrefetchedSummary(header, range: header.startSeq...header.endSeq,
+                                        turnKey: header.id)
+            // 等一次整树重建把行落进时间线，后面的命中定位才有行可指。
+            for _ in 0..<3 { await Task.yield() }
+        }
         let before = max(0, lowest + 1)
         guard (timeline.firstContentSeq ?? Int.max) > lowest else { return }
         let records = (try? await store.windowBefore(
