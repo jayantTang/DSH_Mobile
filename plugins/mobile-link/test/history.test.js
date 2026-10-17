@@ -209,6 +209,26 @@ test('in-session search is answered once the service is bound', async () => {
   assert.notEqual(result.error?.code, 'link/not-implemented')
 })
 
+test('a hit inside a later content part is not missed (no reliance on the host text filter)', async () => {
+  // 2026-10-17 真机：搜「我」「的」拿不到全部用户输入。根因是正文匹配交给了宿主的
+  // `{kind:'text'}` 过滤，而它只看自己认定的那一段；blocks 形态里靠后的段就被漏掉了。
+  // 现在只按 seq 段取文档、在连接器里对**所有**正文段逐字匹配。
+  const log = [
+    { seq: 0, type: 'user/message', time: 1,
+      data: { content: [{ type: 'image' }, { type: 'text', text: '帮我看看这张图的布局' }] } },
+    { seq: 1, type: 'user/message', time: 2,
+      data: { content: [{ type: 'text', text: '这条与那个词无关' }] } },
+    { seq: 2, type: 'tool/result', time: 3, data: { output: 'command: 布局结果在这里' } },
+  ]
+  const service = bound(createHistoryService({ logger: { warn() {}, info() {} } }), fakeSearchQuery(log))
+  const result = await service.handle(FIND_METHOD, { address: ADDRESS, query: '布局', limit: 10 })
+  assert.equal(result.ok, true)
+  const seqs = result.value.hits.map((hit) => hit.seq).sort((a, b) => a - b)
+  assert.deepEqual(seqs, [0, 2], '第二段正文与工具输出里的命中都要有')
+  assert.ok(!seqs.includes(1), '不含关键词的那条不许混进来')
+  assert.ok(result.value.hits.every((hit) => hit.snippet.includes('布局')), '片段要来自命中的那段正文')
+})
+
 // ── 异常路径（进度与来源要如实，不许把"没扫到"说成"没有"） ─────────────────────
 
 test('a session with no events reports zero chunks instead of guessing', async () => {

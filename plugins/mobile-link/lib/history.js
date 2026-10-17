@@ -98,6 +98,29 @@ function parseRoles(value) {
   return { roles }
 }
 
+/// 一条文档里所有可读正文：宿主给的 `text`、`data.text`、`data.content[].text`
+/// （blocks 形态，可能**不止一段**）、`data.message.content[].text`，以及工具结果的
+/// `output` / `result` / `stdout` / `stderr`。
+///
+/// 为什么自己做匹配、不把 `{kind:'text'}` 交给宿主：宿主的文本过滤只看它自己认定的那一段，
+/// 2026-10-17 真机实测（搜"我"/"的"拿不到全部用户输入）说明会漏掉 `content` 里靠后的部分。
+/// 改成"取回这一段全部文档、在这里逐字匹配"之后，命中集合只由我们自己的规则决定。
+function docText(doc) {
+  const data = doc?.data ?? {}
+  const parts = []
+  const push = (value) => {
+    if (typeof value === 'string' && value.length > 0) parts.push(value)
+  }
+  push(doc?.text)
+  push(data.text)
+  for (const blocks of [data.content, data.message?.content]) {
+    if (!Array.isArray(blocks)) continue
+    for (const block of blocks) push(block?.text)
+  }
+  for (const key of ['output', 'result', 'stdout', 'stderr']) push(data[key])
+  return parts.join('\n')
+}
+
 /// A hit snippet with the highlight offsets the phone's list already renders.
 ///
 /// Offsets, not ranges: the value crosses the wire and a character offset stays
@@ -274,6 +297,7 @@ export function createHistoryService({ logger = console } = {}) {
           logger.info?.(`mobile-link: full-text index unavailable, scanning instead: ${messageOf(error)}`)
         }
       }
+      const needle = query.toLowerCase()
       const from = parseSearchCursor(args.cursor)
       // `newestSeq` also carries the progress denominator below; it is cached for
       // 5s, and a scan would have fetched it anyway on the first page.
@@ -290,8 +314,8 @@ export function createHistoryService({ logger = console } = {}) {
       let scanned = 0
       while (to >= 0 && hits.length < limit && scanned < MAX_SEARCH_CHUNKS_PER_CALL) {
         const chunkFrom = Math.max(0, to - chunk + 1)
+        // 只按 seq 段取文档；正文匹配在下面自己做（见 `docText` 的头注）。
         const filters = [{ kind: 'seq', from: chunkFrom, to }]
-        if (!browsing) filters.push({ kind: 'text', text: query })
         const docs = await withTimeout(
           sessionQuery.filterEvents(sessionId, filters),
           HOST_CALL_TIMEOUT_MS,
@@ -313,9 +337,11 @@ export function createHistoryService({ logger = console } = {}) {
           if (roles !== undefined && (role === undefined || !roles.has(role))) continue
           const display = displayRoleOf(doc)
           if (display === undefined) continue
+          const text = docText(doc)
+          if (!browsing && !text.toLowerCase().includes(needle)) continue
           hits.push({ seq: doc.seq, role: display, ...(query.length > 0
-            ? makeSnippet(doc.text, query)
-            : { snippet: String(doc.text ?? '').slice(0, 72).replace(/\s+/g, ' ').trim(),
+            ? makeSnippet(text, query)
+            : { snippet: String(text).slice(0, 72).replace(/\s+/g, ' ').trim(),
                 highlightStart: 0, highlightLength: 0 }) })
           if (hits.length >= limit) break
         }
