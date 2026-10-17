@@ -67,6 +67,11 @@ public struct TimelineItem: Identifiable, Sendable {
     /// 009 上行状态（T022）：这条用户消息没发出去（发送失败/重启恢复未发出），
     /// 行尾给「发送失败，点击重发」。只由 `markSendStates` 回标，折叠本身不产生。
     public var sendFailed: Bool = false
+    /// 已受理、但确认帧永远没来（宿主撤单、轮次以错误结束）。
+    /// 它不是「没发出去」（不能直接重发），也不是「等待开始」（宿主不会开始它了），
+    /// 行尾给「已发送，未确认，点击核对」：核对走一次服务端查重，再决定是否重发。
+    /// 只由 `markSendStates` 回标。
+    public var sendUnconfirmed: Bool = false
 }
 
 /// One tool invocation and its outcome.
@@ -633,17 +638,20 @@ public struct ChatTimeline: Sendable {
             guard let status = statuses[items[index].seq],
                   case .userMessage(let text, let images, let isSteering, _, let isAgentSent) = items[index].kind
             else { continue }
+            // 三态互斥：每写一次状态位就把另外两个清掉。原来 `.sent` 只清 sendFailed，
+            // 一旦出现「状态转 sent 但没重折」的路径，行就永远停在「等待开始」。
+            let flags: (pending: Bool, failed: Bool, unconfirmed: Bool)
             switch status {
-            case .sent:
-                items[index].sendFailed = false
-            case .pending:
-                items[index].sendFailed = false
-                items[index].kind = .userMessage(
-                    text: text, images: images, isSteering: isSteering,
-                    isPending: true, isAgentSent: isAgentSent)
-            case .failed:
-                items[index].sendFailed = true
+            case .sent: flags = (false, false, false)
+            case .pending: flags = (true, false, false)
+            case .failed: flags = (false, true, false)
+            case .unconfirmed: flags = (false, false, true)
             }
+            items[index].kind = .userMessage(
+                text: text, images: images, isSteering: isSteering,
+                isPending: flags.pending, isAgentSent: isAgentSent)
+            items[index].sendFailed = flags.failed
+            items[index].sendUnconfirmed = flags.unconfirmed
         }
     }
 

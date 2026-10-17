@@ -27,19 +27,29 @@ public extension ChatModel {
         let ref = layer.sessionRef(scope: scope, sessionId: summary.sessionId)
         pipelineBridge = ChatPipelineBridge(model: self, layer: layer, ref: ref,
                                             generation: openGeneration)
-        // T022 重启恢复：上次没发出去的消息（磁盘 status='pending'）以「未发出」
-        // 呈现并进时间线，管道内部各尝试重发一次（重发前按 clientId 查重）。
+        // T022 重启恢复：上次没发出去的消息（磁盘 status='pending'）以「未发出」呈现，
+        // 不自动重发——磁盘的 pending 分不清"真没发出去"和"宿主已收下、还在队列里"。
         Task { await layer.restorePending(for: ref) }
     }
 
     /// 失败用户消息「点击重发」（T022）：行身份 `user-<clientId>` 去掉前缀就是
     /// 管道的稳定 UUID。重发走管道状态机；失败只回错误条，行保持 failed。
     public func retrySend(rowId: String) async {
-        guard let bridge = pipelineBridge, rowId.hasPrefix("user-"),
-              let clientId = UUID(uuidString: String(rowId.dropFirst("user-".count)))
-        else { return }
-        // 失败不用另外上报：行仍保持 failed（可再点），这就是反馈。
+        guard let bridge = pipelineBridge, let clientId = Self.clientId(of: rowId) else { return }
         try? await bridge.resend(clientId: clientId)
+    }
+
+    /// 「已发送，未确认」行「点击核对」：只查不重发。查重命中转 sent，未命中转 failed
+    /// （行随后变成「发送失败，点击重发」，要不要再发一次由读者决定）。
+    public func verifySend(rowId: String) async {
+        guard let bridge = pipelineBridge, let clientId = Self.clientId(of: rowId) else { return }
+        await bridge.verify(clientId: clientId)
+    }
+
+    /// 行身份 `user-<clientId>` → 管道的稳定 UUID。
+    private static func clientId(of rowId: String) -> UUID? {
+        guard rowId.hasPrefix("user-") else { return nil }
+        return UUID(uuidString: String(rowId.dropFirst("user-".count)))
     }
 
     /// 关会话/换连接时停掉订阅（订阅的 onTermination 会自行从管道注销）。
@@ -182,7 +192,10 @@ public final class ChatPipelineBridge {
         // 最大值只在**正式 seq**里取：pending/failed 回声用 Int.max 起递减的合成
         // seq，混进来会把 maxSeqBefore 顶到天花板——之后胶囊永不出现（T018）。
         let maxSeqBefore = records.keys
-            .filter { sendStatuses[$0] != .pending && sendStatuses[$0] != .failed }
+            .filter {
+                sendStatuses[$0] != .pending && sendStatuses[$0] != .failed
+                    && sendStatuses[$0] != .unconfirmed
+            }
             .max()
         var tailArrivals = 0
         for change in diff.changes {
@@ -465,6 +478,12 @@ public final class ChatPipelineBridge {
     /// 确认原地替换），行身份不变。
     public func resend(clientId: UUID) async throws {
         try await layer.resend(clientId: clientId, for: ref)
+    }
+
+    /// 「已发送，未确认」行「点击核对」：先查服务端再决定（命中转 sent，
+    /// 未命中转 failed，真正重发要读者再点一次）。
+    public func verify(clientId: UUID) async {
+        await layer.verify(clientId: clientId, for: ref)
     }
 
     /// 下行数据进管道（follow 快照 / WSS 事件）：合并进热窗口并经 diff 重建。

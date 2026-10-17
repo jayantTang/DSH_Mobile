@@ -1757,6 +1757,19 @@ public final class ChatModel {
         hasOlder = !topExhausted && (oldestSeq ?? 1) > 1
         pager?.observe(oldestSeq: oldestSeq, newestSeq: nil, hasMore: !topExhausted)
         searchScopeVersion += 1
+        #if DEBUG
+        // `-DSHProbeStaleSend`：把最后一条用户消息标成「已发送，未确认」。
+        // 真实触发要宿主撤单（`MessagePipeline.markUnconfirmed`），没有用例能稳定造出来，
+        // 所以留一个只改状态位的注入口给截图/UI 用例核对徽标。
+        if ChatProbe.shared.staleSendState,
+           let row = timeline.items.last(where: { item in
+               if case .userMessage = item.kind { return true }
+               return false
+           }) {
+            timeline.markSendStates([row.seq: .unconfirmed])
+            noteWantsBottom()
+        }
+        #endif
     }
 
     /// 只刷新缺口行（加载/失败/到头三态变化，数据行不动）。

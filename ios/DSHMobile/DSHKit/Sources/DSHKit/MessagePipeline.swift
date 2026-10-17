@@ -32,6 +32,9 @@ public actor MessagePipeline {
     public struct RenderedMessage: Identifiable, Sendable {
         public enum Status: String, Sendable, Equatable {
             case sent, pending, failed
+            /// 已受理、但确认帧永远没来（宿主撤单、轮次以错误结束）。
+            /// 与 failed 的区别：不能直接重发（宿主可能已经收下），先核对一次再定。
+            case unconfirmed
         }
 
         public let id: UUID
@@ -113,6 +116,9 @@ public actor MessagePipeline {
     let now: @Sendable () -> TimeInterval // internal：+Send
     private let pageSize: Int
     private let hotLimit: Int
+    /// 轮次结束后多久把仍在 pending 的行标成「未确认」。留一点余量，是因为
+    /// 轮次结束与下一条排队消息被提升成 durable 记录之间有几毫秒到几秒的空隙。
+    private let unconfirmedGrace: TimeInterval
 
     private var pipelines: [SessionRef: SessionPipeline] = [:]
     var states: [SessionRef: SessionState] = [:] // internal：+Send
@@ -131,6 +137,8 @@ public actor MessagePipeline {
         var gaps: [GapRow] = []
         var continuations: [UUID: AsyncStream<SnapshotDiff>.Continuation] = [:]
         var pump: Task<Void, Never>?
+        /// 轮次结束后的「未确认」扫描（每会话一个，后到的时间点覆盖先到的）。
+        var unconfirmedSweep: Task<Void, Never>?
     }
 
     public init(
@@ -141,7 +149,8 @@ public actor MessagePipeline {
         frameTick: @escaping @Sendable () async -> Void = {},
         now: @escaping @Sendable () -> TimeInterval = { Date().timeIntervalSince1970 },
         pageSize: Int = 50,
-        hotLimit: Int = 500
+        hotLimit: Int = 500,
+        unconfirmedGrace: TimeInterval = 20
     ) {
         self.store = store
         self.fetchFactory = fetchFactory
@@ -151,6 +160,7 @@ public actor MessagePipeline {
         self.now = now
         self.pageSize = pageSize
         self.hotLimit = hotLimit
+        self.unconfirmedGrace = unconfirmedGrace
     }
 
     // MARK: - 会话访问（产品/测试入口）
@@ -299,6 +309,46 @@ public actor MessagePipeline {
         guard !changes.isEmpty else { return }
         broadcast(SnapshotDiff(changes: changes), to: state.continuations)
         await enqueueConfirmations(confirmations, for: session)
+        // 轮次结束是一条硬边界：排队消息要么在下一轮开始时被提升成 durable 记录，
+        // 要么被宿主撤回（日志里 `agent/inbox/spliced` removedCount=1）。撤回帧不带
+        // 被撤项的身份，手机端换不成"这一行作废"，于是这里用轮次结束当判据：
+        // 过了宽限期仍是 pending 的行，标成「未确认」，不再声称"等待开始"。
+        if diff.inserted.contains(where: { $0.event.type == "turn/end" }) {
+            scheduleUnconfirmedSweep(for: session)
+        }
+    }
+
+    /// 排一次「未确认」扫描（宽限期后执行；同一会话只留最后一次）。
+    private func scheduleUnconfirmedSweep(for session: SessionRef) {
+        guard var state = states[session] else { return }
+        state.unconfirmedSweep?.cancel()
+        let grace = unconfirmedGrace
+        let task = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(max(0, grace) * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            await self?.markUnconfirmed(for: session)
+        }
+        state.unconfirmedSweep = task
+        states[session] = state
+    }
+
+    /// 把仍在 pending 的行标成「未确认」。
+    ///
+    /// 保留 `pendingSeqs` 映射：迟到的下行确认仍然照常把它救成 sent
+    /// （`confirmPendingRow` 只认 pendingSeqs，不认状态）。
+    func markUnconfirmed(for session: SessionRef) {
+        guard var state = states[session] else { return }
+        var updates: [Row] = []
+        for (clientId, seq) in state.pendingSeqs {
+            guard let row = state.rows[seq], row.status == .pending else { continue }
+            let message = RenderedMessage(id: row.id, seq: seq, record: row.record, status: .unconfirmed)
+            state.rows[seq] = message
+            state.pendingSeqs[clientId] = seq
+            updates.append(.message(message))
+        }
+        states[session] = state
+        guard !updates.isEmpty else { return }
+        broadcast(SnapshotDiff(changes: [.update(updates)]), to: state.continuations)
     }
 
     /// 按 seq 核销行（返回被删行的 id 列表，供 .remove 广播）。

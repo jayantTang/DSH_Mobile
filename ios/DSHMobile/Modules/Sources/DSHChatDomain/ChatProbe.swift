@@ -91,6 +91,9 @@ public final class ChatProbe: @unchecked Sendable {
     /// `-DSHProbeStaleFollowFrame`（032）：打开会话后注入一帧"上一个会话迟到的帧"，
     /// 用来验证"跨会话的帧不落地"这条守卫（注入走同一条判断）。
     public var staleFollowFrame: Bool = false
+    /// `-DSHProbeStaleSend`：把最后一条用户消息标成「已发送，未确认」，用来截图核对
+    /// 徽标换掉了"等待开始"（真实触发要宿主撤单，见 MessagePipeline.markUnconfirmed）。
+    public var staleSendState: Bool = false
     /// 驱动开始（`-DSHProbeOlderScroll` 第一轮）时由宿主报到（`ProbeVariants.noteDriveBegan`）。
     public var noteDriveBegan: (() -> Void)?
 }

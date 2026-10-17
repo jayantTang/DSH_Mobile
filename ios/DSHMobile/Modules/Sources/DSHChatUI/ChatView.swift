@@ -862,6 +862,10 @@ public struct ChatView: View {
         rowView.onSendRetry = { rowId in
             Task { await model.retrySend(rowId: rowId) }
         }
+        // 「已发送，未确认，点击核对」：只核对（服务端查重），重发要读者再点一次。
+        rowView.onSendVerify = { rowId in
+            Task { await model.verifySend(rowId: rowId) }
+        }
         return rowView
             // 搜索跳过来的那一行：淡底 + 左侧色条，一眼能认出"就是这条"。
             .background(alignment: .leading) {

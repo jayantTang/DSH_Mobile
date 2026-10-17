@@ -43,6 +43,8 @@ struct TimelineRowView: View {
     var onGapRetry: ((_ start: Int, _ end: Int) -> Void)?
     /// T022 失败用户消息被点（「发送失败，点击重发」）：把行身份交回调用方。
     var onSendRetry: ((_ rowId: String) -> Void)?
+    /// 「已发送，未确认，点击核对」被点：把行身份交回给调用方（只核对，不重发）。
+    var onSendVerify: ((_ rowId: String) -> Void)?
 
     @ViewBuilder
     private var row: some View {
@@ -55,7 +57,9 @@ struct TimelineRowView: View {
                 isPending: isPending,
                 isAgentSent: isAgentSent,
                 sendFailed: item.sendFailed,
-                onResend: item.sendFailed ? { onSendRetry?(item.id) } : nil
+                sendUnconfirmed: item.sendUnconfirmed,
+                onResend: item.sendFailed ? { onSendRetry?(item.id) } : nil,
+                onVerify: item.sendUnconfirmed ? { onSendVerify?(item.id) } : nil
             )
 
         case .assistantText(let text):
@@ -170,7 +174,11 @@ private struct UserMessageRow: View {
     let isAgentSent: Bool
     /// T022：没发出去（发送失败 / 重启恢复未发出），行尾给可点的重发入口。
     var sendFailed: Bool = false
+    /// 已受理、确认帧却没来（宿主撤单、轮次以错误结束）。既不是"等待开始"，
+    /// 也不是"没发出去"：点一次核对，服务端查重命中就转已发送，否则才允许重发。
+    var sendUnconfirmed: Bool = false
     var onResend: (() -> Void)?
+    var onVerify: (() -> Void)?
 
     /// The agent's own messages sit on the agent's side, like every other thing
     /// it says. They arrive as prompts — the protocol's only door for a picture
@@ -208,6 +216,21 @@ private struct UserMessageRow: View {
                             .font(DSHTheme.Typography.micro)
                     }
                     .foregroundStyle(DSHTheme.labelTertiary)
+                } else if sendUnconfirmed {
+                    // 已受理，但确认帧没来（典型：宿主在轮次失败时把队列项撤了，
+                    // 撤单帧又不带被撤项身份）。不能一直挂着"等待开始"，也不能
+                    // 直接当"没发出去"——点一次核对，查重命中才算已发送。
+                    Button(action: { onVerify?() }) {
+                        HStack(spacing: 3) {
+                            Image(systemName: "questionmark.circle")
+                                .font(.system(size: 9))
+                            Text("已发送，未确认，点击核对")
+                                .font(DSHTheme.Typography.micro)
+                        }
+                        .foregroundStyle(DSHTheme.labelTertiary)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("chat.send.verify")
                 }
                 VStack(alignment: .leading, spacing: DSHTheme.Spacing.tight) {
                     if !images.isEmpty {

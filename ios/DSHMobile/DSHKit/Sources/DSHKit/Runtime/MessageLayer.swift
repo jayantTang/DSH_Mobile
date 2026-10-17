@@ -261,6 +261,11 @@ public final class MessageLayer {
         try await pipeline.resend(clientId: clientId, for: ref)
     }
 
+    /// 核对一条「已发送，未确认」的发送：先查服务端，命中转 sent，未命中转 failed。
+    public func verify(clientId: UUID, for ref: MessageSessionRef) async {
+        await pipeline?.verify(clientId: clientId, for: ref)
+    }
+
     /// 预取目标（列表冷启动时告诉层"这个会话要预取到哪一条"）。
     public func prefetchTarget(ref: MessageSessionRef, newestSeq: Int) -> MessagePrefetchTarget {
         MessagePrefetchTarget(session: ref, newestSeq: newestSeq)

@@ -60,7 +60,12 @@ extension MessagePipeline {
     }
 
     /// 重启恢复（T022）：磁盘层里 status='pending' 的记录是"没发出去"的消息，
-    /// 以 failed（未发出、可点重发）呈现进时间线，并各自尝试重发一次。
+    /// 以 failed（未发出、可点重发）呈现进时间线。
+    ///
+    /// **不再自动重发**（2026-10-17）：磁盘上的 pending 不区分"真没发出去"和
+    /// "宿主已收下、还在队列里"，自动重发会用同一个 requestId 再投一次；本机日志
+    /// 里同一 rpcId 因此出现了两条 `agent/inbox/spliced`（12:09 与 12:57），而手机端
+    /// 按 rpcId 折成一行，界面上看不出重复。要不要再发一次由读者点重发决定。
     /// 幂等：已跟踪的 clientId 不重复插入。
     public func restorePending(for session: SessionRef) async {
         guard let store,
@@ -70,7 +75,6 @@ extension MessagePipeline {
         _ = await ensurePrimedState(for: session)
         guard var state = states[session] else { return }
         var inserted: [Row] = []
-        var toResend: [UUID] = []
         // 新的合成键从大到小发：存储 seq 越大的（越新的消息）排在越后面。
         for entry in pending.sorted(by: { $0.record.event.seq > $1.record.event.seq }) {
             guard let clientId = UUID(uuidString: entry.clientId),
@@ -87,15 +91,28 @@ extension MessagePipeline {
             state.rows[seq] = message
             state.pendingSeqs[clientId] = seq
             inserted.append(.message(message))
-            toResend.append(clientId)
         }
         states[session] = state
-        if !inserted.isEmpty {
-            broadcast(SnapshotDiff(changes: [.insert(inserted)]), to: state.continuations)
+        guard !inserted.isEmpty else { return }
+        broadcast(SnapshotDiff(changes: [.insert(inserted)]), to: state.continuations)
+    }
+
+    /// 「已发送，未确认，点击核对」（2026-10-17）：先按 clientId 对服务端最新页查一次。
+    /// 命中说明其实已确认（只是确认帧没到），只原地替换成 sent；没命中才退回
+    /// failed（「发送失败，点击重发」），由读者决定是否真的再发一次——不替读者决定。
+    public func verify(clientId: UUID, for session: SessionRef) async {
+        _ = await ensurePrimedState(for: session)
+        guard let state = states[session],
+              let seq = state.pendingSeqs[clientId],
+              state.rows[seq] != nil else { return }
+        if let lookup = confirmationLookup, let existing = await lookup(session, clientId) {
+            replacePending(clientId: clientId, with: existing, status: .sent, for: session)
+            await pipeline(for: session).enqueueWrite(.confirmPending(
+                scope: session.scope, sessionId: session.sessionId,
+                clientId: clientId.uuidString, record: existing), key: existing.event.seq)
+            return
         }
-        for clientId in toResend {
-            Task { try? await self.resend(clientId: clientId, for: session) }
-        }
+        replacePending(clientId: clientId, with: nil, status: .failed, for: session)
     }
 
     /// ① 乐观插入：稳定 UUID + 合成 seq（排在当前尾部之后）。记录按 durable

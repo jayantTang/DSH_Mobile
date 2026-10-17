@@ -36,7 +36,8 @@ final class MessagePipelineTests: XCTestCase {
             let json = #"{"type":"user/message","seq":42,"time":1789276358733,"data":{"text":"\#(text)"}}"#
             return SessionRecord(event: try! JSONDecoder().decode(SessionEvent.self, from: Data(json.utf8)))
         },
-        confirmationLookup: MessagePipeline.ConfirmationLookup? = nil
+        confirmationLookup: MessagePipeline.ConfirmationLookup? = nil,
+        unconfirmedGrace: TimeInterval = 20
     ) -> MessagePipeline {
         MessagePipeline(
             store: store,
@@ -45,7 +46,8 @@ final class MessagePipelineTests: XCTestCase {
             } },
             sender: sender,
             confirmationLookup: confirmationLookup,
-            now: { 1000 })
+            now: { 1000 },
+            unconfirmedGrace: unconfirmedGrace)
     }
 
     // MARK: - 订阅与广播
@@ -323,8 +325,10 @@ final class MessagePipelineTests: XCTestCase {
     }
 
     /// 重启恢复（T022）：磁盘里的 pending 记录以「未发出」（failed）呈现，
-    /// 并自动重发一次（成功则原地转 sent）。
-    func testRestorePendingRendersFailedAndResendsOnce() async throws {
+    /// **不再自动重发**——磁盘上的 pending 分不清"真没发出去"和"宿主已收下、
+    /// 还在队列里"，自动重发会用同一个 requestId 再投一次（本机日志里 12:09 与
+    /// 12:57 就因此出现了两条同 rpcId 的 `agent/inbox/spliced`）。
+    func testRestorePendingRendersFailedWithoutAutoResending() async throws {
         let clientId = UUID()
         let optimistic = SessionRecord(event: SessionEvent(
             type: "user/message", seq: Int.max, time: 1_789_276_358_000,
@@ -354,20 +358,127 @@ final class MessagePipelineTests: XCTestCase {
         XCTAssertEqual(restored.id, clientId)
         XCTAssertEqual(restored.status, .failed) // 未发出、可点重发
 
-        // 自动重发一次：pending → sent（同一 clientId，网络只调一次）。
-        var sawPending = false
-        var sawSent = false
-        for _ in 0..<4 {
-            guard case .update(let updates)? = await iterator.next()?.changes.first,
-                  case .message(let message) = updates.first else { break }
-            if message.status == .pending { sawPending = true }
-            if message.status == .sent { sawSent = true; break }
-        }
-        XCTAssertTrue(sawPending)
-        XCTAssertTrue(sawSent)
-        // 重发是 Task 异步派发的，等它落定再数。
+        // 不自动重发：网络一次都不该被调；行也不该自己变成 pending/sent。
         try await Task.sleep(nanoseconds: 200_000_000)
-        do { let sends = await sendCount.value; XCTAssertEqual(sends, 1) }
+        do { let sends = await sendCount.value; XCTAssertEqual(sends, 0) }
+    }
+
+    /// 「已发送，未确认」兜底：轮次结束（含撤回排队项、以错误收尾）后仍停在 pending
+    /// 的行，过了宽限期必须翻成 unconfirmed，不能永远挂着"等待开始"。
+    /// 本机日志 session-152bb1ac：12:09:12 入队 → 同一秒 `agent/inbox/spliced`
+    /// removedCount=1 撤回 → turn/end reason=error(ENOSPC)，之后再无确认帧。
+    func testPendingRowBecomesUnconfirmedAfterTurnEndsWithoutConfirmation() async throws {
+        let pipeline = makePipeline(sender: { _, _, _, _ in nil }, unconfirmedGrace: 0.05)
+        let stream = await pipeline.snapshots(for: session)
+        var iterator = stream.makeAsyncIterator()
+        _ = await iterator.next()
+
+        let clientId = try await pipeline.send(text: "怎么样了", to: session)
+        guard case .insert(let inserted)? = await iterator.next()?.changes.first,
+              case .message(let pending) = inserted.first else {
+            return XCTFail("应有 pending 插入")
+        }
+        XCTAssertEqual(pending.status, .pending)
+
+        // 轮次结束，但宿主没有提升这条排队项（它是被撤回的那一条）。
+        await pipeline.pipeline(for: session).apply(events: [
+            Self.turnEndRecord(seq: 1102).event,
+        ])
+        var unconfirmed: MessagePipeline.RenderedMessage?
+        for _ in 0..<6 {
+            guard case .update(let rows)? = await iterator.next()?.changes.first,
+                  case .message(let message) = rows.first else { continue }
+            if message.status == .unconfirmed { unconfirmed = message; break }
+        }
+        XCTAssertEqual(unconfirmed?.id, clientId)
+        XCTAssertEqual(unconfirmed?.status, .unconfirmed, "轮次结束仍无确认帧：必须降级为未确认")
+    }
+
+    /// 降级之后迟到的确认仍然救得回来（pendingSeqs 不被清）：不许因为一次误判
+    /// 就把一条其实已入队的消息变成"失败"。
+    func testLateConfirmationRescuesUnconfirmedRow() async throws {
+        let pipeline = makePipeline(sender: { _, _, _, _ in nil }, unconfirmedGrace: 0.05)
+        let stream = await pipeline.snapshots(for: session)
+        var iterator = stream.makeAsyncIterator()
+        _ = await iterator.next()
+
+        let clientId = try await pipeline.send(text: "晚到的确认", to: session)
+        _ = await iterator.next() // pending 插入
+        await pipeline.pipeline(for: session).apply(events: [Self.turnEndRecord(seq: 9).event])
+        var sawUnconfirmed = false
+        for _ in 0..<4 {
+            guard case .update(let rows)? = await iterator.next()?.changes.first,
+                  case .message(let message) = rows.first else { continue }
+            if message.status == .unconfirmed { sawUnconfirmed = true; break }
+        }
+        XCTAssertTrue(sawUnconfirmed)
+
+        await pipeline.pipeline(for: session).apply(events: [
+            Self.userRecord(seq: 42, text: "晚到的确认", rpcId: clientId.uuidString).event,
+        ])
+        var rescued: MessagePipeline.RenderedMessage?
+        for _ in 0..<4 {
+            guard case .update(let rows)? = await iterator.next()?.changes.first,
+                  case .message(let message) = rows.first else { continue }
+            if message.status == .sent { rescued = message; break }
+        }
+        XCTAssertEqual(rescued?.id, clientId)
+        XCTAssertEqual(rescued?.seq, 42)
+    }
+
+    /// 「点击核对」：服务端已有这条（确认帧丢了）→ 只原地转 sent，不重发；
+    /// 服务端查不到 → 转 failed 等读者决定，不替读者再发一次。
+    func testVerifyConfirmsOnServerHitWithoutResending() async throws {
+        let sendCount = SendCounter()
+        let lookup = LookupStub()
+        let pipeline = makePipeline(
+            sender: { _, _, _, _ in
+                await sendCount.increment()
+                return nil
+            },
+            confirmationLookup: { _, _ in await lookup.record })
+        let stream = await pipeline.snapshots(for: session)
+        var iterator = stream.makeAsyncIterator()
+        _ = await iterator.next()
+        let clientId = try await pipeline.send(text: "核对", to: session)
+        _ = await iterator.next() // pending 插入
+
+        await lookup.set(Self.userRecord(seq: 77, text: "核对", rpcId: clientId.uuidString))
+        await pipeline.verify(clientId: clientId, for: session)
+        var confirmed: MessagePipeline.RenderedMessage?
+        for _ in 0..<3 {
+            guard case .update(let rows)? = await iterator.next()?.changes.first,
+                  case .message(let message) = rows.first else { continue }
+            if message.status == .sent { confirmed = message; break }
+        }
+        XCTAssertEqual(confirmed?.seq, 77)
+        do { let sends = await sendCount.value; XCTAssertEqual(sends, 1, "核对不许再发一次") }
+    }
+
+    func testVerifyFallsBackToFailedWhenServerHasNothing() async throws {
+        let pipeline = makePipeline(
+            sender: { _, _, _, _ in nil },
+            confirmationLookup: { _, _ in nil })
+        let stream = await pipeline.snapshots(for: session)
+        var iterator = stream.makeAsyncIterator()
+        _ = await iterator.next()
+        let clientId = try await pipeline.send(text: "查不到", to: session)
+        _ = await iterator.next() // pending 插入
+
+        await pipeline.verify(clientId: clientId, for: session)
+        var failed: MessagePipeline.RenderedMessage?
+        for _ in 0..<3 {
+            guard case .update(let rows)? = await iterator.next()?.changes.first,
+                  case .message(let message) = rows.first else { continue }
+            if message.status == .failed { failed = message; break }
+        }
+        XCTAssertEqual(failed?.id, clientId)
+    }
+
+    /// 轮次结束记录（`turn/end`），驱动「未确认」扫描。
+    private static func turnEndRecord(seq: Int) -> SessionRecord {
+        let json = #"{"type":"turn/end","seq":\#(seq),"time":1789276358740,"data":{"turn":2,"reason":{"kind":"error"}}}"#
+        return SessionRecord(event: try! JSONDecoder().decode(SessionEvent.self, from: Data(json.utf8)))
     }
 
     /// durable 用户消息（带 source.rpcId），模拟服务端确认回流的记录。

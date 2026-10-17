@@ -255,6 +255,7 @@
 "移除这张图片" = "Remove this picture";
 "正在上传 %@" = "Uploading %@";
 "已发送，等待开始" = "Sent — waiting to start";
+"已发送，未确认，点击核对" = "Sent — unconfirmed, tap to check";
 "切换为排队" = "Switch to queue";
 "切换为插入当前轮次" = "Switch to steer into the current turn";
 "照片图库" = "Photo library";

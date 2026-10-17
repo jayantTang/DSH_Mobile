@@ -96,6 +96,7 @@ struct DSHMobileApp: App {
         ChatProbe.shared.olderScrollRounds = ViewportProbe.olderScrollRounds
         ChatProbe.shared.olderDriveSkipsReclaimed = ViewportProbe.olderDriveSkipsReclaimed
         ChatProbe.shared.staleFollowFrame = ProbeVariants.staleFollowFrame
+        ChatProbe.shared.staleSendState = ProbeVariants.staleSendState
         ChatProbe.shared.listHost = ProbeVariants.listHost
         ChatProbe.shared.listSpike = ProbeVariants.listSpike
         ChatProbe.shared.lazyStack = ProbeVariants.lazyStack

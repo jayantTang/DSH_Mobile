@@ -563,7 +563,8 @@ final class TranscriptListHost: UIView, UICollectionViewDelegate {
             return "\(item.id)|gap:\(status)"
         case .userMessage(_, _, let isSteering, let isPending, _):
             // pending→sent 原地替换不改字节数，状态位必须进签名，否则徽标永远停在"等待开始"。
-            return "\(base)|u:\(isSteering):\(isPending)"
+            // 失败/未确认两个标记同理：都只翻状态位，不改载荷字节数。
+            return "\(base)|u:\(isSteering):\(isPending):\(item.sendFailed):\(item.sendUnconfirmed)"
         case .toolCall(let invocation):
             return "\(base)|t:\(invocation.isRunning):\(invocation.isError)"
         default:
