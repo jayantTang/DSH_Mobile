@@ -324,6 +324,12 @@ export function createHistoryService({ logger = console } = {}) {
         scanned += 1
         // Newest first inside the chunk: the reader asked about something recent
         // far more often than about something old.
+        //
+        // **游标必须落在"这一页读到哪儿"**，不能一律跳到整块之前：一页在块中途装满时，
+        // 块尾还没读过的文档会被永久跳过——2026-10-17 owner 报的"全局搜索不是用户提问的超集"
+        // 就是这条（用户提问正好落在片尾时被吞掉；索引路径不受影响）。
+        // `resumeFrom` 默认 = 整块之前（读完这块才成立），中途停下时改成"下一条还没读的 seq"。
+        let resumeFrom = chunkFrom - 1
         for (let index = docs.length - 1; index >= 0; index -= 1) {
           const doc = docs[index]
           // **已知局限**：这里只能按文档判角色，而宿主的 `filterEvents` 文档不带 `data.source`，
@@ -343,9 +349,14 @@ export function createHistoryService({ logger = console } = {}) {
             ? makeSnippet(text, query)
             : { snippet: String(text).slice(0, 72).replace(/\s+/g, ' ').trim(),
                 highlightStart: 0, highlightLength: 0 }) })
-          if (hits.length >= limit) break
+          if (hits.length >= limit) {
+            // 装满了：这一条已经收进本页，下一页从它的**前一条**继续——不能从整块之前
+            // （会丢块尾），也不能从这一条本身（会重复）。
+            resumeFrom = doc.seq - 1
+            break
+          }
         }
-        to = chunkFrom - 1
+        to = resumeFrom
       }
       const hasMore = to >= 0 && hits.length >= limit ? true : to >= 0
       return {
