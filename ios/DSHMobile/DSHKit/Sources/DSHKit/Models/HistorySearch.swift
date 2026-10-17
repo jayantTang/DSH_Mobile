@@ -136,7 +136,11 @@ public enum TranscriptHitLocator {
             // 占位行的 id 填给命中，点它就跳到加载占位条上。这类命中用合成身份
             //（`seq-<n>`）：列表直接显示连接器给的 snippet，点它时由
             // `ChatView.jumpToHit` 按 seq 换窗口再跳（那条路已经验过）。
-            guard let row = row(exactlyForSeq: hit.seq, in: items) else {
+            // 只有**命中自己那一行**才复用行身份。`row(exactlyForSeq:)` 是"seq ≤ 命中的最新
+            // 数据行"（floor），拿它的身份会把两行之间的多条命中全算到前一行、再被 `seen`
+            // 去重吃掉——2026-10-17 真机：连接器回 272 条，列表只剩 80 条（用户提问 24 → 4）。
+            // floor 行只用于"跳转落在附近"，不该用来判身份。
+            guard let row = row(exactlyForSeq: hit.seq, in: items), row.seq == hit.seq else {
                 let synthetic = "seq-\(hit.seq)"
                 guard seen.insert(synthetic).inserted else { return nil }
                 return TranscriptSearchHit(id: synthetic, role: role, snippet: hit.snippet,

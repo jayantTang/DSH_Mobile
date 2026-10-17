@@ -61,6 +61,50 @@ final class HistorySearchTests: XCTestCase {
         XCTAssertEqual(Set(object.keys), ["address", "query", "limit"])
     }
 
+    /// 2026-10-17 真机：全局搜索"命中 80 条"而连接器其实回了 272 条。
+    /// 根因是 `attach` 用"seq ≤ 命中的最新一行"（floor）取身份：两行之间的多条命中
+    /// 全算到前一行，被 `seen` 去重吃掉；用户提问若没有自己的行，会被并到邻近的助手行。
+    func testHitsBetweenRowsEachKeepTheirOwnIdentity() {
+        var timeline = ChatTimeline()
+        timeline.reset(with: [userMessage(seq: 100), userMessage(seq: 200)])
+        let rows = timeline.items
+        let hits = [150, 170, 180].map { seq in
+            HistorySearchHit(seq: seq, role: "me", snippet: "mine", highlightStart: 0,
+                             highlightLength: 4)
+        }
+        let attached = TranscriptHitLocator.attach(hits: hits, to: rows)
+        XCTAssertEqual(attached.count, 3, "three hits must stay three rows, not collapse into one")
+        XCTAssertEqual(Set(attached.map(\.id)).count, 3, "each hit needs its own identity")
+        XCTAssertEqual(attached.map(\.seq), [150, 170, 180])
+    }
+
+    func testAHitExactlyOnARowStillUsesThatRow() {
+        var timeline = ChatTimeline()
+        timeline.reset(with: [userMessage(seq: 100), userMessage(seq: 200)])
+        let rows = timeline.items
+        let hit = HistorySearchHit(seq: 200, role: "me", snippet: "mine", highlightStart: 0,
+                                   highlightLength: 4)
+        let attached = TranscriptHitLocator.attach(hits: [hit], to: rows)
+        XCTAssertEqual(attached.first?.id, rows.first { $0.seq == 200 }?.id,
+                       "a hit that owns a row keeps that row's identity (jump still lands there)")
+        XCTAssertEqual(attached.count, 1)
+    }
+
+    func testTwoHitsOnTheSameRowCollapseToOne() {
+        var timeline = ChatTimeline()
+        timeline.reset(with: [userMessage(seq: 100)])
+        let rows = timeline.items
+        let hits = [200, 300].map { seq in
+            HistorySearchHit(seq: seq, role: "agent", snippet: "x", highlightStart: 0,
+                             highlightLength: 1)
+        }
+        // 两条都在最后一行之后：各自合成身份，互不吞并；同一 seq 重复才去重。
+        let attached = TranscriptHitLocator.attach(hits: hits, to: rows)
+        XCTAssertEqual(attached.count, 2)
+        let duplicated = TranscriptHitLocator.attach(hits: [hits[0], hits[0]], to: rows)
+        XCTAssertEqual(duplicated.count, 1, "the same seq twice is one row")
+    }
+
     func testAHitLandsOnTheRowThatOwnsItsSeq() {
         let items = ChatTimeline()
         var timeline = items
