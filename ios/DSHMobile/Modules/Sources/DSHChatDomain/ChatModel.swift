@@ -719,6 +719,36 @@ public final class ChatModel {
         }
     }
 
+    /// 搜索面板顶部统计行的口径（抽成纯函数，能单测；文案由界面层给）。
+    ///
+    /// 三种来源分开说，且**连接器那条要带上"其中我的提问多少条"**：全局搜索按时间倒序混着
+    /// 助手/工具命中，一个人的提问会散在后面几页里（2026-10-17 实测：当前会话搜「我」共 201 条，
+    /// 其中我的提问 23 条，散落在 5 页）。只给总数会让人以为"我的提问没被搜到"。
+    public enum SearchSummaryKind: Equatable, Sendable {
+        /// 浏览「我的提问」：只有条数。
+        case browsing(count: Int)
+        /// 连接器扫描：命中数 + 我的提问数 + 扫描进度（进度可能未知）。
+        case connector(count: Int, mine: Int, progress: SearchPage.SearchProgress?, scanning: Bool)
+        /// 本地全量库：命中数。
+        case localStore(count: Int)
+        /// 本地窗口：搜了多少条 + 命中多少条。
+        case localWindow(searched: Int, count: Int)
+    }
+
+    public static func summaryKind(source: SearchChannel, hits: [TranscriptSearchHit],
+                                   scanned: Int, progress: SearchPage.SearchProgress?,
+                                   hasMore: Bool) -> SearchSummaryKind {
+        switch source {
+        case .localStore:
+            return .localStore(count: hits.count)
+        case .localWindow:
+            return .localWindow(searched: scanned, count: hits.count)
+        case .connector:
+            let mine = hits.filter { $0.role == .me }.count
+            return .connector(count: hits.count, mine: mine, progress: progress, scanning: hasMore)
+        }
+    }
+
     /// 最近一次搜索被连接器拒绝的原因（成功、走本地、或还没搜过时为 nil）。
     ///
     /// 为什么要有它：连接器拒绝（`link/unsupported` / `link/query-too-short` / 超时）

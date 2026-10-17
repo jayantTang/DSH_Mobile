@@ -204,9 +204,9 @@
 /* T040：「我问过的」未灌全（user_inputs_synced_at 为空）时顶部的状态行 */
 "同步中…" = "Syncing…";
 "我的提问 %lld 条" = "%lld questions from me";
-"命中 %lld 条（已搜全部历史）" = "%lld matches (searched the full history)";
-"命中 %lld 条 · 已扫 %lld/%lld 片" = "%lld matches · scanned %lld/%lld chunks";
-"命中 %lld 条 · 还在往前找" = "%lld matches · still searching older history";
+"命中 %1$lld 条（含我的提问 %2$lld 条）· 已扫 %3$lld/%4$lld 片" = "%1$lld matches (including %2$lld of mine) · scanned %3$lld/%4$lld chunks";
+"命中 %1$lld 条（含我的提问 %2$lld 条）· 还在往前找" = "%1$lld matches (including %2$lld of mine) · still searching older history";
+"命中 %1$lld 条（含我的提问 %2$lld 条，已搜全部历史）" = "%1$lld matches (including %2$lld of mine, searched the full history)";
 "命中 %lld 条（本机记录）" = "%lld matches (on-device records)";
 "已搜 %lld 条 · 命中 %lld 条" = "%lld searched · %lld matches";
 "第 %lld 条" = "#%lld";

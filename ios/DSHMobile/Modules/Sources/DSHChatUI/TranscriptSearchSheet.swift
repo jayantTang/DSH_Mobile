@@ -376,26 +376,35 @@ struct TranscriptSearchSheet: View {
     /// 只搜了本地），本地全量库与窗口无关；只有降级窗口路径才报窗口大小。
     /// 量词统一为「条」（2026-10 用户反馈："行"与"条"并用像一个东西，分不清）。
     private var summary: String {
-        if isBrowsing {
-            return String(format: String(localized: "我的提问 %lld 条"), hits.count)
+        let channel: ChatModel.SearchChannel = switch searchSource {
+        case .connector: .connector
+        case .localStore: .localStore
+        case .localWindow: .localWindow
         }
-        switch searchSource {
-        case .connector:
-            // 只有**扫到最老那一片**（`pageHasMore == false`）才配说"全部历史"：这话原来
-            // 在第一页就说了，而扫描一页最多 4 片（2000 seq/片），数字其实还在长。
-            if pageHasMore, let progress = searchProgress, progress.totalChunks > 0 {
-                return String(format: String(localized: "命中 %lld 条 · 已扫 %lld/%lld 片"),
-                              hits.count, progress.scannedChunks, progress.totalChunks)
+        let kind = ChatModel.summaryKind(source: channel, hits: hits,
+                                         scanned: model.searchItems.count,
+                                         progress: searchProgress,
+                                         hasMore: pageHasMore)
+        switch kind {
+        case .browsing(let count):
+            return String(format: String(localized: "我的提问 %lld 条"), count)
+        case .connector(let count, let mine, let progress, let scanning):
+            // 只有**扫到最老那一片**（`scanning == false`）才配说"全部历史"；并且始终带上
+            // "其中我的提问 N 条"——全局搜索按时间倒序，提问会散在后面几页。
+            if scanning, let progress, progress.totalChunks > 0 {
+                return String(format: String(localized: "命中 %1$lld 条（含我的提问 %2$lld 条）· 已扫 %3$lld/%4$lld 片"),
+                              count, mine, progress.scannedChunks, progress.totalChunks)
             }
-            if pageHasMore {
-                return String(format: String(localized: "命中 %lld 条 · 还在往前找"), hits.count)
+            if scanning {
+                return String(format: String(localized: "命中 %1$lld 条（含我的提问 %2$lld 条）· 还在往前找"),
+                              count, mine)
             }
-            return String(format: String(localized: "命中 %lld 条（已搜全部历史）"), hits.count)
-        case .localStore:
-            return String(format: String(localized: "命中 %lld 条（本机记录）"), hits.count)
-        case .localWindow:
-            return String(format: String(localized: "已搜 %lld 条 · 命中 %lld 条"),
-                          model.searchItems.count, hits.count)
+            return String(format: String(localized: "命中 %1$lld 条（含我的提问 %2$lld 条，已搜全部历史）"),
+                          count, mine)
+        case .localStore(let count):
+            return String(format: String(localized: "命中 %lld 条（本机记录）"), count)
+        case .localWindow(let searched, let count):
+            return String(format: String(localized: "已搜 %lld 条 · 命中 %lld 条"), searched, count)
         }
     }
 

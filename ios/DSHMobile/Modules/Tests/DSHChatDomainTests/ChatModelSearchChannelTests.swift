@@ -96,6 +96,39 @@ final class ChatModelSearchChannelTests: XCTestCase {
                        "the on-device store has no older page to fetch")
     }
 
+    // MARK: - 统计行口径（2026-10-17：全局搜索里"我的提问"散在后面几页，只给总数会看成没搜到）
+
+    func testTheConnectorSummaryAlwaysNamesHowManyHitsAreMine() {
+        let mine = TranscriptSearchHit(id: "seq-3", role: .me, snippet: "mine", highlightStart: 0,
+                                       highlightLength: 4, seq: 3)
+        let agent = TranscriptSearchHit(id: "seq-4", role: .agent, snippet: "agent", highlightStart: 0,
+                                        highlightLength: 5, seq: 4)
+        let progress = ChatModel.SearchPage.SearchProgress(scannedChunks: 1, totalChunks: 4)
+
+        XCTAssertEqual(
+            ChatModel.summaryKind(source: .connector, hits: [mine, agent], scanned: 0,
+                                  progress: progress, hasMore: true),
+            .connector(count: 2, mine: 1, progress: progress, scanning: true),
+            "while scanning, the reader must see how many of the hits are theirs")
+        XCTAssertEqual(
+            ChatModel.summaryKind(source: .connector, hits: [mine], scanned: 0,
+                                  progress: nil, hasMore: false),
+            .connector(count: 1, mine: 1, progress: nil, scanning: false),
+            "an exhausted scan keeps the same shape (progress may be unknown)")
+    }
+
+    func testTheOtherSourcesKeepTheirOwnVocabulary() {
+        let hit = TranscriptSearchHit(id: "seq-1", role: .me, snippet: "x", highlightStart: 0,
+                                      highlightLength: 1, seq: 1)
+        XCTAssertEqual(ChatModel.summaryKind(source: .localStore, hits: [hit], scanned: 0,
+                                             progress: nil, hasMore: false),
+                       .localStore(count: 1))
+        XCTAssertEqual(ChatModel.summaryKind(source: .localWindow, hits: [hit], scanned: 610,
+                                             progress: nil, hasMore: false),
+                       .localWindow(searched: 610, count: 1),
+                       "the local window reports how many rows it searched")
+    }
+
     // MARK: - 异常路径：拒绝不等于"没有结果"（FR-013）
 
     func testAConnectorRefusalLeavesAReasonInsteadOfAnEmptyResult() async throws {
