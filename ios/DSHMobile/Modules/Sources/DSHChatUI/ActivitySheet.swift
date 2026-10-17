@@ -59,6 +59,19 @@ public struct ActivitySheet: View {
         .accessibilityIdentifier("activity.sheet")
         .onDisappear { activity.clearNotice() }
         .task {
+            // 没有在跑的东西时，直接把「已结束」展开：入口现在常驻，
+            // 点进来多半就是想看历史（owner 2026-10-17）。名单可能晚到，最多等 3 秒。
+            for _ in 0..<12 {
+                let live = activity.liveJobs(sessionId: sessionId).count
+                    + activity.children(of: sessionId).count
+                if live == 0, activity.settledCount(sessionId: sessionId) > 0 {
+                    showsSettled = true
+                    await activity.loadSettledJobs(sessionId: sessionId)
+                    break
+                }
+                if live > 0 { break }
+                try? await Task.sleep(for: .milliseconds(250))
+            }
             #if DEBUG
             // 名单可能比这张 sheet 晚到：最多等 10 秒，出现第一个在跑任务就推进输出页。
             if automation == "activity-settled" {
@@ -255,7 +268,11 @@ public struct ActivitySheet: View {
                             Image(systemName: showsSettled ? "chevron.down" : "chevron.right")
                                 .font(.system(size: 9, weight: .semibold))
                                 .foregroundStyle(DSHTheme.labelTertiary)
-                            Text("已结束 \(settled) 个")
+                            // 宿主会裁剪已结算任务（保留窗口很短）：任务都被裁掉时，
+                            // 这里只剩子智能体可看，标题就不要再说"0 个任务"（owner 2026-10-17）。
+                            Text(settled > 0
+                                 ? String(localized: "已结束 \(settled) 个任务")
+                                 : String(localized: "已结束的子智能体"))
                                 .font(DSHTheme.Typography.caption)
                                 .foregroundStyle(DSHTheme.labelSecondary)
                         }

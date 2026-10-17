@@ -752,3 +752,7 @@ It is registered as a workspace first, so a new group appears in the desktop sid
 "任务还在跑，有输出会自动出现。" = "The task is still running; output appears as it arrives.";
 
 "后台任务 · %@" = "Background task · %@";
+
+"已结束 %lld 个任务" = "%lld finished tasks";
+
+"已结束的子智能体" = "Finished subagents";

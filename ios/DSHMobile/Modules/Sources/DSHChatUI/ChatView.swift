@@ -331,6 +331,15 @@ public struct ChatView: View {
         activity.isAvailable && (activity.snapshot(sessionId: sessionId)?.isBusy ?? false)
     }
 
+    /// 入口是否常驻：只要连接器支持活动名单就一直在。
+    ///
+    /// owner 2026-10-17：入口原来只在"有活在跑"时出现，任务一结束就没有入口，
+    /// 已结束的任务与子智能体因此再也点不开。现在改成常驻图标，有没有活都进得去。
+    /// 能力位缺失（旧的连接器 / direct 通道）仍然整块不出现。
+    var isActivityEntryVisible: Bool {
+        activity.isAvailable
+    }
+
     /// 018：把这一屏的当前会话与 `timeline.isTurnOpen` 交给活动适配层。
     ///
     /// 转场期间旧屏幕还活着，但它已经不代表屏幕上的会话（`ownsTranscript`），

@@ -18,14 +18,17 @@ extension ChatView {
     @ToolbarContentBuilder
     var toolbar: some ToolbarContent {
         ToolbarItemGroup(placement: .topBarTrailing) {
-            // 018 §2：那个点改为常驻（`isBusy` = 轮次 ∪ 后台 ∪ 子智能体）并带计数，
-            // 位置沿用今天这一处；点它打开任务面板。旧 `chat.running` 标识留在点上。
-            if isActivityVisible {
+            // 018 §2：入口常驻。owner 2026-10-17：原来是个"有活才出现"的蓝点，
+            // 任务一结束按钮就没了，已结束的任务与子智能体再也看不到；而且蓝点看不出
+            // 它代表什么。改为一个固定的列表图标（=任务清单），有活时在旁边加计数。
+            if isActivityEntryVisible {
                 Button {
                     isShowingActivity = true
                 } label: {
                     HStack(spacing: 3) {
-                        StatusDot(level: .busy, size: 7, animated: true)
+                        Image(systemName: "list.bullet.rectangle")
+                            .font(.system(size: 15, weight: .regular))
+                            .foregroundStyle(activity.activeCount > 0 ? DSHTheme.brand : DSHTheme.labelSecondary)
                             .accessibilityIdentifier("chat.running")
                         if activity.activeCount > 0 {
                             Text("\(activity.activeCount)")
