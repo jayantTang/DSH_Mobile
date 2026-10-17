@@ -18,6 +18,7 @@ import { GitBridge, isGitMethod } from './git.js'
 import { isHelloMethod, helloPayload, parseClientInfo } from './hello.js'
 import { isHistoryMethod } from './history.js'
 import { trimRecordsForWire } from './history/records.js'
+import { isJobsMethod } from './jobs-roster.js'
 
 /**
  * 后台大文件上传的桥接帧（relay → 连接器），名字见 `docs/relay-contract.json`
@@ -185,6 +186,21 @@ export class DeviceRouter {
     // 历史窗口/检索（spec 007）：由 index.js 注入宿主 `sessionQuery` 后交给它。
     // 没绑上就回 `link/unsupported`，手机端退回 `session/page`。
     this.history = undefined
+    // 活动名单与 `link/jobs` 推帧（spec 018）。订阅与去抖都在 roster 里，router 只负责
+    // 转交设备生命周期与把帧广播出去。
+    this.jobsRoster = undefined
+  }
+
+  /**
+   * 挂上活动名单（spec 018）。
+   *
+   * 注入可能晚于第一台设备连接（`ctx.inject` 的时序），所以这里要对**已经挂着**的
+   * 设备补报一遍：只在 attach 时通知的话，这台连接会一直到下一次 attach 才开始推帧。
+   */
+  bindJobsRoster(roster) {
+    this.jobsRoster = roster
+    if (roster === undefined) return
+    for (const deviceId of this.devices.keys()) roster.addDevice(deviceId)
   }
 
   #changed() {
@@ -428,6 +444,9 @@ export class DeviceRouter {
   async attachDevice(deviceId, info = {}) {
     if (!nonEmptyString(deviceId)) return
     this.#startTimeline(deviceId)
+    // 活动名单（018）：第一台设备连上才订阅宿主任务事件；回头客这里也要补一次
+    // （detach 时它从名单里撤下过）。
+    this.jobsRoster?.addDevice(deviceId)
     const existing = this.devices.get(deviceId)
     if (existing) {
       // 回头客：手机又连上了。流和攒下的提问都还在，交给 handleOpen 补发。
@@ -484,6 +503,9 @@ export class DeviceRouter {
     this.#finishTimeline(deviceId)
     const record = this.devices.get(deviceId)
     if (!record) return
+    // 活动名单（018）：断了就不再往它那儿推任务帧（离线补发旧任务状态没有意义），
+    // 最后一台设备离开时 roster 自己会释放宿主订阅。
+    this.jobsRoster?.removeDevice(deviceId)
     if (reason === 'revoked') {
       await this.#dropDevice(deviceId)
       this.onEvent('device.revoked', { deviceId })
@@ -516,6 +538,7 @@ export class DeviceRouter {
   async #dropDevice(deviceId) {
     const record = this.devices.get(deviceId)
     if (!record) return
+    this.jobsRoster?.removeDevice(deviceId)
     for (const muxId of this.streams.removeDevice(deviceId)) this.dsh.cancelStream(muxId)
     this.devices.delete(deviceId)
     this.logger.info?.(
@@ -555,6 +578,8 @@ export class DeviceRouter {
     // 不该有残留：上面的循环已经逐个收过；这里兜底，防止 attach 之后没进 devices 的路径留下脏项。
     this.timelines.clear()
     this._sentBytes.clear()
+    // 活动名单（018）：设备都没了，宿主任务订阅与排队的帧一起放掉。
+    this.jobsRoster?.releaseAll()
     return muxIds
   }
 
@@ -660,6 +685,22 @@ export class DeviceRouter {
         result = this.history === undefined
           ? { ok: false, error: errorObject('link/unsupported', 'history reads are unavailable on this connector') }
           : await this.history.handle(frame.method, frame.args ?? {})
+      } catch (error) {
+        result = { ok: false, error: errorObject(error?.code ?? 'link/failed', messageOf(error), error?.details ?? {}) }
+      }
+      this.send(deviceId, resultFrame(frame.id, result, deviceId))
+      return
+    }
+
+    // 活动名单（spec 018）与 history 同一条短路：连接器自己回答，不转发宿主。
+    // 没挂上宿主 `ctx.jobs` 时回 `link/unsupported`——**不**回空名单，否则手机
+    // 会把"这台连接器不支持"显示成"没有任务在跑"。
+    if (isJobsMethod(frame.method)) {
+      let result
+      try {
+        result = this.jobsRoster === undefined
+          ? { ok: false, error: errorObject('link/unsupported', 'job roster is unavailable on this connector') }
+          : await this.jobsRoster.handle(frame.args ?? {})
       } catch (error) {
         result = { ok: false, error: errorObject(error?.code ?? 'link/failed', messageOf(error), error?.details ?? {}) }
       }
@@ -831,10 +872,36 @@ export class DeviceRouter {
       record.readyValue = value
       this.#changed()
     }
+    this.#sendEventItem(deviceId, record, value)
+  }
+
+  /**
+   * 向一台设备投递一条 `$events` 形态的项（item，或未开流时的 event 帧）。
+   *
+   * 抽出来是为了让连接器自造的帧（`link/jobs`，见 `publishEvent`）与宿主事件走**同一段**
+   * 投递口径，帧语义不变：开了 `$events` 的按 dlpId 走 item，没开的按 event 广播。
+   */
+  #sendEventItem(deviceId, record, value) {
     for (const dlpId of record.dlpIds) this.send(deviceId, { t: 'item', id: dlpId, value })
     // Spec §4.1.5: every $events item is broadcast as an `event` frame until the
     // device opens the stream explicitly, so nothing is delivered twice.
     if (record.dlpIds.size === 0) this.send(deviceId, { t: 'event', value })
+  }
+
+  /**
+   * 把一条连接器自造的项广播给**每台在线设备**（活动名单的 `link/jobs`，spec 018）。
+   *
+   * 与 `forwardEvent` 的区别是来源：那条项来自某台设备自己的 `$events` 流，只回给它；
+   * 这条是宿主任务事件的产物，没有归属设备，所以每台在线设备各收一份。
+   *
+   * **离线设备不推**：`$events` 还替它留着（见 `detachDevice`），但旧任务状态没有补发
+   * 意义——重连后手机重新问一次 `_link/jobRoster` 即可（契约 §3）。
+   */
+  publishEvent(value) {
+    for (const record of this.devices.values()) {
+      if (record.offlineSince !== undefined) continue
+      this.#sendEventItem(record.deviceId, record, value)
+    }
   }
 
   /**

@@ -17,20 +17,27 @@ import { deflateRawSync } from 'node:zlib'
 export const SESSION_DIGEST_METHOD = '_link/sessionDigest'
 
 /** 会话项里剔掉的字段：零读取点（`agentAvailable` 1.8%）。 */
-export const DROPPED_ITEM_KEYS = Object.freeze(['agentAvailable'])
+// `agentAvailable` 曾是"零读取点"，018 之后列表行要用它区分"会话是否还有活实例"
+// （`ActivityStore` 与 `session.activity.*`），因此**不再剔除**。留空数组是为了保住
+// 「剔除机制 + 逐字节稳定」这两条不变式；将来要剔字段仍从这里加。
+export const DROPPED_ITEM_KEYS = Object.freeze([])
 
 /**
- * 投影键里剔掉的字段（合计 56.7%）。
+ * 投影键里剔掉的字段（合计约 55%）。
  *
  * 每一条都能在 App/DSHKit 里复查"零读取点"：
  * `turnOutline` 33.4%（每轮 prompt/response 原文）、`imageLimits` 6.2%（上传限制）、
  * `sessionStats` 4.2%、`todos` 2.6%、`subagentCatalog` 2.6%、`contextBreakdown` 2.5%、
  * `sessionListMetadata` 1.9%（唯一被读的 `blank` 在顶层已有同名字段）、
- * `subagentTiming` 1.5%、`agentPreset` 0.8%（`SessionCreateRequest.agentPreset` 是请求字段）。
+ * `agentPreset` 0.8%（`SessionCreateRequest.agentPreset` 是请求字段）。
+ *
+ * **2026-10-20 起不再剔除 `subagentTiming`**（原 1.5%）：018 的活动可见性靠它判断
+ * "某子会话当前是否在跑"与已跑时长；剔除后手机永远看不到「N 智能体」。
+ * 同理 `agentAvailable` 也不再剔除。代价是摘要通道多约 1.5% 字节，换来功能可用。
  */
 export const DROPPED_PROJECTION_KEYS = Object.freeze([
   'turnOutline', 'imageLimits', 'sessionStats', 'todos', 'subagentCatalog',
-  'contextBreakdown', 'sessionListMetadata', 'subagentTiming', 'agentPreset',
+  'contextBreakdown', 'sessionListMetadata', 'agentPreset',
 ])
 
 /**

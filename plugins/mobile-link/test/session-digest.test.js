@@ -81,8 +81,8 @@ test('键序保持：裁剪后的键序等于原键序去掉被删项', () => {
   const page = hostPage({ sessions: 1 })
   const digested = digestSessionList(page)
   const keys = Object.keys(digested.items[0])
-  assert.deepEqual(keys, ['sessionId', 'updatedAt', 'running', 'blank', 'cwd', 'origin',
-    'parentSessionId', 'someFutureField', 'projections'], `键序变了：${keys.join(',')}`)
+  assert.deepEqual(keys, ['sessionId', 'updatedAt', 'agentAvailable', 'running', 'blank', 'cwd',
+    'origin', 'parentSessionId', 'someFutureField', 'projections'], `键序变了：${keys.join(',')}`)
 })
 
 test('结构不是预期形状时原样返回：裁剪不把"看不懂"变成"删掉"', () => {

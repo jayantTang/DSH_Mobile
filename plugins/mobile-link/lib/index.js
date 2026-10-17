@@ -191,6 +191,26 @@ function wireSessionQuery(ctx, history, logger) {
 }
 
 /**
+ * 把宿主的任务与活会话服务交给活动名单（**可选注入**，spec 018）。
+ *
+ * 两个服务都到位才回答 `_link/jobRoster`；缺一个就保持"不支持"，手机整块不显示
+ * （缺一个却回空名单，等于把降级说成"没有任务在跑"）。
+ * 注入可能晚于第一台设备连接——roster 在绑定后会补一次订阅，见 `jobs-roster.js`。
+ */
+function wireJobsServices(ctx, agent, logger) {
+  try {
+    ctx.inject(['jobs', 'sessions'], (scope) => {
+      agent.setJobsServices?.({ jobs: scope.jobs, sessions: scope.sessions })
+      // 服务卸载（宿主换代/插件禁用）时同步摘掉宿主任务事件订阅。
+      scope.effect?.(() => () => agent.setJobsServices?.({}), 'mobile-link: jobs roster')
+      logger.info?.('mobile-link: activity roster bound to ctx.jobs / ctx.sessions')
+    })
+  } catch (error) {
+    logger.warn?.(`mobile-link: jobs service unavailable (activity roster falls back): ${error}`)
+  }
+}
+
+/**
  * @param {import('@deepseek-ai/cordis').Context} ctx
  * @param {Record<string, unknown>} rawConfig
  */
@@ -205,6 +225,7 @@ export function apply(ctx, rawConfig) {
   registerRoutes(ctx, agent, logger, config, history)
   wireEndpointResolver(ctx, agent, logger)
   wireSessionQuery(ctx, history, logger)
+  wireJobsServices(ctx, agent, logger)
   logger.info?.(`mobile-link: ready (relay ${config.relayUrl})`)
 }
 

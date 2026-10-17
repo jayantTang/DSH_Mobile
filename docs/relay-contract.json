@@ -16,6 +16,7 @@
     "history-role-filter",
     "history-scan-boundary",
     "search-progress",
+    "jobs-roster",
     "device-subprotocol-auth",
     "persistent-pair-code",
     "account-state",

@@ -98,6 +98,10 @@ export const SERVER_CAPABILITIES = [
   // search-progress: 扫描式搜索的每一页都带 `totalChunks` / `remainingChunks`，
   // 界面据此从第一页起就能显示「已扫 k/N 片」（026 之后的 App 才读）。
   'search-progress',
+  // jobs-roster: 连接器答 `_link/jobRoster`（逐活会话聚合宿主任务），并推
+  // `link/jobs` 帧（spec 018）。手机**只按这条能力**决定是否渲染任务面板、列表行
+  // 右侧计数与卡片新行：无此能力的旧连接器，手机整块不出现（界面与升级前逐屏一致）。
+  'jobs-roster',
   'device-subprotocol-auth', 'persistent-pair-code', 'account-state', 'account-state-push',
 ]
 

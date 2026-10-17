@@ -28,6 +28,7 @@ import {
   EVENTS_ENDPOINT, EVENTS_RESULT, DeviceRouter, messageOf,
 } from './router.js'
 import { SERVER_VERSION, SERVER_CAPABILITIES, hostVersion } from './hello.js'
+import { createJobsRoster } from './jobs-roster.js'
 import { MissingIdentity, resolveIdentity } from './state.js'
 import { connect as wsConnect } from './ws.js'
 
@@ -126,6 +127,15 @@ export class MobileLinkAgent extends EventEmitter {
     /// 历史读取（spec 007）：宿主 `sessionQuery` 就绪后由插件挂上；没挂上时
     /// 路由回 `link/unsupported`，手机继续走 `session/page`。
     this.setHistoryService = (service) => { this.router.history = service }
+    /// 活动名单与 `link/jobs` 推帧（spec 018）：帧由 router 广播给在线设备，
+    /// 订阅与去抖都在 roster 里。宿主服务由 `setJobsServices` 挂上。
+    this.jobsRoster = createJobsRoster({
+      deliver: (value) => this.router.publishEvent(value),
+      logger,
+      now,
+    })
+    this.router.bindJobsRoster(this.jobsRoster)
+    this.setJobsServices = (services) => this.jobsRoster.bindServices(services)
     this.relay = undefined
     this.socket = undefined
     this.state = 'idle'

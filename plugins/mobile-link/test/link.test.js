@@ -1258,6 +1258,7 @@ function hostSessionList() {
             title: '标题',
             turnOutline: [{ turn: 1, prompt: 'p'.repeat(500), response: 'r'.repeat(500) }],
             imageLimits: { maxImageBytes: 20_971_520 },
+            subagentTiming: { settledMs: 5, active: { since: 1, through: 2 } },
             tokenUsage: { totalTokens: 1234 },
           },
         },
@@ -1279,7 +1280,11 @@ test('sessionDigest：走完整路径出精简结果，老方法一字不改', a
   assert.equal(plain.ok, true)
   assert.equal(plain.value.encoding, 'identity')
   const item = plain.value.value.items[0]
-  assert.ok(!('agentAvailable' in item), 'agentAvailable 应被剔除')
+  // 018 起列表行要读 agentAvailable 与 subagentTiming（子智能体是否在跑），
+  // 因此它们**不再**被剔除；剔除名单的其余项照旧。
+  assert.equal(item.agentAvailable, true, 'agentAvailable 必须保留（018 活动可见性要用）')
+  assert.deepEqual(item.projections.values.subagentTiming, { settledMs: 5, active: { since: 1, through: 2 } },
+    'subagentTiming 必须保留（子智能体是否在跑）')
   assert.ok(!('kind' in item.projections), 'projections.kind 应被剔除')
   assert.ok(!('turnOutline' in item.projections.values), 'turnOutline 应被剔除')
   assert.ok(!('imageLimits' in item.projections.values), 'imageLimits 应被剔除')
