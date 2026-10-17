@@ -87,7 +87,7 @@ function summarise(run) {
 ///
 /// `records` 必须是 `[{type:'event', event}]` 且按 seq 升序。返回的 `records`
 /// 保持这个形状；`folds` 是同一份摘要的列表，便于记账与测试。
-export function foldCompletedTurns(records) {
+export function foldProcessRuns(records) {
   const events = records.map((record) => record.event)
   // 页内最后一条助手回答保留：它可能是最终回答，也可能是这一屏唯一的正文。
   let lastAssistant = -1

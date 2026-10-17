@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { FOLD_RECORD_TYPE, foldCompletedTurns } from '../lib/history/fold.js'
+import { FOLD_RECORD_TYPE, foldProcessRuns } from '../lib/history/fold.js'
 
 let seq = 0
 function event(type, data = {}, at) {
@@ -23,7 +23,7 @@ test('连续过程段折成一条摘要：用户消息、页内最后回答、�
     event('assistant/message', { turn: 1, content: [{ type: 'text', text: '最终回答' }] }),
     event('turn/end', { turn: 1, reason: { kind: 'completed' } }),
   ]
-  const { records: out, folds } = foldCompletedTurns(records(events))
+  const { records: out, folds } = foldProcessRuns(records(events))
   assert.deepEqual(types(out), ['turn/start', 'user/message', FOLD_RECORD_TYPE, 'assistant/message', 'turn/end'])
   assert.equal(folds.length, 1)
   assert.equal(folds[0].toolCount, 1)
@@ -37,7 +37,7 @@ test('连续过程段折成一条摘要：用户消息、页内最后回答、�
 
 test('页内最后一条助手回答永远不折（可能是最终回答或这一屏唯一正文）', () => {
   reset()
-  const { records: out, folds } = foldCompletedTurns(records([
+  const { records: out, folds } = foldProcessRuns(records([
     event('user/message', { content: [{ type: 'text', text: '问' }] }),
     event('assistant/message', { content: [{ type: 'text', text: '中间' }] }),
     event('assistant/message', { content: [{ type: 'text', text: '最后' }] }),
@@ -50,7 +50,7 @@ test('页内最后一条助手回答永远不折（可能是最终回答或这�
 
 test('不渲染的事件整条丢掉（request/header、step、goal、title）', () => {
   reset()
-  const { records: out, folds } = foldCompletedTurns(records([
+  const { records: out, folds } = foldProcessRuns(records([
     event('request/header', { text: 'x'.repeat(1000) }),
     event('user/message', { content: [{ type: 'text', text: '问' }] }),
     event('step/start', { turn: 1, step: 1 }),
@@ -65,7 +65,7 @@ test('不渲染的事件整条丢掉（request/header、step、goal、title）',
 
 test('压缩与错误通知保留，并把过程段切开', () => {
   reset()
-  const { records: out } = foldCompletedTurns(records([
+  const { records: out } = foldProcessRuns(records([
     event('user/message', { content: [{ type: 'text', text: '问' }] }),
     event('tool/call', { callId: 'c1', name: 'bash' }),
     event('compaction/summary', { summary: '压缩了' }),
@@ -78,7 +78,7 @@ test('压缩与错误通知保留，并把过程段切开', () => {
 
 test('多个过程段各自成一条摘要（跨页轮次也能受益）', () => {
   reset()
-  const { records: out, folds } = foldCompletedTurns(records([
+  const { records: out, folds } = foldProcessRuns(records([
     event('turn/start', { turn: 4 }),
     event('tool/call', { callId: 'a', name: 'bash' }),
     event('tool/result', { callId: 'a', content: [] }),
@@ -95,7 +95,7 @@ test('多个过程段各自成一条摘要（跨页轮次也能受益）', () =>
 
 test('页首/页尾从轮次中间开始或结束也不影响（按过程段折）', () => {
   reset()
-  const running = foldCompletedTurns(records([
+  const running = foldProcessRuns(records([
     event('tool/call', { callId: 'c1', name: 'bash' }),
     event('tool/result', { callId: 'c1', content: [] }),
     event('assistant/message', { content: [{ type: 'text', text: '进行中的最后一句' }] }),
@@ -112,7 +112,7 @@ test('只有保留事件时输出与输入逐条相同', () => {
     event('assistant/message', { content: [{ type: 'text', text: '答' }] }),
     event('turn/end', { turn: 1, reason: { kind: 'completed' } }),
   ])
-  const { records: out, folds } = foldCompletedTurns(input)
+  const { records: out, folds } = foldProcessRuns(input)
   assert.equal(folds.length, 0)
   assert.deepEqual(out, input)
 })
@@ -120,7 +120,7 @@ test('只有保留事件时输出与输入逐条相同', () => {
 test('轮次外的非渲染事件也丢掉（不影响轮次内折叠）', () => {
   reset()
   const before = event('request/header', {})
-  const { records: out, folds } = foldCompletedTurns(records([
+  const { records: out, folds } = foldProcessRuns(records([
     before,
     event('user/message', { content: [{ type: 'text', text: '问' }] }),
     event('tool/call', { callId: 'c1', name: 'bash' }),

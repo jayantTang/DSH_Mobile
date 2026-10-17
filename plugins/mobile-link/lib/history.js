@@ -9,7 +9,7 @@ import { createSnapshotCache, scanSnapshot } from './history/session-snapshot.js
 import {
   HISTORY_COMPRESSION_CAPABILITY, maybeCompressHistoryValue,
 } from './history/compress.js'
-import { FOLD_CAPABILITY, foldCompletedTurns } from './history/fold.js'
+import { FOLD_CAPABILITY, foldProcessRuns } from './history/fold.js'
 
 // Re-exported for the caller/tests that read them off this module (single source
 // is `history/records.js`; the call ceiling lives in `history/shared.js`).
@@ -501,7 +501,7 @@ export function createHistoryService({
       // 016：下发前统一清掉只用于诊断的宿主模型输出日志（口径只有一份，
       // 见 specs/016-history-load-perf/contracts/history-record-trim.md）。
       const trimmed = trimRecordsForWire(page.records)
-      const folded = fold ? foldCompletedTurns(trimmed) : { records: trimmed, folds: [] }
+      const folded = fold ? foldProcessRuns(trimmed) : { records: trimmed, folds: [] }
       const value = { ...page, records: folded.records }
       // `folds` 只在折叠时出现：老客户端不认识这个字段也不会读它；新客户端没有它
       // 就按普通记录折（老连接器）。
