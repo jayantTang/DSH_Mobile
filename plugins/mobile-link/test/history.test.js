@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { inflateRawSync } from 'node:zlib'
 
 import {
   WINDOW_METHOD, FIND_METHOD, WINDOW_CHUNK, DEFAULT_MAX_BYTES,
@@ -837,4 +838,98 @@ test('旧分页清洗认两种回包形态（信封与裸页），其余方法�
   assert.equal(trimHistoryPageForWire('session/list', other), other, '别的方法原样返回')
   const shapeless = { ok: true, value: 'nope' }
   assert.equal(trimHistoryPageForWire('session/page', shapeless), shapeless)
+})
+
+
+// spec 016 后续：_link/sessionWindow 的应用层压缩（能力 history-compression）。
+// 只改回包形态，解压后必须与不压缩逐字段一致；不传或传错 encoding 仍是纯 JSON。
+
+test('sessionWindow 的 deflate-raw 信封：rawBytes/base64 正确，解压后与纯 JSON 逐字段相同', async () => {
+  const log = makeLog(400)
+  const args = { address: ADDRESS, before: 300, limit: 50, maxBytes: DEFAULT_MAX_BYTES }
+  const plain = await bound(createHistoryService({ logger: { warn() {}, info() {} } }), fakeQuery(log))
+    .handle(WINDOW_METHOD, args)
+  const packed = await bound(createHistoryService({ logger: { warn() {}, info() {} } }), fakeQuery(log))
+    .handle(WINDOW_METHOD, { ...args, encoding: 'deflate-raw' })
+
+  assert.equal(packed.ok, true)
+  assert.equal(packed.value.encoding, 'deflate-raw')
+  assert.equal(typeof packed.value.value, 'string')
+  const raw = inflateRawSync(Buffer.from(packed.value.value, 'base64'))
+  assert.equal(raw.length, packed.value.rawBytes)
+  assert.deepEqual(JSON.parse(raw.toString('utf8')), plain.value)
+  // 同一页压缩后应显著小于原文（样本是重复度高的合成日志，阈值为保守值）。
+  assert.ok(raw.length > 0)
+  const plainBytes = Buffer.byteLength(JSON.stringify(plain.value), 'utf8')
+  assert.ok(Buffer.from(packed.value.value, 'base64').length < plainBytes)
+})
+
+test('sessionWindow 不认识的 encoding 原样回纯 JSON，不报错', async () => {
+  const log = makeLog(120)
+  const service = bound(createHistoryService({ logger: { warn() {}, info() {} } }), fakeQuery(log))
+  const result = await service.handle(WINDOW_METHOD, {
+    address: ADDRESS, before: 100, limit: 20, encoding: 'br',
+  })
+  assert.equal(result.ok, true)
+  assert.equal(result.value.encoding, undefined)
+  assert.ok(Array.isArray(result.value.records))
+})
+
+
+// spec 016 后续：窗口缓存。只对"同一段、同一组参数"的重复读生效；
+// 键里少一个参数就可能把过滤页当浏览页返回，因此每个参数都要单独钉一条。
+
+test('同一段窗口重复请求不再读宿主（缓存命中）', async () => {
+  const log = makeLog(400)
+  const query = fakeQuery(log)
+  const service = bound(createHistoryService({ logger: { warn() {}, info() {} } }), query)
+  const args = { address: ADDRESS, before: 300, limit: 50, maxBytes: DEFAULT_MAX_BYTES }
+  const first = await service.handle(WINDOW_METHOD, args)
+  const callsAfterFirst = query.calls.length
+  const second = await service.handle(WINDOW_METHOD, args)
+  assert.deepEqual(second, first)
+  assert.equal(query.calls.length, callsAfterFirst, '第二次不该再走宿主')
+})
+
+test('缓存键区分 limit/roles：不同参数的请求不许串页', async () => {
+  const log = makeLog(400)
+  const query = fakeQuery(log)
+  const service = bound(createHistoryService({ logger: { warn() {}, info() {} } }), query)
+  const base = { address: ADDRESS, before: 300, maxBytes: DEFAULT_MAX_BYTES }
+  const a = await service.handle(WINDOW_METHOD, { ...base, limit: 20 })
+  const calls = query.calls.length
+  const b = await service.handle(WINDOW_METHOD, { ...base, limit: 50 })
+  assert.notDeepEqual(a.value, b.value)
+  assert.ok(query.calls.length > calls, '不同 limit 必须重新读')
+
+  const c = await service.handle(WINDOW_METHOD, { ...base, limit: 20, roles: ['me'] })
+  assert.notDeepEqual(a.value, c.value, '过滤页与浏览页不是同一份')
+})
+
+test('缓存过期后重新读宿主', async () => {
+  const log = makeLog(200)
+  const query = fakeQuery(log)
+  const service = bound(createHistoryService({
+    logger: { warn() {}, info() {} }, cacheTtlMs: 20,
+  }), query)
+  const args = { address: ADDRESS, before: 150, limit: 20, maxBytes: DEFAULT_MAX_BYTES }
+  await service.handle(WINDOW_METHOD, args)
+  const calls = query.calls.length
+  await new Promise((resolve) => setTimeout(resolve, 40))
+  await service.handle(WINDOW_METHOD, args)
+  assert.ok(query.calls.length > calls, '过期后要重新读')
+})
+
+test('缓存可关闭（cacheLimit=0）且不影响结果', async () => {
+  const log = makeLog(200)
+  const query = fakeQuery(log)
+  const service = bound(createHistoryService({
+    logger: { warn() {}, info() {} }, cacheLimit: 0,
+  }), query)
+  const args = { address: ADDRESS, before: 150, limit: 20, maxBytes: DEFAULT_MAX_BYTES }
+  const first = await service.handle(WINDOW_METHOD, args)
+  const calls = query.calls.length
+  const second = await service.handle(WINDOW_METHOD, args)
+  assert.deepEqual(second, first)
+  assert.ok(query.calls.length > calls, '关闭缓存时每次都读')
 })

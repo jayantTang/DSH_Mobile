@@ -132,12 +132,24 @@ public struct DSHClient: Sendable {
     /// `link/unsupported`, and the caller keeps using `session/page`. Nothing here
     /// retries or falls back: which channel a session uses is the pager's
     /// decision, not a property of one request.
+    /// 本连接该不该请求压缩：只在连接器声明了 `history-compression` 时。
+    ///
+    /// 放在这里而不是每个调用点各判一次：取页有三条路径（精确窗口、管道、灌库），
+    /// 少判一处就会在弱网上多传一倍字节，而且很难从症状上看出来。
+    public var historyWindowEncoding: String? {
+        capabilities.contains(HistoryWindowWire.compressionCapability) ? "deflate-raw" : nil
+    }
+
     public func historyWindow(_ request: HistoryWindowRequest) async throws -> HistoryWindowValue {
-        try await carrier.unary(
+        // 先按未类型化的 JSON 取回：连接器可能回纯 JSON，也可能回压缩信封
+        // （`history-compression`）。按 `encoding` 字段识别，两种形态都能解；
+        // 直接按 `HistoryWindowValue` 解会在压缩回包上失败。
+        let raw = try await carrier.unary(
             method: "_link/sessionWindow",
             args: request,
-            as: HistoryWindowValue.self
+            as: JSONValue.self
         )
+        return try HistoryWindowWire.decode(raw)
     }
 
     /// Searches inside one session through the connector (spec 007).

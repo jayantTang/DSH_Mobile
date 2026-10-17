@@ -164,7 +164,8 @@ public final class MessageLayer {
                         // `before` 是开区间上界：页必须结束在 before-1，正好盖住 range。
                         let value = try await client.historyWindow(HistoryWindowRequest(
                             address: address, before: range.upperBound + 1, through: nil,
-                            limit: range.count, maxBytes: 256 * 1024))
+                            limit: range.count, maxBytes: 256 * 1024,
+                            encoding: client.historyWindowEncoding))
                         await Self.noteFetch(probes, priority: priority, range: range,
                                              started: started, records: value.records.count)
                         return SessionPipeline.FetchPage(
@@ -196,7 +197,8 @@ public final class MessageLayer {
                 guard let client = await self.currentClient(),
                       let address = addresses.address(for: ref.sessionId) else { return nil }
                 let value = try? await client.historyWindow(HistoryWindowRequest(
-                    address: address, before: HistoryWindowRequest.safeMaxBefore, limit: 50, maxBytes: 256 * 1024))
+                    address: address, before: HistoryWindowRequest.safeMaxBefore, limit: 50,
+                    maxBytes: 256 * 1024, encoding: client.historyWindowEncoding))
                 return value?.records.first { record in
                     guard case .userMessage(let message) = ChatEventDecoder.decode(record.event)
                     else { return false }
@@ -398,7 +400,8 @@ public final class MessageLayer {
                     scope: scope, sessionId: summary.sessionId, lastSeq: lastSeq) { before in
                         try await client.historyWindow(HistoryWindowRequest(
                             address: address, before: before ?? HistoryWindowRequest.safeMaxBefore,
-                            limit: 200, maxBytes: 256 * 1024, roles: ["me"]))
+                            limit: 200, maxBytes: 256 * 1024, roles: ["me"],
+                            encoding: client.historyWindowEncoding))
                     }
                 if case .pulled(let pages, let rows) = outcome {
                     pagesUsed += pages
@@ -443,7 +446,8 @@ public final class MessageLayer {
             let outcome = try await backfiller.backfill(scope: scope, sessionId: sessionId, lastSeq: lastSeq) { before in
                 try await client.historyWindow(HistoryWindowRequest(
                     address: address, before: before ?? HistoryWindowRequest.safeMaxBefore,
-                    limit: 200, maxBytes: 256 * 1024, roles: ["me"]))
+                    limit: 200, maxBytes: 256 * 1024, roles: ["me"],
+                    encoding: client.historyWindowEncoding))
             }
             if case .pulled(let pages, let rows) = outcome {
                 await probes.note("userinputs.backfill", [

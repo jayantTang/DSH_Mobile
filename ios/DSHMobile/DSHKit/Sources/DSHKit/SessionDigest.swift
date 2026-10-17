@@ -40,10 +40,21 @@ public enum SessionDigestError: Error, Equatable {
 /// 上限 32 MiB 与中转的帧上限一致：比这更大的 `rawBytes` 是畸形响应，不是大盘数据。
 public func decodeSessionDigest(_ envelope: SessionDigestEnvelope,
                                 limit: Int = 32 * 1024 * 1024) throws -> SessionListValue {
+    try decodeEnvelope(envelope, as: SessionListValue.self, limit: limit)
+}
+
+/// 解同一套信封到任意类型。
+///
+/// `_link/sessionWindow` 的压缩用同一套 `{encoding, value, rawBytes}`（见
+/// `HistoryWindowWire`），所以解码只能有一份：`identity` 走重编码，`deflate-raw`
+/// 先解 base64 再 inflate。两份实现迟早会在错误码或长度校验上分叉。
+func decodeEnvelope<T: Decodable>(_ envelope: SessionDigestEnvelope,
+                                  as type: T.Type,
+                                  limit: Int = 32 * 1024 * 1024) throws -> T {
     switch envelope.encoding {
     case "identity":
         let data = try JSONEncoder().encode(envelope.value)
-        return try JSONDecoder().decode(SessionListValue.self, from: data)
+        return try JSONDecoder().decode(type, from: data)
     case "deflate-raw":
         guard let rawBytes = envelope.rawBytes else { throw SessionDigestError.missingRawBytes }
         guard rawBytes > 0, rawBytes <= limit else {
@@ -52,14 +63,14 @@ public func decodeSessionDigest(_ envelope: SessionDigestEnvelope,
         guard case .string(let base64) = envelope.value, let packed = Data(base64Encoded: base64) else {
             throw SessionDigestError.badBase64
         }
-        return try decodeInflated(packed, rawBytes: rawBytes)
+        return try JSONDecoder().decode(type, from: try decodeInflatedData(packed, rawBytes: rawBytes))
     default:
         throw SessionDigestError.unsupportedEncoding(envelope.encoding)
     }
 }
 
-/// 原始 DEFLATE → `SessionListValue`。
-private func decodeInflated(_ packed: Data, rawBytes: Int) throws -> SessionListValue {
+/// 原始 DEFLATE → 原始 JSON 字节。
+private func decodeInflatedData(_ packed: Data, rawBytes: Int) throws -> Data {
     var out = Data(count: rawBytes)
     let written = out.withUnsafeMutableBytes { destination -> Int in
         packed.withUnsafeBytes { source -> Int in
@@ -71,5 +82,5 @@ private func decodeInflated(_ packed: Data, rawBytes: Int) throws -> SessionList
     // `compression_decode_buffer` 回 0 表示"解不开或缓冲区不够"；带上 rawBytes 之后
     // 缓冲区不够不该发生，所以这里一律按解不开报。
     guard written == rawBytes else { throw SessionDigestError.inflateFailed }
-    return try JSONDecoder().decode(SessionListValue.self, from: out)
+    return out
 }

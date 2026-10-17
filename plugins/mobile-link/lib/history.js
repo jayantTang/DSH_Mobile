@@ -6,6 +6,9 @@ import {
 import { pageFrom, scanOlder } from './history/window.js'
 import { filteredScan } from './history/filter-scan.js'
 import { createSnapshotCache, scanSnapshot } from './history/session-snapshot.js'
+import {
+  HISTORY_COMPRESSION_CAPABILITY, maybeCompressHistoryValue,
+} from './history/compress.js'
 
 // Re-exported for the caller/tests that read them off this module (single source
 // is `history/records.js`; the call ceiling lives in `history/shared.js`).
@@ -50,6 +53,10 @@ export const HISTORY_CAPABILITIES = [
   // so the reader can be told "已扫 k/N 片" from the first page on. Purely additive:
   // `totalChunks` comes from the log's newest seq, which a scan already fetches.
   'search-progress',
+  // history-compression: `_link/sessionWindow` 接受 `encoding: "deflate-raw"`，
+  // 回包变成 `{encoding, value(base64), rawBytes}`。手机只在看到这条能力时才请求；
+  // 老客户端不传 encoding，拿到的仍是纯 JSON。
+  HISTORY_COMPRESSION_CAPABILITY,
 ]
 
 export function isHistoryMethod(method) {
@@ -167,7 +174,11 @@ function hostFailure(error) {
 /**
  * @param {{ logger?: { warn?: Function, info?: Function } }} deps
  */
-export function createHistoryService({ logger = console } = {}) {
+export function createHistoryService({
+  logger = console,
+  cacheTtlMs = 15_000,
+  cacheLimit = 32,
+} = {}) {
   let sessionQuery
   /// 会话日志快照（只给**按角色过滤**的读取用）：一个会话读一次整份、本地过滤、短 TTL。
   /// 它把"每条命中一次宿主调用"那道墙去掉——灌库一个会话从十几次往返变成一次读。
@@ -179,6 +190,39 @@ export function createHistoryService({ logger = console } = {}) {
   let indexSearchable = true
   const inFlight = new Set()
   const lastSeqCache = new Map()
+  /// 最近读过的页（spec 016 后续）：回看、回收后再水合、重复请求同一段时不再走网络。
+  /// 只缓存"已经结束在 before-1"的页：日志只追加，旧 seq 段的内容不会变；
+  /// 会话被裁剪是唯一例外，用短 TTL 兜底（默认 15s）。键里带全部影响结果的参数，
+  /// 少一个就可能把过滤页当成浏览页返回。
+  const pageCache = new Map()
+
+  function cacheKey({ sessionId, before, through, limit, maxBytes, roles }) {
+    return [sessionId, before, through ?? '', limit, maxBytes,
+            roles === undefined ? '' : [...roles].sort().join(',')].join('|')
+  }
+
+  function cacheGet(key, now = Date.now()) {
+    const hit = pageCache.get(key)
+    if (hit === undefined) return undefined
+    if (now - hit.at > cacheTtlMs) {
+      pageCache.delete(key)
+      return undefined
+    }
+    // 重新插入：Map 的插入序当作 LRU 序，命中也要刷新位置。
+    pageCache.delete(key)
+    pageCache.set(key, hit)
+    return hit.value
+  }
+
+  function cachePut(key, value, now = Date.now()) {
+    if (cacheLimit <= 0) return
+    pageCache.delete(key)
+    pageCache.set(key, { at: now, value })
+    while (pageCache.size > cacheLimit) {
+      const oldest = pageCache.keys().next().value
+      pageCache.delete(oldest)
+    }
+  }
 
   /// The log's newest seq, cached briefly: it is only needed to clamp a request
   /// that runs past the end (a session can be trimmed between two pages).
@@ -408,6 +452,12 @@ export function createHistoryService({ logger = console } = {}) {
     const { roles, error: rolesError } = parseRoles(args.roles)
     if (rolesError) return rolesError
 
+    const requestKey = cacheKey({ sessionId, before, through, limit, maxBytes, roles })
+    const cachedPage = cacheGet(requestKey)
+    if (cachedPage !== undefined) {
+      return { ok: true, value: maybeCompressHistoryValue(cachedPage, args.encoding) }
+    }
+
     const key = `window:${sessionId}`
     if (inFlight.has(key)) return failure('link/busy', 'another window read is in flight for this session')
     inFlight.add(key)
@@ -433,7 +483,10 @@ export function createHistoryService({ logger = console } = {}) {
       const page = pageFrom(scan, { limit, maxBytes, roles })
       // 016：下发前统一清掉只用于诊断的宿主模型输出日志（口径只有一份，
       // 见 specs/016-history-load-perf/contracts/history-record-trim.md）。
-      return { ok: true, value: { ...page, records: trimRecordsForWire(page.records) } }
+      const value = { ...page, records: trimRecordsForWire(page.records) }
+      cachePut(requestKey, value)
+      // 压缩只改回包形态，不改分页语义：解压后逐字段等于不压缩的那份。
+      return { ok: true, value: maybeCompressHistoryValue(value, args.encoding) }
     } catch (error) {
       logger.warn?.(`mobile-link: sessionWindow failed: ${messageOf(error)}`)
       return hostFailure(error)

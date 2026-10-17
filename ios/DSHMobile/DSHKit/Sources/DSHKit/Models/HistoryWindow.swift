@@ -27,6 +27,10 @@ public struct HistoryWindowRequest: Sendable, Codable {
     /// the `before` cursor semantics are unchanged. Since T039 such a page also
     /// carries `scanBoundary` — the boundary a filtered pull advances by.
     public let roles: [String]?
+    /// Optional response encoding, connector capability `history-compression`.
+    /// Only `"deflate-raw"` is defined; omit it and the connector returns plain JSON,
+    /// which is what every client before this capability does.
+    public let encoding: String?
 
     /// 「从最新开始」的线上安全值。连接器用 JS `Number.isSafeInteger` 校验
     /// `before`；Swift 的 `Int.max`（2^63−1）过 JSON.parse 会变成 2^63，
@@ -35,14 +39,19 @@ public struct HistoryWindowRequest: Sendable, Codable {
     public static let safeMaxBefore = 9_007_199_254_740_991
 
     public init(address: SessionAddress, before: Int, through: Int? = nil,
-                limit: Int? = nil, maxBytes: Int? = nil, roles: [String]? = nil) {
+                limit: Int? = nil, maxBytes: Int? = nil, roles: [String]? = nil,
+                encoding: String? = nil) {
         self.address = address
         self.before = before
         self.through = through
         self.limit = limit
         self.maxBytes = maxBytes
         self.roles = roles
+        self.encoding = encoding
     }
+
+    /// The one encoding this build asks for, when the connector advertises it.
+    public static let deflateRaw = "deflate-raw"
 }
 
 /// What the connector hands back.

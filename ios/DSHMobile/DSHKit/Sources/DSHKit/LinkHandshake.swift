@@ -63,6 +63,9 @@ public struct LinkHandshake: Decodable, Sendable {
         /// `_link/sessionWindow` 支持 roles 过滤、roleOf 按 data.source 严格归类
         /// （连接器 7fac79f 起；无此能力的旧连接器，用户输入回填整体跳过）。
         public static let historyRoleFilter = "history-role-filter"
+        /// `_link/sessionWindow` 接受 `encoding: "deflate-raw"`，回包是压缩信封
+        /// （spec 016 后续）。无此能力的旧连接器不认这个参数，回纯 JSON。
+        public static let historyCompression = "history-compression"
         /// 连接器能回答 `_link/jobRoster`，并会推 `link/jobs` 帧（spec 018）。
         ///
         /// 手机**只按这条能力**决定是否渲染任务面板、列表行右侧计数与卡片新行：

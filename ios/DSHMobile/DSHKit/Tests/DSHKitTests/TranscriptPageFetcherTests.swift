@@ -17,7 +17,15 @@ final class TranscriptPageFetcherTests: XCTestCase {
         ) async throws -> Value {
             calls.append((method, String(describing: args)))
             if let error { throw error }
-            if let value = windowValue as? Value { return value }
+            if let windowValue {
+                // `DSHClient.historyWindow` 先按未类型化的 JSON 取回（要兼容压缩信封），
+                // 所以桩在 `Value == JSONValue` 时也要能给出同一份值的 JSON 形态。
+                if valueType == JSONValue.self {
+                    let data = try JSONEncoder().encode(windowValue)
+                    return try JSONDecoder().decode(JSONValue.self, from: data) as! Value
+                }
+                if let value = windowValue as? Value { return value }
+            }
             if !pageValues.isEmpty {
                 let next = pageValues.removeFirst()
                 if let value = next as? Value { return value }
