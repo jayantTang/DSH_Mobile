@@ -51,11 +51,21 @@ public extension ChatModel {
 
     func toggleProcessGroup(groupKey: String) {
         let plan = processPlan()
-        guard plan.groupByKey[groupKey] != nil else { return }
-        if foldState.collapsedGroups.contains(groupKey) {
-            foldState.collapsedGroups.remove(groupKey)
-        } else {
+        guard let group = plan.groupByKey[groupKey] else { return }
+        let turn = plan.turnByKey[group.turnKey]
+        // Completed turns show their groups expanded; in a running turn only
+        // the still-growing (not yet sealed) group is open by default.
+        let defaultOpen = turn.map { !$0.isRunning || !TranscriptProcessFold.isGroupClosed(group, in: $0) } ?? true
+        if foldState.expandedGroups.contains(groupKey) {
+            foldState.expandedGroups.remove(groupKey)
             foldState.collapsedGroups.insert(groupKey)
+        } else if foldState.collapsedGroups.contains(groupKey) {
+            foldState.collapsedGroups.remove(groupKey)
+            foldState.expandedGroups.insert(groupKey)
+        } else if defaultOpen {
+            foldState.collapsedGroups.insert(groupKey)
+        } else {
+            foldState.expandedGroups.insert(groupKey)
         }
     }
 
@@ -144,6 +154,7 @@ public extension ChatModel {
         let groupKeys = Set(plan.groups.map(\.key))
         foldState.manualTurn = foldState.manualTurn.filter { turnKeys.contains($0.key) }
         foldState.collapsedGroups.formIntersection(groupKeys)
+        foldState.expandedGroups.formIntersection(groupKeys)
         if let top = foldState.readerTopRowID,
            !plan.rows.contains(where: { $0.id == top }) {
             foldState.readerTopRowID = nil

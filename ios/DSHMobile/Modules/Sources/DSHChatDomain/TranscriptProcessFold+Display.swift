@@ -26,6 +26,15 @@ extension TranscriptProcessFold {
         return RevealTarget(turnKey: turnKey, groupKey: plan.rowGroupKey[rowID], rowID: rowID)
     }
 
+    /// Whether a group is already sealed. In a running turn only the last
+    /// group (the one still growing at the tail) is active; every group before
+    /// it, and a last group followed by an assistant reply, is closed.
+    public static func isGroupClosed(_ group: Group, in turn: Turn) -> Bool {
+        guard turn.isRunning else { return true }
+        guard group.key == turn.groups.last?.key else { return true }
+        return group.indexes.last != turn.range.upperBound - 1
+    }
+
     public static func isTurnExpanded(_ turn: Turn, plan: Plan,
                                       state: TranscriptFoldState) -> Bool {
         guard turn.isFoldable else { return true }
@@ -44,6 +53,9 @@ extension TranscriptProcessFold {
 
     private static func display(_ turn: Turn, plan: Plan,
                                 state: TranscriptFoldState) -> [TimelineItem] {
+        if turn.isRunning, turn.groups.count > 1 {
+            return displayRunning(turn, plan: plan, state: state)
+        }
         guard turn.isFoldable else { return Array(plan.rows[turn.range]) }
         let expanded = isTurnExpanded(turn, plan: plan, state: state)
         let header = turnHeader(turn, expanded: expanded)
@@ -76,6 +88,40 @@ extension TranscriptProcessFold {
             out.append(plan.rows[index])
         }
         if !headerInserted { out.append(header.item) }
+        return out
+    }
+
+
+    /// A running turn still folds the subtrees that are already sealed: every
+    /// process group followed by an intermediate reply is a completed subtree,
+    /// while the last group (still growing) stays open. This mirrors the
+    /// desktop client's `stepGrouping: collapsed` behaviour.
+    private static func displayRunning(_ turn: Turn, plan: Plan,
+                                       state: TranscriptFoldState) -> [TimelineItem] {
+        var out = Array(plan.rows[turn.range.lowerBound..<turn.leading.upperBound])
+        let groupByMember = Dictionary(uniqueKeysWithValues:
+            turn.groups.flatMap { group in group.indexes.map { ($0, group) } })
+        let groupByStart = Dictionary(uniqueKeysWithValues:
+            turn.groups.compactMap { group in group.indexes.first.map { ($0, group) } })
+        let lastGroupKey = turn.groups.last?.key
+        let lastRow = turn.range.upperBound - 1
+
+        func isClosed(_ group: Group) -> Bool {
+            TranscriptProcessFold.isGroupClosed(group, in: turn)
+        }
+
+        for index in turn.leading.upperBound..<turn.range.upperBound {
+            if let group = groupByStart[index], isClosed(group) {
+                // Sealed groups default to collapsed while the turn is live.
+                let open = state.expandedGroups.contains(group.key)
+                out.append(groupHeader(group, expanded: open).item)
+            }
+            if let group = groupByMember[index], isClosed(group),
+               !state.expandedGroups.contains(group.key) {
+                continue
+            }
+            out.append(plan.rows[index])
+        }
         return out
     }
 

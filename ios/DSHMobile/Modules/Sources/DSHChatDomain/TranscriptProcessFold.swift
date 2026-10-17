@@ -12,15 +12,20 @@ public struct TranscriptFoldState: Sendable, Equatable {
     public var manualTurn: [String: Bool]
     /// Groups default to expanded; only explicit collapses are stored.
     public var collapsedGroups: Set<String>
+    /// A closed group inside a running turn defaults to collapsed; this is the
+    /// explicit "I opened it" set. (Completed turns default to expanded.)
+    public var expandedGroups: Set<String>
     /// The top fully visible row reported by the list host. Used to keep the
     /// turn the reader is currently inside from collapsing under their finger.
     public var readerTopRowID: String?
 
     public init(manualTurn: [String: Bool] = [:],
                 collapsedGroups: Set<String> = [],
+                expandedGroups: Set<String> = [],
                 readerTopRowID: String? = nil) {
         self.manualTurn = manualTurn
         self.collapsedGroups = collapsedGroups
+        self.expandedGroups = expandedGroups
         self.readerTopRowID = readerTopRowID
     }
 }

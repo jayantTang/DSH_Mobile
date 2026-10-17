@@ -325,6 +325,80 @@ final class TranscriptProcessFoldTests: XCTestCase {
         XCTAssertTrue(plan.processRowIDs.contains(tool.id))
     }
 
+    func test_running_turn_folds_completed_groups_and_keeps_the_active_one_open() throws {
+        // 进行中：第一段过程（bash）已被中间回答封口，应折叠成组节点；
+        // 第二段（read）仍在增长，保持展开。
+        let timeline = try ProcessFoldFixtures.timeline([
+            ProcessFoldFixtures.turnStart(seq: 1, turn: 1),
+            ProcessFoldFixtures.user(seq: 2, text: "q"),
+            ProcessFoldFixtures.toolCall(seq: 3, callId: "c1", name: "bash"),
+            ProcessFoldFixtures.toolResult(seq: 4, callId: "c1"),
+            ProcessFoldFixtures.assistant(seq: 5, text: "first part done"),
+            ProcessFoldFixtures.toolCall(seq: 6, callId: "c2", name: "read"),
+            ProcessFoldFixtures.toolResult(seq: 7, callId: "c2"),
+        ])
+        let plan = plan(timeline, isTurnOpen: true)
+        let turn = try XCTUnwrap(plan.turns.first)
+        XCTAssertTrue(turn.isRunning)
+        XCTAssertEqual(turn.groups.count, 2)
+
+        let rows = TranscriptProcessFold.displayRows(plan, state: TranscriptFoldState())
+        // 第一段组节点在，但成员被收起；第二段成员直接可见。
+        let groupHeaders = rows.compactMap { item -> TimelineProcessHeader? in
+            if case .processHeader(let header) = item.kind, header.scope == .group { return header }
+            return nil
+        }
+        XCTAssertEqual(groupHeaders.count, 1, "only the closed group gets a header")
+        XCTAssertEqual(groupHeaders.first?.toolCount, 1)
+        XCTAssertFalse(groupHeaders.first?.isExpanded ?? true)
+        XCTAssertFalse(rows.contains { $0.id == timeline.items[1].id },
+                       "closed group's tool call is hidden")
+        XCTAssertTrue(rows.contains { $0.id == timeline.items[2].id },
+                      "intermediate assistant text stays visible")
+        XCTAssertTrue(rows.contains { $0.id == timeline.items[3].id },
+                      "active group's tool call stays visible")
+    }
+
+    func test_running_turn_without_a_boundary_keeps_everything_visible() throws {
+        // 进行中、只有一段连续过程：没有可封口的组，全部展开。
+        let timeline = try ProcessFoldFixtures.timeline([
+            ProcessFoldFixtures.turnStart(seq: 1, turn: 1),
+            ProcessFoldFixtures.user(seq: 2, text: "q"),
+            ProcessFoldFixtures.toolCall(seq: 3, callId: "c1", name: "bash"),
+            ProcessFoldFixtures.toolResult(seq: 4, callId: "c1"),
+            ProcessFoldFixtures.toolCall(seq: 5, callId: "c2", name: "read"),
+            ProcessFoldFixtures.toolResult(seq: 6, callId: "c2"),
+        ])
+        let plan = plan(timeline, isTurnOpen: true)
+        let turn = try XCTUnwrap(plan.turns.first)
+        XCTAssertEqual(turn.groups.count, 1)
+        let rows = TranscriptProcessFold.displayRows(plan, state: TranscriptFoldState())
+        XCTAssertFalse(rows.contains { header($0)?.scope == .group })
+        XCTAssertEqual(rows.count, timeline.items.count)
+    }
+
+    func test_running_turn_group_header_expands_on_tap() throws {
+        let timeline = try ProcessFoldFixtures.timeline([
+            ProcessFoldFixtures.turnStart(seq: 1, turn: 1),
+            ProcessFoldFixtures.user(seq: 2, text: "q"),
+            ProcessFoldFixtures.toolCall(seq: 3, callId: "c1", name: "bash"),
+            ProcessFoldFixtures.toolResult(seq: 4, callId: "c1"),
+            ProcessFoldFixtures.assistant(seq: 5, text: "first part done"),
+            ProcessFoldFixtures.toolCall(seq: 6, callId: "c2", name: "read"),
+            ProcessFoldFixtures.toolResult(seq: 7, callId: "c2"),
+        ])
+        let plan = plan(timeline, isTurnOpen: true)
+        let turn = try XCTUnwrap(plan.turns.first)
+        let closedGroup = try XCTUnwrap(turn.groups.first)
+        var state = TranscriptFoldState()
+        let collapsed = TranscriptProcessFold.displayRows(plan, state: state)
+        XCTAssertFalse(collapsed.contains { $0.id == timeline.items[1].id })
+
+        state.expandedGroups.insert(closedGroup.key)
+        let expanded = TranscriptProcessFold.displayRows(plan, state: state)
+        XCTAssertTrue(expanded.contains { $0.id == timeline.items[1].id })
+    }
+
     func test_display_is_idempotent() throws {
         let timeline = try completed(tools: 3, intermediate: true)
         let plan = plan(timeline)
