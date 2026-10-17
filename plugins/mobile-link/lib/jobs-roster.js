@@ -233,8 +233,13 @@ export function createJobsRoster({
       return
     }
     try {
-      // `{owners:'all'}`：名单覆盖全部活会话，只订一个作用域会漏掉别的预设下的会话。
-      unsubscribe = events.subscribe({ owners: 'all' }, onChange)
+      // `{owners:'scope'}`：连接器挂在宿主全局层，作用域就是整个进程，等价于"全部会话"。
+      //
+      // 不用 `{owners:'all'}`：本机实测（0.2.0-rc.2 桌面版宿主）该过滤器的订阅装上了
+      // 但**一条事件都收不到**（subscribe 成功、onChange 从不触发），于是 `link/jobs`
+      // 永远不推、手机只能显示建连那一刻的名单（2026-10-17 owner 报"任务结束了手机还显示在跑"）。
+      // `scope` 在同一宿主上按预期收到 registered/settled/removed，因此改用它。
+      unsubscribe = events.subscribe({ owners: 'scope' }, onChange)
     } catch (error) {
       logger.warn?.(`mobile-link: subscribing to jobs events failed: ${messageOf(error)}`)
     }

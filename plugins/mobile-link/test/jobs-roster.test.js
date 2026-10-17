@@ -287,7 +287,7 @@ test('不变式 4：最后一个设备离开时释放宿主订阅，之后不再
 
   assert.equal(roster.addDevice('dev_1'), true)
   assert.equal(roster.subscribed, true, '有设备才订阅')
-  assert.deepEqual(jobs.filters, [{ owners: 'all' }], '订阅要看全部会话，不只看某个作用域')
+  assert.deepEqual(jobs.filters, [{ owners: 'scope' }], "订阅用 scope：连接器挂在宿主全局层，等价全部会话；`{owners:'all'}` 在本机宿主上收不到事件（见实现注释）")
 
   jobs.register(job('bash-1', 's1'))
   assert.equal(timers.pending, 1, '窗口内的事件合成一帧')
@@ -464,7 +464,7 @@ test('G1：设备全部离开后重新接入，订阅重新装上、后续事件
   assert.equal(roster.addDevice('dev_1'), true, '回头客要重新进名单')
   assert.equal(roster.subscribed, true, '重新接入必须重新订阅宿主任务事件')
   assert.equal(jobs.subscriberCount, 1, '订阅是真的重装的，不是复用一个已 dispose 的 listener')
-  assert.deepEqual(jobs.filters, [{ owners: 'all' }, { owners: 'all' }], '重装时仍要覆盖全部会话')
+  assert.deepEqual(jobs.filters, [{ owners: 'scope' }, { owners: 'scope' }], '重装时仍要覆盖全部会话')
 
   jobs.register(job('bash-3', 's1'))
   assert.equal(timers.pending, 1, '回来之后事件要重新排帧')

@@ -198,7 +198,7 @@ test('两台设备各收一份；整格替换；断开后不再推帧', async ()
   await connect(agent, socket, 'dev_1')
   await connect(agent, socket, 'dev_2')
   assert.equal(jobs.subscriberCount, 1, '两台设备共用一份宿主订阅')
-  assert.deepEqual(jobs.filters, [{ owners: 'all' }])
+  assert.deepEqual(jobs.filters, [{ owners: 'scope' }])
 
   // 注册 → 推帧。
   jobs.register(job('bash-1', 's1'))
