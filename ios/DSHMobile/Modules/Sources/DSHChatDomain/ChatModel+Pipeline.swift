@@ -121,7 +121,13 @@ public final class ChatPipelineBridge {
 
     /// 017：一次向上翻要几页。一页一次往返就是"每屏等一次"的来源，所以一次多要几屏；
     /// 上限同时受连接器 `MAX_CHUNKS_PER_CALL`（12 块）与单帧字节预算约束，3 页留有余量。
+    ///
+    /// 折叠感知下发之后，一页能画出多少行与 seq 数不再成正比（过程段已被折成一行），
+    /// 所以实际窗口交给 `olderWindow` 自适应，这里只保留产品基数。
     public static let pagesPerFetch = 3
+
+    /// 向上翻页的自适应窗口（每次返回的可见记录少就加倍，多就收回基数）。
+    public var olderWindow = HistoryFetchWindowPolicy()
     /// 点胶囊直跳最新的降级阈值（页）：超过就丢中间段（spec 场景 7）。
     public static let catchUpPageBudget = 5 // internal：+PipelineFetch 要用
 

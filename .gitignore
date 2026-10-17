@@ -99,3 +99,6 @@ id_ed25519*
 *.orig
 *.swp
 *~
+
+# 端到端基准产物（本机数字，不入库）
+scripts/perf/results/

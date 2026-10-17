@@ -40,16 +40,20 @@ public extension ChatPipelineBridge {
             refold(messagesChanged: false, gapsChanged: true)
         }
         // 017：一次向上翻不是要一页，而是要**接下来几屏**——一页一次往返就是
-        // "每屏等一次"的来源。请求区间仍从最老已加载记录往上算，页边界不变。
-        let lower = max(1, oldest - Self.pageSize * Self.pagesPerFetch)
+        // "每屏等一次"的来源。请求区间仍从最老已加载记录往上算，页边界不变；
+        // 折叠感知下发之后一页能画几行不再与 seq 数成正比，窗口由上一批的
+        // 实际返回记录数自适应（`olderWindow`）。
+        let pages = olderWindow.pages
+        let lower = max(1, oldest - Self.pageSize * pages)
         do {
-            _ = try await session.records(in: lower...(oldest - 1), priority: .userVisible)
+            let fetched = try await session.records(in: lower...(oldest - 1), priority: .userVisible)
+            olderWindow.observe(records: fetched.count)
             didAutoRetry = false
             // 009 取页链路原来没有任何探针事件（pager.page 只在旧 pager 路径上），
             // 失败语义不可观测。按同一名字补回（用例按「逐页落地、首尾相接」验收）。
             ChatProbe.shared.probeNote?("pager.page", [
                 "start": String(lower), "end": String(oldest - 1),
-                "pages": String(Self.pagesPerFetch),
+                "pages": String(pages),
                 "oldest": String(records.keys.min() ?? -1),
             ], true)
         } catch {
@@ -128,7 +132,7 @@ public extension ChatPipelineBridge {
             }
             // 017：重试与向上翻同口径——一次要的也是接下来几屏，否则点一次只回一页，
             // 读者马上又撞到同一段等待。
-            let lower = max(1, oldest - Self.pageSize * Self.pagesPerFetch)
+            let lower = max(1, oldest - Self.pageSize * olderWindow.pages)
             try? await session.retry(range: lower...(oldest - 1))
             // 顶部行的恢复不走 loadOlder，pager.page 打不到；恢复动作要可观测（用例 48）。
             ChatProbe.shared.probeNote?("pager.retry", ["start": String(lower), "end": String(oldest - 1)], true)

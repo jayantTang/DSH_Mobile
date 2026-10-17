@@ -415,7 +415,7 @@ final class TranscriptProcessFoldTests: XCTestCase {
         var timeline = ChatTimeline()
         let events: [[String: JSONValue]] = [
             ProcessFoldFixtures.turnStart(seq: 1, turn: 1),
-            ProcessFoldFixtures.user(seq: 2, text: "问"),
+            ProcessFoldFixtures.user(seq: 2, text: "q"),
             ["type": .string("+link/fold"), "seq": .int(3), "data": .object([
                 "turn": .int(1), "startSeq": .int(3), "endSeq": .int(4),
                 "finalSeq": .int(5), "dividerSeq": .int(6),
@@ -424,24 +424,24 @@ final class TranscriptProcessFoldTests: XCTestCase {
                 "endReason": .string("done"), "durationMs": .int(1200),
                 "foldedCount": .int(2),
             ])],
-            ProcessFoldFixtures.assistant(seq: 5, text: "答"),
+            ProcessFoldFixtures.assistant(seq: 5, text: "a"),
             ProcessFoldFixtures.turnEnd(seq: 6, turn: 1, reason: "done"),
         ]
         for event in events { _ = timeline.apply(try ProcessFoldFixtures.record(event).event) }
 
         let plan = TranscriptProcessFold.plan(items: timeline.items, isTurnOpen: false)
         let turn = try XCTUnwrap(plan.turns.first)
-        XCTAssertFalse(turn.isFoldable, "摘要行本身就是要显示的那一行，这一轮不能再被折叠")
+        XCTAssertFalse(turn.isFoldable, "a prefetched summary row is the row to show; the turn must not fold again")
 
         let rows = TranscriptProcessFold.displayRows(plan, state: TranscriptFoldState())
         let prefetched = rows.compactMap { item -> TimelineProcessHeader? in
             if case .processHeader(let header) = item.kind, header.isPrefetched { return header }
             return nil
         }
-        XCTAssertEqual(prefetched.count, 1, "只显示摘要这一行，不再由不存在的真实过程行推导第二行")
+        XCTAssertEqual(prefetched.count, 1, "only the prefetched summary row; no second header derived from absent process rows")
         XCTAssertEqual(prefetched.first?.toolCount, 2)
         XCTAssertTrue(rows.contains { item in
-            if case .assistantText(let text) = item.kind { return text == "答" }
+            if case .assistantText(let text) = item.kind { return text == "a" }
             return false
         })
     }
@@ -459,11 +459,11 @@ final class TranscriptProcessFoldTests: XCTestCase {
         }
         let events: [[String: JSONValue]] = [
             ProcessFoldFixtures.turnStart(seq: 1, turn: 1),
-            ProcessFoldFixtures.user(seq: 2, text: "问"),
+            ProcessFoldFixtures.user(seq: 2, text: "q"),
             foldEvent(3, 3, 4, 2),
-            ProcessFoldFixtures.assistant(seq: 5, text: "中间说明"),
+            ProcessFoldFixtures.assistant(seq: 5, text: "intermediate"),
             foldEvent(6, 6, 7, 3),
-            ProcessFoldFixtures.assistant(seq: 8, text: "答"),
+            ProcessFoldFixtures.assistant(seq: 8, text: "a"),
             ProcessFoldFixtures.turnEnd(seq: 9, turn: 1, reason: "done"),
         ]
         for event in events { _ = timeline.apply(try ProcessFoldFixtures.record(event).event) }
@@ -474,8 +474,8 @@ final class TranscriptProcessFoldTests: XCTestCase {
             if case .processHeader(let header) = item.kind, header.isPrefetched { return header }
             return nil
         }
-        XCTAssertEqual(headers.count, 1, "一层跨多页时只能出现一个过程节点")
-        XCTAssertEqual(headers.first?.toolCount, 5, "计数相加")
+        XCTAssertEqual(headers.count, 1, "one turn spanning pages still shows one process node")
+        XCTAssertEqual(headers.first?.toolCount, 5, "counts are summed")
         XCTAssertEqual(headers.first?.startSeq, 3)
         XCTAssertEqual(headers.first?.endSeq, 7)
     }
