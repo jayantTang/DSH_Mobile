@@ -292,9 +292,21 @@ $A admin.py --db $DB ops-report --days 30 --as-of yesterday                   # 
 
 `ops-report` 是**视图**，不是账本：调试设备（`DSH-` 前缀、`Node`/`simulator` 机型）的用量、
 设备与账号一律不进报告，`usage` 命令仍读全量。设备行已被清理工具删掉、账号又不在邀请码
-登记名单里的孤儿用量行同样剔除（见 `admin.py:_is_orphan_usage`：清理工具为治连接器重连
-卡顿会删已撤销设备行、按约定保留 `usageDaily`，留下找不到设备主体的历史行）。外部账号的
-孤儿行保留——那是真人真事的历史。
+登记名单里的孤儿用量行同样剔除（见 `admin.py:_is_orphan_usage`：清理工具为治连接器重连卡顿会
+删已撤销设备行、按约定保留 `usageDaily`，留下找不到设备主体的历史行）。外部账号的孤儿行保留——
+那是真人真事的历史。
+
+除原有板块外，`ops-report` 还带两份新数据：`versions`（最近 48 小时**有用量行**的设备按
+`appVersion` 分组的设备数 / 账号数 / 最近在线；窗口按用量行的 `lastSeenAt` 卡，不用
+`devices.lastSeenAt`，长度见 `REPORT_VERSION_HOURS`）与
+`hourlyActivity`（过去 72 小时逐小时的活跃账号数，只算**有设备在连**的账号——电脑的连接器
+常年挂着不算）。后者由 `journalctl -u dsh-relay` 里的 device `attached` / `detached` 事件
+重建，因为中转自己只按天记账；读不到日志时 `buckets` 为 `null`，日报会跳过那张图，不拿 0
+冒充。换单元名用 `--journal-unit`。
+
+`invites` 板块的三本账要分开看：`remaining` 是"未使用的全部"，把过期没用的也算在内；
+`usable`（未用且未过期）、`expiringSoon`（7 天内到期）、`expiredUnused`（已过期未用）
+才是日报要回答"还能发几张"的数字，`unused` 按到期时间升序列出最早失效的那几张。
 
 「新增手机」（`devices.newPerDay`、`today.devices.new`）数的是手机，不是设备行：同一账号 +
 同一机型只算第一次出现（`admin.py:_first_device_rows`）。App 重装或换版本会重新配对、插一行

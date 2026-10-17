@@ -343,28 +343,29 @@ test('buildInvocation 的远端命令按 POSIX 引号化', () => {
 
 test('日报分「今日」与「最近 30 天」两段，正文被转义', () => {
   const html = renderReport(fixture())
-  // 两段：概览 + 趋势与留存。页面只有两张图（每日活跃用户、每日出口流量）。
+  // 两段：概览 + 趋势与留存。趋势段固定两张图；概览里的激活码趋势与 72 小时热力图
+  // 取决于有没有数据，按图名断言，不钉死 SVG 个数。
   assert.ok(html.includes('<span class="tag ">今日</span>概览'), '今日板块')
   assert.ok(html.includes('<span class="tag range">最近 30 天</span>趋势与留存'), '30 天板块')
-  assert.equal((html.match(/<svg /g) ?? []).length, 2, '只有每日活跃用户与每日出口流量两张图')
-  assert.ok(html.includes('每日活跃用户') && html.includes('每日出口流量'))
-  // 头牌是账号口径的活跃用户（owner 2026-10-17 定的口径），活跃手机降为状态行里的一个数。
-  assert.ok(html.includes('今日活跃用户（电脑账号）') && html.includes('较昨日'))
-  assert.ok(html.includes('活跃手机 2 台'), '状态行里给出同一天的设备行口径')
-  assert.ok(!html.includes('今日活跃手机'), '头牌不再写活跃手机')
+  assert.ok((html.match(/<svg /g) ?? []).length >= 2, '至少有两张趋势图')
+  assert.ok(html.includes('每日活跃账号') && html.includes('每日出口流量'))
+  // 头牌是账号口径的活跃账号，活跃设备降为状态行里的一个数。
+  assert.ok(html.includes('今日活跃账号') && html.includes('较昨日'))
+  assert.ok(html.includes('活跃设备 2 台'), '状态行里给出同一天的设备行口径')
+  assert.ok(!html.includes('今日活跃设备'), '头牌不再写活跃设备')
   assert.ok(html.includes('今日出口流量') && html.includes('较昨日 ↑ 100.0%'))
   assert.ok(html.includes('3.0 MB'), '出口字节应换算成 MB')
-  // 近 7 天表：活跃用户与新增手机各一列。
-  assert.ok(html.includes('活跃用户') && html.includes('新增手机'))
-  // 留存：外部账号（页面写「电脑」）口径、D1/D7 与登记激活都要在页面上。
-  assert.ok(html.includes('外部电脑 · 活跃=当天有中转连接'))
+  // 近 7 天表：活跃账号与新增设备各一列。
+  assert.ok(html.includes('活跃账号') && html.includes('新增设备'))
+  // 留存：外部账号口径、D1/D7 与登记激活都要在页面上。
+  assert.ok(html.includes('激活码登记的外部账号 · 活跃=当天有设备连接'))
   for (const label of ['登记激活', '次日留存', '7 日留存']) {
     assert.ok(html.includes(label), `留存缺 ${label}`)
   }
   assert.ok(html.includes('62%') && html.includes('n=13'), '留存率要带队列人数')
   assert.ok(html.includes('已剔除测试提交 3 条'))
   // 2026-10-17 精简掉的那几块不再出现：版本分布、邀请码登记清单、分周队列表。
-  for (const gone of ['今日版本分布', '邀请码登记', '2026-W40', '今日电脑']) {
+  for (const gone of ['今日版本分布', '登记清单', '2026-W40', '今日账号']) {
     assert.ok(!html.includes(gone), `已精简的块不该再渲染：${gone}`)
   }
   assert.ok(!html.includes('<script>'), '正文里的 script 必须被转义')
@@ -389,7 +390,7 @@ test('手机上不写死宽表：长清单有上限', () => {
 test('空数据也能渲染出可看的整页', () => {
   const html = renderReport({ ok: true, generatedAt: GENERATED_AT, days: 30 })
   assert.match(html, /<span class="tag ">今日<\/span>概览/)
-  assert.match(html, /今日活跃用户（电脑账号）/)
+  assert.match(html, /今日活跃账号/)
   assert.match(html, /窗口内没有数据/)
   assert.match(html, /窗口内没有反馈/)
   assert.match(html, /窗口内没有用量记录/)
@@ -407,7 +408,7 @@ test('「关注」板块把待办提到整页最上面，阈值越线才报警',
   const focus = html.indexOf('要处理的事')
   assert.ok(focus > -1 && focus < html.indexOf('今日</span>概览'), '关注区在今日板块之前')
   assert.match(html, /反馈待回复 2 条，最早一条已等 1\.0 h/)
-  assert.match(html, /邀请码只剩 9 张（21\/30 已用）/)
+  assert.match(html, /激活码只剩 9 张（21\/30 已用）/)
   assert.match(html, /2 件待办/)
   // d7 = 40% 不越线、推送全注册、没有背离：这三件不该出现。
   assert.ok(!html.includes('7 日留存 40%（n=10）低于'), '没越线的指标不报警')
@@ -427,7 +428,7 @@ test('「关注」区只留要 owner 动作的待办，自动观察不再堆上�
   const html = renderReport(fixture())
   assert.match(html, /2 件待办/)
   // 2026-10-17 删掉的 info 级自动观察（周目标缺口、版本分裂、单日波动、背离）都不再出现。
-  for (const gone of ['本周新增手机', '个 App 版本同时在用', '偏离超过', '核对重连逻辑']) {
+  for (const gone of ['本周新增设备', '个 App 版本同时在用', '偏离超过', '核对重连逻辑']) {
     assert.ok(!html.includes(gone), `自动观察不该再出现在关注区：${gone}`)
   }
   assert.ok(!html.includes('<span class="chip up">提示</span>'), '关注区不再有 info 级提示条目')
@@ -448,7 +449,7 @@ test('推送注册率只算近 7 天活跃的手机（owner 2026-10-17 定）', 
     deviceId: `dvc_${i}`, name: 'iPhone', model: 'iPhone 17', appVersion: '1.2.3',
     createdAt: GENERATED_AT, lastSeenAt: GENERATED_AT - i * 3_600_000,
     revoked: 0, push: { registered: i < 2 } }))
-  assert.match(renderReport(loud), /近 7 天活跃的 6 台手机里 4 台没注册推送（67%）/)
+  assert.match(renderReport(loud), /近 7 天活跃的 6 台设备里 4 台没注册推送（67%）/)
 })
 
 test('待回复反馈超过 24h SLA 时文案升级', () => {
@@ -462,7 +463,7 @@ test('同一条待办连续挂三天，文案升级为「已连续 N 天未处�
   const dayStartAt = data.today.dayStartAt
   const history = { days: {}, alerts: { 'invites-low': { lastStart: dayStartAt - 86_400_000, count: 2 } } }
   const html = renderReport(data, { history })
-  assert.match(html, /邀请码只剩 9 张（21\/30 已用），该补铸一批（已连续 3 天未处理）/)
+  assert.match(html, /激活码只剩 9 张（21\/30 已用），该补铸一批（已连续 3 天未处理）/)
   // 同一天重复渲染不重复计数。
   const sameDay = renderReport(data, { history:
     { days: {}, alerts: { 'invites-low': { lastStart: dayStartAt, count: 4 } } } })
@@ -549,11 +550,11 @@ test('机型代码转人话，查不到的原样保留', () => {
   assert.ok(renderReport(data).includes('iPhone 15'))
 })
 
-test('日报不再渲染邀请码登记清单（登记只在关注区作为余量提醒出现）', () => {
+test('日报不再渲染激活码登记清单（登记只在关注区作为余量提醒出现）', () => {
   const html = renderReport(fixture())
-  assert.ok(!html.includes('邀请码登记'), '窗口登记清单已删')
   assert.ok(!html.includes('Sam 的 MacBook'), '登记明细不再上页面')
-  assert.match(html, /邀请码只剩 9 张（21\/30 已用）/, '余量提醒仍在关注区')
+  assert.ok(!html.includes('Sam 的 MacBook'), '登记明细不再上页面')
+  assert.match(html, /激活码只剩 9 张（21\/30 已用）/, '余量提醒仍在关注区')
 })
 
 test('活跃时段接近一整天时写「全天有连接」', () => {
@@ -655,10 +656,10 @@ test('覆盖整天的日报按覆盖日写日期、标题与「全天」标签',
   assert.ok(html.includes('2026-10-12 周一'), '周几也要按覆盖日算')
   assert.ok(html.includes('<span class="tag ">全天</span>概览'), '过完的那一天叫「整天」')
   assert.ok(html.includes('10-12 自然日 00:00–23:59（已过完）'))
-  assert.ok(html.includes('全天活跃用户（电脑账号）') && html.includes('较前一日'))
+  assert.ok(html.includes('全天活跃账号') && html.includes('较前一日'))
   assert.ok(html.includes('全天出口流量'), '成本口径跟着覆盖日的叫法')
   assert.ok(html.includes('本地日窗口（含 10-12）'))
-  assert.ok(html.includes('活跃用户 = 当天有中转连接的电脑'))
+  assert.ok(html.includes('活跃账号 = 当天有设备用量行的账号'))
   assert.ok(html.includes('活跃时段 05:00–23:59'), '跨零点的时间要夹到 23:59')
   assert.ok(!/23:59–00:00/.test(html), '不能出现回到 00:00 的时段')
   assert.ok(!html.includes('较昨日'), '10-13 生成的页面上不能把 10-12 写成"今日"')
@@ -1184,4 +1185,84 @@ test('过渡期回退只认目标缺失：线程不存在等真错误不回退',
   const { code } = run(['show', '--thread', 'th_nope'], { runner })
   assert.equal(code, 1, '真错误原样透传，不许拿中转再试一遍把错误搅浑')
   assert.equal(calls.length, 1, '没有第二次调用')
+})
+
+test('日报版本分布：只看近 48 小时活跃，网页端不冒充 App 构建', () => {
+  const data = {
+    ...fixture(),
+    versions: [
+      { appVersion: '1.0 20261012.1056', devices: 3, accounts: 2, lastSeenAt: GENERATED_AT },
+      { appVersion: '0.1.0', devices: 4, accounts: 3, lastSeenAt: GENERATED_AT - 3600_000 },
+    ],
+  }
+  const html = renderReport(data)
+  assert.match(html, /版本分布（近 48 小时活跃）/)
+  assert.match(html, /20261012\.1056/)
+  assert.match(html, /网页端/)
+  assert.ok(!html.includes('网页端 · 网页端'), '类别名不与自己重复')
+  assert.match(html, /活跃账号/)
+  assert.match(html, /活跃设备/)
+  // 构建号要从 `1.0 20261012.1056` 归一成 `20261012.1056`，与今日表的同一版本合并成一行。
+  assert.equal((html.match(/20261012\.1056/g) ?? []).length, 1)
+})
+
+test('激活码板块：能用/到期/过期三本账分开，最近激活按时间倒序', () => {
+  const data = {
+    ...fixture(),
+    invites: {
+      minted: 30, used: 21, remaining: 12, usable: 9, expiringSoon: 2, expiredUnused: 3,
+      unused: [{ note: '给 Sam', createdAt: GENERATED_AT - 10 * 86_400_000,
+        expiresAt: GENERATED_AT + 5 * 86_400_000 }],
+      enrollments: [
+        { usedAt: GENERATED_AT - 3600_000, accountName: 'Sam', agentName: 'Sam 的 MacBook',
+          inviteNote: '给 Sam' },
+        { usedAt: GENERATED_AT - 9 * 86_400_000, accountName: 'Ann', agentName: 'Ann 的 iMac',
+          inviteNote: '给 Ann' },
+      ],
+    },
+  }
+  const html = renderReport(data)
+  assert.match(html, /激活码/)
+  assert.match(html, /可用 9 张/)
+  assert.match(html, /7 天内到期 2 张/)
+  assert.match(html, /已过期未用 3 张/)
+  assert.match(html, /近 7 天激活 1/)
+  assert.match(html, /Sam 的 MacBook/)
+  assert.match(html, /每日激活/)
+  assert.match(html, /今日激活 1/)
+})
+
+test('激活码板块：老服务端没有 usable/unused 时退回 remaining，页面不炸', () => {
+  const html = renderReport(fixture())
+  assert.match(html, /激活码/)
+  assert.match(html, /可用 9 张/, 'remaining 就是 9')
+  assert.match(html, /MacBook/, '老服务端的 enrollments 照样列出来')
+})
+
+test('过去 72 小时热度图：整点格齐全，缺的一小时画空格不插值', () => {
+  const hour = 3_600_000
+  const end = Math.floor(GENERATED_AT / hour) * hour
+  const buckets = [...Array(72).keys()].map((i) => ({
+    hourStartAt: end - (71 - i) * hour,
+    accounts: i % 9 === 0 ? 6 : (i % 4 === 0 ? 2 : 0),
+    agents: 3,
+  })).filter((bucket) => bucket.accounts > 0)
+  const html = renderReport({ ...fixture(), hourlyActivity: { windowHours: 72, buckets } })
+  assert.match(html, /过去 72 小时活跃分布/)
+  // 每个有数据的格子带一个 `<title>` 悬停说明，外加文档 head 里那一只。
+  assert.equal((html.match(/<title>/g) ?? []).length, buckets.length + 1)
+  assert.match(html, /峰值 6 个账号/)
+  assert.match(html, /0时/)
+  assert.match(html, /23时/)
+})
+
+test('过去 72 小时热度图：读不到日志时写「跳过」，不画空表冒充 0', () => {
+  const html = renderReport({ ...fixture(), hourlyActivity: { windowHours: 72, buckets: null } })
+  assert.match(html, /服务端读不到中转日志/)
+})
+
+test('老服务端没有 versions / hourlyActivity：两块的字段不缺，页面照常出', () => {
+  const html = renderReport(fixture())
+  assert.match(html, /版本分布（近 48 小时活跃）/)
+  assert.match(html, /过去 72 小时活跃分布/)
 })

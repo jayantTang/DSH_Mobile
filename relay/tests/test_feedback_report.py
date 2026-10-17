@@ -64,7 +64,8 @@ def test_ops_report_has_all_four_sections_on_an_empty_database(tmp_path, capsys)
     assert report["usage"]["topAccounts"] == []
     assert report["usage"]["totals"] == {"egressBytes": 0, "connections": 0}
     assert report["invites"] == {"minted": 0, "used": 0, "remaining": 0, "test": 0,
-                                 "enrollments": []}
+                                 "usable": 0, "expiringSoon": 0, "expiredUnused": 0,
+                                 "unused": [], "enrollments": []}
     # 留存板块：空库也要有形状（渲染层靠它画空态），没有账号时所有比例是 None。
     assert report["retention"]["scope"] == "external"
     assert report["retention"]["users"] == {"dau": 0, "wau": 0, "mau": 0,
@@ -709,6 +710,22 @@ def test_ops_report_as_of_a_date_covers_that_day(tmp_path, capsys):
     assert report["usage"]["peakDay"] == {"day": 20261012, "egressBytes": 1234}
 
 
+def test_invite_report_separates_usable_from_expired(tmp_path):
+    """余量要分三本账：能用、7 天内到期、已过期没用。`remaining` 是老口径（不区分过期）。"""
+    store = Store(str(tmp_path / "state.db"))
+    store.mint_invite(ttl_ms=60 * 86_400_000, note="long")
+    store.mint_invite(ttl_ms=2 * 86_400_000, note="soon")
+    store.mint_invite(ttl_ms=-1000, note="dead")
+    try:
+        report = admin._invite_report(store, now_ms(), [])
+    finally:
+        store.close()
+    assert (report["minted"], report["remaining"]) == (3, 3)
+    assert (report["usable"], report["expiringSoon"], report["expiredUnused"]) == (2, 1, 1)
+    # 最早到期的排前面：下一批什么时候失效，看第一行。
+    assert [row["note"] for row in report["unused"]] == ["soon", "long"]
+
+
 def test_ops_report_rejects_an_unparsable_as_of(tmp_path, capsys):
     """写错的日期是业务失败（退出码 1）并把取值原样带出来，不静默当成今天。"""
     db = str(tmp_path / "state.db")
@@ -729,3 +746,143 @@ def test_ops_report_without_as_of_still_covers_today_to_now(tmp_path, capsys):
     assert report["today"]["usage"]["egressBytes"] == 7000
     assert report["asOf"] == report["generatedAt"]
     assert report["usage"]["perDay"][-1]["day"] == made["today"]
+
+
+# ── 2026-10-17：版本分布与「过去 72 小时」活跃分布 ─────────────────────────────
+
+def _version_fixture(tmp_path, rows):
+    """建一个库，写入给定的用量行，返回 (store, devices 映射, now)。"""
+    store = Store(str(tmp_path / "state.db"))
+    at = now_ms()
+    device_map = {}
+    entries = []
+    for device_id, version, account_id, seen_at in rows:
+        device_map[device_id] = {"deviceId": device_id, "appVersion": version,
+                                 "accountId": account_id, "agentId": "agt_a"}
+        entries.append({"day": local_day(seen_at / 1000), "deviceId": device_id,
+                        "agentId": "agt_a", "accountId": account_id,
+                        "egressBytes": 1024, "connections": 1, "at": seen_at,
+                        "lastBuild": version})
+    store.add_usage(entries)
+    return store, device_map, at
+
+
+def test_version_report_counts_accounts_once_per_version(tmp_path):
+    """同一账号的两台设备，在版本分布里只算一个账号、两台设备。
+
+    这条口径和「活跃账号」一致：owner 看的是"多少人在哪个版本"，不是设备行数。
+    """
+    at = now_ms()
+    store, devices, _ = _version_fixture(tmp_path, [
+        ("dev_a", "1.0 20261013.2233", "acc_a", at - 1000),
+        ("dev_b", "1.0 20261013.2233", "acc_a", at - 2000),
+        ("dev_c", "1.0 (20260924.1925)", "acc_b", at - 3000),
+    ])
+    try:
+        reported = admin._version_report(store, since_ms=at - 48 * 3_600_000, until_ms=at,
+                                         devices=devices, debug_ids=set(),
+                                         known_ids=set(devices), external=set())
+    finally:
+        store.close()
+    by_version = {row["appVersion"]: row for row in reported}
+    newest = by_version["1.0 20261013.2233"]
+    assert newest["devices"] == 2 and newest["accounts"] == 1
+    assert by_version["1.0 (20260924.1925)"]["devices"] == 1
+    # 设备多的版本排前面。
+    assert reported[0]["appVersion"] == "1.0 20261013.2233"
+
+
+def test_version_report_only_counts_usage_inside_the_window(tmp_path):
+    """近 48 小时口径：窗口外没有用量行的设备不进版本分布（看用量行，不看 lastSeen）。"""
+    at = now_ms()
+    store, devices, _ = _version_fixture(tmp_path, [
+        ("dev_new", "1.0 20261017.1430", "acc_new", at - 3_600_000),
+        ("dev_old", "1.0 20260924.1925", "acc_old", at - 72 * 3_600_000),
+    ])
+    try:
+        reported = admin._version_report(store, since_ms=at - 48 * 3_600_000, until_ms=at,
+                                         devices=devices, debug_ids=set(),
+                                         known_ids=set(devices), external=set())
+    finally:
+        store.close()
+    assert [row["appVersion"] for row in reported] == ["1.0 20261017.1430"]
+    assert reported[0]["accounts"] == 1 and reported[0]["devices"] == 1
+
+
+def test_hourly_activity_counts_accounts_with_a_device_connected():
+    """只有**设备**连着才算活跃：电脑的连接器一直挂着，不设备连接不该占一格。
+
+    `closed a socket that had already been replaced` 是旧 socket 的收尾，忽略。
+    """
+    tz = datetime.timezone(datetime.timedelta(hours=8))
+    end = int(datetime.datetime(2026, 10, 17, 16, 0, 0, tzinfo=tz).timestamp() * 1000)
+    at_14 = int(datetime.datetime(2026, 10, 17, 14, 0, 0, tzinfo=tz).timestamp() * 1000)
+    at_15 = at_14 + 3_600_000
+    lines = [
+        "2026-10-17T14:10:00+0800 host python[1]: 2026-10-17 14:10:00,000 INFO relay relay: "
+        "device dev_a (iPhone) attached to agent agt_a",
+        "2026-10-17T15:20:00+0800 host python[1]: 2026-10-17 15:20:00,000 INFO relay relay: "
+        "device dev_b (Chrome) attached to agent agt_a",
+        "2026-10-17T15:30:00+0800 host python[1]: 2026-10-17 15:30:00,000 INFO relay relay: "
+        "device dev_b closed a socket that had already been replaced; no detach "
+        "notification sent for it (agent agt_a)",
+        "2026-10-17T15:40:00+0800 host python[1]: 2026-10-17 15:40:00,000 INFO relay relay: "
+        "device dev_b detached (socket closed) (agent agt_a)",
+        "2026-10-17T15:50:00+0800 host python[1]: 2026-10-17 15:50:00,000 INFO relay relay: "
+        "device dev_a detached (socket closed) (agent agt_a)",
+    ]
+    devices = {"dev_a": {"accountId": "acc_1", "agentId": "agt_a"},
+               "dev_b": {"accountId": "acc_1", "agentId": "agt_a"}}
+    agents = {"agt_a": {"accountId": "acc_1"}}
+    buckets = admin._hourly_activity(6, end, devices, agents, lines=lines)
+    assert len(buckets) == 7, "6 小时窗口落成 7 个整点格（含两端）"
+    by_hour = {bucket["hourStartAt"]: bucket for bucket in buckets}
+    # 14 点只有 dev_a；15 点先 dev_a 后 dev_b，但同属 acc_1，账号数仍是 1。
+    assert by_hour[at_14] == {"hourStartAt": at_14, "accounts": 1, "devices": 1}
+    assert by_hour[at_15] == {"hourStartAt": at_15, "accounts": 1, "devices": 2}
+
+
+def test_hourly_activity_falls_back_to_the_agent_account_for_purged_devices():
+    """设备行被清理工具删掉时，用日志里带的 agent 归属到账号，不丢这一格。"""
+    tz = datetime.timezone(datetime.timedelta(hours=8))
+    end = int(datetime.datetime(2026, 10, 17, 16, 0, 0, tzinfo=tz).timestamp() * 1000)
+    lines = [
+        "2026-10-17T15:10:00+0800 host python[1]: 2026-10-17 15:10:00,000 INFO relay relay: "
+        "device dev_gone (iPhone) attached to agent agt_a",
+    ]
+    buckets = admin._hourly_activity(2, end, {}, {"agt_a": {"accountId": "acc_9"}}, lines=lines)
+    assert buckets[-1]["accounts"] == 1 and buckets[-1]["devices"] == 1
+
+
+def test_hourly_activity_skips_debug_devices():
+    """调试设备（DSH- 前缀）不进日报；也不能因为兜底到 agent 就算成 owner 的活跃。"""
+    tz = datetime.timezone(datetime.timedelta(hours=8))
+    end = int(datetime.datetime(2026, 10, 17, 16, 0, 0, tzinfo=tz).timestamp() * 1000)
+    lines = [
+        "2026-10-17T15:10:00+0800 host python[1]: 2026-10-17 15:10:00,000 INFO relay relay: "
+        "device dev_dbg (iPhone) attached to agent agt_owner",
+    ]
+    devices = {"dev_dbg": {"accountId": "acc_owner", "agentId": "agt_owner",
+                           "name": "DSH-Test", "model": "iPhone 15"}}
+    buckets = admin._hourly_activity(2, end, devices,
+                                     {"agt_owner": {"accountId": "acc_owner"}}, lines=lines)
+    assert all(bucket["accounts"] == 0 and bucket["devices"] == 0 for bucket in buckets)
+
+
+def test_hourly_activity_returns_none_when_the_journal_is_unreadable(monkeypatch):
+    """读不到日志就是 `None`：渲染层据此写「跳过」，不拿空表冒充 0。"""
+    monkeypatch.setattr(admin, "_read_journal", lambda *a, **k: None)
+    assert admin._hourly_activity(72, now_ms(), {}, {}) is None
+
+
+def test_ops_report_carries_the_version_table_and_the_hourly_window(tmp_path, capsys, monkeypatch):
+    """两个新板块必须出现在 `ops-report` 的 JSON 里，且读不到日志时 buckets 是 None。"""
+    monkeypatch.setattr(admin, "_read_journal", lambda *a, **k: None)
+    db, made = yesterday_and_today_usage(tmp_path)
+
+    code, report = run_cli(db, "ops-report", "--days", "3", capsys=capsys)
+    assert code == 0
+    assert "versions" in report and isinstance(report["versions"], list)
+    hourly = report["hourlyActivity"]
+    assert hourly["windowHours"] == 72
+    assert hourly["buckets"] is None

@@ -21,6 +21,8 @@ import asyncio
 import datetime
 import json
 import os
+import re
+import subprocess
 import sys
 from typing import Any
 from urllib.parse import quote
@@ -257,6 +259,8 @@ def build_parser() -> argparse.ArgumentParser:
     ops_report.add_argument("--days", type=int, default=30)
     ops_report.add_argument("--as-of", dest="as_of", default="now",
                             help="now (default) | yesterday | YYYY-MM-DD；后两者按那一整天算")
+    ops_report.add_argument("--journal-unit", dest="journal_unit", default=DEFAULT_JOURNAL_UNIT,
+                            help="systemd 单元名：过去 72 小时分布图从它的日志重建（默认 dsh-relay）")
     return parser
 
 
@@ -472,7 +476,8 @@ def run(args: argparse.Namespace, store: Store) -> int:
         return 0
 
     if command == "ops-report":
-        _emit(_ops_report(store, max(1, int(args.days)), as_of=_resolve_as_of(args.as_of)))
+        _emit(_ops_report(store, max(1, int(args.days)), as_of=_resolve_as_of(args.as_of),
+                          journal_unit=args.journal_unit))
         return 0
 
     if command == "device-revoke":
@@ -713,6 +718,189 @@ def _recent_days(days: int, *, end: int | None = None) -> list[int]:
     """最近 N 天的本地日序号（含 `end` 所在的那一天），从早到晚。`end` 默认此刻。"""
     at = (now_ms() if end is None else int(end)) / 1000
     return sorted({local_day(at - offset * 86_400) for offset in range(max(1, int(days)))})
+
+
+#: 日报「过去 72 小时」分布图的窗口长度。
+REPORT_ACTIVITY_HOURS = 72
+
+#: 版本分布的窗口：只看最近 48 小时有设备连接的用户（owner 2026-10-17 定）。
+#: 全量设备里有一半是几周没上线的历史行，混进来以后「还有多少人在旧版」显得很严重。
+REPORT_VERSION_HOURS = 48
+
+#: systemd 单元名：只有它才写得出「谁在哪一小时连着」。可用 `--journal-unit` 覆盖。
+DEFAULT_JOURNAL_UNIT = "dsh-relay"
+
+#: 日志里的设备连接事件。认四种：
+#: - `attached to agent …`：连上；
+#: - `attached again while its previous socket is still open`：重连顶掉旧 socket（先把旧的算断开）；
+#: - `detached (socket closed) / (revoked)`：断开；
+#: - `closed a socket that had already been replaced`：旧 socket 的收尾，**忽略**，否则会把
+#:   刚重连上的那台设备记成离线。
+#:
+#: 为什么不用 agent（电脑）的连接事件：电脑常年开着，连接器一直连着，但用户没用 App，
+#: 那不该算活跃。owner 要的是「有设备连着」这个口径，与头牌的「活跃用户」一致。
+_DEVICE_EVENT = re.compile(
+    r"device (dev_[A-Za-z0-9]+) .*?(attached to agent|attached again|detached|"
+    r"closed a socket that had already been replaced)")
+_AGENT_IN_LINE = re.compile(r"agent (agt_[A-Za-z0-9]+)")
+
+
+def _version_report(store: Store, *, since_ms: int, until_ms: int,
+                    devices: dict[str, dict[str, Any]], debug_ids: set[str],
+                    known_ids: set[str], external: set[str]) -> list[dict[str, Any]]:
+    """版本分布：近 48 小时**有设备用量行**的账号装在哪个版本。
+
+    口径与头牌「活跃账号」同一条（owner 2026-10-17 定）：只有真的用 App 连过中转的设备
+    才算，不能拿 `devices.lastSeenAt`（连接器重连也会刷它）。窗口按用量行的 `lastSeenAt`
+    卡，不按自然日——48 小时跨两天，按天取会把窗口拉长。
+
+    设备数按**设备行**（重装/换机会多一行），账号数按 `accountId` 去重；两个数字不相等
+    是常态，页面上分开写。`appVersion` 为空的老行归到 `None`，渲染层写「未知」。
+    """
+    start_day = local_day(int(since_ms) / 1000)
+    end_day = local_day(int(until_ms) / 1000)
+    grouped: dict[str | None, dict[str, Any]] = {}
+    seen_devices: set[str] = set()
+    for day in range(int(start_day), int(end_day) + 1):
+        for row in store.usage_rows(day):
+            device_id = row["deviceId"]
+            if device_id in debug_ids or device_id in seen_devices:
+                continue
+            if _is_orphan_usage(row, known_ids=known_ids, external=external):
+                continue
+            seen = int(row.get("lastSeenAt") or 0)
+            if seen < int(since_ms):
+                continue
+            seen_devices.add(device_id)
+            device = devices.get(device_id) or {}
+            version = (device.get("appVersion") or "").strip() or None
+            entry = grouped.setdefault(version, {"appVersion": version, "devices": 0,
+                                                 "accounts": set(), "lastSeenAt": 0})
+            entry["devices"] += 1
+            account_id = row.get("accountId") or device.get("accountId")
+            if account_id:
+                entry["accounts"].add(account_id)
+            entry["lastSeenAt"] = max(entry["lastSeenAt"], seen)
+    return sorted(
+        ({"appVersion": entry["appVersion"], "devices": entry["devices"],
+          "accounts": len(entry["accounts"]), "lastSeenAt": entry["lastSeenAt"] or None}
+         for entry in grouped.values()),
+        key=lambda item: (-item["devices"], item["appVersion"] or ""))
+
+
+def _read_journal(unit: str, since_ms: int, until_ms: int) -> list[str] | None:
+    """取中转日志。取不到（没装 systemd、无 journal 读权限、单元名不对）时返回 `None`——
+    日报宁可少一张图，也不能因为一个可选板块整份生成失败。
+    """
+    since = datetime.datetime.fromtimestamp(since_ms / 1000).strftime("%Y-%m-%d %H:%M:%S")
+    until = datetime.datetime.fromtimestamp(until_ms / 1000).strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        completed = subprocess.run(  # noqa: S603 - 固定的只读运维命令，参数不是用户输入
+            ["journalctl", "-u", unit, "--since", since, "--until", until,
+             "--no-pager", "-o", "short-iso"],
+            capture_output=True, text=True, timeout=30, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if completed.returncode != 0:
+        return None
+    return completed.stdout.splitlines()
+
+
+def _parse_journal_time(line: str) -> int | None:
+    """`short-iso` 行的前缀是 `2026-10-17T15:44:16+0800`，转成毫秒时间戳。"""
+    stamp = line.split(" ", 1)[0]
+    try:
+        parsed = datetime.datetime.fromisoformat(stamp)
+    except ValueError:
+        return None
+    return int(parsed.timestamp() * 1000)
+
+
+def _hourly_activity(hours: int, end_ms: int, devices: dict[str, dict[str, Any]],
+                     agents: dict[str, dict[str, Any]],
+                     *, lines: list[str] | None = None,
+                     unit: str = DEFAULT_JOURNAL_UNIT) -> list[dict[str, Any]] | None:
+    """过去 `hours` 小时里，每个本地小时有多少个活跃用户、多少台设备在连。
+
+    口径（owner 2026-10-17 定）：**只算有设备连接的用户**，电脑的连接器一直挂着不算。
+    这与头牌「活跃用户」一致——电脑开着但没人用 App，不该在图上占一格。
+
+    数据从 systemd 日志里的 `device … attached / detached` 重建：中转自己只把用量按
+    **天**记账，没有小时粒度，而日报要的是 72 小时的形状。日志是唯一的现成来源；
+    取不到就返回 `None`，由渲染层写「没有日志数据」，不编数字。
+
+    返回按小时升序：`accounts` 是那一小时内有设备在线的**账号数**（同账号多台设备只算
+    一个），`devices` 是在线的设备台数。
+    """
+    hour_ms = 3_600_000
+    end = int(end_ms)
+    start = end - hours * hour_ms
+    raw = lines if lines is not None else _read_journal(unit, start, end)
+    if raw is None:
+        return None
+
+    # 同一台设备同一时刻只有一条 socket：新连接（含 `attached again`）先关掉上一条，
+    # `closed a socket that had already been replaced` 是旧 socket 的收尾、不是断开，忽略。
+    open_at: dict[str, tuple[int, str | None]] = {}
+    spans: list[tuple[int, int, str, str | None]] = []
+    for line in raw:
+        event = _DEVICE_EVENT.search(line)
+        if event is None:
+            continue
+        device_id, kind = event.group(1), event.group(2)
+        if kind == "closed a socket that had already been replaced":
+            continue
+        at = _parse_journal_time(line)
+        if at is None:
+            continue
+        at = min(max(at, start), end)
+        agent_id = _AGENT_IN_LINE.search(line)
+        agent = agent_id.group(1) if agent_id else None
+        if kind.startswith("attached"):
+            if device_id in open_at:
+                opened, previous_agent = open_at.pop(device_id)
+                spans.append((opened, at, device_id, previous_agent))
+            open_at[device_id] = (at, agent)
+        else:
+            previous = open_at.pop(device_id, None)
+            if previous is not None:
+                spans.append((previous[0], at, device_id, previous[1] or agent))
+    for device_id, (opened, agent) in open_at.items():   # 窗口末尾还连着的，算到 end
+        spans.append((opened, end, device_id, agent))
+
+    # 账号来源：设备行优先（设备可能已换账号？不会，但行被清理过时用同一条日志里的 agent 兜底）。
+    def account_of(device_id: str, agent_id: str | None) -> str | None:
+        device = devices.get(device_id)
+        # 调试设备（DSH- 前缀、模拟器机型）不进日报，与其它板块同一口径；
+        # 不能走下面的 agent 兜底，否则它们会被算到 owner 账号头上。
+        if device is not None and _is_debug_device(device):
+            return None
+        if device and device.get("accountId"):
+            return device["accountId"]
+        owner_agent = (device or {}).get("agentId") or agent_id
+        return (agents.get(owner_agent) or {}).get("accountId") if owner_agent else None
+
+    # 部署时区是整小时偏移（Asia/Shanghai，+08:00），所以纪元小时边界就是本地小时边界。
+    first = (start // hour_ms) * hour_ms
+    buckets = {at: {"hourStartAt": at, "accounts": set(), "devices": set()}
+               for at in range(first, end + 1, hour_ms)}
+    for opened, closed, device_id, agent_id in spans:
+        if closed < opened:
+            continue
+        account_id = account_of(device_id, agent_id)
+        if not account_id:                             # 设备行被清理、日志也没带 agent：无法归属
+            continue
+        cursor = (opened // hour_ms) * hour_ms
+        while cursor <= closed:
+            bucket = buckets.get(cursor)
+            if bucket is not None:
+                bucket["devices"].add(device_id)
+                bucket["accounts"].add(account_id)
+            cursor += hour_ms
+    return [{"hourStartAt": bucket["hourStartAt"],
+             "accounts": len(bucket["accounts"]),
+             "devices": len(bucket["devices"])}
+            for bucket in (buckets[at] for at in sorted(buckets))]
 
 
 def _resolve_as_of(value: str | None, *, now: int | None = None) -> int | None:
@@ -1211,7 +1399,35 @@ def _first_seen_days(store: Store, *, debug_ids: set[str],
     return first
 
 
-def _ops_report(store: Store, days: int, *, as_of: int | None = None) -> dict[str, Any]:
+def _invite_report(store: Store, stamp: int, enrollments: list[dict[str, Any]],
+                   *, test_count: int = 0) -> dict[str, Any]:
+    """激活码（邀请码）的账：还有多少能用、哪些快到期、最近谁激活了。
+
+    `remaining` 是老口径（未使用的全部），把**已过期但没用**的也算在里面；日报要说
+    「还剩几张能发」，所以另给 `usable`（未用且未过期）、`expiringSoon`（7 天内到期）、
+    `expiredUnused`（已经废掉的）。三个数各自独立，加起来才等于 `remaining`。
+    """
+    totals = store.invite_totals()
+    soon = int(stamp) + 7 * 86_400_000
+    unused = [{"createdAt": int(row.get("createdAt") or 0),
+               "expiresAt": int(row.get("expiresAt") or 0),
+               "note": row.get("note")}
+              for row in store.list_invites()]
+    usable = [row for row in unused if row["expiresAt"] > int(stamp)]
+    return {
+        **totals,
+        "test": test_count,
+        "usable": len(usable),
+        "expiringSoon": len([row for row in usable if row["expiresAt"] <= soon]),
+        "expiredUnused": len([row for row in unused if row["expiresAt"] <= int(stamp)]),
+        # 最早到期的排前面：日报要回答"下一批什么时候失效"。
+        "unused": sorted(usable, key=lambda row: row["expiresAt"])[:12],
+        "enrollments": enrollments,
+    }
+
+
+def _ops_report(store: Store, days: int, *, as_of: int | None = None,
+                journal_unit: str = DEFAULT_JOURNAL_UNIT) -> dict[str, Any]:
     """日报的板块：**今日** + 反馈 / 设备 / 用量 / 留存 / 邀请码（最近 `--days` 天）。
 
     `--days` 是窗口（本地日，含 `as_of` 那天）：反馈只数窗口内**新建**的线程，用量与每日新增
@@ -1271,6 +1487,19 @@ def _ops_report(store: Store, days: int, *, as_of: int | None = None) -> dict[st
         "generatedAt": now,
         "asOf": stamp,
         "days": days,
+        # 版本分布：只看最近 48 小时有设备连接的用户（owner 2026-10-17 定）。
+        "versions": _version_report(
+            store, since_ms=stamp - REPORT_VERSION_HOURS * 3_600_000, until_ms=stamp,
+            devices={row["deviceId"]: row for row in devices}, debug_ids=debug_ids,
+            known_ids=known_ids, external=external),
+        "versionsWindowHours": REPORT_VERSION_HOURS,
+        # 过去 72 小时的活跃形状：从 systemd 日志重建，只算**有设备在连**的账号。
+        # 取不到日志时 `buckets` 为 None，渲染层写「没有日志数据」，不拿别的数据凑。
+        "hourlyActivity": {"windowHours": REPORT_ACTIVITY_HOURS,
+                           "buckets": _hourly_activity(
+                               REPORT_ACTIVITY_HOURS, stamp,
+                               {row["deviceId"]: row for row in devices},
+                               agent_versions, unit=journal_unit)},
         "today": _today_report(store, stamp=stamp, threads=threads, real_devices=real,
                                debug_ids=debug_ids, names=names, known_ids=known_ids,
                                external=external),
@@ -1306,8 +1535,8 @@ def _ops_report(store: Store, days: int, *, as_of: int | None = None) -> dict[st
                                        active_by_day=active_by_day,
                                        first_seen=_first_seen_days(store, debug_ids=debug_ids,
                                                                    owners=owners)),
-        "invites": {**store.invite_totals(), "test": len(enrollments) - len(real_enrollments),
-                    "enrollments": real_enrollments},
+        "invites": _invite_report(store, stamp, real_enrollments,
+                                  test_count=len(enrollments) - len(real_enrollments)),
     }
 
 
