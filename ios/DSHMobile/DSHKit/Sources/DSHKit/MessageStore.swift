@@ -86,6 +86,9 @@ public actor MessageStore {
         migrator.registerMigration("v3-aggregate-excludes-pending") { db in
             try repairAggregatesExcludingPending(db)
         }
+        migrator.registerMigration("v4-fts-all-content-parts") { db in
+            try migrateToV4FtsAllParts(db)
+        }
         return migrator
     }()
 
@@ -95,9 +98,21 @@ public actor MessageStore {
     /// 四处（触发器 / 清理迁移回填 / 本重建 / LIKE 降级）必须共用同一式。
     /// 参数 `column` 在触发器里是 `new.payload`/`old.payload`，查询里是 `payload`。
     static func ftsTextExpr(_ column: String) -> String {
-        """
-        COALESCE(NULLIF(json_extract(CAST(\(column) AS TEXT), '$.event.data.text'), ''), \
-        json_extract(CAST(\(column) AS TEXT), '$.event.data.content[0].text'), '')
+        let json = "CAST(\(column) AS TEXT)"
+        // 2026-10-17 真机：搜「我」拿不到全部用户输入。原来只取 `$.event.data.text` 或
+        // `content[0].text`——blocks 形态常常**不止一段**（附件、分段输入），靠后的段就被
+        // 整段漏掉。这里把每一段的 `text` 都拼进来（`json_each` 遍历，`json_valid` 挡住
+        // 非对象元素，`content` 不是数组时 `json_each` 给 0 行）。
+        return """
+        COALESCE(NULLIF(json_extract(\(json), '$.event.data.text'), ''), '') || ' ' ||
+        COALESCE((SELECT group_concat(json_extract(part.value, '$.text'), ' ')
+                  FROM json_each(json_extract(\(json), '$.event.data.content')) AS part
+                  WHERE json_valid(part.value)
+                    AND json_extract(part.value, '$.text') IS NOT NULL), '') || ' ' ||
+        COALESCE((SELECT group_concat(json_extract(block.value, '$.text'), ' ')
+                  FROM json_each(json_extract(\(json), '$.event.data.message.content')) AS block
+                  WHERE json_valid(block.value)
+                    AND json_extract(block.value, '$.text') IS NOT NULL), '')
         """
     }
 
@@ -252,6 +267,21 @@ public actor MessageStore {
     /// 触发器与索引对真实数据仍全是空串（T036 慢闸在仿真器真库里抓出）。
     /// 已应用过旧迁移的库：换触发器定义 + 整表再重建。
     static func migrateToV3BlocksText(_ db: Database) throws {
+        try db.execute(sql: "DROP TRIGGER IF EXISTS record_fts_ai")
+        try db.execute(sql: """
+            CREATE TRIGGER record_fts_ai AFTER INSERT ON record
+            WHEN new.role = 'me' BEGIN
+              INSERT INTO record_fts(rowid, text) VALUES (
+                new.rowid, \(ftsTextExpr("new.payload")));
+            END;
+            """)
+        try reindexRecordFts(db)
+    }
+
+    /// v4-fts-all-content-parts：`ftsTextExpr` 从"只取 `data.text` / `content[0].text`"
+    /// 改成"拼接每一段 `text`"（2026-10-17：搜「我」漏命中）。已有的库里触发器与索引
+    /// 都是旧式建出来的，所以换触发器定义 + 整表重建，与新库一致。
+    static func migrateToV4FtsAllParts(_ db: Database) throws {
         try db.execute(sql: "DROP TRIGGER IF EXISTS record_fts_ai")
         try db.execute(sql: """
             CREATE TRIGGER record_fts_ai AFTER INSERT ON record

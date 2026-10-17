@@ -176,6 +176,27 @@ final class MessageStoreTests: XCTestCase {
         // 直挂 data.text 的旧形态仍可用（fixture 的 record() 就是这条路径，上面已覆盖）。
     }
 
+    /// 2026-10-17 真机：搜「我」「的」不是用户输入的全集。blocks 形态的正文常常**不止一段**
+    /// （附件、分段输入），旧的提取式只取 `content[0].text`，靠后的段整段漏掉。
+    /// FTS（≥3 字符）与 LIKE 降级（短词）都必须能看到每一段。
+    func testRecordSearchSeesEveryContentPart() async throws {
+        let json = #"{"type":"user/message","seq":9,"time":1789276358732,"data":{"content":[{"type":"image","src":"x.png"},{"type":"text","text":"第二段才提到我"},{"type":"text","text":"的部署脚本"}],"source":{"kind":"user","rpcId":"r-1"}}}"#
+        let event = try JSONDecoder().decode(SessionEvent.self, from: Data(json.utf8))
+        try await upsert([SessionRecord(event: event)])
+
+        // 短查询（<3 字符）走 LIKE：第二段里的「我」要命中。
+        let short = try await store.searchUserInputRecords(scope: "mac", query: "我")
+        XCTAssertEqual(short.map { $0.record.event.seq }, [9],
+                       "a short query must reach the second content part")
+        // 长查询（≥3 字符）走 FTS trigram：同样要命中（索引里必须含每一段）。
+        let long = try await store.searchUserInputRecords(scope: "mac", query: "部署脚本")
+        XCTAssertEqual(long.map { $0.record.event.seq }, [9],
+                       "the FTS index must include every content part")
+        // 对照：三段里都没有的词不该命中。
+        let miss = try await store.searchUserInputRecords(scope: "mac", query: "安装")
+        XCTAssertTrue(miss.isEmpty, "a word that appears nowhere must not match")
+    }
+
     // MARK: - T032：source 列
 
     /// 写入路径从 data.source 提取 source_kind/source_id；缺省（老数据形态）留空，
