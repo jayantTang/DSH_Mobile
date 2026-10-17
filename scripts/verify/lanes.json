@@ -92,7 +92,9 @@
       "title": "iOS App",
       "globs": [
         "ios/DSHMobile/DSHMobile/**",
-        "ios/DSHMobile/DSHMobile.xcodeproj/**"
+        "ios/DSHMobile/Modules/**",
+        "ios/DSHMobile/DSHMobile.xcodeproj/**",
+        "ios/DSHMobile/project.yml"
       ]
     },
     {
