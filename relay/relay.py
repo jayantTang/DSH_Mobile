@@ -21,6 +21,7 @@ from typing import Any
 from aiohttp import WSMsgType, web
 
 import dlp
+import monitor as monitor_module
 import push
 import version
 from api import DEVICE_SUBPROTOCOL_PREFIX, bearer_token, device_subprotocol_token, cors_preflight, register_http_routes
@@ -250,23 +251,39 @@ async def link_device(request: web.Request) -> web.WebSocketResponse:
 
 # ── application ─────────────────────────────────────────────────────────────
 
+async def _monitor_tick(monitor: Any, interval: float = 60.0) -> None:
+    """每 ``interval`` 秒把监控的计数落一次盘（没变化时是空操作）。"""
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            monitor.flush()
+        except Exception:  # noqa: BLE001 - 监控坏掉不许影响中转
+            LOGGER.debug("relay: monitor flush failed", exc_info=True)
+
 
 def create_app(*, store: Store, limits: Limits | None = None,
                pair_ttl_ms: int = DEFAULT_PAIR_TTL_MS,
                device_ttl_ms: int = DEFAULT_DEVICE_TTL_MS,
                max_paired_devices: int = DEFAULT_MAX_PAIRED_DEVICES,
                base_path: str = "",
-               logger: logging.Logger | None = None) -> web.Application:
+               logger: logging.Logger | None = None,
+               monitor: Any = None) -> web.Application:
     limits = limits or Limits()
     base_path = normalize_base_path(base_path)
-    app = web.Application(client_max_size=limits.max_frame_bytes, middlewares=[cors_preflight])
+    # 监控先于其它中间件装配：它必须在最外层，才能看见后面所有中间件与 handler
+    # 抛出来的异常（见 `monitor.middleware`）。
+    monitor = monitor if monitor is not None else monitor_module.IncidentMonitor.from_env()
+    app = web.Application(client_max_size=limits.max_frame_bytes,
+                          middlewares=[monitor_module.middleware(monitor), cors_preflight])
     app["store"] = store
     app["limits"] = limits
     app["pair_ttl_ms"] = pair_ttl_ms
     app["device_ttl_ms"] = device_ttl_ms
     app["max_paired_devices"] = max(0, int(max_paired_devices))
     app["base_path"] = base_path
+    app["monitor"] = monitor
     app["hub"] = RelayHub(store, logger=logger or LOGGER, limits=limits)
+    app["hub"].set_monitor(monitor)
 
     def route(method: str, path: str, handler: Any) -> None:
         """Register one route, and its prefixed twin when a base path is set."""
@@ -284,11 +301,22 @@ def create_app(*, store: Store, limits: Limits | None = None,
         # 撤销对账：库里撤销是唯一事实来源，relay 负责让在线世界跟上它
         # （admin.py / 手工改库这些 relay 够不着的撤销路径靠这条兜底）。
         _app["hub"].start_revoke_reconcile()
+        # 异常监控的状态落盘（按类别去重的计数）。关掉时是空操作。
+        _app["monitor_task"] = asyncio.create_task(_monitor_tick(monitor))
+        LOGGER.info("relay: incident monitor %s", monitor.describe())
         # APNs 投递器（R-1）。未配置或 `DLP_APNS_ENABLED=0` 时它把自己标成 disabled
         # 并打一行 warn——**转发行为与今天逐字一致**，这是「推送配置错掉转发」的防线。
         _app["hub"].set_push_sender(push.PushSender.from_env())
 
     async def _cleanup(_app: web.Application) -> None:
+        task = _app.get("monitor_task")
+        if task is not None:
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):  # noqa: B014 - cancellation is expected
+                pass
+        monitor.save_state()
         sender = getattr(_app["hub"], "push", None)
         if sender is not None:
             await sender.aclose()

@@ -57,6 +57,24 @@ Environment=DLP_LOG_LEVEL=INFO
 Environment=DLP_MAX_DEVICES_PER_AGENT=8
 Environment=DLP_DEVICE_RATE_KBPS=100000
 Environment=DLP_DEVICE_DAILY_MB=5120
+
+# ── 异常告警（`monitor.py`）─────────────────────────────────────────────────
+# 中转只负责**记**：把"没见过的异常 / 连接反复断开 / 上游坏字符"追加到
+# $DLP_ALERT_DIR/alerts.jsonl。投递由 dsh-relay-alerts.timer 每两分钟做一趟
+# （见 deploy/dsh-relay-alerts.service），中转进程因此不持有任何发信凭据。
+#
+# 2026-10-17 的事故就是这段东西缺失的证据：143 次未处理异常、702 次连接器断开，
+# 没有一条告警，用户不发反馈就没人知道。留空 = 关闭（与没有监控时逐字一致）。
+Environment=DLP_ALERT_DIR=/var/lib/dsh-relay/alerts
+# 同一类别多久之后才重新提醒一次（小时）。新类别总是立刻报，这条只压"同一类还在发生"。
+Environment=DLP_ALERT_RENOTIFY_HOURS=24
+# 告警上限：一小时与一天各多少条。超出的只累计次数，并把"压掉了多少条"带到下一条里。
+Environment=DLP_ALERT_MAX_PER_HOUR=6
+Environment=DLP_ALERT_MAX_PER_DAY=40
+# 抖动判定窗口：同一台电脑在 300 秒内断开 5 次算"反复断开"，同一窗口只报一次。
+Environment=DLP_ALERT_FLAP_WINDOW_S=300
+Environment=DLP_ALERT_FLAP_THRESHOLD=5
+
 # ProtectSystem=strict makes the filesystem read-only: never write .pyc files.
 Environment=PYTHONDONTWRITEBYTECODE=1
 

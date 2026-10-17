@@ -63,7 +63,9 @@ esac
 
 if [ "$UNINSTALL" -eq 1 ]; then
   say "stopping and removing the systemd unit"
+  systemctl disable --now dsh-relay-alerts.timer >/dev/null 2>&1 || true
   systemctl disable --now dsh-relay.service >/dev/null 2>&1 || true
+  rm -f /etc/systemd/system/dsh-relay-alerts.timer /etc/systemd/system/dsh-relay-alerts.service
   rm -f "$UNIT_PATH"
   systemctl daemon-reload
 
@@ -105,8 +107,8 @@ install -d -m 0750 -o root -g "$SERVICE_USER" /etc/dsh-relay/apns
 # ── 2. sources and venv ─────────────────────────────────────────────────────
 
 say "installing relay sources into $APP_DIR"
-for module in relay.py api.py dlp.py store.py hub.py admin.py push.py feedback.py \
-              version.py purge-revoked-devices.py; do
+for module in relay.py api.py dlp.py store.py hub.py monitor.py admin.py push.py feedback.py \
+              alert-dispatch.py version.py purge-revoked-devices.py; do
   [ -f "$SRC_DIR/$module" ] || die "$SRC_DIR/$module is missing"
   install -m 0644 -o root -g root "$SRC_DIR/$module" "$APP_DIR/$module"
 done
@@ -151,11 +153,27 @@ else
   say "keeping the existing $APNS_ENV"
 fi
 
+# 异常告警的收件账号（owner 本人）。同样**只写模板、绝不覆盖**：那是人填过的账号。
+# 填上之前 relay 照常写告警队列，只是没有人收——不会丢，也不会发错人。
+ALERT_ENV=/etc/dsh-relay/alert.env
+if [ ! -f "$ALERT_ENV" ]; then
+  say "writing the alert recipient template to $ALERT_ENV (fill DLP_ALERT_ACCOUNT)"
+  install -m 0640 -o root -g root "$SRC_DIR/deploy/alert.env.example" "$ALERT_ENV"
+else
+  say "keeping the existing $ALERT_ENV"
+fi
+
 # ── 3. systemd unit ─────────────────────────────────────────────────────────
 
 say "installing $UNIT_PATH"
 install -m 0644 -o root -g root "$SRC_DIR/deploy/dsh-relay.service" "$UNIT_PATH"
+# 告警投递：relay 只往 $DATA_DIR/alerts 追加记录，这一对 unit 每两分钟把它投进信箱。
+ALERT_UNIT_PATH=/etc/systemd/system/dsh-relay-alerts.service
+ALERT_TIMER_PATH=/etc/systemd/system/dsh-relay-alerts.timer
+install -m 0644 -o root -g root "$SRC_DIR/deploy/dsh-relay-alerts.service" "$ALERT_UNIT_PATH"
+install -m 0644 -o root -g root "$SRC_DIR/deploy/dsh-relay-alerts.timer" "$ALERT_TIMER_PATH"
 systemctl daemon-reload
+systemctl enable --now dsh-relay-alerts.timer >/dev/null
 systemctl enable dsh-relay.service >/dev/null
 if systemctl is-active --quiet dsh-relay.service; then
   systemctl restart dsh-relay.service

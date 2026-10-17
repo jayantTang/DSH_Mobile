@@ -20,6 +20,8 @@ one agent WebSocket multiplexes every device.
 from __future__ import annotations
 
 import json
+import re
+from dataclasses import dataclass
 from typing import Any
 
 PROTOCOL_VERSION = 1
@@ -90,6 +92,95 @@ def parse_frame(raw: str | bytes) -> dict[str, Any]:
 def encode_frame(frame: dict[str, Any]) -> str:
     """Encode a frame. ``ensure_ascii`` keeps the payload byte-exact across hops."""
     return json.dumps(frame, ensure_ascii=False, separators=(",", ":"))
+
+
+# ── UTF-16 代理项（2026-10-17 生产事故的修复点）──────────────────────────────
+#
+# JSON 允许 `"\ud83d"` 这种**没有配对**的转义，`json.loads` 会原样交出一个落单的
+# 代理项字符。它没法按 UTF-8 编码，于是 `text.encode("utf-8")` 抛
+# `UnicodeEncodeError`：中转算流量的那一句把整个 agent 链路带崩，手机卡在"连接中"。
+# 为什么会切出落单代理项见 `relay/monitor.py` 的记录（诊断字段能回答"是不是卡在帧
+# 尾部"）。
+#
+# 这里的约定：**中转永远不因为一个坏字符丢掉整条链路**。落单代理项换成 U+FFFD
+# （Unicode 的"读不出来"），照常计费、照常转发。
+
+#: 任何落单的 UTF-16 代理项。配对的两个在 `json.loads` 阶段已经合并成一个字符，
+#: 所以 str 里出现代理项时一定是坏的。用 raw 串，让正则自己解释 `\uXXXX`。
+SURROGATE_PATTERN = re.compile(r"[\ud800-\udfff]")
+
+#: 落单代理项的替身。U+FFFD 是合法字符，iOS 照常解码，只显示成一个方块。
+REPLACEMENT_CHARACTER = "\ufffd"
+
+#: 诊断记录里保留多长的上下文。够看出被切开的是什么（emoji、中文、JSON 转义），
+#: 又不至于把用户内容写进日志。
+_CONTEXT_CHARS = 24
+
+
+@dataclass(frozen=True)
+class SurrogateDamage:
+    """一处（或几处）落单代理项的形态与位置——只用于排障。
+
+    字段刻意都是"位置"而不是"内容"：这个类只在真的遇到坏字符时构造，进的是运维
+    告警，所以**不**带正文，只带 `context` 那一小段。
+    """
+
+    count: int
+    total_chars: int
+    first_index: int
+    trailing_chars: int
+    kinds: str
+    context: str
+
+    def as_details(self) -> dict[str, Any]:
+        return {
+            "count": self.count,
+            "totalChars": self.total_chars,
+            "firstIndex": self.first_index,
+            "trailingChars": self.trailing_chars,
+            "kinds": self.kinds,
+            "context": self.context,
+        }
+
+
+def _describe_damage(text: str) -> SurrogateDamage:
+    """扫描一遍坏文本，算出第一处落单代理项的位置与周围上下文。"""
+    matches = list(SURROGATE_PATTERN.finditer(text))
+    first = matches[0]
+    high = sum(1 for m in matches if "\ud800" <= m.group() <= "\udbff")
+    low = len(matches) - high
+    kinds = "high" if low == 0 else "low" if high == 0 else "mixed"
+    start = max(0, first.start() - _CONTEXT_CHARS)
+    end = min(len(text), first.end() + _CONTEXT_CHARS)
+    snippet = SURROGATE_PATTERN.sub(REPLACEMENT_CHARACTER, text[start:end])
+    return SurrogateDamage(
+        count=len(matches),
+        total_chars=len(text),
+        first_index=first.start(),
+        trailing_chars=len(text) - first.end(),
+        kinds=kinds,
+        context=snippet,
+    )
+
+
+def prepare_outbound(text: str) -> tuple[str, int, SurrogateDamage | None]:
+    """Make ``text`` sendable and return ``(clean_text, utf8_size, damage)``.
+
+    ``utf8_size`` is the length of what will actually go on the wire, which is
+    also what the daily allowance is charged. The fast path is one ``encode`` —
+    the same call the relay already made, so the common case costs nothing extra.
+    """
+    try:
+        return text, len(text.encode("utf-8")), None
+    except UnicodeEncodeError:
+        damage = _describe_damage(text)
+        clean = SURROGATE_PATTERN.sub(REPLACEMENT_CHARACTER, text)
+        return clean, len(clean.encode("utf-8")), damage
+
+
+def utf8_len(text: str) -> int:
+    """Byte length on the wire, never raising (see :func:`prepare_outbound`)."""
+    return prepare_outbound(text)[1]
 
 
 def frame_type(frame: dict[str, Any]) -> str:

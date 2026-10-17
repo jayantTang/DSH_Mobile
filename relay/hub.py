@@ -339,7 +339,9 @@ class DeviceLink(Link):
         connector or a future client must too. Writing the pieces as WebSocket
         *continuation* frames instead would remove the requirement entirely.
         """
-        size = len(text.encode("utf-8"))
+        # 坏字符不能在这里变成异常：writer 一抛，writer 任务就退出，整条设备链路
+        # 静默死掉且不会重连回来（2026-10-17 的生产事故，见 `dlp.prepare_outbound`）。
+        text, size, _damage = dlp.prepare_outbound(text)
         if size <= _CHUNK_CHARS:
             await self.pace(size)
             await self.ws.send_str(text)
@@ -714,6 +716,13 @@ class RelayHub:
         # 0 或负数 = 关掉（只给测试与极端场景用）。
         self.revoked_reconcile_interval = _reconcile_interval_from_env()
         self._reconcile_task: asyncio.Task[None] | None = None
+        #: 异常监控（`monitor.IncidentMonitor`）。None = 不记（测试与未配置的部署）。
+        #: 只在这两类事件发生时被调用：转发路径修好了一个坏字符、一条 agent 链路断开。
+        self.monitor: Any = None
+
+    def set_monitor(self, monitor: Any) -> None:
+        """装上一个监控器。注入而不是在这里构造：hub 不为告警负责，只为它取数。"""
+        self.monitor = monitor
 
     # ── agent lifecycle ─────────────────────────────────────────────────────
 
@@ -793,6 +802,11 @@ class RelayHub:
         if link.superseded:
             return
         self.logger.info("relay: agent %s disconnected", link.agent_id)
+        # 一条链路断了本身是常态（锁屏、断网、换网），**反复断**才是故障。是不是
+        # "反复"由监控器按窗口判定，hub 只报"断了一条"（2026-10-17 那次连接器每
+        # 分钟重连一轮，日志里 702 条 disconnected，没人注意到）。
+        if self.monitor is not None:
+            self.monitor.note_agent_disconnect(link.agent_id, name=getattr(link, "name", ""))
         # 挂在这台电脑上的上传立刻失败：不然 HTTP 请求会等到自己的超时，
         # 手机上看起来是"一直在传"，而不是"传失败了"。
         await self._drop_agent_bridges(link.agent_id, "the PC connector disconnected")
@@ -1035,11 +1049,17 @@ class RelayHub:
             return
         # The relay's own addressing key never reaches the device.
         text = dlp.encode_frame(dlp.strip_device_id(frame))
+        # 连接器有可能送来一个带落单代理项的字符串（JSON 允许 `"\ud83d"` 这种没有配对的
+        # 转义）。**先修再算账**：修好的文本才是真正发出去的字节，按它计费；坏字符换成
+        # U+FFFD 后照常转发，绝不让一个坏字符崩掉整条链路。
+        text, size, damage = dlp.prepare_outbound(text)
+        if damage is not None:
+            self._note_surrogate(link, device_id, kind, damage)
         # The daily allowance is charged on what actually goes to the phone, and
         # the phone is told why it stopped instead of silently going quiet: a
         # client that keeps reconnecting into a spent quota is worse than one
         # that shows "today's traffic allowance is used up".
-        if not device.charge_daily(len(text.encode("utf-8"))):
+        if not device.charge_daily(size):
             self.logger.warning("relay: device %s exceeded its daily allowance (%d bytes)",
                                 device_id, device.quota.limit)
             device.enqueue_frame(dlp.error_frame(
@@ -1049,6 +1069,25 @@ class RelayHub:
             return
         if not device.enqueue_text(text):
             await self._drop_device(device_id, "backpressure")
+
+    def _note_surrogate(self, link: AgentLink, device_id: str, kind: str,
+                        damage: dlp.SurrogateDamage) -> None:
+        """记一条"上游送来了坏字符"的诊断（见 `monitor.IncidentMonitor`）。
+
+        这条日志是**定位上游根因的唯一线索**：`trailingChars` 接近 0 说明坏字符卡在
+        帧尾——典型是被按字符切分的流式分片截断；深在中间则更像上游自己拼错了。
+        两条路径都只做一次 JSON 序列化 + 一次日志，遇到坏字符才会走进来。
+        """
+        self.logger.warning("relay: repaired %d unpaired surrogate(s) in a %s frame from agent %s "
+                            "for device %s (at char %d of %d, %d left in frame, kinds=%s)",
+                            damage.count, kind, link.agent_id, device_id,
+                            damage.first_index, damage.total_chars, damage.trailing_chars,
+                            damage.kinds)
+        monitor = self.monitor
+        if monitor is None:
+            return
+        monitor.note_unpaired_surrogates(agent_id=link.agent_id, device_id=device_id,
+                                        frame_type=kind, damage=damage)
 
     # ── push notifications (R-1) ────────────────────────────────────────────
 

@@ -379,6 +379,11 @@ Overridable: `DSH_RELAY_USER`, `DSH_RELAY_DIR`, `DSH_RELAY_DATA`,
 | `--dead-device-warn-threshold` / `DLP_DEAD_DEVICE_WARN_THRESHOLD` | `200` | 一个 agent 名下的死设备记录（已撤销 ∪ 已过期）超过它就在该连接器连上时记一条 WARNING；`0` = 不告警。只告警、不自动删——清理见「Dead device records」 |
 | `--base-path` / `DLP_BASE_PATH` | *(empty)* | optional mount prefix; every route is served with and without it |
 | `--log-level` / `DLP_LOG_LEVEL` | `INFO` | log verbosity |
+| `DLP_ALERT_DIR` | *(empty = 关)* | 异常告警写到哪（`alerts.jsonl`）。空值等于没有监控，行为与没有本模块时逐字一致。见「异常兜底与告警」 |
+| `DLP_ALERT_RENOTIFY_HOURS` | `24` | 同一类别多久之后才重新提醒；新类别总是立刻报 |
+| `DLP_ALERT_MAX_PER_HOUR` / `DLP_ALERT_MAX_PER_DAY` | `6` / `40` | 告警条数上限；超出只累计，压掉的条数带到下一条里 |
+| `DLP_ALERT_FLAP_WINDOW_S` / `DLP_ALERT_FLAP_THRESHOLD` | `300` / `5` | 同一台电脑在窗口内断开几次算「反复断开」 |
+| `DLP_ALERT_SURROGATE_SAMPLES` | `20` | 上游坏字符每天最多带几份完整取样（位置/帧尾余量/上下文） |
 
 ### Why the three limits exist (and how to pick numbers)
 
@@ -411,6 +416,43 @@ perfectly ordinary session not ruining everybody else's:
   frame (code `limit/devices`) on an accepted socket followed by a clean close
   with code **`4012`**, not as a bare HTTP `403` — the phone can then tell the
   person the host is full.
+
+### 异常兜底与告警（2026-10-17 事故之后）
+
+**兜底：一个坏字符不许打断链路。** 转发前算流量要按 UTF-8 编码帧文本；如果上游送来
+一个落单的 UTF-16 代理项（典型来源是被切开的 emoji，JSON 里长成 `"\ud83d"`），
+`text.encode("utf-8")` 会抛 `UnicodeEncodeError`，整个 agent 链路随之断开，手机重连后
+连接器重放同一帧再崩一次——用户看到的是永远"连接中"。现在 `dlp.prepare_outbound()`
+把落单代理项换成 `U+FFFD` 再转发，按修好后的字节数计费；设备写入器的分片路径同样不抛。
+干净文本走的还是原来那一次 `encode`，热路径没有多出开销。
+
+**告警：没见过的异常要主动报出来。** `monitor.py` 按类别（异常类型 + 最内层代码位置、
+每台电脑的抖动、坏字符）去重与限量，只把记录追加到 `$DLP_ALERT_DIR/alerts.jsonl`；
+`alert-dispatch.py` 由 `dsh-relay-alerts.timer` 每两分钟取走，投进 owner 自己的信箱。
+中转因此不持有任何发信凭据，发信失败也不会影响转发（失败会把记录放回队列，一条不丢）。
+
+判据是"**有没有出现过此前没见过的类别**"：新类别立刻报，同一类别 24 小时内只报一次并累计
+次数；一小时/一天各有条数上限，压掉的条数带到下一条里。事故当天的情况是 143 次未处理
+异常、702 次连接器断开，一条告警都没有——所以这套东西的价值不在"报几次"，而在
+"不会再有没人知道的那一类"。
+
+```bash
+# 看一眼现在攒了什么（不动队列、不发信）
+/opt/dsh-relay/.venv/bin/python /opt/dsh-relay/alert-dispatch.py \
+  --alert-dir /var/lib/dsh-relay/alerts --dry-run
+
+# 立刻投一趟（平时由 timer 每两分钟做）
+systemctl start dsh-relay-alerts.service
+journalctl -u dsh-relay-alerts -n 30 --no-pager
+```
+
+收件账号在 `/etc/dsh-relay/alert.env`（`DLP_ALERT_ACCOUNT`，deploy.sh 只写模板、不覆盖）。
+没填时中转照常写队列，只是没人收——不会丢，也不会发错人。
+
+坏字符的告警带四个定位字段：`frameType`、`firstIndex` / `totalChars`、`trailingChars`
+（坏字符之后这一帧还剩多少字符）与 `context`（两侧各 24 字符）。`trailingChars` 只剩
+JSON 收尾的几字符，说明坏字符卡在正文末尾——这是"被按字符切分的流式分片截断"的形态；
+深在中间则说明上游自己拼错了。这一条是定位上游根因的唯一线索。
 
 ### Watching the load
 
