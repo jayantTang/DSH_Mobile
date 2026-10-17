@@ -6,11 +6,11 @@ Authoritative, implementation-oriented reference for the **DeepSeek Harness (DSH
 
 | | |
 |---|---|
-| **DSH version** | `0.1.5-rc.1` |
-| **Generated at** | `2026-09-13T05:51:44.713Z` |
+| **DSH version** | `0.2.0-rc.2` |
+| **Generated at** | `2026-09-13T05:51:44.713Z` (job surface re-verified `2026-10-17`) |
 | **Probed server** | `http://127.0.0.1:54499` (pid 43814, desktop shell) |
-| **Endpoints catalogued** | **47** (42 unary, 5 stream) |
-| **Method** | Host FaceModels (`typert.host.js` `TYPERT.invocations`) cross-checked against the live server with the descriptor-validation probe, plus verbatim `.d.ts` extraction and live captures in `docs/artifacts/samples/`. |
+| **Endpoints catalogued** | **50** (45 unary, 5 stream) |
+| **Method** | Host FaceModels (`typert.host.js` `TYPERT.invocations`) cross-checked against the live server with the descriptor-validation probe, plus verbatim `.d.ts` extraction and live captures in `docs/artifacts/samples/`. The `job/*` surface and the forwarded-event allowlist were re-read from the installed `0.2.0-rc.2` packages and probed against a running host on `2026-10-17` (Section 7.6). |
 
 > **Provenance rules used throughout.** Every argument name in Section 2 was confirmed **empirically** against the live server, not read from source alone. Every type in Section 3 is copied **verbatim** from the installed `.d.ts` files. Where the two disagree, or where a feature is absent from this deployment, it is called out explicitly in Section 7.
 
@@ -297,7 +297,7 @@ Rules the validator enforces:
 
 ## 2. Endpoint catalog
 
-**47 endpoints** (42 unary, 5 stream). `args` is the exact set of wire field names accepted in `payload.args`; a field marked **?** is optional on the wire, and `—` means the endpoint takes no arguments and requires `"args": {}`. Request/response columns give the TypeScript type name defined verbatim in Section 3.
+**50 endpoints** (45 unary, 5 stream). `args` is the exact set of wire field names accepted in `payload.args`; a field marked **?** is optional on the wire, and `—` means the endpoint takes no arguments and requires `"args": {}`. Request/response columns give the TypeScript type name defined verbatim in Section 3.
 
 | Method | Kind | `payload.args` fields | Request type | Response type | Semantics |
 |---|---|---|---|---|---|
@@ -310,6 +310,9 @@ Rules the validator enforces:
 | `directoryPicker/list` | unary | `path` **?** | — | `DirectoryListing` | List one directory level plus ancestry for an in-app browser (needs the browse backend; unavailable in this deployment). |
 | `directoryPicker/pick` | unary | — | — | `string \| null` | Open the Host OS directory chooser and return the chosen absolute path (or null when cancelled). |
 | `fileReferences/list` | unary | `agentId`, `query` | — | `FileReferenceCandidate[]` | Complete path-only file reference candidates inside an Agent/session cwd for a query prefix. |
+| `job/follow` | stream | `request` | `JobFollowRequest` | `JobFollowFrame` | Observe one job: an `opened` anchor carrying its projection, coalesced `output` batches, then one terminal `status` after the ring drains. |
+| `job/kill` | unary | `request` | `JobKillRequest` | `JobKillValue` | Ask the registry to cancel one job visible to a session. Answers `requested` or `already-finished`; unknown ids are `job/not-found`. |
+| `job/list` | stream | `request` | `JobListRequest` | `JobListFrame` | Mirror the complete job set a session can see (its own plus every unowned job); whole-set replacement on each lifecycle change. |
 | `session/attachment` | unary | `request` | `SessionAttachmentRequest` | `SessionAttachmentValue` | Read one durable image attachment's metadata and base64 bytes. |
 | `session/cancel` | unary | `request` | `SessionCancelRequest` | `SessionCancelValue` | Request cancellation of the addressed Session's active turn. |
 | `session/canOpenWorkspacePath` | unary | — | — | `boolean` | Whether the Host can hand a workspace path to a native opener. |
@@ -3112,6 +3115,61 @@ export type WorkspaceId = WorkspaceIdBrand;
 
 ---
 
+### 3.12 Job controller — roster, observation, kill
+
+Verbatim from `@deepseek-ai/dsh-api-job-controller/lib/types/types.d.ts` (`0.2.0-rc.2`). `JobView` and `JobChunk` come from `@deepseek-ai/dsh-jobs/view`; the projection carries `id`, `kind`, `label`, optional `owner`, `status` (`running` / `stopping` / `completed` / `killed` / `failed`), optional `progress` and `detail`, `startedAt`, optional `finishedAt`, an `output` ring summary (`total`, `earliest`, optional `spillPaths`), and optional `outputLost` / `headOutputLost` flags.
+
+```ts
+/** Target of one `job/list` stream: the session whose visible jobs the stream mirrors. */
+export interface JobListRequest {
+    readonly sessionId: SessionId;
+}
+
+/** One `job/list` frame: the complete set the session can see after a lifecycle change. */
+export interface JobListFrame {
+    readonly type: 'rows';
+    readonly jobs: readonly JobView[];
+}
+
+/** Human-initiated cancellation of one background job visible to a session. */
+export interface JobKillRequest {
+    readonly sessionId: SessionId;
+    readonly jobId: JobId;
+}
+
+/** Receipt after the registry accepted the human kill request. */
+export interface JobKillValue {
+    readonly outcome: 'requested' | 'already-finished';
+}
+
+/** Target of one `job/follow` stream: the job, its owning session, and an optional resume offset. */
+export interface JobFollowRequest {
+    readonly sessionId?: SessionId;
+    readonly jobId: JobId;
+    /** Absolute byte offset to resume from (a prior frame's `next`). */
+    readonly from?: number;
+}
+
+export type JobFollowFrame = {
+    readonly type: 'opened';
+    readonly job: JobView;
+    /** Offset the first `output` frame continues from. */
+    readonly from: number;
+} | {
+    readonly type: 'output';
+    readonly chunks: readonly JobChunk[];
+    /** Offset to resume from after this frame. */
+    readonly next: number;
+    /** Bytes between the requested offset and `chunks` were already evicted. */
+    readonly lossy?: true;
+} | {
+    readonly type: 'status';
+    readonly job: JobView;
+};
+```
+
+`job/kill` answers `job/not-found` with `{sessionId, jobId}` when the session's job list no longer carries a killable row under that id. `job/list` is whole-set replacement, so a reconnecting client's first frame is already the truth; settled jobs stay visible only for the registry's retention window (minutes, not hours), which is why a client cannot treat `job/list` as history.
+
 ## 4. Event catalog
 
 ### 4.1 The three event channels (do not confuse them)
@@ -3122,7 +3180,7 @@ export type WorkspaceId = WorkspaceIdBrand;
 | **Durable session events** | `SessionEventEntry` = `{type:'event', event: SessionWireEvent}` | `session/follow` WS stream (inside the snapshot's `records` and as later items) | Never |
 | **Client-only live frames** | `{type:'assistant-stream', frame: SessionAssistantStreamFrame}` | `session/follow` WS stream, only when you open with `assistantStream: true` | Never |
 
-The streaming chat surface that an implementer cares about — `turn/start`, `step/start`, `assistant/message`, `tool/call`, `tool/result`, `user/message`, `session/title`, `goal/change`, `todo/write`, `approval/asked`, `approval/decided`, `compaction/*`, `subagent/*`, `feedback/*` — is **durable session-event traffic carried inside `session/follow`**. It does **not** come over `$events`. `$events` carries only the 19-event forwarded allowlist in Section 4.2.
+The streaming chat surface that an implementer cares about — `turn/start`, `step/start`, `assistant/message`, `tool/call`, `tool/result`, `user/message`, `session/title`, `goal/change`, `todo/write`, `approval/asked`, `approval/decided`, `compaction/*`, `subagent/*`, `feedback/*` — is **durable session-event traffic carried inside `session/follow`**. It does **not** come over `$events`. `$events` carries only the 27-event forwarded allowlist in Section 4.2.
 
 `SessionWireEvent` is the envelope for every durable event:
 
@@ -3140,29 +3198,37 @@ interface SessionWireEvent {
 
 `surfaceOp` is `'append'` or `{op:'replace', startSeq, endSeq}`. A `replace` means this event **supersedes** the surface nodes from `startSeq` through `endSeq` inclusive (this is what compaction does) — a client rendering a linear transcript must honor it. `sourceEventSeqs` lists the earlier surface nodes a replacement shadowed.
 
-### 4.2 `$events` forwarded-event allowlist (19 events)
+### 4.2 `$events` forwarded-event allowlist (27 events)
 
 This list is the *complete* set of application events the host forwards to clients; it is the authoritative allowlist in `@deepseek-ai/dsh-api-remotes`. `emit` frames need no answer; **waterfall** frames must be answered with `$events/result` (Section 1.8).
 
 | Event | Mode | Cordis signature (verbatim) | When it fires | Source |
 |---|---|---|---|---|
 | `agent-preset/selected` | emit — no answer required | `'agent-preset/selected'(sessionId: SessionId, agentPreset: string): void` | One session committed a different agent preset to its durable log. | `dsh-agent-presets/lib/types/types.d.ts` |
-| `approval/request` | **waterfall** — must be answered with `$events/result` | `'approval/request'(this: Scoped<Agent>, req: ApprovalRequestEvent, next: () => Promise<ApprovalOutcome>): Promise<ApprovalOutcome>` | Ask composed answerers for one decision. | `dsh-user-approval/lib/types/types.d.ts` |
 | `api-session/activity` | emit — no answer required | `'api-session/activity'(sessionId: SessionId, updatedAt: number): void` | One user-authored durable message advanced Session list activity. | `dsh-api-session-controller/lib/types/types.d.ts` |
 | `api-session/added` | emit — no answer required | `'api-session/added'(summary: SessionSummary): void` | A Session became visible to Session list consumers. | `dsh-api-session-controller/lib/types/types.d.ts` |
 | `api-session/error` | emit — no answer required | `'api-session/error'(sessionId: SessionId, message: string): void` | One Agent failed outside a durable turn position. | `dsh-api-session-controller/lib/types/types.d.ts` |
 | `api-session/removed` | emit — no answer required | `'api-session/removed'(sessionId: SessionId): void` | A Session left the live Host registry. | `dsh-api-session-controller/lib/types/types.d.ts` |
 | `api-session/status` | emit — no answer required | `'api-session/status'(sessionId: SessionId, running: boolean): void` | One Agent changed running state. | `dsh-api-session-controller/lib/types/types.d.ts` |
+| `approval/request` | **waterfall** — must be answered with `$events/result` | `'approval/request'(this: Scoped<Agent>, req: ApprovalRequestEvent, next: () => Promise<ApprovalOutcome>): Promise<ApprovalOutcome>` | Ask composed answerers for one decision. | `dsh-user-approval/lib/types/types.d.ts` |
 | `commands/change` | emit — no answer required | `'commands/change'(): void` | A command was registered or unregistered. | `dsh-commands/lib/types/types.d.ts` |
-| `credentials/reference-updated` | emit — no answer required | `'credentials/reference-updated'(ref: CredentialRef): void` | Committed change to a provider-managed credential source: a `set`, an `unset`, or an external edit observed in storage. | `dsh-credentials/lib/types/types.d.ts` |
-| `goal/activation-changed` | emit — no answer required | `'goal/activation-changed'(payload: GoalActivationChanged): void` | Process-local goal activation changed for one session. | `dsh-goal/lib/types/types.d.ts` |
-| `cordis/request-run` | emit — no answer required | `'cordis/request-run'(request: DynamicCordisRunRequest): void` | A Client-bearing activation needs a browser page, and may require a user decision. | `dsh-cordis-host-runner/lib/types/types.d.ts` |
-| `cordis/request-run-resolved` | emit — no answer required | `'cordis/request-run-resolved'(resolved: DynamicCordisRequestResolved): void` | A pending Client activation request left the answerable state. | `dsh-cordis-host-runner/lib/types/types.d.ts` |
 | `cordis/dynamic-package` | emit — no answer required | `'cordis/dynamic-package'(pkg: DynamicCordisPackage): void` | One exact Plugin/Package activation is now live in the Host. | `dsh-cordis-host-runner/lib/types/types.d.ts` |
 | `cordis/dynamic-retract` | emit — no answer required | `'cordis/dynamic-retract'(retracted: DynamicCordisRetracted): void` | One exact activation was withdrawn. | `dsh-cordis-host-runner/lib/types/types.d.ts` |
 | `cordis/inspect-query` | emit — no answer required | `'cordis/inspect-query'(request: CordisInspectQueryRequest): void` | Request a live read-only query from the Client inspect registry. | `dsh-cordis-host-runner/lib/types/types.d.ts` |
 | `cordis/inspect-query-resolved` | emit — no answer required | `'cordis/inspect-query-resolved'(resolved: CordisInspectQueryResolved): void` | Notify every Client that an inspect query has settled or been cancelled. | `dsh-cordis-host-runner/lib/types/types.d.ts` |
+| `cordis/request-run` | emit — no answer required | `'cordis/request-run'(request: DynamicCordisRunRequest): void` | A Client-bearing activation needs a browser page, and may require a user decision. | `dsh-cordis-host-runner/lib/types/types.d.ts` |
+| `cordis/request-run-resolved` | emit — no answer required | `'cordis/request-run-resolved'(resolved: DynamicCordisRequestResolved): void` | A pending Client activation request left the answerable state. | `dsh-cordis-host-runner/lib/types/types.d.ts` |
+| `credentials/record-updated` | emit — no answer required | `'credentials/record-updated'(key: CredentialKey): void` | A stored credential record's value changed. | `dsh-credentials/lib/types/types.d.ts` |
+| `credentials/reference-updated` | emit — no answer required | `'credentials/reference-updated'(ref: CredentialRef): void` | Committed change to a provider-managed credential source: a `set`, an `unset`, or an external edit observed in storage. | `dsh-credentials/lib/types/types.d.ts` |
+| `deepseek-account/model-sign-in-required` | emit — no answer required | `'deepseek-account/model-sign-in-required'(): void` | An account model request requires the user to sign in. | `dsh-deepseek-account/lib/types/types.d.ts` |
+| `deepseek-account/session-expired` | emit — no answer required | `'deepseek-account/session-expired'(): void` | Server rejection removed the current account credential; not replayed. | `dsh-deepseek-account/lib/types/types.d.ts` |
+| `goal/activation-changed` | emit — no answer required | `'goal/activation-changed'(payload: GoalActivationChanged): void` | Process-local goal activation changed for one session. | `dsh-goal/lib/types/types.d.ts` |
 | `llm/adapters-updated` | emit — no answer required | `'llm/adapters-updated'(): void` | The provider topology changed: an adapter registered or unregistered routes, or the configurable-provider directory gained or lost entries. | `dsh-llm/lib/types/types.d.ts` |
+| `permission-presets/catalog-changed` | emit — no answer required | `'permission-presets/catalog-changed'(): void` | The selectable process catalog changed; payload-free by design, consumers re-read it. | `dsh-permission-presets/lib/types/types.d.ts` |
+| `plugin-manager/changed` | emit — no answer required | `'plugin-manager/changed'(change: PluginChange): void` | A manager operation changed the profile's plugins, bundles, or composition. | `dsh-plugin-manager/lib/types/types.d.ts` |
+| `plugin-manager/install-log` | emit — no answer required | `'plugin-manager/install-log'(chunk: PluginInstallLogChunk): void` | One chunk of a pnpm run's output. | `dsh-plugin-manager/lib/types/types.d.ts` |
+| `plugin-manager/install-state` | emit — no answer required | `'plugin-manager/install-state'(progress: PluginInstallProgress): void` | An installation moved between Host phases (`installing` / `cancelling` / `applying`). | `dsh-plugin-manager/lib/types/types.d.ts` |
+| `schedule/changed` | emit — no answer required | `'schedule/changed'(): void` | The durable task set changed; clients refetch the task catalogs. | `dsh-schedule/lib/types/types.d.ts` |
 | `settings/document-updated` | emit — no answer required | `'settings/document-updated'(ns: SettingsNamespace, revision: number): void` | One registered namespace's RAW user section changed, whether or not the resolved value did. | `dsh-settings/lib/types/types.d.ts` |
 | `user-questions/request` | **waterfall** — must be answered with `$events/result` | `'user-questions/request'(this: Scoped<Agent>, request: AskUserQuestionRequestEvent, next: () => Promise<AskUserQuestionAnswer>): Promise<AskUserQuestionAnswer>` | Ask composed answerers for structured user input. | `dsh-user-questions/lib/types/types.d.ts` |
 
@@ -3369,6 +3435,14 @@ The two waterfalls (`approval/request`, `user-questions/request`) were not trigg
 - The `$events` forwarded allowlist is complete for **this** deployment; a differently-composed host may forward a different set.
 
 ---
+
+### 7.6 Refresh of 2026-10-17 (job surface and forwarded allowlist)
+
+Re-verified against a running `0.2.0-rc.2` desktop host and the installed packages:
+
+- **`job/*` added.** `job/list`, `job/follow`, and `job/kill` were missing from the catalog; their wire types are copied verbatim in Section 3.12, and all three were exercised live (roster stream, output follow on a running and on a settled job, kill with `requested` / `already-finished` / `job/not-found`).
+- **Allowlist 19 → 27.** `deepseek-account/model-sign-in-required`, `deepseek-account/session-expired`, `credentials/record-updated`, `permission-presets/catalog-changed`, `plugin-manager/changed`, `plugin-manager/install-log`, `plugin-manager/install-state`, and `schedule/changed` are forwarded in this build.
+- **Still from the 2026-09-13 probe.** The endpoint *count* was not re-enumerated (this install exposes no descriptor-dump route and ships no `typert.host.js`), so the header's 50 = 47 catalogued then plus the three `job/*` endpoints: other additions between `0.1.5-rc.1` and `0.2.0-rc.2` may be missing. The durable session-event catalog in Section 4.3 (56 types) was likewise not re-counted.
 
 ## Appendix A — Reproduction
 
