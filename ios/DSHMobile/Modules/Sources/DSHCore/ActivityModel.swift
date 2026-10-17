@@ -44,6 +44,8 @@ public final class ActivityModel {
         public let id: String
         public let sessionId: String
         public var jobLabel: String
+        /// 已经收到 `opened` 帧：用来区分「还没开流」与「开了但暂时没有输出」。
+        public var hasOpened = false
         public var chunks: [JobChunk] = []
         /// 宿主明确说过"中间有一段被丢了"。
         public var isLossy = false
@@ -393,6 +395,7 @@ public final class ActivityModel {
     private func applyOutput(_ frame: JobFollowFrame) {
         switch frame {
         case .opened(let job, _):
+            outputFeed?.hasOpened = true
             outputFeed?.jobLabel = job.label
             outputFeed?.outputLost = job.headOutputLost
         case .output(let chunks, _, let lossy):

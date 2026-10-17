@@ -200,6 +200,11 @@ public struct ActivitySheet: View {
                     Task { await activity.killJob(sessionId: sessionId, jobId: job.id) }
                 }
             }
+            // 类型标识（owner 2026-10-17：看不出在跑的是任务还是子智能体）。
+            Text("后台任务 · \(Self.statusText(job.status))")
+                .font(DSHTheme.Typography.micro)
+                .foregroundStyle(DSHTheme.labelTertiary)
+                .padding(.leading, 24)
             if let progress = job.progress, !progress.isEmpty {
                 Text(progress)
                     .font(DSHTheme.Typography.caption)
@@ -283,15 +288,27 @@ public struct ActivitySheet: View {
                             .foregroundStyle(DSHTheme.labelTertiary)
                     }
                     ForEach(activity.settledJobs) { job in
-                        settledRow(kind: "task", label: job.label,
-                                   detail: job.detail ?? ActivitySheet.statusText(job.status),
-                                   id: job.id)
+                        Button {
+                            outputJob = job
+                        } label: {
+                            settledRow(kind: "task", label: job.label,
+                                       detail: job.detail ?? ActivitySheet.statusText(job.status),
+                                       id: job.id,
+                                       hint: "查看输出 ›")
+                        }
+                        .buttonStyle(.plain)
                     }
                     ForEach(finishedChildren) { child in
-                        settledRow(kind: "child",
-                                   label: child.subagentLabel ?? child.sessionId,
-                                   detail: "子智能体 · 已结束",
-                                   id: child.sessionId)
+                        Button {
+                            onOpenSession?(child.sessionId)
+                        } label: {
+                            settledRow(kind: "child",
+                                       label: child.subagentLabel ?? child.sessionId,
+                                       detail: "子智能体 · 已结束",
+                                       id: child.sessionId,
+                                       hint: "打开子会话 ›")
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
             }
@@ -300,7 +317,7 @@ public struct ActivitySheet: View {
         }
     }
 
-    private func settledRow(kind: String, label: String, detail: String, id: String) -> some View {
+    private func settledRow(kind: String, label: String, detail: String, id: String, hint: String) -> some View {
         HStack(spacing: DSHTheme.Spacing.tight) {
             Image(systemName: kind == "child" ? "person.2" : "terminal")
                 .font(.system(size: 10, weight: .medium))
@@ -315,6 +332,9 @@ public struct ActivitySheet: View {
                     .font(DSHTheme.Typography.micro)
                     .foregroundStyle(DSHTheme.labelTertiary)
                     .lineLimit(1)
+                Text(hint)
+                    .font(DSHTheme.Typography.micro)
+                    .foregroundStyle(DSHTheme.brand)
             }
             Spacer(minLength: 0)
             Text("已结束")

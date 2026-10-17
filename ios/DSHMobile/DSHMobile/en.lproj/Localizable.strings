@@ -748,3 +748,7 @@ It is registered as a workspace first, so a new group appears in the desktop sid
 "已失败" = "Failed";
 
 "正在停止" = "Stopping";
+
+"任务还在跑，有输出会自动出现。" = "The task is still running; output appears as it arrives.";
+
+"后台任务 · %@" = "Background task · %@";

@@ -114,6 +114,13 @@ public struct JobOutputView: View {
                 title: String(localized: "还没有输出"),
                 message: String(localized: "这个任务没有产生任何输出。")
             )
+        } else if feed?.hasOpened == true {
+            // 开了流但暂时没有输出：不要一直转圈（owner 2026-10-17 报过"等了几秒仍在加载"）。
+            EmptyStateView(
+                icon: "text.alignleft",
+                title: String(localized: "还没有输出"),
+                message: String(localized: "任务还在跑，有输出会自动出现。")
+            )
         } else {
             ProgressView()
                 .controlSize(.small)
