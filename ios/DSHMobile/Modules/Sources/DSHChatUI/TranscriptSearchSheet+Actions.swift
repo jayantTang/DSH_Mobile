@@ -211,7 +211,7 @@ extension TranscriptSearchSheet {
     func prefetchIfRunningLow(fallbackWhenNothingVisible: Bool = false) {
         // localStore（「我问过的」本地全量库）没有"更早的一页"可预读。
         guard searchSource != .localStore,
-              !isLoadingMore, model.canExtendSearch, !hits.isEmpty else { return }
+              !isLoadingMore, canRequestAnotherPage, !hits.isEmpty else { return }
         // 打字期间不读：那会一边追加行一边重排列表，和输入抢主线程（也正是"卡"的来源）。
         guard !isSearchPending else { return }
         let lastVisible = hits.lastIndex { visibleHitIds.contains($0.id) }
@@ -249,12 +249,25 @@ extension TranscriptSearchSheet {
         requestLoad()
     }
 
+    /// 还能不能再要一页。**按来源分别判断**（详见 `ChatModel.canRequestSearchPage`）：
+    /// 连接器只看它自己回报的 hasMore 与游标；本地窗口才看"本地库还有没有更早的"。
+    var canRequestAnotherPage: Bool {
+        let channel: ChatModel.SearchChannel = switch searchSource {
+        case .connector: .connector
+        case .localStore: .localStore
+        case .localWindow: .localWindow
+        }
+        return ChatModel.canRequestSearchPage(source: channel, cursor: searchCursor,
+                                              connectorHasMore: pageHasMore,
+                                              localCanExtend: model.canExtendSearch)
+    }
+
     /// 起一次"往前读一页"。同步占住 `isLoadingMore`，避免同一批行事件里起好几个。
     ///
     /// `onlyMine` 直接挡掉：「我问过的」是本地全量库，没有更早的一页，也**没有**网络可退
     ///（T040）——这里不挡的话，竞态窗口里会按上一次的来源去要连接器分页。
     func requestLoad() {
-        guard !isLoadingMore, model.canExtendSearch, !onlyMine else { return }
+        guard !isLoadingMore, canRequestAnotherPage, !onlyMine else { return }
         isLoadingMore = true
         Task { await loadMore() }
     }
@@ -276,8 +289,14 @@ extension TranscriptSearchSheet {
             await performSearch(key: searchKey)
         case .connector:
             // 连接器分页：直接要下一页命中（它自己扫整个会话），不走本地缓冲。
+            // 没有游标就**不要再要一次**——那等于把第一页重扫一遍（列表不增长、片数进度回 1），
+            // 这正是 `canRequestAnotherPage` 挡掉的那条路，这里再兜一层。
+            guard let cursor = searchCursor else {
+                isLoadingMore = false
+                return
+            }
             let page = await model.searchPage(query: self.query, onlyMine: false,
-                                              cursor: searchCursor, limit: 50)
+                                              cursor: cursor, limit: 50)
             guard searchKey == key else { return dropStalePage(key) }
             if let page {
                 let existing = Set(hits.map(\.id))

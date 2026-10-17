@@ -69,6 +69,33 @@ final class ChatModelSearchChannelTests: XCTestCase {
         }
     }
 
+    // MARK: - 翻页闸门（2026-10-17 真机：连接器扫完之后仍给"继续往下滑"，点一次重扫第一页）
+
+    func testAConnectorPageIsOnlyRequestedWhileItHasMoreAndACursor() {
+        XCTAssertTrue(ChatModel.canRequestSearchPage(source: .connector, cursor: "1200",
+                                                     connectorHasMore: true, localCanExtend: false),
+                      "hasMore + cursor: the next page is a real page")
+        XCTAssertFalse(ChatModel.canRequestSearchPage(source: .connector, cursor: nil,
+                                                      connectorHasMore: true, localCanExtend: true),
+                       "no cursor means page one: re-requesting it rescans from the top")
+        XCTAssertFalse(ChatModel.canRequestSearchPage(source: .connector, cursor: "1200",
+                                                      connectorHasMore: false, localCanExtend: true),
+                       "the scan reached the start: the local library's older history is a different source")
+    }
+
+    func testTheLocalWindowStillFollowsTheLocalLibrary() {
+        XCTAssertTrue(ChatModel.canRequestSearchPage(source: .localWindow, cursor: nil,
+                                                     connectorHasMore: false, localCanExtend: true))
+        XCTAssertFalse(ChatModel.canRequestSearchPage(source: .localWindow, cursor: nil,
+                                                      connectorHasMore: true, localCanExtend: false))
+    }
+
+    func testTheLocalStoreNeverPages() {
+        XCTAssertFalse(ChatModel.canRequestSearchPage(source: .localStore, cursor: "x",
+                                                      connectorHasMore: true, localCanExtend: true),
+                       "the on-device store has no older page to fetch")
+    }
+
     // MARK: - 异常路径：拒绝不等于"没有结果"（FR-013）
 
     func testAConnectorRefusalLeavesAReasonInsteadOfAnEmptyResult() async throws {

@@ -607,6 +607,7 @@ It is registered as a workspace first, so a new group appears in the desktop sid
 
 /* 转写搜索页脚（原先硬编码） */
 "搜索只覆盖已经读到手机上的那段历史。" = "Search only covers the history already read onto this phone.";
+"继续往下滑，会一段一段往前扫。" = "Keep scrolling to scan further back, one chunk at a time.";
 "这条连接方式不支持发送文件" = "This connection method cannot send files";
 "电脑上的连接器版本过旧，请更新后重发" = "The connector on your computer is too old. Update it, then send again";
 "这条连接的中转地址无效，请重新配对。" = "This connection's relay address is invalid. Pair again.";

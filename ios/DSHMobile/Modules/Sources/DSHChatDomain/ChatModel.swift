@@ -698,6 +698,27 @@ public final class ChatModel {
         return .connector
     }
 
+    /// 还能不能再要一页搜索结果。
+    ///
+    /// 三种来源各有自己的"还有没有"，混用就会出 2026-10-17 的真机现象：连接器已经回报
+    /// `hasMore == false`（扫描到底、游标为 nil），界面却按**本地库**的 `canExtendSearch`
+    /// 继续给出「继续往下滑」——点一次就再要一次**第一页**（游标 nil），命中全被去重、
+    /// 列表不长，而片数进度从 1 爬到 N 又回 1（每点一次重扫一遍）。
+    ///
+    /// 所以连接器那条只认"hasMore 且 游标非 nil"：只信 hasMore 会在游标为 nil 时从头再扫。
+    public static func canRequestSearchPage(source: SearchChannel, cursor: String?,
+                                            connectorHasMore: Bool,
+                                            localCanExtend: Bool) -> Bool {
+        switch source {
+        case .localStore:
+            return false
+        case .connector:
+            return connectorHasMore && cursor != nil
+        case .localWindow:
+            return localCanExtend
+        }
+    }
+
     /// 最近一次搜索被连接器拒绝的原因（成功、走本地、或还没搜过时为 nil）。
     ///
     /// 为什么要有它：连接器拒绝（`link/unsupported` / `link/query-too-short` / 超时）

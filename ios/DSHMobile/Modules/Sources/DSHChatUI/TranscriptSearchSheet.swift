@@ -418,7 +418,7 @@ struct TranscriptSearchSheet: View {
                         .accessibilityIdentifier("search.older.local")
                 }
             }
-        } else if model.canExtendSearch {
+        } else if canRequestAnotherPage {
             Section {
                 Button {
                     requestLoad()
@@ -436,7 +436,9 @@ struct TranscriptSearchSheet: View {
                 .accessibilityIdentifier("search.older")
                 .onAppear { prefetchIfRunningLow(fallbackWhenNothingVisible: true) }
             } footer: {
-                Text("搜索只覆盖已经读到手机上的那段历史。")
+                // 连接器覆盖整个会话，这句话只对"本地窗口"的降级路径成立。
+                Text(searchSource == .connector ? "继续往下滑，会一段一段往前扫。"
+                                                : "搜索只覆盖已经读到手机上的那段历史。")
                     .font(DSHTheme.Typography.micro)
                     .foregroundStyle(DSHTheme.labelTertiary)
             }
