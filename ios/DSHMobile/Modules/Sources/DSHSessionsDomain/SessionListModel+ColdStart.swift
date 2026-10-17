@@ -8,26 +8,6 @@ import Foundation
 /// 首次启动）时一切表现与现状一致。host 数据回来后仍以 host 为准，刷新逻辑不动。
 public extension SessionListModel {
 
-    /// T010：从 MessageStore 读会话聚合，把 snippet 叠到列表行上。
-    /// 快照首帧与 host 刷新成功后各调一次——后者能叠上预取瀑布刚喂出来的数据。
-    public func overlayMessageStoreSnippets() async {
-        guard let scope = store?.scopeId, let store = messageLayer?.store,
-              let states = try? await store.sessionStates(scope: scope), !states.isEmpty
-        else { return }
-        var snippets: [String: String] = [:]
-        for entry in states {
-            guard let snippet = entry.lastSnippet, !snippet.isEmpty else { continue }
-            snippets[entry.sessionId] = snippet
-        }
-        guard snippets != coldStartSnippets else { return }
-        coldStartSnippets = snippets
-    }
-
-    /// 某行的冷启动摘要；nil 时该行布局与现状完全一致（无摘要行）。
-    public func coldStartSnippet(for sessionId: String) -> String? {
-        coldStartSnippets[sessionId]
-    }
-
     /// T011：按列表顺序为前 ~10 个会话排预取瀑布（最新页 [newestSeq-49, newestSeq]，
     /// 并发 3，低优先级后台任务）。链接未建立、磁盘层不可用都整体跳过——
     /// 预取不许报错刷日志；同一台电脑一次启动只排一次。

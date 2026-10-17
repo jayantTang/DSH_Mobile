@@ -195,8 +195,6 @@ public final class SessionListModel {
 
     /// 009 消息层（磁盘层聚合数据 + 预取瀑布）；nil 时整套叠加缺位，回退现有行为。
     weak var messageLayer: MessageLayer?
-    /// 冷启动首帧各行叠加的摘要（sessionId → snippet，来自 MessageStore）。
-    public var coldStartSnippets: [String: String] = [:]
     /// 这台电脑本轮启动有没有排过预取瀑布（只排一次）。
     public var lastPrefetchScope: String?
 
@@ -467,7 +465,6 @@ public final class SessionListModel {
         // 说"显示上次数据"。
         lastSavedFingerprint = [:]
         isShowingSnapshot = false
-        coldStartSnippets = [:]
         lastPrefetchScope = nil
     }
 
@@ -501,7 +498,6 @@ public final class SessionListModel {
             saveSnapshot()
             // T011：host 数据回来之后排一次冷启动预取瀑布（只排一次；
             // 磁盘层可能已被它喂出新的摘要，顺手再叠一次）。
-            Task { await overlayMessageStoreSnippets() }
             scheduleColdStartPrefetch()
         } catch {
             // Keep any previously loaded rows visible: a transient failure
@@ -539,8 +535,6 @@ public final class SessionListModel {
         isShowingSnapshot = true
         lastSavedFingerprint[scope] = snapshot.contentFingerprint
         phase = .loaded
-        // T010：快照首帧之上叠加 009 磁盘层的摘要（异步，磁盘读，不阻塞首帧）。
-        Task { await overlayMessageStoreSnippets() }
         // 诊断：冷启动到底有没有用上缓存（排查"打开是空的"时第一眼要看的就是这行）。
         probeNote?("snapshot.loaded", ["items": String(snapshot.items.count)], true)
     }
@@ -583,7 +577,6 @@ public final class SessionListModel {
         if let scope = store?.scopeId { snapshotStore.clear(scope: scope) }
         lastSavedFingerprint = [:]
         isShowingSnapshot = false
-        coldStartSnippets = [:]
     }
 
     /// Subscribes to the host feed so sessions started elsewhere appear here.

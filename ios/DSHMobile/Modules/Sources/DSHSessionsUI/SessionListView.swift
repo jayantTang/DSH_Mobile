@@ -416,8 +416,7 @@ public struct SessionListView: View {
             NavigationLink(value: session.sessionId) {
                 SessionRow(session: session, rowState: model.state(of: session),
                            home: store.hostHome,
-                           isJustCreated: session.sessionId == model.lastCreatedSessionId,
-                           snippet: model.coldStartSnippet(for: session.sessionId))
+                           isJustCreated: session.sessionId == model.lastCreatedSessionId)
             }
             .buttonStyle(.plain)
             // 首个会话行真的画出来了 → 记一条 `app.first-render`（一次拨号一条）。
@@ -448,7 +447,7 @@ public struct SessionListView: View {
         NavigationLink(value: session.sessionId) {
             SessionRow(session: session, rowState: model.state(of: session),
                        home: store.hostHome, isChild: true,
-                       snippet: model.coldStartSnippet(for: session.sessionId))
+                       )
         }
         .buttonStyle(.plain)
         // 子会话行也是"内容画出来"的一种（同一处语义的两条渲染路径，都要覆盖）。
@@ -468,8 +467,7 @@ public struct SessionListView: View {
         NavigationLink(value: session.sessionId) {
             SessionRow(session: session, rowState: model.state(of: session),
                        home: store.hostHome, isChild: true,
-                       isJustCreated: session.sessionId == model.lastCreatedSessionId,
-                       snippet: model.coldStartSnippet(for: session.sessionId))
+                       isJustCreated: session.sessionId == model.lastCreatedSessionId)
         }
         .buttonStyle(.plain)
         // 子会话行也是"内容画出来"的一种（同一处语义的两条渲染路径，都要覆盖）。
@@ -644,8 +642,6 @@ public struct SessionRow: View {
     var isChild: Bool = false
     /// Whether this is the session the app just created in this run.
     var isJustCreated: Bool = false
-    /// 009 磁盘层给的冷启动摘要；nil 时行布局与现状一致（T010）。
-    var snippet: String? = nil
 
     private var projections: SessionProjectionValues? { session.projections?.values }
 
@@ -685,15 +681,6 @@ public struct SessionRow: View {
                     if isJustCreated {
                         CreatedBadge()
                     }
-                }
-
-                if let snippet {
-                    // 冷启动时磁盘层给的一行摘要；host 数据里本来没有这个槽位，
-                    // 所以只作为叠加信息出现，不参与任何状态判定。
-                    Text(snippet)
-                        .font(DSHTheme.Typography.micro)
-                        .foregroundStyle(DSHTheme.labelTertiary)
-                        .lineLimit(1)
                 }
 
                 HStack(spacing: DSHTheme.Spacing.hairline) {
