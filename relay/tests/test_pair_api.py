@@ -468,6 +468,14 @@ async def test_healthz_advertises_subprotocol_capability(client):
     assert "device-subprotocol-auth" in body["capabilities"]
 
 
+async def test_healthz_advertises_file_transfer_capability(client):
+    # FR-010：与 docs/relay-contract.json 的能力词表对齐。浏览器客户端据此省掉
+    # 那次"空 PUT /files/up"的探测，所以这个名字必须与契约逐字相同。
+    response = await client.get("/healthz")
+    body = await response.json()
+    assert "file-transfer" in body["capabilities"]
+
+
 async def test_devices_list_echoes_the_callers_device_id(client, provisioned):
     token = await _paired_device(client, provisioned, name="EchoCheck")
     response = await client.get("/devices", headers={"Authorization": f"Bearer {token}"})

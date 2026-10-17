@@ -205,3 +205,35 @@ order with the real `caddy adapt` when a `caddy` binary is available.
   partial download without splicing a stale prefix onto a changed file.
 * Registered in `docs/relay-contract.json` capabilities as
   `device-subprotocol-auth`.
+
+## 16. Streaming responses must carry their own CORS headers — the middleware cannot add them afterwards
+
+`cors_preflight` is written the obvious way: call the handler, then set
+`access-control-allow-origin` on the response it returned. That works for every ordinary
+response, and it was read as "CORS is handled once, centrally". It is not true for a
+streaming handler: `files_down()` calls `StreamResponse.prepare(request)` itself, which
+writes the status line and headers to the wire. The middleware runs only after the handler
+returns, so its header assignment lands on an object whose headers have already been sent —
+aiohttp reports nothing and the bytes on the wire do not change.
+
+The consequence is one-sided and easy to miss: `OPTIONS` carries the full CORS header set
+(it is produced by the middleware itself), while the `200`/`206` body response carries none.
+Every native client is unaffected (no CORS), so only a browser can observe it — as
+`blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present` *after* the
+bytes have arrived.
+
+`files_down()` therefore writes `CORS_STREAM_HEADERS` (`access-control-allow-origin: *`
+plus `access-control-expose-headers: content-range, etag`) **before** `prepare()`.
+`content-range` and `etag` are not CORS-safelisted, so without the expose list a browser
+could read the body but not the resume offset or the version — the download would still be
+unresumable. Any future streaming endpoint must do the same; putting CORS headers into the
+chunk loop is impossible, and changing headers after `prepare()` is silently ineffective.
+
+The fast gate pins this on the body response itself
+(`test_files_down.py::test_streamed_download_response_carries_cors_headers`, both `200`
+and `206`); asserting the preflight alone cannot catch it. One measurement detail matters
+when reproducing this in a browser: page JavaScript **cannot read `Access-Control-Allow-Origin`**
+(it is not an exposed response header, for the same reason `etag` is not), so a check that
+requires `headers.get('access-control-allow-origin') === '*'` will fail even when the
+header is present. Assert instead that the fetch resolves, the body matches, and `etag` /
+`content-range` are readable.

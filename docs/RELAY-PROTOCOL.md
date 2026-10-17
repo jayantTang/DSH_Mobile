@@ -58,6 +58,11 @@ Relay 只做两件事：**鉴权**与**按 `agentId` 转发**。它不解析 DLP
 
 `agentId` 也允许放在首帧 `hello` 中；query 参数优先。
 
+文件传输走 `PUT /files/up` 与 `GET /files/down`（`Range` 与 `If-Range` 续传）：两者都在 CORS 放行
+范围内，下载的 200/206 **正文响应**自带 `access-control-allow-origin: *` 与
+`access-control-expose-headers: content-range, etag`。预检（`OPTIONS`）通过不代表正文可读，理由与
+实现位置见 [`RELAY-NOTES.md`](RELAY-NOTES.md) 第 16 条。
+
 ### 2.1 `/pair/claim`
 
 请求：

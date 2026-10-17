@@ -68,6 +68,17 @@ CORS_HEADERS = {
     "access-control-max-age": "600",
 }
 
+#: 流式响应必须在 ``prepare()`` **之前**自带 CORS 头。``cors_preflight`` 中间件是
+#: handler 返回之后才补头的，而 ``files_down`` 在 handler 内部就 ``prepare()`` 了：
+#: 状态行与响应头那时已经发出，中间件再改 ``response.headers`` 不报错也不生效
+#: （静默失效）。**预检放行 ≠ 正文可读**：OPTIONS 一直带着全套 CORS 头，缺的只有
+#: 200/206 的正文响应，浏览器把已经收到的字节判为不可读。这里只列流式响应需要的
+#: 两项，预检专用的 allow-methods / allow-headers 不发给 GET。
+CORS_STREAM_HEADERS = {
+    "access-control-allow-origin": "*",
+    "access-control-expose-headers": "content-range, etag",
+}
+
 
 def bearer_token(request: web.Request) -> str | None:
     header = request.headers.get("Authorization", "")
@@ -293,8 +304,12 @@ async def healthz(_request: web.Request) -> web.Response:
         # 客户端读不到这个字段就按"中转需升级"提示，不静默降级。
         # 032 起加上账户/配对模型的三项：持久码、账户级状态读、账户级状态推送。
         # Web 与 App 靠这个字段决定要不要显示"设备页 / 已配对 N/8"这类界面。
+        # `file-transfer` 与 `docs/relay-contract.json` 的能力词表对齐：这份中转
+        # 有 `PUT /files/up` 与 `GET /files/down`，浏览器客户端据此判定文件能力，
+        # 不必再发一次空的 PUT 预检。它说的是"中转有没有这两条路由"，连接器版本
+        # 够不够传文件仍由下载响应自己回答。
         "capabilities": ["device-subprotocol-auth", "persistent-pair-code",
-                         "account-state", "account-state-push"],
+                         "account-state", "account-state-push", "file-transfer"],
     })
 
 
@@ -1192,6 +1207,10 @@ async def files_down(request: web.Request) -> web.StreamResponse:
         status = 206 if offset else 200
         response = web.StreamResponse(status=status)
         response.content_type = "application/octet-stream"
+        # Before `prepare()` or not at all: the middleware that adds CORS to every
+        # ordinary response runs *after* this handler returns, by which time the
+        # status line and headers are already on the wire. See CORS_STREAM_HEADERS.
+        response.headers.update(CORS_STREAM_HEADERS)
         # Nothing may sit between the connector and the phone: a buffering proxy
         # would defeat the whole point of streaming (the Caddy snippet already
         # sets `flush_interval -1` for this path).

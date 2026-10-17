@@ -911,3 +911,47 @@ async def test_the_download_route_does_not_bypass_the_device_bucket_object(
     assert link.quota.used >= len(body), "日额度桶没被扣"
     await device_ws.close()
     await agent_ws.close()
+
+
+# ── CORS on the body response (FR-009) ──────────────────────────────────────
+
+async def test_streamed_download_response_carries_cors_headers(client, provisioned):
+    """200/206 的**正文响应**自带 CORS 头，不只预检有。
+
+    这个缺口只在浏览器侧显形：``OPTIONS`` 由中间件直接返回，一向是全套 CORS 头；
+    而 ``files_down`` 在 handler 内部 ``prepare()``，中间件事后再补头不报错也不生效。
+    于是"预检通过 ≠ 正文可读"，浏览器把已经收到的字节判为不可读。断言必须落在
+    这个 GET 自己的响应上——只断言预检，这条用例就白写。
+    """
+    agent_ws = await open_agent(client, provisioned)
+    device = await claim_device(client, provisioned)
+    await drain(agent_ws)
+    body = b"z" * (1 << 20)
+
+    # ① 整份：200
+    stub = FetchStub(agent_ws, body)
+    task = asyncio.create_task(stub.run())
+    full = await client.get(down_url(device, scopeId="s1", path="report.bin"),
+                            headers=device_auth(device))
+    assert full.status == 200
+    assert full.headers["access-control-allow-origin"] == "*"
+    exposed = full.headers["access-control-expose-headers"].lower()
+    assert "content-range" in exposed
+    assert "etag" in exposed
+    assert full.headers["etag"]
+    assert await full.read() == body
+    await task
+
+    # ② 续传：206。同一处 headers.update，但这一路多走 Content-Range 分支，
+    #    最容易在这里漏掉 expose-headers。
+    stub_part = FetchStub(agent_ws, body)
+    task_part = asyncio.create_task(stub_part.run())
+    part = await client.get(down_url(device, scopeId="s1", path="report.bin"),
+                            headers={**device_auth(device), "Range": "bytes=1024-"})
+    assert part.status == 206
+    assert part.headers["access-control-allow-origin"] == "*"
+    assert "content-range" in part.headers["access-control-expose-headers"].lower()
+    assert part.headers["content-range"].startswith("bytes 1024-")
+    assert await part.read() == body[1024:]
+    await task_part
+    await agent_ws.close()

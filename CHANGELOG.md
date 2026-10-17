@@ -4,6 +4,25 @@
 [语义化版本](https://semver.org/lang/zh-CN/)。三处部署（App / 连接器 / 中转）的组合见
 [`docs/VERSIONING.md`](docs/VERSIONING.md)。
 
+## 中转 — 2026-10-17（浏览器下载的正文响应带上 CORS 头）
+
+Web 客户端经中转下载文件一直是 `blocked by CORS policy`：预检（`OPTIONS`）带着全套 CORS 头，
+真正的 `200`/`206` 正文响应一个都没有。根因是 `files_down()` 在 handler 内部就
+`prepare()`，而 `cors_preflight` 中间件是 handler 返回**之后**才补头——那时响应头已经发出，
+再改 `headers` 不报错也不生效。修法只有一处：在 `prepare()` 之前用 `CORS_STREAM_HEADERS`
+把 `access-control-allow-origin` 与 `access-control-expose-headers: content-range, etag`
+写进流式响应（FR-009）。`content-range` / `etag` 不在 CORS 安全响应头列表里，不 expose
+浏览器就读不到续传的偏移与版本。
+
+快闸新增一条用例直接断言 `200` 与 `206` 的**正文响应**头（去掉那一行即红），并在
+`docs/RELAY-NOTES.md` 第 16 条写明"流式响应要自带 CORS 头，中间件事后补无效"。
+`/healthz` 的 `capabilities` 补上 `file-transfer`，与 `docs/relay-contract.json` 的能力
+词表对齐，浏览器客户端据此省掉那次空的 `PUT /files/up` 探测（FR-010）。
+
+真实浏览器取证：Chromium 148（Playwright，headless）+ 真实 Caddy + 真实 relay 进程，
+5 MB 文件整份、`Range` 续传、`If-Range` 过期三条路径的字节数与 SHA-256 全部对上；
+同一页面打去掉那一行的副本，得到与线上一致的 `blocked by CORS policy`（负对照）。
+
 ## 连接器 0.6.6 / 中转 / 信件服务 — 2026-10-17（四段版本在运行时可知）
 
 用户出问题时，"他当时跑的是哪一版"要能直接查到。四段版本**只经控制帧**搬到位：
