@@ -124,6 +124,8 @@ public struct ChatView: View {
     @State private var anchorCompletions = 0
     /// 搜索面板是否打开。
     @State var isSearching = false
+    /// 033：刚被点开/收起的过程节点；内容变化后把它带回视口。
+    @State private var processToggleAnchor: String?
     /// 搜索面板选中的那条（行 id）：转写页滚动到它并短暂高亮。
     @State private var searchJumpHit: TranscriptSearchHit?
     /// 正在为跳转换窗口（这期间不让"钉底/补页"插手，否则会把刚换好的窗口又拽回去）。
@@ -386,11 +388,23 @@ public struct ChatView: View {
         // re-applied the anchor, which scrolled again. On a long transcript that
         // feedback saturated the main thread and the UI stopped rendering —
         // which is exactly what a blank conversation area is.
-        .defaultScrollAnchor(.bottom)
+        .defaultScrollAnchor(isFollowing ? .bottom : nil)
         // 探针：滚动几何（偏移 / 内容高 / 容器高）。"落在内容之外"这种状态
         // 只能从这里看出来，光看"有没有已渲染的行"看不出来。
         .modifier(ScrollGeometryProbe())
         .accessibilityIdentifier("chat.transcript")
+        .onChange(of: processToggleAnchor) { _, anchor in
+            guard let anchor else { return }
+            processToggleAnchor = nil
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(80))
+                if ChatProbe.shared.listHost == "uikit" {
+                    listHostRef?.scrollTo(id: anchor)
+                } else {
+                    proxy.scrollTo(anchor, anchor: .center)
+                }
+            }
+        }
         // 探针：转写区自己的矩形。它和已渲染行的矩形之差就是"没被盖住的带"。
         .background(
             GeometryReader { proxy in
@@ -661,6 +675,7 @@ public struct ChatView: View {
                 onDiagnostic: { name, fields in ChatProbe.shared.probeNote?(name, fields, true) },
                 onNearTop: { Task { await model.loadOlder() } },
                 onScroll: { distance in
+                    model.noteReaderTopRow(listHostRef?.topVisibleRowID)
                     topDistance = distance
                     // 几何的新鲜度戳必须与值同写：只写值时哨兵路径的
                     // `older.stale` 会拿 distantPast 算出垃圾 age，把补页恒挡掉
@@ -679,13 +694,14 @@ public struct ChatView: View {
                 },
                 onBudgetCheck: { visibleRows in
                     // 跟随尾部时才丢：读者不在尾巴上时丢东西会把他正在看的行抽走。
-                    guard isFollowing, !userScrolled else { return 0 }
+                    guard isFollowing, !userScrolled else { return [] }
                     // 保留带按**屏**算：至少留住两屏，否则丢弃之后内容比一屏还短，
                     // 看起来像会话被截断（run 20261008-230106 的 T037）。
                     let keep = max(24, visibleRows * 2)
-                    let count = model.rowsToDropForBudget(keepLast: keep)
-                    if count > 0 { model.dropOldestRows(count) }
-                    return count
+                    let plan = model.trimPlanForBudget(keepLast: keep)
+                    guard !plan.isEmpty else { return [] }
+                    _ = model.applyTrim(plan)
+                    return plan.displayDropIDs
                 },
                 driveRounds: ChatProbe.shared.olderScrollRounds ?? 0,
                 onDriveBegin: {
@@ -722,6 +738,7 @@ public struct ChatView: View {
                     }
                 },
                 onBottomChanged: { atBottom in  // 几何驱动
+                    if model.processToggleFollowHold { return }
                     // 009 管道 + uikit 宿主：跟随判定由跟底两态接管（48pt + 向上拖动
                     // 抑制，见 onFollowGeometry），这条旧回调只在其它路径生效。
                     guard !(model.pipelineActive && ChatProbe.shared.listHost == "uikit") else { return }
@@ -739,8 +756,13 @@ public struct ChatView: View {
                     }
                 },
                 onFollowGeometry: { distance, draggingUp in
+                    if model.processToggleFollowHold {
+                        if draggingUp { model.releaseProcessToggleFollow() }
+                        return
+                    }
                     // 跟底两态（T017）：状态判定收敛在模型，这里只把结论同步给
                     // 本视图的两个滚动开关（isFollowing 是所有自动滚动的总闸）。
+                    model.noteReaderTopRow(listHostRef?.topVisibleRowID)
                     model.noteFollowGeometry(distance: distance, draggingUp: draggingUp)
                     guard model.pipelineActive else { return }
                     if model.followState == .atBottom {
@@ -763,7 +785,7 @@ public struct ChatView: View {
                 },
                 // 009（T013/T015）：管道快照的每次变化都是多段混合变更，
                 // 必须作为一次原子更新提交（统一锚位移修正）。
-                atomicApply: model.pipelineActive
+                atomicApply: true
             )
             .accessibilityIdentifier("chat.transcript.list")
         } else if ChatProbe.shared.lazyStack {
@@ -943,6 +965,33 @@ public struct ChatView: View {
         rowView.activity = activity
         rowView.onOpenSession = onOpenSession
         rowView.parentSessionId = model.session?.sessionId
+        rowView.onToggleProcess = {
+            if case .processHeader(let header) = item.kind {
+                // 展开/收起是读者动作：先退出跟随，否则同一次更新里的"钉底"
+                // 会抵消宿主的锚点修正，把视口甩到最新一条（spec 033 FR-015）。
+                isFollowing = false
+                userScrolled = true
+                model.holdProcessToggleFollow()
+                ChatProbe.shared.probeNote?("process.toggle", [
+                    "id": item.id, "expanded": header.isExpanded ? "1" : "0",
+                ], true)
+                listHostRef?.cancelBottomIntent()
+                // Put the node at the top *before* the content grows; otherwise
+                // the list's bottom anchor pushes it off screen (spec 033 FR-015).
+                listHostRef?.scrollTo(id: item.id)
+                // Give the list one update to see pinToBottom == false and drop
+                // its bottom intent before the transcript grows.
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(40))
+                    if header.scope == .group {
+                        model.toggleProcessGroup(groupKey: item.id)
+                    } else {
+                        model.toggleProcess(turnKey: item.id)
+                    }
+                    processToggleAnchor = item.id
+                }
+            }
+        }
         return rowView
             // 搜索跳过来的那一行：淡底 + 左侧色条，一眼能认出"就是这条"。
             .background(alignment: .leading) {
@@ -1240,6 +1289,11 @@ public struct ChatView: View {
         // 命中在窗口内时不走 rebaseWindow，模型侧也要强制「阅读中」（spec 场景 9：
         // 否则跳转后到下一条几何上报之间来的增量会按 atBottom 计、还可能拽回底部）。
         model.noteJumpToReading()
+        // 命中可能是被折叠的过程行：先展开它所在的轮次/过程组，后面的
+        // `TranscriptHitLocator` 才能在显示行里解析到它（spec 033 FR-013）。
+        if let raw = TranscriptHitLocator.row(exactlyForSeq: hit.seq, in: model.timeline.items) {
+            _ = model.revealProcess(containingRowID: raw.id)
+        }
         // 命中可能在窗口**之外**（搜索是全会话的，时间线只装一窗）：先换窗口再滚，
         // 否则"按 seq 解析行"只会解析到窗口的第一行，怎么滚都落不到目标上（T068）。
         // 归属判据是**管道窗口**（`pipelineHolds`），不是"时间线里凑巧有这一行"：
@@ -1276,7 +1330,12 @@ public struct ChatView: View {
                 if Task.isCancelled || !ownsTranscript { return }
                 // 精确归属：换窗口失败时钳制版会把目标解析成窗口第一行，
                 // 梯子会把视口滚到错误位置还以为成功（009 场景⑥回归）。
-                guard let row = TranscriptHitLocator.row(exactlyForSeq: hit.seq, in: model.timeline.items) else {
+                if let raw = TranscriptHitLocator.row(exactlyForSeq: hit.seq, in: model.timeline.items) {
+                    _ = model.revealProcess(containingRowID: raw.id)
+                }
+                guard let row = TranscriptHitLocator.row(
+                    exactlyForSeq: hit.seq,
+                    in: model.rowsFor(screen: sessionId)) else {
                     continue
                 }
                 if ChatProbe.shared.listHost == "uikit" {
@@ -1289,7 +1348,9 @@ public struct ChatView: View {
                 }
             }
             let visible = ChatProbe.shared.visibleRowIds?() ?? []
-            let target = TranscriptHitLocator.row(exactlyForSeq: hit.seq, in: model.timeline.items)?.id ?? hit.id
+            let target = TranscriptHitLocator.row(
+                exactlyForSeq: hit.seq,
+                in: model.rowsFor(screen: sessionId))?.id ?? hit.id
             if ChatProbe.shared.listHost == "uikit" {
                 // 新宿主：把目标交给它滚过去（同一次更新里定位，不经过 ScrollViewProxy）。
                 listJumpNonce += 1
@@ -1321,6 +1382,7 @@ public struct ChatView: View {
         // 选中的那条可能还在"搜索缓冲"里（面板往前翻过历史、但没动时间线）：
         // 先把它并进时间线，下面的重试才找得到这一行。并入会往视口上方插内容，
         // 所以紧接着的跳转本身也是"把视口带到那一条"。
+        _ = model.revealProcess(containingRowID: id)
         if !model.timeline.items.contains(where: { $0.id == id }) {
             _ = model.commitSearchHistory()
         }
@@ -1335,7 +1397,8 @@ public struct ChatView: View {
             for delay in [0, 120, 300, 600, 1000, 1800, 2600] {
                 if delay > 0 { try? await Task.sleep(for: .milliseconds(delay)) }
                 if Task.isCancelled || !ownsTranscript { return }
-                guard model.timeline.items.contains(where: { $0.id == id }) else { return }
+                _ = model.revealProcess(containingRowID: id)
+                guard model.rowsFor(screen: sessionId).contains(where: { $0.id == id }) else { return }
                 proxy.scrollTo(id, anchor: .center)
             }
             // 落点诊断：跳完之后视口最上面是哪一行。目标行不在附近就说明又没钉住。
@@ -1478,6 +1541,7 @@ public struct ChatView: View {
     /// on every token saturates the main thread, and a blocked main thread
     /// renders nothing, which is what a blank transcript looks like.
     private func scrollToBottom(_ proxy: ScrollViewProxy, animated: Bool = true, force: Bool = false) {
+        model.releaseProcessToggleFollow()
         // 唯一的滚动出口，所以"不是我的会话就别滚"也只需要在这里把一道关。
         guard ownsTranscript else { return }
         let now = Date()

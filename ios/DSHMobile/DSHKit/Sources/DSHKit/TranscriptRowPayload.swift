@@ -23,6 +23,8 @@ public struct TranscriptRowPayload {
         case notice
         /// 缺口占位行（009）：回收只换载荷，占位高度不变。
         case gap
+        /// Process node: a display-only summary row; has no heavy payload.
+        case processHeader
     }
 
     public let id: String
@@ -49,6 +51,13 @@ public struct TranscriptRowPayload {
         return false
     }
 
+    /// The journal sequence this row stands for, even after it was reclaimed.
+    public var seq: Int? {
+        if let item { return item.seq }
+        if case .reclaimed(let seq, _, _) = state { return seq }
+        return nil
+    }
+
     /// 载荷字节：只算"重"的部分（可见文本），附件在磁盘上、不算。
     ///
     /// 口径写进 `specs/008-transcript-list-host/contracts/list-host.md` §4：
@@ -62,6 +71,7 @@ public struct TranscriptRowPayload {
         case .toolCall(let invocation):
             return invocation.arguments.utf8.count + invocation.resultText.utf8.count
         case .notice(let text, _): return text.utf8.count
+        case .processHeader: return 0
         default: return 0
         }
     }
@@ -69,6 +79,7 @@ public struct TranscriptRowPayload {
     /// 回收：留下 seq / 类型 / 高度，把内容换掉。
     public mutating func reclaim() {
         guard let item, !isReclaimed else { return }
+        if case .processHeader = item.kind { return }
         state = .reclaimed(seq: item.seq, kind: Self.kind(of: item), height: height ?? 0)
     }
 
@@ -86,6 +97,7 @@ public struct TranscriptRowPayload {
         case .toolCall: return .toolCall
         case .notice: return .notice
         case .gap: return .gap
+        case .processHeader: return .processHeader
         default: return .notice
         }
     }

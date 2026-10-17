@@ -31,6 +31,10 @@ public struct TimelineItem: Identifiable, Sendable {
         /// 区间之间、或窗口顶端之上的未水合范围。固定高度，身份 `gap:<start>-<end>`
         /// 由区间集派生；补齐时整行被数据行原子替换，不原地变高。
         case gap(start: Int, end: Int, status: GapStatus)
+        /// 过程节点（spec 033）：显示投影插入的一行摘要，代表一轮或一轮内的
+        /// 一段连续过程。**不是日志事件折出来的行**，只由 `DSHChatDomain` 的
+        /// `TranscriptProcessFold` 产生；原始过程行仍在时间线里。
+        case processHeader(TimelineProcessHeader)
 
         /// 数据行（记录折叠而来），与缺口占位行相对。
         /// 窗口边界、命中归属等"内容覆盖"判定只认数据行（009 场景⑥）。

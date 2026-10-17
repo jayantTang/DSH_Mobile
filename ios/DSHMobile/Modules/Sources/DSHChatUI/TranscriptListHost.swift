@@ -31,10 +31,11 @@ struct TranscriptListRepresentable: UIViewRepresentable {
     let onNearTop: () -> Void
     /// 滚动几何回调（007 的 `older.sentinel` 等价）。
     let onScroll: (CGFloat) -> Void
-    /// 跟随尾部时按预算丢最老端（入参是"屏幕大约能放几行"，返回该丢几行；0 = 不丢）。
+    /// 跟随尾部时按预算丢最老端（入参是"屏幕大约能放几行"，返回要删除的
+    /// **显示行 id**；空 = 不丢）。折叠后原始行数 ≠ 显示行数，不能再返回行数。
     /// 传屏高进去是为了让保留带至少覆盖一两屏——否则丢弃会把内容压到比一屏还短
     /// （run 20261008-230106 的现象：窗口只剩 20 行、视口滚不动、连补页都不再触发）。
-    let onBudgetCheck: (Int) -> Int
+    let onBudgetCheck: (Int) -> [String]
     /// `-DSHProbeOlderScroll` 的 uikit 驱动轮数（0 = 不驱动）。
     let driveRounds: Int
     /// 驱动开始前调用：真实手指上滑会把"跟随中"关掉，驱动必须做同样的事，
@@ -111,6 +112,7 @@ struct TranscriptListRepresentable: UIViewRepresentable {
         }
         if pinToBottom, let last = items.last?.id { host.scrollTo(id: last) }
         context.coordinator.known = Set(items.map(\.id))
+        onDiagnostic("list.pinAfterUpdate", ["pin": pinToBottom ? "1" : "0", "items": String(items.count)])
         if pinToBottom { host.pinAfterUpdate() }
         context.coordinator.finishOlderIfNeeded(host: host, items: items)
         // 强制水合要等**真有行被回收**之后才有东西可水合：`makeUIView` 那一刻还没回收，
@@ -129,19 +131,19 @@ struct TranscriptListRepresentable: UIViewRepresentable {
         // 跟随尾部时按预算丢最老端：宿主做原子丢弃（同一批 id），模型同步丢。
         // 只调一次：`onBudgetCheck` **有副作用**（它会把模型端该丢的行也丢掉），
         // 调两次会让"探针那次"先把行丢了、"执行那次"拿到 0（2026-10-08 实测：`window.trimmed` 反而消失）。
-        let budgetCount = context.coordinator.onBudgetCheck?(host.visibleRowEstimate) ?? 0
+        let budgetIDs = context.coordinator.onBudgetCheck?(host.visibleRowEstimate) ?? []
         onDiagnostic("list.budget", [
-            "count": String(budgetCount),
+            "count": String(budgetIDs.count),
             "pin": pinToBottom ? "1" : "0",
             "items": String(items.count),
         ])
-        if pinToBottom, budgetCount > 0 {
-            let victims = items.prefix(budgetCount).map(\.id)
-            host.apply(.dropOldest(count: budgetCount))
+        if pinToBottom, !budgetIDs.isEmpty {
+            let oldest = budgetIDs.last ?? "-"
+            host.apply(.dropOldestIDs(budgetIDs))
             onDiagnostic("window.trimmed", [
-                "dropped": String(budgetCount),
-                "items": String(max(0, items.count - budgetCount)),
-                "oldest": victims.last ?? "-",
+                "dropped": String(budgetIDs.count),
+                "items": String(max(0, items.count - budgetIDs.count)),
+                "oldest": oldest,
             ])
         }
     }
@@ -156,7 +158,7 @@ struct TranscriptListRepresentable: UIViewRepresentable {
         weak var host: TranscriptListHost?
         var onNearTop: (() -> Void)?
         var onDiagnostic: ((String, [String: String]) -> Void)?
-        var onBudgetCheck: ((Int) -> Int)?
+        var onBudgetCheck: ((Int) -> [String])?
         var onDriveBegin: (() -> Void)?
         var onNeedRehydrate: (([Int]) -> Void)?
         /// 本地库取回内容之后，把行交回宿主水合（真实路径的入口）。
@@ -274,7 +276,9 @@ final class TranscriptListHost: UIView, UICollectionViewDelegate {
     enum Command {
         case setRows([TimelineItem], anchorId: String?)
         case prepend([TimelineItem])
-        case dropOldest(count: Int)
+        /// 033：按显示行 id 丢弃一个前缀（折叠后原始行数 ≠ 显示行数）。
+        /// 不再提供"按行数删"的入口：显示行与原始行已经不是一回事。
+        case dropOldestIDs([String])
         case reclaim([String])
         case rehydrate([String])
         /// 一次原子提交的多段混合变更（spec 009 tasks T015）：头部插入 + 缺口
@@ -286,6 +290,9 @@ final class TranscriptListHost: UIView, UICollectionViewDelegate {
     private(set) var rows: [TranscriptRowPayload] = []
     private(set) var collectionView: UICollectionView!
     private var dataSource: UICollectionViewDiffableDataSource<String, String>!
+
+    /// The first fully visible row, used by the reader-context hold in spec 033.
+    var topVisibleRowID: String? { firstFullyVisibleRowId() }
 
     /// 行视图构造：由 `ChatView` 注入（它知道怎么把 `TimelineItem` 画出来）。
     var makeRow: ((TimelineItem) -> AnyView)?
@@ -467,8 +474,8 @@ final class TranscriptListHost: UIView, UICollectionViewDelegate {
             diagnostic("list.host", ["mode": "uikit", "rows": String(rows.count)])
         case .prepend(let items):
             prepend(items, reason: "page")
-        case .dropOldest(let count):
-            dropOldest(count)
+        case .dropOldestIDs(let ids):
+            dropOldest(ids: ids)
         case .reclaim(let ids):
             reclaim(ids: ids)
         case .rehydrate(let ids):
@@ -512,7 +519,10 @@ final class TranscriptListHost: UIView, UICollectionViewDelegate {
         }
         lastReconcile = incoming
         let anchorId = firstFullyVisibleRowId() ?? rows.first?.id
+        let anchorSeq = rows.first(where: { $0.id == anchorId })?.seq
         let before = visualY(of: anchorId)
+        let effectiveAnchorId = TranscriptAnchorResolver.resolve(
+            anchorID: anchorId, anchorSeq: anchorSeq, in: ordered)
         let reclaimedById = Dictionary(
             rows.filter(\.isReclaimed).map { ($0.id, $0.state) },
             uniquingKeysWith: { old, _ in old })
@@ -527,18 +537,18 @@ final class TranscriptListHost: UIView, UICollectionViewDelegate {
         }
         applySnapshot(reloading: changedIds)
         collectionView.layoutIfNeeded()
-        let after = visualY(of: anchorId)
+        let after = visualY(of: effectiveAnchorId)
         var delta = (after ?? 0) - (before ?? 0)
         if delta != 0 {
             collectionView.contentOffset.y += delta
             collectionView.layoutIfNeeded()
         }
-        var residual = (visualY(of: anchorId) ?? before ?? 0) - (before ?? 0)
+        var residual = (visualY(of: effectiveAnchorId) ?? before ?? 0) - (before ?? 0)
         if abs(residual) > Self.tolerance {
             collectionView.contentOffset.y += residual
             collectionView.layoutIfNeeded()
             delta += residual
-            residual = (visualY(of: anchorId) ?? before ?? 0) - (before ?? 0)
+            residual = (visualY(of: effectiveAnchorId) ?? before ?? 0) - (before ?? 0)
         }
         diagnostic("list.reconcile", [
             "rows": String(rows.count),
@@ -546,7 +556,7 @@ final class TranscriptListHost: UIView, UICollectionViewDelegate {
             "ms": String(format: "%.0f", (CFAbsoluteTimeGetCurrent() - started) * 1000),
             "reason": reason,
         ])
-        settle(anchorId: anchorId ?? "-", moved: residual)
+        settle(anchorId: effectiveAnchorId ?? "-", moved: residual)
         satisfyBottomIntent()
         if distanceToTop() < prefetchMargin() {
             nearTopArmed = true
@@ -567,6 +577,8 @@ final class TranscriptListHost: UIView, UICollectionViewDelegate {
             return "\(base)|u:\(isSteering):\(isPending):\(item.sendFailed):\(item.sendUnconfirmed)"
         case .toolCall(let invocation):
             return "\(base)|t:\(invocation.isRunning):\(invocation.isError)"
+        case .processHeader(let header):
+            return "\(base)|ph:\(header.isExpanded):\(header.toolCount):\(header.reasoningCount):\(header.messageCount)"
         default:
             return base
         }
@@ -631,11 +643,15 @@ final class TranscriptListHost: UIView, UICollectionViewDelegate {
     }
 
     /// 按预算丢弃最老的已读行（spec 008 的 FR-002）。
-    func dropOldest(_ count: Int) {
-        guard count > 0, rows.count > count else { return }
-        let anchorId = rows[count].id
+    /// 033：丢掉显示行的一个前缀。折叠后显示行数少于原始行数，按行数裁剪会
+    /// 删错行；调用方给出**显示行 id**，这里只做前缀删除与位移修正。
+    func dropOldest(ids: [String]) {
+        guard !ids.isEmpty, rows.count > ids.count else { return }
+        let victims = Set(ids)
+        guard let firstKept = rows.firstIndex(where: { !victims.contains($0.id) }) else { return }
+        let anchorId = rows[firstKept].id
         let before = visualY(of: anchorId)
-        rows.removeFirst(count)
+        rows.removeFirst(firstKept)
         applySnapshot()
         collectionView.layoutIfNeeded()
         let after = visualY(of: anchorId)
@@ -645,9 +661,9 @@ final class TranscriptListHost: UIView, UICollectionViewDelegate {
             collectionView.layoutIfNeeded()
         }
         let residual = (visualY(of: anchorId) ?? before ?? 0) - (before ?? 0)
-        diagnostic("list.insert", ["rows": String(count),
+        diagnostic("list.insert", ["rows": String(firstKept),
                                    "deltaPt": String(format: "%.0f", delta),
-                                   "reason": "drop"])
+                                   "reason": "drop-ids"])
         settle(anchorId: anchorId, moved: residual)
     }
 
@@ -881,13 +897,14 @@ final class TranscriptListHost: UIView, UICollectionViewDelegate {
     static var reclaimDistanceScreens: Int { ChatProbe.shared.reclaimScreens }
     static var rehydrateDistanceScreens: Int { ChatProbe.shared.rehydrateScreens }
 
-    func scrollTo(id: String, animated: Bool = false) {
+    func scrollTo(id: String, animated: Bool = false,
+                  anchor: UICollectionView.ScrollPosition = .centeredVertically) {
         guard let index = rows.firstIndex(where: { $0.id == id }) else { return }
         // 程序化"跳走"同样撤销钉底意图（与 scrollToTop 同一条纪律）：
         // 搜索命中跳转停在中间时，挂着 wantsBottom 会让下一条新消息把读者拽回底部。
         wantsBottom = false
         collectionView.scrollToItem(at: IndexPath(item: index, section: 0),
-                                    at: .centeredVertically, animated: animated)
+                                    at: anchor, animated: animated)
         scheduleReclaimCheck(immediate: true)
     }
 

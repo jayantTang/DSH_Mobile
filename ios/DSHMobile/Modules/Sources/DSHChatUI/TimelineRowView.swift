@@ -36,6 +36,9 @@ struct TimelineRowView: View {
         case .turnDivider: return "row.turnEnd"
         case .unknown: return "row.unknown"
         case .gap: return "row.gap"
+        case .processHeader(let header):
+            if header.scope == .group { return "row.process.group" }
+            return header.turn > 0 ? "row.process.turn.\(header.turn)" : "row.process"
         }
     }
 
@@ -52,6 +55,8 @@ struct TimelineRowView: View {
     var onOpenSession: ((String) -> Void)?
     /// 018：这一行属于哪个会话（子智能体停止要用父会话 id）。
     var parentSessionId: String?
+    /// 033：过程节点的展开/收起回调。nil 时节点不可操作（预览等场景）。
+    var onToggleProcess: (() -> Void)?
 
     @ViewBuilder
     private var row: some View {
@@ -97,6 +102,9 @@ struct TimelineRowView: View {
 
         case .gap(let start, let end, let status):
             GapRowView(status: status) { onGapRetry?(start, end) }
+
+        case .processHeader(let header):
+            ProcessHeaderRow(header: header) { onToggleProcess?() }
         }
     }
 }

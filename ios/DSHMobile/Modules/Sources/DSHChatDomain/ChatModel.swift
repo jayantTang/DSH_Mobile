@@ -43,6 +43,10 @@ public final class ChatModel {
     /// `summary` 之下，因此任何一次发布都是自洽的一对。
     public private(set) var visible: VisibleSession?
 
+    /// 过程节点的展开状态（spec 033）。这是**会话级显示状态**，不是转写数据：
+    /// 换会话/重开 App 重置；内部 setter 让 `ChatModel+ProcessFold.swift` 能改。
+    public internal(set) var foldState = TranscriptFoldState()
+
     /// 现在开的是哪个会话（读 `visible`）。
     public var session: SessionSummary? { visible?.summary }
 
@@ -59,9 +63,11 @@ public final class ChatModel {
     /// 渲染（`ChatView`）与量具（`StaleRenderWatch`）都读这一个入口，因此
     /// "屏幕上画了什么"与"判定量到什么"永远是同一件事。换会话期间、以及任何
     /// "行属于别的会话"的时刻，这里返回空——界面不会把上一个会话的内容画出来。
+    ///
+    /// 033 起这里返回的是**显示投影**：已完成轮次的过程被收进过程节点。需要原始
+    /// 行（搜索、分页、长按）的调用方用 `rawRowsFor(screen:)`。
     public func rowsFor(screen sessionId: String) -> [TimelineItem] {
-        guard let visible, visible.summary.sessionId == sessionId else { return [] }
-        return visible.timeline.items
+        displayRowsFor(screen: sessionId)
     }
 
     public private(set) var phase: Phase = .idle
@@ -340,6 +346,10 @@ public final class ChatModel {
     /// 只允许 ChatModel+Follow 的迁移入口改写（Swift 没有"跨文件只读"，
     /// 写权限按模块内纪律约束）。
     public var followState: FollowState = .atBottom
+    /// 033：读者刚点过过程节点，暂时抑制"贴底即恢复跟随"。
+    /// 用模型属性而不是 View 的 @State，是因为滚动几何回调可能在
+    /// SwiftUI 重建之前就到达，读到的是旧闭包里的值。
+    public internal(set) var processToggleFollowHold = false
     /// reading 期间到达的新消息数（「↓ 新消息」胶囊的未读数，T018）。
     public var unreadWhileReading = 0
     /// 尾部追平（点胶囊/可见性兜底）进行中：胶囊转 spinner，兜底去重（T018/T019）。
@@ -394,6 +404,19 @@ public final class ChatModel {
             phase = .failed(String(localized: "尚未连接"))
             return
         }
+        #if DEBUG
+        if ChatProbe.shared.processFoldFixture {
+            var fixture = ChatTimeline()
+            _ = fixture.reset(with: ProcessFoldFixture.records)
+            visible = VisibleSession(summary: summary, timeline: fixture)
+            foldState = TranscriptFoldState()
+            cachedSearchItems = nil
+            searchScopeVersion += 1
+            phase = .ready
+            scrollSignal += 1
+            return
+        }
+        #endif
         // ① **同步脱离**：把上一个会话要落盘的东西（转写尾部、草稿、内存缓存）用**旧 key**
         //    取出来，并把它的写链尾巴抓在手里稍后 await。这一步从前是 `await close()` 的一部分，
         //    而 `close()` 里那次等待（等写盘）正是"新会话那一屏先画出旧会话"的成因之一：
@@ -417,6 +440,11 @@ public final class ChatModel {
         // 以前只在"没有本地数据"那一支清，于是命中缓存/命中落盘时会把上一个会话
         // 的更早记录带进新会话，甚至能并进它的时间线。
         clearSearchHistory()
+        processToggleFollowHold = false
+        // 同一会话的重试/重开保留读者的展开状态；只有换会话才重置。
+        if visible?.summary.sessionId != key {
+            foldState = TranscriptFoldState()
+        }
         olderFailure = nil
         // This session's own half-written message, not the last one's.
         draft = drafts[key]?.text ?? ""
@@ -590,6 +618,8 @@ public final class ChatModel {
         streamFlushTask = nil
         pendingStreamFrames.removeAll(keepingCapacity: false)
         isAwaitingTurnStart = false
+        foldState = TranscriptFoldState()
+        processToggleFollowHold = false
     }
 
     /// Drops everything that belonged to the connection just left.
@@ -619,6 +649,7 @@ public final class ChatModel {
         throughSeq = 0
         pendingStreamFrames.removeAll()
         clearSearchHistory()
+        foldState = TranscriptFoldState()
         phase = .idle
     }
 

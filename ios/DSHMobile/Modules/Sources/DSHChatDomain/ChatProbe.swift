@@ -94,6 +94,9 @@ public final class ChatProbe: @unchecked Sendable {
     /// `-DSHProbeStaleSend`：把最后一条用户消息标成「已发送，未确认」，用来截图核对
     /// 徽标换掉了"等待开始"（真实触发要宿主撤单，见 MessagePipeline.markUnconfirmed）。
     public var staleSendState: Bool = false
+    /// `-DSHProbeProcessFoldFixture`（033）：打开会话时用确定性转写替换真实尾部，
+    /// 供过程折叠的 UI 用例使用；不产生网络请求。
+    public var processFoldFixture: Bool = false
     /// 驱动开始（`-DSHProbeOlderScroll` 第一轮）时由宿主报到（`ProbeVariants.noteDriveBegan`）。
     public var noteDriveBegan: (() -> Void)?
 }

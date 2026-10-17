@@ -756,3 +756,47 @@ It is registered as a workspace first, so a new group appears in the desktop sid
 "已结束 %lld 个任务" = "%lld finished tasks";
 
 "已结束的子智能体" = "Finished subagents";
+
+"进行中" = "Running";
+
+"已停止" = "Stopped";
+
+"过程" = "Process";
+
+"过程组" = "Process group";
+
+"已展开" = "Expanded";
+
+"已收起" = "Collapsed";
+
+"展开过程" = "Expand process";
+
+"收起过程" = "Collapse process";
+
+"部分记录" = "Partial record";
+
+"读取" = "Read";
+
+"写入" = "Write";
+
+"修改" = "Edit";
+
+"搜索" = "Search";
+
+"命令" = "Commands";
+
+"代码" = "Code";
+
+"联网" = "Web";
+
+"子智能体" = "Subagent";
+
+"提问" = "Questions";
+
+"计划" = "Plan";
+
+"%lld 次工具调用" = "%lld tool calls";
+
+"%lld 段思考" = "%lld thinking blocks";
+
+"用时 %@" = "Took %@";

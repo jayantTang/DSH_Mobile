@@ -117,7 +117,7 @@ public enum TranscriptSearch {
             let parts = [invocation.name, invocation.summary, invocation.resultText]
                 .filter { !$0.isEmpty }
             return parts.isEmpty ? nil : (.tool, parts.joined(separator: "\n"))
-        case .reasoning, .notice, .turnDivider, .unknown, .gap:
+        case .reasoning, .notice, .turnDivider, .unknown, .gap, .processHeader:
             return nil
         }
     }

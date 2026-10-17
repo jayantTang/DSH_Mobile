@@ -491,6 +491,11 @@ enum ProbeVariants {
     static var staleSendState: Bool {
         ProcessInfo.processInfo.arguments.contains("-DSHProbeStaleSend")
     }
+
+    /// `-DSHProbeProcessFoldFixture`（033）：用确定性转写替换真实会话尾部。
+    static var processFoldFixture: Bool {
+        ProcessInfo.processInfo.arguments.contains("-DSHProbeProcessFoldFixture")
+    }
     nonisolated(unsafe) private static var _driveBegan = false
     /// 驱动开始（`-DSHProbeOlderScroll` 第一轮）时由 TranscriptListHost 报到。
     static func noteDriveBegan() { _driveBegan = true }
@@ -647,6 +652,7 @@ enum ProbeVariants {
     static var failPageOnDrive: Bool { false }
     static var staleFollowFrame: Bool { false }
     static var staleSendState: Bool { false }
+    static var processFoldFixture: Bool { false }
     static func noteDriveBegan() {}
     static var failPageArmed: Bool { false }
     static var lazyStack: Bool { false }
