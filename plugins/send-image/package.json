@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-send-image",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Lets a picture into the conversation both ways: the agent can send one, and you can drag-select a screen region with ⌥⌘S and attach it to the current conversation.",
   "keywords": [
     "dsh",
