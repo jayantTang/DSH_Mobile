@@ -41,33 +41,56 @@ export function createSnapshotCache({
 } = {}) {
   const entries = new Map()
 
+  /// 同一会话的并发读只打一次宿主（预热与首屏可能同时到）。
+  const loading = new Map()
+
+  function fresh(sessionId) {
+    const cached = entries.get(sessionId)
+    if (cached === undefined || now() - cached.at >= ttlMs) return undefined
+    // LRU：命中后挪到队尾。
+    entries.delete(sessionId)
+    entries.set(sessionId, cached)
+    return cached
+  }
+
+  async function load(sessionId) {
+    if (typeof readSession !== 'function') return undefined
+    let snapshot
+    try {
+      snapshot = await readSession(sessionId)
+    } catch {
+      return undefined
+    }
+    const events = snapshot?.events
+    if (!Array.isArray(events) || events.length > maxEvents) return undefined
+    const entry = {
+      events,
+      newestSeq: events.length > 0 ? events[events.length - 1].seq : -1,
+      at: now(),
+    }
+    entries.set(sessionId, entry)
+    while (entries.size > maxEntries) entries.delete(entries.keys().next().value)
+    return entry
+  }
+
   return {
     /** 命中且新鲜就返回；否则读一次；读不到/超限/形状不对一律 undefined。 */
     async get(sessionId) {
-      const cached = entries.get(sessionId)
-      if (cached !== undefined && now() - cached.at < ttlMs) {
-        // LRU：命中后挪到队尾。
-        entries.delete(sessionId)
-        entries.set(sessionId, cached)
-        return cached
-      }
-      if (typeof readSession !== 'function') return undefined
-      let snapshot
-      try {
-        snapshot = await readSession(sessionId)
-      } catch {
-        return undefined
-      }
-      const events = snapshot?.events
-      if (!Array.isArray(events) || events.length > maxEvents) return undefined
-      const entry = {
-        events,
-        newestSeq: events.length > 0 ? events[events.length - 1].seq : -1,
-        at: now(),
-      }
-      entries.set(sessionId, entry)
-      while (entries.size > maxEntries) entries.delete(entries.keys().next().value)
-      return entry
+      const cached = fresh(sessionId)
+      if (cached !== undefined) return cached
+      const pending = loading.get(sessionId)
+      if (pending !== undefined) return pending
+      const task = load(sessionId).finally(() => loading.delete(sessionId))
+      loading.set(sessionId, task)
+      return task
+    },
+    /** 只看缓存，不读宿主（浏览翻页第一次请求用它，避免首屏多付一次整份读）。 */
+    peek(sessionId) { return fresh(sessionId) },
+    /** 后台预热：不阻塞当前请求，下一次翻页就能命中。 */
+    warm(sessionId) {
+      if (fresh(sessionId) !== undefined) return
+      if (loading.has(sessionId)) return
+      void this.get(sessionId)
     },
     invalidate(sessionId) { entries.delete(sessionId) },
     get size() { return entries.size },

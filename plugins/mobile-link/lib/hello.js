@@ -102,6 +102,9 @@ export const SERVER_CAPABILITIES = [
   // `deflate-raw` 的 base64 信封（见 history/compress.js）。手机只在看到这条
   // 能力时请求；旧客户端不传 encoding，回包与改动前逐字一致。
   'history-compression',
+  // history-fold-summary: `_link/sessionWindow` 接受 `fold: true`，把已完成轮次的
+  // 过程事件折成一条 `+link/fold` 摘要（见 history/fold.js）；手机展开时用普通请求取回。
+  'history-fold-summary',
   // jobs-roster: 连接器答 `_link/jobRoster`（逐活会话聚合宿主任务），并推
   // `link/jobs` 帧（spec 018）。手机**只按这条能力**决定是否渲染任务面板、列表行
   // 右侧计数与卡片新行：无此能力的旧连接器，手机整块不出现（界面与升级前逐屏一致）。

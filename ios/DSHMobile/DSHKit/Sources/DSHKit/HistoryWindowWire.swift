@@ -11,6 +11,8 @@ import Foundation
 public enum HistoryWindowWire {
     /// 连接器在 `_link/hello` 里声明：`_link/sessionWindow` 接受 `encoding`。
     public static let compressionCapability = "history-compression"
+    /// 连接器在 `_link/hello` 里声明：`_link/sessionWindow` 接受 `fold: true`。
+    public static let foldCapability = "history-fold-summary"
 
     public static func decode(_ raw: JSONValue,
                               limit: Int = 32 * 1024 * 1024) throws -> HistoryWindowValue {

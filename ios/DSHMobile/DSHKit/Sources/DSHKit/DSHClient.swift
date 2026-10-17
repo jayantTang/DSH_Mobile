@@ -140,6 +140,14 @@ public struct DSHClient: Sendable {
         capabilities.contains(HistoryWindowWire.compressionCapability) ? "deflate-raw" : nil
     }
 
+    /// 本连接该不该要求折叠感知下发：只在连接器声明了 `history-fold-summary` 时。
+    ///
+    /// 只用于**浏览翻页**（无 `roles`）。角色过滤的页可能从一轮中间开始，折叠判定
+    /// 不可靠，调用方传 `fold: false`/不传。
+    public var historyFoldEnabled: Bool {
+        capabilities.contains(HistoryWindowWire.foldCapability)
+    }
+
     public func historyWindow(_ request: HistoryWindowRequest) async throws -> HistoryWindowValue {
         // 先按未类型化的 JSON 取回：连接器可能回纯 JSON，也可能回压缩信封
         // （`history-compression`）。按 `encoding` 字段识别，两种形态都能解；

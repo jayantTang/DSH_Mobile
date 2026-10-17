@@ -222,7 +222,7 @@ test('readSession 失败时退回分块路径，结果仍然正确', async () =>
   assert.ok(query.calls.readEvent > 0)
 })
 
-test('未过滤路径不受影响：仍走 readEvent 分块，不读快照', async () => {
+test('未过滤路径：当前页仍实时读，后台预热；之后的更早页从快照出', async () => {
   const log = makeLog(300)
   const query = fakeQuery(log)
   const service = bound(query)
@@ -230,7 +230,15 @@ test('未过滤路径不受影响：仍走 readEvent 分块，不读快照', asy
   const legacy = await legacyPage(log, { before: 300, limit: 10 })
   assert.deepEqual(page.value.records, legacy.records)
   assert.equal(page.value.scanBoundary, legacy.scanBoundary)
-  assert.equal(query.calls.readSession, 0, '浏览翻页不该读整份日志')
+  // 首屏仍在实时窗口读（不能等整份快照）；预热是后台的，允许 0 或 1 次。
+  assert.ok(query.calls.readSession <= 1)
+  await new Promise((resolve) => setTimeout(resolve, 10))
+
+  const beforeReads = query.calls.readEvent
+  const older = await service.handle(WINDOW_METHOD, { address: ADDRESS, before: 280, limit: 10 })
+  assert.ok(older.value.records.length > 0)
+  assert.equal(query.calls.readEvent, beforeReads, '更早的页不该再逐块读宿主')
+  assert.ok(query.calls.readSession >= 1, '后台预热应该已经读过一次整份日志')
 })
 
 test('快照路径天然按原始事件判角色：注入消息不会被算成"我"', async () => {

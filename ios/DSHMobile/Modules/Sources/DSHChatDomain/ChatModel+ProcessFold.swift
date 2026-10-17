@@ -41,11 +41,80 @@ public extension ChatModel {
 
     func toggleProcess(turnKey: String) {
         let plan = processPlan()
-        guard let turn = plan.turnByKey[turnKey], turn.isFoldable else { return }
+        guard let turn = plan.turnByKey[turnKey] else { return }
+
+        // 连接器折好下发的摘要：这一轮没有过程行可展开，点它等于「把详情取回来」。
+        // 先记为展开，详情落地后整树重建，这一轮自然恢复成正常的可折叠轮次。
+        if let header = Self.prefetchedSummary(in: turn, plan: plan) {
+            let range = Self.prefetchedRange(in: turn, plan: plan) ?? header.startSeq...header.endSeq
+            foldState.manualTurn[turnKey] = true
+            Task { [weak self] in
+                await self?.loadPrefetchedSummary(header, range: range, turnKey: turnKey)
+            }
+            return
+        }
+
+        guard turn.isFoldable else { return }
         let expanded = TranscriptProcessFold.isTurnExpanded(turn, plan: plan, state: foldState)
         foldState.manualTurn[turnKey] = !expanded
         if !expanded {
             for group in turn.groups { foldState.collapsedGroups.remove(group.key) }
+        }
+    }
+
+    /// 轮次里有没有「连接器折好下发」的摘要行（`isPrefetched`）。
+    static func prefetchedSummary(in turn: TranscriptProcessFold.Turn,
+                                  plan: TranscriptProcessFold.Plan) -> TimelineProcessHeader? {
+        for index in turn.processIndexes {
+            if case .processHeader(let header) = plan.rows[index].kind, header.isPrefetched {
+                return header
+            }
+        }
+        return nil
+    }
+
+    /// 一轮里所有连接器摘要覆盖的 seq 段（合并后的展开范围）。
+    static func prefetchedRange(in turn: TranscriptProcessFold.Turn,
+                                plan: TranscriptProcessFold.Plan) -> ClosedRange<Int>? {
+        var lower: Int?
+        var upper: Int?
+        for index in turn.range {
+            guard case .processHeader(let header) = plan.rows[index].kind, header.isPrefetched else { continue }
+            lower = min(lower ?? header.startSeq, header.startSeq)
+            upper = max(upper ?? header.endSeq, header.endSeq)
+        }
+        guard let lower, let upper, lower <= upper else { return nil }
+        return lower...upper
+    }
+
+    /// 取回摘要背后的真实过程行。
+    ///
+    /// 走的是现有 `_link/sessionWindow`（不带 `fold`），不新增端点；取回后交给管道
+    /// `absorb`，摘要记录所在的 seq 被真实事件覆盖，下一次整树重建就把它换掉。
+    /// 失败时不改任何状态：摘要行还在，读者可以再点一次。
+    func loadPrefetchedSummary(_ header: TimelineProcessHeader,
+                               range: ClosedRange<Int>,
+                               turnKey: String) async {
+        guard header.isPrefetched,
+              let client = store?.client, let address else { return }
+        let lower = range.lowerBound
+        let upper = range.upperBound
+        do {
+            let value = try await client.historyWindow(HistoryWindowRequest(
+                address: address, before: upper + 1, through: nil,
+                limit: upper - lower + 1, maxBytes: 512 * 1024,
+                encoding: client.historyWindowEncoding, fold: nil))
+            let records = value.records.filter { $0.event.seq >= lower && $0.event.seq <= upper }
+            guard !records.isEmpty else { return }
+            await pipelineBridge?.absorb(records: records)
+            foldState.manualTurn[turnKey] = true
+            ChatProbe.shared.probeNote?("process.expand", [
+                "turn": turnKey, "records": String(records.count),
+            ], true)
+        } catch {
+            ChatProbe.shared.probeNote?("process.expandFailed", [
+                "turn": turnKey, "reason": String(describing: error),
+            ], true)
         }
     }
 

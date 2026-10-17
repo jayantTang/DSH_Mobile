@@ -933,3 +933,60 @@ test('缓存可关闭（cacheLimit=0）且不影响结果', async () => {
   assert.deepEqual(second, first)
   assert.ok(query.calls.length > calls, '关闭缓存时每次都读')
 })
+
+
+// 折叠感知下发：窗口层要把"摘要 + 保留事件"装回分页元数据里，且 fold=false 必须
+// 还能取回被折的过程事件（展开路径就靠它，不需要新端点）。
+
+function turnLog() {
+  return [
+    { seq: 0, type: 'turn/start', time: 1000, data: { turn: 1 } },
+    { seq: 1, type: 'user/message', time: 1001, data: { content: [{ type: 'text', text: '问题' }], source: { kind: 'user' } } },
+    { seq: 2, type: 'assistant/message', time: 1002, data: { turn: 1, content: [{ type: 'reasoning', text: '想' }] } },
+    { seq: 3, type: 'tool/call', time: 1003, data: { callId: 'c1', name: 'bash', arguments: '{}' } },
+    { seq: 4, type: 'tool/result', time: 1004, data: { callId: 'c1', content: [{ type: 'text', text: '输出' }] } },
+    { seq: 5, type: 'assistant/message', time: 1005, data: { turn: 1, content: [{ type: 'text', text: '最终回答' }] } },
+    { seq: 6, type: 'turn/end', time: 1006, data: { turn: 1, reason: 'done' } },
+  ]
+}
+
+test('sessionWindow fold=true 折已完成轮次：摘要记录 + 保留问答与结束标记', async () => {
+  const log = turnLog()
+  const service = bound(createHistoryService({ logger: { warn() {}, info() {} } }), fakeQuery(log))
+  const result = await service.handle(WINDOW_METHOD, {
+    address: ADDRESS, before: 7, limit: 50, maxBytes: DEFAULT_MAX_BYTES, fold: true,
+  })
+  assert.equal(result.ok, true)
+  const types = result.value.records.map((record) => record.event.type)
+  assert.deepEqual(types, ['turn/start', 'user/message', '+link/fold', 'assistant/message', 'turn/end'])
+  assert.equal(result.value.folds.length, 1)
+  assert.equal(result.value.folds[0].toolCount, 1)
+  assert.equal(result.value.folds[0].startSeq, 2)
+  assert.equal(result.value.folds[0].endSeq, 4)
+  assert.equal(result.value.folds[0].dividerSeq, null)
+  assert.equal(result.value.startSeq, 0)
+  assert.equal(result.value.endSeq, 6)
+})
+
+test('sessionWindow fold=false 仍能取回全部过程事件（展开路径）', async () => {
+  const log = turnLog()
+  const service = bound(createHistoryService({ logger: { warn() {}, info() {} } }), fakeQuery(log))
+  const result = await service.handle(WINDOW_METHOD, {
+    address: ADDRESS, before: 7, limit: 50, maxBytes: DEFAULT_MAX_BYTES,
+  })
+  assert.deepEqual(result.value.records.map((record) => record.event.seq), [0, 1, 2, 3, 4, 5, 6])
+  assert.equal(result.value.folds, undefined)
+})
+
+test('折叠回包同样走压缩信封，解压后与不压缩的折叠结果一致', async () => {
+  const log = turnLog()
+  const service = bound(createHistoryService({ logger: { warn() {}, info() {} } }), fakeQuery(log))
+  const plain = await service.handle(WINDOW_METHOD, {
+    address: ADDRESS, before: 7, limit: 50, fold: true,
+  })
+  const packed = await service.handle(WINDOW_METHOD, {
+    address: ADDRESS, before: 7, limit: 50, fold: true, encoding: 'deflate-raw',
+  })
+  const raw = inflateRawSync(Buffer.from(packed.value.value, 'base64'))
+  assert.deepEqual(JSON.parse(raw.toString('utf8')), plain.value)
+})

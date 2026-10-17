@@ -313,7 +313,41 @@ public struct ChatTimeline: Sendable {
 
     // MARK: - Internals
 
+    /// 把连接器折好的轮次摘要插成一行过程节点（`isPrefetched`）。
+    private mutating func applyFoldSummary(_ event: SessionEvent) -> Change {
+        let data = event.data
+        let turn = data["turn"]?.intValue ?? 0
+        let startSeq = data["startSeq"]?.intValue ?? event.seq
+        let endSeq = data["endSeq"]?.intValue ?? event.seq
+        let durationMs = data["durationMs"]?.doubleValue
+        let header = TimelineProcessHeader(
+            id: "fold-\(turn)-\(startSeq)",
+            scope: .turn,
+            turn: turn,
+            startSeq: startSeq,
+            endSeq: endSeq,
+            toolCount: data["toolCount"]?.intValue ?? 0,
+            reasoningCount: data["reasoningCount"]?.intValue ?? 0,
+            messageCount: data["messageCount"]?.intValue ?? 0,
+            subagentCount: data["subagentCount"]?.intValue ?? 0,
+            activityCounts: [:],
+            isExpanded: false,
+            isFoldable: true,
+            isRunning: false,
+            endReason: data["endReason"]?.stringValue,
+            duration: durationMs.map { $0 / 1000 },
+            hasFailure: false,
+            isPartial: false,
+            isPrefetched: true
+        )
+        return append(kind: .processHeader(header), seq: event.seq, identity: header.id)
+    }
+
+
     private mutating func applyEvent(_ event: SessionEvent) -> Change {
+        // 连接器折好下发的轮次摘要（`history-fold-summary`）。它不是宿主事件，
+        // 不经过 ChatEventDecoder：直接插一行 `processHeader`，点开时由上层回取详情。
+        if event.type == "+link/fold" { return applyFoldSummary(event) }
         switch ChatEventDecoder.decode(event) {
         case .userMessage(let message):
             // The host journals plugin and runtime-context messages under the

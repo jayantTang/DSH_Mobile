@@ -27,6 +27,9 @@ public struct HistoryWindowRequest: Sendable, Codable {
     /// the `before` cursor semantics are unchanged. Since T039 such a page also
     /// carries `scanBoundary` — the boundary a filtered pull advances by.
     public let roles: [String]?
+    /// 折叠感知下发（能力 `history-fold-summary`）：`true` 时连接器把本页内已完成
+    /// 的轮次折成一条 `+link/fold` 摘要记录。展开某轮时用 `false`（默认）取回原事件。
+    public let fold: Bool?
     /// Optional response encoding, connector capability `history-compression`.
     /// Only `"deflate-raw"` is defined; omit it and the connector returns plain JSON,
     /// which is what every client before this capability does.
@@ -40,7 +43,7 @@ public struct HistoryWindowRequest: Sendable, Codable {
 
     public init(address: SessionAddress, before: Int, through: Int? = nil,
                 limit: Int? = nil, maxBytes: Int? = nil, roles: [String]? = nil,
-                encoding: String? = nil) {
+                encoding: String? = nil, fold: Bool? = nil) {
         self.address = address
         self.before = before
         self.through = through
@@ -48,6 +51,7 @@ public struct HistoryWindowRequest: Sendable, Codable {
         self.maxBytes = maxBytes
         self.roles = roles
         self.encoding = encoding
+        self.fold = fold
     }
 
     /// The one encoding this build asks for, when the connector advertises it.
@@ -77,9 +81,13 @@ public struct HistoryWindowValue: Sendable, Codable {
     /// `nil` means the connector predates the field; readers fall back to
     /// `startSeq` (the old rule) and behave exactly as before.
     public let scanBoundary: Int?
+    /// 本页被折掉的轮次摘要（能力 `history-fold-summary`）。没有这个字段 = 连接器
+    /// 没折（老连接器，或本页没有可折的完成轮次）。
+    public let folds: [HistoryFoldSummary]?
 
     public init(records: [SessionRecord], startSeq: Int?, endSeq: Int?, hasMore: Bool,
-                truncatedBy: String? = nil, clamped: Bool? = nil, scanBoundary: Int? = nil) {
+                truncatedBy: String? = nil, clamped: Bool? = nil, scanBoundary: Int? = nil,
+                folds: [HistoryFoldSummary]? = nil) {
         self.records = records
         self.startSeq = startSeq
         self.endSeq = endSeq
@@ -87,6 +95,7 @@ public struct HistoryWindowValue: Sendable, Codable {
         self.truncatedBy = truncatedBy
         self.clamped = clamped
         self.scanBoundary = scanBoundary
+        self.folds = folds
     }
 
     /// The page as the pager wants it.
@@ -97,6 +106,40 @@ public struct HistoryWindowValue: Sendable, Codable {
             endSeq: endSeq ?? records.last?.event.seq ?? 0,
             hasMore: hasMore,
             clamped: clamped ?? false
+        )
+    }
+}
+
+
+/// 连接器折好的一条轮次摘要（`+link/fold` 的 `data`，也是 `folds` 的元素）。
+///
+/// 字段与 `TimelineProcessHeader` 一一对应；客户端收到后直接插一行过程节点，
+/// 点开时按 `startSeq...endSeq` 回取详情。`isPartial` 恒为 false：连接器只折
+/// 完整落在本页里的轮次。
+public struct HistoryFoldSummary: Sendable, Codable, Equatable {
+    public let turn: Int
+    public let startSeq: Int
+    public let endSeq: Int
+    public let finalSeq: Int?
+    public let dividerSeq: Int?
+    public let toolCount: Int
+    public let reasoningCount: Int
+    public let messageCount: Int
+    public let subagentCount: Int
+    public let endReason: String?
+    public let durationMs: Double?
+    public let foldedCount: Int
+
+    /// 展开这一轮时要发的那一次请求：精确覆盖摘要的 seq 段，**不带 fold**
+    /// （要的就是被折掉的原事件），压缩按当前连接能力带。
+    public func detailRequest(address: SessionAddress, encoding: String? = nil) -> HistoryWindowRequest {
+        HistoryWindowRequest(
+            address: address,
+            before: endSeq + 1,
+            through: nil,
+            limit: max(1, endSeq - startSeq + 1),
+            maxBytes: 512 * 1024,
+            encoding: encoding
         )
     }
 }

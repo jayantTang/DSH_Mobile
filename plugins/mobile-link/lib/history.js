@@ -9,6 +9,7 @@ import { createSnapshotCache, scanSnapshot } from './history/session-snapshot.js
 import {
   HISTORY_COMPRESSION_CAPABILITY, maybeCompressHistoryValue,
 } from './history/compress.js'
+import { FOLD_CAPABILITY, foldCompletedTurns } from './history/fold.js'
 
 // Re-exported for the caller/tests that read them off this module (single source
 // is `history/records.js`; the call ceiling lives in `history/shared.js`).
@@ -57,6 +58,9 @@ export const HISTORY_CAPABILITIES = [
   // 回包变成 `{encoding, value(base64), rawBytes}`。手机只在看到这条能力时才请求；
   // 老客户端不传 encoding，拿到的仍是纯 JSON。
   HISTORY_COMPRESSION_CAPABILITY,
+  // history-fold-summary: `_link/sessionWindow` 接受 `fold: true`，把本页内
+  // 已完成的轮次折成一条 `+link/fold` 摘要记录（展开时用不带 fold 的普通窗口取回）。
+  FOLD_CAPABILITY,
 ]
 
 export function isHistoryMethod(method) {
@@ -196,9 +200,9 @@ export function createHistoryService({
   /// 少一个就可能把过滤页当成浏览页返回。
   const pageCache = new Map()
 
-  function cacheKey({ sessionId, before, through, limit, maxBytes, roles }) {
+  function cacheKey({ sessionId, before, through, limit, maxBytes, roles, fold }) {
     return [sessionId, before, through ?? '', limit, maxBytes,
-            roles === undefined ? '' : [...roles].sort().join(',')].join('|')
+            roles === undefined ? '' : [...roles].sort().join(','), fold === true ? '1' : '0'].join('|')
   }
 
   function cacheGet(key, now = Date.now()) {
@@ -452,7 +456,8 @@ export function createHistoryService({
     const { roles, error: rolesError } = parseRoles(args.roles)
     if (rolesError) return rolesError
 
-    const requestKey = cacheKey({ sessionId, before, through, limit, maxBytes, roles })
+    const fold = args.fold === true
+    const requestKey = cacheKey({ sessionId, before, through, limit, maxBytes, roles, fold })
     const cachedPage = cacheGet(requestKey)
     if (cachedPage !== undefined) {
       return { ok: true, value: maybeCompressHistoryValue(cachedPage, args.encoding) }
@@ -469,9 +474,21 @@ export function createHistoryService({
       // 三级：① 角色过滤 + 宿主能整份读 → 从快照出（一次读、之后每页零往返）；
       //       ② 角色过滤但快照不可用（没有 readSession / 太大 / 读失败）→ A1 的分块定位；
       //       ③ 不带角色 → 原来的分块扫描（浏览翻页要的是精确的一段原始事件）。
-      const snapshot = roles !== undefined && typeof sessionQuery?.readSession === 'function'
-        ? await snapshots.get(sessionId)
-        : undefined
+      // 未过滤的浏览翻页也走整份快照：本机 13k 会话一次 `readSession` 约 0.3s，
+      // 而逐页 `readEvent` 每页都要付一次宿主地板价（实测 300–500ms/页）。
+      // 第一次请求仍走实时读（首屏不能等快照），同时在后台预热；之后的更早页命中快照。
+      // 只有"请求上界落在快照最新 seq 之内"才用快照——更新的那段必须实时读，
+      // 否则刚发出去的消息会被旧快照挡住。
+      let snapshot
+      if (roles !== undefined) {
+        snapshot = typeof sessionQuery?.readSession === 'function'
+          ? await snapshots.get(sessionId)
+          : undefined
+      } else {
+        snapshot = snapshots.peek(sessionId)
+        if (snapshot === undefined) snapshots.warm(sessionId)
+        if (snapshot !== undefined && before - 1 > snapshot.newestSeq) snapshot = undefined
+      }
       const scan = snapshot !== undefined
         ? scanSnapshot(snapshot, { before, through, limit, maxBytes, roles, roleOf })
         : useFilterScan
@@ -483,7 +500,12 @@ export function createHistoryService({
       const page = pageFrom(scan, { limit, maxBytes, roles })
       // 016：下发前统一清掉只用于诊断的宿主模型输出日志（口径只有一份，
       // 见 specs/016-history-load-perf/contracts/history-record-trim.md）。
-      const value = { ...page, records: trimRecordsForWire(page.records) }
+      const trimmed = trimRecordsForWire(page.records)
+      const folded = fold ? foldCompletedTurns(trimmed) : { records: trimmed, folds: [] }
+      const value = { ...page, records: folded.records }
+      // `folds` 只在折叠时出现：老客户端不认识这个字段也不会读它；新客户端没有它
+      // 就按普通记录折（老连接器）。
+      if (folded.folds.length > 0) value.folds = folded.folds
       cachePut(requestKey, value)
       // 压缩只改回包形态，不改分页语义：解压后逐字段等于不压缩的那份。
       return { ok: true, value: maybeCompressHistoryValue(value, args.encoding) }

@@ -79,6 +79,9 @@ public struct TimelineProcessHeader: Sendable, Equatable {
     public let hasFailure: Bool
     /// The turn begins or ends outside the loaded window.
     public let isPartial: Bool
+    /// 这一行是连接器折好下发的摘要（`+link/fold`），不是客户端从过程行推导出来的。
+    /// 展开它要先按 `startSeq...endSeq` 取回详情，再走正常的折叠路径。
+    public let isPrefetched: Bool
 
     public init(
         id: String,
@@ -97,7 +100,8 @@ public struct TimelineProcessHeader: Sendable, Equatable {
         endReason: String?,
         duration: TimeInterval?,
         hasFailure: Bool,
-        isPartial: Bool
+        isPartial: Bool,
+        isPrefetched: Bool = false
     ) {
         self.id = id
         self.scope = scope
@@ -116,6 +120,7 @@ public struct TimelineProcessHeader: Sendable, Equatable {
         self.duration = duration
         self.hasFailure = hasFailure
         self.isPartial = isPartial
+        self.isPrefetched = isPrefetched
     }
 
     /// The row a display projection inserts for this header.

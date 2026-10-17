@@ -408,4 +408,76 @@ final class TranscriptProcessFoldTests: XCTestCase {
         let second = ids(TranscriptProcessFold.displayRows(plan, state: state))
         XCTAssertEqual(first, second)
     }
+
+    // MARK: - 连接器折好下发的摘要（history-fold-summary）
+
+    func test_prefetched_summary_turn_is_not_folded_and_header_stays_visible() throws {
+        var timeline = ChatTimeline()
+        let events: [[String: JSONValue]] = [
+            ProcessFoldFixtures.turnStart(seq: 1, turn: 1),
+            ProcessFoldFixtures.user(seq: 2, text: "问"),
+            ["type": .string("+link/fold"), "seq": .int(3), "data": .object([
+                "turn": .int(1), "startSeq": .int(3), "endSeq": .int(4),
+                "finalSeq": .int(5), "dividerSeq": .int(6),
+                "toolCount": .int(2), "reasoningCount": .int(1),
+                "messageCount": .int(1), "subagentCount": .int(0),
+                "endReason": .string("done"), "durationMs": .int(1200),
+                "foldedCount": .int(2),
+            ])],
+            ProcessFoldFixtures.assistant(seq: 5, text: "答"),
+            ProcessFoldFixtures.turnEnd(seq: 6, turn: 1, reason: "done"),
+        ]
+        for event in events { _ = timeline.apply(try ProcessFoldFixtures.record(event).event) }
+
+        let plan = TranscriptProcessFold.plan(items: timeline.items, isTurnOpen: false)
+        let turn = try XCTUnwrap(plan.turns.first)
+        XCTAssertFalse(turn.isFoldable, "摘要行本身就是要显示的那一行，这一轮不能再被折叠")
+
+        let rows = TranscriptProcessFold.displayRows(plan, state: TranscriptFoldState())
+        let prefetched = rows.compactMap { item -> TimelineProcessHeader? in
+            if case .processHeader(let header) = item.kind, header.isPrefetched { return header }
+            return nil
+        }
+        XCTAssertEqual(prefetched.count, 1, "只显示摘要这一行，不再由不存在的真实过程行推导第二行")
+        XCTAssertEqual(prefetched.first?.toolCount, 2)
+        XCTAssertTrue(rows.contains { item in
+            if case .assistantText(let text) = item.kind { return text == "答" }
+            return false
+        })
+    }
+
+
+    func test_multiple_prefetched_headers_merge_into_one_row() throws {
+        var timeline = ChatTimeline()
+        let foldEvent = { (seq: Int, start: Int, end: Int, tools: Int) -> [String: JSONValue] in
+            ["type": .string("+link/fold"), "seq": .int(seq), "data": .object([
+                "turn": .int(1), "startSeq": .int(start), "endSeq": .int(end),
+                "toolCount": .int(tools), "reasoningCount": .int(0),
+                "messageCount": .int(1), "subagentCount": .int(0),
+                "foldedCount": .int(2),
+            ])]
+        }
+        let events: [[String: JSONValue]] = [
+            ProcessFoldFixtures.turnStart(seq: 1, turn: 1),
+            ProcessFoldFixtures.user(seq: 2, text: "问"),
+            foldEvent(3, 3, 4, 2),
+            ProcessFoldFixtures.assistant(seq: 5, text: "中间说明"),
+            foldEvent(6, 6, 7, 3),
+            ProcessFoldFixtures.assistant(seq: 8, text: "答"),
+            ProcessFoldFixtures.turnEnd(seq: 9, turn: 1, reason: "done"),
+        ]
+        for event in events { _ = timeline.apply(try ProcessFoldFixtures.record(event).event) }
+
+        let plan = TranscriptProcessFold.plan(items: timeline.items, isTurnOpen: false)
+        let rows = TranscriptProcessFold.displayRows(plan, state: TranscriptFoldState())
+        let headers = rows.compactMap { item -> TimelineProcessHeader? in
+            if case .processHeader(let header) = item.kind, header.isPrefetched { return header }
+            return nil
+        }
+        XCTAssertEqual(headers.count, 1, "一层跨多页时只能出现一个过程节点")
+        XCTAssertEqual(headers.first?.toolCount, 5, "计数相加")
+        XCTAssertEqual(headers.first?.startSeq, 3)
+        XCTAssertEqual(headers.first?.endSeq, 7)
+    }
+
 }

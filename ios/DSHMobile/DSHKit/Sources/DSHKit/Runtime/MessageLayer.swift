@@ -165,7 +165,8 @@ public final class MessageLayer {
                         let value = try await client.historyWindow(HistoryWindowRequest(
                             address: address, before: range.upperBound + 1, through: nil,
                             limit: range.count, maxBytes: 256 * 1024,
-                            encoding: client.historyWindowEncoding))
+                            encoding: client.historyWindowEncoding,
+                            fold: client.historyFoldEnabled ? true : nil))
                         await Self.noteFetch(probes, priority: priority, range: range,
                                              started: started, records: value.records.count)
                         return SessionPipeline.FetchPage(
