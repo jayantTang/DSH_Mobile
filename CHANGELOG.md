@@ -4,49 +4,25 @@
 [语义化版本](https://semver.org/lang/zh-CN/)。三处部署（App / 连接器 / 中转）的组合见
 [`docs/VERSIONING.md`](docs/VERSIONING.md)。
 
-## 中转 — 2026-10-17（浏览器下载的正文响应带上 CORS 头）
+## App 1.0（开发版）— 2026-10-17（发送状态不再永久挂住）
 
-Web 客户端经中转下载文件一直是 `blocked by CORS policy`：预检（`OPTIONS`）带着全套 CORS 头，
-真正的 `200`/`206` 正文响应一个都没有。根因是 `files_down()` 在 handler 内部就
-`prepare()`，而 `cors_preflight` 中间件是 handler 返回**之后**才补头——那时响应头已经发出，
-再改 `headers` 不报错也不生效。修法只有一处：在 `prepare()` 之前用 `CORS_STREAM_HEADERS`
-把 `access-control-allow-origin` 与 `access-control-expose-headers: content-range, etag`
-写进流式响应（FR-009）。`content-range` / `etag` 不在 CORS 安全响应头列表里，不 expose
-浏览器就读不到续传的偏移与版本。
+宿主撤单不带被撤项身份，手机端的行会永远停在「已发送，等待开始」。新增「未确认」态：
+`turn/end` 后仍 pending 的行转成「已发送，未确认，点击核对」，只查服务端不自动重发；
+重开会话也不再自动重投同一 requestId。
 
-快闸新增一条用例直接断言 `200` 与 `206` 的**正文响应**头（去掉那一行即红），并在
-`docs/RELAY-NOTES.md` 第 16 条写明"流式响应要自带 CORS 头，中间件事后补无效"。
-`/healthz` 的 `capabilities` 补上 `file-transfer`，与 `docs/relay-contract.json` 的能力
-词表对齐，浏览器客户端据此省掉那次空的 `PUT /files/up` 探测（FR-010）。
+## 中转 — 2026-10-17（浏览器下载补齐 CORS 头）
 
-真实浏览器取证：Chromium 148（Playwright，headless）+ 真实 Caddy + 真实 relay 进程，
-5 MB 文件整份、`Range` 续传、`If-Range` 过期三条路径的字节数与 SHA-256 全部对上；
-同一页面打去掉那一行的副本，得到与线上一致的 `blocked by CORS policy`（负对照）。
+`files_down()` 在 handler 内部就 `prepare()`，而补 CORS 头的中间件在返回后才跑——正文响应
+因此一个 CORS 头都没有，浏览器一律 `blocked by CORS policy`。改为在 `prepare()` 之前把
+`access-control-allow-origin` 与 `expose-headers: content-range, etag` 写进流式响应；
+`/healthz` 的能力清单补 `file-transfer`。快闸新增 200/206 正文响应头的断言。
 
 ## 连接器 0.6.6 / 中转 / 信件服务 — 2026-10-17（四段版本在运行时可知）
 
-用户出问题时，"他当时跑的是哪一版"要能直接查到。四段版本**只经控制帧**搬到位：
-App 每次连接在 `_link/hello` 里说自己（`clientVersion`/`clientBuild`，中转写入
-`devices.appVersion`，一直如此）；连接器在同一个应答里加 **`hostVersion`**（宿主 DSH 版本，
-取自进程环境 `DSH_CLIENT_VERSION`），并在控制帧 `hostStatus.info` 里带上自身 `version` 与
-`hostVersion`——中转收到就按 agent 记进 `agents.connectorVersion`/`hostVersion`/`versionsAt`
-（**值变了才写**，业务帧一律不看）。中转自己也有了标识：`/healthz` 的 `relayVersion`
-是 **部署构建号 `yyyyMMdd.HHmm`**（与 iOS 构建号同口径），部署脚本写进 `build.json`，
-并在发给设备的 `hostStatus` 里带 `relayVersion`；信件服务的 `/healthz` 同样带 `version`。
-
-App 设置「关于」因此从两行变四行：App 版本、连接器版本、DSH 版本、中转版本（连不上时后三段
-显示「未上报」）。连接器本机流水在每次链路建立时记一行 `link.open`（`serverVersion` +
-`hostVersion`），事后不必翻安装记录。
-
-顺带修掉一个真问题：连接器用 `require('../package.json')` 取自身版本，`require` 把 JSON 缓存在
-CJS 表里而热更不清缓存，于是 DSH 进程 10-12 启动后一直上报 `0.6.0`（仓库 10-13 已是 `0.6.5`）；
-改成读文件后热更即报真值。版本号口径同时定死：有 npm 注册版本的三件（连接器、send-image、
-doubao-image）继续语义化递增；没有注册表的（App、中转、信件服务、Web）用构建号
-`yyyyMMdd.HHmm`；DSH 宿主沿用上游版本。
-
-数据库迁移到 v8：`agents` 加三列（`connectorVersion`/`hostVersion`/`versionsAt`）。排障入口
-`admin.py device-list` 每行同时给出手机、连接器、DSH 三段版本。已知未覆盖：Web 客户端不发
-`_link/hello`，它的 `devices.appVersion` 仍停在配对时那一次（修法在 Web 仓库一侧）。
+连接器与 DSH 宿主版本随 `_link/hello` 与 `hostStatus` 上报，中转按 agent 记下（值变了才写）、
+`/healthz` 报部署构建号，信件服务 `/healthz` 同样带构建号；App 设置「关于」显示
+App / 连接器 / DSH / 中转四段。顺带修掉连接器版本号因 `require` 缓存而不随热更更新的问题。
+版本号口径：有 npm 注册版本的三件用语义化递增，其余用构建号 `yyyyMMdd.HHmm`。
 
 ## 中转 + 信件 — 2026-10-16（账户级状态与设备间同步）
 
