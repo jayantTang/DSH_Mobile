@@ -1276,7 +1276,12 @@ async def files_down(request: web.Request) -> web.StreamResponse:
                                            device["deviceId"], link.quota.limit)
                             return await _abort_download(response, link)
                         link._count_egress(len(slice_bytes))  # noqa: SLF001 - one definition
-                    await response.write(slice_bytes)
+                    if not await _write_piece(response, slice_bytes, bid):
+                        # 手机在下载途中走了（关 App、切网、锁屏被系统杀掉）。这不是
+                        # 中转的故障，但以前它会以 ERROR + traceback 落在日志里
+                        # （2026-10-17 的 24 小时统计里这类占 231 条中的 4 条），
+                        # 与真正的异常混在一起。记 DEBUG、走同一条收尾路径。
+                        raise _PeerGone
                     if remaining_declared is not None:
                         remaining_declared -= len(slice_bytes)
                         if remaining_declared == 0:
@@ -1290,6 +1295,8 @@ async def files_down(request: web.Request) -> web.StreamResponse:
                 except asyncio.TimeoutError:
                     LOGGER.warning("relay: download %s stalled for %.0fs", bid, DOWN_IDLE_TIMEOUT_S)
                     break
+        except _PeerGone:
+            pass
         finally:
             # Every exit from the loop means nobody is reading any more — the
             # declared length was reached, the connector ended, the phone hung
@@ -1299,10 +1306,34 @@ async def files_down(request: web.Request) -> web.StreamResponse:
             # and threw every window away at `deliver`.
             bridge.abandon()
             hub._cancel_fetch(agent, bridge)  # noqa: SLF001 - routing owns the frame shape
-        await response.write_eof()
+        try:
+            await response.write_eof()
+        except (ConnectionResetError, BrokenPipeError) as error:
+            # 与上面同一条理由：对端已经不在，收尾失败不是异常事件。
+            LOGGER.debug("relay: download %s could not be closed cleanly: %s", bid, error)
         return response
     finally:
         hub.close_bridge(bid)
+
+
+class _PeerGone(Exception):
+    """下载途中断开（只用于控制流，不对外、不进日志）。"""
+
+
+async def _write_piece(response: Any, data: bytes, bid: str) -> bool:
+    """把一段字节写进响应体；对端已经走了就返回 ``False``（不抛、不记 ERROR）。
+
+    ``aiohttp`` 在对端断开后写正文会抛 ``ClientConnectionResetError``（它是
+    ``ConnectionResetError`` 的子类）或 ``BrokenPipeError``。两种都是客户端行为，
+    拆成一个小函数是为了让"这是噪声而不是故障"这件事可被单测直接锁住。
+    """
+    try:
+        await response.write(data)
+    except (ConnectionResetError, BrokenPipeError) as error:
+        LOGGER.debug("relay: download %s: the client went away mid-body: %s", bid, error)
+        return False
+    return True
+
 
 
 async def _abort_download(response: web.StreamResponse,

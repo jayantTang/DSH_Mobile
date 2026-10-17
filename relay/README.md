@@ -454,6 +454,11 @@ journalctl -u dsh-relay-alerts -n 30 --no-pager
 JSON 收尾的几字符，说明坏字符卡在正文末尾——这是"被按字符切分的流式分片截断"的形态；
 深在中间则说明上游自己拼错了。这一条是定位上游根因的唯一线索。
 
+**噪声不占告警名额。** 手机在下载途中关 App、切网、被系统杀掉，aiohttp 写正文时会抛
+`ClientConnectionResetError` / `BrokenPipeError`。这是客户端行为，`GET /files/down`
+现在把它记成 DEBUG 并照常收尾（放弃桥、通知连接器停手），不再留下 `Error handling
+request` 的 ERROR 与 traceback——2026-10-17 的 24 小时统计里，这类占了 231 条异常中的 4 条。
+
 ### Watching the load
 
 `GET /stats` returns the relay's own accounting — live agents and devices, the
