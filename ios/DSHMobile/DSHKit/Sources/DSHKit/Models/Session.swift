@@ -73,6 +73,8 @@ public struct SessionSummary: Sendable, Codable, Identifiable, Hashable {
     public let origin: String?
     public let cwd: String?
     public let projections: SessionProjectionHints?
+    /// 宿主的这一会话是否还能起新轮次（本机实测存在，协议文档未列；缺省即未知）。
+    public let agentAvailable: Bool?
 
     public var id: String { sessionId }
 
@@ -114,6 +116,23 @@ public struct SessionSummary: Sendable, Codable, Identifiable, Hashable {
     ///
     /// History reads must not ask past this cursor; the host rejects the page.
     public var asOfSeq: Int { projections?.asOfSeq ?? 0 }
+
+    /// 子会话本轮是否在跑（`data-model.md` §3：`subagentTiming.active` 非空即在跑）。
+    ///
+    /// **只认这个投影**。老宿主不给它时读作 false：`running` 是快照、且父会话的
+    /// 轮次也会让它为真，拿它推"子智能体在跑"会把结束了的子会话一直算成活。
+    public var isSubagentActive: Bool { subagentTiming?.active != nil }
+
+    public var subagentTiming: SubagentTimingProjection? { projections?.values?.subagentTiming }
+
+    /// 行标题用的子会话标签；缺失时视图回退会话 id（`activity-ui.md` §5）。
+    public var subagentLabel: String? { projections?.values?.subagent?.label }
+
+    /// 可持续 / 一次性；缺失时按一次性处理（不给"停止"入口）。
+    public var subagentMode: SessionAddress.SubagentMode? { projections?.values?.subagent?.mode }
+
+    /// 子会话本轮的起跑时刻（毫秒）：面板的已跑时长基准。
+    public var subagentActiveSince: Double? { projections?.values?.subagentTiming?.active?.since }
 }
 
 public struct SessionProjectionHints: Sendable, Codable, Hashable {
@@ -139,7 +158,28 @@ public struct SessionProjectionValues: Sendable, Codable, Hashable {
     public let plan: PlanProjection?
     public let subagent: SubagentProjection?
     let subagentCatalog: JSONValue?
+    /// 子会话本轮的计时：`active` 存在 = 正在跑；消失 = 本轮结束。
+    public let subagentTiming: SubagentTimingProjection?
     public let inbox: JSONValue?
+}
+
+/// 投影 `subagentTiming`（`host-job-surface.md` §7）。
+///
+/// 三个字段都是可选的：宿主在子会话还没起跑、或本轮已经结束时只给其中一部分。
+public struct SubagentTimingProjection: Sendable, Codable, Hashable {
+    /// 已经跑完的轮次累计毫秒。
+    public let settledMs: Double?
+    /// 正在进行的那一轮；`nil` = 没在跑。
+    public let active: Active?
+    /// 最近一轮是否已完成（面板「已结束」段的判据之一）。
+    public let lastTurnCompleted: Bool?
+
+    public struct Active: Sendable, Codable, Hashable {
+        /// 起跑时刻（毫秒）：已跑时长的基准。
+        public let since: Double?
+        /// 已确认推进到的时刻（毫秒）；宿主用它标记心跳。
+        public let through: Double?
+    }
 }
 
 /// What the host knows about one subagent transcript.

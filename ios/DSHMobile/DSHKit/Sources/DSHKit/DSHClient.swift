@@ -187,6 +187,148 @@ public struct DSHClient: Sendable {
         await carrier.stream(endpoint: "session/control", args: EmptyArgs())
     }
 
+    // MARK: - Jobs and subagents (spec 018)
+
+    /// 连接器自己回答的活动名单方法名（`contracts/link-job-roster.md` §2）。
+    public static let jobsRosterMethod = "_link/jobRoster"
+
+    /// Follows one session's job list. Every frame is the **whole** list
+    /// (`host-job-surface.md` §1); there is no natural end.
+    ///
+    /// A frame this build cannot decode is skipped rather than ending the
+    /// stream: the next `rows` frame still replaces the list wholesale.
+    public func jobList(sessionId: String) async -> AsyncThrowingStream<JobListFrame, any Error> {
+        let raw = await carrier.stream(
+            endpoint: "job/list",
+            args: RequestArgs(request: JobListRequest(sessionId: sessionId))
+        )
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    for try await value in raw {
+                        guard let frame = Self.decode(JobListFrame.self, from: value) else { continue }
+                        continuation.yield(frame)
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    /// Follows one job's output (`host-job-surface.md` §2).
+    ///
+    /// `sessionId` may be omitted for an unowned job; `from` is a byte offset and
+    /// means "from the oldest byte the host still keeps".
+    ///
+    /// Three frame types arrive in order — `opened`, then `output` chunks, then
+    /// `status` — and then the host closes the stream normally. A frame this
+    /// build cannot decode becomes ``JobFollowFrame/unknown(type:raw:)``: ending
+    /// the stream there would tell the user the job vanished.
+    ///
+    /// A frame whose `type` is `error` is **not** a frame this build can ignore:
+    /// it means the host/connector refused or aborted the stream, so the stream
+    /// ends by throwing instead of degrading to `.unknown` and reading on
+    /// (`specs/018-mobile-activity-visibility/test-coverage.md` G8).
+    public func jobFollow(
+        sessionId: String? = nil,
+        jobId: String,
+        from: Int? = nil
+    ) async -> AsyncThrowingStream<JobFollowFrame, any Error> {
+        let raw = await carrier.stream(
+            endpoint: "job/follow",
+            args: RequestArgs(request: JobFollowRequest(sessionId: sessionId, jobId: jobId, from: from))
+        )
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    for try await value in raw {
+                        if let frame = Self.decode(JobFollowFrame.self, from: value) {
+                            if case .unknown(let type, let frameRaw) = frame, type == "error" {
+                                throw DSHTransportError.streamFailed(Self.streamFailure(from: frameRaw))
+                            }
+                            continuation.yield(frame)
+                        } else {
+                            continuation.yield(.unknown(type: "undecodable", raw: value))
+                        }
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    /// Reads a stream's own `error` frame into the same failure type the
+    /// carriers throw, so callers only need one branch ("the stream failed").
+    ///
+    /// Two shapes are accepted, because the error may come from the host or be
+    /// wrapped by `$events`-style forwarding: `{"type":"error","error":{…}}`
+    /// and the fields spread on the frame itself (`{"type":"error","code":…}`).
+    static func streamFailure(from raw: JSONValue) -> DSHRPCFailure {
+        let object = raw["error"]?.objectValue ?? raw.objectValue ?? [:]
+        let code = object["code"]?.stringValue ?? "stream/error"
+        let message = object["message"]?.stringValue ?? "the stream reported an error"
+        return DSHRPCFailure(code: code, message: message, details: object["details"] ?? .object([:]))
+    }
+
+    /// Asks the host to stop one job (`host-job-surface.md` §3).
+    ///
+    /// `requested` only means "accepted": the row must wait for the roster to
+    /// come back with the terminal status. `already-finished` is not a failure.
+    public func jobKill(sessionId: String, jobId: String) async throws -> JobKillValue {
+        try await carrier.unary(
+            method: "job/kill",
+            args: RequestArgs(request: JobKillRequest(sessionId: sessionId, jobId: jobId)),
+            as: JobKillValue.self
+        )
+    }
+
+    /// Stops a continuable subagent from its parent (`host-job-surface.md` §5).
+    ///
+    /// The host's schema pins `mode` to the literal `continuable`, so one-shot
+    /// subagents have no independent stop; the UI must not offer one.
+    public func subagentInterrupt(
+        childSessionId: String,
+        parentSessionId: String
+    ) async throws -> SubagentInterruptValue {
+        try await carrier.unary(
+            method: "subagents/interruptByParent",
+            args: SubagentInterruptRequest(
+                childSessionId: childSessionId,
+                parentSessionId: parentSessionId
+            ),
+            as: SubagentInterruptValue.self
+        )
+    }
+
+    /// Reads the connector's aggregated activity roster (`link-job-roster.md` §2).
+    ///
+    /// Caller must have seen `jobs-roster` in the handshake; without it an older
+    /// connector answers `link/unsupported` and every activity surface stays
+    /// hidden. Nothing falls back: a per-session `job/list` stream per session is
+    /// exactly the design this roster exists to avoid.
+    public func activityRoster() async throws -> ActivityRoster {
+        try await carrier.unary(
+            method: Self.jobsRosterMethod,
+            args: EmptyArgs(),
+            as: ActivityRoster.self
+        )
+    }
+
+    /// Decodes one stream frame without letting a decode bug end the stream.
+    private static func decode<Frame: Decodable & Sendable>(
+        _ type: Frame.Type,
+        from value: JSONValue
+    ) -> Frame? {
+        guard let data = try? JSONEncoder().encode(value) else { return nil }
+        return try? JSONDecoder().decode(Frame.self, from: data)
+    }
+
     public func createSession(_ request: SessionCreateRequest) async throws -> JSONValue {
         try await carrier.unary(method: "session/create", args: RequestArgs(request: request), as: JSONValue.self)
     }
