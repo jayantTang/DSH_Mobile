@@ -261,7 +261,6 @@
 "照片图库" = "Photo library";
 "文件" = "Files";
 "添加图片或文件" = "Add a picture or file";
-"停止" = "Stop";
 "插入当前轮次" = "Steer this turn";
 "排队发送" = "Queue";
 "发送" = "Send";
@@ -713,3 +712,29 @@ It is registered as a workspace first, so a new group appears in the desktop sid
 "已经配满 %lld 台。要再加一台（手机或浏览器），先在这里撤销一台不再用的。" = "All %lld slots are taken. To add another phone or browser, revoke one you no longer use.";
 /* Devices page: footer when there is room (032, mentions the web client) */
 "这些是能通过中转到这台电脑的设备（手机或浏览器）。撤销一台后，它需要重新配对。" = "These are the devices paired to this computer through the relay (phones and browsers). Revoking one makes it pair again.";
+
+/* 018 activity visibility: session row counts, chat indicator, panel, output */
+"%lld 智能体" = "%lld agents";
+"%lld 后台任务" = "%lld jobs";
+"任务与子智能体" = "Tasks & subagents";
+"关掉面板不影响它们继续跑；跑完了会推通知。" = "Closing this panel does not stop them. You will be notified when they finish.";
+"上次已知" = "Last known";
+"没有正在运行的任务" = "Nothing is running";
+"子智能体 · 可持续" = "Subagent · continuable";
+"子智能体 · 一次性，随本轮一起结束" = "Subagent · one-shot, ends with this turn";
+"子智能体 · %@" = "Subagent · %@";
+"打开子会话 ›" = "Open child session ›";
+"查看输出 ›" = "View output ›";
+"已结束 %lld 个" = "%lld finished";
+"清除" = "Clear";
+"再按一次停止" = "Tap again to stop";
+"运行中 · %@" = "Running · %@";
+"更早的输出已被丢弃" = "Earlier output was dropped";
+"中间有一段输出被丢弃" = "A section of output is missing";
+"还没有输出" = "No output yet";
+"这个任务没有产生任何输出。" = "This task produced no output.";
+"任务已经结束了" = "The task has already finished";
+"任务已不在列表里" = "The task is no longer listed";
+"停止请求没有被接受" = "The stop request was not accepted";
+
+"停止" = "Stop";

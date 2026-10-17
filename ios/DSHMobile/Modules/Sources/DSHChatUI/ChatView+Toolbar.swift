@@ -18,9 +18,28 @@ extension ChatView {
     @ToolbarContentBuilder
     var toolbar: some ToolbarContent {
         ToolbarItemGroup(placement: .topBarTrailing) {
-            // Run state is the one piece of status worth permanent space, and
-            // only while it is actually doing something.
-            if model.isRunning {
+            // 018 §2：那个点改为常驻（`isBusy` = 轮次 ∪ 后台 ∪ 子智能体）并带计数，
+            // 位置沿用今天这一处；点它打开任务面板。旧 `chat.running` 标识留在点上。
+            if isActivityVisible {
+                Button {
+                    isShowingActivity = true
+                } label: {
+                    HStack(spacing: 3) {
+                        StatusDot(level: .busy, size: 7, animated: true)
+                            .accessibilityIdentifier("chat.running")
+                        if activity.activeCount > 0 {
+                            Text("\(activity.activeCount)")
+                                .font(DSHTheme.Typography.micro)
+                                .foregroundStyle(DSHTheme.brand)
+                                .monospacedDigit()
+                                .accessibilityIdentifier("chat.activity.count")
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("chat.activity")
+                .accessibilityLabel("任务与子智能体")
+            } else if model.isRunning {
                 StatusDot(level: .busy, size: 7, animated: true)
                     .accessibilityIdentifier("chat.running")
                     .accessibilityLabel("运行中")

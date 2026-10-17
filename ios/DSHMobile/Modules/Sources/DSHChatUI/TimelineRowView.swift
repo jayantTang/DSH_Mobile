@@ -1,4 +1,5 @@
 #if os(iOS)
+import DSHCore
 import DSHDesign
 import DSHKit
 import SwiftUI
@@ -45,6 +46,12 @@ struct TimelineRowView: View {
     var onSendRetry: ((_ rowId: String) -> Void)?
     /// 「已发送，未确认，点击核对」被点：把行身份交回给调用方（只核对，不重发）。
     var onSendVerify: ((_ rowId: String) -> Void)?
+    /// 018：活动适配层（`subagent` 卡的状态与已跑时长；能力位缺失时不传）。
+    var activity: ActivityModel?
+    /// 018：打开子会话（装配层压入导航栈）。
+    var onOpenSession: ((String) -> Void)?
+    /// 018：这一行属于哪个会话（子智能体停止要用父会话 id）。
+    var parentSessionId: String?
 
     @ViewBuilder
     private var row: some View {
@@ -72,7 +79,12 @@ struct TimelineRowView: View {
             ReasoningRow(text: text)
 
         case .toolCall(let invocation):
-            ToolCallRow(invocation: invocation)
+            ToolCallRow(
+                invocation: invocation,
+                activity: activity,
+                parentSessionId: parentSessionId,
+                onOpenSession: onOpenSession
+            )
 
         case .notice(let text, let isError):
             NoticeRow(text: text, isError: isError)
@@ -368,8 +380,17 @@ private struct ReasoningRow: View {
 /// One tool invocation: header, expandable arguments, and its output.
 struct ToolCallRow: View {
     let invocation: ToolInvocation
+    /// 018：活动适配层（能力位缺失时 nil → 卡片不新增任何一行）。
+    var activity: ActivityModel?
+    /// 018：子会话的父会话 id（停止要它）。
+    var parentSessionId: String?
+    /// 018：打开子会话。
+    var onOpenSession: ((String) -> Void)?
     /// `nil` follows the default for this result; a tap pins it either way.
     @State private var expansionOverride: Bool?
+    /// 018：「停止」的第一下（3 秒内第二下才发请求）。
+    @State private var armedStop = false
+    @State private var disarmTask: Task<Void, Never>?
     /// Whether the raw arguments and the machine text are on screen. Off by
     /// default for a card whose point is the picture: `{"caption": "…",
     /// "screenshot": true}` and a `<path>…</path>` handle next to a screenshot
@@ -408,6 +429,10 @@ struct ToolCallRow: View {
                 Hairline()
                 details
             }
+            if subagentFooterVisible {
+                Hairline()
+                subagentFooter
+            }
         }
         .background(DSHTheme.layer1)
         .clipShape(RoundedRectangle(cornerRadius: DSHTheme.Radius.large, style: .continuous))
@@ -415,6 +440,97 @@ struct ToolCallRow: View {
             RoundedRectangle(cornerRadius: DSHTheme.Radius.large, style: .continuous)
                 .stroke(invocation.isError ? DSHTheme.danger.opacity(0.4) : DSHTheme.border1, lineWidth: 1)
         )
+    }
+
+    // MARK: - subagent 卡（018 §4）
+
+    /// 从调用结果文本里取子会话 id（格式 `started subagent <childSessionId>`）。
+    /// 拿不到证据就不加任何新行——不猜哪个后台身份属于这张卡。
+    private var subagentChildId: String? {
+        guard invocation.name == "subagent", !invocation.isRunning else { return nil }
+        guard let range = invocation.resultText.range(of: "started subagent ") else { return nil }
+        let tail = invocation.resultText[range.upperBound...]
+        let id = tail.prefix { character in
+            character.isLetter || character.isNumber
+                || character == "-" || character == "_" || character == "." || character == ":"
+        }
+        return id.isEmpty ? nil : String(id)
+    }
+
+    private var subagentChild: SessionSummary? {
+        guard let id = subagentChildId else { return nil }
+        return activity?.summary(sessionId: id)
+    }
+
+    private var subagentFooterVisible: Bool {
+        activity?.isAvailable == true && subagentChildId != nil
+    }
+
+    private var subagentFooter: some View {
+        HStack(spacing: DSHTheme.Spacing.tight) {
+            if let child = subagentChild {
+                if child.isSubagentActive, let since = child.subagentActiveSince {
+                    TimelineView(.periodic(from: .now, by: 1)) { _ in
+                        Text("运行中 · \(ActivityDuration.clock(sinceMilliseconds: since))")
+                            .font(DSHTheme.Typography.micro)
+                            .foregroundStyle(DSHTheme.brand)
+                            .monospacedDigit()
+                    }
+                } else {
+                    Text("已完成")
+                        .font(DSHTheme.Typography.micro)
+                        .foregroundStyle(DSHTheme.labelTertiary)
+                }
+            }
+            Spacer(minLength: 0)
+            if subagentChild?.isSubagentActive == true,
+               subagentChild?.subagentMode == .continuable {
+                subagentStopControl
+            }
+            if let childId = subagentChildId {
+                Button {
+                    onOpenSession?(childId)
+                } label: {
+                    Text("打开子会话 ›")
+                        .font(DSHTheme.Typography.micro)
+                        .foregroundStyle(DSHTheme.brand)
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("chat.tool.openChild")
+            }
+        }
+        .padding(.horizontal, DSHTheme.Spacing.standard)
+        .padding(.vertical, DSHTheme.Spacing.tight)
+    }
+
+    /// 与面板同一套：三级灰小字、两段确认、不乐观改状态。
+    private var subagentStopControl: some View {
+        Button {
+            if armedStop {
+                armedStop = false
+                disarmTask?.cancel()
+                guard let childId = subagentChildId, let parentSessionId else { return }
+                Task {
+                    await activity?.stopSubagent(
+                        childSessionId: childId,
+                        parentSessionId: parentSessionId
+                    )
+                }
+            } else {
+                armedStop = true
+                disarmTask?.cancel()
+                disarmTask = Task { @MainActor in
+                    try? await Task.sleep(for: .seconds(3))
+                    if !Task.isCancelled { armedStop = false }
+                }
+            }
+        } label: {
+            Text(armedStop ? "再按一次停止" : "停止")
+                .font(DSHTheme.Typography.micro)
+                .foregroundStyle(armedStop ? DSHTheme.danger : DSHTheme.labelTertiary)
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("chat.tool.stopSubagent")
     }
 
     private var header: some View {

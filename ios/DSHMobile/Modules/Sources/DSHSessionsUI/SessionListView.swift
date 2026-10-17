@@ -67,6 +67,8 @@ public struct SessionListView: View {
     @State private var isCreatingSession = false
     /// 反馈记录页那张 sheet。
     @State private var isShowingFeedback = false
+    /// 018：活动名单的应用级适配层（同一份名单同时供列表与聊天面板读）。
+    @MainActor private var activity: ActivityModel { .shared }
     /// The session just archived, so the swipe can be taken back.
     @State private var justArchived: SessionSummary?
     @State private var archiveFailure: String?
@@ -416,7 +418,8 @@ public struct SessionListView: View {
             NavigationLink(value: session.sessionId) {
                 SessionRow(session: session, rowState: model.state(of: session),
                            home: store.hostHome,
-                           isJustCreated: session.sessionId == model.lastCreatedSessionId)
+                           isJustCreated: session.sessionId == model.lastCreatedSessionId,
+                           activity: activity.snapshot(sessionId: session.sessionId))
             }
             .buttonStyle(.plain)
             // 首个会话行真的画出来了 → 记一条 `app.first-render`（一次拨号一条）。
@@ -447,6 +450,7 @@ public struct SessionListView: View {
         NavigationLink(value: session.sessionId) {
             SessionRow(session: session, rowState: model.state(of: session),
                        home: store.hostHome, isChild: true,
+                       activity: activity.snapshot(sessionId: session.sessionId),
                        )
         }
         .buttonStyle(.plain)
@@ -467,7 +471,8 @@ public struct SessionListView: View {
         NavigationLink(value: session.sessionId) {
             SessionRow(session: session, rowState: model.state(of: session),
                        home: store.hostHome, isChild: true,
-                       isJustCreated: session.sessionId == model.lastCreatedSessionId)
+                       isJustCreated: session.sessionId == model.lastCreatedSessionId,
+                       activity: activity.snapshot(sessionId: session.sessionId))
         }
         .buttonStyle(.plain)
         // 子会话行也是"内容画出来"的一种（同一处语义的两条渲染路径，都要覆盖）。
@@ -642,8 +647,19 @@ public struct SessionRow: View {
     var isChild: Bool = false
     /// Whether this is the session the app just created in this run.
     var isJustCreated: Bool = false
+    /// 018：活动快照（`ActivityStore.snapshot` 的产物）。能力位缺失时是 nil，
+    /// 此时右侧计数与 `isBusy` 扩展的「运行中」都不出现。
+    var activity: SessionActivity?
 
     private var projections: SessionProjectionValues? { session.projections?.values }
+
+    /// 行状态是否算「运行中」：轮次 ∪ 后台任务 ∪ 子智能体（判定在 DSHKit）。
+    private var isBusy: Bool { activity?.isBusy == true }
+    private var showsActivityCounts: Bool {
+        isBusy && rowState != .waitingForYou && (agents > 0 || jobs > 0)
+    }
+    private var agents: Int { activity?.counts.agents ?? 0 }
+    private var jobs: Int { activity?.counts.jobs ?? 0 }
 
     public var body: some View {
         HStack(spacing: DSHTheme.Spacing.tight) {
@@ -663,11 +679,15 @@ public struct SessionRow: View {
             // 待答和运行中共用这个圆点，区分交给整行底色与左侧竖条（见行底那两处）：
             // 圆点只负责"这一行有状态"，脉冲与否才是"它在不在动"。
             Group {
-                if rowState == .finishedSeen {
+                if rowState == .finishedSeen && !isBusy {
                     Color.clear
                 } else {
                     // 只有真在跑的才脉冲：等用户回应的那个是不动的。
-                    StatusDot(level: statusLevel, animated: session.running && rowState == .running)
+                    StatusDot(
+                        level: statusLevel,
+                        animated: rowState != .waitingForYou
+                            && (isBusy || (session.running && rowState == .running))
+                    )
                 }
             }
             .frame(width: 8, height: 8)
@@ -694,7 +714,7 @@ public struct SessionRow: View {
                         Text("·")
                             .font(DSHTheme.Typography.micro)
                             .foregroundStyle(DSHTheme.labelDimmed)
-                    } else if session.running {
+                    } else if session.running || isBusy {
                         Text("运行中")
                             .font(DSHTheme.Typography.micro)
                             .foregroundStyle(DSHTheme.brand)
@@ -731,6 +751,29 @@ public struct SessionRow: View {
 
             Spacer(minLength: DSHTheme.Spacing.hairline)
 
+            // 018 §1：行内右侧两行右对齐蓝字（为 0 的那行不存在）。
+            // 文案不变、位置在行尾；顶部计数不动。
+            if showsActivityCounts {
+                VStack(alignment: .trailing, spacing: 1) {
+                    if agents > 0 {
+                        Text("\(agents) 智能体")
+                            .font(DSHTheme.Typography.micro)
+                            .foregroundStyle(DSHTheme.brand)
+                            .monospacedDigit()
+                            .accessibilityIdentifier("session.activity.agents")
+                    }
+                    if jobs > 0 {
+                        Text("\(jobs) 后台任务")
+                            .font(DSHTheme.Typography.micro)
+                            .foregroundStyle(DSHTheme.brand)
+                            .monospacedDigit()
+                            .accessibilityIdentifier("session.activity.jobs")
+                    }
+                }
+                .multilineTextAlignment(.trailing)
+                .fixedSize(horizontal: true, vertical: false)
+            }
+
             if let fraction = projections?.contextPressure?.fraction, fraction > 0.75 {
                 // Only surfaces when context is actually getting tight, so the
                 // row stays quiet in the common case. Small text rather than the
@@ -766,6 +809,8 @@ public struct SessionRow: View {
     }
 
     private var statusLevel: StatusDot.Level {
+        // 等待回应的整行样式优先：即使这一行同时还有后台在跑，也不把它画成"在动"。
+        if isBusy, rowState != .waitingForYou { return .busy }
         switch rowState {
         case .waitingForYou: return .attention
         case .running: return .busy

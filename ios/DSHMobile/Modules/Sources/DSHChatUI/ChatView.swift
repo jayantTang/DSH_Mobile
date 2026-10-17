@@ -18,8 +18,21 @@ public struct ChatView: View {
     var onOpenFiles: ((SessionSummary) -> Void)?
     /// Opens the plugin WebView fallback for one origin.
     var onOpenWeb: ((URL) -> Void)?
+    /// 018：从面板或工具卡打开一个子会话（由装配层压入导航栈）。
+    var onOpenSession: ((String) -> Void)?
     /// 这份转写属于哪个会话（`RootView.sessionDestination` 一屏一份，用 `.id()` 区分）。
     var sessionId: String
+
+    /// 018：活动名单的应用级适配层（一份名单同时供列表与面板读）。
+    @MainActor var activity: ActivityModel { .shared }
+    /// 任务与子智能体面板（半屏 sheet）。
+    @State var isShowingActivity = false
+
+    /// 无人值守截图用：`-DSHOpenScreen activity` / `activity-output` 直接打开面板
+    ///（后者再展开第一个在跑任务的输出）。仅 DEBUG；与 `RootView` 的 `-DSHOpenScreen`
+    /// 同一族，未知取值在那边不匹配任何页面，因此互不干扰。
+    @State private var automationActivity: String?
+
 
     /// 现在屏幕上的还是不是我的会话。
     ///
@@ -150,11 +163,13 @@ public struct ChatView: View {
         model: ChatModel,
         onOpenFiles: ((SessionSummary) -> Void)? = nil,
         onOpenWeb: ((URL) -> Void)? = nil,
+        onOpenSession: ((String) -> Void)? = nil,
         sessionId: String
     ) {
         self.model = model
         self.onOpenFiles = onOpenFiles
         self.onOpenWeb = onOpenWeb
+        self.onOpenSession = onOpenSession
         self.sessionId = sessionId
     }
 
@@ -169,6 +184,15 @@ public struct ChatView: View {
                 .probed("composer")
         }
         .background(DSHTheme.background)
+        // 018：聊天页把当前会话的轮次喂成 `timeline.isTurnOpen`（列表喂的是
+        // `session/list.running`，两者口径不同，这里覆盖）。
+        .task { syncActivityBinding() }
+        .onChange(of: model.timeline.isTurnOpen) { _, _ in syncActivityBinding() }
+        .onChange(of: model.session?.sessionId) { _, _ in syncActivityBinding() }
+        .onDisappear {
+            guard ownsTranscript else { return }
+            activity.bindChat(sessionId: nil, isTurnOpen: false)
+        }
         .task {
             ChatProbe.shared.start?()
             ChatProbe.shared.resume?()
@@ -241,6 +265,26 @@ public struct ChatView: View {
         .sheet(isPresented: $isSearching) {
             TranscriptSearchSheet(model: model) { hit in searchJumpHit = hit }
         }
+        .task {
+            #if DEBUG
+            if let requested = Self.automationActivityScreen() {
+                automationActivity = requested
+                isShowingActivity = true
+            }
+            #endif
+        }
+        .sheet(isPresented: $isShowingActivity) {
+            ActivitySheet(
+                sessionId: sessionId,
+                onOpenSession: { childId in
+                    isShowingActivity = false
+                    onOpenSession?(childId)
+                },
+                automation: automationActivity
+            )
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+        }
         .sheet(item: $readingMessage) { message in
             MessageTextSheet(message: message)
         }
@@ -270,10 +314,28 @@ public struct ChatView: View {
 
     /// The directory name, falling back to the title when there is no workspace.
     private var headerTitle: String {
+        // 018 §5：子会话只换标题，不加任何退出/关闭控件（退出沿用系统导航手势）。
+        if let session = model.session, session.isSubagent {
+            return String(localized: "子智能体 · \(session.subagentLabel ?? session.sessionId)")
+        }
         if let cwd = model.session?.cwd, !cwd.isEmpty {
             return (cwd as NSString).lastPathComponent
         }
         return model.session?.displayTitle ?? "会话"
+    }
+
+    /// 018 §2：工具栏那个点是否出现（有活才出现入口；能力位缺失整块不出现）。
+    var isActivityVisible: Bool {
+        activity.isAvailable && (activity.snapshot(sessionId: sessionId)?.isBusy ?? false)
+    }
+
+    /// 018：把这一屏的当前会话与 `timeline.isTurnOpen` 交给活动适配层。
+    ///
+    /// 转场期间旧屏幕还活着，但它已经不代表屏幕上的会话（`ownsTranscript`），
+    /// 这时不许用旧轮次去覆盖新会话的绑定。
+    private func syncActivityBinding() {
+        guard ownsTranscript else { return }
+        activity.bindChat(sessionId: sessionId, isTurnOpen: model.timeline.isTurnOpen)
     }
 
     // MARK: - Transcript
@@ -866,6 +928,10 @@ public struct ChatView: View {
         rowView.onSendVerify = { rowId in
             Task { await model.verifySend(rowId: rowId) }
         }
+        // 018：subagent 卡绑定运行态与「打开子会话」；其它卡片读不到证据就不加行。
+        rowView.activity = activity
+        rowView.onOpenSession = onOpenSession
+        rowView.parentSessionId = model.session?.sessionId
         return rowView
             // 搜索跳过来的那一行：淡底 + 左侧色条，一眼能认出"就是这条"。
             .background(alignment: .leading) {
@@ -1460,6 +1526,19 @@ public struct ChatView: View {
 
     private static let bottomAnchor = "transcript-bottom"
     private static let topAnchor = "transcript-top"
+
+#if DEBUG
+    /// `-DSHOpenScreen activity|activity-output`；其它取值返回 nil（交给 `RootView` 处理）。
+    static func automationActivityScreen() -> String? {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let index = arguments.firstIndex(of: "-DSHOpenScreen"),
+              arguments.indices.contains(index + 1)
+        else { return nil }
+        let value = arguments[index + 1]
+        return (value == "activity" || value == "activity-output") ? value : nil
+    }
+#endif
+
 }
 
 #endif

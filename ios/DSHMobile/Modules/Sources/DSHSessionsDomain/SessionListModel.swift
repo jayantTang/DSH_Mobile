@@ -21,6 +21,10 @@ public final class SessionListModel {
     /// App 注入的探针钩子（025）。
     public var probeNote: ((String, [String: String], Bool) -> Void)? = nil
 
+    /// 018：活动名单适配层（应用级单例，由装配层注入）。列表每次从 host 拿到
+    /// 会话行就喂一次；行状态与右侧计数的判定全部在 DSHKit 的 `ActivityStore`。
+    public weak var activityModel: ActivityModel?
+
     /// One working-directory group.
     ///
     /// 形状已下沉到 DSHKit（`SessionGrouping.Group`，spec 023 的 S3c）：这里只留一个 typealias，
@@ -480,6 +484,10 @@ public final class SessionListModel {
         do {
             let value = try await link.sessions()
             allSessions = value.items
+            // 018 T028：会话行喂给活动状态机（子会话计数 + 行轮次）。
+            // 轮次口径沿用列表既有语义（`summary.running`）；聊天页当前会话由
+            // `ActivityModel.bindChat` 用 `timeline.isTurnOpen` 覆盖。
+            (activityModel ?? ActivityModel.shared).applySessions(value.items)
             // Retried: the fallback is the wrong grouping, so it should be a
             // last resort rather than the first answer to a slow response.
             if let baseline = await loadWorkspaces(link: link) {

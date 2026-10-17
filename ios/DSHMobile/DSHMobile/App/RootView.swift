@@ -37,6 +37,8 @@ struct RootView: View {
     /// 032：本机答过哪些待回应提示（跨设备互斥用）。
     @State private var answerLog = PromptAnswerLog()
     @State private var listModel = SessionListModel()
+    /// 018：活动可见性的适配层。应用级一份名单，列表与聊天页读同一份。
+    @State private var activity = ActivityModel.shared
 
     /// 026：探针从 static 改实例后，由装配点在构造期注入（行为与 static 版一致）。
     init() {
@@ -71,6 +73,7 @@ struct RootView: View {
         content
             .environment(store)
             .environment(hub)
+            .environment(activity)
             .environment(updates)
             .environment(alerts)
             .environment(alertPrefs)
@@ -91,6 +94,8 @@ struct RootView: View {
             // without anyone tapping.
             .onChange(of: store.state.isConnected) { _, isConnected in
                 if isConnected { attachmentImages.clearFailures() }
+                // 018：断线 → 冻结本地推断并标「上次已知」；重连 → 重新问名单。
+                activity.setConnected(isConnected)
             }
             .onChange(of: store.activeProfile?.id) { _, _ in
                 // 032：档案一换（刚配对、切到另一台电脑）就去对齐账户级状态。
@@ -121,6 +126,9 @@ struct RootView: View {
                 // The feed asks for the client each time it reopens, so a repair
                 // that swapped the carrier underneath is picked up by itself.
                 hub.attach { [store] in store.link }
+                // 018：活动名单跟着连接走：建连即订阅 + 取名单，断线冻结本地推断。
+                activity.attach(service: store, hub: hub)
+                listModel.activityModel = activity
 
                 // Automation hook first: a scripted run passes the target
                 // explicitly and must not fall back to a remembered profile.
@@ -1016,6 +1024,8 @@ private struct MainView: View {
             model: chatModel,
             onOpenFiles: { filesScope = WorkspaceFileScope(summary: $0, hostHome: store.hostHome) },
             onOpenWeb: { _ in isShowingWebFallback = true },
+            // 018：面板与 subagent 卡的「打开子会话」压入同一个导航栈。
+            onOpenSession: { paths.append($0) },
             sessionId: summary.sessionId
         )
     }
