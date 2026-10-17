@@ -4,7 +4,7 @@
 [语义化版本](https://semver.org/lang/zh-CN/)。三处部署（App / 连接器 / 中转）的组合见
 [`docs/VERSIONING.md`](docs/VERSIONING.md)。
 
-## send-image 0.2.1 — 2026-10-17（按钮外观交给宿主）
+## send-image 0.2.2 — 2026-10-17（按钮外观交给宿主）
 
 工具卡里的按钮改用宿主的 `Button` 渲染，兜底样式不再覆盖宿主主题；只改外观，接口不变。
 
