@@ -450,28 +450,41 @@ final class TranscriptProcessFoldTests: XCTestCase {
         XCTAssertFalse(PrefetchPager.isComplete(lower: 1, coveredLow: 151))
     }
 
-    func test_header_counts_come_from_summary_even_when_details_exist() throws {
-        // 展开后明细会合并进来；表头数字必须仍然来自摘要，不能因为明细只到了
-        // 一部分就变小或改口径（否则点开再收起数字会跳）。
-        var timeline = ChatTimeline()
-        let events: [[String: JSONValue]] = [
+    func test_header_counts_survive_replacing_the_summary_with_details() throws {
+        // 摘要被明细替换前后，表头数字必须一致：前者=摘要计数，后者=明细行计数。
+        var summarized = ChatTimeline()
+        for event in [
             ProcessFoldFixtures.turnStart(seq: 1, turn: 1),
             ProcessFoldFixtures.user(seq: 2, text: "q"),
             ["type": .string("+link/fold"), "seq": .int(3), "data": .object([
-                "turn": .int(1), "startSeq": .int(3), "endSeq": .int(4),
-                "toolCount": .int(230), "reasoningCount": .int(16),
+                "turn": .int(1), "startSeq": .int(3), "endSeq": .int(6),
+                "toolCount": .int(3), "reasoningCount": .int(1),
                 "messageCount": .int(1), "subagentCount": .int(0),
-                "durationMs": .int(660_000),
+                "durationMs": .int(9_000),
             ])],
-            ProcessFoldFixtures.toolCall(seq: 5, callId: "c1", name: "bash"),
-            ProcessFoldFixtures.assistant(seq: 6, text: "a"),
-            ProcessFoldFixtures.turnEnd(seq: 7, turn: 1),
-        ]
-        for event in events { _ = timeline.apply(try ProcessFoldFixtures.record(event).event) }
-        let turn = try XCTUnwrap(TranscriptProcessFold.plan(items: timeline.items, isTurnOpen: false).turns.first)
-        XCTAssertEqual(turn.toolCount, 230)
-        XCTAssertEqual(turn.reasoningCount, 16)
-        XCTAssertEqual(turn.duration ?? 0, 660, accuracy: 0.001)
+            ProcessFoldFixtures.assistant(seq: 7, text: "a"),
+            ProcessFoldFixtures.turnEnd(seq: 8, turn: 1),
+        ] { _ = summarized.apply(try ProcessFoldFixtures.record(event).event) }
+        let summarizedTurn = try XCTUnwrap(
+            TranscriptProcessFold.plan(items: summarized.items, isTurnOpen: false).turns.first)
+        XCTAssertEqual(summarizedTurn.toolCount, 3)
+        XCTAssertEqual(summarizedTurn.reasoningCount, 1)
+
+        var detailed = ChatTimeline()
+        for event in [
+            ProcessFoldFixtures.turnStart(seq: 1, turn: 1),
+            ProcessFoldFixtures.user(seq: 2, text: "q"),
+            ProcessFoldFixtures.toolCall(seq: 3, callId: "c1", name: "bash"),
+            ProcessFoldFixtures.toolCall(seq: 4, callId: "c2", name: "bash"),
+            ProcessFoldFixtures.toolCall(seq: 5, callId: "c3", name: "bash"),
+            ProcessFoldFixtures.assistant(seq: 6, text: nil, reasoning: "why"),
+            ProcessFoldFixtures.assistant(seq: 7, text: "a"),
+            ProcessFoldFixtures.turnEnd(seq: 8, turn: 1),
+        ] { _ = detailed.apply(try ProcessFoldFixtures.record(event).event) }
+        let detailedTurn = try XCTUnwrap(
+            TranscriptProcessFold.plan(items: detailed.items, isTurnOpen: false).turns.first)
+        XCTAssertEqual(detailedTurn.toolCount, summarizedTurn.toolCount)
+        XCTAssertEqual(detailedTurn.reasoningCount, summarizedTurn.reasoningCount)
     }
 
     // MARK: - 连接器折好下发的摘要（history-fold-summary）

@@ -348,10 +348,13 @@ public enum TranscriptProcessFold {
                 isPartial: isPartial,
                 endReason: summaryEndReason ?? segment.endReason,
                 duration: summaryDuration ?? segment.duration,
-                toolCount: hasPrefetchedSummary ? summaryTools : counts.tools,
-                reasoningCount: hasPrefetchedSummary ? summaryReasoning : counts.reasoning,
-                messageCount: hasPrefetchedSummary ? summaryMessages : counts.messages,
-                subagentCount: hasPrefetchedSummary ? summarySubagents : counts.subagents,
+                // 计数 = 可见明细行的计数 + 每条预折摘要替它隐藏的那一段的计数。
+                // 摘要被明细替换后（展开时吸收原事件），两者此消彼长、总数不变；
+                // 只取其中一边会让表头在展开前后跳数字。
+                toolCount: counts.tools + summaryTools,
+                reasoningCount: counts.reasoning + summaryReasoning,
+                messageCount: counts.messages + summaryMessages,
+                subagentCount: counts.subagents + summarySubagents,
                 activityCounts: counts.activities,
                 startSeq: hasPrefetchedSummary ? (summaryStart ?? startSeq) : startSeq,
                 endSeq: hasPrefetchedSummary ? (summaryEnd ?? endSeq) : endSeq)
