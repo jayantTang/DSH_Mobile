@@ -55,4 +55,25 @@ final class TimelineProcessHeaderTests: XCTestCase {
         }
         XCTAssertNotEqual(left.isExpanded, right.isExpanded)
     }
+
+    func test_prefetch_status_advances_only_while_loading() {
+        XCTAssertEqual(PrefetchStatus.loading(loaded: 0).advanced(by: 120), .loading(loaded: 120))
+        XCTAssertEqual(PrefetchStatus.loading(loaded: 120).advanced(by: 0), .loading(loaded: 120))
+        XCTAssertEqual(PrefetchStatus.failed.advanced(by: 50), .failed)
+    }
+
+    func test_header_with_prefetch_status_preserves_other_fields() {
+        let header = TimelineProcessHeader(
+            id: "fold-1-3", scope: .turn, turn: 1, startSeq: 3, endSeq: 7,
+            toolCount: 230, reasoningCount: 16, messageCount: 1, subagentCount: 0,
+            activityCounts: [:], isExpanded: false, isFoldable: true, isRunning: false,
+            endReason: "done", duration: 660, hasFailure: false, isPartial: false,
+            isPrefetched: true)
+        let annotated = header.with(prefetchStatus: .loading(loaded: 150))
+        XCTAssertEqual(annotated.prefetchStatus, .loading(loaded: 150))
+        XCTAssertEqual(annotated.toolCount, 230)
+        XCTAssertEqual(annotated.reasoningCount, 16)
+        XCTAssertEqual(annotated.id, header.id)
+        XCTAssertTrue(annotated.isPrefetched)
+    }
 }

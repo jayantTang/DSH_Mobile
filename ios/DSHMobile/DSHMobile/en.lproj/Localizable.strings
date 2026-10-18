@@ -801,3 +801,5 @@ It is registered as a workspace first, so a new group appears in the desktop sid
 
 "用时 %@" = "Took %@";
 "读取超时，点按重试" = "Read timed out. Tap to retry.";
+"正在加载过程（已取 %lld 条）" = "Loading process… (%lld records fetched)";
+"加载失败，点按重试" = "Could not load the process. Tap to retry.";

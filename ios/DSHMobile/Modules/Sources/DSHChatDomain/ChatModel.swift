@@ -47,6 +47,11 @@ public final class ChatModel {
     /// 换会话/重开 App 重置；内部 setter 让 `ChatModel+ProcessFold.swift` 能改。
     public internal(set) var foldState = TranscriptFoldState()
 
+    /// 展开预折摘要时的取详情进度，按表头 id 记录。与 `foldState` 同属会话级
+    /// 显示状态：换会话清空；请求的四种结局（进行中/成功/失败/取消）都要落到这里，
+    /// 界面只渲染它，不自己计时也不自己重试。
+    public internal(set) var prefetchStatus: [String: PrefetchStatus] = [:]
+
     /// 现在开的是哪个会话（读 `visible`）。
     public var session: SessionSummary? { visible?.summary }
 
@@ -452,6 +457,7 @@ public final class ChatModel {
             _ = fixture.reset(with: ProcessFoldFixture.records)
             visible = VisibleSession(summary: summary, timeline: fixture)
             foldState = TranscriptFoldState()
+            prefetchStatus.removeAll()
             cachedSearchItems = nil
             searchScopeVersion += 1
             phase = .ready
@@ -486,6 +492,7 @@ public final class ChatModel {
         // 同一会话的重试/重开保留读者的展开状态；只有换会话才重置。
         if visible?.summary.sessionId != key {
             foldState = TranscriptFoldState()
+            prefetchStatus.removeAll()
         }
         setOlderState(.idle)
         // This session's own half-written message, not the last one's.
@@ -661,6 +668,7 @@ public final class ChatModel {
         pendingStreamFrames.removeAll(keepingCapacity: false)
         isAwaitingTurnStart = false
         foldState = TranscriptFoldState()
+        prefetchStatus.removeAll()
         processToggleFollowHold = false
     }
 
@@ -692,6 +700,7 @@ public final class ChatModel {
         pendingStreamFrames.removeAll()
         clearSearchHistory()
         foldState = TranscriptFoldState()
+        prefetchStatus.removeAll()
         phase = .idle
     }
 

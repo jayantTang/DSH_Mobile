@@ -33,7 +33,16 @@ public extension ChatModel {
         // 折叠摘要：只在状态变化时发（`FoldTrace.note` 内部比较并节流）。
         // 这行是"某些已完成的历史对话没有折叠"唯一的现场证据来源。
         FoldTrace.note(plan: plan, session: sessionId)
-        return TranscriptProcessFold.displayRows(plan, state: foldState)
+        var rows = TranscriptProcessFold.displayRows(plan, state: foldState)
+        // 展开摘要的取详情进度贴在表头上；模型是唯一所有者，投影只做搬运。
+        if !prefetchStatus.isEmpty {
+            for index in rows.indices {
+                guard case .processHeader(let header) = rows[index].kind,
+                      let status = prefetchStatus[header.id] else { continue }
+                rows[index].kind = .processHeader(header.with(prefetchStatus: status))
+            }
+        }
+        return rows
     }
 
     /// The original rows, for callers that must reason about hidden content
@@ -101,6 +110,9 @@ public extension ChatModel {
                                turnKey: String) async {
         guard header.isPrefetched,
               let client = store?.client, let address else { return }
+        // 同一轮只允许一个在飞的详情请求；失败后（.failed）允许再次点按重试。
+        if case .loading = prefetchStatus[header.id] { return }
+        prefetchStatus[header.id] = .loading(loaded: 0)
         let lower = range.lowerBound
         let upper = range.upperBound
         // 一次只取 `PrefetchPager.window` 条，按 seq 往下滚到 lower 为止。
@@ -119,16 +131,29 @@ public extension ChatModel {
                 guard let oldest = records.map(\.event.seq).min(), oldest < cursor else { break }
                 collected += records.count
                 coveredLow = min(coveredLow, oldest)
+                prefetchStatus[header.id] = (prefetchStatus[header.id] ?? .loading(loaded: 0))
+                    .advanced(by: records.count)
                 await pipelineBridge?.absorb(records: records)
                 cursor = oldest
             }
-            guard collected > 0 else { return }
+            guard collected > 0 else {
+                prefetchStatus[header.id] = nil
+                return
+            }
+            // 明细已经落地，进度标记随之消失；表头改由摘要+明细共同计数。
+            prefetchStatus[header.id] = nil
             foldState.manualTurn[turnKey] = true
             ChatProbe.shared.probeNote?("process.expand", [
                 "turn": turnKey, "records": String(collected),
                 "complete": PrefetchPager.isComplete(lower: lower, coveredLow: coveredLow) ? "1" : "0",
             ], true)
         } catch {
+            // 取消不算失败（切换会话时的正常收尾）；其余错误要落到可重试的终态。
+            if error is CancellationError {
+                prefetchStatus[header.id] = nil
+            } else {
+                prefetchStatus[header.id] = .failed
+            }
             ChatProbe.shared.probeNote?("process.expandFailed", [
                 "turn": turnKey, "reason": String(describing: error),
             ], true)

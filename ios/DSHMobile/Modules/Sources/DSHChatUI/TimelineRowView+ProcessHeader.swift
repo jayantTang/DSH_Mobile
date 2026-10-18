@@ -44,6 +44,14 @@ struct ProcessHeaderRow: View {
         if header.isPartial {
             parts.append(String(localized: "部分记录"))
         }
+        if let status = header.prefetchStatus {
+            switch status {
+            case .loading(let loaded):
+                parts.append(String(format: String(localized: "正在加载过程（已取 %lld 条）"), loaded))
+            case .failed:
+                parts.append(String(localized: "加载失败，点按重试"))
+            }
+        }
         return parts.joined(separator: " · ")
     }
 

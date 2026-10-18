@@ -52,6 +52,19 @@ public enum TimelineProcessActivity: String, Sendable, Hashable, CaseIterable {
 /// `ChatTimeline.items`, so search, paging, trimming and long-press continue to
 /// see them. `startSeq...endSeq` covers the rows this header stands for and is
 /// what the list host uses to keep its scroll anchor when a row becomes hidden.
+/// 展开预折摘要（`+link/fold`）时取详情的进度。
+/// 由 ChatModel 持有（一个轮次一份），视图只渲染，不自己计时、不自己重试。
+public enum PrefetchStatus: Sendable, Equatable {
+    case loading(loaded: Int)
+    case failed
+
+    /// 又收到一批明细；只有进行中的状态才推进。
+    public func advanced(by count: Int) -> PrefetchStatus {
+        guard case .loading(let loaded) = self else { return self }
+        return .loading(loaded: loaded + count)
+    }
+}
+
 public struct TimelineProcessHeader: Sendable, Equatable {
     public enum Scope: String, Sendable {
         /// One completed turn's whole process.
@@ -82,6 +95,8 @@ public struct TimelineProcessHeader: Sendable, Equatable {
     /// 这一行是连接器折好下发的摘要（`+link/fold`），不是客户端从过程行推导出来的。
     /// 展开它要先按 `startSeq...endSeq` 取回详情，再走正常的折叠路径。
     public let isPrefetched: Bool
+    /// 展开摘要时的取详情进度；普通轮次恒为 nil。
+    public let prefetchStatus: PrefetchStatus?
 
     public init(
         id: String,
@@ -101,7 +116,8 @@ public struct TimelineProcessHeader: Sendable, Equatable {
         duration: TimeInterval?,
         hasFailure: Bool,
         isPartial: Bool,
-        isPrefetched: Bool = false
+        isPrefetched: Bool = false,
+        prefetchStatus: PrefetchStatus? = nil
     ) {
         self.id = id
         self.scope = scope
@@ -121,6 +137,18 @@ public struct TimelineProcessHeader: Sendable, Equatable {
         self.hasFailure = hasFailure
         self.isPartial = isPartial
         self.isPrefetched = isPrefetched
+        self.prefetchStatus = prefetchStatus
+    }
+
+    /// 只替换进度字段；用于折叠投影把模型侧的状态贴到表头上。
+    public func with(prefetchStatus: PrefetchStatus?) -> TimelineProcessHeader {
+        TimelineProcessHeader(
+            id: id, scope: scope, turn: turn, startSeq: startSeq, endSeq: endSeq,
+            toolCount: toolCount, reasoningCount: reasoningCount, messageCount: messageCount,
+            subagentCount: subagentCount, activityCounts: activityCounts,
+            isExpanded: isExpanded, isFoldable: isFoldable, isRunning: isRunning,
+            endReason: endReason, duration: duration, hasFailure: hasFailure,
+            isPartial: isPartial, isPrefetched: isPrefetched, prefetchStatus: prefetchStatus)
     }
 
     /// The row a display projection inserts for this header.
