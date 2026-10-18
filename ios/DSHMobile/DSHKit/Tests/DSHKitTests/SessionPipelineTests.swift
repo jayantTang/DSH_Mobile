@@ -115,6 +115,16 @@ final class SessionPipelineTests: XCTestCase {
         XCTAssertTrue(gaps.isEmpty, "已问过的稀疏区间不应再生成缺口行：\(gaps)")
     }
 
+    func testInteriorHoleIsReportedEvenWhenOldestIsOne() async throws {
+        // 冷启动只有 1 和 3 的记录（2 是空号）：oldest==1 不代表历史完整。
+        let stub = stub!
+        let pipeline = makePipeline()
+        await pipeline.apply(events: [record(1).event, record(3).event])
+        let before = await pipeline.uncoveredSpans()
+        XCTAssertEqual(before, [2...2], "内部空洞必须报出来，否则顶部会停在'已到最早'")
+        _ = stub
+    }
+
     // MARK: - 区间判定三分支
 
     func testFullCoverageServesLocallyWithoutNetwork() async throws {

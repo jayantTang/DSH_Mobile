@@ -84,6 +84,12 @@ extension SessionPipeline {
     // MARK: - gap 行派生（从主文件拆出，同一 500 行上限）
 
     /// 缺口行由区间集派生（spec「缺口行的生命周期」）：窗口 = 最老…最新。
+    /// 已加载区间内仍未补上的空洞。`oldest` 到 1 只说明没有更早的号，
+    /// 不代表中间没有缺口；调用方要据此决定"补洞"还是"到头"。
+    public func uncoveredSpans() -> [ClosedRange<Int>] {
+        currentGaps().map { $0.start...$0.end }
+    }
+
     func currentGaps() -> [GapRow] {
         guard let oldest = ranges.oldest, let newest = ranges.newest, oldest <= newest else { return [] }
         // 已问过的区间也参与"覆盖"判定：空号是已知无内容，不是待加载的缺口。

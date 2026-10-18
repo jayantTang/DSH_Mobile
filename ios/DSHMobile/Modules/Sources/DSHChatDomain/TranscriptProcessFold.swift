@@ -325,8 +325,11 @@ public enum TranscriptProcessFold {
             // 折叠的判据只看"这一轮是否已结束、是否有过程行、是否可以隐藏细节"。
             // 缺失区间与中途输入不再取消整轮折叠；预折摘要也不再让整轮铺开——
             // 摘要只提供计数，折叠仍由这一轮的普通表头承担。
+            // 预折摘要本身就代表"这一段已完成"，即使窗口里没有结束分隔线，
+            // 也按已完成轮次折叠；否则它会以一条单独的折叠行嵌在轮次里，
+            // 读者展开后还会看到一个"小折叠"。
             let foldable = Self.isFoldable(
-                hasDivider: segment.hasDivider,
+                hasDivider: segment.hasDivider || hasPrefetchedSummary,
                 isRunning: isRunning,
                 hasFailure: segment.hasFailure,
                 hasProcessRows: !processIndexes.isEmpty)

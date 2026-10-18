@@ -32,6 +32,19 @@ public extension ChatPipelineBridge {
             return
         }
         guard oldest > 1 else {
+            // 到 1 只说明没有更早的号，不等于历史完整：内部还可能留着
+            // 上次没补完的小洞（进程被杀、取页被抢占）。先把它们补掉，
+            // 否则这些行会一直转圈，而顶部又因为"已到最早"不再发请求。
+            let holes = await session.uncoveredSpans().filter { $0.count <= 200 }
+            if !holes.isEmpty {
+                DSHLog.event("page.older.gapfill", ["holes": String(holes.count)])
+                model.notePipelineOlder(state: .loading)
+                defer { model.finishOlderIfLoading() }
+                for hole in holes.prefix(3) {
+                    _ = try? await session.records(in: hole, priority: .userVisible)
+                }
+                return
+            }
             DSHLog.event("page.older.skip", ["why": "earliest"])
             await noteEarliestReached(session, model)
             return

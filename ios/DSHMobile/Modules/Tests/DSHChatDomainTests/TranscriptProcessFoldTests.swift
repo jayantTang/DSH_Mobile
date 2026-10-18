@@ -487,6 +487,33 @@ final class TranscriptProcessFoldTests: XCTestCase {
         XCTAssertEqual(detailedTurn.reasoningCount, summarizedTurn.reasoningCount)
     }
 
+    func test_prefetched_turn_without_a_divider_still_folds_as_one() throws {
+        // 窗口里没有结束分隔线，但预折摘要本身就说明这一段已完成：
+        // 不能再把摘要当成一条单独的折叠行嵌在轮次里（展开后还会看到"小折叠"）。
+        var timeline = ChatTimeline()
+        let events: [[String: JSONValue]] = [
+            ProcessFoldFixtures.turnStart(seq: 1, turn: 1),
+            ProcessFoldFixtures.user(seq: 2, text: "q"),
+            ["type": .string("+link/fold"), "seq": .int(3), "data": .object([
+                "turn": .int(1), "startSeq": .int(3), "endSeq": .int(4),
+                "toolCount": .int(2), "reasoningCount": .int(1),
+                "messageCount": .int(1), "subagentCount": .int(0),
+            ])],
+            ProcessFoldFixtures.assistant(seq: 5, text: "a"),
+        ]
+        for event in events { _ = timeline.apply(try ProcessFoldFixtures.record(event).event) }
+        let plan = TranscriptProcessFold.plan(items: timeline.items, isTurnOpen: false)
+        let turn = try XCTUnwrap(plan.turns.first)
+        XCTAssertTrue(turn.isFoldable)
+        var expanded = TranscriptFoldState()
+        expanded.manualTurn[turn.key] = true
+        let rows = TranscriptProcessFold.displayRows(plan, state: expanded)
+        XCTAssertFalse(rows.contains { item in
+            if case .processHeader(let header) = item.kind { return header.isPrefetched }
+            return false
+        }, "展开后不应再出现摘要行")
+    }
+
     // MARK: - 连接器折好下发的摘要（history-fold-summary）
 
     func test_prefetched_summary_folds_with_the_same_header_as_recent_turns() throws {

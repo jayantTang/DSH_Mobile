@@ -33,6 +33,11 @@ public struct SessionHandle: Sendable {
         get async { await pipeline.ranges }
     }
 
+    /// 已加载区间内仍未补上的空洞（`oldest` 到 1 不代表历史完整）。
+    public func uncoveredSpans() async -> [ClosedRange<Int>] {
+        await pipeline.uncoveredSpans()
+    }
+
     /// 更早方向是否已经到头（顶部没有更多历史）。
     public var topExhausted: Bool {
         get async { await pipeline.topExhausted }
