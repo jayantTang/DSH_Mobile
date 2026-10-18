@@ -96,6 +96,15 @@ public final class ChatPipelineBridge {
     private var sendStatuses: [Int: MessageSendStatus] = [:]
     /// 当前缺口行（派生量的最新一份）。
     private var gaps: [TranscriptGapRow] = []
+
+    /// 还有等待补上的缺口行（供 ChatModel 转发给视图）。
+    var hasUnfilledGaps: Bool {
+        gaps.contains { row in
+            if case .loading = row.status { return true }
+            return false
+        }
+    }
+
     /// 缺口行的看门狗：同一区间只在进入 loading 时起一个，状态一变就取消。
     private var gapWatchdogs: [String: Task<Void, Never>] = [:]
     private var lastGapSignature = ""

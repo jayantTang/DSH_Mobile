@@ -203,6 +203,10 @@ public final class ChatModel {
     }
     /// 视图只读这两位的投影；真正的状态在 `pager` 里（FR-005/FR-038）。
     public private(set) var hasOlder = false
+
+    /// 还有等待补上的缺口行。顶部触发不能只看 `hasOlder`：读者已经到最早时，
+    /// 区间里仍可能留着上次没补完的小洞，只靠 hasOlder 会永远不再发请求。
+    public var hasUnfilledGaps: Bool { pipelineBridge?.hasUnfilledGaps ?? false }
     /// 失败后的一次自动补试（FR-004 的"继续能恢复"）。
     ///
     /// 为什么必须有一次：失败之后读者往往就停在顶部不动了——哨兵行没有重建就不会再

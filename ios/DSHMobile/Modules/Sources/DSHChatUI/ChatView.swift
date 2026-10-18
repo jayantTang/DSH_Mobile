@@ -1149,8 +1149,8 @@ public struct ChatView: View {
     @State private var lastPumpTrace = Date.distantPast
 
     private func pumpOlder(_ proxy: ScrollViewProxy) {
-        guard ownsTranscript, sentinelNearTop, model.hasOlder, !model.isLoadingOlder,
-              olderPump == nil else {
+        guard ownsTranscript, sentinelNearTop, model.hasOlder || model.hasUnfilledGaps,
+              !model.isLoadingOlder, olderPump == nil else {
             // 顶部不再自动补页时，必须能区分是哪一条闸门挡住的：没有这条，
             // "还有历史却不动"只能靠猜（2026-10-18 仿真连续上拉 386 次卡在同一处）。
             if Date().timeIntervalSince(lastPumpTrace) > 1 {
@@ -1159,6 +1159,7 @@ public struct ChatView: View {
                     "owns": ownsTranscript ? "1" : "0",
                     "nearTop": sentinelNearTop ? "1" : "0",
                     "hasOlder": model.hasOlder ? "1" : "0",
+                    "gaps": model.hasUnfilledGaps ? "1" : "0",
                     "loading": model.isLoadingOlder ? "1" : "0",
                     "pumping": olderPump == nil ? "0" : "1",
                 ])
@@ -1217,6 +1218,7 @@ public struct ChatView: View {
                     "items": String(model.timeline.items.count),
                     "anchor": anchor ?? "-",
                     "hasOlder": model.hasOlder ? "1" : "0",
+                    "gaps": model.hasUnfilledGaps ? "1" : "0",
                     // `kept == 1` = 内容长了多少、偏移就跟着走了多少：可见内容没动。
                     "kept": kept,
                 ], true)
