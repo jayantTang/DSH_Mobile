@@ -16,6 +16,10 @@ struct ProcessHeaderRow: View {
     private var isExpanded: Bool { header.isExpanded }
     private var canFold: Bool { header.isFoldable }
 
+    private var isCompleted: Bool {
+        !header.isRunning && !header.hasFailure && header.endReason != "max-steps"
+    }
+
     private var statusText: String {
         if header.isRunning { return String(localized: "进行中") }
         if header.hasFailure { return Self.reasonText(header.endReason) }
@@ -24,7 +28,10 @@ struct ProcessHeaderRow: View {
     }
 
     private var summaryText: String {
-        var parts: [String] = [statusText]
+        // 完成态不再写"已完成"：行首的对勾已经表达了它，文字留给计数与用时；
+        // 进行中、失败、达步数上限这些非默认状态仍然要写出来。
+        var parts: [String] = []
+        if !isCompleted { parts.append(statusText) }
         if header.toolCount > 0 {
             parts.append(String(format: String(localized: "%lld 次工具调用"), header.toolCount))
         }

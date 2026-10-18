@@ -78,7 +78,7 @@ extension TranscriptProcessFold {
                 continue
             }
             if !expanded {
-                if index == turn.finalAnswerIndex || index == turn.dividerIndex {
+                if turn.answerIndexes.contains(index) || index == turn.dividerIndex {
                     out.append(plan.rows[index])
                 } else if case .gap = plan.rows[index].kind {
                     // 缺失区间在收起状态下仍然可见：把它藏进折叠里，读者会以为

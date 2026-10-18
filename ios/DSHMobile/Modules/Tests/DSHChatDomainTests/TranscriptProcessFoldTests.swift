@@ -412,6 +412,26 @@ final class TranscriptProcessFoldTests: XCTestCase {
         XCTAssertEqual(first, second)
     }
 
+    func test_only_the_trailing_answer_run_stays_visible_when_folded() throws {
+        // 过程里有中间回复，最后才是正式回答：收起时只留末尾那一段。
+        let timeline = try ProcessFoldFixtures.timeline([
+            ProcessFoldFixtures.turnStart(seq: 1, turn: 1),
+            ProcessFoldFixtures.user(seq: 2, text: "q"),
+            ProcessFoldFixtures.toolCall(seq: 3, callId: "c1", name: "bash"),
+            ProcessFoldFixtures.assistant(seq: 4, text: "intermediate"),
+            ProcessFoldFixtures.toolCall(seq: 5, callId: "c2", name: "bash"),
+            ProcessFoldFixtures.assistant(seq: 6, text: "final"),
+            ProcessFoldFixtures.turnEnd(seq: 7),
+        ])
+        let plan = plan(timeline)
+        let rows = TranscriptProcessFold.displayRows(plan, state: TranscriptFoldState())
+        let texts = rows.compactMap { item -> String? in
+            if case .assistantText(let text) = item.kind { return text }
+            return nil
+        }
+        XCTAssertEqual(texts, ["final"], "intermediate prose is process; the final answer must stay visible when folded")
+    }
+
     // MARK: - 连接器折好下发的摘要（history-fold-summary）
 
     func test_prefetched_summary_folds_with_the_same_header_as_recent_turns() throws {
@@ -448,7 +468,7 @@ final class TranscriptProcessFoldTests: XCTestCase {
         }
         XCTAssertEqual(headers.count, 1)
         XCTAssertEqual(headers.first?.toolCount, 2)
-        XCTAssertEqual(headers.first?.isPrefetched, false, "统一成普通表头，不再单独渲染摘要行")
+        XCTAssertEqual(headers.first?.isPrefetched, false, "prefetched turns use the normal header, not a separate summary row")
         XCTAssertTrue(rows.contains { item in
             if case .assistantText(let text) = item.kind { return text == "a" }
             return false

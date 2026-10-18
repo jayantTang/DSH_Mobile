@@ -55,7 +55,7 @@ public enum TranscriptProcessFold {
         /// Process rows in original order. Intermediate assistant prose is a
         /// member (and a group separator); the final answer is not.
         public let processIndexes: [Int]
-        public let finalAnswerIndex: Int?
+        public let answerIndexes: Set<Int>
         public let dividerIndex: Int?
         public let groups: [Group]
         public let isFoldable: Bool
@@ -212,18 +212,43 @@ public enum TranscriptProcessFold {
             if leading.count > 1 { /* handled below as interleaved */ }
 
             let answerEnd = segment.dividerIndex ?? (segment.end + 1)
-            var finalAnswer: Int?
+            // 正式回答 = 分隔线之前**末尾连续的一段回答内容**，不只是最后一条助手文本。
+            // 图片型回答（agent 发送的图片消息）不是 `assistantText`；旧规则把它当过程，
+            // 收起时就被一起藏掉。工具产出里的图片仍然是过程，不会被算进来。
+            func isAnswerRow(_ item: TimelineItem) -> Bool {
+                switch item.kind {
+                case .assistantText: return true
+                // agent 发送的图片消息是回答内容，不是过程；工具产出里的图片不在此列。
+                case .userMessage(_, _, _, _, let isAgentSent): return isAgentSent
+                default: return false
+                }
+            }
+            var answerIndexes = Set<Int>()
             if segment.hasDivider {
-                for index in stride(from: answerEnd - 1, through: leadingEnd, by: -1) {
-                    if case .assistantText = items[index].kind {
-                        finalAnswer = index
-                        break
+                // 回答 = 最后一个回答行所在的连续段。允许它后面还有尾部过程行
+                //（例如回答之后的投递工具），这些仍算过程、收起时隐藏。
+                var last: Int?
+                for index in stride(from: answerEnd - 1, through: leadingEnd, by: -1)
+                where isAnswerRow(items[index]) {
+                    last = index
+                    break
+                }
+                if let start = last {
+                    var index = start
+                    while index >= leadingEnd, isAnswerRow(items[index]) {
+                        answerIndexes.insert(index)
+                        index -= 1
+                    }
+                    index = start + 1
+                    while index < answerEnd, isAnswerRow(items[index]) {
+                        answerIndexes.insert(index)
+                        index += 1
                     }
                 }
             }
 
             var processIndexes: [Int] = []
-            for index in leadingEnd..<answerEnd where index != finalAnswer {
+            for index in leadingEnd..<answerEnd where !answerIndexes.contains(index) {
                 processIndexes.append(index)
             }
 
@@ -312,7 +337,7 @@ public enum TranscriptProcessFold {
                 range: range,
                 leading: leading,
                 processIndexes: processIndexes,
-                finalAnswerIndex: finalAnswer,
+                answerIndexes: answerIndexes,
                 dividerIndex: segment.dividerIndex,
                 groups: groups,
                 isFoldable: foldable,

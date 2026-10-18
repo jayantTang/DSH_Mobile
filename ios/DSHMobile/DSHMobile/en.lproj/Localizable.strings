@@ -800,3 +800,4 @@ It is registered as a workspace first, so a new group appears in the desktop sid
 "%lld 段思考" = "%lld thinking blocks";
 
 "用时 %@" = "Took %@";
+"读取超时，点按重试" = "Read timed out. Tap to retry.";
