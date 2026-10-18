@@ -8,11 +8,13 @@
 //               下面四张卡：出口流量（含环比）、连接次数、新增设备、近 7 天活跃账号；
 //               一行状态给出同一天的活跃设备数、在册设备数与活跃时段。
 //   【最近 N 天】趋势与谁在用——每日活跃账号与每日出口流量两张折线、近 7 天表、
-//               外部账号留存漏斗、账号排名、设备与反馈清单。
+//               外部账号留存漏斗、账号排名、设备清单，以及反馈的**计数**（不列具体线程）。
 //
 // 2026-10-17 精简掉的内容（小字与重复数字太多，owner 说"搞得很混乱"）：窗口六张 KPI 卡、
 // 每日新增设备柱状图、今日账号/版本/设备/反馈四张明细表、激活码登记清单、分周队列表、
 // 反馈状态栈与占比 chips、留存卡片与目标/上周小字，以及 info 级的自动观察告警。
+// 2026-10-19 再精简：反馈不再列线程明细，只给新增/待回复/已回复/首次回复中位四个数；
+// GitHub 的 star/fork/关注者并进激活码那一排（两者都是"外部进来多少人"）。
 //
 // 单位只用三个词（2026-10-17 owner 对齐）：**账号** = 自然人（一次激活码兑换建立一个）；
 // **主机** = 装了连接器的一台电脑（agent）；**设备** = 一次配对产生的客户端（手机/平板/网页，
@@ -50,11 +52,10 @@ const heatStep = (accounts) => {
   return 4
 }
 const CHART = { w: 360, h: 168, left: 46, right: 10, top: 16, bottom: 24 }
-const STATUS_LABEL = { open: '待回复', replied: '已回复' }
 const WEEKDAYS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
 
 /// 一张清单最多列几条：手机上要一屏能扫完，剩下的用「共 N 条」交代。
-const LIMIT = { accounts: 6, devices: 6, feedback: 6, recentDays: 7 }
+const LIMIT = { accounts: 6, devices: 6, recentDays: 7 }
 
 /// 「关注」板块的报警阈值（2026-10-13 运营评审定的第一版，按周报复盘再调）。
 /// 只有 warn 级要求 owner 动作；`info` 级的自动观察（背离/波动/突增/版本分裂/目标缺口）
@@ -252,14 +253,6 @@ function formatBytes(bytes) {
 
 function formatInt(value) {
   return num(value).toLocaleString('en-US')
-}
-
-/// 完整时间戳：反馈线程的创建时刻（清单里要能对到具体哪天）。
-function formatTime(ms) {
-  if (!Number.isFinite(Number(ms)) || Number(ms) <= 0) return '—'
-  const at = new Date(Number(ms))
-  const pad = (n) => String(n).padStart(2, '0')
-  return `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())} ${pad(at.getHours())}:${pad(at.getMinutes())}`
 }
 
 /// 清单里的时间写 `MM-DD HH:MM`：窗口最长 30 天，年份是废话，省下的位置留给账号名与机型。
@@ -499,7 +492,19 @@ function withDefaults(value, fallback) {
 export function normalize(data) {
   const source = data && typeof data === 'object' ? data : {}
   const today = source.today && typeof source.today === 'object' ? source.today : {}
+  // GitHub 计数是本机取的外部数据，没取到（老服务端 / 断网）时为 null，页面整块省略。
+  const github = source.github && typeof source.github === 'object'
+    && ['stars', 'forks', 'followers'].every((key) => Number.isFinite(Number(source.github[key])))
+    ? {
+        repo: text(source.github.repo, '仓库'),
+        stars: num(source.github.stars),
+        forks: num(source.github.forks),
+        followers: num(source.github.followers),
+        fetchedAt: num(source.github.fetchedAt),
+      }
+    : null
   return {
+    github,
     today: {
       day: num(today.day),
       dayStartAt: num(today.dayStartAt),
@@ -531,12 +536,6 @@ export function normalize(data) {
     },
     invites: withDefaults(source.invites, { minted: 0, used: 0, remaining: 0, enrollments: [] }),
   }
-}
-
-function sourceText(source) {
-  if (!source || typeof source !== 'object') return '匿名'
-  const kind = source.kind === 'device' ? text(humanModel(source.deviceModel), '已配对设备') : '匿名'
-  return [kind, source.appVersion].filter(Boolean).join(' · ')
 }
 
 /** 「关注」板块的报警。返回 [{key, level, text, streak}]，按重要度排序。
@@ -625,17 +624,19 @@ function attentionSection(items) {
     `<ul class="alerts">${rows}</ul>`, 'focus')
 }
 
-const statusChip = (status) => `<span class="chip ${escapeHtml(status)}">${escapeHtml(STATUS_LABEL[status] ?? status)}</span>`
 
-/// 反馈线程两行版：主题（没填就用摘要） + 状态；下行是时间、来源，未读只是灰字不做红标
-/// （窗口里大多数线程本来就没被点开过，逐条标红等于没标）。
-function feedbackRows(threads, limit) {
-  return (threads ?? []).slice(0, limit).map((row) => ({
-    title: escapeHtml(clip(text(row.subject, text(row.excerpt, '（无正文）')))),
-    tag: statusChip(row.status),
-    meta: escapeHtml(`${formatTime(row.createdAt)} · ${sourceText(row.source)}`
-      + (num(row.ownerUnread) > 0 ? ' · 未读' : '')),
-  }))
+/// 反馈只给数字（owner 2026-10-19 定）：哪几条、谁提的都不进日报，要看去 App 的反馈页。
+/// 四枚 chip：窗口内新增、待回复、已回复、首次回复中位时长；没有分母的指标不显示。
+function feedbackStats(feedback = {}) {
+  const median = feedback.medianFirstReplyHours
+  const chips = [
+    `<span class="chip">窗口内新增 ${formatInt(num(feedback.new))} 条</span>`,
+    `<span class="chip${num(feedback.open) > 0 ? ' open' : ''}">待回复 ${formatInt(num(feedback.open))} 条</span>`,
+    `<span class="chip">已回复 ${formatInt(num(feedback.replied))} 条</span>`,
+    median === null || median === undefined || !Number.isFinite(Number(median))
+      ? '' : `<span class="chip">首次回复中位 ${Number(median).toFixed(1)} h</span>`,
+  ].filter(Boolean).join('')
+  return `<div class="chips">${chips}</div>`
 }
 
 /// 版本号的展示口径：构建号（`20261013.2233`）单独拿出来当版本名，其余（网页端 0.1.0、
@@ -718,7 +719,7 @@ function inviteBlock(report, { generatedAt = 0, limit = 6 } = {}) {
   const expiring = num(invites.expiringSoon)
   const expired = num(invites.expiredUnused)
   const enrollments = [...(invites.enrollments ?? [])]
-    .filter((row) => num(row.usedAt) > 0)
+    .filter((row) => num(row.usedAt) > 0 && num(row.usedAt) <= num(generatedAt))
     .sort((a, b) => num(b.usedAt) - num(a.usedAt))
   const weekAgo = num(generatedAt) - 7 * 86_400_000
   const activated7d = enrollments.filter((row) => num(row.usedAt) >= weekAgo).length
@@ -747,6 +748,9 @@ function inviteBlock(report, { generatedAt = 0, limit = 6 } = {}) {
     `<span class="chip">今日激活 ${formatInt(activatedToday)}</span>`,
     `<span class="chip">近 7 天激活 ${formatInt(activated7d)}</span>`,
     `<span class="chip">近 30 天激活 ${formatInt(activated30d)}</span>`,
+    // GitHub 的三个计数并进激活码这一排（owner 2026-10-19 定）：两者都是"外部进来多少人"，
+    // 单独占一行没有信息增量。取不到时就不显示，不占位。
+    ...githubChips(report.github),
   ].filter(Boolean).join('')
 
   const recent = enrollments.slice(0, limit).map((row) => ({
@@ -768,10 +772,29 @@ function inviteBlock(report, { generatedAt = 0, limit = 6 } = {}) {
     format: (value) => String(Math.round(value)),
   })
 
-  return subheading('激活码', '激活码的账 · 只看能用的余量')
+  return subheading('激活码', '激活码的账 · 只看能用的余量；GitHub 计数取生成时刻')
     + `<div class="chips">${chips}</div>`
+    + (githubChips(report.github).length
+      ? '<p class="meta">GitHub 的 star / fork / 关注者取生成时刻（接口无历史快照），与覆盖日无关</p>'
+      : '')
     + `<div class="gap8"></div>${chart}`
     + `<div class="gap8"></div>${recentTable}`
+}
+
+/// GitHub 的三枚计数 chip（仓库 star、fork、账号关注者）。没有数据时返回空数组：
+/// 外部接口取不到不该在页面上留一个「0」。
+function githubChips(github) {
+  const stars = num(github?.stars)
+  const forks = num(github?.forks)
+  const followers = num(github?.followers)
+  if (!github || !Number.isFinite(stars) || !Number.isFinite(forks) || !Number.isFinite(followers)) {
+    return []
+  }
+  return [
+    `<span class="chip">${escapeHtml(text(github.repo, '仓库'))} ★ ${formatInt(stars)}</span>`,
+    `<span class="chip">Fork ${formatInt(forks)}</span>`,
+    `<span class="chip">账号关注者 ${formatInt(followers)}</span>`,
+  ]
 }
 
 /** 时间戳 → 本地日序号（`YYYYMMDD`），与 `dayText` 的取值域一致。 */
@@ -857,8 +880,9 @@ function todaySection(report, generatedAt, days, completed = false) {
     ? `${shortDay(report.today.day)} 自然日 00:00–23:59（已过完）`
     : `自然日 00:00 起 · 截至 ${clock(generatedAt)}`,
     hero + counts + versionBlock(report)
-    + inviteBlock(report, { generatedAt: completed ? dayEnd + 1 : generatedAt }))
+    + inviteBlock(report, { generatedAt: completed ? dayEnd : generatedAt }))
 }
+
 
 /// 百分比：服务端给的是 0..1 的比例，没有分母（None）时显示「—」。
 const percent = (ratio) => (ratio === null || ratio === undefined || !Number.isFinite(Number(ratio))
@@ -986,9 +1010,10 @@ function rangeSection(report, days, completed = false, { history = null } = {}) 
     + subheading('外部账号留存', '激活码登记的外部账号 · 活跃=当天有设备连接') + retentionBlock(report.retention)
     + subheading('账号排名') + accounts
     + subheading('设备', `${formatInt(devices.paired)} 台在册 · 最近在线前 ${Math.min(LIMIT.devices, (devices.list ?? []).length)} 台`) + rowList(deviceRows, '窗口内没有设备')
-    + subheading('反馈', `共 ${formatInt(feedback.new)} 条 · 待回复 ${formatInt(feedback.open)}`
+    // 反馈只给数字（owner 2026-10-19 定）：哪几条、谁提的都不进日报，要看去 App 的反馈页。
+    + subheading('反馈', '窗口内新增与回复情况 · 明细见 App 反馈页'
       + (num(feedback.test) > 0 ? ` · 已剔除测试提交 ${formatInt(feedback.test)} 条` : ''))
-    + rowList(feedbackRows(feedback.threads, LIMIT.feedback), '窗口内没有反馈')
+    + feedbackStats(feedback)
 
   return section(`最近 ${days} 天`, completed ? '趋势与留存' : '趋势与留存',
     completed ? `本地日窗口（含 ${shortDay(report.today.day)}）` : '本地日窗口（含今日）',
@@ -1021,6 +1046,9 @@ export function renderReport(data, { now = Date.now(), history = null } = {}) {
     + ` 出口流量只计中转出口字节（不含 OTA 下载与 SSH）；调试设备（DSH- 前缀与测试台机型）不计。`
     + ` 72 小时分布是连接口径（从日志重建，含只连着、没有流量的设备；取不到日志时该图跳过）；`
     + `版本分布与活跃账号同口径，窗口 48 小时（按用量行的 lastSeenAt 卡）。`
+    + ` GitHub 的 star / fork / 关注者取自公开 API（未认证），是**生成时刻**的值（接口没有历史快照），`
+    + `本机缓存 6 小时；取不到时这一行省略。`
+    + ` 其余板块按覆盖日结算：覆盖日之后才配对的设备、才铸或用掉的邀请码、才激活的账号都不进这份报告。`
   const stampNote = completed
     ? `全天 · ${escapeHtml(clock(generatedAt))} 生成`
     : `${escapeHtml(clock(generatedAt))} 生成`

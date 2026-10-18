@@ -10,8 +10,8 @@ import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { buildInvocation, debugDeviceIds, foreignRecipients, main, mergeReportData,
-  renderAgentPlist, reportPath, resolveSshTarget } from './feedback.mjs'
+import { buildInvocation, debugDeviceIds, fetchGitHubStats, foreignRecipients, main,
+  mergeReportData, readGitHubStats, renderAgentPlist, reportPath, resolveSshTarget } from './feedback.mjs'
 import { escapeHtml, humanModel, renderReport, updateHistory } from './feedback-report.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -115,13 +115,16 @@ function completedDayFixture() {
   return data
 }
 
-function run(argv, { runner, approvalLog, env = { DSH_OTA_HOST: HOST, DSH_ACCOUNT_ID: OWNER } } = {}) {
+function run(argv, { runner, approvalLog, github = null,
+  env = { DSH_OTA_HOST: HOST, DSH_ACCOUNT_ID: OWNER } } = {}) {
   const out = []
   const err = []
   // 默认把留痕写进临时目录：用例绝不能碰真实 `~/Library/Logs`（宪法第 III 条）。
   const code = main(argv, {
     runner: runner ?? (() => { throw new Error('runner 不该被调用') }),
     env,
+    // `github: null` = 这轮不取外部计数：用例不出网，也不写真实缓存文件。
+    github,
     approvalLog: approvalLog ?? approvalLogFile(),
     out: (line) => out.push(String(line)),
     err: (line) => err.push(String(line)),
@@ -368,8 +371,9 @@ test('日报分「今日」与「最近 30 天」两段，正文被转义', () =
   for (const gone of ['今日版本分布', '登记清单', '2026-W40', '今日账号']) {
     assert.ok(!html.includes(gone), `已精简的块不该再渲染：${gone}`)
   }
-  assert.ok(!html.includes('<script>'), '正文里的 script 必须被转义')
-  assert.ok(html.includes('&lt;script&gt;'))
+  // 反馈板块只给数字（owner 2026-10-19 定）：正文与主题都不进日报，不会出现被转义的原句。
+  assert.ok(html.includes('窗口内新增 4 条') && html.includes('待回复 2 条'), '反馈只给计数')
+  assert.ok(!html.includes('<script>') && !html.includes('&lt;script&gt;'), '反馈正文不再进日报')
 })
 
 test('手机上不写死宽表：长清单有上限', () => {
@@ -392,7 +396,7 @@ test('空数据也能渲染出可看的整页', () => {
   assert.match(html, /<span class="tag ">今日<\/span>概览/)
   assert.match(html, /今日活跃账号/)
   assert.match(html, /窗口内没有数据/)
-  assert.match(html, /窗口内没有反馈/)
+  assert.match(html, /待回复 0 条/)
   assert.match(html, /窗口内没有用量记录/)
   assert.ok(!html.includes('NaN') && !html.includes('undefined'), '缺字段不能漏成 NaN/undefined')
 })
@@ -1167,7 +1171,7 @@ test('过渡期：mail 未部署时日报照常出（反馈板块用中转的旧
   assert.equal(code, 0, '定时日报在切换前不许挂')
   assert.match(err, /（回退）服务器上还没有 mail 服务/)
   const html = readFileSync(join(outDir, '2026-10-12.html'), 'utf8')
-  assert.ok(html.includes('&lt;script&gt;'), '反馈板块用的还是中转那份数据（且照样转义）')
+  assert.ok(html.includes('待回复 2 条'), '反馈板块用的还是中转那份数据')
 })
 
 test('过渡期回退只认目标缺失：线程不存在等真错误不回退', () => {
@@ -1265,4 +1269,108 @@ test('老服务端没有 versions / hourlyActivity：两块的字段不缺，页
   const html = renderReport(fixture())
   assert.match(html, /版本分布（近 48 小时活跃）/)
   assert.match(html, /过去 72 小时活跃分布/)
+})
+
+// ── GitHub 外部计数（owner 2026-10-19 要求：日报只给 star / fork / 关注者三个数字） ─────
+
+test('日报带上 GitHub 三个计数；没有数据时这一行不出现', () => {
+  const withStats = renderReport({ ...fixture(),
+    github: { repo: 'jayantTang/DSH_Mobile', stars: 4, forks: 1, followers: 7 } })
+  assert.match(withStats, /jayantTang\/DSH_Mobile ★ 4/)
+  assert.match(withStats, /Fork 1/)
+  assert.match(withStats, /账号关注者 7/)
+
+  const without = renderReport(fixture())
+  assert.doesNotMatch(without, /账号关注者/)
+  // 字段不全也当没有：不许把缺失值渲染成 0。
+  const partial = renderReport({ ...fixture(), github: { repo: 'x/y', stars: 4 } })
+  assert.doesNotMatch(partial, /账号关注者/)
+})
+
+test('report 把 github 计数带进页面（注入的对象不再走网络）', () => {
+  const fake = spy(JSON.stringify(fixture()))
+  const outDir = mkdtempSync(join(tmpdir(), 'feedback-report-github-'))
+  const { code } = run(['report', '--out', outDir], { runner: fake.runner,
+    github: { repo: 'jayantTang/DSH_Mobile', stars: 9, forks: 2, followers: 3 } })
+  assert.equal(code, 0)
+  const html = readFileSync(join(outDir, '2026-10-12.html'), 'utf8')
+  assert.match(html, /★ 9/)
+  assert.match(html, /Fork 2/)
+  assert.match(html, /账号关注者 3/)
+})
+
+test('fetchGitHubStats 解析两个接口；字段不全算失败', () => {
+  const calls = []
+  const exec = (cmd, argv) => {
+    calls.push(argv)
+    if (argv.at(-1).includes('/repos/')) return JSON.stringify({ stargazers_count: 4, forks_count: 1 })
+    return JSON.stringify({ followers: 12 })
+  }
+  const stats = fetchGitHubStats({ slug: { owner: 'jayantTang', repo: 'DSH_Mobile', user: 'jayantTang' },
+    exec })
+  assert.equal(stats.stars, 4)
+  assert.equal(stats.forks, 1)
+  assert.equal(stats.followers, 12)
+  assert.equal(calls.length, 2)
+  // 认证头与超时都必须带上：未认证请求被限流时至少不会挂住。
+  assert.ok(calls[0].includes('--max-time'))
+
+  const missing = () => fetchGitHubStats({ slug: { owner: 'a', repo: 'b', user: 'a' },
+    exec: () => JSON.stringify({ stargazers_count: 1 }) })
+  assert.throws(missing, /字段不全/, '字段缺失要抛错，让缓存层退回旧值或省略整行')
+})
+
+test('readGitHubStats：6 小时内用缓存，过期重取，失败退回旧缓存', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'feedback-github-cache-'))
+  const cacheFile = join(dir, '.github-stats.json')
+  const fresh = { repo: 'a/b', stars: 4, forks: 1, followers: 7, fetchedAt: 1000 }
+  writeFileSync(cacheFile, JSON.stringify(fresh), 'utf8')
+
+  let fetches = 0
+  const hit = readGitHubStats({ cacheFile, ttlMs: 600_000, now: 1000 + 300_000,
+    fetchStats: () => { fetches += 1; return fresh } })
+  assert.equal(fetches, 0, '缓存有效期内不得请求接口')
+  assert.equal(hit.stars, 4)
+
+  const refreshed = { ...fresh, stars: 5, fetchedAt: 2000 }
+  const after = readGitHubStats({ cacheFile, ttlMs: 600_000, now: 1000 + 700_000,
+    fetchStats: () => { fetches += 1; return refreshed } })
+  assert.equal(fetches, 1)
+  assert.equal(after.stars, 5)
+
+  const stale = readGitHubStats({ cacheFile, ttlMs: 600_000, now: 1000 + 900_000,
+    fetchStats: () => { throw new Error('offline') } })
+  assert.equal(stale.stars, 5, '断网时用上次的缓存，空白页面比保留旧数字更糟')
+
+  const empty = readGitHubStats({ cacheFile: join(dir, 'none.json'), ttlMs: 600_000,
+    now: 1, fetchStats: () => { throw new Error('offline') } })
+  assert.equal(empty, null)
+})
+
+test('fetchGitHubStats 失败时 report 照常生成，不写这一行', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'feedback-github-fail-'))
+  const cacheFile = join(dir, '.github-stats.json')
+  const stats = readGitHubStats({ cacheFile, ttlMs: 1, now: 10,
+    fetchStats: () => { throw new Error('offline') } })
+  assert.equal(stats, null)
+  const html = renderReport({ ...fixture(), github: stats })
+  assert.doesNotMatch(html, /账号关注者/)
+})
+
+test('已过完一天的日报：激活码按覆盖日结算，不按生成时刻的次日', () => {
+  // 00:02 生成、覆盖前一天：`今日激活` 与 14 天曲线都必须落在覆盖日。
+  // 修之前 `dayEnd + 1` 会被 `localDayOf` 解析成第二天，"今日激活" 恒为 0、
+  // 曲线最后一格是第二天（2026-10-19 实测日报里出现了 10-19 的格子）。
+  const data = completedDayFixture()
+  const dayStartAt = data.today.dayStartAt
+  data.invites = {
+    ...fixture().invites,
+    enrollments: [
+      { usedAt: dayStartAt + 22 * 3_600_000, accountName: 'covered', agentName: 'covered-mac' },
+      { usedAt: dayStartAt + 86_400_000 + 60_000, accountName: 'nextday', agentName: 'next-mac' },
+    ],
+  }
+  const html = renderReport(data)
+  assert.match(html, /今日激活 1/, '覆盖日 22:00 的那次登记才算今日')
+  assert.doesNotMatch(html, /10-13/, '曲线与表格都不该出现覆盖日的次日')
 })

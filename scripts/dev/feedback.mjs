@@ -78,6 +78,13 @@ const LOCAL_DB = join(ROOT, 'relay', '.local', 'state.db')
 const LOCAL_MAIL_DB = join(ROOT, 'mail', '.local', 'mail.db')
 const DEFAULT_OUT = join(ROOT, 'maintainers', 'reports')
 
+/// 日报里的 GitHub 计数（仓库 star/fork、账号关注者）取自公开 API，只存数字。
+/// 缓存落在报告目录（已 gitignore），6 小时内不重复请求：未认证配额 60 次/小时，
+/// 补跑历史报告不能把配额打光。
+const GITHUB_CACHE = join(DEFAULT_OUT, '.github-stats.json')
+const GITHUB_TTL_MS = 6 * 3600_000
+const GITHUB_BASE = 'https://api.github.com'
+
 /// 子命令 → 服务：信件类打 mail，用量/报告数据打中转（拆分后的路由表）。
 const MAIL_SUBS = new Set(['list', 'show', 'template', 'reply', 'notify', 'delete'])
 
@@ -714,10 +721,71 @@ export function buildRemoteRemoveInvocation(remoteFile, { env = {} } = {}) {
     `rm -f ${shellQuote(remoteFile)}`]
 }
 
+/// 日报里的 GitHub 计数：仓库 star、fork，以及个人账号的关注者。
+///
+/// 三个数字只用于日报页面的一行统计，不列任何明细（owner 2026-10-19 要求）。
+/// 仓库与账号从本机 git remote 推断，推断不出来时退回仓库默认值。
+/// 取数失败一律返回 null：日报不能因为 GitHub 不通而生成失败。
+export function gitHubSlug(root = ROOT) {
+  try {
+    const url = String(execFileSync('git', ['-C', root, 'config', '--get', 'remote.origin.url'],
+      { encoding: 'utf8' })).trim()
+    const match = url.match(/github\.com[:/]([^/]+)\/([^/]+?)(?:\.git)?$/)
+    if (match) return { owner: match[1], repo: match[2], user: match[1] }
+  } catch {
+    // 没有 git 或没有 origin：用默认值
+  }
+  return { owner: 'jayantTang', repo: 'DSH_Mobile', user: 'jayantTang' }
+}
+
+/// 两个只读请求（仓库、用户），`curl` 负责超时；返回扁平数字，字段不全视为失败。
+export function fetchGitHubStats({ slug = gitHubSlug(), timeoutMs = 6000, exec = execFileSync } = {}) {
+  const get = (path) => JSON.parse(exec('curl', ['-sSf', '--max-time',
+    String(Math.ceil(timeoutMs / 1000)), '-H', 'Accept: application/vnd.github+json',
+    `${GITHUB_BASE}${path}`], { encoding: 'utf8' }))
+  const repo = get(`/repos/${slug.owner}/${slug.repo}`)
+  const user = get(`/users/${slug.user}`)
+  const stats = {
+    repo: `${slug.owner}/${slug.repo}`,
+    stars: Number(repo?.stargazers_count),
+    forks: Number(repo?.forks_count),
+    followers: Number(user?.followers),
+    fetchedAt: Date.now(),
+  }
+  if (!Number.isFinite(stats.stars) || !Number.isFinite(stats.forks)
+    || !Number.isFinite(stats.followers)) throw new Error('GitHub 返回的字段不全')
+  return stats
+}
+
+/// 缓存优先取数：6 小时内直接用缓存；过期就重新请求，失败时退回旧缓存（有过期数据
+/// 也比没有强），再不行返回 null，页面那一行整块省略。
+export function readGitHubStats({ cacheFile = GITHUB_CACHE, ttlMs = GITHUB_TTL_MS,
+  now = Date.now(), fetchStats = fetchGitHubStats } = {}) {
+  let cached = null
+  try {
+    cached = JSON.parse(readFileSync(cacheFile, 'utf8'))
+  } catch {
+    cached = null
+  }
+  const usable = cached && Number.isFinite(Number(cached.stars))
+    && Number.isFinite(Number(cached.forks)) && Number.isFinite(Number(cached.followers))
+  if (usable && now - Number(cached.fetchedAt) < ttlMs) return cached
+  try {
+    const fresh = fetchStats()
+    mkdirSync(dirname(cacheFile), { recursive: true })
+    writeFileSync(cacheFile, JSON.stringify(fresh), 'utf8')
+    return fresh
+  } catch {
+    return usable ? cached : null
+  }
+}
+
 /// 日报的合并取数：中转 ops-report + mail feedback-stats，本机合并（I-3）。
 /// `feedback-stats` 的剔除口径要中转的调试设备 id（`DSH-` 前缀/测试台机型），
 /// 所以一共三次只读调用：device-list（中转）→ ops-report（中转）→ feedback-stats（mail）。
-function fetchReportData(parsed, { env, exists, run, io }) {
+/// GitHub 计数不进服务器：本机取，随合并结果一起渲染（`github` 为对象时用它，
+/// 为 null 时不取，未给时按缓存/接口取）。
+function fetchReportData(parsed, { env, exists, run, io, github }) {
   const { opts } = parsed
   const devices = JSON.parse(run(relayDevicesInvocation(parsed, { env, exists }).argv))
   const debugDevices = debugDeviceIds(devices)
@@ -734,16 +802,19 @@ function fetchReportData(parsed, { env, exists, run, io }) {
     io.err('（回退）服务器上还没有 mail 服务，日报的反馈板块暂用中转的旧计算；生产切换后此提示消失')
     mailStats = { ok: false }
   }
-  return mergeReportData(relayReport, mailStats)
+  const merged = mergeReportData(relayReport, mailStats)
+  const counts = github === null ? null : (github ?? readGitHubStats())
+  if (counts) merged.github = counts
+  return merged
 }
 
 /// `report --send`：双侧取数合并 → 落盘 HTML → （scp → mail 的
 /// `feedback-notify --format html` → 删远端）完整顺序。`--local` 时报告文件本机
 /// 就能读到，不走 scp、也不需要清理。发给别人的日报（审批原因非空）在投递
 /// 成功后自动发件存档。
-function reportAndSend(parsed, { env, exists, run, io, owner, approvalReason }) {
+function reportAndSend(parsed, { env, exists, run, io, owner, approvalReason, github }) {
   const { opts } = parsed
-  const merged = fetchReportData(parsed, { env, exists, run, io })
+  const merged = fetchReportData(parsed, { env, exists, run, io, github })
   const { code, file } = writeReport(JSON.stringify(merged), opts, io)
   if (code !== 0) return code
 
@@ -872,7 +943,7 @@ export function main(argv, deps = {}) {
           + '或在 .env.local 里设 DSH_ACCOUNT_ID；本命令不会群发')
       }
       const approvalReason = requireOwnerApproval(parsed, { env, exists, run }, owner, io, deps)
-      return reportAndSend(parsed, { env, exists, run, io, owner, approvalReason })
+      return reportAndSend(parsed, { env, exists, run, io, owner, approvalReason, github: deps.github })
     }
     const approvalReason = requireOwnerApproval(parsed, { env, exists, run }, owner, io, deps)
     // `notify --all` 的展开（审批之后：拒发时连只读的 account-list 也不跑）：
@@ -891,7 +962,7 @@ export function main(argv, deps = {}) {
     }
     // report / report-data：双侧取数（中转 ops-report + mail feedback-stats）后合并。
     if (sub === 'report' || sub === 'report-data') {
-      const merged = fetchReportData(parsed, { env, exists, run, io })
+      const merged = fetchReportData(parsed, { env, exists, run, io, github: deps.github })
       if (sub === 'report-data') {
         io.out(JSON.stringify(merged))
         return 0

@@ -768,7 +768,9 @@ def _version_report(store: Store, *, since_ms: int, until_ms: int,
                 continue
             if _is_orphan_usage(row, known_ids=known_ids, external=external):
                 continue
-            seen = int(row.get("lastSeenAt") or 0)
+            # 夹到锚点：跨日那一跳写下的用量行可能带着第二天零点几秒的 lastSeenAt，
+            # 日报会把"昨天"的表格印成"10-19 00:00"（2026-10-19 实测）。
+            seen = min(int(row.get("lastSeenAt") or 0), int(until_ms))
             if seen < int(since_ms):
                 continue
             seen_devices.add(device_id)
@@ -1333,7 +1335,9 @@ def _today_report(store: Store, *, stamp: int, threads: list[dict[str, Any]],
         })
     by_device.sort(key=lambda row: (int(row["egressBytes"]), int(row["connections"])), reverse=True)
     ranked = sorted(by_account.values(), key=lambda row: int(row["egressBytes"]), reverse=True)
-    live = [row for row in real_devices if not row.get("revokedAt")]
+    # 在册 = 锚点时刻没被撤销；锚点之后才撤销的不算（`revokedAt > stamp`）。
+    live = [row for row in real_devices
+            if not row.get("revokedAt") or int(row["revokedAt"]) > stamp]
     fresh = [row for row in threads if start <= int(row["createdAt"]) <= stamp]
     enrollments = [row for row in store.list_enrollments()
                    if start <= int(row.get("usedAt") or 0) <= stamp
@@ -1400,26 +1404,32 @@ def _first_seen_days(store: Store, *, debug_ids: set[str],
 
 
 def _invite_report(store: Store, stamp: int, enrollments: list[dict[str, Any]],
-                   *, test_count: int = 0) -> dict[str, Any]:
+                   *, test_count: int = 0, totals: dict[str, int] | None = None,
+                   unused: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     """激活码（邀请码）的账：还有多少能用、哪些快到期、最近谁激活了。
 
     `remaining` 是老口径（未使用的全部），把**已过期但没用**的也算在里面；日报要说
     「还剩几张能发」，所以另给 `usable`（未用且未过期）、`expiringSoon`（7 天内到期）、
     `expiredUnused`（已经废掉的）。三个数各自独立，加起来才等于 `remaining`。
+
+    `totals` / `unused` 由调用方按报告锚点算好传进来（`_ops_report`）：日报是快照，
+    锚点之后才铸、才用掉的码不能出现在"昨天"里。不传时退回库里此刻的状态。
     """
-    totals = store.invite_totals()
+    if totals is None:
+        totals = store.invite_totals()
     soon = int(stamp) + 7 * 86_400_000
-    unused = [{"createdAt": int(row.get("createdAt") or 0),
-               "expiresAt": int(row.get("expiresAt") or 0),
-               "note": row.get("note")}
-              for row in store.list_invites()]
-    usable = [row for row in unused if row["expiresAt"] > int(stamp)]
+    rows = unused if unused is not None else store.list_invites()
+    unused_rows = [{"createdAt": int(row.get("createdAt") or 0),
+                    "expiresAt": int(row.get("expiresAt") or 0),
+                    "note": row.get("note")}
+                   for row in rows]
+    usable = [row for row in unused_rows if row["expiresAt"] > int(stamp)]
     return {
         **totals,
         "test": test_count,
         "usable": len(usable),
         "expiringSoon": len([row for row in usable if row["expiresAt"] <= soon]),
-        "expiredUnused": len([row for row in unused if row["expiresAt"] <= int(stamp)]),
+        "expiredUnused": len([row for row in unused_rows if row["expiresAt"] <= int(stamp)]),
         # 最早到期的排前面：日报要回答"下一批什么时候失效"。
         "unused": sorted(usable, key=lambda row: row["expiresAt"])[:12],
         "enrollments": enrollments,
@@ -1456,8 +1466,13 @@ def _ops_report(store: Store, days: int, *, as_of: int | None = None,
     agent_versions = {row["agentId"]: row for row in store.list_agents()}
     debug_ids = {row["deviceId"] for row in devices if _is_debug_device(row)}
     names = {row["accountId"]: row.get("name") for row in store.list_accounts()}
-    real = [row for row in devices if row["deviceId"] not in debug_ids]
-    live = [row for row in real if not row.get("revokedAt")]
+    # 报告是**锚点时刻的快照**：00:02 跑、报刚过去那一天时，锚点之后才配对的手机、
+    # 才撤销的设备、才用掉的邀请码都不属于这份报告。不按锚点结算的话，日报里会出现
+    # 第二天的数据（2026-10-19 实测：版本表「最近在线 10-19 00:00」、设备表「10-19 00:01」）。
+    real = [row for row in devices
+            if row["deviceId"] not in debug_ids and int(row.get("createdAt") or 0) <= stamp]
+    live = [row for row in real
+            if not row.get("revokedAt") or int(row["revokedAt"]) > stamp]
     threads = [row for row in listed if not _is_test_thread(row, debug_ids)]
     # 「每日新增手机」按手机去重（`_first_device_rows`）：换版本重装会插新设备行，
     # 不去重的话这类行会被记成新用户。`newRawPerDay` 保留设备行口径。
@@ -1476,9 +1491,30 @@ def _ops_report(store: Store, days: int, *, as_of: int | None = None,
     # 登记名单要在读用量之前算好：孤儿用量行（设备行被清理工具删掉）要不要算进报表，
     # 取决于它属不属于外部账号，见 `_is_orphan_usage`。
     enrollments = store.list_enrollments()
+    test_enrollments = [row for row in enrollments if _is_test_enrollment(row)]
     real_enrollments = [row for row in enrollments if not _is_test_enrollment(row)]
+    # 锚点之后才激活的账号不属于这份报告：不加这一刀，「近 30 天激活」与激活码表格里
+    # 会混进 00:00–00:02 之间刚发生的登记。
+    real_enrollments = [row for row in real_enrollments
+                        if int(row.get("usedAt") or 0) <= stamp]
+    # 激活码的账同样按锚点结算：之后才铸的码、才用掉的码都不在"昨天"这份报告里。
+    invites_as_of = [row for row in store.list_invites(include_used=True)
+                     if int(row.get("createdAt") or 0) <= stamp]
+    used_by_stamp = [row for row in invites_as_of
+                     if row.get("usedAt") and int(row["usedAt"]) <= stamp]
+    unused_by_stamp = [row for row in invites_as_of if row not in used_by_stamp]
+    invite_totals_as_of = {"minted": len(invites_as_of), "used": len(used_by_stamp),
+                           "remaining": len(unused_by_stamp)}
     external = {row["accountId"] for row in real_enrollments if row.get("accountId")}
     known_ids = {row["deviceId"] for row in devices}
+    # 设备行的「最近在线」取自用量行并夹到锚点：直接读 devices.lastSeenAt 会显示
+    # 第二天的时间（连接器重连也会刷它），那是另一份事实。
+    last_seen_by_device: dict[str, int] = {}
+    for day in _recent_days(days, end=stamp):
+        for row in store.usage_rows(day):
+            seen = min(int(row.get("lastSeenAt") or 0), stamp)
+            if seen > last_seen_by_device.get(row["deviceId"], 0):
+                last_seen_by_device[row["deviceId"]] = seen
     series, ranked, active_by_day = _usage_scan(store, days, debug_ids, names, end=stamp,
                                                 known_ids=known_ids, external=external)
     owners = {row["deviceId"]: row.get("accountId") for row in devices}
@@ -1507,15 +1543,18 @@ def _ops_report(store: Store, days: int, *, as_of: int | None = None,
         "devices": {
             "paired": len(live),
             "active7d": len([row for row in live
-                             if stamp - 7 * 86_400_000 <= int(row.get("lastSeenAt") or 0) <= stamp]),
+                             if stamp - 7 * 86_400_000
+                             <= last_seen_by_device.get(row["deviceId"], 0) <= stamp]),
             "activeWindow": len([row for row in live
                                  if stamp - days * 86_400_000
-                                 <= int(row.get("lastSeenAt") or 0) <= stamp]),
+                                 <= last_seen_by_device.get(row["deviceId"], 0) <= stamp]),
             "newInWindow": sum(int(entry["count"]) for entry in new_per_day),
             "newRawInWindow": sum(int(entry["count"]) for entry in raw_new_per_day),
             "windowDays": days,
             "revoked": len(real) - len(live),
-            "debug": len(devices) - len(real),
+            "debug": len([row for row in devices
+                          if row["deviceId"] in debug_ids
+                          and int(row.get("createdAt") or 0) <= stamp]),
             "newPerDay": new_per_day,
             # 设备行口径的每日新增，只用来核对与 `newPerDay` 的差（差 = 重装行数）。
             # 渲染层不读它；`_first_device_rows` 记了为什么要按手机去重。
@@ -1524,10 +1563,14 @@ def _ops_report(store: Store, days: int, *, as_of: int | None = None,
             # 全量列表在生产库上是 1900+ 行（历次调试配对都还在），日报会被它撑爆
             # （2026-10-12 第一版 327 KB，正文里 90% 是 DSH-Test/DSH-Sweep 的历史行）。
             # `accountName` 是日报自己加的：手机上设备名常常全是「iPhone」，得靠账号名区分。
+            # `lastSeenAt` 用**锚点内的用量行**覆盖：registry 那一列会被 00:00 之后的
+            # 重连刷成第二天的时间。
             "list": [{**_device_report_row(_with_versions(row, agent_versions)),
+                      "lastSeenAt": last_seen_by_device.get(row["deviceId"]),
                       "accountName": names.get(row["accountId"])}
                      for row in
-                     sorted(live, key=lambda row: int(row.get("lastSeenAt") or row["createdAt"]),
+                     sorted(live, key=lambda row: int(last_seen_by_device.get(row["deviceId"])
+                                                      or row["createdAt"]),
                             reverse=True)[:REPORT_DEVICE_LIMIT]],
         },
         "usage": _usage_report(series, ranked, active_by_day),
@@ -1536,7 +1579,8 @@ def _ops_report(store: Store, days: int, *, as_of: int | None = None,
                                        first_seen=_first_seen_days(store, debug_ids=debug_ids,
                                                                    owners=owners)),
         "invites": _invite_report(store, stamp, real_enrollments,
-                                  test_count=len(enrollments) - len(real_enrollments)),
+                                  test_count=len(test_enrollments),
+                                  totals=invite_totals_as_of, unused=unused_by_stamp),
     }
 
 

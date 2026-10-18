@@ -886,3 +886,36 @@ def test_ops_report_carries_the_version_table_and_the_hourly_window(tmp_path, ca
     hourly = report["hourlyActivity"]
     assert hourly["windowHours"] == 72
     assert hourly["buckets"] is None
+
+
+def test_ops_report_ignores_events_after_the_anchor(tmp_path, capsys):
+    """日报是锚点时刻的快照：锚点之后才配对的手机、才铸的码都不进「昨天」那一份。
+
+    00:02 跑日报时，00:00–00:02 之间发生的事属于新的一天；不按锚点结算，
+    设备表与激活码表会印出第二天的时间与数字（2026-10-19 实测）。
+    """
+    db = str(tmp_path / "state.db")
+    store = Store(db)
+    invite = store.mint_invite(ttl_ms=60_000, note="anchor-later")
+    claimed = store.claim_invite(invite["code"], "later")
+    code = store.mint_pair_code(claimed["agentId"], ttl_ms=60_000)["code"]
+    device = store.claim_pair_code(code, device_name="iPhone")
+    stamp = admin._resolve_as_of("yesterday")
+    store.add_usage([{"day": admin.local_day(stamp / 1000), "deviceId": device["deviceId"],
+                      "agentId": claimed["agentId"],
+                      "accountId": claimed["accountId"],
+                      "egressBytes": 1234, "connections": 2,
+                      "firstSeenAt": stamp - 60_000, "lastSeenAt": stamp + 60_000,
+                      "at": stamp + 60_000, "lastBuild": "1.2.3"}])
+    store.close()
+
+    code, report = run_cli(db, "ops-report", "--days", "3", "--as-of", "yesterday",
+                           capsys=capsys)
+    assert code == 0
+    assert report["devices"]["paired"] == 0, "锚点之后才配对的手机不算在册"
+    assert report["devices"]["list"] == []
+    assert report["invites"]["minted"] == 0, "锚点之后才铸的码不属于昨天"
+    assert report["invites"]["enrollments"] == []
+    assert report["today"]["invites"]["used"] == 0
+    # 版本表的「最近在线」夹到锚点，不会印出第二天零点后的时间。
+    assert report["versions"][0]["lastSeenAt"] <= stamp
