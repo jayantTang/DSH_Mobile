@@ -107,7 +107,12 @@ public enum TranscriptSearch {
     ///
     /// 思考过程（`reasoning`）不进搜索：它又长又碎，读者要找的是"我说过什么、
     /// 助手答过什么、跑过什么命令"。结构分隔行同理。
+    ///
+    /// **还没进入会话历史的上行消息**（`isUnsavedInput`）也不进搜索：它的 seq 是
+    /// 本机合成键，而命中会被面板印成「第 N 条」——一个不存在的会话位置。
+    /// 与读库那三个入口同一条规则（`MessageStore.sessionContent()`）。
     static func searchable(_ item: TimelineItem) -> (TranscriptSearchHit.Role, String)? {
+        guard !item.isUnsavedInput else { return nil }
         switch item.kind {
         case .userMessage(let text, _, _, _, _):
             return (.me, text)

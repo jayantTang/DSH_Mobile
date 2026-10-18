@@ -76,6 +76,17 @@ public struct TimelineItem: Identifiable, Sendable {
     /// 行尾给「已发送，未确认，点击核对」：核对走一次服务端查重，再决定是否重发。
     /// 只由 `markSendStates` 回标。
     public var sendUnconfirmed: Bool = false
+
+    /// 这一行是**还没进入会话历史**的上行消息。
+    ///
+    /// 三种形态：刚发出等确认（`isPending`）、确认没来（`sendUnconfirmed`）、
+    /// 没发出去（`sendFailed`）。它们的 `seq` 是 `MessagePipeline` 的合成排序键
+    /// （`Int.max` 起递减），不是会话里的位置，因此不能当搜索命中/跳转目标/对外
+    /// 序号使用（见 `MessageStore.sessionContent()` 与 `TranscriptSearch.searchable`）。
+    public var isUnsavedInput: Bool {
+        guard case .userMessage(_, _, _, let isPending, _) = kind else { return false }
+        return isPending || sendFailed || sendUnconfirmed
+    }
 }
 
 /// One tool invocation and its outcome.

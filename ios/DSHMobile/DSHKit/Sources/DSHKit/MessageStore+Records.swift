@@ -4,6 +4,23 @@ import GRDB
 /// MessageStore 的读写半边（文件按职责拆分，沿用 `TranscriptStore+Housekeeping` 先例）。
 extension MessageStore {
 
+    // MARK: - 会话内容判据（唯一定义）
+
+    /// 「这一行是会话里的内容」：pending 行**不是**。
+    ///
+    /// 上行的乐观记录（`MessagePipeline+Send` 的 `insertOptimistic` / `restorePending`）
+    /// 带的是本机合成排序键（`Int.max` 起递减），它只负责把行排在末尾，不是会话里的
+    /// **位置**。会话位置只有一个所有者：服务端 seq。所以任何对外交出 seq 的读侧
+    /// （聚合游标、浏览列表、关键词搜索、增量灌库锚点）都必须带上这一条，否则合成键
+    /// 会被下游当成位置用：界面上印成「第 9223372036854775806 条」，灌库锚点被顶到天花板，
+    /// 跳转按 `seq + leading` 算页边界时整数溢出。
+    ///
+    /// `alias` 是 SQL 里 `record` 表的名字（带 JOIN 时用表的别名）。
+    /// 迁移 `v3-aggregate-excludes-pending` 里有一段同名条件，那是历史快照，不随这里改。
+    static func sessionContent(_ alias: String = "record") -> String {
+        "\(alias).status != 'pending'"
+    }
+
     // MARK: - 写入（下行记录 / 上行 pending 共用一个入口，批量事务）
 
     /// 应用一批去重后的变更（内存层 PendingWriteQueue drain 的结果）。
@@ -57,18 +74,18 @@ extension MessageStore {
     private static func refreshState(
         scope: String, sessionId: String, openedAt: Date, db: Database
     ) throws {
-        // 聚合只统计 sent 行。上行的乐观记录用合成 seq（`nextSyntheticSeq` 从
-        // `Int.max` 起递减，见 MessagePipeline+Send），算进 MAX(seq) 会让
-        // `newest_seq` 变成 9223372036854775807；冷启动预取拿它当游标算页边界，
-        // 第二次 `start + pageSize - 1` 就整数溢出（TestFlight 20261012.1310 的
-        // SIGTRAP 落在 SessionPipeline+Paging.swift:12）。pending 是"host 还没接受"
-        // 的上行缓存，不是会话里最新的内容，任何对外暴露的游标都不该包含它。
+        // 聚合只统计会话内容（`sessionContent()`：排除 pending）。上行的乐观记录用
+        // 合成 seq（`nextSyntheticSeq` 从 `Int.max` 起递减，见 MessagePipeline+Send），
+        // 算进 MAX(seq) 会让 `newest_seq` 变成 9223372036854775807；冷启动预取拿它当
+        // 游标算页边界，第二次 `start + pageSize - 1` 就整数溢出（TestFlight
+        // 20261012.1310 的 SIGTRAP 落在 SessionPipeline+Paging.swift:12）。
         let bounds = try Row.fetchOne(db, sql: """
             SELECT MIN(seq) AS oldest, MAX(seq) AS newest, COUNT(*) AS total
-            FROM record WHERE scope = ? AND session_id = ? AND status != 'pending'
+            FROM record WHERE scope = ? AND session_id = ? AND \(Self.sessionContent())
             """, arguments: [scope, sessionId])
         let snippet = try Row.fetchOne(db, sql: """
-            SELECT payload FROM record WHERE scope = ? AND session_id = ? AND status != 'pending'
+            SELECT payload FROM record WHERE scope = ? AND session_id = ?
+              AND \(Self.sessionContent())
             ORDER BY seq DESC LIMIT 1
             """, arguments: [scope, sessionId]).flatMap { row -> String? in
             guard let payload: Data = row["payload"] else { return nil }
@@ -249,6 +266,7 @@ extension MessageStore {
                     SELECT r.session_id, r.payload FROM record_fts f
                     JOIN record r ON r.rowid = f.rowid
                     WHERE record_fts MATCH ? AND r.scope = ?
+                      AND \(Self.sessionContent("r"))
                       AND COALESCE(r.source_kind, 'user') = 'user'
                       AND (r.source_id IS NULL OR r.source_id NOT LIKE 'agent-%')
                     ORDER BY r.seq DESC LIMIT 200
@@ -260,7 +278,7 @@ extension MessageStore {
                     .replacingOccurrences(of: "_", with: "\\_") + "%"
                 rows = try Row.fetchAll(db, sql: """
                     SELECT session_id, payload FROM record
-                    WHERE scope = ? AND \(Self.userInputFilter)
+                    WHERE scope = ? AND \(Self.sessionContent()) AND \(Self.userInputFilter)
                       AND \(Self.ftsTextExpr("payload"))
                           LIKE ? ESCAPE '\\'
                     ORDER BY seq DESC LIMIT 200
@@ -276,7 +294,7 @@ extension MessageStore {
         try await pool.read { db in
             let rows = try Row.fetchAll(db, sql: """
                 SELECT session_id, payload FROM record
-                WHERE scope = ? AND \(Self.userInputFilter)
+                WHERE scope = ? AND \(Self.sessionContent()) AND \(Self.userInputFilter)
                 ORDER BY session_id ASC, seq ASC
                 """, arguments: [scope])
             return Self.decodeEntries(rows)

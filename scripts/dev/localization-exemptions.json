@@ -299,6 +299,12 @@
       "file": "ios/DSHMobile/Modules/Tests/DSHChatDomainTests/ChatModelSearchChannelTests.swift",
       "reason": "测试断言的输入值：中文关键词（「我」「迁移」）是喂给 ChatModel.searchChannel 的查询数据，不是用户可见文案；产品侧出口在 ChatDomain/ChatModel.swift，已有同口径豁免先例",
       "backlog": "i18n-test-expectations"
+    },
+    {
+      "rule": "hardcoded-string",
+      "file": "ios/DSHMobile/Modules/Tests/DSHChatDomainTests/ChatModelUserInputIndexTests.swift",
+      "reason": "测试断言的输入值：中文提问正文与关键词（「还没确认」「刚发」）是喂给「我问过的」读侧的会话数据，不是用户可见文案；断言里那句带「第 N 条」的是诊断说明，产品侧文案键在 TranscriptSearchSheet.swift，已有",
+      "backlog": "i18n-test-expectations"
     }
   ]
 }

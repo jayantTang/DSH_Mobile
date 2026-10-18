@@ -81,4 +81,29 @@ final class TranscriptSearchTests: XCTestCase {
         let items = [tool("t1", seq: 1, name: "bash", summary: "ls", result: "README.md\nPackage.swift")]
         XCTAssertEqual(TranscriptSearch.hits(in: items, query: "Package.swift").map(\.id), ["t1"])
     }
+
+    /// 还没进入会话历史的上行消息**没有会话位置**：它的 seq 是 `Int.max` 起的合成键，
+    /// 放进搜索就会让面板把它印成「第 9223372036854775806 条」（2026-10-19）。
+    /// 与读库那三个入口同一条规则（`MessageStore.sessionContent()`）。
+    func testUnsavedInputsAreNotSearchable() {
+        func unsaved(_ id: String, _ text: String, pending: Bool = false,
+                     failed: Bool = false, unconfirmed: Bool = false) -> TimelineItem {
+            var item = TimelineItem(
+                id: id,
+                kind: .userMessage(text: text, images: [], isSteering: false,
+                                   isPending: pending, isAgentSent: false),
+                seq: Int.max - 1)
+            item.sendFailed = failed
+            item.sendUnconfirmed = unconfirmed
+            return item
+        }
+        let items = [
+            unsaved("u-pending", "刚发出还没确认的一行", pending: true),
+            unsaved("u-failed", "发送失败的一行", failed: true),
+            unsaved("u-unconfirmed", "已发送未确认的一行", unconfirmed: true),
+            user("u1", seq: 1, "已进入历史的一行"),
+        ]
+        XCTAssertEqual(TranscriptSearch.hits(in: items, query: "一行").map(\.id), ["u1"],
+                       "a row without a session position must not become a search hit")
+    }
 }

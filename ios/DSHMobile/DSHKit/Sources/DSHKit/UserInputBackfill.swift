@@ -223,11 +223,16 @@ extension MessageStore {
 
     /// 本地已灌的最大 seq（增量补拉的锚点），归类口径与 `userInputRecords` 一致；
     /// nil = 空库。
+    ///
+    /// 排除 pending：未确认的上行消息带的是本机合成键（`Int.max` 起递减），算进
+    /// MAX 会把锚点顶到天花板，`collect` 的「碰到已入库 seq 即停」对第一页恒成立，
+    /// 增量补拉因此只拉一页就收工（`MessageStore.sessionContent()` 的注释）。
     func maxUserInputSeq(scope: String, sessionId: String) async throws -> Int? {
         try await pool.read { db in
             try Int.fetchOne(db, sql: """
                 SELECT MAX(seq) FROM record
-                WHERE scope = ? AND session_id = ? AND role = 'me'
+                WHERE scope = ? AND session_id = ?
+                  AND \(MessageStore.sessionContent()) AND role = 'me'
                   AND COALESCE(source_kind, 'user') = 'user'
                   AND (source_id IS NULL OR source_id NOT LIKE 'agent-%')
                 """, arguments: [scope, sessionId])
