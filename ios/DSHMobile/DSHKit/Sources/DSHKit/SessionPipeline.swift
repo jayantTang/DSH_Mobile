@@ -261,7 +261,9 @@ public actor SessionPipeline {
         priority: FetchPriority = .userVisible
     ) async throws -> [SessionRecord] {
         // 跳转抢占：取消低优先级预取，用户动作插队（spec 支撑机制 1）。
-        if priority == .jump { _ = inFlight.cancelAll(below: .jump) }
+        // 跳转只抢占**预取**。以前连 userVisible 一起取消：读者刚上拉发出的
+        // 几页会被紧随其后的跳转/回到底部清掉，页面永远补不齐，只能反复重发。
+        if priority == .jump { _ = inFlight.cancelAll(below: .userVisible) }
 
         let startedAt = Date()
         // ① 区间判定三分支：算出缺口。
