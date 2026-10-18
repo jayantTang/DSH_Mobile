@@ -59,13 +59,18 @@ extension MessagePipeline {
         }
     }
 
-    /// 重启恢复（T022）：磁盘层里 status='pending' 的记录是"没发出去"的消息，
-    /// 以 failed（未发出、可点重发）呈现进时间线。
+    /// 重启恢复（T022）：磁盘层里 status='pending' 的记录，**先按 clientId 对账**
+    /// 再决定是不是「没发出去」。
     ///
-    /// **不再自动重发**（2026-10-17）：磁盘上的 pending 不区分"真没发出去"和
-    /// "宿主已收下、还在队列里"，自动重发会用同一个 requestId 再投一次；本机日志
-    /// 里同一 rpcId 因此出现了两条 `agent/inbox/spliced`（12:09 与 12:57），而手机端
-    /// 按 rpcId 折成一行，界面上看不出重复。要不要再发一次由读者点重发决定。
+    /// 送达的唯一事实是宿主写下的 durable 用户消息（`source.rpcId == clientId`）：
+    /// 它在热窗口里，或在磁盘上（还没水合），都说明这条不是没发出去。此时只清掉
+    /// 磁盘上残留的 pending 行，不插 failed 行。2026-10-18 的现场就是漏了这一步：
+    /// 进程在确认落盘前被杀，重启后把已经回答过的消息显示成「发送失败」。
+    ///
+    /// 只有对账查无此条时才以 failed（未发出、可点重发）呈现。
+    /// **不再自动重发**（2026-10-17）：自动重发会用同一个 requestId 再投一次；
+    /// 本机日志里同一 rpcId 因此出现了两条 `agent/inbox/spliced`（12:09 与 12:57），
+    /// 而手机端按 rpcId 折成一行，界面上看不出重复。要不要再发一次由读者点重发决定。
     /// 幂等：已跟踪的 clientId 不重复插入。
     public func restorePending(for session: SessionRef) async {
         guard let store,
@@ -73,17 +78,36 @@ extension MessagePipeline {
                   scope: session.scope, sessionId: session.sessionId),
               !pending.isEmpty else { return }
         _ = await ensurePrimedState(for: session)
-        guard var state = states[session] else { return }
-        var inserted: [Row] = []
-        // 新的合成键从大到小发：存储 seq 越大的（越新的消息）排在越后面。
+        // 先把磁盘对账的 await 全部做完，再一次性改状态：这个 actor 在 await
+        // 期间是重入的，泵/发送写进来的行会被手里这份旧 state 覆盖。
+        var inspected: [(clientId: String, pending: SessionRecord, stored: SessionRecord?)] = []
         for entry in pending.sorted(by: { $0.record.event.seq > $1.record.event.seq }) {
-            guard let clientId = UUID(uuidString: entry.clientId),
+            guard UUID(uuidString: entry.clientId) != nil else { continue }
+            // 正式记录已经落进磁盘、只是还没水合进窗口：同样不是「没发出去」。
+            let stored = (try? await store.confirmedRecord(
+                scope: session.scope, sessionId: session.sessionId,
+                clientId: entry.clientId)) ?? nil
+            inspected.append((entry.clientId, entry.record, stored))
+        }
+        guard var state = states[session] else { return }
+        let landed = Self.landedRecords(in: state)
+        var inserted: [Row] = []
+        /// 已经在宿主确认过的 uuid → 正式记录：只清磁盘残留，不进时间线。
+        var settled: [(clientId: String, record: SessionRecord)] = []
+        for item in inspected {
+            guard let clientId = UUID(uuidString: item.clientId),
                   state.pendingSeqs[clientId] == nil else { continue }
+            if let confirmed = landed[clientId] ?? item.stored {
+                // 窗口里已有（或磁盘上已有）`source.rpcId == clientId` 的正式记录：
+                // 这条已经送达，只把磁盘上残留的 pending 行换成正式行。
+                settled.append((item.clientId, confirmed))
+                continue
+            }
             let seq = state.nextSyntheticSeq
             state.nextSyntheticSeq -= 1
             // 合成键每次启动重发（行排序用），记录里的 seq 同步换掉，折叠出的
             // 行 seq 与状态回标的键才一致。
-            let event = entry.record.event
+            let event = item.pending.event
             let record = SessionRecord(event: SessionEvent(
                 type: event.type, seq: seq, time: event.time,
                 data: event.data, surfaceOp: event.surfaceOp))
@@ -93,8 +117,41 @@ extension MessagePipeline {
             inserted.append(.message(message))
         }
         states[session] = state
-        guard !inserted.isEmpty else { return }
-        broadcast(SnapshotDiff(changes: [.insert(inserted)]), to: state.continuations)
+        if !inserted.isEmpty {
+            broadcast(SnapshotDiff(changes: [.insert(inserted)]), to: state.continuations)
+        }
+        // pending 行留在磁盘上就等于"还没发送"，下次启动还会被当成未发出：
+        // 用确认写入把它换成正式行（按 client_id 删除后写入，幂等）。
+        for (clientId, record) in settled {
+            await pipeline(for: session).enqueueWrite(.confirmPending(
+                scope: session.scope, sessionId: session.sessionId,
+                clientId: clientId, record: record), key: record.event.seq)
+        }
+    }
+
+    /// 热窗口里已经确认过的上行记录（clientId → 正式记录）。
+    ///
+    /// 只认 `.sent`：乐观行自己也带 `source.rpcId == clientId`，把 pending/failed
+    /// 一起算进来会把它自己的影子当成"已送达"。
+    static func landedRecords(in state: SessionState) -> [UUID: SessionRecord] {
+        var result: [UUID: SessionRecord] = [:]
+        for row in state.rows.values where row.status == .sent {
+            if let clientId = confirmationClientId(of: row.record) {
+                result[clientId] = row.record
+            }
+        }
+        return result
+    }
+
+    /// 把各会话的批量写队列立即落盘。
+    ///
+    /// 写队列没有定时器：只在下一次入队时检查 0.5 秒窗口。退到后台/被挂起前不显式
+    /// 冲一次，已确认（confirm）的写入可能停在内存里；进程被杀后磁盘上只剩 pending，
+    /// 重启就会被恢复逻辑误判成"没发出去"。
+    public func flushWrites() async {
+        for pipeline in pipelines.values {
+            await pipeline.flushPendingWrites()
+        }
     }
 
     /// 「已发送，未确认，点击核对」（2026-10-17）：先按 clientId 对服务端最新页查一次。

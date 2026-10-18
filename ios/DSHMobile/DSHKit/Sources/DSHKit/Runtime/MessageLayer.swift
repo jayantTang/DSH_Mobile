@@ -258,6 +258,11 @@ public final class MessageLayer {
         await pipeline?.restorePending(for: ref)
     }
 
+    /// 把 009 的批量写队列立刻落盘（退后台/被挂起前，由宿主生命周期调用）。
+    public func flushWrites() async {
+        await pipeline?.flushWrites()
+    }
+
     /// 重发一条 pending 的发送。
     public func resend(clientId: UUID, for ref: MessageSessionRef) async throws {
         guard let pipeline else { throw FetchFailure.notConnected }

@@ -1322,6 +1322,15 @@ public final class ChatModel {
         await writeChain?.value
     }
 
+    /// 退后台/被挂起：把 009 的批量写队列（pending / confirm）立刻落盘。
+    ///
+    /// 旧路径的 `persistTranscriptNow` / `flushTranscript` 只管 ChatModel 自己的写链，
+    /// 管道模式下它们直接 return；009 的写队列没有定时器，不显式冲就会停在内存里，
+    /// 进程被杀后磁盘上只剩 pending，重启时就会被误判成"没发出去"。
+    public func flushPipelineWrites() async {
+        await messageLayer?.flushWrites()
+    }
+
     private func enqueueAppend(scope: String, sessionId: String, records: [SessionRecord]) {
         guard !records.isEmpty else { return }
         enqueueWrite { [layer = messageBacking] in

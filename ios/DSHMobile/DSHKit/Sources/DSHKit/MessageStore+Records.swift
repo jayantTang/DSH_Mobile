@@ -136,6 +136,22 @@ extension MessageStore {
         }
     }
 
+    /// 按 clientId 找宿主确认过的正式记录（`source_id` 即 `data.source.rpcId`，
+    /// `status != 'pending'`）。重启恢复用它判断"磁盘上这条 pending 其实已经送达"，
+    /// 不再只看本地 pending 行。
+    func confirmedRecord(
+        scope: String, sessionId: String, clientId: String
+    ) async throws -> SessionRecord? {
+        try await pool.read { db in
+            let rows = try Row.fetchAll(db, sql: """
+                SELECT payload FROM record
+                WHERE scope = ? AND session_id = ? AND source_id = ? AND status != 'pending'
+                ORDER BY seq DESC LIMIT 1
+                """, arguments: [scope, sessionId, clientId])
+            return try Self.decode(rows).first
+        }
+    }
+
     /// 某 seq 之前的一页（降序取、返回升序），向上翻页用。
     public func windowBefore(
         scope: String, sessionId: String, seq: Int, limit: Int

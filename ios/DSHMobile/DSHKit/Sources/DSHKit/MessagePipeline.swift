@@ -120,7 +120,7 @@ public actor MessagePipeline {
     /// 轮次结束与下一条排队消息被提升成 durable 记录之间有几毫秒到几秒的空隙。
     private let unconfirmedGrace: TimeInterval
 
-    private var pipelines: [SessionRef: SessionPipeline] = [:]
+    var pipelines: [SessionRef: SessionPipeline] = [:] // internal：+Send 的 flushWrites 要用
     var states: [SessionRef: SessionState] = [:] // internal：+Send
 
     /// 每会话的聚合状态：行表 + 订阅者 + 泵任务。
@@ -293,11 +293,20 @@ public actor MessagePipeline {
         if !insertedRows.isEmpty { changes.append(.insert(insertedRows)) }
 
         var updatedRows: [Row] = reclassifiedUpdates
-        updatedRows += diff.updated.compactMap { record in
-            guard let id = state.identities[record.event.seq] else { return nil }
+        for record in diff.updated {
+            // 同 seq 的再次到达也可能是确认：正式记录先被水合/落盘、pending 行后插
+            // （restorePending 的顺序就是如此）时，durable 记录再送一遍走的是 update。
+            // 以前只认 inserted，这条失败行从此没有任何机会被救回。
+            if let clientId = Self.confirmationClientId(of: record),
+               let confirmed = confirmPendingRow(clientId: clientId, with: record, state: &state) {
+                updatedRows.append(confirmed)
+                confirmations.append((clientId, record))
+                continue
+            }
+            guard let id = state.identities[record.event.seq] else { continue }
             let message = RenderedMessage(id: id, seq: record.event.seq, record: record, status: .sent)
             state.rows[record.event.seq] = message
-            return .message(message)
+            updatedRows.append(.message(message))
         }
         if !updatedRows.isEmpty { changes.append(.update(updatedRows)) }
 
@@ -392,7 +401,7 @@ public actor MessagePipeline {
 
     /// 一条下行记录是不是某条上行消息的确认：durable 用户消息且 source.rpcId
     /// 是个 UUID（发送时把 clientId 当 requestId 发出，host 原样落在 source 上）。
-    private static func confirmationClientId(of record: SessionRecord) -> UUID? {
+    static func confirmationClientId(of record: SessionRecord) -> UUID? {
         guard case .userMessage(let message) = ChatEventDecoder.decode(record.event),
               message.isFromHuman, let rpcId = message.rpcId else { return nil }
         return UUID(uuidString: rpcId)

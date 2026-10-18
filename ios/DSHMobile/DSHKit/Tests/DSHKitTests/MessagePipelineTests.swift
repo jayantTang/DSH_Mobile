@@ -363,6 +363,105 @@ final class MessagePipelineTests: XCTestCase {
         do { let sends = await sendCount.value; XCTAssertEqual(sends, 0) }
     }
 
+    /// 重启恢复不得把**已经送达并被回答**的消息重新标成失败（2026-10-18 现场：
+    /// 会话 6c8c611b，宿主 23:44:31 收到 rpcId `CF19EC67` 并回答，手机端到 23:54
+    /// 仍显示「发送失败，点击重发」）。
+    ///
+    /// 冷启动的顺序是「先水合最新页/磁盘 → 再 restorePending」。正式记录
+    /// （`source.rpcId == clientId`）已经进了热窗口，而磁盘上还留着上一轮没来得及
+    /// 落确认的 pending 行。恢复逻辑只认磁盘，不认窗口里已经存在的正式记录，于是
+    /// 又插一条合成 key 的 failed 行；两条记录折叠身份同为 `user-<rpcId>`，后者
+    /// （页尾）覆盖前者——屏幕上就是"回答在上面、失败在下面"，而且再也不会有
+    /// 下行确认来救它（同 seq 的记录再次到达只会走 update，不进确认分支）。
+    func testRestorePendingMustNotMarkAnAlreadyLandedSendAsFailed() async throws {
+        let clientId = UUID()
+        let pending = SessionRecord(event: SessionEvent(
+            type: "user/message", seq: Int.max, time: 1_789_276_358_000,
+            data: .object([
+                "text": .string("已发出并被回答"),
+                "source": .object(["kind": .string("user"), "rpcId": .string(clientId.uuidString)]),
+            ]), surfaceOp: nil))
+        try await store.applyWrites([.upsertPending(
+            scope: "mac", sessionId: "s1", clientId: clientId.uuidString, record: pending)])
+
+        let pipeline = makePipeline(sender: { _, _, _, _ in nil })
+        let sessionPipeline = await pipeline.pipeline(for: session)
+        // 冷启动先水合出宿主已确认的正式记录（同一 clientId，seq 594）。
+        await sessionPipeline.apply(events: [
+            Self.userRecord(seq: 594, text: "已发出并被回答", rpcId: clientId.uuidString).event,
+        ])
+
+        await pipeline.restorePending(for: session)
+
+        let visible = await messages(pipeline)
+        let same = visible.filter {
+            $0.record.event.data["source"]?["rpcId"]?.stringValue == clientId.uuidString
+        }
+        XCTAssertEqual(same.count, 1, "同一 clientId 只能有一行：正式记录已在窗口里，恢复不得再插失败行")
+        XCTAssertEqual(same.first?.status, .sent, "已确认并已回答的消息，恢复后不许显示成发送失败")
+    }
+
+    /// 确认已经写进内存、但确认落库还在队列里就被杀进程：磁盘上仍是 pending。
+    /// 重启恢复必须识别"正式记录已经存在"（同一 rpcId），不能把这条翻回 failed。
+    func testRestorePendingMustNotUndoAConfirmationWhoseDiskWriteWasLost() async throws {
+        let pipeline = makePipeline(sender: { _, _, _, _ in nil })
+        _ = await pipeline.snapshots(for: session) // 建状态
+
+        let clientId = try await pipeline.send(text: "确认写没落盘", to: session)
+        let sessionPipeline = await pipeline.pipeline(for: session)
+        // pending 已落盘（send 之后那次 flush），确认还没落盘。
+        await sessionPipeline.flushPendingWrites()
+        try await Task.sleep(nanoseconds: 100_000_000)
+        let onDisk = try await store.pendingRecords(scope: "mac", sessionId: "s1")
+        XCTAssertEqual(onDisk.count, 1, "前提：pending 行确实已经在磁盘上（确认还没落盘）")
+        await sessionPipeline.apply(events: [
+            Self.userRecord(seq: 42, text: "确认写没落盘", rpcId: clientId.uuidString).event,
+        ])
+
+        await pipeline.restorePending(for: session)
+
+        let visible = await messages(pipeline)
+        let same = visible.filter { $0.id == clientId }
+        XCTAssertEqual(same.count, 1, "恢复不得在已确认的行之外再造一行")
+        XCTAssertEqual(same.first?.status, .sent, "确认已在内存里落地，磁盘 pending 不得把行翻回 failed")
+    }
+
+    /// 退后台/被挂起必须把 009 的批量写队列冲干净。写队列只在下一次入队时检查
+    /// 0.5 秒窗口，没有定时器；不显式冲，确认写入就停在内存里，进程被杀后磁盘上
+    /// 只剩 pending，重启就被恢复逻辑误判成"没发出去"（2026-10-18 现场的前半段）。
+    func testFlushWritesPersistsAConfirmationWithoutAnotherEnqueue() async throws {
+        let pipeline = makePipeline(sender: { _, _, _, _ in nil })
+        _ = await pipeline.snapshots(for: session)
+        let clientId = try await pipeline.send(text: "退后台前落盘", to: session)
+        let sessionPipeline = await pipeline.pipeline(for: session)
+        await sessionPipeline.flushPendingWrites()
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        await sessionPipeline.apply(events: [
+            Self.userRecord(seq: 42, text: "退后台前落盘", rpcId: clientId.uuidString).event,
+        ])
+        // 确认由管道泵异步入队：等它进队列，再模拟退后台直接冲。
+        try await Task.sleep(nanoseconds: 100_000_000)
+        await pipeline.flushWrites()
+        try await Task.sleep(nanoseconds: 200_000_000)
+
+        let pending = try await store.pendingRecords(scope: "mac", sessionId: "s1")
+        XCTAssertTrue(pending.isEmpty, "flush 之后磁盘上不许再留 pending 行")
+        let records = try await store.records(scope: "mac", sessionId: "s1", in: 42...42)
+        XCTAssertEqual(records.count, 1, "确认写入必须已经落成正式行")
+    }
+
+    /// 当前快照里的全部数据行（订阅即得全量首帧）。
+    private func messages(_ pipeline: MessagePipeline) async -> [MessagePipeline.RenderedMessage] {
+        let stream = await pipeline.snapshots(for: session)
+        var iterator = stream.makeAsyncIterator()
+        guard case .insert(let rows)? = await iterator.next()?.changes.first else { return [] }
+        return rows.compactMap { row in
+            if case .message(let message) = row { return message }
+            return nil
+        }
+    }
+
     /// 「已发送，未确认」兜底：轮次结束（含撤回排队项、以错误收尾）后仍停在 pending
     /// 的行，过了宽限期必须翻成 unconfirmed，不能永远挂着"等待开始"。
     /// 本机日志 session-152bb1ac：12:09:12 入队 → 同一秒 `agent/inbox/spliced`

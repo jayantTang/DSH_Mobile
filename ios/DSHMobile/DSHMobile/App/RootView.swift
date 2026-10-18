@@ -292,9 +292,12 @@ struct RootView: View {
         stageOne
             .onChange(of: scenePhase) { _, phase in
                 // 退到后台/被挂起：把转写尾部立刻写盘——此刻之后进程可能就没了。
+                // 009 的写队列（pending / confirm）是另一条写链，旧路径的
+                // persistTranscriptNow 在管道模式下直接 return，必须单独冲。
                 if phase != .active {
                     chatModel.persistTranscriptNow()
                     Task { await chatModel.flushTranscript() }
+                    Task { await chatModel.flushPipelineWrites() }
                 }
                 // 前后台切换记一条（spec 020）：这是区分「App 被系统挂起」与「拨号卡住」
                 // 的唯一本地证据——两者在中转与连接器两侧看起来完全一样。
