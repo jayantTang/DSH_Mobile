@@ -432,6 +432,48 @@ final class TranscriptProcessFoldTests: XCTestCase {
         XCTAssertEqual(texts, ["final"], "intermediate prose is process; the final answer must stay visible when folded")
     }
 
+    func test_prefetch_pager_covers_whole_range_in_bounded_windows() {
+        var cursor = 1000
+        var lowest = Int.max
+        var batches = 0
+        while let window = PrefetchPager.next(lower: 1, cursor: cursor) {
+            XCTAssertLessThanOrEqual(window.count, PrefetchPager.window)
+            XCTAssertEqual(window.upperBound, cursor - 1)
+            lowest = min(lowest, window.lowerBound)
+            batches += 1
+            if PrefetchPager.isComplete(lower: 1, coveredLow: window.lowerBound) { break }
+            cursor = window.lowerBound
+        }
+        XCTAssertEqual(lowest, 1, "the pager must reach lower instead of stopping halfway")
+        XCTAssertEqual(batches, 7)
+        XCTAssertTrue(PrefetchPager.isComplete(lower: 1, coveredLow: 1))
+        XCTAssertFalse(PrefetchPager.isComplete(lower: 1, coveredLow: 151))
+    }
+
+    func test_header_counts_come_from_summary_even_when_details_exist() throws {
+        // 展开后明细会合并进来；表头数字必须仍然来自摘要，不能因为明细只到了
+        // 一部分就变小或改口径（否则点开再收起数字会跳）。
+        var timeline = ChatTimeline()
+        let events: [[String: JSONValue]] = [
+            ProcessFoldFixtures.turnStart(seq: 1, turn: 1),
+            ProcessFoldFixtures.user(seq: 2, text: "q"),
+            ["type": .string("+link/fold"), "seq": .int(3), "data": .object([
+                "turn": .int(1), "startSeq": .int(3), "endSeq": .int(4),
+                "toolCount": .int(230), "reasoningCount": .int(16),
+                "messageCount": .int(1), "subagentCount": .int(0),
+                "durationMs": .int(660_000),
+            ])],
+            ProcessFoldFixtures.toolCall(seq: 5, callId: "c1", name: "bash"),
+            ProcessFoldFixtures.assistant(seq: 6, text: "a"),
+            ProcessFoldFixtures.turnEnd(seq: 7, turn: 1),
+        ]
+        for event in events { _ = timeline.apply(try ProcessFoldFixtures.record(event).event) }
+        let turn = try XCTUnwrap(TranscriptProcessFold.plan(items: timeline.items, isTurnOpen: false).turns.first)
+        XCTAssertEqual(turn.toolCount, 230)
+        XCTAssertEqual(turn.reasoningCount, 16)
+        XCTAssertEqual(turn.duration ?? 0, 660, accuracy: 0.001)
+    }
+
     // MARK: - 连接器折好下发的摘要（history-fold-summary）
 
     func test_prefetched_summary_folds_with_the_same_header_as_recent_turns() throws {

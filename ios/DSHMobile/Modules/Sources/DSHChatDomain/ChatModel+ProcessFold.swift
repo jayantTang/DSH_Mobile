@@ -103,17 +103,30 @@ public extension ChatModel {
               let client = store?.client, let address else { return }
         let lower = range.lowerBound
         let upper = range.upperBound
+        // 一次只取 `PrefetchPager.window` 条，按 seq 往下滚到 lower 为止。
+        // 旧实现一次要整个区间（可能几千个 seq、几百条记录），宿主按条数与字节
+        // 截断后只回来一小段，表头写着“230 次工具调用”，展开却只有几条。
+        var cursor = upper + 1
+        var collected = 0
+        var coveredLow = upper
         do {
-            let value = try await client.historyWindow(HistoryWindowRequest(
-                address: address, before: upper + 1, through: nil,
-                limit: upper - lower + 1, maxBytes: 512 * 1024,
-                encoding: client.historyWindowEncoding, fold: nil))
-            let records = value.records.filter { $0.event.seq >= lower && $0.event.seq <= upper }
-            guard !records.isEmpty else { return }
-            await pipelineBridge?.absorb(records: records)
+            while let window = PrefetchPager.next(lower: lower, cursor: cursor) {
+                let value = try await client.historyWindow(HistoryWindowRequest(
+                    address: address, before: cursor, through: nil,
+                    limit: window.count, maxBytes: 512 * 1024,
+                    encoding: client.historyWindowEncoding, fold: nil))
+                let records = value.records.filter { $0.event.seq >= lower && $0.event.seq <= upper }
+                guard let oldest = records.map(\.event.seq).min(), oldest < cursor else { break }
+                collected += records.count
+                coveredLow = min(coveredLow, oldest)
+                await pipelineBridge?.absorb(records: records)
+                cursor = oldest
+            }
+            guard collected > 0 else { return }
             foldState.manualTurn[turnKey] = true
             ChatProbe.shared.probeNote?("process.expand", [
-                "turn": turnKey, "records": String(records.count),
+                "turn": turnKey, "records": String(collected),
+                "complete": PrefetchPager.isComplete(lower: lower, coveredLow: coveredLow) ? "1" : "0",
             ], true)
         } catch {
             ChatProbe.shared.probeNote?("process.expandFailed", [
@@ -242,5 +255,26 @@ public extension ChatModel {
             items: visible.timeline.items,
             isTurnOpen: visible.timeline.isTurnOpen,
             currentTurn: visible.timeline.currentTurn)
+    }
+}
+
+
+/// 展开预折摘要时的取页规划。纯函数，单测直接钉"要分批、要覆盖到 lower"。
+public enum PrefetchPager {
+    /// 每批最多取多少个 seq。取值只受宿主单次回包上限约束，与页大小无关。
+    public static let window = 150
+
+    /// 下一批的请求范围；`cursor` 是"从哪个 seq 之下开始取"（不含）。
+    /// 已经覆盖到 lower 就返回 nil。
+    public static func next(lower: Int, cursor: Int) -> ClosedRange<Int>? {
+        guard cursor > lower else { return nil }
+        let upper = cursor - 1
+        let lowerBound = max(lower, upper - window + 1)
+        return lowerBound...upper
+    }
+
+    /// 取到的最老 seq 已经到 lower，即整段覆盖完成。
+    public static func isComplete(lower: Int, coveredLow: Int) -> Bool {
+        coveredLow <= lower
     }
 }
