@@ -150,8 +150,52 @@ public final class ChatModel {
     private var hostReportsRunning = false
     private var awaitingTimeout: Task<Void, Never>?
     private var lastSeenCompletionAt: Date?
-    /// True while older history is being fetched.
-    public private(set) var isLoadingOlder = false
+    /// 向上取页的唯一状态源：进行中、失败、已到最早、空闲。
+    ///
+    /// 以前拆成 `isLoadingOlder` 与 `olderFailure` 两个字段，界面与管道各存一份，
+    /// 失败的清空与加载的结束是两个独立的写点——这正是"一直转圈"能出现的结构原因。
+    /// 现在只有一个状态与一个写入口；`isLoadingOlder` / `olderFailure` 只是只读投影。
+    public enum OlderPageState: Equatable, Sendable {
+        case idle
+        case loading
+        case failed(String)
+        case exhausted
+    }
+    public private(set) var olderState: OlderPageState = .idle
+    public var isLoadingOlder: Bool { olderState == .loading }
+    public var olderFailure: String? {
+        if case .failed(let message) = olderState { return message }
+        return nil
+    }
+
+    /// 唯一写入口：进行中的清理不会覆盖已经落地的失败终态。
+    ///
+    /// 事件也在这里发：任何一次状态迁移都必须留下一条记录，而不是只记"开始加载"。
+    /// 2026-10-18 第一次读日志时 spinner 只出现 older=1、没有配对的 0，就是因为
+    /// 收尾走的是另一个方法、没有发事件——诊断事件必须挂在唯一写入口上。
+    private var olderWatchdog: Task<Void, Never>?
+
+    public func setOlderState(_ next: OlderPageState) {
+        // 相同状态不重复发事件：启动阶段会连续多次落到 idle，重复事件既无信息，
+        // 又会挤占每条来源每秒 10 条的配额，把真正的 1→0 迁移挤掉。
+        guard next != olderState else { return }
+        olderState = next
+        DSHLog.event("list.spinner", ["older": next == .loading ? "1" : "0"])
+        olderWatchdog?.cancel()
+        olderWatchdog = nil
+        if next == .loading {
+            olderWatchdog = Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 8_000_000_000)
+                guard !Task.isCancelled, let self, self.olderState == .loading else { return }
+                DSHLog.event("anomaly.loading", ["waitedMs": "8000"])
+            }
+        }
+    }
+
+    /// 请求收尾：只在仍处于进行中时回到空闲，失败/到头的终态保持不变。
+    public func finishOlderIfLoading() {
+        setOlderState(olderState.finishing())
+    }
     /// 视图只读这两位的投影；真正的状态在 `pager` 里（FR-005/FR-038）。
     public private(set) var hasOlder = false
     /// 失败后的一次自动补试（FR-004 的"继续能恢复"）。
@@ -163,8 +207,6 @@ public final class ChatModel {
     private var didAutoRetry = false
     /// 宿主权威的"还有更早"：只由快照与 pager 的观察更新，失败绝不改它（FR-003）。
     private var hostHasMore = true
-    /// 最近一次取页失败的原因；顶部据此显示可点的重试条（FR-004/FR-007）。
-    public private(set) var olderFailure: String?
     public private(set) var lastError: String?
 
     /// Model routes the host can serve.
@@ -445,7 +487,7 @@ public final class ChatModel {
         if visible?.summary.sessionId != key {
             foldState = TranscriptFoldState()
         }
-        olderFailure = nil
+        setOlderState(.idle)
         // This session's own half-written message, not the last one's.
         draft = drafts[key]?.text ?? ""
         draftImages = drafts[key]?.images ?? []
@@ -645,7 +687,7 @@ public final class ChatModel {
         currentPermission = nil
         pager = nil
         hasOlder = false
-        olderFailure = nil
+        setOlderState(.idle)
         throughSeq = 0
         pendingStreamFrames.removeAll()
         clearSearchHistory()
@@ -935,7 +977,7 @@ public final class ChatModel {
         let oldest = records.first?.event.seq
         let newest = records.last?.event.seq
         pager?.reset(oldestLoadedSeq: oldest, newestLoadedSeq: newest, hasMore: (oldest ?? 1) > 1)
-        olderFailure = nil
+        setOlderState(.idle)
         hostHasMore = (oldest ?? 1) > 1
         syncOlderState()
         let landed = TranscriptHitLocator.row(forSeq: seq, in: timeline.items)?.id
@@ -1625,13 +1667,13 @@ public final class ChatModel {
         if await backfillFromStore() { return }
         guard let pager else { return }
         guard let fetcher = makePageFetcher() else {
-            olderFailure = String(localized: "尚未连接")
+            setOlderState(.failed(String(localized: "尚未连接")))
             return
         }
-        isLoadingOlder = true
-        olderFailure = nil
+        setOlderState(.loading)
+        setOlderState(.idle)
         defer {
-            isLoadingOlder = false
+            finishOlderIfLoading()
             syncOlderState()
         }
         let previousOldest = pager.oldestLoadedSeq ?? Int.max
@@ -1663,7 +1705,7 @@ public final class ChatModel {
         case .endOfLog:
             ChatProbe.shared.probeNote?("pager.end", ["oldest": String(oldestSeq ?? -1)], true)
         case .failed(let reason):
-            olderFailure = reason
+            setOlderState(.failed(reason))
             ChatProbe.shared.probeNote?("pager.failed", ["reason": reason], true)
             scheduleAutoRetry()
         case .busy:
@@ -1734,7 +1776,7 @@ public final class ChatModel {
 
     /// Retries the page the reader is still waiting for (the top retry bar).
     public func retryOlder() async {
-        olderFailure = nil
+        setOlderState(.idle)
         didAutoRetry = false
         await loadOlder()
     }
@@ -1763,7 +1805,7 @@ public final class ChatModel {
             newestLoadedSeq: newest,
             hasMore: hasMore
         )
-        olderFailure = nil
+        setOlderState(.idle)
         hostHasMore = hasMore
         autoRetryTask?.cancel()
         didAutoRetry = false
@@ -1835,13 +1877,9 @@ public final class ChatModel {
     }
 
     /// 管道模式下的「向上翻页」进行中（顶部缺口行 spinner 与旧版小字共用此位）。
-    public func notePipelineLoadingOlder(_ loading: Bool) {
-        isLoadingOlder = loading
-    }
-
-    /// 管道模式下的取页失败（顶部缺口行转「点击重试」，绝不写成"没有更多"）。
-    public func notePipelineOlderFailure(_ message: String?) {
-        olderFailure = message
+    /// 管道把取页状态写进来的唯一入口（旧的两个写点已删除）。
+    public func notePipelineOlder(state: OlderPageState) {
+        setOlderState(state)
     }
 
     public static func isGapRow(_ item: TimelineItem) -> Bool {
@@ -1990,7 +2028,7 @@ public final class ChatModel {
         }
         // 本地没有才问宿主。取不到就是取不到：不写任何"没有更早了"的状态，读者可以再试（FR-003）。
         guard let page = try? await fetcher.page(before: from) else {
-            olderFailure = String(localized: "读取更早的记录失败，点按重试")
+            setOlderState(.failed(String(localized: "读取更早的记录失败，点按重试")))
             return false
         }
         let fresh = page.records.filter { $0.event.seq < from }
@@ -2358,5 +2396,14 @@ public extension JSONValue {
     public init(from model: some Encodable) throws {
         let data = try JSONEncoder().encode(model)
         self = try JSONDecoder().decode(JSONValue.self, from: data)
+    }
+}
+
+
+public extension ChatModel.OlderPageState {
+    /// 收尾规则：进行中回到空闲，失败与到头是终态。
+    /// 单测直接断言这一条——旧实现把失败当成"加载结束"一起清掉，界面才会一直转。
+    func finishing() -> Self {
+        self == .loading ? .idle : self
     }
 }

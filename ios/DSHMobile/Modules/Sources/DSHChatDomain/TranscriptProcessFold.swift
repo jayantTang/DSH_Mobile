@@ -38,6 +38,15 @@ public struct TranscriptFoldState: Sendable, Equatable {
 /// the original rows.
 public enum TranscriptProcessFold {
 
+    /// 一轮是否可折叠的纯判据。
+    ///
+    /// 不做布局、不读状态，单测直接据此钉边界：缺段（gap）与中途输入都不是
+    /// "不可折"的理由——前者以轮内一行保留，后者是分组边界。
+    public static func isFoldable(hasDivider: Bool, isRunning: Bool, hasFailure: Bool,
+                                  hasProcessRows: Bool) -> Bool {
+        hasDivider && !isRunning && !hasFailure && hasProcessRows
+    }
+
     public struct Turn: Sendable, Identifiable {
         public let key: String
         public let turn: Int
@@ -267,20 +276,35 @@ public enum TranscriptProcessFold {
             let counts = Self.counts(indexes: processIndexes, items: items)
             let interleaved = segment.hasInterleavedInput || leading.count > 1
             let isPartial = leading.isEmpty || (segment.dividerIndex == nil && !isRunning)
-            // 连接器折好下发的摘要（`isPrefetched`）本身就是要显示的那一行：
-            // 这一轮不能再被折叠，否则摘要会被"由真实过程行推导出的表头"替代，
-            // 而那些行根本没下发。点开摘要时由上层回取详情，之后这一轮才恢复可折。
-            let hasPrefetchedSummary = processIndexes.contains { index in
-                if case .processHeader(let header) = items[index].kind { return header.isPrefetched }
-                return false
+            // 连接器预折摘要（`isPrefetched`）是这一轮**全部**过程的计数来源：
+            // 明细可能还没下发，按行数会漏计；明细已下发时按行再数一遍又会重复。
+            // 所以只要存在摘要，就用摘要的计数与用时，折叠表头与近期轮次同一样式。
+            var summaryTools = 0, summaryReasoning = 0, summaryMessages = 0, summarySubagents = 0
+            var summaryDuration: TimeInterval?
+            var summaryEndReason: String?
+            var summaryStart: Int?
+            var summaryEnd: Int?
+            var hasPrefetchedSummary = false
+            for index in processIndexes {
+                guard case .processHeader(let header) = items[index].kind, header.isPrefetched else { continue }
+                hasPrefetchedSummary = true
+                summaryTools += header.toolCount
+                summaryReasoning += header.reasoningCount
+                summaryMessages += header.messageCount
+                summarySubagents += header.subagentCount
+                if summaryDuration == nil { summaryDuration = header.duration }
+                if summaryEndReason == nil { summaryEndReason = header.endReason }
+                summaryStart = min(summaryStart ?? header.startSeq, header.startSeq)
+                summaryEnd = max(summaryEnd ?? header.endSeq, header.endSeq)
             }
-            let foldable = segment.hasDivider
-                && !isRunning
-                && !segment.hasFailure
-                && !segment.hasGap
-                && !interleaved
-                && !hasPrefetchedSummary
-                && !processIndexes.isEmpty
+            // 折叠的判据只看"这一轮是否已结束、是否有过程行、是否可以隐藏细节"。
+            // 缺失区间与中途输入不再取消整轮折叠；预折摘要也不再让整轮铺开——
+            // 摘要只提供计数，折叠仍由这一轮的普通表头承担。
+            let foldable = Self.isFoldable(
+                hasDivider: segment.hasDivider,
+                isRunning: isRunning,
+                hasFailure: segment.hasFailure,
+                hasProcessRows: !processIndexes.isEmpty)
 
             let turn = Turn(
                 key: key,
@@ -297,15 +321,15 @@ public enum TranscriptProcessFold {
                 hasGap: segment.hasGap,
                 hasInterleavedInput: interleaved,
                 isPartial: isPartial,
-                endReason: segment.endReason,
-                duration: segment.duration,
-                toolCount: counts.tools,
-                reasoningCount: counts.reasoning,
-                messageCount: counts.messages,
-                subagentCount: counts.subagents,
+                endReason: summaryEndReason ?? segment.endReason,
+                duration: summaryDuration ?? segment.duration,
+                toolCount: hasPrefetchedSummary ? summaryTools : counts.tools,
+                reasoningCount: hasPrefetchedSummary ? summaryReasoning : counts.reasoning,
+                messageCount: hasPrefetchedSummary ? summaryMessages : counts.messages,
+                subagentCount: hasPrefetchedSummary ? summarySubagents : counts.subagents,
                 activityCounts: counts.activities,
-                startSeq: startSeq,
-                endSeq: endSeq)
+                startSeq: hasPrefetchedSummary ? (summaryStart ?? startSeq) : startSeq,
+                endSeq: hasPrefetchedSummary ? (summaryEnd ?? endSeq) : endSeq)
             turns.append(turn)
 
             for index in range {

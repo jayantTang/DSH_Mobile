@@ -673,6 +673,8 @@ public struct ChatView: View {
                 makeRow: { AnyView(row($0)) },
                 pinToBottom: isFollowing,
                 onDiagnostic: { name, fields in ChatProbe.shared.probeNote?(name, fields, true) },
+                canLoadOlder: { model.hasOlder },
+                isLoadingOlder: { model.isLoadingOlder },
                 onNearTop: { Task { await model.loadOlder() } },
                 onScroll: { distance in
                     model.noteReaderTopRow(listHostRef?.topVisibleRowID)
@@ -1144,9 +1146,25 @@ public struct ChatView: View {
     /// 2. 一次上滑最多连补 `maxOlderBurst` 页：视口比一页还高（短会话）时补一页填不满
     ///    屏幕，那就接着补；但绝不允许无限补下去。
     /// 3. 每次补完等一拍再判断"视口还在不在顶部"：锚定与插入都要下一帧才落地。
+    @State private var lastPumpTrace = Date.distantPast
+
     private func pumpOlder(_ proxy: ScrollViewProxy) {
         guard ownsTranscript, sentinelNearTop, model.hasOlder, !model.isLoadingOlder,
-              olderPump == nil else { return }
+              olderPump == nil else {
+            // 顶部不再自动补页时，必须能区分是哪一条闸门挡住的：没有这条，
+            // "还有历史却不动"只能靠猜（2026-10-18 仿真连续上拉 386 次卡在同一处）。
+            if Date().timeIntervalSince(lastPumpTrace) > 1 {
+                lastPumpTrace = Date()
+                DSHLog.event("pump.skip", [
+                    "owns": ownsTranscript ? "1" : "0",
+                    "nearTop": sentinelNearTop ? "1" : "0",
+                    "hasOlder": model.hasOlder ? "1" : "0",
+                    "loading": model.isLoadingOlder ? "1" : "0",
+                    "pumping": olderPump == nil ? "0" : "1",
+                ])
+            }
+            return
+        }
         // 已经失败过就先别自动再试：否则"重试条出现 → 布局变化把哨兵推回来 → 又发一页 →
         // 失败清掉 olderFailure → 胶囊出现 → 失败 → 重试条再出现"会一直翻来覆去
         // （2026-10-08 用例 53 实测：探针里重试条 7.68s 就布局好了，8.5s 的截图却是加载态）。

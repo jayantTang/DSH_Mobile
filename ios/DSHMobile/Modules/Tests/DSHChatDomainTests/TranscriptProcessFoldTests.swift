@@ -106,7 +106,7 @@ final class TranscriptProcessFoldTests: XCTestCase {
         }
     }
 
-    func test_steering_prevents_folding() throws {
+    func test_steering_is_a_boundary_not_a_fold_blocker() throws {
         let timeline = try ProcessFoldFixtures.timeline([
             ProcessFoldFixtures.turnStart(seq: 1, turn: 1),
             ProcessFoldFixtures.user(seq: 2, text: "q"),
@@ -116,7 +116,8 @@ final class TranscriptProcessFoldTests: XCTestCase {
             ProcessFoldFixtures.turnEnd(seq: 6),
         ])
         let plan = plan(timeline)
-        XCTAssertFalse(try XCTUnwrap(plan.turns.first).isFoldable)
+        // 2026-10-18：中途插话不再取消整轮折叠，但读者自己说的话必须仍然可见。
+        XCTAssertTrue(try XCTUnwrap(plan.turns.first).isFoldable)
         XCTAssertTrue(ids(TranscriptProcessFold.displayRows(plan, state: TranscriptFoldState()))
             .contains(try XCTUnwrap(timeline.items.first { item in
                 if case .userMessage(_, _, let steering, _, _) = item.kind { return steering }
@@ -124,13 +125,15 @@ final class TranscriptProcessFoldTests: XCTestCase {
             }).id))
     }
 
-    func test_gap_prevents_folding_and_stays_visible() throws {
+    func test_gap_does_not_block_folding_and_stays_visible() throws {
         let timeline = try completed(tools: 2)
         let gap = ChatTimeline.gapItem(start: 3, end: 3, status: .loading)
         var items = timeline.items
         items.insert(gap, at: 2)
         let plan = plan(items)
-        XCTAssertFalse(try XCTUnwrap(plan.turns.first).isFoldable)
+        // 2026-10-18：缺段不再让整轮不可折；缺口行以轮内一行的形式保留，
+        // 收起时也可见（否则读者会以为这一段历史是完整的）。
+        XCTAssertTrue(try XCTUnwrap(plan.turns.first).isFoldable)
         XCTAssertTrue(ids(TranscriptProcessFold.displayRows(plan, state: TranscriptFoldState())).contains(gap.id))
     }
 
@@ -411,7 +414,7 @@ final class TranscriptProcessFoldTests: XCTestCase {
 
     // MARK: - 连接器折好下发的摘要（history-fold-summary）
 
-    func test_prefetched_summary_turn_is_not_folded_and_header_stays_visible() throws {
+    func test_prefetched_summary_folds_with_the_same_header_as_recent_turns() throws {
         var timeline = ChatTimeline()
         let events: [[String: JSONValue]] = [
             ProcessFoldFixtures.turnStart(seq: 1, turn: 1),
@@ -431,15 +434,21 @@ final class TranscriptProcessFoldTests: XCTestCase {
 
         let plan = TranscriptProcessFold.plan(items: timeline.items, isTurnOpen: false)
         let turn = try XCTUnwrap(plan.turns.first)
-        XCTAssertFalse(turn.isFoldable, "a prefetched summary row is the row to show; the turn must not fold again")
+        // 2026-10-18：预折摘要不再让整轮铺开，表头与近期轮次同一样式；
+        // 计数取摘要里的值（明细没下发时按行数会漏）。
+        XCTAssertTrue(turn.isFoldable)
+        XCTAssertEqual(turn.toolCount, 2)
+        XCTAssertEqual(turn.reasoningCount, 1)
+        XCTAssertEqual(turn.duration ?? 0, 1.2, accuracy: 0.001)
 
         let rows = TranscriptProcessFold.displayRows(plan, state: TranscriptFoldState())
-        let prefetched = rows.compactMap { item -> TimelineProcessHeader? in
-            if case .processHeader(let header) = item.kind, header.isPrefetched { return header }
+        let headers = rows.compactMap { item -> TimelineProcessHeader? in
+            if case .processHeader(let header) = item.kind { return header }
             return nil
         }
-        XCTAssertEqual(prefetched.count, 1, "only the prefetched summary row; no second header derived from absent process rows")
-        XCTAssertEqual(prefetched.first?.toolCount, 2)
+        XCTAssertEqual(headers.count, 1)
+        XCTAssertEqual(headers.first?.toolCount, 2)
+        XCTAssertEqual(headers.first?.isPrefetched, false, "统一成普通表头，不再单独渲染摘要行")
         XCTAssertTrue(rows.contains { item in
             if case .assistantText(let text) = item.kind { return text == "a" }
             return false
@@ -471,7 +480,7 @@ final class TranscriptProcessFoldTests: XCTestCase {
         let plan = TranscriptProcessFold.plan(items: timeline.items, isTurnOpen: false)
         let rows = TranscriptProcessFold.displayRows(plan, state: TranscriptFoldState())
         let headers = rows.compactMap { item -> TimelineProcessHeader? in
-            if case .processHeader(let header) = item.kind, header.isPrefetched { return header }
+            if case .processHeader(let header) = item.kind { return header }
             return nil
         }
         XCTAssertEqual(headers.count, 1, "one turn spanning pages still shows one process node")

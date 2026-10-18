@@ -3,6 +3,7 @@ import DSHKit
 import SwiftUI
 import UIKit
 import DSHChatDomain
+import DSHFoundation
 
 /// 转写列表的新宿主（spec 008）。
 ///
@@ -27,6 +28,10 @@ struct TranscriptListRepresentable: UIViewRepresentable {
     let pinToBottom: Bool
     /// 探针出口。
     let onDiagnostic: (String, [String: String]) -> Void
+    /// 诊断用：宿主是否还有更早的历史、是否正在取页。
+    /// 只读，不参与渲染；缺了这个，顶部状态只能靠"首行是不是缺口行"猜，会误报。
+    var canLoadOlder: () -> Bool = { false }
+    var isLoadingOlder: () -> Bool = { false }
     /// 读者滑到顶部附近：调用方负责取页（`ChatModel.loadOlder`）。
     let onNearTop: () -> Void
     /// 滚动几何回调（007 的 `older.sentinel` 等价）。
@@ -69,6 +74,10 @@ struct TranscriptListRepresentable: UIViewRepresentable {
         context.coordinator.onBudgetCheck = onBudgetCheck
         host.makeRow = makeRow
         host.onDiagnostic = onDiagnostic
+        #if DEBUG
+        host.canLoadOlder = canLoadOlder
+        host.isLoadingOlderProvider = isLoadingOlder
+        #endif
         host.onScroll = onScroll
         host.onBottomChanged = onBottomChanged
         host.onFollowGeometry = onFollowGeometry
@@ -356,7 +365,9 @@ final class TranscriptListHost: UIView, UICollectionViewDelegate {
     private var reclaimCheckIsImmediate = false
     /// 最近一次补页后的残差（用来把 007 的 `older.pump kept` 等价出来）。
     private(set) var lastSettle: (moved: CGFloat, ok: Bool)?
-    private var nearTopArmed = true
+    /// 顶部补页的节流：贴近顶部时持续上拉要能持续补，不能只触发一次。
+    /// 触发条件由"离开顶部再回来"改为"贴顶就请求"，频率交给节流与 coordinator 的闩锁。
+    private var lastNearTopFire: CFTimeInterval = 0
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -463,6 +474,81 @@ final class TranscriptListHost: UIView, UICollectionViewDelegate {
         false
     }
 
+    // MARK: - 诊断：连续上滑
+
+#if DEBUG
+    /// `-DSHDiagSwipeUp <n>`：连续上滑 n 次（每次约一屏），用于诊断取页与顶部状态。
+    /// 与 `-DSHProbeOlderScroll` 的区别：**不回到底部**，轨迹与人的连续上拉一致。
+    var canLoadOlder: () -> Bool = { false }
+    var isLoadingOlderProvider: () -> Bool = { false }
+    private var diagSwipeStarted = false
+    private var diagSwipeTask: Task<Void, Never>?
+
+    private static func diagSwipeCount() -> Int? {
+        let args = ProcessInfo.processInfo.arguments
+        guard let index = args.firstIndex(of: "-DSHDiagSwipeUp"), index + 1 < args.count,
+              let count = Int(args[index + 1]), count > 0 else { return nil }
+        return count
+    }
+
+    func startDiagnosticSwipeIfNeeded() {
+        guard !diagSwipeStarted, let count = Self.diagSwipeCount(), !rows.isEmpty else { return }
+        diagSwipeStarted = true
+        diagSwipeTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            var stalled = 0
+            for _ in 0..<count {
+                guard let self, !Task.isCancelled else { return }
+                let height = self.collectionView.bounds.height
+                let top = -self.collectionView.adjustedContentInset.top
+                let before = self.collectionView.contentOffset.y
+                let y = max(top, before - height * 0.85)
+                self.collectionView.setContentOffset(CGPoint(x: 0, y: y), animated: false)
+                try? await Task.sleep(nanoseconds: 350_000_000)
+                let after = self.collectionView.contentOffset.y
+                DSHLog.event("diag.scroll", [
+                    "phase": "up", "delta": String(Int(after - before)), "off": String(Int(after)),
+                    "rows": String(self.rows.count),
+                    "hasOlder": self.canLoadOlder() ? "1" : "0",
+                    "loading": self.isLoadingOlderProvider() ? "1" : "0",
+                ])
+                stalled = abs(after - before) < 0.5 ? stalled + 1 : 0
+                guard stalled < 2 else { break }
+            }
+            // 到顶后停留观察：模拟持续上拉的"回弹"，每秒一次，看是否最终发起取页。
+            for i in 0..<12 {
+                guard let self, !Task.isCancelled else { return }
+                self.collectionView.setContentOffset(CGPoint(x: 0, y: -30), animated: false)
+                try? await Task.sleep(nanoseconds: 120_000_000)
+                self.collectionView.setContentOffset(CGPoint(x: 0, y: 0), animated: false)
+                try? await Task.sleep(nanoseconds: 880_000_000)
+                DSHLog.event("diag.hold", [
+                    "i": String(i), "rows": String(self.rows.count),
+                    "hasOlder": self.canLoadOlder() ? "1" : "0",
+                    "loading": self.isLoadingOlderProvider() ? "1" : "0",
+                ])
+            }
+            // 到顶后的对照：同一位置下拉应能移动，上拉不应移动。
+            for phase in ["down", "up", "down", "up"] {
+                guard let self, !Task.isCancelled else { return }
+                let height = self.collectionView.bounds.height
+                let before = self.collectionView.contentOffset.y
+                let delta = height * 0.85 * (phase == "down" ? -1 : 1)
+                self.collectionView.setContentOffset(
+                    CGPoint(x: 0, y: before + delta), animated: false)
+                try? await Task.sleep(nanoseconds: 300_000_000)
+                let after = self.collectionView.contentOffset.y
+                DSHLog.event("diag.scroll", [
+                    "phase": phase, "delta": String(Int(after - before)), "off": String(Int(after)),
+                    "rows": String(self.rows.count),
+                    "hasOlder": self.canLoadOlder() ? "1" : "0",
+                    "loading": self.isLoadingOlderProvider() ? "1" : "0",
+                ])
+            }
+        }
+    }
+#endif
+
     // MARK: - 指令
 
     func apply(_ command: Command) {
@@ -470,7 +556,13 @@ final class TranscriptListHost: UIView, UICollectionViewDelegate {
         case .setRows(let items, let anchorId):
             rows = TranscriptListSection.ordered(items).map { TranscriptRowPayload(item: $0) }
             applySnapshot()
-            if let anchorId { scrollTo(id: anchorId, animated: false) }
+            // 快照是异步落的：同一轮里滚会打到旧数据源的下标（见 `scrollTo(id:)` 的注释）。
+            // 这里显式推迟一轮，`scrollTo` 里还有一道按实时条数的兜底校验。
+            if let anchorId {
+                DispatchQueue.main.async { [weak self] in
+                    self?.scrollTo(id: anchorId, animated: false)
+                }
+            }
             diagnostic("list.host", ["mode": "uikit", "rows": String(rows.count)])
         case .prepend(let items):
             prepend(items, reason: "page")
@@ -558,10 +650,7 @@ final class TranscriptListHost: UIView, UICollectionViewDelegate {
         ])
         settle(anchorId: effectiveAnchorId ?? "-", moved: residual)
         satisfyBottomIntent()
-        if distanceToTop() < prefetchMargin() {
-            nearTopArmed = true
-            onNearTop?()
-        }
+        if distanceToTop() < prefetchMargin() { onNearTop?() }
     }
 
     /// 行内容签名：身份之外「内容有没有变」的判定（相同 id 的行被更新时要
@@ -636,10 +725,7 @@ final class TranscriptListHost: UIView, UICollectionViewDelegate {
         // （2026-10-08 真机反馈："仍不能无限拉，中断了"）。这里由宿主自己续上，
         // 次数交给调用方的"还有没有更早"兜底（到日志开头就不再要）。
         satisfyBottomIntent()
-        if distanceToTop() < prefetchMargin() {
-            nearTopArmed = true
-            onNearTop?()
-        }
+        if distanceToTop() < prefetchMargin() { onNearTop?() }
     }
 
     /// 按预算丢弃最老的已读行（spec 008 的 FR-002）。
@@ -898,8 +984,27 @@ final class TranscriptListHost: UIView, UICollectionViewDelegate {
     static var rehydrateDistanceScreens: Int { ChatProbe.shared.rehydrateScreens }
 
     func scrollTo(id: String, animated: Bool = false,
-                  anchor: UICollectionView.ScrollPosition = .centeredVertically) {
+                  anchor: UICollectionView.ScrollPosition = .centeredVertically,
+                  retrying: Bool = false) {
         guard let index = rows.firstIndex(where: { $0.id == id }) else { return }
+        // `apply(snapshot, animatingDifferences: false)` 仍然是**异步**的：`rows` 已经换成
+        // 新数组，而 collection view 的数据源可能还停在上一份。同一轮里拿新下标调
+        // `scrollToItem`，UIKit 会以 `_validateScrollingTargetIndexPath:` 断言把 App 打死
+        // （SIGABRT）。2026-10-18 真机"一打开会话就闪退"就是这条：打开时行数增多，
+        // 末行下标超出旧快照的条数。
+        //
+        // 因此这里必须按**数据源当前条数**校验，而不是按 `rows` 校验；越界说明快照还没落定，
+        // 交给下一轮再试一次（后续更新与布局也会重新表达意图）。
+        let liveCount = collectionView.numberOfItems(inSection: 0)
+        guard index < liveCount else {
+            // 只重试一次：数据源始终没跟上就放弃（后续更新会重新表达意图），
+            // 不在这里空转 runloop。
+            guard !retrying else { return }
+            DispatchQueue.main.async { [weak self] in
+                self?.scrollTo(id: id, animated: animated, anchor: anchor, retrying: true)
+            }
+            return
+        }
         // 程序化"跳走"同样撤销钉底意图（与 scrollToTop 同一条纪律）：
         // 搜索命中跳转停在中间时，挂着 wantsBottom 会让下一条新消息把读者拽回底部。
         wantsBottom = false
@@ -955,6 +1060,9 @@ final class TranscriptListHost: UIView, UICollectionViewDelegate {
         let reloadable = reloadIds.intersection(identifiers)
         if !reloadable.isEmpty { snapshot.reloadItems(Array(reloadable)) }
         dataSource.apply(snapshot, animatingDifferences: false)
+        #if DEBUG
+        startDiagnosticSwipeIfNeeded()
+        #endif
     }
 
     /// 某一行在**屏幕上**的 y（内容坐标 − 当前 offset）；量不到返回 nil。
@@ -991,13 +1099,15 @@ extension TranscriptListHost {
         reportFollowGeometry(scrollView)
         // **可见余量预取**：离顶端还有一屏半就开始要，而不是等贴到顶（真机反馈"预取太慢"）。
         // 贴着顶时也允许继续要 —— 读者一直往上拉就一页页接着给。
+        // 2026-10-18 实测：旧写法是边沿触发（贴顶触发一次、离开两倍边距才重新武装），
+        // 读者停在顶部时永远等不到第二次，于是"还有更早、没有加载、也拉不动"。
+        // 现在贴顶就请求，300ms 节流；真正的并发与"一页在飞"由 coordinator 的闩锁负责。
         if distance < prefetchMargin() {
-            if nearTopArmed {
-                nearTopArmed = false
+            let now = CFAbsoluteTimeGetCurrent()
+            if now - lastNearTopFire > 0.3 {
+                lastNearTopFire = now
                 onNearTop?()
             }
-        } else if distance > prefetchMargin() * 2 {
-            nearTopArmed = true
         }
     }
 

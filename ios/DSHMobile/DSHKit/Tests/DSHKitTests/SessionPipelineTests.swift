@@ -96,6 +96,25 @@ final class SessionPipelineTests: XCTestCase {
         try? await Task.sleep(nanoseconds: 100_000_000)
     }
 
+    // MARK: - 稀疏回包不留下永久缺口
+
+    func testSparsePageDoesNotLeaveAPermanentLoadingGap() async throws {
+        // 宿主 seq 不连续：51 号没有记录。页 [51...100] 只回 52...100。
+        // 若只按"本地记录"判定覆盖，51 会变成一个永远补不上的缺口（界面一直"正在加载"）。
+        let stub = stub!
+        let sparse = SessionPipeline.FetchPage(records: (52...100).map { record($0) }, hasMore: true)
+        await stub.set(1...50, .page(page(1...50)))
+        await stub.set(51...100, .page(sparse))
+        let pipeline = SessionPipeline(
+            scope: "mac", sessionId: "s1", store: nil,
+            fetch: { range, priority in try await stub.fetch(range, priority: priority) },
+            now: { 1000 }, pageSize: 50, hotLimit: 500)
+        _ = try await pipeline.records(in: 1...100)
+        await settle()
+        let gaps = await pipeline.currentGaps()
+        XCTAssertTrue(gaps.isEmpty, "已问过的稀疏区间不应再生成缺口行：\(gaps)")
+    }
+
     // MARK: - 区间判定三分支
 
     func testFullCoverageServesLocallyWithoutNetwork() async throws {

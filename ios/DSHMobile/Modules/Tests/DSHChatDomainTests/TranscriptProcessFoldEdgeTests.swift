@@ -52,7 +52,9 @@ final class TranscriptProcessFoldEdgeTests: XCTestCase {
         XCTAssertFalse(rows.contains { if case .unknown = $0.kind { return true }; return false })
     }
 
-    func test_second_user_message_prevents_folding() throws {
+    func test_second_user_message_is_a_boundary_not_a_fold_blocker() throws {
+        // 2026-10-18：中途插话不再取消整轮折叠。用户消息在 leading 里，收起时仍可见；
+        // 原先"有第二条用户消息就整轮铺开"会让长会话里的大量轮次永远不可折。
         let timeline = try ProcessFoldFixtures.timeline([
             ProcessFoldFixtures.turnStart(seq: 1, turn: 1),
             ProcessFoldFixtures.user(seq: 2, text: "q"),
@@ -61,7 +63,35 @@ final class TranscriptProcessFoldEdgeTests: XCTestCase {
             ProcessFoldFixtures.assistant(seq: 5, text: "a"),
             ProcessFoldFixtures.turnEnd(seq: 6),
         ])
-        XCTAssertFalse(try XCTUnwrap(plan(timeline).turns.first).isFoldable)
+        let turn = try XCTUnwrap(plan(timeline).turns.first)
+        XCTAssertTrue(turn.isFoldable)
+        let rows = TranscriptProcessFold.displayRows(plan(timeline), state: TranscriptFoldState())
+        let texts = rows.compactMap { item -> String? in
+            if case .userMessage(let text, _, _, _, _) = item.kind { return text }
+            return nil
+        }
+        XCTAssertTrue(texts.contains("q"))
+        XCTAssertTrue(texts.contains("and this"))
+    }
+
+    func test_foldability_predicate_has_no_gap_or_interleaved_input_terms() {
+        // 判据只由这四项决定；gap、中途插话与预折摘要都不在签名里，
+        // 任何一项都不应把整轮重新变成不可折。
+        XCTAssertTrue(TranscriptProcessFold.isFoldable(
+            hasDivider: true, isRunning: false, hasFailure: false,
+            hasProcessRows: true))
+        XCTAssertFalse(TranscriptProcessFold.isFoldable(
+            hasDivider: false, isRunning: false, hasFailure: false,
+            hasProcessRows: true))
+        XCTAssertFalse(TranscriptProcessFold.isFoldable(
+            hasDivider: true, isRunning: true, hasFailure: false,
+            hasProcessRows: true))
+        XCTAssertFalse(TranscriptProcessFold.isFoldable(
+            hasDivider: true, isRunning: false, hasFailure: true,
+            hasProcessRows: true))
+        XCTAssertFalse(TranscriptProcessFold.isFoldable(
+            hasDivider: true, isRunning: false, hasFailure: false,
+            hasProcessRows: false))
     }
 
     func test_tail_without_a_divider_and_not_running_is_not_folded() throws {

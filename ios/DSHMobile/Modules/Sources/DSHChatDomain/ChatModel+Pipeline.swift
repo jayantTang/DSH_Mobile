@@ -1,3 +1,4 @@
+import DSHFoundation
 import DSHKit
 import Foundation
 
@@ -95,6 +96,9 @@ public final class ChatPipelineBridge {
     private var sendStatuses: [Int: MessageSendStatus] = [:]
     /// 当前缺口行（派生量的最新一份）。
     private var gaps: [TranscriptGapRow] = []
+    /// 缺口行的看门狗：同一区间只在进入 loading 时起一个，状态一变就取消。
+    private var gapWatchdogs: [String: Task<Void, Never>] = [:]
+    private var lastGapSignature = ""
     /// 管道判定的「已到最早」（hasMore=false / clamped；网络失败永不置位）。
     private var topExhausted = false
 
@@ -105,16 +109,26 @@ public final class ChatPipelineBridge {
     /// 落地在 `refold` 的整树重建分支之后由 `resolveRebaseWaiters()` 唤醒。
     private var rebaseWaiters: [UUID: (seq: Int, continuation: CheckedContinuation<String?, Never>)] = [:]
     private var rebaseTimeouts: [UUID: Task<Void, Never>] = [:]
-    /// 「向上翻页」进行中（顶部缺口行 spinner 由它驱动，镜像进 model.isLoadingOlder）。
-    public var isLoadingOlder = false // internal：+PipelineFetch 要用
-    /// 最近一次取页失败原因（顶部缺口行据此转「点击重试」）。
-    public var olderFailure: String? // internal：+PipelineFetch 要用
     /// 失败后的一次自动补试（沿用 007 FR-004 语义：只补一次，不循环）。
     public var didAutoRetry = false // internal：+PipelineFetch 要用
     /// T037：锚点不可知时挂起的「向上翻页」——首个数据落地后自动补一次
     /// （没有它，读者会在管道还没数据时拉了却什么都没发生）。置位/清位都在
     /// `ChatModel+PipelineFetch.swift` 与 `apply`。
     public var pendingOlderRequest = false // internal：+PipelineFetch 要用
+
+    /// 只在首帧数据之后预热一次；低优先级、失败静默（读者上拉时仍会正常取）。
+    private var didWarmOlder = false
+
+    private func warmOlderWindowOnce() {
+        guard !didWarmOlder, let session, let oldest = records.keys.min(), oldest > 1 else { return }
+        didWarmOlder = true
+        // 预热与"一次上拉"同窗口：首拉要的是接下来 3 页（pagesPerFetch），
+        // 只备 1 页仍会让另外两页走网络（实测首拉 2.7 秒就是这么来的）。
+        let lower = max(1, oldest - Self.pageSize * Self.pagesPerFetch)
+        Task { [weak self] in
+            _ = try? await self?.session?.records(in: lower...(oldest - 1), priority: .prefetch)
+        }
+    }
 
     /// 一次「向上翻页」拉多少条（与管道页大小一致）。
     public static let pageSize = 50 // internal：+PipelineFetch / 尾部追平预算要用
@@ -149,9 +163,10 @@ public final class ChatPipelineBridge {
         // T037：挂起的「向上翻页」（加载中 / 已到最早）不能跨会话留着——桥本身随
         // 会话丢弃，但 `model.isLoadingOlder` 是共享的，留着会挡住新会话的自动补页。
         pendingOlderRequest = false
-        isLoadingOlder = false
-        model?.notePipelineLoadingOlder(false)
-        model?.notePipelineOlderFailure(nil)
+        didWarmOlder = false
+        for task in gapWatchdogs.values { task.cancel() }
+        gapWatchdogs.removeAll()
+        model?.notePipelineOlder(state: .idle)
         // 关会话时唤醒还挂着的跳转 waiter，不让 continuation 泄漏。
         let waiters = rebaseWaiters
         rebaseWaiters.removeAll()
@@ -257,10 +272,13 @@ public final class ChatPipelineBridge {
         // loadOlder（它自己要求不在飞）。
         if pendingOlderRequest, !records.isEmpty {
             pendingOlderRequest = false
-            isLoadingOlder = false
-            model?.notePipelineLoadingOlder(false)
+            model?.notePipelineOlder(state: .idle)
             Task { @MainActor [weak self] in await self?.loadOlder() }
         }
+        // 打开会话后的预热：首帧数据到齐时，后台预取紧邻当前窗口下沿的一页。
+        // 这是流水线的策略，不是视图缓存：用户第一次上拉请求的正是这个区间，
+        // 预热使它变成一次本地读。只做一次，且随桥关闭而停止。
+        warmOlderWindowOnce()
         // 快进路：全部增量都是"流式行文本变长"且缺口/删除都没动 → 单行更新。
         // 提交由 reconcile 走 008 统一锚一次修正（T021），不单独触发布局。
         if onlyStreamingUpdates, !hasRemove, !gapsChanged, !streamUpdates.isEmpty,
@@ -269,7 +287,52 @@ public final class ChatPipelineBridge {
            }) {
             return
         }
+        if gapsChanged { traceGapsChanged() }
         refold(messagesChanged: messagesChanged, gapsChanged: gapsChanged)
+    }
+
+    /// 缺口行的状态与卡住检测：中间缺口不是顶部取页，`olderState` 看不到它。
+    /// 判据：同一区间在 loading 持续 8 秒仍没有变成 failed/exhausted，就是"一直加载"。
+    private func traceGapsChanged() {
+        let signature = gaps.map { "\($0.id):\(Self.gapStatusKey($0.status))" }
+            .sorted().joined(separator: ",")
+        guard signature != lastGapSignature else { return }
+        lastGapSignature = signature
+        var live = Set<String>()
+        for gap in gaps {
+            DSHLog.event("gap.set", [
+                "id": gap.id, "status": Self.gapStatusKey(gap.status),
+                "start": String(gap.start), "end": String(gap.end),
+            ])
+            guard case .loading = gap.status else {
+                gapWatchdogs[gap.id]?.cancel()
+                gapWatchdogs[gap.id] = nil
+                continue
+            }
+            live.insert(gap.id)
+            guard gapWatchdogs[gap.id] == nil else { continue }
+            gapWatchdogs[gap.id] = Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 8_000_000_000)
+                guard !Task.isCancelled, let self else { return }
+                guard let current = self.gaps.first(where: { $0.id == gap.id }),
+                      case .loading = current.status else { return }
+                DSHLog.event("anomaly.gap-stuck", [
+                    "id": gap.id, "start": String(gap.start), "end": String(gap.end),
+                ])
+            }
+        }
+        for (id, task) in gapWatchdogs where !live.contains(id) {
+            task.cancel()
+            gapWatchdogs[id] = nil
+        }
+    }
+
+    private static func gapStatusKey(_ status: TranscriptGapRow.Status) -> String {
+        switch status {
+        case .loading: return "loading"
+        case .failed: return "failed"
+        case .exhausted: return "exhausted"
+        }
     }
 
     /// provisional 记录的流式内容（text/reasoning）；非流式记录返回 nil。
@@ -299,6 +362,7 @@ public final class ChatPipelineBridge {
         guard messagesChanged || gapsChanged else { return }
         foldGeneration += 1
         let generation = foldGeneration
+        let refoldStartedAt = Date()
         let snapshot = records.sorted { $0.key < $1.key }.map(\.value)
         let currentGaps = gaps
         let statuses = sendStatuses
@@ -310,6 +374,7 @@ public final class ChatPipelineBridge {
                 model.applyPipelineGaps(gapItems)
                 return
             }
+            let foldStartedAt = Date()
             let folded = await Task.detached(priority: .userInitiated) {
                 var timeline = ChatTimeline()
                 _ = timeline.reset(with: snapshot)
@@ -323,6 +388,12 @@ public final class ChatPipelineBridge {
             model.applyPipelineRebuild(
                 folded, gaps: gapItems,
                 topExhausted: exhausted, oldestSeq: self.records.keys.min())
+            DSHLog.event("fold.rebuild", [
+                "records": String(snapshot.count),
+                "foldMs": String(Int(Date().timeIntervalSince(foldStartedAt) * 1000)),
+                "totalMs": String(Int(Date().timeIntervalSince(refoldStartedAt) * 1000)),
+                "gen": String(generation),
+            ])
             // T023：命中行已随这次折叠落进时间线，唤醒等待跳转的 waiter。
             self.resolveRebaseWaiters()
         }

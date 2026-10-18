@@ -56,7 +56,7 @@ extension TranscriptProcessFold {
         if turn.isRunning, turn.groups.count > 1 {
             return displayRunning(turn, plan: plan, state: state)
         }
-        guard turn.isFoldable else { return mergedPrefetched(turn, plan: plan) }
+        guard turn.isFoldable else { return Array(plan.rows[turn.range]) }
         let expanded = isTurnExpanded(turn, plan: plan, state: state)
         let header = turnHeader(turn, expanded: expanded)
         let processSet = Set(turn.processIndexes)
@@ -72,8 +72,21 @@ extension TranscriptProcessFold {
                 out.append(header.item)
                 headerInserted = true
             }
+            // 预折摘要只提供表头计数，本身不再作为一行显示：收起时它和其它过程行
+            // 一起被藏起来，展开时明细已由上层回取，也不需要这条摘要。
+            if case .processHeader(let header) = plan.rows[index].kind, header.isPrefetched {
+                continue
+            }
             if !expanded {
                 if index == turn.finalAnswerIndex || index == turn.dividerIndex {
+                    out.append(plan.rows[index])
+                } else if case .gap = plan.rows[index].kind {
+                    // 缺失区间在收起状态下仍然可见：把它藏进折叠里，读者会以为
+                    // 这一段历史完整，而实际是没取到。
+                    out.append(plan.rows[index])
+                } else if case .userMessage = plan.rows[index].kind {
+                    // 中途输入的 user 消息是读者的内容，不是过程细节：折叠只能收
+                    // 过程行，不能把读者自己说的话收进去。
                     out.append(plan.rows[index])
                 }
                 continue
@@ -167,54 +180,5 @@ extension TranscriptProcessFold {
             isPartial: false)
     }
 
-    /// 一轮里可能有多条连接器下发的摘要（一层跨多页，每页各自折了自己的过程段）。
-    /// 显示上合并成一行：计数相加、seq 段取并、轮次与状态取第一条。展开时由上层
-    /// 按合并后的区间整段回取，不需要知道原来分了几段。
-    private static func mergedPrefetched(_ turn: Turn, plan: Plan) -> [TimelineItem] {
-        var indexes: [Int] = []
-        for index in turn.range {
-            if case .processHeader(let header) = plan.rows[index].kind, header.isPrefetched {
-                indexes.append(index)
-            }
-        }
-        guard indexes.count > 1 else { return Array(plan.rows[turn.range]) }
-        let headers = indexes.compactMap { index -> TimelineProcessHeader? in
-            if case .processHeader(let header) = plan.rows[index].kind { return header }
-            return nil
-        }
-        guard let first = headers.first, let last = headers.last else {
-            return Array(plan.rows[turn.range])
-        }
-        let merged = TimelineProcessHeader(
-            id: first.id,
-            scope: .turn,
-            turn: first.turn,
-            startSeq: headers.map(\.startSeq).min() ?? first.startSeq,
-            endSeq: headers.map(\.endSeq).max() ?? last.endSeq,
-            toolCount: headers.reduce(0) { $0 + $1.toolCount },
-            reasoningCount: headers.reduce(0) { $0 + $1.reasoningCount },
-            messageCount: headers.reduce(0) { $0 + $1.messageCount },
-            subagentCount: headers.reduce(0) { $0 + $1.subagentCount },
-            activityCounts: [:],
-            isExpanded: false,
-            isFoldable: true,
-            isRunning: false,
-            endReason: first.endReason,
-            duration: nil,
-            hasFailure: false,
-            isPartial: false,
-            isPrefetched: true
-        )
-        let firstIndex = indexes[0]
-        var mergedItem = plan.rows[firstIndex]
-        mergedItem.kind = .processHeader(merged)
-        var out: [TimelineItem] = []
-        for index in turn.range {
-            if index == firstIndex { out.append(mergedItem); continue }
-            if indexes.contains(index) { continue }
-            out.append(plan.rows[index])
-        }
-        return out
-    }
 
 }
