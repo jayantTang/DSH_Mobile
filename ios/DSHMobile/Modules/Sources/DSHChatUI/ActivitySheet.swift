@@ -172,9 +172,7 @@ public struct ActivitySheet: View {
                     }
                 }
             }
-            Text(isContinuable
-                 ? String(localized: "子智能体 · 可持续")
-                 : String(localized: "子智能体 · 一次性，随本轮一起结束"))
+            Text(Self.modeCaption(child.subagentMode))
                 .font(DSHTheme.Typography.micro)
                 .foregroundStyle(DSHTheme.labelTertiary)
                 .padding(.leading, 24)
@@ -193,6 +191,22 @@ public struct ActivitySheet: View {
         .background(DSHTheme.layer2, in: RoundedRectangle(cornerRadius: DSHTheme.Radius.medium, style: .continuous))
         // 不在这层挂 identifier：容器上的 id 会下传给子元素，把里面的
         // 「停止」「打开子会话」的 id 覆盖掉（仓库既有坑）。行的锚点挂在标题上。
+    }
+
+    /// 子智能体形态的说明行。
+    ///
+    /// 只给**确定的**形态下断言：宿主对一部分子会话行不给 `subagent` 投影
+    /// （`SessionAddress.SubagentMode.unknown`），这时说"一次性，随本轮一起结束"
+    /// 就是在编事实——那一行可能还能继续对话。未知就只说"子智能体"。
+    static func modeCaption(_ mode: SessionAddress.SubagentMode?) -> String {
+        switch mode {
+        case .continuable:
+            return String(localized: "子智能体 · 可持续")
+        case .oneShot:
+            return String(localized: "子智能体 · 一次性，随本轮一起结束")
+        case .external, .unknown, nil:
+            return String(localized: "子智能体")
+        }
     }
 
     private func jobRow(_ job: Job) -> some View {

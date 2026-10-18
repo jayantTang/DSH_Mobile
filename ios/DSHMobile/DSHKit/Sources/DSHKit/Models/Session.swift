@@ -10,9 +10,29 @@ public enum SessionAddress: Sendable, Hashable, Codable {
     case session(sessionId: String)
     case subagent(parentSessionId: String, childSessionId: String, mode: SubagentMode)
 
+    /// 子会话的三种形态，外加"宿主没说是哪一种"。
+    ///
+    /// 词表是宿主的（`dsh-subagent` 的 catalog）：`one-shot` / `continuable` /
+    /// `external`（桌面端显示为「外部任务」）。`unknown` 也是宿主自己的线上取值，
+    /// 而且**只有它跳过 mode 校验**（`dsh-api-session-controller` 的 `validateAddress`：
+    /// `address.mode !== 'unknown' && identity.mode !== address.mode` 才拒）。
+    ///
+    /// 所以"拿不到 mode"必须表达成 `unknown`，不能猜一个具体值：猜错就是
+    /// `subagent/unauthorized`，子会话直接打不开。
     public enum SubagentMode: String, Sendable, Hashable, Codable {
         case oneShot = "one-shot"
         case continuable
+        /// 外部子任务：独立会话，但没有可继续的对话。
+        case external
+        /// 这一版说不清是哪种（宿主没给投影，或给了不认识的名字）。
+        case unknown
+
+        /// 不认识的取值读作 `.unknown`：一行解不开就是整份 `session/list` 解不开，
+        /// 而"不知道"本身是能发给宿主的合法取值。
+        public init(from decoder: any Decoder) throws {
+            let raw = try decoder.singleValueContainer().decode(String.self)
+            self = SubagentMode(rawValue: raw) ?? .unknown
+        }
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -26,7 +46,7 @@ public enum SessionAddress: Sendable, Hashable, Codable {
             self = .subagent(
                 parentSessionId: try container.decode(String.self, forKey: .parentSessionId),
                 childSessionId: try container.decode(String.self, forKey: .childSessionId),
-                mode: (try? container.decode(SubagentMode.self, forKey: .mode)) ?? .oneShot
+                mode: (try? container.decode(SubagentMode.self, forKey: .mode)) ?? .unknown
             )
         default:
             self = .session(sessionId: try container.decode(String.self, forKey: .sessionId))
@@ -101,12 +121,19 @@ public struct SessionSummary: Sendable, Codable, Identifiable, Hashable {
     /// rejects a bare child id, and it also rejects a mode that disagrees with
     /// the transcript, so the address is reconstructed from the row and its
     /// `subagent` projection.
+    ///
+    /// **没有投影时发 `unknown`，不猜 `.oneShot`**：宿主只给一部分子会话行带
+    /// `subagent` 投影（本机 2026-10-19 实测 317 条子会话行里 194 条没有；嵌套
+    /// 子智能体、老会话都是这样），而 `validateAddress` 拿真实 mode 与地址比对，
+    /// 不符即 `subagent/unauthorized`——猜成一次性会让真身为 `continuable` 的
+    /// 子会话**一开就报错**。`unknown` 在宿主那边跳过校验，是"不知道"的唯一
+    /// 合法表达（`SessionAddress.SubagentMode` 的头注）。
     public var address: SessionAddress {
         if origin == "subagent", let parentSessionId {
             return .subagent(
                 parentSessionId: parentSessionId,
                 childSessionId: sessionId,
-                mode: projections?.values?.subagent?.mode ?? .oneShot
+                mode: projections?.values?.subagent?.mode ?? .unknown
             )
         }
         return .session(sessionId: sessionId)
