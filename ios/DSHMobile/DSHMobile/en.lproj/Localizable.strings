@@ -731,6 +731,8 @@ It is registered as a workspace first, so a new group appears in the desktop sid
 "运行中 · %@" = "Running · %@";
 "更早的输出已被丢弃" = "Earlier output was dropped";
 "中间有一段输出被丢弃" = "A section of output is missing";
+"尚未连接，读不到这个任务的输出" = "Not connected, so this job's output cannot be read";
+"连接已断开，读到的输出可能不是最新的" = "The connection dropped; this output may no longer be current";
 "还没有输出" = "No output yet";
 "这个任务没有产生任何输出。" = "This task produced no output.";
 "任务已经结束了" = "The task has already finished";

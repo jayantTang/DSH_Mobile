@@ -63,13 +63,27 @@ public struct JobOutputView: View {
         if activity.outputFeed?.isLossy == true {
             warning("中间有一段输出被丢弃")
         }
+        // 流开不下去（断线、没链路）时错误也要看得见：有内容时它是页脚一行，
+        // 没内容时由 `content(for:)` 的 `ErrorStateView` 整页呈现。
+        if let error = activity.outputFeed?.error, activity.outputFeed?.chunks.isEmpty == false {
+            warning(verbatim: error)
+        }
     }
 
     private func warning(_ text: LocalizedStringKey) -> some View {
+        warning(Text(text))
+    }
+
+    /// 已经是成品文案（模型侧 `String(localized:)` 过了一遍）：不再当键查表。
+    private func warning(verbatim text: String) -> some View {
+        warning(Text(text))
+    }
+
+    private func warning(_ text: Text) -> some View {
         HStack(spacing: DSHTheme.Spacing.hairline) {
             Image(systemName: "exclamationmark.triangle")
                 .font(.system(size: 10, weight: .medium))
-            Text(text)
+            text
                 .font(DSHTheme.Typography.micro)
             Spacer(minLength: 0)
         }

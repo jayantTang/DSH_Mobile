@@ -146,7 +146,10 @@ public final class ActivityModel {
             Task { await refresh() }
             startAutoRefresh()
         } else {
-            closeOutput()
+            // 断线不清掉已经读到的输出：读者正看着它，清空等于把页面变成一块
+            // 永远转圈的空白（`JobOutputView` 对 nil 的渲染就是加载态）。已读到的
+            // 内容留着，页脚给一句"连接断了"，与面板的「上次已知」同一种口径。
+            markOpenOutputUnavailable(String(localized: "连接已断开，读到的输出可能不是最新的"))
             stopAutoRefresh()
         }
     }
@@ -308,7 +311,12 @@ public final class ActivityModel {
         }
         #endif
         outputFeed = feed
-        guard let client = service?.client else { return }
+        guard let client = service?.client else {
+            // 没有链路就没有流：这一步必须**落到可见结局**，不能把 feed 留在
+            // "还没开流"那一格——视图对它的渲染是加载态，读者会一直转圈。
+            markOpenOutputUnavailable(String(localized: "尚未连接，读不到这个任务的输出"))
+            return
+        }
         let jobId = job.id
         outputTask = Task { [weak self] in
             do {
@@ -331,6 +339,19 @@ public final class ActivityModel {
         outputTask?.cancel()
         outputTask = nil
         outputFeed = nil
+    }
+
+    /// 流开不下去（没链路 / 断线）：把当前这份 feed 落成错误终态。
+    ///
+    /// 只改**已经展开的那一份**：视图的四种结局（有输出 / 已结束 / 错误 / 加载中）
+    /// 里，只有错误态能在"没有流"时给出确定信息；保留已读到的 chunks 是为了
+    /// 让断线后仍能看完手里的内容，`error` 由页脚呈现。
+    private func markOpenOutputUnavailable(_ message: String) {
+        outputTask?.cancel()
+        outputTask = nil
+        guard outputFeed != nil else { return }
+        if outputFeed?.error == nil { outputFeed?.error = message }
+        outputFeed?.isFinished = true
     }
 
     /// 本机清除「已结束 N 个」。
