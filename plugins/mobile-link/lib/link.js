@@ -21,6 +21,7 @@ const LIVE_AGENT = Symbol.for('dsh.mobile-link.live-agent')
 import { enrollAgent, enrollCommand, inviteFrom } from './enroll.js'
 import { handoffFromEndpoint, writeHandoff } from './handoff.js'
 import { LinkJournal, defaultJournalPath } from './journal.js'
+import { LogSpool, defaultLogsRoot } from './logs.js'
 import { statusSnapshot } from './status.js'
 import { mintPairCode, regeneratePairCode } from './pairing.js'
 import {
@@ -67,6 +68,9 @@ export class MobileLinkAgent extends EventEmitter {
     // 生命周期流水（见 journal.js）：`journal` 传实例（测试注入），`journalPath`
     // 传路径（`defaultJournalPath()` 之外的位置），false 表示只留内存不落盘。
     journal, journalPath,
+    // 设备日志落盘（见 logs.js）：`logs` 传实例（测试注入），`logsRoot` 换目录，
+    // `logs: false` 关掉接收（手机会把它当旧连接器，静默忽略）。
+    logs = true, logsRoot,
     // 手机不在时替它攒下来的提问条数上限（见 router.js）；环境变量给部署用，
     // 构造参数给测试用。**没有"留多久"这个旋钮**：`$events` 一直留到设备被撤销。
     eventsBacklog = numberFromEnv(env.DSH_MOBILE_LINK_EVENTS_BACKLOG, DEFAULT_EVENTS_BACKLOG),
@@ -98,6 +102,12 @@ export class MobileLinkAgent extends EventEmitter {
       now,
       logger,
     })
+    /** 设备日志落盘：默认开着，目录在身份文件旁边，保留 7 天（清理在写入路径上）。 */
+    this.logsSpool = logs === false
+      ? null
+      : (logs && typeof logs === 'object'
+        ? logs
+        : new LogSpool({ root: logsRoot, logger, now }))
     this.router = new DeviceRouter({
       dsh: this.dsh,
       logger,
@@ -106,6 +116,7 @@ export class MobileLinkAgent extends EventEmitter {
       eventsBacklog,
       slowRequestMs: this.slowRequestMs,
       diagnostics: this.diagnostics,
+      logs: this.logsSpool,
       send: (deviceId, frame) => this.sendToDevice(deviceId, frame),
       // 设备侧的 attach/detach 与链路侧同源记进流水：事后想把"手机断了"和
       // "连接器拆链"对上时间，两边必须写在同一份文件里。

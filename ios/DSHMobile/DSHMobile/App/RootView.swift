@@ -258,6 +258,17 @@ struct RootView: View {
                 // 而不是把用户拦在连接页（换电脑走列表顶部的连接入口）。
             }
             .task {
+                // OTA 诊断（仅 `DIAGNOSTICS` 构建存在）：启动即采集，并在连接建立/更换后
+                // 把推送目标换到当前链路。非 OTA 构建里整段被编译掉，闭包为空。
+                #if DIAGNOSTICS
+                AppDiagnostics.shared.start()
+                while !Task.isCancelled {
+                    AppDiagnostics.shared.attachIfNeeded(store.client?.carrier)
+                    try? await Task.sleep(for: .seconds(1))
+                }
+                #endif
+            }
+            .task {
                 // 夹具：`-DSHProbeAsk <sessionId>` 时由 App 自己给那个会话发一条
                 // "立刻提问"的提示词——host 侧 RPC 发起的提问送不到手机，
                 // 只有走产品这条路（本设备发起的 turn）waterfall 才会回到 App。
@@ -346,6 +357,9 @@ struct RootView: View {
                 if let home { store.hostHome = home }
             }
             .onOpenURL { url in
+                #if DIAGNOSTICS
+                if AppDiagnostics.shared.handle(url: url) { return }
+                #endif
                 handle(url)
             }
     }

@@ -239,9 +239,17 @@ export function build(simId, { force = false } = {}) {
   // `-DSHFailAttachmentLoad` 这三个调试参数在 App 里被 `#if DEBUG` 关着，切到 Release
   // 之后它们会**静默失效**——用例照样跑、照样绿，只是参数不再生效，于是拿到的是
   // 另一套行为。这条耦合由 `npm run check:contracts` 的调试钩子闸门守着（源码侧）。
-  run('xcodebuild', ['-project', join(PROJECT, 'DSHMobile.xcodeproj'), '-scheme', 'DSHMobile',
+  // 诊断构建开关（默认关闭）：`DSH_TEST_DIAGNOSTICS=1` 时把 OTA 才有的
+  // `DIAGNOSTICS` 条件带进这次用例构建，用来验证诊断通道本身。
+  // 不加 `DEBUG` 会连调试钩子一起关掉，所以两者都要写。
+  const launchArgs = ['-project', join(PROJECT, 'DSHMobile.xcodeproj'), '-scheme', 'DSHMobile',
     '-configuration', 'Debug', '-destination', `platform=iOS Simulator,id=${simId}`,
-    '-derivedDataPath', DERIVED, 'build-for-testing'], { quiet: true })
+    '-derivedDataPath', DERIVED]
+  if (process.env.DSH_TEST_DIAGNOSTICS === '1') {
+    launchArgs.push('SWIFT_ACTIVE_COMPILATION_CONDITIONS=DEBUG DIAGNOSTICS')
+  }
+  launchArgs.push('build-for-testing')
+  run('xcodebuild', launchArgs, { quiet: true })
   return { skipped: false, seconds: (Date.now() - started) / 1000 }
 }
 

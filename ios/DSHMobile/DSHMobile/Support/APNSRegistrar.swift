@@ -159,6 +159,18 @@ final class APNSRegistrar: NSObject, UIApplicationDelegate {
     }
 
     /// Apple's answer to `registerForRemoteNotifications()`: the device token.
+    /// 诊断命令（`dsh://diag/...`）：交给 App 自己的诊断设施处理，其余 URL 照旧。
+    /// 放在 delegate 而不是视图的 `onOpenURL` 上：视图可能还没起来，delegate 一定在。
+    #if DIAGNOSTICS
+    func application(
+        _ application: UIApplication,
+        open url: URL,
+        options: [UIApplication.OpenURLOptionsKey: Any] = [:]
+    ) -> Bool {
+        AppDiagnostics.shared.handle(url: url)
+    }
+    #endif
+
     func application(
         _ application: UIApplication,
         didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data

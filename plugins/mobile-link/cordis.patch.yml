@@ -32,6 +32,12 @@
 #                  (the per-attach `device.summary` is still written).
 #   diagnostics    false refuses the phone's phase uploads (`_link/diagnostics`) with
 #                  `diagnostics/disabled`; the phone ignores it and stays connected.
+#   logs           false refuses the phone's runtime logs (`_link/logs`) with
+#                  `logs/disabled`; the phone keeps them in its own ring and retries.
+#   logsFile       log spool root (default ~/.dsh/mobile-link/logs). One directory
+#                  per device, one JSONL per local day, pruned to the last 7 days
+#                  in the write path itself — there is no timer or background job
+#                  to keep alive. Read it with `node scripts/dev/ios-logs.mjs`.
 #   dshUrl         explicit local DSH base URL override (default: discovery)
 #
 # Address resolution order: this config block, then DSH_RELAY_URL (or

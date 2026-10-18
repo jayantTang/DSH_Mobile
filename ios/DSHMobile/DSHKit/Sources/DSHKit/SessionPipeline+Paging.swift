@@ -86,7 +86,10 @@ extension SessionPipeline {
     /// 缺口行由区间集派生（spec「缺口行的生命周期」）：窗口 = 最老…最新。
     func currentGaps() -> [GapRow] {
         guard let oldest = ranges.oldest, let newest = ranges.newest, oldest <= newest else { return [] }
-        return ranges.gaps(within: oldest...newest).map { span in
+        // 已问过的区间也参与"覆盖"判定：空号是已知无内容，不是待加载的缺口。
+        var covered = ranges
+        for span in asked.spans { covered.insert(span.start...span.end) }
+        return covered.gaps(within: oldest...newest).map { span in
             GapRow(start: span.start, end: span.end, status: gapStatus(for: span))
         }
     }

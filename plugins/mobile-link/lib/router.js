@@ -104,6 +104,8 @@ export const DEFAULT_SLOW_REQUEST_MS = 2000
 
 /** App 把自己那份阶段记录推上来的方法（契约 connector-diagnostics-method.md）。 */
 export const DIAGNOSTICS_METHOD = '_link/diagnostics'
+/** 手机把运行日志推上来的方法；落盘在 `logs.js`，与 journal 分开。 */
+export const LOGS_METHOD = '_link/logs'
 /** 单批上限：超过就截断并如实报 `accepted`，剩下的由 App 下次再推（水位不推进）。 */
 export const DIAGNOSTICS_BATCH_BYTES = 32 * 1024
 /** 单条事件里字符串字段的保留长度。 */
@@ -143,9 +145,11 @@ export class DeviceRouter {
   constructor({
     dsh, send, logger = console, onChange = () => {}, now = Date.now, protocolVersion = 1,
     eventsBacklog = DEFAULT_EVENTS_BACKLOG, notify = () => {}, onEvent = () => {},
-    slowRequestMs = DEFAULT_SLOW_REQUEST_MS, diagnostics = true,
+    slowRequestMs = DEFAULT_SLOW_REQUEST_MS, diagnostics = true, logs = null,
   } = {}) {
     this.dsh = dsh
+    /** 设备日志落盘（见 logs.js）；null = 不接日志（老配置或单测）。 */
+    this.logs = logs
     this.eventsBacklog = eventsBacklog
     this.slowRequestMs = Number(slowRequestMs) || 0
     this.diagnosticsEnabled = diagnostics !== false
@@ -420,6 +424,22 @@ export class DeviceRouter {
     return { ok: true, value: { accepted, lastSeq } }
   }
 
+  /**
+   * 收下手机推来的日志行。
+   *
+   * 与 `acceptDiagnostics` 的区别：这里不产生任何生命周期事件（日志是数据，不是状态），
+   * 也不做批量解释；`logs.js` 只负责按天落盘与 7 天清理。失败一律当无事：
+   * 手机侧把未确认的条目留在自己的环里，下次再推。
+   */
+  acceptLogs(deviceId, args = {}) {
+    if (!this.logs) {
+      return { ok: false, error: errorObject('logs/disabled', 'log intake is disabled on this connector') }
+    }
+    const entries = Array.isArray(args.entries) ? args.entries : []
+    const result = this.logs.append(deviceId, entries, { full: args.full === true })
+    return { ok: true, value: result }
+  }
+
   /** 起一次新的接入计时（回头客也重起：那确实是一次新连接）。 */
   #startTimeline(deviceId) {
     this.timelines.get(deviceId)?.finish()
@@ -609,6 +629,12 @@ export class DeviceRouter {
 
     if (frame.method === DIAGNOSTICS_METHOD) {
       const result = this.acceptDiagnostics(deviceId, frame.args ?? {})
+      this.send(deviceId, resultFrame(frame.id, result, deviceId))
+      return
+    }
+
+    if (frame.method === LOGS_METHOD) {
+      const result = this.acceptLogs(deviceId, frame.args ?? {})
       this.send(deviceId, resultFrame(frame.id, result, deviceId))
       return
     }

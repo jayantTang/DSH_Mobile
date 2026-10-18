@@ -1,3 +1,4 @@
+import DSHFoundation
 import DSHKit
 import Foundation
 
@@ -29,6 +30,9 @@ public extension ChatModel {
             items: visible.timeline.items,
             isTurnOpen: visible.timeline.isTurnOpen,
             currentTurn: visible.timeline.currentTurn)
+        // 折叠摘要：只在状态变化时发（`FoldTrace.note` 内部比较并节流）。
+        // 这行是"某些已完成的历史对话没有折叠"唯一的现场证据来源。
+        FoldTrace.note(plan: plan, session: sessionId)
         return TranscriptProcessFold.displayRows(plan, state: foldState)
     }
 

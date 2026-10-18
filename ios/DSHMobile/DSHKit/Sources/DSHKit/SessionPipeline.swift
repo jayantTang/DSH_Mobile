@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 
 /// 单会话内存流水线（spec 009 架构决定 §2/§6/§7 / tasks T008）。
 ///
@@ -122,6 +123,14 @@ public actor SessionPipeline {
 
     /// 有效连续区间集：本地（热窗口 + 磁盘）确定完整的范围。
     public private(set) var ranges = RangeIndex()
+    /// 已经成功问过宿主的区间（本进程内）。
+    ///
+    /// 与 `ranges` 的区别：`ranges` 记的是"本地有记录"，它只能按记录逐个 seq 覆盖；
+    /// 宿主的 seq 天然不连续（非记录事件也占号），所以一页 50 个 seq 只回 34 条时，
+    /// 剩下的号会被当成"没取过"，生成一个永远补不上的加载行。
+    /// 这里记"这一段问过、宿主答过"，空号由此归为已知无内容；**不持久化**：
+    /// seq 可能被宿主重排，落盘的旧区间会与新区间对不上。
+    var asked = RangeIndex() // internal：+Paging 的 currentGaps 要读
 
     /// 热窗口：[seq: 记录] + 有序索引，超出 hotLimit 淘汰最老（只影响内存）。
     /// internal：流式半边（SessionPipeline+Streaming）要查行是否存在。
@@ -164,7 +173,11 @@ public actor SessionPipeline {
     /// 缺页集合内的取页并发上限（017）。为什么是 2 而不是更大：一页 200–400ms 里大头是
     /// 往返与宿主读取，压到 2 路就能把"一次取 3 页"的等待从 3×往返降到约 1.5×往返；
     /// 再往上只是把一个读者的取数铺开，会挤占同一宿主上别的会话。预取与读者触发共用它。
-    static let fetchConcurrency = 2
+    /// 用户可见的取页并发。实测单次往返 85–730ms、连接器侧 <200ms，瓶颈在往返；
+    /// 2 会把 4–6 个窗口排成 3 轮。4 保持有界，又能让一次上拉的窗口并行。
+    static let fetchConcurrency = 4
+    /// 合并缺口后单个窗口最多多少个 seq。宿主按窗口读，太大则回包解码与内存都会涨。
+    static let maxWindowSeq = 100
 
     /// 预取窗口：沿读取方向提前备好的页数（017）。读者停住时最多就是这几页，
     /// 不会把剩余历史一次拉下来。
@@ -250,6 +263,7 @@ public actor SessionPipeline {
         // 跳转抢占：取消低优先级预取，用户动作插队（spec 支撑机制 1）。
         if priority == .jump { _ = inFlight.cancelAll(below: .jump) }
 
+        let startedAt = Date()
         // ① 区间判定三分支：算出缺口。
         var missing: [RangeIndex.Span]
         switch ranges.coverage(of: range) {
@@ -257,12 +271,17 @@ public actor SessionPipeline {
         case .partial(_, let spans): missing = spans
         case .none: missing = [RangeIndex.Span(range.lowerBound, range.upperBound)]
         }
+        // 已经问过、宿主答过（含答得很稀疏）的区间不再重复取。
+        missing = subtractingAsked(missing)
 
+        Self.trace("fetch.plan range=\(range.lowerBound)-\(range.upperBound) missing=\(missing.count) ms=\(Int(Date().timeIntervalSince(startedAt) * 1000))")
         // ② 命中部分：热窗口优先，缺的读盘；盘也读不出的并入缺口转网络。
         //    磁盘水合的记录必须发 diff（T026 修复 US2 遗留：淘汰后回看，
         //    区间集仍声称覆盖、读盘合并了却不广播，订阅方永远看不到——
         //        静默空白带的根因）。
+        let hydrateStartedAt = Date()
         let hydrated = await hydrateCoveredSpans(of: range, missing: &missing)
+        Self.trace("fetch.disk rows=\(hydrated.count) missing=\(missing.count) ms=\(Int(Date().timeIntervalSince(hydrateStartedAt) * 1000))")
         let hydratedFromDisk = !hydrated.isEmpty
         if !hydrated.isEmpty {
             var diff = Diff(inserted: hydrated)
@@ -273,8 +292,11 @@ public actor SessionPipeline {
 
         // ③ 缺口按对齐页拉网络（含整段缺失/跳转型完全不命中）。
         if !missing.isEmpty {
+            let netStartedAt = Date()
             try await fetchMissing(missing, priority: priority, direction: direction(of: range))
+            Self.trace("fetch.net missing=\(missing.count) ms=\(Int(Date().timeIntervalSince(netStartedAt) * 1000))")
         }
+        Self.trace("fetch.total range=\(range.lowerBound)-\(range.upperBound) ms=\(Int(Date().timeIntervalSince(startedAt) * 1000))")
 
         // ④ 组装结果 + 预取瀑布（spec §7；017 起按方向提前 `prefetchDepth` 页）。
         //
@@ -299,11 +321,24 @@ public actor SessionPipeline {
     /// 为什么不再逐页 await：一页要等一次完整往返（实测 200–400ms），读者一次要三页时
     /// 串行就是三次等待。并发封顶在 `fetchConcurrency`，读者触发的页排在预取之前
     /// （`pageOrder` 保证），同页仍由 in-flight 页表合并成一次请求。
+    /// 从缺口里扣掉"已经问过"的区间；剩下的才是真的要发请求的。
+    private func subtractingAsked(_ missing: [RangeIndex.Span]) -> [RangeIndex.Span] {
+        guard !asked.isEmpty, !missing.isEmpty else { return missing }
+        return missing.flatMap { span -> [RangeIndex.Span] in
+            switch asked.coverage(of: span.start...span.end) {
+            case .full: return []
+            case .none: return [span]
+            case .partial(_, let spans): return spans
+            }
+        }
+    }
+
     private func fetchMissing(
         _ missing: [RangeIndex.Span], priority: FetchPriority, direction: ReadingDirection
     ) async throws {
         let pages = pageOrder(for: missing, priority: priority, direction: direction)
         guard !pages.isEmpty else { return }
+        Self.trace("fetch.pages count=\(pages.count) lo=\(pages.first?.lowerBound ?? 0) hi=\(pages.last?.upperBound ?? 0)")
         var firstError: Error?
         await withTaskGroup(of: Error?.self) { group in
             var next = 0
@@ -350,8 +385,17 @@ public actor SessionPipeline {
     private func pageOrder(
         for missing: [RangeIndex.Span], priority: FetchPriority, direction: ReadingDirection
     ) -> [ClosedRange<Int>] {
+        // 2026-10-18 实测：一次 150 seq 的窗口里有 8–39 个很小的缺口时，旧实现对每个
+        // 缺口各自展开成对齐页，规划出 9–39 条，其中大量是同一页的重复。在飞表只
+        // 合并重复的网络请求，重复条目本身仍要排队、仍会印出误导性的页数。
+        // 这里保持"页对齐"的取回语义不变，只把重复页去掉：同一页只排一次。
         var pages: [ClosedRange<Int>] = []
-        for span in missing { pages.append(contentsOf: alignedPages(covering: span)) }
+        var seen = Set<Int>()
+        for span in missing {
+            for page in alignedPages(covering: span) where seen.insert(page.lowerBound).inserted {
+                pages.append(page)
+            }
+        }
         guard priority != .jump, pages.count > 1 else { return pages }
         switch direction {
         case .older: return pages.sorted { $0.lowerBound > $1.lowerBound }
@@ -361,8 +405,24 @@ public actor SessionPipeline {
     }
 
     /// 单页拉取：in-flight 页表同页合并/可抢占，回包按代数核销。
+    /// 单页取回的耗时证据。用 `OSLog`（notice 级，会持久化）而不是依赖上层探针：
+    /// 只有在这里才看得到"网络往返 + 解码"的净耗时，与上层"整次取页"分开。
+    private static let traceLog = Logger(subsystem: "com.jayanttang.dsh", category: "pipeline")
+
+    /// 同一条证据的第二出口。系统日志在 OTA 诊断构建里没有可靠到达（实测只留下
+    /// 系统框架的条目），所以由 App 在启动时接一个闭包直接进诊断环；
+    /// TestFlight 里为 nil，只有一条判空。
+    public nonisolated(unsafe) static var traceSink: (@Sendable (String) -> Void)?
+
+    nonisolated static func trace(_ line: String) {
+        traceSink?(line)
+        traceLog.notice("\(line, privacy: .public)")
+    }
+
     private func fetchPage(_ page: ClosedRange<Int>, priority: FetchPriority) async throws {
         let key = page.lowerBound
+        let startedAt = Date()
+        Self.trace("page.fetch.start lo=\(page.lowerBound) hi=\(page.upperBound) pri=\(String(describing: priority))")
         if failureCounts[key, default: 0] >= Self.maxRetries {
             emit(Diff(gaps: currentGaps()))
             throw FetchError.gapFailed
@@ -372,6 +432,7 @@ public actor SessionPipeline {
         case .joined:
             // 同页在途：搭车等待同一个任务（任务覆盖到合并完成，见下）。
             if let task = inFlightTasks[key] { try await task.value }
+            Self.trace("page.fetch.joined lo=\(page.lowerBound) hi=\(page.upperBound) ms=\(Int(Date().timeIntervalSince(startedAt) * 1000))")
             return
         case .start(let generation):
             let fetch = self.fetch
@@ -380,9 +441,11 @@ public actor SessionPipeline {
                 let result: FetchPage
                 do { result = try await self.withTimeout(self.fetchTimeout) { try await fetch(page, priority) } }
                 catch {
+                    Self.trace("page.fetch.end lo=\(page.lowerBound) hi=\(page.upperBound) ms=\(Int(Date().timeIntervalSince(startedAt) * 1000)) ok=0 err=\(String(describing: type(of: error)))")
                     self.failFetch(error, key: key, generation: generation)
                     throw error
                 }
+                Self.trace("page.fetch.end lo=\(page.lowerBound) hi=\(page.upperBound) ms=\(Int(Date().timeIntervalSince(startedAt) * 1000)) recs=\(result.records.count) ok=1")
                 // T038（spec 追加修订 2「空页即异常」）：不过滤的翻页拉回 0 条且
                 // 服务端没说到头 = 可重试失败，走与网络失败**同一条**计数路径
                 // （failFetch）——3 次后缺口转 failed(retryable)，探针口径
@@ -479,6 +542,8 @@ public actor SessionPipeline {
             if Self.reachedEnd(page, requested: requested) { topExhausted = true }
             _ = evictIfNeeded(anchor: Self.anchor(of: requested))
         }
+        // 成功问过一段，就记下来：即使回包比请求的范围稀疏，也不该再把它当缺口。
+        asked.insert(requested)
         diff.gaps = currentGaps()
         emit(diff)
     }

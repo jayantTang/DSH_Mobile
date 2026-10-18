@@ -160,6 +160,25 @@ fi
 IPA="$(/bin/ls -t "$EXPORT_DIR"/*.ipa 2>/dev/null | head -1 || true)"
 [ -n "$IPA" ] || die "没有找到 .ipa（${EXPORT_DIR}）"
 
+# 诊断哨兵：这一条是**产物级**保证，不是配置级假设。`AppDiagnostics.sentinel` 只在
+# `#if DIAGNOSTICS` 里存在，而 DIAGNOSTICS 只挂在 App target 的 OTA 配置上；
+# 归档时若条件丢了（有人改了工程、或用错配置），这里立刻停下，而不是发一个"看着是
+# OTA、其实什么日志都推不上来"的包。
+step "校验诊断哨兵（OTA 必带）"
+SENTINEL_PROBE="$(mktemp -d)"
+trap 'rm -rf "$SENTINEL_PROBE"' EXIT
+unzip -q "$IPA" 'Payload/*' -d "$SENTINEL_PROBE"
+OTA_BINARY="$(/bin/ls "$SENTINEL_PROBE"/Payload/*.app/DSHMobile 2>/dev/null | head -1 || true)"
+[ -n "$OTA_BINARY" ] || die "解不开 $IPA 里的可执行文件"
+# 先把 strings 落到文件再 grep：`strings | grep -q` 在 `pipefail` 下会因为 grep 提前退出、
+# strings 收到 SIGPIPE 而被判成"没命中"（2026-10-18 实测：归档里明明有哨兵，脚本却红）。
+strings -a "$OTA_BINARY" > "$SENTINEL_PROBE/symbols.txt" 2>/dev/null || true
+if ! grep -q "DSHDIAG-OTA-" "$SENTINEL_PROBE/symbols.txt"; then
+  die "OTA 包缺诊断哨兵：App target 的 OTA 配置应带 SWIFT_ACTIVE_COMPILATION_CONDITIONS = DIAGNOSTICS（见 scripts/dev/check-diag-gate.mjs）"
+fi
+rm -rf "$SENTINEL_PROBE"
+trap - EXIT
+
 step "读取版本号"
 APP_PLIST="$ARCHIVE/Products/Applications/DSHMobile.app/Info.plist"
 SHORT_VERSION=$(plutil -extract CFBundleShortVersionString raw -o - "$APP_PLIST")

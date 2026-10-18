@@ -56,6 +56,10 @@ const DEFAULTS = {
   // 是否接收手机推上来的阶段记录（`_link/diagnostics`）。false = 回 diagnostics/disabled，
   // 手机静默忽略——这是"记录出问题时的回退闸"，关掉不影响连接。
   diagnostics: true,
+  // 是否接收手机推上来的运行日志（`_link/logs`），落盘目录见 logs.js。
+  // 关掉后手机收到的同样是明确拒绝，不会影响连接。
+  logs: true,
+  logsFile: '',
   heartbeatMs: 20000,
   pongTimeoutMs: 60000,
   maxBackoffMs: 30000,
@@ -112,6 +116,10 @@ function buildAgent(config, logger) {
       ? DEFAULTS.slowRequestMs
       : Number(config.slowRequestMs) || 0,
     diagnostics: config.diagnostics !== false,
+    // 设备日志落盘（见 lib/logs.js）：`logsFile` 换根目录，`logs: false` 关掉接收。
+    // 保留期固定 7 天，不做配置项——清理在写入路径上，配错就是悄悄留不住或悄悄写满。
+    logs: config.logs !== false,
+    logsRoot: typeof config.logsFile === 'string' && config.logsFile ? config.logsFile : undefined,
     heartbeatMs: Number(config.heartbeatMs) || DEFAULTS.heartbeatMs,
     pongTimeoutMs: Number(config.pongTimeoutMs) || DEFAULTS.pongTimeoutMs,
     maxBackoffMs: Number(config.maxBackoffMs) || DEFAULTS.maxBackoffMs,
