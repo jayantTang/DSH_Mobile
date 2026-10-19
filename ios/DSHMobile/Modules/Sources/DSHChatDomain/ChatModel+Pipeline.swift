@@ -131,11 +131,11 @@ public final class ChatPipelineBridge {
     private func warmOlderWindowOnce() {
         guard !didWarmOlder, let session, let oldest = records.keys.min(), oldest > 1 else { return }
         didWarmOlder = true
-        // 预热与"一次上拉"同窗口：首拉要的是接下来 3 页（pagesPerFetch），
-        // 只备 1 页仍会让另外两页走网络（实测首拉 2.7 秒就是这么来的）。
-        let lower = max(1, oldest - Self.pageSize * Self.pagesPerFetch)
+        // 预取只备视口上方两页（spec：视口前后各 2 页），且走统一的取页入口，
+        // 与用户请求共享单飞与槽位；预取不抢用户请求的并发额度。
+        let lower = max(1, oldest - Self.pageSize * Self.prefetchOlderPages)
         Task { [weak self] in
-            _ = try? await self?.session?.records(in: lower...(oldest - 1), priority: .prefetch)
+            _ = try? await self?.session?.ensure(in: lower...(oldest - 1), priority: .prefetch)
         }
     }
 
@@ -148,6 +148,9 @@ public final class ChatPipelineBridge {
     /// 折叠感知下发之后，一页能画出多少行与 seq 数不再成正比（过程段已被折成一行），
     /// 所以实际窗口交给 `olderWindow` 自适应，这里只保留产品基数。
     public static let pagesPerFetch = 3
+
+    /// 预取窗口：视口上方两页。比一次上拉小，用户请求一到就让路。
+    public static let prefetchOlderPages = 2
 
     /// 向上翻页的自适应窗口（每次返回的可见记录少就加倍，多就收回基数）。
     public var olderWindow = HistoryFetchWindowPolicy()
