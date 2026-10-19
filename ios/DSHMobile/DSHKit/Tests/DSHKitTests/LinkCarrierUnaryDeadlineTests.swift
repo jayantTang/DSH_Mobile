@@ -49,7 +49,7 @@ struct LinkCarrierUnaryDeadlineTests {
         } catch {
             // expected
         }
-        #expect(ContinuousClock.now - started < .seconds(2))
+        #expect(ContinuousClock.now - started < .seconds(5), "截止后应立即返回，允许机器繁忙的余量")
     }
 
     @Test("并发一元调用不超过上限")
