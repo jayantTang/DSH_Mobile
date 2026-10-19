@@ -150,6 +150,9 @@ public actor SessionPipeline {
     }
 
     /// 采纳对端的已知为空结论；版本不一致整段丢弃。写入同步落盘，冷启动可复用。
+    /// 指标快照（只读；不参与判定）。
+    public func metricsSnapshot() -> FetchMetrics { metrics }
+
     public func applyKnownEmpty(_ spans: [ClosedRange<Int>], revision: String) {
         guard adoptKnownEmpty(spans, revision: revision) else { return }
         emit(Diff(gaps: currentGaps()))
@@ -186,6 +189,9 @@ public actor SessionPipeline {
         }
         return true
     }
+
+    /// 历史取页的只读指标（首行/批完成/失败）。
+    public private(set) var metrics = FetchMetrics()
 
     /// 任务级单飞：同一范围只跑一次，跨入口共享（上拉/跳转/展开/预取）。
     private var jobs: FetchJobCoordinator
@@ -341,14 +347,21 @@ public actor SessionPipeline {
                 return try await self.runJob(range: range, priority: priority, machine: machine)
             }
             ensureJobs[range] = task
+            let startedAt = Date()
             do {
                 let result = try await task.value
                 jobs.succeed(range)
                 ensureJobs[range] = nil
+                let ms = Int(Date().timeIntervalSince(startedAt) * 1000)
+                metrics.record(.init(firstRowMs: result.isEmpty ? nil : ms,
+                                     batchMs: ms, pages: 1))
                 return result
             } catch {
                 jobs.fail(range)
                 ensureJobs[range] = nil
+                let ms = Int(Date().timeIntervalSince(startedAt) * 1000)
+                let failure = (error as? FetchError).map(String.init(describing:)) ?? "error"
+                metrics.record(.init(firstRowMs: nil, batchMs: ms, pages: 1, failure: failure))
                 throw error
             }
         case .joined:

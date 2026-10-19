@@ -224,6 +224,17 @@ final class SessionPipelineTests: XCTestCase {
         XCTAssertTrue(holes.isEmpty, "冷启动应采用版本一致的已知为空：\(holes)")
     }
 
+    func test_successful_ensure_records_metrics() async throws {
+        let stub = stub!
+        await stub.set(1...50, .page(page(1...50)))
+        let pipeline = makePipeline()
+        _ = try await pipeline.ensure(range: 1...50)
+        let metrics = await pipeline.metricsSnapshot()
+        XCTAssertEqual(metrics.count, 1)
+        XCTAssertNotNil(metrics.batchP50Ms)
+        XCTAssertEqual(metrics.failureRate(last: 50), 0)
+    }
+
     // MARK: - 区间判定三分支
 
     func testFullCoverageServesLocallyWithoutNetwork() async throws {

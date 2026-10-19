@@ -34,6 +34,11 @@ public struct SessionHandle: Sendable {
         try await pipeline.ensure(range: range, priority: priority)
     }
 
+    /// 取页指标快照（只读，不参与判定）。
+    public func fetchMetrics() async -> FetchMetrics {
+        await pipeline.metricsSnapshot()
+    }
+
     /// 采纳对端确认的已知为空区间（带版本，版本不一致丢弃）。
     public func applyKnownEmpty(spans: [ClosedRange<Int>], revision: String) async {
         await pipeline.applyKnownEmpty(spans, revision: revision)
