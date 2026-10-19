@@ -1090,7 +1090,8 @@ def _usage_scan(store: Store, days: int, debug_ids: set[str],
 
 def _usage_report(series: list[dict[str, Any]],
                   ranked: list[dict[str, Any]],
-                  active_by_day: dict[int, set[str]]) -> dict[str, Any]:
+                  active_by_day: dict[int, set[str]],
+                  first_seen: dict[str, int]) -> dict[str, Any]:
     """用量板块的 JSON：每日用量、账号排名（合并到一行）、窗口总计与派生指标。
 
     合并与剔除都在 `_usage_scan` 里做过：同一个账号在窗口里出现多次要并成一行再排名
@@ -1099,12 +1100,22 @@ def _usage_report(series: list[dict[str, Any]],
 
     `activeAccounts` / `activeAccounts7d` 是窗口内（与最近 7 天内）**账号**口径的活跃用户：
     一天的账号数不能相加求并集，所以两个数字都在这里按账号集合算，渲染层不自己拼。
+
+    `perDay[].newAccounts` / `returningAccounts` 把每天的活跃账号拆成两段（owner 2026-10-19
+    定）：新增 = 首次活跃日就在这一天的账号，回访 = 当天活跃的其余账号。两个数在这里算，
+    渲染层只读——否则同一个"谁是新用户"会在服务端与本机脚本各算一套，口径迟早漂。
     """
     peak = max(series, key=lambda entry: int(entry["egressBytes"])) if series else None
     total = sum(int(entry["egressBytes"]) for entry in series)
     active_all: set[str] = set().union(*active_by_day.values()) if active_by_day else set()
     last7 = sorted(active_by_day)[-7:]
     active_7d: set[str] = set().union(*[active_by_day[day] for day in last7]) if last7 else set()
+    for entry in series:
+        day = int(entry["day"])
+        active = active_by_day.get(day, set())
+        fresh = {account for account in active if first_seen.get(account) == day}
+        entry["newAccounts"] = len(fresh)
+        entry["returningAccounts"] = len(active) - len(fresh)
     return {
         "perDay": series,
         "topAccounts": ranked[:REPORT_TOP_ACCOUNTS],
@@ -1518,6 +1529,9 @@ def _ops_report(store: Store, days: int, *, as_of: int | None = None,
     series, ranked, active_by_day = _usage_scan(store, days, debug_ids, names, end=stamp,
                                                 known_ids=known_ids, external=external)
     owners = {row["deviceId"]: row.get("accountId") for row in devices}
+    # 首次活跃日只算一次：用量图的「新增 / 回访」拆分与留存队列都读它，
+    # 两处各算一遍迟早出现"图上新增 3 个、留存队列 2 个"这种对不上的数字。
+    first_seen = _first_seen_days(store, debug_ids=debug_ids, owners=owners)
     return {
         "ok": True,
         "generatedAt": now,
@@ -1573,11 +1587,10 @@ def _ops_report(store: Store, days: int, *, as_of: int | None = None,
                                                       or row["createdAt"]),
                             reverse=True)[:REPORT_DEVICE_LIMIT]],
         },
-        "usage": _usage_report(series, ranked, active_by_day),
+        "usage": _usage_report(series, ranked, active_by_day, first_seen),
         "retention": _retention_report(store, days=days, stamp=stamp, external=external,
                                        active_by_day=active_by_day,
-                                       first_seen=_first_seen_days(store, debug_ids=debug_ids,
-                                                                   owners=owners)),
+                                       first_seen=first_seen),
         "invites": _invite_report(store, stamp, real_enrollments,
                                   test_count=len(test_enrollments),
                                   totals=invite_totals_as_of, unused=unused_by_stamp),

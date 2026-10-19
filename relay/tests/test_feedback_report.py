@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import datetime
 import json
+import time
 
 import admin
 import pytest
@@ -155,10 +156,53 @@ def test_ops_report_counts_devices_usage_and_invites(tmp_path, capsys):
 
     today = report["usage"]["perDay"][-1]
     assert today == {"day": local_day(), "egressBytes": 1250, "connections": 3, "devices": 2,
-                     "accounts": 1}, "两台手机同属一个账号：活跃用户（账号口径）只算一个"
+                     "accounts": 1, "newAccounts": 1, "returningAccounts": 0}, \
+        "两台手机同属一个账号：活跃用户（账号口径）只算一个；这个账号是第一次活跃，记新增"
     assert report["usage"]["totals"] == {"egressBytes": 1250, "connections": 3}
     assert report["invites"]["minted"] == 1 and report["invites"]["remaining"] == 1
     assert report["invites"]["enrollments"] == []
+
+
+def test_ops_report_splits_new_and_returning_accounts(tmp_path, capsys):
+    """每天的活跃账号拆成「当天首次活跃」与「此前活跃过」——活跃账号图的两段堆叠。
+
+    owner 2026-10-19 要求把新增叠进活跃账号图。新增只能由服务端按首次活跃日算一次
+    （`_first_seen_days`），渲染层不能再自己算：两个地方各算一套，图上的新增与留存
+    队列里的分母迟早对不上。这条用例钉住两个字段，以及它们与 `accounts` 的等式。
+    """
+    db = str(tmp_path / "state.db")
+    store = Store(db)
+    veteran = store.create_account("老用户")
+    veteran_agent = store.register_agent(veteran["accountId"], "mac")
+    veteran_device = store.claim_pair_code(
+        store.mint_pair_code(veteran_agent["agentId"], ttl_ms=60_000)["code"], device_name="iPhone")
+    fresh = store.create_account("新用户")
+    fresh_agent = store.register_agent(fresh["accountId"], "mac")
+    fresh_device = store.claim_pair_code(
+        store.mint_pair_code(fresh_agent["agentId"], ttl_ms=60_000)["code"], device_name="iPad")
+    yesterday = local_day(time.time() - 86_400)
+    row = lambda day, device, agent_id, account_id: {
+        "day": day, "deviceId": device, "agentId": agent_id, "accountId": account_id,
+        "egressBytes": 100, "connections": 1, "at": now_ms(), "lastBuild": None}
+    store.add_usage([row(yesterday, veteran_device["deviceId"], veteran_agent["agentId"],
+                         veteran["accountId"]),
+                     row(local_day(), veteran_device["deviceId"], veteran_agent["agentId"],
+                         veteran["accountId"]),
+                     row(local_day(), fresh_device["deviceId"], fresh_agent["agentId"],
+                         fresh["accountId"])])
+    store.close()
+
+    code, report = run_cli(db, "ops-report", "--days", "2", capsys=capsys)
+    assert code == 0
+    by_day = {entry["day"]: entry for entry in report["usage"]["perDay"]}
+    assert by_day[yesterday]["accounts"] == 1
+    assert by_day[yesterday]["newAccounts"] == 1 and by_day[yesterday]["returningAccounts"] == 0, \
+        "老用户昨天才第一次活跃"
+    assert by_day[local_day()]["accounts"] == 2
+    assert by_day[local_day()]["newAccounts"] == 1, "今天第一次出现的只有新用户"
+    assert by_day[local_day()]["returningAccounts"] == 1, "昨天活跃过的老用户算回访"
+    for entry in report["usage"]["perDay"]:
+        assert entry["newAccounts"] + entry["returningAccounts"] == entry["accounts"]
 
 
 def test_ops_report_counts_a_reinstalled_phone_once(tmp_path, capsys):
