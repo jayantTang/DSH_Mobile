@@ -259,6 +259,11 @@ public actor SessionPipeline {
 
     // MARK: - 水合（取不到就拉，spec §6 三分支）
 
+    /// 用户槽位已被别的范围占用：调用方应把它当成"稍后再说"，不是失败。
+    public struct FetchBusy: Error, Sendable {
+        public init() {}
+    }
+
     /// 任务级单飞入口：同一范围同一时刻只跑一次；搭车者等同一个任务。
     ///
     /// 与 `records(in:)` 的分工：`records` 负责区间判定与水合；`ensure` 负责
@@ -288,7 +293,9 @@ public actor SessionPipeline {
         case .joined:
             guard let task = ensureJobs[range] else { return [] }
             return try await task.value
-        case .rejectedUserBusy, .ignored:
+        case .rejectedUserBusy:
+            throw FetchBusy()
+        case .ignored:
             return []
         }
     }

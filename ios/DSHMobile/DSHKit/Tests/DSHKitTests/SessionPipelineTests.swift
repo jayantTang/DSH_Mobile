@@ -151,8 +151,12 @@ final class SessionPipelineTests: XCTestCase {
         let pipeline = makePipeline()
         let first = Task { try await pipeline.ensure(range: 1...50) }
         try await Task.sleep(for: .milliseconds(60))
-        let other = try await pipeline.ensure(range: 51...100)
-        XCTAssertTrue(other.isEmpty, "用户槽位被占用时不再开第二个任务")
+        do {
+            _ = try await pipeline.ensure(range: 51...100)
+            XCTFail("用户槽位被占用时必须抛 FetchBusy")
+        } catch is SessionPipeline.FetchBusy {
+            // expected
+        }
         _ = try await first.value
         let requests = await stub.allRequests()
         XCTAssertFalse(requests.contains(51...100))

@@ -84,8 +84,10 @@ public extension ChatPipelineBridge {
         do {
             // 一次取页必须有自己的终态：请求永不返回时，界面停在"加载中"就是
             // 没有终态。20 秒上限把未知结局收口成可重试的失败行。
+            // 任务级单飞：同一范围已有任务在跑就搭车；用户槽位被别的范围占用时
+            // 这次什么都不做（下一次触发会再试），不当成失败。
             let fetched = try await Self.withTimeout(seconds: 20) {
-                try await session.records(in: lower...(oldest - 1), priority: .userVisible)
+                try await session.ensure(in: lower...(oldest - 1), priority: .userVisible)
             }
             fetchedCount = fetched.count
             olderWindow.observe(records: fetched.count)
@@ -97,6 +99,9 @@ public extension ChatPipelineBridge {
                 "pages": String(pages),
                 "oldest": String(records.keys.min() ?? -1),
             ], true)
+        } catch is SessionPipeline.FetchBusy {
+            // 已在补别的范围：这次不重复发，也不制造失败行。
+            failure = "busy"
         } catch is CancellationError {
             // 取消不是失败：会话切换、视图消失导致的中断只回到空闲，不显示重试条。
             // 四态里"取消"必须与"失败"分开，否则每次切会话都留一条假错误。
