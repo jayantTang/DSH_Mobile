@@ -468,9 +468,13 @@ public final class SessionListModel {
         // 指纹相同而跳过落盘（缓存文件已经不属于这台的语义），状态行也会一直
         // 说"显示上次数据"。
         lastSavedFingerprint = [:]
+        digestVersion = nil
         isShowingSnapshot = false
         lastPrefetchScope = nil
     }
+
+    /// 上次摘要的覆盖版本；连接器换机或版本失效时由全量响应重置。
+    private var digestVersion: String?
 
     public func refresh() async {
         // 冷启动（或上次没拉成）：先把落盘的旧列表画出来，屏幕上立刻有东西，
@@ -482,8 +486,13 @@ public final class SessionListModel {
         }
         if groups.isEmpty { phase = .loading }
         do {
-            let value = try await link.sessions()
-            allSessions = value.items
+            let value = try await link.sessions(since: digestVersion)
+            if value.full == true || digestVersion == nil {
+                allSessions = value.items
+            } else {
+                allSessions = SessionDigestMerge.apply(current: allSessions, value: value)
+            }
+            digestVersion = value.version
             // 018 T028：会话行喂给活动状态机（子会话计数 + 行轮次）。
             // 轮次口径沿用列表既有语义（`summary.running`）；聊天页当前会话由
             // `ActivityModel.bindChat` 用 `timeline.isTurnOpen` 覆盖。
@@ -584,6 +593,7 @@ public final class SessionListModel {
     public func clearCachedSnapshot() {
         if let scope = store?.scopeId { snapshotStore.clear(scope: scope) }
         lastSavedFingerprint = [:]
+        digestVersion = nil
         isShowingSnapshot = false
     }
 

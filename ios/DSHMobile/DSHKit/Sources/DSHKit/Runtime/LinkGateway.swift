@@ -81,10 +81,23 @@ public struct LinkGateway: Sendable {
     // MARK: - 会话
 
     /// 会话列表（连接器支持精简摘要时走精简版，失败自动回退）。
+    ///
+    /// `since` 非空且连接器支持增量时，只回变化与删除项；任何失败都回退全量，
+    /// 列表不会因为增量通道不可用而打不开。
     @MainActor
-    public func sessions() async throws -> SessionListValue {
+    public func sessions(since: String? = nil) async throws -> SessionListValue {
         guard let client = clientProvider() else { throw DSHTransportError.carrierClosed }
-        return try await client.sessions()
+        guard let since, !since.isEmpty,
+              client.capabilities.contains(DSHClient.sessionDigestCapability) else {
+            return try await client.sessions()
+        }
+        do {
+            let value = try await client.sessionDigest(since: since)
+            guard value.version != nil else { return try await client.sessions() }
+            return value
+        } catch {
+            return try await client.sessions()
+        }
     }
 
     /// 归档 / 取消归档，返回宿主给出的归档集合。
