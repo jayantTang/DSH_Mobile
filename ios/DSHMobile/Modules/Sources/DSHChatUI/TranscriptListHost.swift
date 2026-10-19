@@ -351,7 +351,8 @@ final class TranscriptListHost: UIView, UICollectionViewDelegate {
 
     /// 预取余量：一屏半。
     private func prefetchMargin() -> CGFloat {
-        max(240, collectionView.bounds.height * 1.5)
+        // 触发口径只有一份：视口高度的两倍（下限 240pt），见 HistoryTriggerPolicy。
+        HistoryTriggerPolicy.margin(viewportHeight: collectionView.bounds.height)
     }
 
     /// 该回收这些行（由调用方决定最终是否回收）。
