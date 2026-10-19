@@ -55,6 +55,11 @@ public struct InFlightPageTable<Key: Hashable & Sendable>: Sendable {
     /// 登记一次拉取意图。同 key 在途：搭车；若新优先级更高则**升级**优先级
     /// （插队语义：同一页从预取升级为用户可见），不发新请求。
     @discardableResult
+    /// 这一页当前是否有人在取（缺口行据此决定显示"加载中"还是可重试）。
+    public func contains(_ key: Key) -> Bool {
+        entries[key] != nil
+    }
+
     public mutating func begin(_ key: Key, priority: Priority) -> Decision {
         if var entry = entries[key] {
             entry.riders += 1

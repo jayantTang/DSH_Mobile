@@ -102,12 +102,14 @@ extension SessionPipeline {
     }
 
     private func gapStatus(for span: RangeIndex.Span) -> GapRow.Status {
-        // 该缺口覆盖的对齐页里有到 3 次失败的 → retryable。
-        let firstPage = alignedPages(covering: span).first
-        if let key = firstPage?.lowerBound, failureCounts[key, default: 0] >= Self.maxRetries {
+        let pages = alignedPages(covering: span)
+        // 只有"确实有人在取"才显示加载中；没有在飞页的缺口不许无限转圈。
+        if pages.contains(where: { inFlight.contains($0.lowerBound) }) { return .loading }
+        if let key = pages.first?.lowerBound, failureCounts[key, default: 0] >= Self.maxRetries {
             return .failed(retryable: true)
         }
-        return .loading
+        // 没在取、也没失败记录：给可重试入口（spec SC-003），不是加载态。
+        return .failed(retryable: true)
     }
 
     /// 丢弃一段不打算自动补的缺口（T026 修复 US3 遗留：>5 页降级直跳
