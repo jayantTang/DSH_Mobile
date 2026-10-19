@@ -28,6 +28,12 @@ public struct SessionHandle: Sendable {
         try await pipeline.records(in: range, priority: priority)
     }
 
+    /// 任务级单飞入口：同一范围只跑一次，搭车者等同一批结果。
+    public func ensure(in range: ClosedRange<Int>,
+                       priority: SessionPipeline.FetchPriority = .userVisible) async throws -> [SessionRecord] {
+        try await pipeline.ensure(range: range, priority: priority)
+    }
+
     /// 已经取到的 seq 区间。
     public var ranges: RangeIndex {
         get async { await pipeline.ranges }

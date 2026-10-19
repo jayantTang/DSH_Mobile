@@ -19,14 +19,18 @@ final class SessionPipelineTests: XCTestCase {
         private(set) var requests: [ClosedRange<Int>] = []
         /// true 时 fetch 永远不回（模拟回包丢失/链路挂起）。
         private var hangs = false
+        /// 每次 fetch 先睡这么久，用来构造"在飞窗口"。
+        private var delay: Duration = .zero
 
         func set(_ range: ClosedRange<Int>, _ entry: Entry) { script[range.lowerBound] = entry }
         func hang() { hangs = true }
+        func setDelay(_ value: Duration) { delay = value }
         func requestCount(_ range: ClosedRange<Int>) -> Int { requests.filter { $0 == range }.count }
         func allRequests() -> [ClosedRange<Int>] { requests }
 
         func fetch(_ range: ClosedRange<Int>, priority: SessionPipeline.FetchPriority) async throws -> SessionPipeline.FetchPage {
             requests.append(range)
+            if delay > .zero { try await Task.sleep(for: delay) }
             if hangs { try await Task.sleep(for: .seconds(3600)) }
             switch script[range.lowerBound] {
             case .page(let page): return page
@@ -123,6 +127,35 @@ final class SessionPipelineTests: XCTestCase {
         let before = await pipeline.uncoveredSpans()
         XCTAssertEqual(before, [2...2], "内部空洞必须报出来，否则顶部会停在'已到最早'")
         _ = stub
+    }
+
+    func testEnsureJoinsAnInFlightRangeInsteadOfDuplicating() async throws {
+        let stub = stub!
+        await stub.setDelay(.milliseconds(400))
+        await stub.set(1...50, .page(page(1...50)))
+        let pipeline = makePipeline()
+        let first = Task { try await pipeline.ensure(range: 1...50) }
+        try await Task.sleep(for: .milliseconds(50))
+        let second = Task { try await pipeline.ensure(range: 1...50) }
+        let joined = try await second.value
+        _ = try await first.value
+        let count = await stub.requestCount(1...50)
+        XCTAssertEqual(count, 1, "同一范围同一时刻只允许一次请求")
+        XCTAssertEqual(joined.count, 50, "搭车者拿到同一批结果")
+    }
+
+    func testEnsureRejectsASecondUserRangeWhileOneIsRunning() async throws {
+        let stub = stub!
+        await stub.setDelay(.milliseconds(300))
+        await stub.set(1...50, .page(page(1...50)))
+        let pipeline = makePipeline()
+        let first = Task { try await pipeline.ensure(range: 1...50) }
+        try await Task.sleep(for: .milliseconds(60))
+        let other = try await pipeline.ensure(range: 51...100)
+        XCTAssertTrue(other.isEmpty, "用户槽位被占用时不再开第二个任务")
+        _ = try await first.value
+        let requests = await stub.allRequests()
+        XCTAssertFalse(requests.contains(51...100))
     }
 
     // MARK: - 区间判定三分支

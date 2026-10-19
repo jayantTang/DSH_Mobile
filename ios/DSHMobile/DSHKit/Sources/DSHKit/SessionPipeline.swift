@@ -132,6 +132,11 @@ public actor SessionPipeline {
     /// seq 可能被宿主重排，落盘的旧区间会与新区间对不上。
     var asked = RangeIndex() // internal：+Paging 的 currentGaps 要读
 
+    /// 任务级单飞：同一范围只跑一次，跨入口共享（上拉/跳转/展开/预取）。
+    private var jobs = FetchJobCoordinator()
+    /// 搭车者等待同一个任务，不重复发请求。
+    private var ensureJobs: [ClosedRange<Int>: Task<[SessionRecord], Error>] = [:]
+
     /// 热窗口：[seq: 记录] + 有序索引，超出 hotLimit 淘汰最老（只影响内存）。
     /// internal：流式半边（SessionPipeline+Streaming）要查行是否存在。
     var hotWindow: [Int: SessionRecord] = [:]
@@ -253,6 +258,40 @@ public actor SessionPipeline {
     }
 
     // MARK: - 水合（取不到就拉，spec §6 三分支）
+
+    /// 任务级单飞入口：同一范围同一时刻只跑一次；搭车者等同一个任务。
+    ///
+    /// 与 `records(in:)` 的分工：`records` 负责区间判定与水合；`ensure` 负责
+    /// “现在要不要发、是不是已经有人在发”。调用方只报目标范围，不再自己算批次。
+    public func ensure(
+        range: ClosedRange<Int>,
+        priority: FetchPriority = .userVisible
+    ) async throws -> [SessionRecord] {
+        let slot: FetchJobMachine.Slot = priority == .prefetch ? .prefetch : .user
+        switch jobs.request(range, slot: slot) {
+        case .run:
+            let task = Task { [weak self] () throws -> [SessionRecord] in
+                guard let self else { throw CancellationError() }
+                return try await self.records(in: range, priority: priority)
+            }
+            ensureJobs[range] = task
+            do {
+                let result = try await task.value
+                jobs.succeed(range)
+                ensureJobs[range] = nil
+                return result
+            } catch {
+                jobs.fail(range)
+                ensureJobs[range] = nil
+                throw error
+            }
+        case .joined:
+            guard let task = ensureJobs[range] else { return [] }
+            return try await task.value
+        case .rejectedUserBusy, .ignored:
+            return []
+        }
+    }
 
     /// 取一个闭区间：命中部分本地直给，缺口按对齐页磁盘→网络补齐。
     /// 磁盘是纯缓存：区间声称覆盖但磁盘读不出（被淘汰/未落盘）同样转网络。
