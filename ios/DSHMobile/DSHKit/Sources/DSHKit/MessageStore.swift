@@ -172,6 +172,18 @@ public actor MessageStore {
               PRIMARY KEY (scope, session_id)
             );
             """)
+        // 已知为空：带版本的空号结论。宿主重排号段后版本变化，旧行由写入路径清理。
+        try db.execute(sql: """
+            CREATE TABLE IF NOT EXISTS known_empty (
+              scope      TEXT    NOT NULL,
+              session_id TEXT    NOT NULL,
+              revision   TEXT    NOT NULL,
+              start_seq  INTEGER NOT NULL,
+              end_seq    INTEGER NOT NULL,
+              observed_at REAL   NOT NULL,
+              PRIMARY KEY (scope, session_id, revision, start_seq, end_seq)
+            );
+            """)
         // trigram：unicode61 不会切中文（整段当一个词），子串搜索会全空。
         // trigram 需要查询 ≥3 字符，短查询在读取侧降级 LIKE（见 searchUserInputs）。
         try db.execute(sql: """

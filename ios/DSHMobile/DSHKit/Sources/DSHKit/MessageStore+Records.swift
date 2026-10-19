@@ -220,6 +220,52 @@ extension MessageStore {
         }
     }
 
+    /// 带版本的已知为空结论（一次写入即替换该会话其它版本）。
+    public struct KnownEmptyRecord: Sendable, Equatable {
+        public let revision: String
+        public let spans: [ClosedRange<Int>]
+        public init(revision: String, spans: [ClosedRange<Int>]) {
+            self.revision = revision
+            self.spans = spans
+        }
+    }
+
+    public func saveKnownEmpty(scope: String, sessionId: String, revision: String,
+                               spans: [ClosedRange<Int>], observedAt: TimeInterval) async throws {
+        guard !spans.isEmpty else { return }
+        try await pool.write { db in
+            // 只保留当前版本：宿主重排号段后旧结论失效，留着只会误导。
+            try db.execute(sql: """
+                DELETE FROM known_empty
+                WHERE scope = ? AND session_id = ? AND revision <> ?
+                """, arguments: [scope, sessionId, revision])
+            for span in spans {
+                try db.execute(sql: """
+                    INSERT OR REPLACE INTO known_empty
+                      (scope, session_id, revision, start_seq, end_seq, observed_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """, arguments: [scope, sessionId, revision,
+                                     span.lowerBound, span.upperBound, observedAt])
+            }
+        }
+    }
+
+    public func knownEmpty(scope: String, sessionId: String) async throws -> [KnownEmptyRecord] {
+        try await pool.read { db in
+            var byRevision: [String: [ClosedRange<Int>]] = [:]
+            let rows = try Row.fetchAll(db, sql: """
+                SELECT revision, start_seq, end_seq FROM known_empty
+                WHERE scope = ? AND session_id = ?
+                ORDER BY revision, start_seq
+                """, arguments: [scope, sessionId])
+            for row in rows {
+                let revision: String = row["revision"]
+                byRevision[revision, default: []].append(row["start_seq"]...row["end_seq"])
+            }
+            return byRevision.map { KnownEmptyRecord(revision: $0.key, spans: $0.value) }
+        }
+    }
+
     /// 更新「还有更早」标志（网络侧权威值；失败永不写这里，spec 007 FR-038 语义沿用）。
     func setHasMore(_ hasMore: Bool, scope: String, sessionId: String) async throws {
         try await pool.write { db in

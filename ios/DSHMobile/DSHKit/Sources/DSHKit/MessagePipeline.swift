@@ -486,6 +486,9 @@ public actor MessagePipeline {
         }
         let lower = max(1, target.newestSeq - pageSize + 1)
         _ = try? await pipeline.records(in: lower...target.newestSeq, priority: priority)
+        // 最新页落地后 coverageRevision 才等于会话最新号；此时装载持久化的
+        // 已知为空结论，旧版本的记录在装载时被过滤掉。
+        await pipeline.adoptPersistedKnownEmpty()
         if let store {
             let ranges = await pipeline.ranges
             try? await store.saveRanges(

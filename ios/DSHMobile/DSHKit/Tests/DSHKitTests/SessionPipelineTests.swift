@@ -206,6 +206,24 @@ final class SessionPipelineTests: XCTestCase {
         XCTAssertTrue(holes.isEmpty, "同版本的 knownEmpty 应消掉空洞：\(holes)")
     }
 
+    func test_persisted_known_empty_is_adopted_after_restart() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = try MessageStore(path: dir.appendingPathComponent("t.sqlite3"))
+        try await store.saveKnownEmpty(scope: "mac", sessionId: "s1", revision: "3",
+                                       spans: [2...2], observedAt: 1000)
+        let stub = stub!
+        let pipeline = SessionPipeline(
+            scope: "mac", sessionId: "s1", store: store,
+            fetch: { range, priority in try await stub.fetch(range, priority: priority) },
+            now: { 1000 }, pageSize: 50, hotLimit: 500)
+        await pipeline.apply(events: [record(1).event, record(3).event])
+        await pipeline.adoptPersistedKnownEmpty()
+        let holes = await pipeline.uncoveredSpans()
+        XCTAssertTrue(holes.isEmpty, "冷启动应采用版本一致的已知为空：\(holes)")
+    }
+
     // MARK: - 区间判定三分支
 
     func testFullCoverageServesLocallyWithoutNetwork() async throws {
@@ -261,7 +279,8 @@ final class SessionPipelineTests: XCTestCase {
 
         var snapshot = await pipeline.snapshot()
         XCTAssertEqual(snapshot.gaps.map(\.id), ["gap:51-100"])
-        XCTAssertEqual(snapshot.gaps.first?.status, .loading)
+        // 没有在飞页的缺口不许显示"加载中"（SC-003）：给可重试入口。
+        XCTAssertEqual(snapshot.gaps.first?.status, .failed(retryable: true))
 
         await stub.set(51...100, .page(page(51...100)))
         _ = try await pipeline.records(in: 51...75)

@@ -138,21 +138,54 @@ public actor SessionPipeline {
     /// seq 可能被宿主重排，落盘的旧区间会与新区间对不上。
     var asked = RangeIndex() // internal：+Paging 的 currentGaps 要读
 
-    /// 对端确认"这些号没有内容"。带版本：宿主重排号段后旧结论必须失效。
-    private var knownEmpty = RangeIndex()
+    /// 对端确认"这些号没有内容"。按版本分组：只有与当前版本一致的那组参与判定。
+    private var knownEmptyByRevision: [String: RangeIndex] = [:]
     /// 版本 = 当前最新号；对端回包的 revision 与它一致才采纳。
     public var coverageRevision: String? { ranges.newest.map(String.init) }
 
-    /// 采纳对端的已知为空结论；版本不一致整段丢弃。
+    /// 覆盖判定要用的已知为空（只取当前版本）。
+    func knownEmptyRanges() -> RangeIndex {
+        guard let revision = coverageRevision else { return RangeIndex() }
+        return knownEmptyByRevision[revision] ?? RangeIndex()
+    }
+
+    /// 采纳对端的已知为空结论；版本不一致整段丢弃。写入同步落盘，冷启动可复用。
     public func applyKnownEmpty(_ spans: [ClosedRange<Int>], revision: String) {
-        guard revision == coverageRevision else { return }
-        guard !spans.isEmpty else { return }
-        for span in spans { knownEmpty.insert(span) }
+        guard adoptKnownEmpty(spans, revision: revision) else { return }
         emit(Diff(gaps: currentGaps()))
     }
 
-    /// 覆盖判定要用的已知为空（供 +Paging 读取）。
-    func knownEmptyRanges() -> RangeIndex { knownEmpty }
+    /// 冷启动装载：读回按版本分组的结论，当前版本立刻生效。
+    public func adoptPersistedKnownEmpty() async {
+        guard let store else { return }
+        let rows = (try? await store.knownEmpty(scope: scope, sessionId: sessionId)) ?? []
+        guard !rows.isEmpty else { return }
+        knownEmptyByRevision = [:]
+        for row in rows {
+            var index = knownEmptyByRevision[row.revision] ?? RangeIndex()
+            for span in row.spans { index.insert(span) }
+            knownEmptyByRevision[row.revision] = index
+        }
+        emit(Diff(gaps: currentGaps()))
+    }
+
+    /// 采纳并落盘；不广播（由调用方与同一次 diff 合并）。
+    @discardableResult
+    private func adoptKnownEmpty(_ spans: [ClosedRange<Int>], revision: String) -> Bool {
+        guard revision == coverageRevision, !spans.isEmpty else { return false }
+        var index = knownEmptyByRevision[revision] ?? RangeIndex()
+        for span in spans { index.insert(span) }
+        knownEmptyByRevision[revision] = index
+        if let store {
+            let scope = scope, sessionId = sessionId
+            Task {
+                try? await store.saveKnownEmpty(
+                    scope: scope, sessionId: sessionId, revision: revision,
+                    spans: spans, observedAt: Date().timeIntervalSince1970)
+            }
+        }
+        return true
+    }
 
     /// 任务级单飞：同一范围只跑一次，跨入口共享（上拉/跳转/展开/预取）。
     private var jobs: FetchJobCoordinator
@@ -164,7 +197,7 @@ public actor SessionPipeline {
     var hotWindow: [Int: SessionRecord] = [:]
     private var hotOrder: [Int] = []
 
-    private var inFlight = InFlightPageTable<Int>()
+    var inFlight = InFlightPageTable<Int>() // internal：+Paging 的 gapStatus 要读
     /// 在途任务本体（页表只存代数；搭车者 await 同一个 Task，任务覆盖到合并完成）。
     private var inFlightTasks: [Int: Task<Void, Error>] = [:]
     private var writes = PendingWriteQueue<Int, MessageStore.RecordChange>()
@@ -651,10 +684,12 @@ public actor SessionPipeline {
         // 成功问过一段，就记下来：即使回包比请求的范围稀疏，也不该再把它当缺口。
         asked.insert(requested)
         // 对端确认的空号：版本与当前一致才采纳（宿主重排号段后旧结论失效）。
-        if let revision = page.revision, revision == coverageRevision {
-            for span in page.knownEmpty where span.count == 2 && span[0] <= span[1] {
-                knownEmpty.insert(span[0]...span[1])
+        if let revision = page.revision {
+            let spans = page.knownEmpty.compactMap { span -> ClosedRange<Int>? in
+                guard span.count == 2, span[0] <= span[1] else { return nil }
+                return span[0]...span[1]
             }
+            adoptKnownEmpty(spans, revision: revision)
         }
         diff.gaps = currentGaps()
         emit(diff)

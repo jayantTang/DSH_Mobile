@@ -321,4 +321,18 @@ final class MessageStoreTests: XCTestCase {
         let state = try await migrated.userInputSyncState(scope: "mac", sessionId: "s1")
         XCTAssertEqual(state?.lastSeq, 42)
     }
+
+func test_known_empty_round_trip_and_revision_replacement() async throws {
+        try await store.saveKnownEmpty(
+            scope: "mac", sessionId: "s1", revision: "10",
+            spans: [2...2, 5...7], observedAt: 1000)
+        let first = try await store.knownEmpty(scope: "mac", sessionId: "s1")
+        XCTAssertEqual(first, [MessageStore.KnownEmptyRecord(revision: "10", spans: [2...2, 5...7])])
+
+        try await store.saveKnownEmpty(
+            scope: "mac", sessionId: "s1", revision: "11", spans: [9...9], observedAt: 2000)
+        let second = try await store.knownEmpty(scope: "mac", sessionId: "s1")
+        XCTAssertEqual(second, [MessageStore.KnownEmptyRecord(revision: "11", spans: [9...9])],
+                       "旧版本的结论必须被替换，不能与新版本混用")
+    }
 }
