@@ -504,8 +504,10 @@ test('发版日在流量图上标注（构建号第一次出现在历史快照�
     '20261011': { day: 20261011, dayStartAt: 2, builds: ['20261011.1447'] },
   }, alerts: {} }
   const html = renderReport(data, { history })
-  assert.ok(html.includes('>发版</text>'), '新版首次出现的那天有标注')
-  assert.ok(!renderReport(data).includes('>发版</text>'), '没有历史文件就不标')
+  assert.ok(html.includes('stroke-dasharray="2,3"'), '新版首次出现的那天画竖虚线')
+  assert.ok(html.includes('竖虚线为发版日'), '含义写在图的说明里，不逐条压文字')
+  assert.ok(!html.includes('>发版</text>'), '不再在线上写「发版」：连续发版时会叠成一团')
+  assert.ok(!renderReport(data).includes('竖虚线为发版日'), '没有历史文件就不标')
 })
 
 test('updateHistory 只记过完的一整天，并累计告警连续天数', () => {

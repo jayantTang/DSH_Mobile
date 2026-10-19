@@ -351,14 +351,15 @@ function lineChart({ title, note, points, format, markers = [] }) {
     ? `<text x="${peakAt.toFixed(1)}" y="${(y(list[peak].value) - 5).toFixed(1)}" class="peakLabel" text-anchor="${anchor}">${escapeHtml(format(list[peak].value))}</text>`
     : ''
   const labels = dayLabels(list, x, h)
+  // 发版标注只画竖虚线，不在线上写「发版」二字：十天内连续发版时，相邻标记只隔十几个
+  // 像素，文字会叠成一团（2026-10-19 实际发生，7 个「发版」糊在一起还撞上峰值数字）。
+  // 含义写在图的说明里（见调用处的 note），一次说清，不随点位数变多而变乱。
   const marks = markers.filter((marker) => marker.index >= 0 && marker.index < list.length)
     .map((marker) => {
       const at = x(marker.index)
-      const anchor = at < left + 14 ? 'start' : at > w - right - 14 ? 'end' : 'middle'
+      // 用中性灰而不是峰值红：红的留给"最高点"，发版是可预期的事件，不该抢视觉。
       return `<line x1="${at.toFixed(1)}" x2="${at.toFixed(1)}" y1="${top}" y2="${h - bottom}" `
-        + `stroke="${COLORS.peak}" stroke-width="1" stroke-dasharray="2,3" opacity="0.55"/>`
-        + `<text x="${at.toFixed(1)}" y="${top - 4}" text-anchor="${anchor}" fill="${COLORS.peak}" `
-        + `font-size="8.5">${escapeHtml(marker.label)}</text>`
+        + `stroke="#94a3b8" stroke-width="1" stroke-dasharray="2,3" opacity="0.6"/>`
     }).join('')
   const svg = `<svg viewBox="0 0 ${w} ${h}" role="img" aria-label="${escapeHtml(title)}">`
     + gridLines(max, y, format)
@@ -1011,8 +1012,7 @@ function rangeSection(report, days, completed = false, { history = null } = {}) 
     ? `峰值 ${fullDay(peak.day)} ${formatBytes(peak.egressBytes)}` : `最近 ${days} 天`
   const userPoints = (usage.perDay ?? []).map((row) => ({ label: row.day, value: row.accounts,
     fresh: row.newAccounts }))
-  const egressPoints = (usage.perDay ?? []).map((row) => ({ label: row.day, value: row.egressBytes }))
-  // 发版标注：历史快照里每个构建号第一次出现的那一天，在流量图上画一条竖线——
+  const egressPoints = (usage.perDay ?? []).map((row) => ({ label: row.day, value: row.egressBytes }))  // 发版标注：历史快照里每个构建号第一次出现的那一天，在流量图上画一条竖线——
   // 「10-12 发版后流量翻倍」这类因果不用翻日历对。没有历史文件就没有标注。
   const releaseMarkers = (() => {
     if (!history?.days) return []
@@ -1048,7 +1048,8 @@ function rangeSection(report, days, completed = false, { history = null } = {}) 
   })
   const charts = activeChart + lineChart({
     title: '每日出口流量',
-    note: peakNote,
+    // 竖虚线的含义写在这里：图上不再逐条标「发版」，密集发版时文字会互相压住。
+    note: releaseMarkers.length ? `${peakNote} · 竖虚线为发版日` : peakNote,
     points: egressPoints,
     format: formatBytes,
     markers: releaseMarkers,
