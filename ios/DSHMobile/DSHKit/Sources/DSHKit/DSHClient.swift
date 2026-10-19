@@ -107,10 +107,11 @@ public struct DSHClient: Sendable {
     ///
     /// 调用方一般不需要直接用它：`sessions()` 会按能力自动选通道。留成公开方法是给
     /// 诊断/测试一条"强制走精简版"的路。
-    public func sessionDigest() async throws -> SessionListValue {
+    public func sessionDigest(since: String? = nil) async throws -> SessionListValue {
         let envelope = try await carrier.unary(
             method: "_link/sessionDigest",
-            args: SessionDigestRequest(_request: SessionListRequest(), encoding: "deflate-raw"),
+            args: SessionDigestRequest(_request: SessionListRequest(), encoding: "deflate-raw",
+                                       since: since),
             as: SessionDigestEnvelope.self
         )
         return try decodeSessionDigest(envelope)
@@ -780,6 +781,8 @@ struct SessionListRequest: Encodable, Sendable {
 struct SessionDigestRequest: Encodable, Sendable {
     var _request: SessionListRequest
     var encoding: String
+    /// 上一次收到的覆盖版本；带上则只回变化项，不带回全量。
+    var since: String?
 }
 
 public struct SessionCreateRequest: Encodable, Sendable {

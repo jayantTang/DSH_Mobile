@@ -81,6 +81,37 @@ public enum SessionAddress: Sendable, Hashable, Codable {
 /// One page of the session list.
 public struct SessionListValue: Sendable, Codable {
     public let items: [SessionSummary]
+    /// 增量响应：消失的会话 id；全量时为空。
+    public let removed: [String]?
+    /// 覆盖版本：下次请求带 `since` 即可只取变化。
+    public let version: String?
+    /// `true` = 这是一份全量（不能用增量方式合并）。
+    public let full: Bool?
+
+    public init(items: [SessionSummary], removed: [String]? = nil,
+                version: String? = nil, full: Bool? = nil) {
+        self.items = items
+        self.removed = removed
+        self.version = version
+        self.full = full
+    }
+}
+
+/// 会话列表的增量合并（纯函数，非 UI）。
+public enum SessionDigestMerge {
+    /// 把一次回包合并进当前列表：按 id 替换/追加、删除 removed、按更新时间倒序。
+    public static func apply(current: [SessionSummary],
+                             value: SessionListValue) -> [SessionSummary] {
+        var byId: [String: SessionSummary] = [:]
+        if value.full != true {
+            for row in current { byId[row.sessionId] = row }
+        }
+        for row in value.items { byId[row.sessionId] = row }
+        if value.full != true {
+            for id in value.removed ?? [] { byId.removeValue(forKey: id) }
+        }
+        return byId.values.sorted { $0.updatedAt > $1.updatedAt }
+    }
 }
 
 /// One row in the session list.

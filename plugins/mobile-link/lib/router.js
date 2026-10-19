@@ -97,7 +97,7 @@ export function trimHistoryPageForWire(method, result) {
 }
 
 import { DeviceTimeline } from './diagnostics.js'
-import { SESSION_DIGEST_METHOD, digestSessionList, encodeDigest } from './session-digest.js'
+import { SESSION_DIGEST_METHOD, digestSessionList, encodeDigest, digestDelta } from './session-digest.js'
 
 /** 慢请求阈值默认值（毫秒）；0 = 关闭逐条慢请求记录。 */
 export const DEFAULT_SLOW_REQUEST_MS = 2000
@@ -620,9 +620,30 @@ export class DeviceRouter {
         this.lastError = messageOf(error)
         this.#changed()
       }
-      const payload = result?.ok === true
-        ? { ok: true, value: encodeDigest(digestSessionList(result), args.encoding) }
-        : result
+      let payload = result
+      if (result?.ok === true) {
+        const trimmed = digestSessionList(result)
+        const items = Array.isArray(trimmed?.items) ? trimmed.items : []
+        const since = typeof args.since === 'string' ? args.since : null
+        this.digestCursors ??= new Map()
+        const previous = since ? this.digestCursors.get(deviceId) : null
+        // 版本对得上才发增量；对不上（首次、连接器重启、设备被清理）发全量。
+        const incremental = Boolean(previous && previous.version === since)
+        const delta = digestDelta(incremental ? previous.fingerprints : null, items)
+        this.digestCursors.set(deviceId, { version: delta.version, fingerprints: delta.fingerprints })
+        if (this.digestCursors.size > 32) {
+          const oldest = this.digestCursors.keys().next().value
+          this.digestCursors.delete(oldest)
+        }
+        const value = {
+          ...trimmed,
+          items: incremental ? delta.changed : items,
+          removed: incremental ? delta.removed : [],
+          version: delta.version,
+          full: !incremental,
+        }
+        payload = { ok: true, value: encodeDigest(value, args.encoding) }
+      }
       this.send(deviceId, resultFrame(frame.id, payload, deviceId))
       return
     }

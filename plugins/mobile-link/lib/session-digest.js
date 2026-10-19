@@ -12,6 +12,7 @@
  */
 
 import { deflateRawSync } from 'node:zlib'
+import { createHash } from 'node:crypto'
 
 /** 方法名（设备发起，中转不校验方法名，所以不需要中转改动）。 */
 export const SESSION_DIGEST_METHOD = '_link/sessionDigest'
@@ -121,4 +122,51 @@ export function encodeDigest(value, encoding) {
     value: deflateRawSync(raw).toString('base64'),
     rawBytes: raw.length,
   }
+}
+
+/** 单条会话的稳定指纹：内容不变则指纹不变（用于增量比较）。 */
+export function digestFingerprint(item) {
+  try {
+    return createHash('sha1').update(JSON.stringify(item)).digest('hex').slice(0, 16)
+  } catch {
+    return 'unhashable'
+  }
+}
+
+/** 一批会话的指纹表（id → 指纹）。 */
+export function digestFingerprints(items) {
+  const map = new Map()
+  for (const item of items ?? []) {
+    if (item && typeof item.id === 'string') map.set(item.id, digestFingerprint(item))
+  }
+  return map
+}
+
+/** 指纹表的版本：指纹集合不变则版本不变。 */
+export function fingerprintsVersion(map) {
+  const keys = [...map.keys()].sort()
+  const digest = createHash('sha1')
+  for (const key of keys) digest.update(key).update('\u0000').update(map.get(key)).update('\u0001')
+  return digest.digest('hex').slice(0, 16)
+}
+
+/**
+ * 相对上一次指纹表的增量。
+ *
+ * 入参 `previous` 为 Map 或 null；返回 changed（新增或内容变化的项）、
+ * removed（消失的 id）与新版本。`previous` 为空时调用方应按全量处理。
+ */
+export function digestDelta(previous, items) {
+  const list = Array.isArray(items) ? items : []
+  const next = digestFingerprints(list)
+  const changed = []
+  for (const item of list) {
+    if (!item || typeof item.id !== 'string') continue
+    if (!previous || previous.get(item.id) !== next.get(item.id)) changed.push(item)
+  }
+  const removed = []
+  if (previous) {
+    for (const id of previous.keys()) if (!next.has(id)) removed.push(id)
+  }
+  return { changed, removed, version: fingerprintsVersion(next), fingerprints: next }
 }
