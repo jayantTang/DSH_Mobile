@@ -73,8 +73,10 @@ function fixture() {
         push: { registered: true } }],
     },
     usage: {
-      perDay: [{ day: '2026-10-11', egressBytes: 1024 * 1024, connections: 3, devices: 1, accounts: 1 },
-        { day: '2026-10-12', egressBytes: 2 * 1024 * 1024, connections: 9, devices: 2, accounts: 2 }],
+      perDay: [{ day: '2026-10-11', egressBytes: 1024 * 1024, connections: 3, devices: 1,
+        accounts: 1, newAccounts: 1, returningAccounts: 0 },
+      { day: '2026-10-12', egressBytes: 2 * 1024 * 1024, connections: 9, devices: 2,
+        accounts: 2, newAccounts: 1, returningAccounts: 1 }],
       topAccounts: [{ accountId: 'acc_a', name: 'jayant', egressBytes: 3 * 1024 * 1024,
         connections: 12, lastSeenAt: GENERATED_AT, lastBuild: '1.0 20261012.1056' }],
       totals: { egressBytes: 3 * 1024 * 1024, connections: 12 },
@@ -352,6 +354,11 @@ test('日报分「今日」与「最近 30 天」两段，正文被转义', () =
   assert.ok(html.includes('<span class="tag range">最近 30 天</span>趋势与留存'), '30 天板块')
   assert.ok((html.match(/<svg /g) ?? []).length >= 2, '至少有两张趋势图')
   assert.ok(html.includes('每日活跃账号') && html.includes('每日出口流量'))
+  // 活跃账号图是「回访 + 当日新增」两段堆叠（owner 2026-10-19 定）：两段颜色与图例都要在。
+  assert.ok(html.includes('trend-legend') && html.includes('回访') && html.includes('当日新增'),
+    '图上要有两段图例')
+  assert.ok(html.includes(`fill="${'#0ea5e9'}"`) && html.includes(`fill="${'#f59e0b'}"`),
+    '回访面积与新增带各用一套色')
   // 头牌是账号口径的活跃账号，活跃设备降为状态行里的一个数。
   assert.ok(html.includes('今日活跃账号') && html.includes('较昨日'))
   assert.ok(html.includes('活跃设备 2 台'), '状态行里给出同一天的设备行口径')
@@ -360,9 +367,9 @@ test('日报分「今日」与「最近 30 天」两段，正文被转义', () =
   assert.ok(html.includes('3.0 MB'), '出口字节应换算成 MB')
   // 近 7 天表：活跃账号与新增设备各一列。
   assert.ok(html.includes('活跃账号') && html.includes('新增设备'))
-  // 留存：外部账号口径、D1/D7 与登记激活都要在页面上。
+  // 留存：外部账号口径、D1/D7 与「登记后 7 天内连上」都要在页面上。
   assert.ok(html.includes('激活码登记的外部账号 · 活跃=当天有设备连接'))
-  for (const label of ['登记激活', '次日留存', '7 日留存']) {
+  for (const label of ['登记后 7 天内连上', '次日留存', '7 日留存']) {
     assert.ok(html.includes(label), `留存缺 ${label}`)
   }
   assert.ok(html.includes('62%') && html.includes('n=13'), '留存率要带队列人数')
@@ -1269,6 +1276,17 @@ test('老服务端没有 versions / hourlyActivity：两块的字段不缺，页
   const html = renderReport(fixture())
   assert.match(html, /版本分布（近 48 小时活跃）/)
   assert.match(html, /过去 72 小时活跃分布/)
+})
+
+test('老服务端没有 perDay.newAccounts：退回单条折线，不自己补算新增', () => {
+  // 服务端与渲染层不是一个进程，发布有先后。旧服务端没这个字段时只画总量，
+  // 不在本机按"首次活跃日"再算一遍——同一事实只能有一个所有者。
+  const stale = fixture()
+  stale.usage.perDay = stale.usage.perDay.map(({ newAccounts, returningAccounts, ...row }) => row)
+  const html = renderReport(stale)
+  assert.ok(html.includes('每日活跃账号'))
+  assert.ok(!html.includes('<div class="trend-legend">'), '没有拆分就不出两段图例')
+  assert.ok(!html.includes('当日新增'))
 })
 
 // ── GitHub 外部计数（owner 2026-10-19 要求：日报只给 star / fork / 关注者三个数字） ─────

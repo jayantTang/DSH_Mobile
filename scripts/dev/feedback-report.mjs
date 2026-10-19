@@ -36,20 +36,30 @@ import { pathToFileURL } from 'node:url'
 
 /// 图表配色与画布尺寸：viewBox 固定，实际宽度交给 CSS（窄屏能整页缩放）。
 const COLORS = { line: '#2563eb', open: '#f59e0b', replied: '#10b981',
-  peak: '#dc2626', grid: '#eef2f7' }
-/// 72 小时热度图用的五档色阶（浅 → 深）。分档边界是**绝对活跃账号数**：
-/// 1–2 / 3–4 / 5–6 / 7–8 / 9+。见 `hourlyHeatmap` 里为什么不用相对色阶。
-/// 边界按"有设备在线的账号"这个口径定的（常态每小时 1–10 个）；换成电脑连接口径
-/// （峰值 26）就只剩最浅两档，图会失去分辨力。
-const HEAT_STEPS = ['#dbe9ff', '#a9c7ff', '#6f9df8', '#3f79ee', '#2563eb']
-const HEAT_LEGEND = ['1–2', '3–4', '5–6', '7–8', '9+']
+  peak: '#dc2626', grid: '#eef2f7',
+  // 活跃账号图的堆叠两段：回访（浅蓝面积）与当日新增（橙带），与预览稿一致。
+  returning: '#0ea5e9', fresh: '#f59e0b' }
+/// 72 小时热度图的七档色阶（0 / 1–2 / 3–4 / 5–6 / 7–8 / 9–11 / 12+）。
+/// 分档仍是**绝对活跃账号数**（不按当前峰值做相对色阶）：相对色阶下平淡的一天也会画成
+/// 满屏深色，看不出"今天其实比昨天闲"。
+///
+/// 色阶是 2026-10-19 owner 定的多色方案：黄绿 → 青 → 蓝 → 深藏青。为什么不用纯蓝五档：
+/// 活跃账号涨到每小时 12 个以后，9 以上的格子全挤在最深那一档（当天 14 个），看不出差别。
+/// 为什么不用彩虹（蓝→绿→黄→红）：黄色比红色更亮，"12"反而不如"7–8"显眼；红绿相邻对
+/// 色弱不友好；红色还和峰值标注撞色。这里的色相跨黄绿→青→蓝，亮度随数值单调变深，
+/// 既拉开区分度，又保持"越深越多"的既有读法。
+const HEAT_STEPS = ['#f8fce8', '#d5efb4', '#7fd0a0', '#34a9a0',
+  '#2f6fa8', '#34509c', '#1d2f6e']
+const HEAT_LEGEND = ['0', '1–2', '3–4', '5–6', '7–8', '9–11', '12+']
 const heatStep = (accounts) => {
   const value = num(accounts)
-  if (value <= 2) return 0
-  if (value <= 4) return 1
-  if (value <= 6) return 2
-  if (value <= 8) return 3
-  return 4
+  if (value <= 0) return 0
+  if (value <= 2) return 1
+  if (value <= 4) return 2
+  if (value <= 6) return 3
+  if (value <= 8) return 4
+  if (value <= 11) return 5
+  return 6
 }
 const CHART = { w: 360, h: 168, left: 46, right: 10, top: 16, bottom: 24 }
 const WEEKDAYS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
@@ -73,7 +83,7 @@ const THRESHOLDS = {
 /// 经营目标（2026-10-13 owner 拍的第一版，按周报复盘调）：只在留存板块当对照线用。
 const TARGETS = {
   d7: 0.3,              // 7 日留存
-  activation: 0.75,     // 登记激活
+  activation: 0.75,     // 登记后 7 天内连上（不是留存）
 }
 
 /// 机型代码转人话：`iPhone15,4` → `iPhone 15`。只放出现过的主流型号，
@@ -168,11 +178,16 @@ figure.chart svg { display: block; width: 100%; max-width: 540px; height: auto; 
 svg text { font-family: "PingFang SC", Arial, sans-serif; font-size: 9.5px; fill: #94a3b8; }
 svg text.peakLabel { fill: ${COLORS.peak}; font-weight: 600; }
 /* 72 小时热度图的图例：色块 + 账号数区间，与 SVG 同一套五档。 */
-.heat-legend { display: flex; align-items: center; flex-wrap: wrap; gap: 3px 5px;
-  margin: 2px auto 6px; max-width: 540px; color: #94a3b8; font-size: 10px; }
-.heat-legend span { margin-right: 2px; }
-.heat-legend i { width: 12px; height: 9px; border-radius: 2px; }
+.heat-legend { display: flex; align-items: center; flex-wrap: wrap; gap: 2px 4px;
+  margin: 2px auto 6px; max-width: 540px; color: #94a3b8; font-size: 9.5px; }
+.heat-legend span { margin-right: 1px; }
+.heat-legend i { width: 10px; height: 8px; border-radius: 2px; }
 .heat-legend em { margin-right: 4px; font-style: normal; color: #64748b; }
+/* 活跃账号图的两段图例：色块与 SVG 同一套色。 */
+.trend-legend { display: flex; align-items: center; justify-content: center; gap: 14px;
+  margin: 3px 0 4px; color: #64748b; font-size: 10.5px; }
+.trend-legend i { display: inline-block; width: 11px; height: 9px; border-radius: 2px;
+  margin-right: 4px; vertical-align: -1px; }
 .gap8 { height: 8px; }
 p.empty { margin: 0; padding: 11px 12px; border: 1px dashed #d7dde5; border-radius: 11px;
   background: #fff; color: #94a3b8; font-size: 12.5px; }
@@ -286,6 +301,17 @@ function spread(count, max) {
   return [...Array(max).keys()].map((i) => Math.round(i * step))
 }
 
+/** 横轴日期标签：首尾两端改用 start / end 对齐。
+    居中对齐时，右下角最后一个日期会有一半画到 viewBox 外面（2026-10-19 实测
+    「10-19」只剩「10-1」），所有折线图共用这一处。 */
+function dayLabels(list, x, h) {
+  return spread(list.length, 5).map((i) => {
+    const anchor = i === 0 ? 'start' : i === list.length - 1 ? 'end' : 'middle'
+    return `<text x="${x(i).toFixed(1)}" y="${h - 9}" text-anchor="${anchor}">`
+      + `${escapeHtml(list[i].label)}</text>`
+  }).join('')
+}
+
 function figure(title, note, svg) {
   const caption = `<strong>${escapeHtml(title)}</strong>`
     + (note ? `<span class="note">${escapeHtml(note)}</span>` : '')
@@ -324,8 +350,7 @@ function lineChart({ title, note, points, format, markers = [] }) {
   const peakLabel = list[peak].value > 0
     ? `<text x="${peakAt.toFixed(1)}" y="${(y(list[peak].value) - 5).toFixed(1)}" class="peakLabel" text-anchor="${anchor}">${escapeHtml(format(list[peak].value))}</text>`
     : ''
-  const labels = spread(list.length, 5)
-    .map((i) => `<text x="${x(i).toFixed(1)}" y="${h - 9}" text-anchor="middle">${escapeHtml(list[i].label)}</text>`).join('')
+  const labels = dayLabels(list, x, h)
   const marks = markers.filter((marker) => marker.index >= 0 && marker.index < list.length)
     .map((marker) => {
       const at = x(marker.index)
@@ -341,6 +366,54 @@ function lineChart({ title, note, points, format, markers = [] }) {
     + `<polyline points="${path}" fill="none" stroke="${COLORS.line}" stroke-width="1.8"/>`
     + dots + peakLabel + labels + marks + '</svg>'
   return figure(title, note, svg)
+}
+
+/** 折线图 + 两段堆叠：上边界是每天活跃账号，浅蓝是回访（此前活跃过），
+    橙色带是当天新增。points = [{label, value, fresh}]，`fresh` 由服务端给
+    （`usage.perDay[].newAccounts`）——本机不再自己按"首次活跃日"算一遍。
+
+    为什么叠成面积而不是两条线（2026-10-19 owner 定）：新增只有总量的三成左右，
+    画成两条线时几乎平行、要靠量间距才看得出构成；叠起来后带宽就是新增，直接可读。 */
+function compositionChart({ title, note, points, format }) {
+  const list = (points ?? []).map((point) => ({ label: shortDay(point.label),
+    value: num(point.value), fresh: num(point.fresh) }))
+  if (!list.length || !list.some((point) => point.value > 0)) return emptyFigure(title, note)
+  const { w, h, left, right, top, bottom } = CHART
+  const max = Math.max(...list.map((point) => point.value), 1)
+  const x = (i) => (list.length === 1 ? left : left + (i * (w - left - right)) / (list.length - 1))
+  const y = (value) => h - bottom - (value / max) * (h - top - bottom)
+  const returning = list.map((point) => Math.max(point.value - point.fresh, 0))
+  const line = (values) => values
+    .map((value, i) => `${x(i).toFixed(1)},${y(value).toFixed(1)}`).join(' ')
+  const bottomEdge = `${left},${(h - bottom).toFixed(1)}`
+  const returningArea = `<polygon points="${bottomEdge} ${line(returning)} `
+    + `${x(list.length - 1).toFixed(1)},${(h - bottom).toFixed(1)}" `
+    + `fill="${COLORS.returning}" opacity="0.28"/>`
+  const freshBand = `<polygon points="${line(list.map((point) => point.value))} `
+    + `${line(returning).split(' ').reverse().join(' ')}" `
+    + `fill="${COLORS.fresh}" opacity="0.55"/>`
+  const boundary = `<polyline points="${line(list.map((point) => point.value))}" fill="none" `
+    + `stroke="${COLORS.line}" stroke-width="1.8"/>`
+  const peak = list.reduce((best, point, i) => (point.value > list[best].value ? i : best), 0)
+  const dots = list.map((point, i) => {
+    const hot = i === peak && point.value > 0
+    return `<circle cx="${x(i).toFixed(1)}" cy="${y(point.value).toFixed(1)}" r="${hot ? 3 : 1.6}" `
+      + `fill="${hot ? COLORS.peak : COLORS.line}"/>`
+  }).join('')
+  const peakAt = x(peak)
+  const anchor = peakAt < left + 26 ? 'start' : peakAt > w - right - 26 ? 'end' : 'middle'
+  const peakLabel = list[peak].value > 0
+    ? `<text x="${peakAt.toFixed(1)}" y="${(y(list[peak].value) - 5).toFixed(1)}" class="peakLabel" text-anchor="${anchor}">${escapeHtml(format(list[peak].value))}</text>`
+    : ''
+  const labels = dayLabels(list, x, h)
+  const svg = `<svg viewBox="0 0 ${w} ${h}" role="img" aria-label="${escapeHtml(title)}">`
+    + gridLines(max, y, format)
+    + returningArea + freshBand + boundary + dots + peakLabel + labels + '</svg>'
+  const legend = '<div class="trend-legend">'
+    + `<span><i style="background:${COLORS.returning}"></i>回访</span>`
+    + `<span><i style="background:${COLORS.fresh}"></i>当日新增</span>`
+    + '</div>'
+  return figure(title, note, svg + legend)
 }
 
 /** 24 小时 × N 天的热度图：格子越深，那一小时在线的账号越多。
@@ -914,7 +987,9 @@ function retentionBlock(retention) {
     + '<div class="frow"><span class="fk">登记</span><span class="track">'
     + '<i style="width:100%;background:#cbd5e1"></i></span>'
     + `<span class="fv"><span>${formatInt(users.external)} 个账号</span></span></div>`
-    + funnelRow('登记激活', retention.activation)
+    // 名字写全：它量的是"登记后 7 天内第一次连上"，不是留存；只写「登记激活」会被读成
+    // 留存率，然后被问"为什么一直不动"（2026-10-19 实际发生过）。
+    + funnelRow('登记后 7 天内连上', retention.activation)
     + funnelRow('次日留存', retention.d1)
     + funnelRow('7 日留存', retention.d7, { warnBelow: THRESHOLDS.d7Low })
     + '</div>'
@@ -934,7 +1009,8 @@ function rangeSection(report, days, completed = false, { history = null } = {}) 
 
   const peakNote = peak && num(peak.egressBytes) > 0
     ? `峰值 ${fullDay(peak.day)} ${formatBytes(peak.egressBytes)}` : `最近 ${days} 天`
-  const userPoints = (usage.perDay ?? []).map((row) => ({ label: row.day, value: row.accounts }))
+  const userPoints = (usage.perDay ?? []).map((row) => ({ label: row.day, value: row.accounts,
+    fresh: row.newAccounts }))
   const egressPoints = (usage.perDay ?? []).map((row) => ({ label: row.day, value: row.egressBytes }))
   // 发版标注：历史快照里每个构建号第一次出现的那一天，在流量图上画一条竖线——
   // 「10-12 发版后流量翻倍」这类因果不用翻日历对。没有历史文件就没有标注。
@@ -955,12 +1031,22 @@ function rangeSection(report, days, completed = false, { history = null } = {}) 
       .filter((marker) => marker.day && firstSeen.has(marker.day))
       .map((marker) => ({ index: marker.index, label: '发版' }))
   })()
-  const charts = lineChart({
+  // 活跃账号图：服务端给了「新增 / 回访」拆分（`perDay[].newAccounts`）就叠成两段；
+  // 老服务端没有这个字段时退回单条折线——本机不补算"首次活跃日"，口径只能有一个所有者。
+  const hasSplit = userPoints.length > 0
+    && userPoints.every((point) => point.fresh !== undefined && point.fresh !== null)
+  const activeChart = hasSplit ? compositionChart({
     title: '每日活跃账号',
     note: `近 7 天 ${formatInt(usage.activeAccounts7d)} 个`,
     points: userPoints,
     format: (value) => String(Math.round(value)),
-  }) + lineChart({
+  }) : lineChart({
+    title: '每日活跃账号',
+    note: `近 7 天 ${formatInt(usage.activeAccounts7d)} 个`,
+    points: userPoints,
+    format: (value) => String(Math.round(value)),
+  })
+  const charts = activeChart + lineChart({
     title: '每日出口流量',
     note: peakNote,
     points: egressPoints,
@@ -983,11 +1069,15 @@ function rangeSection(report, days, completed = false, { history = null } = {}) 
 
   const rankedAccounts = (usage.topAccounts ?? []).slice(0, LIMIT.accounts)
   const rankLabel = accountLabeler(rankedAccounts)
+  // 「最近在线」不是装饰：排名按 30 天出口总量，一个早已不再使用的账号会在窗口里
+  // 顶住第一好几周（2026-10-19 实际发生：10.95 GB 全部发生在 10-02 至 10-13，
+  // 之后零流量，数字一直不动，看着像算错了）。列出来才能分辨"还在用"与"已休眠"。
   const accounts = table([
     { label: '账号', text: (row) => rankLabel(row), wide: true },
     { label: '出口', text: (row) => formatBytes(row.egressBytes), num: true },
     { label: '连接', text: (row) => formatInt(row.connections), num: true },
     { label: '设备', text: (row) => formatInt(row.devices), num: true },
+    { label: '最近在线', text: (row) => (row.lastSeenAt ? shortTime(row.lastSeenAt) : '—'), num: true },
   ], rankedAccounts, '窗口内没有用量记录')
 
   const listedDevices = (devices.list ?? []).slice(0, LIMIT.devices)
