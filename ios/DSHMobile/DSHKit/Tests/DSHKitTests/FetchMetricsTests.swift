@@ -29,4 +29,15 @@ final class FetchMetricsTests: XCTestCase {
         }
         XCTAssertEqual(metrics.count, FetchMetrics.capacity)
     }
+
+    func test_summary_fields_are_stable() {
+        var metrics = FetchMetrics()
+        metrics.record(.init(firstRowMs: 120, batchMs: 300, pages: 3))
+        let fields = metrics.summaryFields()
+        XCTAssertEqual(fields["samples"], "1")
+        XCTAssertEqual(fields["batchP50Ms"], "300")
+        XCTAssertEqual(fields["firstRowP95Ms"], "120")
+        XCTAssertEqual(fields["duplicateRate"], "0.000")
+        XCTAssertEqual(fields["failureRate"], "0.000")
+    }
 }

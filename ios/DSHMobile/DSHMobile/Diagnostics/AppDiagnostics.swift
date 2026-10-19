@@ -73,6 +73,9 @@ final class AppDiagnostics {
         DSHLog.sink = { [ring] line in ring.append(level: "info", source: "app", text: line) }
         // 协议层的逐页耗时：系统日志在真机上没有稳定到达，直接接进环。
         SessionPipeline.traceSink = { [ring] line in ring.append(level: "info", source: "app", text: line) }
+        SessionPipeline.metricsSink = { [ring] fields in
+            ring.append(level: "info", source: "app", text: "metrics.snapshot " + Self.metricsText(fields))
+        }
         // 真机验证入口：`xcrun devicectl device process launch … -DSHDiagCommand on`
         // 带参数拉起即可打开采集，不必在手机上点开链接、再点系统「是否打开」。
         if let command = Self.launchCommand() { perform(command: command) }
@@ -149,6 +152,12 @@ final class AppDiagnostics {
     }
 
     /// 启动参数里的同一条命令：`-DSHDiagCommand <off|on|export|status>`。
+
+    /// 指标快照的扁平文本（键排序，便于 grep 与聚合）。
+    private nonisolated static func metricsText(_ fields: [String: String]) -> String {
+        fields.keys.sorted().map { "\($0)=\(fields[$0] ?? "")" }.joined(separator: " ")
+    }
+
     static func launchCommand() -> String? {
         let args = ProcessInfo.processInfo.arguments
         guard let index = args.firstIndex(of: "-DSHDiagCommand"), index + 1 < args.count else { return nil }
@@ -180,6 +189,9 @@ final class AppDiagnostics {
             DSHLog.sink = { [ring] line in ring.append(level: "info", source: "app", text: line) }
         // 协议层的逐页耗时：系统日志在真机上没有稳定到达，直接接进环。
         SessionPipeline.traceSink = { [ring] line in ring.append(level: "info", source: "app", text: line) }
+        SessionPipeline.metricsSink = { [ring] fields in
+            ring.append(level: "info", source: "app", text: "metrics.snapshot " + Self.metricsText(fields))
+        }
             record(level: "info", source: "diag", text: "enabled by dsh://diag/on")
         case "export":
             enabled = true
@@ -292,6 +304,7 @@ final class OSLogReader: @unchecked Sendable {
             failures += 1
         }
     }
+
 
     private static func level(for type: OSLogEntryLog.Level) -> String {
         switch type {

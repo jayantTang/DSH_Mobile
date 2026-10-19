@@ -150,6 +150,12 @@ public actor SessionPipeline {
     }
 
     /// 采纳对端的已知为空结论；版本不一致整段丢弃。写入同步落盘，冷启动可复用。
+    /// 指标只经统一日志输出一次快照；诊断通道按进程采集，不需要 App 侧再转发。
+    private static func logMetrics(_ metrics: FetchMetrics) {
+        let fields = metrics.summaryFields()
+        metricsSink?(fields)
+    }
+
     /// 指标快照（只读；不参与判定）。
     public func metricsSnapshot() -> FetchMetrics { metrics }
 
@@ -192,6 +198,9 @@ public actor SessionPipeline {
 
     /// 历史取页的只读指标（首行/批完成/失败）。
     public private(set) var metrics = FetchMetrics()
+    /// 指标出口（诊断通道接线用）：只读快照，不参与判定。
+    /// 与 `traceSink` 同一条思路——DSHKit 不依赖 App 的日志类型，由 App 注入。
+    public nonisolated(unsafe) static var metricsSink: (@Sendable ([String: String]) -> Void)?
 
     /// 任务级单飞：同一范围只跑一次，跨入口共享（上拉/跳转/展开/预取）。
     private var jobs: FetchJobCoordinator
@@ -355,6 +364,7 @@ public actor SessionPipeline {
                 let ms = Int(Date().timeIntervalSince(startedAt) * 1000)
                 metrics.record(.init(firstRowMs: result.isEmpty ? nil : ms,
                                      batchMs: ms, pages: 1))
+                Self.logMetrics(metrics)
                 return result
             } catch {
                 jobs.fail(range)
@@ -362,6 +372,7 @@ public actor SessionPipeline {
                 let ms = Int(Date().timeIntervalSince(startedAt) * 1000)
                 let failure = (error as? FetchError).map(String.init(describing:)) ?? "error"
                 metrics.record(.init(firstRowMs: nil, batchMs: ms, pages: 1, failure: failure))
+                Self.logMetrics(metrics)
                 throw error
             }
         case .joined:

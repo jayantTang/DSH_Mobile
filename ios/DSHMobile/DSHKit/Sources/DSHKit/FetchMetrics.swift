@@ -61,6 +61,17 @@ public struct FetchMetrics: Sendable, Equatable {
         return Double(failed) / Double(window.count)
     }
 
+    /// 诊断出口用的扁平字段；键名稳定，CLI 与面板按它聚合。
+    public func summaryFields() -> [String: String] {
+        var fields: [String: String] = ["samples": String(count)]
+        if let value = batchP50Ms { fields["batchP50Ms"] = String(value) }
+        if let value = batchP95Ms { fields["batchP95Ms"] = String(value) }
+        if let value = firstRowP95Ms { fields["firstRowP95Ms"] = String(value) }
+        fields["duplicateRate"] = String(format: "%.3f", duplicateRate)
+        fields["failureRate"] = String(format: "%.3f", failureRate())
+        return fields
+    }
+
     /// 最近秩法（nearest-rank）：样本少时也给出确定值，不插值。
     static func percentile(_ values: [Int], _ p: Double) -> Int? {
         guard !values.isEmpty else { return nil }
