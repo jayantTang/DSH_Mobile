@@ -990,3 +990,33 @@ test('折叠回包同样走压缩信封，解压后与不压缩的折叠结果�
   const raw = inflateRawSync(Buffer.from(packed.value.value, 'base64'))
   assert.deepEqual(JSON.parse(raw.toString('utf8')), plain.value)
 })
+
+test('coverage is opt-in: without it there are no knownEmpty/revision fields', async () => {
+  const log = makeLog(100)
+  const service = bound(createHistoryService({ logger: { warn() {}, info() {} } }), fakeQuery(log))
+  const result = await service.handle(WINDOW_METHOD, { address: ADDRESS, before: 51, limit: 50 })
+  assert.equal(result.ok, true)
+  assert.equal('knownEmpty' in result.value, false)
+  assert.equal('revision' in result.value, false)
+})
+
+test('coverage reports known-empty spans with the session revision', async () => {
+  const log = makeLog(100).filter((event) => event.seq < 40 || event.seq > 45)
+  const service = bound(createHistoryService({ logger: { warn() {}, info() {} } }), fakeQuery(log))
+  const result = await service.handle(WINDOW_METHOD, {
+    address: ADDRESS, before: 51, limit: 50, coverage: true,
+  })
+  assert.equal(result.ok, true)
+  assert.deepEqual(result.value.knownEmpty, [[40, 45]])
+  assert.equal(result.value.revision, '99')
+})
+
+test('an empty window claims no known-empty spans', async () => {
+  const log = makeLog(5)
+  const service = bound(createHistoryService({ logger: { warn() {}, info() {} } }), fakeQuery(log))
+  const result = await service.handle(WINDOW_METHOD, {
+    address: ADDRESS, before: 1, limit: 50, coverage: true,
+  })
+  assert.equal(result.ok, true)
+  assert.deepEqual(result.value.knownEmpty, [])
+})
