@@ -133,7 +133,7 @@ public actor SessionPipeline {
     var asked = RangeIndex() // internal：+Paging 的 currentGaps 要读
 
     /// 任务级单飞：同一范围只跑一次，跨入口共享（上拉/跳转/展开/预取）。
-    private var jobs = FetchJobCoordinator()
+    private var jobs: FetchJobCoordinator
     /// 搭车者等待同一个任务，不重复发请求。
     private var ensureJobs: [ClosedRange<Int>: Task<[SessionRecord], Error>] = [:]
 
@@ -198,6 +198,9 @@ public actor SessionPipeline {
         pageSize: Int = 50,
         hotLimit: Int = 500,
         initialRanges: RangeIndex = RangeIndex(),
+        fetchAttemptTimeout: TimeInterval = FetchJobMachine.defaultAttemptTimeout,
+        fetchBatchBudget: TimeInterval = FetchJobMachine.defaultBatchBudget,
+        fetchBackoff: [TimeInterval] = FetchJobMachine.defaultBackoff,
         flushWrites: @escaping @Sendable ([MessageStore.RecordChange]) -> Void = { _ in },
         fetchTimeout: TimeInterval = 45
     ) {
@@ -211,6 +214,9 @@ public actor SessionPipeline {
         self.hotLimit = hotLimit
         self.ranges = initialRanges
         self.fetchTimeout = fetchTimeout
+        self.jobs = FetchJobCoordinator(attemptTimeout: fetchAttemptTimeout,
+                                        batchBudget: fetchBatchBudget,
+                                        backoff: fetchBackoff)
         self.flushWrites = flushWrites
     }
 
@@ -274,10 +280,10 @@ public actor SessionPipeline {
     ) async throws -> [SessionRecord] {
         let slot: FetchJobMachine.Slot = priority == .prefetch ? .prefetch : .user
         switch jobs.request(range, slot: slot) {
-        case .run:
+        case .run(let machine):
             let task = Task { [weak self] () throws -> [SessionRecord] in
                 guard let self else { throw CancellationError() }
-                return try await self.records(in: range, priority: priority)
+                return try await self.runJob(range: range, priority: priority, machine: machine)
             }
             ensureJobs[range] = task
             do {
@@ -297,6 +303,36 @@ public actor SessionPipeline {
             throw FetchBusy()
         case .ignored:
             return []
+        }
+    }
+
+    /// 执行一个任务：单次尝试有 3s 上限，失败按机器的退避序列重试，
+    /// 预算耗尽或次数用尽后抛错。任务的四态判定全部来自 `FetchJobMachine`。
+    private func runJob(range: ClosedRange<Int>,
+                        priority: FetchPriority,
+                        machine: FetchJobMachine) async throws -> [SessionRecord] {
+        var machine = machine
+        while true {
+            let startedAt = Date()
+            do {
+                return try await withTimeout(machine.attemptTimeout) {
+                    try await self.records(in: range, priority: priority)
+                }
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                let spent = min(Date().timeIntervalSince(startedAt), machine.attemptTimeout)
+                switch machine.attemptFailed(elapsed: spent) {
+                case .retry(let delay):
+                    // 页级失败计数是给"读者手动重试"的口径；任务级重试由机器计数，
+                    // 这里先清掉，否则第 4 次尝试会被页级 3 次上限直接拒掉、根本没发请求。
+                    clearFailureCounts(for: range)
+                    try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                    machine.resumeAfterBackoff(delay)
+                case .fail, .ignore:
+                    throw error
+                }
+            }
         }
     }
 
@@ -600,10 +636,16 @@ public actor SessionPipeline {
     /// 清掉该范围覆盖对齐页的失败计数，再走一次「取不到就拉」。
     /// 除此之外没有任何路径能清零计数——失败到上限的缺口不会自己偷偷重试。
     public func retry(range: ClosedRange<Int>) async throws {
+        clearFailureCounts(for: range)
+        _ = try await records(in: range, priority: .userVisible)
+    }
+
+    /// 只清失败计数，不重新取数：任务级重试要复用这条口径，
+    /// 不能被页级 3 次上限挡在门外（尝试次数由 `FetchJobMachine` 决定）。
+    private func clearFailureCounts(for range: ClosedRange<Int>) {
         for page in alignedPages(covering: RangeIndex.Span(range.lowerBound, range.upperBound)) {
             failureCounts.removeValue(forKey: page.lowerBound)
         }
-        _ = try await records(in: range, priority: .userVisible)
     }
 
     // MARK: - 下行合并（WSS 推送 / 流式）

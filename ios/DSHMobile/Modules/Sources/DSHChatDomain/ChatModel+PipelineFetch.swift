@@ -86,9 +86,8 @@ public extension ChatPipelineBridge {
             // 没有终态。20 秒上限把未知结局收口成可重试的失败行。
             // 任务级单飞：同一范围已有任务在跑就搭车；用户槽位被别的范围占用时
             // 这次什么都不做（下一次触发会再试），不当成失败。
-            let fetched = try await Self.withTimeout(seconds: 20) {
-                try await session.ensure(in: lower...(oldest - 1), priority: .userVisible)
-            }
+            // 截止时间由任务自己的预算负责（3s 尝试 / 6s 批），这里不再叠第二层超时。
+            let fetched = try await session.ensure(in: lower...(oldest - 1), priority: .userVisible)
             fetchedCount = fetched.count
             olderWindow.observe(records: fetched.count)
             didAutoRetry = false

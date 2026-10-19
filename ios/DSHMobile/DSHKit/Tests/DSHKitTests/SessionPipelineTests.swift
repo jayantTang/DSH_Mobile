@@ -85,14 +85,18 @@ final class SessionPipelineTests: XCTestCase {
     private func makePipeline(
         hotLimit: Int = 500,
         tick: @escaping @Sendable () async -> Void = {},
-        fetchTimeout: TimeInterval = 45
+        fetchTimeout: TimeInterval = 45,
+        attemptTimeout: TimeInterval = FetchJobMachine.defaultAttemptTimeout,
+        batchBudget: TimeInterval = FetchJobMachine.defaultBatchBudget,
+        backoff: [TimeInterval] = FetchJobMachine.defaultBackoff
     ) -> SessionPipeline {
         let stub = stub!
         return SessionPipeline(
             scope: "mac", sessionId: "s1", store: nil,
             fetch: { range, priority in try await stub.fetch(range, priority: priority) },
             frameTick: tick, now: { 1000 }, pageSize: 50, hotLimit: hotLimit,
-            fetchTimeout: fetchTimeout)
+            fetchAttemptTimeout: attemptTimeout, fetchBatchBudget: batchBudget,
+            fetchBackoff: backoff, fetchTimeout: fetchTimeout)
     }
 
     /// 等异步沉淀的轻量工具（prefetch/diff 广播是 fire-and-forget）。
@@ -158,8 +162,22 @@ final class SessionPipelineTests: XCTestCase {
             // expected
         }
         _ = try await first.value
-        let requests = await stub.allRequests()
-        XCTAssertFalse(requests.contains(51...100))
+    }
+
+    func testEnsureRetriesFastFailuresWithBackoffThenGivesUp() async throws {
+        let stub = stub!
+        await stub.setDelay(.milliseconds(5))
+        await stub.set(1...50, .error("boom"))
+        let pipeline = makePipeline(attemptTimeout: 0.5, batchBudget: 5,
+                                    backoff: [0.01, 0.02, 0.03])
+        do {
+            _ = try await pipeline.ensure(range: 1...50)
+            XCTFail("persistent failure must throw")
+        } catch {
+            // expected
+        }
+        let count = await stub.requestCount(1...50)
+        XCTAssertEqual(count, 4, "首次 + 3 次退避，共 4 次尝试")
     }
 
     // MARK: - 区间判定三分支

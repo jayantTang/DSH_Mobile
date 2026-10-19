@@ -27,19 +27,31 @@ public struct FetchJobMachine: Sendable, Equatable {
         case ignore
     }
 
-    public static let attemptTimeout: TimeInterval = 3
-    public static let batchBudget: TimeInterval = 6
+    public static let defaultAttemptTimeout: TimeInterval = 3
+    public static let defaultBatchBudget: TimeInterval = 6
     /// 首次 + 3 次退避，共 4 次尝试。
-    public static let maxAttempts = 4
-    public static let backoff: [TimeInterval] = [0.5, 1, 2]
+    public static let defaultMaxAttempts = 4
+    public static let defaultBackoff: [TimeInterval] = [0.5, 1, 2]
 
     public let slot: Slot
+    public let attemptTimeout: TimeInterval
+    public let batchBudget: TimeInterval
+    public let maxAttempts: Int
+    public let backoff: [TimeInterval]
     public private(set) var state: State = .queued
     public private(set) var attempts = 0
     public private(set) var elapsed: TimeInterval = 0
 
-    public init(slot: Slot) {
+    public init(slot: Slot,
+                attemptTimeout: TimeInterval = FetchJobMachine.defaultAttemptTimeout,
+                batchBudget: TimeInterval = FetchJobMachine.defaultBatchBudget,
+                maxAttempts: Int = FetchJobMachine.defaultMaxAttempts,
+                backoff: [TimeInterval] = FetchJobMachine.defaultBackoff) {
         self.slot = slot
+        self.attemptTimeout = attemptTimeout
+        self.batchBudget = batchBudget
+        self.maxAttempts = maxAttempts
+        self.backoff = backoff
     }
 
     public var isTerminal: Bool {
@@ -75,7 +87,7 @@ public struct FetchJobMachine: Sendable, Equatable {
     public mutating func advance(by seconds: TimeInterval) -> Tick {
         guard case .running = state else { return .ignore }
         elapsed += seconds
-        if elapsed >= Self.batchBudget {
+        if elapsed >= batchBudget {
             state = .failed(retryable: true)
             return .fail
         }
@@ -86,15 +98,16 @@ public struct FetchJobMachine: Sendable, Equatable {
     ///
     /// 预算内且还有退避次数 → 回到 queued 并给出延迟；否则 failed(retryable)。
     @discardableResult
-    public mutating func attemptFailed(timeout: TimeInterval = attemptTimeout) -> Tick {
+    public mutating func attemptFailed(elapsed actual: TimeInterval? = nil) -> Tick {
         guard case .running = state else { return .ignore }
-        elapsed += timeout
-        if elapsed >= Self.batchBudget || attempts >= Self.maxAttempts {
+        // 用实际耗时，而不是假定每次都会拖满超时；否则快速失败会被预算误杀。
+        elapsed += actual ?? attemptTimeout
+        if elapsed >= batchBudget || attempts >= maxAttempts {
             state = .failed(retryable: true)
             return .fail
         }
         state = .queued
-        return .retry(after: Self.backoff[min(attempts - 1, Self.backoff.count - 1)])
+        return .retry(after: backoff[min(attempts - 1, backoff.count - 1)])
     }
 
     /// 休眠后重新开始下一次尝试。

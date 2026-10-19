@@ -5,13 +5,13 @@ final class FetchJobMachineTests: XCTestCase {
     func test_four_attempts_then_retryable_failure() {
         var job = FetchJobMachine(slot: .user)
         XCTAssertTrue(job.start())
-        XCTAssertEqual(job.attemptFailed(timeout: 0.1), .retry(after: 0.5))
+        XCTAssertEqual(job.attemptFailed(elapsed: 0.1), .retry(after: 0.5))
         XCTAssertTrue(job.resumeAfterBackoff(0.5))
-        XCTAssertEqual(job.attemptFailed(timeout: 0.1), .retry(after: 1))
+        XCTAssertEqual(job.attemptFailed(elapsed: 0.1), .retry(after: 1))
         XCTAssertTrue(job.resumeAfterBackoff(1))
-        XCTAssertEqual(job.attemptFailed(timeout: 0.1), .retry(after: 2))
+        XCTAssertEqual(job.attemptFailed(elapsed: 0.1), .retry(after: 2))
         XCTAssertTrue(job.resumeAfterBackoff(2))
-        XCTAssertEqual(job.attemptFailed(timeout: 0.1), .fail)
+        XCTAssertEqual(job.attemptFailed(elapsed: 0.1), .fail)
         XCTAssertEqual(job.state, .failed(retryable: true))
         XCTAssertEqual(job.attempts, 4, "首次 + 3 次退避")
     }
@@ -48,7 +48,7 @@ final class FetchJobMachineTests: XCTestCase {
         XCTAssertTrue(job.start())
         var delays: [TimeInterval] = []
         for _ in 0..<3 {
-            guard case .retry(let delay) = job.attemptFailed(timeout: 0.1) else {
+            guard case .retry(let delay) = job.attemptFailed(elapsed: 0.1) else {
                 return XCTFail("expected retry")
             }
             delays.append(delay)

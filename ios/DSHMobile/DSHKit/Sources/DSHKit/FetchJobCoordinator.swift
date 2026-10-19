@@ -20,8 +20,20 @@ public struct FetchJobCoordinator: Sendable, Equatable {
 
     /// 终态任务立即移除；只保留 queued/running。
     private var jobs: [ClosedRange<Int>: FetchJobMachine] = [:]
+    private let attemptTimeout: TimeInterval
+    private let batchBudget: TimeInterval
+    private let maxAttempts: Int
+    private let backoff: [TimeInterval]
 
-    public init() {}
+    public init(attemptTimeout: TimeInterval = FetchJobMachine.defaultAttemptTimeout,
+                batchBudget: TimeInterval = FetchJobMachine.defaultBatchBudget,
+                maxAttempts: Int = FetchJobMachine.defaultMaxAttempts,
+                backoff: [TimeInterval] = FetchJobMachine.defaultBackoff) {
+        self.attemptTimeout = attemptTimeout
+        self.batchBudget = batchBudget
+        self.maxAttempts = maxAttempts
+        self.backoff = backoff
+    }
 
     public var depth: Int { jobs.count }
 
@@ -44,7 +56,9 @@ public struct FetchJobCoordinator: Sendable, Equatable {
         if slot == .user, hasActiveJob(in: .user, excluding: range) {
             return .rejectedUserBusy
         }
-        var job = FetchJobMachine(slot: slot)
+        var job = FetchJobMachine(slot: slot, attemptTimeout: attemptTimeout,
+                                  batchBudget: batchBudget, maxAttempts: maxAttempts,
+                                  backoff: backoff)
         _ = job.start()
         jobs[range] = job
         return .run(job)
