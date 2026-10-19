@@ -94,6 +94,13 @@ published_build() {
 
 PUBLISHED_BUILD="$(published_build)"
 BUILD_NUMBER="$("$NODE_BIN" "$OTA_VERSION" --published "$PUBLISHED_BUILD")"
+# 解析 .mobileprovision：`security cms -D` 在本机会卡在信任评估（trustd/OCSP），
+# openssl 只做 CMS 解码与不校验证书的解包，毫秒级返回；失败再退回 security。
+profile_plist() {
+  openssl smime -inform der -verify -noverify -in "$1" 2>/dev/null \
+    || security cms -D -i "$1" 2>/dev/null
+}
+
 step "构建号 ${BUILD_NUMBER}（北京时间）· 线上 ${PUBLISHED_BUILD:-无}"
 
 if [ "$PLAN_ONLY" -eq 1 ]; then
@@ -121,12 +128,12 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
       [ -d "$dir" ] || continue
       for file in "$dir"/*.mobileprovision; do
         [ -e "$file" ] || continue
-        name=$(security cms -D -i "$file" 2>/dev/null | plutil -extract Name raw -o - - 2>/dev/null || true)
+        name=$(profile_plist "$file" 2>/dev/null | plutil -extract Name raw -o - - 2>/dev/null || true)
         [ "$name" = "$OTA_PROFILE_NAME" ] && found="$file"
       done
     done
     [ -n "$found" ] || die "本机没有名为「${OTA_PROFILE_NAME}」的描述文件：去掉 --skip-profile 让脚本去 ASC 签一张"
-    expiry=$(security cms -D -i "$found" | plutil -extract ExpirationDate raw -o - -)
+    expiry=$(profile_plist "$found" | plutil -extract ExpirationDate raw -o - -)
     echo "    用 ${found}（到期 ${expiry}）"
   fi
 

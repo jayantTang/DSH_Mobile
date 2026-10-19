@@ -221,7 +221,15 @@ function profileDirectory() {
 
 /** Reads one entitlement out of an installed profile, for the closing check. */
 function profileEntitlement(path, key) {
-  const plist = execFileSync('security', ['cms', '-D', '-i', path], { encoding: 'buffer' })
+  // `security cms -D` 在本机会卡在信任评估（trustd/OCSP）；openssl 只解 CMS，
+  // 不校验证书链，毫秒级返回。失败再退回 security（离线机器上行为不变）。
+  let plist
+  try {
+    plist = execFileSync('openssl', ['smime', '-inform', 'der', '-verify', '-noverify', '-in', path],
+      { encoding: 'buffer', stdio: ['ignore', 'pipe', 'ignore'] })
+  } catch {
+    plist = execFileSync('security', ['cms', '-D', '-i', path], { encoding: 'buffer' })
+  }
   const tmp = join(ROOT, 'ios/DSHMobile/.build/dist-signing/.profile.plist')
   mkdirSync(dirname(tmp), { recursive: true })
   writeFileSync(tmp, plist)
