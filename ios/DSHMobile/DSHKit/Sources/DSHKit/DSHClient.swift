@@ -148,6 +148,11 @@ public struct DSHClient: Sendable {
         capabilities.contains(HistoryWindowWire.foldCapability)
     }
 
+    /// 覆盖信息（已知为空 + 版本）是否可用。
+    public var historyCoverageEnabled: Bool {
+        capabilities.contains(HistoryWindowWire.coverageCapability)
+    }
+
     public func historyWindow(_ request: HistoryWindowRequest) async throws -> HistoryWindowValue {
         // 先按未类型化的 JSON 取回：连接器可能回纯 JSON，也可能回压缩信封
         // （`history-compression`）。按 `encoding` 字段识别，两种形态都能解；

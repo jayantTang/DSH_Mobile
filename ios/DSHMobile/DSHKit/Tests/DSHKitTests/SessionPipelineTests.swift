@@ -180,6 +180,32 @@ final class SessionPipelineTests: XCTestCase {
         XCTAssertEqual(count, 4, "首次 + 3 次退避，共 4 次尝试")
     }
 
+    func test_known_empty_hides_sparse_holes_only_when_revision_matches() async throws {
+        let pipeline = makePipeline()
+        await pipeline.apply(events: [record(1).event, record(3).event])
+        let stale = "2"
+        await pipeline.applyKnownEmpty([2...2], revision: stale)
+        let before = await pipeline.uncoveredSpans()
+        XCTAssertEqual(before, [2...2], "版本不一致的已知为空必须丢弃")
+
+        let current = await pipeline.coverageRevision
+        await pipeline.applyKnownEmpty([2...2], revision: current ?? "")
+        let after = await pipeline.uncoveredSpans()
+        XCTAssertTrue(after.isEmpty, "版本一致的已知为空应消掉缺口：\(after)")
+    }
+
+    func test_page_coverage_hides_holes_when_revision_matches() async throws {
+        let stub = stub!
+        let sparse = SessionPipeline.FetchPage(
+            records: [record(1), record(3)], hasMore: true,
+            knownEmpty: [[2, 2]], revision: "3")
+        await stub.set(1...50, .page(sparse))
+        let pipeline = makePipeline()
+        _ = try await pipeline.records(in: 1...3)
+        let holes = await pipeline.uncoveredSpans()
+        XCTAssertTrue(holes.isEmpty, "同版本的 knownEmpty 应消掉空洞：\(holes)")
+    }
+
     // MARK: - 区间判定三分支
 
     func testFullCoverageServesLocallyWithoutNetwork() async throws {

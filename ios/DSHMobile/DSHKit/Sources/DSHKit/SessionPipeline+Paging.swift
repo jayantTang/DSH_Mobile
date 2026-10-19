@@ -95,6 +95,7 @@ extension SessionPipeline {
         // 已问过的区间也参与"覆盖"判定：空号是已知无内容，不是待加载的缺口。
         var covered = ranges
         for span in asked.spans { covered.insert(span.start...span.end) }
+        for span in knownEmptyRanges().spans { covered.insert(span.start...span.end) }
         return covered.gaps(within: oldest...newest).map { span in
             GapRow(start: span.start, end: span.end, status: gapStatus(for: span))
         }

@@ -34,11 +34,17 @@ public actor SessionPipeline {
         public let hasMore: Bool
         /// 服务端日志被裁剪：允许「到头」（spec 场景 6 与 FR-038 语义沿用）。
         public let clamped: Bool
+        /// 连接器确认无内容的号段与版本（能力 `history-coverage`）。
+        public let knownEmpty: [[Int]]
+        public let revision: String?
 
-        public init(records: [SessionRecord], hasMore: Bool, clamped: Bool = false) {
+        public init(records: [SessionRecord], hasMore: Bool, clamped: Bool = false,
+                    knownEmpty: [[Int]] = [], revision: String? = nil) {
             self.records = records
             self.hasMore = hasMore
             self.clamped = clamped
+            self.knownEmpty = knownEmpty
+            self.revision = revision
         }
     }
 
@@ -131,6 +137,22 @@ public actor SessionPipeline {
     /// 这里记"这一段问过、宿主答过"，空号由此归为已知无内容；**不持久化**：
     /// seq 可能被宿主重排，落盘的旧区间会与新区间对不上。
     var asked = RangeIndex() // internal：+Paging 的 currentGaps 要读
+
+    /// 对端确认"这些号没有内容"。带版本：宿主重排号段后旧结论必须失效。
+    private var knownEmpty = RangeIndex()
+    /// 版本 = 当前最新号；对端回包的 revision 与它一致才采纳。
+    public var coverageRevision: String? { ranges.newest.map(String.init) }
+
+    /// 采纳对端的已知为空结论；版本不一致整段丢弃。
+    public func applyKnownEmpty(_ spans: [ClosedRange<Int>], revision: String) {
+        guard revision == coverageRevision else { return }
+        guard !spans.isEmpty else { return }
+        for span in spans { knownEmpty.insert(span) }
+        emit(Diff(gaps: currentGaps()))
+    }
+
+    /// 覆盖判定要用的已知为空（供 +Paging 读取）。
+    func knownEmptyRanges() -> RangeIndex { knownEmpty }
 
     /// 任务级单飞：同一范围只跑一次，跨入口共享（上拉/跳转/展开/预取）。
     private var jobs: FetchJobCoordinator
@@ -628,6 +650,12 @@ public actor SessionPipeline {
         }
         // 成功问过一段，就记下来：即使回包比请求的范围稀疏，也不该再把它当缺口。
         asked.insert(requested)
+        // 对端确认的空号：版本与当前一致才采纳（宿主重排号段后旧结论失效）。
+        if let revision = page.revision, revision == coverageRevision {
+            for span in page.knownEmpty where span.count == 2 && span[0] <= span[1] {
+                knownEmpty.insert(span[0]...span[1])
+            }
+        }
         diff.gaps = currentGaps()
         emit(diff)
     }

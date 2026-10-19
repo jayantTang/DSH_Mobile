@@ -34,6 +34,8 @@ public struct HistoryWindowRequest: Sendable, Codable {
     /// Only `"deflate-raw"` is defined; omit it and the connector returns plain JSON,
     /// which is what every client before this capability does.
     public let encoding: String?
+    /// 覆盖信息（能力 `history-coverage`）：请求随回包带回"这些号确认没有内容"。
+    public let coverage: Bool?
 
     /// 「从最新开始」的线上安全值。连接器用 JS `Number.isSafeInteger` 校验
     /// `before`；Swift 的 `Int.max`（2^63−1）过 JSON.parse 会变成 2^63，
@@ -43,7 +45,7 @@ public struct HistoryWindowRequest: Sendable, Codable {
 
     public init(address: SessionAddress, before: Int, through: Int? = nil,
                 limit: Int? = nil, maxBytes: Int? = nil, roles: [String]? = nil,
-                encoding: String? = nil, fold: Bool? = nil) {
+                encoding: String? = nil, fold: Bool? = nil, coverage: Bool? = nil) {
         self.address = address
         self.before = before
         self.through = through
@@ -52,6 +54,7 @@ public struct HistoryWindowRequest: Sendable, Codable {
         self.roles = roles
         self.encoding = encoding
         self.fold = fold
+        self.coverage = coverage
     }
 
     /// The one encoding this build asks for, when the connector advertises it.
@@ -84,10 +87,15 @@ public struct HistoryWindowValue: Sendable, Codable {
     /// 本页被折掉的轮次摘要（能力 `history-fold-summary`）。没有这个字段 = 连接器
     /// 没折（老连接器，或本页没有可折的完成轮次）。
     public let folds: [HistoryFoldSummary]?
+    /// 本窗口内确认无内容的号段（能力 `history-coverage`）。没有 = 老连接器。
+    public let knownEmpty: [[Int]]?
+    /// 覆盖版本；与客户端当前版本不一致时整段丢弃。
+    public let revision: String?
 
     public init(records: [SessionRecord], startSeq: Int?, endSeq: Int?, hasMore: Bool,
                 truncatedBy: String? = nil, clamped: Bool? = nil, scanBoundary: Int? = nil,
-                folds: [HistoryFoldSummary]? = nil) {
+                folds: [HistoryFoldSummary]? = nil,
+                knownEmpty: [[Int]]? = nil, revision: String? = nil) {
         self.records = records
         self.startSeq = startSeq
         self.endSeq = endSeq
@@ -96,6 +104,8 @@ public struct HistoryWindowValue: Sendable, Codable {
         self.clamped = clamped
         self.scanBoundary = scanBoundary
         self.folds = folds
+        self.knownEmpty = knownEmpty
+        self.revision = revision
     }
 
     /// The page as the pager wants it.

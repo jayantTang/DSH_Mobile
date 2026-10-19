@@ -34,6 +34,16 @@ public struct SessionHandle: Sendable {
         try await pipeline.ensure(range: range, priority: priority)
     }
 
+    /// 采纳对端确认的已知为空区间（带版本，版本不一致丢弃）。
+    public func applyKnownEmpty(spans: [ClosedRange<Int>], revision: String) async {
+        await pipeline.applyKnownEmpty(spans, revision: revision)
+    }
+
+    /// 当前覆盖版本（最新号）；对端回包的 revision 要与它一致才可用。
+    public var coverageRevision: String? {
+        get async { await pipeline.coverageRevision }
+    }
+
     /// 已经取到的 seq 区间。
     public var ranges: RangeIndex {
         get async { await pipeline.ranges }

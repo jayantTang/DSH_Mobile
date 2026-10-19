@@ -10,6 +10,7 @@ import {
   HISTORY_COMPRESSION_CAPABILITY, maybeCompressHistoryValue,
 } from './history/compress.js'
 import { FOLD_CAPABILITY, foldProcessRuns } from './history/fold.js'
+import { emptySpans } from './history/coverage.js'
 
 // Re-exported for the caller/tests that read them off this module (single source
 // is `history/records.js`; the call ceiling lives in `history/shared.js`).
@@ -200,9 +201,10 @@ export function createHistoryService({
   /// 少一个就可能把过滤页当成浏览页返回。
   const pageCache = new Map()
 
-  function cacheKey({ sessionId, before, through, limit, maxBytes, roles, fold }) {
+  function cacheKey({ sessionId, before, through, limit, maxBytes, roles, fold, coverage }) {
     return [sessionId, before, through ?? '', limit, maxBytes,
-            roles === undefined ? '' : [...roles].sort().join(','), fold === true ? '1' : '0'].join('|')
+            roles === undefined ? '' : [...roles].sort().join(','), fold === true ? '1' : '0',
+            coverage === true ? '1' : '0'].join('|')
   }
 
   function cacheGet(key, now = Date.now()) {
@@ -457,7 +459,8 @@ export function createHistoryService({
     if (rolesError) return rolesError
 
     const fold = args.fold === true
-    const requestKey = cacheKey({ sessionId, before, through, limit, maxBytes, roles, fold })
+    const coverage = args.coverage === true
+    const requestKey = cacheKey({ sessionId, before, through, limit, maxBytes, roles, fold, coverage })
     const cachedPage = cacheGet(requestKey)
     if (cachedPage !== undefined) {
       return { ok: true, value: maybeCompressHistoryValue(cachedPage, args.encoding) }
@@ -503,6 +506,14 @@ export function createHistoryService({
       const trimmed = trimRecordsForWire(page.records)
       const folded = fold ? foldProcessRuns(trimmed) : { records: trimmed, folds: [] }
       const value = { ...page, records: folded.records }
+      // 已知为空：只覆盖"最老返回记录..窗口上界"。版本取会话最新号；
+      // 客户端版本不一致时不采纳（宿主重排号段后旧结论失效）。
+      if (coverage) {
+        const upper = before - 1
+        const lower = Math.max(1, before - limit)
+        value.knownEmpty = emptySpans(trimmed, lower, upper)
+        value.revision = String(await newestSeq(sessionId))
+      }
       // `folds` 只在折叠时出现：老客户端不认识这个字段也不会读它；新客户端没有它
       // 就按普通记录折（老连接器）。
       if (folded.folds.length > 0) value.folds = folded.folds

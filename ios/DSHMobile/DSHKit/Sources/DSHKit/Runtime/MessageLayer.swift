@@ -166,12 +166,15 @@ public final class MessageLayer {
                             address: address, before: range.upperBound + 1, through: nil,
                             limit: range.count, maxBytes: 256 * 1024,
                             encoding: client.historyWindowEncoding,
-                            fold: client.historyFoldEnabled ? true : nil))
+                            fold: client.historyFoldEnabled ? true : nil,
+                            coverage: client.historyCoverageEnabled ? true : nil))
                         await Self.noteFetch(probes, priority: priority, range: range,
                                              started: started, records: value.records.count)
                         return SessionPipeline.FetchPage(
                             records: value.records, hasMore: value.hasMore,
-                            clamped: value.clamped ?? false)
+                            clamped: value.clamped ?? false,
+                            knownEmpty: value.knownEmpty ?? [],
+                            revision: value.revision)
                     } catch {
                         await Self.noteFetch(probes, priority: priority, range: range,
                                              started: started, records: nil, failure: error)

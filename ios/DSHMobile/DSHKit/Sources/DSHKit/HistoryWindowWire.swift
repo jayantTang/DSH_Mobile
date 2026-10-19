@@ -13,6 +13,8 @@ public enum HistoryWindowWire {
     public static let compressionCapability = "history-compression"
     /// 连接器在 `_link/hello` 里声明：`_link/sessionWindow` 接受 `fold: true`。
     public static let foldCapability = "history-fold-summary"
+    /// 覆盖信息（已知为空 + 版本）。
+    public static let coverageCapability = "history-coverage"
 
     public static func decode(_ raw: JSONValue,
                               limit: Int = 32 * 1024 * 1024) throws -> HistoryWindowValue {
