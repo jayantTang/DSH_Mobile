@@ -189,8 +189,15 @@ public actor LinkCarrier: DSHCarrier {
     private var receiveLoop: Task<Void, Never>?
     private var heartbeatLoop: Task<Void, Never>?
     private var connectWaiters: [CheckedContinuation<Void, any Error>] = []
+    /// 拨号看门狗：拨号卡住时，等待者按截止失败，不再无限挂起。
+    private var dialWatchdog: Task<Void, Never>?
+    private let dialTimeout: Duration
 
     private var pending: [String: CheckedContinuation<JSONValue, any Error>] = [:]
+    /// 并发的一元调用上限：超过就排队，不许无限并发。
+    private let unaryLimit: Int
+    private var unaryActive = 0
+    private var unaryWaiters: [CheckedContinuation<Void, Never>] = []
     private var streams: [String: AsyncThrowingStream<JSONValue, any Error>.Continuation] = [:]
     private var counter: UInt64 = 0
     private var isClosed = false
@@ -225,11 +232,15 @@ public actor LinkCarrier: DSHCarrier {
         configuration: LinkConfiguration,
         session: URLSession? = nil,
         timeout: Duration = .seconds(60),
+        unaryLimit: Int = 8,
+        dialTimeout: Duration = .seconds(15),
         reconnect: ReconnectPolicy = .default,
         diagnostics: LinkDiagnostics = LinkDiagnostics()
     ) {
         self.configuration = configuration
         self.timeout = timeout
+        self.unaryLimit = max(1, unaryLimit)
+        self.dialTimeout = dialTimeout
         self.reconnect = reconnect
         self.diagnostics = diagnostics
         if let session {
@@ -255,12 +266,16 @@ public actor LinkCarrier: DSHCarrier {
     init(
         configuration: LinkConfiguration,
         timeout: Duration = .seconds(60),
+        unaryLimit: Int = 8,
+        dialTimeout: Duration = .seconds(15),
         reconnect: ReconnectPolicy = .default,
         diagnostics: LinkDiagnostics = LinkDiagnostics(),
         makeSocket: @escaping @Sendable (URLRequest) -> any RelaySocketTask
     ) {
         self.configuration = configuration
         self.timeout = timeout
+        self.unaryLimit = max(1, unaryLimit)
+        self.dialTimeout = dialTimeout
         self.reconnect = reconnect
         self.diagnostics = diagnostics
         self.session = URLSession(configuration: .ephemeral)
@@ -343,7 +358,7 @@ public actor LinkCarrier: DSHCarrier {
         let startedAt = Date()
         await diagnostics.beginInteraction(method: method)
         do {
-            let value = try await performUnary(method: method, args: args)
+            let value = try await performUnary(method: method, args: args, startedAt: startedAt)
             let data = try JSONEncoder().encode(value)
             let decoded = try JSONDecoder().decode(Value.self, from: data)
             await diagnosticsNoteInteraction(method: method,
@@ -456,14 +471,20 @@ public actor LinkCarrier: DSHCarrier {
 
     private func performUnary<Args: Encodable & Sendable>(
         method: String,
-        args: Args
+        args: Args,
+        startedAt: Date
     ) async throws -> JSONValue {
         try await ensureConnected()
+        await acquireUnarySlot()
+        defer { releaseUnarySlot() }
 
         counter += 1
         let id = "u\(counter)"
         let frame = RequestFrame(id: id, method: method, args: args)
-        let deadline = timeout
+        // 绝对截止：连接等待与排队都算在内，重连不会重置。
+        let remaining = timeout.seconds - Date().timeIntervalSince(startedAt)
+        guard remaining > 0 else { throw DSHTransportError.timedOut(method: method) }
+        let deadline = Duration.seconds(remaining)
 
         return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<JSONValue, any Error>) in
             Task {
@@ -492,6 +513,32 @@ public actor LinkCarrier: DSHCarrier {
                 }
             }
         }
+    }
+
+    /// 拨号超时：把等待者按失败唤醒；拨号本身继续，成功后会重建 socket。
+    private func failDialWaiters() {
+        guard dialInFlight else { return }
+        dialInFlight = false
+        let waiters = connectWaiters
+        connectWaiters.removeAll()
+        for waiter in waiters { waiter.resume(throwing: DSHTransportError.timedOut(method: "connect")) }
+    }
+
+    /// 一元调用并发闸：满了就排队，释放时唤醒队首。
+    private func acquireUnarySlot() async {
+        if unaryActive < unaryLimit {
+            unaryActive += 1
+            return
+        }
+        await withCheckedContinuation { unaryWaiters.append($0) }
+        unaryActive += 1
+    }
+
+    private func releaseUnarySlot() {
+        unaryActive = max(0, unaryActive - 1)
+        guard !unaryWaiters.isEmpty else { return }
+        let waiter = unaryWaiters.removeFirst()
+        waiter.resume()
     }
 
     /// Drops a connection whose frame boundary is no longer knowable.
@@ -555,14 +602,23 @@ public actor LinkCarrier: DSHCarrier {
             return
         }
         dialInFlight = true
+        dialWatchdog?.cancel()
+        let dialSeconds = dialTimeout.seconds
+        dialWatchdog = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(dialSeconds * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            await self?.failDialWaiters()
+        }
         do {
             try await openSocket()
             dialInFlight = false
+            dialWatchdog?.cancel()
             let waiters = connectWaiters
             connectWaiters.removeAll()
             for waiter in waiters { waiter.resume() }
         } catch {
             dialInFlight = false
+            dialWatchdog?.cancel()
             let waiters = connectWaiters
             connectWaiters.removeAll()
             for waiter in waiters { waiter.resume(throwing: error) }
