@@ -143,8 +143,16 @@ public final class ChatModel {
         }
     }
 
+    /// 输入区状态（草稿/图片/插入模式）。2026-10-21 从 ChatModel 拆出。
+    public let composer = ComposerState()
+
     /// Pictures queued in the composer, sent with the next prompt.
-    public private(set) var draftImages: [DraftImage] = []
+    ///
+    /// 存储已搬到 `composer`；这里保留同名投影，UI 与测试调用点不变。
+    public private(set) var draftImages: [DraftImage] {
+        get { composer.images }
+        set { composer.images = newValue }
+    }
 
     /// Name of the file being uploaded, for the composer to show.
     public private(set) var isUploadingFile: String?
@@ -229,10 +237,16 @@ public final class ChatModel {
     public private(set) var permissionOptions: [PermissionsProjection.Option] = []
     public private(set) var currentPermission: String?
 
-    /// Composer state.
-    public var draft: String = ""
+    /// Composer state（存储在 `composer`，这里保留同名投影）。
+    public var draft: String {
+        get { composer.draft }
+        set { composer.draft = newValue }
+    }
     /// Whether the next submission queues behind the turn or steers into it.
-    public var steerNext: Bool = false
+    public var steerNext: Bool {
+        get { composer.steerNext }
+        set { composer.steerNext = newValue }
+    }
 
     /// Bumped whenever the transcript grows, so the view can autoscroll.
     public private(set) var scrollSignal: Int = 0
@@ -318,13 +332,6 @@ public final class ChatModel {
 
     /// Half-written messages, one per session.
     ///
-    /// The draft used to be a single field on this (single, app-wide) model, and
-    /// switching sessions never reset it: text typed for one conversation showed
-    /// up in the next one's composer, and pressing send there posted it — the
-    /// host stores a prompt against the session id of the moment, so from the
-    /// receiving side it looked like an instruction the user never gave.
-    private var drafts: [String: Draft] = [:]
-
     public struct Draft {
         public var text: String = ""
         public var images: [DraftImage] = []
@@ -498,8 +505,7 @@ public final class ChatModel {
         }
         setOlderState(.idle)
         // This session's own half-written message, not the last one's.
-        draft = drafts[key]?.text ?? ""
-        draftImages = drafts[key]?.images ?? []
+        composer.load(sessionId: key)
         lastError = nil
         hostReportsRunning = summary.running
         isAwaitingTurnStart = false
@@ -686,9 +692,7 @@ public final class ChatModel {
         visible = nil
         cache.removeAll()
         cacheOrder.removeAll()
-        drafts.removeAll()
-        draft = ""
-        draftImages.removeAll()
+        composer.reset()
         lastError = nil
         currentSelection = nil
         permissionOptions = []
@@ -1200,8 +1204,7 @@ public final class ChatModel {
     /// leaks: the next session loads its own draft (usually empty).
     private func stashDraft() {
         guard let key = session?.sessionId else { return }
-        let current = Draft(text: draft, images: draftImages)
-        if current.isEmpty { drafts.removeValue(forKey: key) } else { drafts[key] = current }
+        composer.stash(sessionId: key)
     }
 
     /// What the store knows about this session's window, or `nil` when it has none.
@@ -1973,15 +1976,15 @@ public final class ChatModel {
     /// 025 阶段4b：造这一批载荷要 UIImage（缩放 + JPEG 编码），所以「从 UIImage 加」
     /// 留在界面层（`DSHChatUI` 的 `ChatModel+DraftImages.swift`）；领域层只收结果。
     public func addDraftImages(_ images: [DraftImage]) {
-        draftImages.append(contentsOf: images)
+        composer.images.append(contentsOf: images)
     }
 
     public func removeDraftImage(id: UUID) {
-        draftImages.removeAll { $0.id == id }
+        composer.images.removeAll { $0.id == id }
     }
 
     public func clearDraftImages() {
-        draftImages.removeAll()
+        composer.images.removeAll()
     }
 
     /// Submits the composer's text.
@@ -2009,7 +2012,7 @@ public final class ChatModel {
         // restored if the host refuses — losing typed text to a transient
         // failure is worse than seeing it come back.
         draft = ""
-        drafts.removeValue(forKey: owner)
+        composer.discard(sessionId: owner)
 
         // The request id is minted here because the host stores it on the
         // durable message's source; that is what lets the transcript replace
@@ -2048,14 +2051,10 @@ public final class ChatModel {
             isAwaitingTurnStart = false
             // Back to the conversation it was typed in — visible if the user is
             // still there, waiting quietly if they have moved on.
-            let restored = Draft(text: text, images: images)
-            drafts[owner] = restored
             // `session` was captured by the guard at the top of this function,
             // so it is this send's own session — not whatever is on screen now.
-            if session.sessionId == owner {
-                if draft.isEmpty { draft = text }
-                if draftImages.isEmpty { draftImages = images }
-            }
+            composer.restore(text: text, images: images, for: owner,
+                             isCurrent: session.sessionId == owner)
             lastError = LinkErrors.describe(error)
         }
     }
@@ -2067,7 +2066,7 @@ public final class ChatModel {
     private func sendViaPipeline(text: String, mode: SessionPromptRequest.Mode, owner: String) async {
         guard let pipeline = messageLayer?.pipeline, let scope = sessionScope else { return }
         draft = ""
-        drafts.removeValue(forKey: owner)
+        composer.discard(sessionId: owner)
         scrollSignal += 1
         sendSignal += 1
         // 发送自己的消息一律贴底（spec 009「跟底两态」钦定例外，tasks T017）。
@@ -2184,7 +2183,7 @@ public final class ChatModel {
     ) async {
         let text = "我发送了一个文件，已保存到：\(staged.path)（\(staged.bytes) 字节）"
         guard session?.sessionId == owner else {
-            drafts[owner] = Draft(text: text, images: [])
+            composer.store(text: text, images: [], for: owner)
             return
         }
         draft = text

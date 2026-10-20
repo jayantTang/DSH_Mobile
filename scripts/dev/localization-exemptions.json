@@ -60,7 +60,7 @@
     },
     {
       "rule": "hardcoded-string",
-      "file": "ios/DSHMobile/Modules/Features/Chat/Domain/ChatModel.swift",
+      "file": "ios/DSHMobile/Modules/Features/Chat/Domain/Session/ChatModel.swift",
       "reason": "会话数据层的文案出口，不在本轮范围（G5 backlog）",
       "backlog": "i18n-backlog-app-chatmodel"
     },
@@ -90,7 +90,7 @@
     },
     {
       "rule": "unlocalized-binding",
-      "file": "ios/DSHMobile/Modules/Features/Chat/Domain/MessageSelectionPayload.swift",
+      "file": "ios/DSHMobile/Modules/Features/Chat/Domain/Support/MessageSelectionPayload.swift",
       "reason": "消息选择的载荷文案，不在本轮范围（G5 backlog）",
       "backlog": "i18n-backlog-app-messageselectionpayload"
     },
