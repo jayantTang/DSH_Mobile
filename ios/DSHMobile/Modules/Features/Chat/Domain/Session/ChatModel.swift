@@ -26,22 +26,15 @@ public final class ChatModel {
     /// "开的是 B、行还是 A"的中间态上——2026-10-16 用户报的"新建会话先闪一下旧会话"
     /// 就是它（`open()` 里 `session` 与 `timeline` 的赋值中间隔了两次磁盘等待）。
     /// 合成一个值之后，这个中间态在类型上就写不出来。
-    public struct VisibleSession {
-        public var summary: SessionSummary
-        public var timeline: ChatTimeline
+    /// 会话可见状态（visible/timeline/session）已搬到 `transcriptStore`。
+    public let transcriptStore = TranscriptStore()
+    public typealias VisibleSession = TranscriptStore.VisibleSession
 
-        public init(summary: SessionSummary, timeline: ChatTimeline) {
-            self.summary = summary
-            self.timeline = timeline
-        }
+    /// 唯一被发布的会话可见状态（存储在 `transcriptStore`）。
+    public private(set) var visible: VisibleSession? {
+        get { transcriptStore.visible }
+        set { transcriptStore.visible = newValue }
     }
-
-    /// 唯一被发布的会话可见状态。
-    ///
-    /// **换会话时只在这里赋值一次**，且这次赋值之前不得有 `await`（先把旧会话要落盘的
-    /// 东西同步脱离出来，落盘的等待排在发布之后）。其余对时间线的改动都落在同一个
-    /// `summary` 之下，因此任何一次发布都是自洽的一对。
-    public private(set) var visible: VisibleSession?
 
     /// 过程节点的展开状态（spec 033）。这是**会话级显示状态**，不是转写数据：
     /// 换会话/重开 App 重置；内部 setter 让 `ChatModel+ProcessFold.swift` 能改。
@@ -53,14 +46,14 @@ public final class ChatModel {
     public internal(set) var prefetchStatus: [String: PrefetchStatus] = [:]
 
     /// 现在开的是哪个会话（读 `visible`）。
-    public var session: SessionSummary? { visible?.summary }
+    public var session: SessionSummary? { transcriptStore.session }
 
     /// 屏幕上这批行（读 `visible`）。
     ///
     /// 注意：**不要**用它判断"这些行是不是这一屏的"——判断用 `rowsFor(screen:)`。
     public private(set) var timeline: ChatTimeline {
-        get { visible?.timeline ?? ChatTimeline() }
-        set { visible?.timeline = newValue }
+        get { transcriptStore.timeline }
+        set { transcriptStore.timeline = newValue }
     }
 
     /// 这一屏该画哪些行：**只有这批行属于这一屏时才交出去**。
