@@ -1,4 +1,4 @@
-// swift-tools-version: 5.9
+// swift-tools-version: 6.0
 //
 // DSHMobile 模块包（025 模块化重构；2026-10-21 层/单元目录重排）
 //
@@ -58,7 +58,8 @@ let package = Package(
         // 零业务、零 UI
         .target(
             name: "DSHFoundation",
-            path: "Foundation/Sources"
+            path: "Foundation/Sources",
+            swiftSettings: [.swiftLanguageMode(.v6)]
         ),
         .testTarget(
             name: "DSHFoundationTests",
@@ -70,7 +71,8 @@ let package = Package(
         .target(
             name: "DSHDesign",
             dependencies: ["DSHFoundation"],
-            path: "Design/Sources"
+            path: "Design/Sources",
+            swiftSettings: [.swiftLanguageMode(.v6)]
         ),
         .testTarget(
             name: "DSHDesignTests",
@@ -90,7 +92,8 @@ let package = Package(
         .target(
             name: "DSHConnectionAPI",
             dependencies: [dshKit],
-            path: "Contracts/Sources"
+            path: "Contracts/Sources",
+            swiftSettings: [.swiftLanguageMode(.v6)]
         ),
 
         // MARK: - 服务层
@@ -99,7 +102,8 @@ let package = Package(
         .target(
             name: "DSHCore",
             dependencies: ["DSHConnectionAPI", "DSHFoundation", dshKit, relayKit],
-            path: "Core/Sources"
+            path: "Core/Sources",
+            swiftSettings: [.swiftLanguageMode(.v6)]
         ),
         .testTarget(
             name: "DSHCoreTests",
@@ -113,7 +117,8 @@ let package = Package(
         .target(
             name: "DSHConnectionDomain",
             dependencies: ["DSHConnectionAPI", "DSHFoundation", dshKit, relayKit],
-            path: "Features/Connection/Domain"
+            path: "Features/Connection/Domain",
+            swiftSettings: [.swiftLanguageMode(.v6)]
         ),
         .testTarget(
             name: "DSHConnectionDomainTests",
@@ -125,14 +130,16 @@ let package = Package(
         .target(
             name: "DSHConnectionUI",
             dependencies: ["DSHConnectionDomain", "DSHDesign", "DSHCore", "DSHFoundation", dshKit],
-            path: "Features/Connection/UI"
+            path: "Features/Connection/UI",
+            swiftSettings: [.swiftLanguageMode(.v6)]
         ),
 
         // 会话单元
         .target(
             name: "DSHSessionsDomain",
             dependencies: ["DSHCore", "DSHConnectionAPI", "DSHFoundation", dshKit],
-            path: "Features/Sessions/Domain"
+            path: "Features/Sessions/Domain",
+            swiftSettings: [.swiftLanguageMode(.v6)]
         ),
         .testTarget(
             name: "DSHSessionsDomainTests",
@@ -144,14 +151,16 @@ let package = Package(
             dependencies: [
                 "DSHSessionsDomain", "DSHDesign", "DSHCore", "DSHConnectionDomain", "DSHFoundation", dshKit,
             ],
-            path: "Features/Sessions/UI"
+            path: "Features/Sessions/UI",
+            swiftSettings: [.swiftLanguageMode(.v6)]
         ),
 
         // 聊天单元：转写/流式/分页的领域层，与转写界面层
         .target(
             name: "DSHChatDomain",
             dependencies: ["DSHCore", "DSHConnectionAPI", "DSHFoundation", dshKit, relayKit],
-            path: "Features/Chat/Domain"
+            path: "Features/Chat/Domain",
+            swiftSettings: [.swiftLanguageMode(.v6)]
         ),
         // 传输注入缝用例要 FakeLinkService + FakeCarrier（026 的 clientOverride），
         // 并直接点名 HostEventHub / ConnectionProfile。
@@ -167,14 +176,16 @@ let package = Package(
             dependencies: [
                 "DSHChatDomain", "DSHDesign", "DSHCore", "DSHConnectionDomain", "DSHFoundation", dshKit, relayKit,
             ],
-            path: "Features/Chat/UI"
+            path: "Features/Chat/UI",
+            swiftSettings: [.swiftLanguageMode(.v6)]
         ),
 
         // 设置单元
         .target(
             name: "DSHSettingsDomain",
             dependencies: ["DSHCore", "DSHConnectionAPI", "DSHFoundation", dshKit, relayKit],
-            path: "Features/Settings/Domain"
+            path: "Features/Settings/Domain",
+            swiftSettings: [.swiftLanguageMode(.v6)]
         ),
         .testTarget(
             name: "DSHSettingsDomainTests",
@@ -186,14 +197,16 @@ let package = Package(
             dependencies: [
                 "DSHSettingsDomain", "DSHDesign", "DSHCore", "DSHConnectionDomain", "DSHFoundation", dshKit, relayKit,
             ],
-            path: "Features/Settings/UI"
+            path: "Features/Settings/UI",
+            swiftSettings: [.swiftLanguageMode(.v6)]
         ),
 
         // 信箱单元
         .target(
             name: "DSHFeedbackDomain",
             dependencies: ["DSHCore", "DSHConnectionAPI", "DSHFoundation", dshKit, relayKit],
-            path: "Features/Feedback/Domain"
+            path: "Features/Feedback/Domain",
+            swiftSettings: [.swiftLanguageMode(.v6)]
         ),
         .testTarget(
             name: "DSHFeedbackDomainTests",
@@ -203,21 +216,24 @@ let package = Package(
         .target(
             name: "DSHFeedbackUI",
             dependencies: ["DSHFeedbackDomain", "DSHDesign", "DSHCore", relayKit],
-            path: "Features/Feedback/UI"
+            path: "Features/Feedback/UI",
+            swiftSettings: [.swiftLanguageMode(.v6)]
         ),
 
         // 插件网页单元（暂无 Domain）
         .target(
             name: "DSHPluginUI",
             dependencies: ["DSHCore", "DSHDesign", "DSHConnectionDomain", "DSHFoundation", dshKit],
-            path: "Features/Plugin/UI"
+            path: "Features/Plugin/UI",
+            swiftSettings: [.swiftLanguageMode(.v6)]
         ),
 
         // 文件单元
         .target(
             name: "DSHFilesDomain",
             dependencies: ["DSHCore", "DSHConnectionAPI", "DSHFoundation", dshKit, relayKit],
-            path: "Features/Files/Domain"
+            path: "Features/Files/Domain",
+            swiftSettings: [.swiftLanguageMode(.v6)]
         ),
         .testTarget(
             name: "DSHFilesDomainTests",
@@ -227,7 +243,8 @@ let package = Package(
         .target(
             name: "DSHFilesUI",
             dependencies: ["DSHFilesDomain", "DSHDesign", "DSHCore", "DSHConnectionDomain", dshKit],
-            path: "Features/Files/UI"
+            path: "Features/Files/UI",
+            swiftSettings: [.swiftLanguageMode(.v6)]
         ),
 
         // MARK: - 测试辅助（仅 test target 依赖）
@@ -235,7 +252,11 @@ let package = Package(
         .target(
             name: "DSHTestingSupport",
             dependencies: ["DSHCore", "DSHConnectionAPI", dshKit],
-            path: "Testing/TestingSupport"
+            path: "Testing/TestingSupport",
+            swiftSettings: [.swiftLanguageMode(.v6)]
         ),
-    ]
+    ],
+    // 所有**生产 target** 已逐个显式打开 v6；测试 target 仍是 v5（手写夹具里
+    // 大量非 Sendable 值，单独迁移）。包级默认保持 v5，新增 target 必须显式选模式。
+    swiftLanguageModes: [.v5]
 )

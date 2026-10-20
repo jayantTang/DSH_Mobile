@@ -57,7 +57,7 @@ public final class SettingsModel {
     }
 
     /// How the phone reaches the host.
-    public enum Transport: Equatable {
+    public enum Transport: Equatable, Sendable {
         case direct
         case relay
         case unknown
