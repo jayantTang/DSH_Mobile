@@ -5,8 +5,9 @@
 ## In one line
 
 Your conversations travel between your phone and your computer through a relay. The relay forwards
-them and keeps no conversation history. The one thing the app sends on its own initiative is a
-feedback message, and only when you press send (see *Feedback and notices*).
+them and keeps no conversation history. The app sends nothing on its own except crash reports
+(technical, described below); a feedback message is sent only when you press send (see *Feedback and
+notices*).
 
 ## The app
 
@@ -17,9 +18,17 @@ feedback message, and only when you press send (see *Feedback and notices*).
   200 records of sessions you have opened, pictures you have viewed, and a mirror of your feedback
   threads. That cache is not backed up, expires after 30 days, and can be cleared in
   **Settings → Cache**; clearing it keeps the Keychain pickup key.
-- Nothing leaves the phone unless you send it: a feedback message is uploaded only when you press
-  send, on the screen that shows exactly what will be sent.
-- Notifications are local; nothing is pushed through a third-party notification service.
+- Apart from crash reports (below), nothing leaves the phone unless you send it: a feedback message
+  is uploaded only when you press send, on the screen that shows exactly what will be sent.
+- Notifications use Apple's push service (APNs) through the relay you are paired with; the device
+  token and push registration live on that relay. While a run is in flight the app also plays silent
+  audio so the event stream stays connected in the background. Neither path uploads conversation
+  content.
+- **Crash reports are the only thing sent automatically.** If the app crashed, iOS hands the report
+  to the next launch; the app stores it locally and uploads it once it can reach the relay. The
+  content is technical: app version and build, device model, iOS version, exception type and signal,
+  and stack frames (binary name + offset). It contains no session id, message text, file path,
+  account or device token. At most 20 are kept locally, and each one is sent once.
 
 ## The relay
 
