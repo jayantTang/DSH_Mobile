@@ -32,7 +32,7 @@ public struct SessionRequest: Equatable, Sendable {
 /// navigation stack twice and had to go back twice. Here the value is cleared
 /// **inside** the same call that returns it, so the second reader gets `nil`.
 ///
-/// It is `@MainActor` for the same reason ``TranscriptPager`` is: every caller
+/// It is `@MainActor` for the same reason ``SessionHandle`` is: every caller
 /// is (notifications arrive on the main actor, and the view reads this while
 /// building a body), and the take-once guarantee is only a guarantee if the
 /// check and the clear cannot interleave.

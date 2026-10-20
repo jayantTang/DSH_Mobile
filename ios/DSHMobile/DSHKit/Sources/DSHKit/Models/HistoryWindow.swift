@@ -108,9 +108,9 @@ public struct HistoryWindowValue: Sendable, Codable {
         self.revision = revision
     }
 
-    /// The page as the pager wants it.
-    public func page() -> TranscriptPager.Page {
-        TranscriptPager.Page(
+    /// The page as the transcript expects it.
+    public func page() -> TranscriptPage {
+        TranscriptPage(
             records: records,
             startSeq: startSeq ?? records.first?.event.seq ?? 0,
             endSeq: endSeq ?? records.last?.event.seq ?? 0,

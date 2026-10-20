@@ -201,21 +201,13 @@ public final class ChatModel {
     public func finishOlderIfLoading() {
         setOlderState(olderState.finishing())
     }
-    /// 视图只读这两位的投影；真正的状态在 `pager` 里（FR-005/FR-038）。
+    /// 视图只读这一位的投影；更早历史的状态由管道与宿主快照给出（FR-005/FR-038）。
     public private(set) var hasOlder = false
 
     /// 还有等待补上的缺口行。顶部触发不能只看 `hasOlder`：读者已经到最早时，
     /// 区间里仍可能留着上次没补完的小洞，只靠 hasOlder 会永远不再发请求。
     public var hasUnfilledGaps: Bool { pipelineBridge?.hasUnfilledGaps ?? false }
-    /// 失败后的一次自动补试（FR-004 的"继续能恢复"）。
-    ///
-    /// 为什么必须有一次：失败之后读者往往就停在顶部不动了——哨兵行没有重建就不会再
-    /// `onAppear`，滚动几何也没有"变化"可报（2026-10-08 用例 48 实测：失败后再怎么送
-    /// 视口上去都不再重试）。只补试**一次**，不做循环：持续的坏链路交给读者点重试条。
-    private var autoRetryTask: Task<Void, Never>?
-    private var didAutoRetry = false
-    /// 宿主权威的"还有更早"：只由快照与 pager 的观察更新，失败绝不改它（FR-003）。
-    private var hostHasMore = true
+    /// 宿主权威的"还有更早"由 `hasOlder` 直接表达；失败不写它（FR-003）。
     public private(set) var lastError: String?
 
     /// Model routes the host can serve.
@@ -356,8 +348,6 @@ public final class ChatModel {
         #endif
         return 5000
     }
-    /// 一次本地读回最多补多少条。
-    private static let windowBackfillLimit = 60
     private var followTask: Task<Void, Never>?
     private var eventTask: Task<Void, Never>?
     /// 会话代数：每次 `open` 自增，**存活的流必须带自己那一代**。
@@ -385,11 +375,11 @@ public final class ChatModel {
     /// 它只让出主线程，不做任何取舍；生产构建里这个属性不存在，也没有任何调用点。
     public var beforeVisibleSwap: (@MainActor () async -> Void)?
     #endif
-    /// 取页游标状态机：每个会话一份，是全 App 唯一的"更早历史"状态来源。
-    private var pager: TranscriptPager?
     /// 009 渲染数据源桥（tasks T013）：非 nil 时，时间线由 MessagePipeline 的
-    /// 快照驱动（订阅/折叠/重试全在 ChatModel+Pipeline.swift 的桥里）；
-    /// nil = 回退到自有 pager/fetcher/store 路径（管道不可用时不劣于现状）。
+    /// 快照驱动（订阅/折叠/重试全在 ChatModel+Pipeline.swift 的桥里）。
+    ///
+    /// 2026-10-21：旧的 `TranscriptPager` 回退路径已删除；生产路径恒有桥。
+    /// 桥缺位时 `loadOlder` 报可见的「尚未连接」，不再静默当到底。
     public var pipelineBridge: ChatPipelineBridge?
     /// 009 跟底两态（tasks T017）：判定逻辑在 ChatModel+Follow.swift，
     /// 存储只能留在主文件（扩展不能有存储属性）。
@@ -407,10 +397,18 @@ public final class ChatModel {
     public var isCatchingUpTail = false
     /// 可见性兜底的幂等闩（T019）：一次只跑一轮「对 lastSeq」。
     public var tailSyncInFlight = false
-    /// 本地窗口的最老 seq（投影自 pager，供搜索缓冲与落盘使用）。
-    private var oldestSeq: Int? { pager?.oldestLoadedSeq }
-    /// DEBUG 故障注入：让前 N 次取页失败（`-DSHProbeFailPage <n>`）。
-    private let pageFailures = PageFailureInjector(remaining: ChatProbe.shared.failPageAttempts)
+    /// 本地窗口最老的数据行 seq（搜索缓冲与落盘用）。
+    ///
+    /// 管道模式下以桥里的记录为准；其余情况取时间线里第一条非缺口、非过程节点行。
+    private var oldestSeq: Int? {
+        if let bridge = pipelineBridge { return bridge.records.keys.min() }
+        return timeline.items.first(where: { item in
+            switch item.kind {
+            case .gap, .processHeader: return false
+            default: return true
+            }
+        })?.seq
+    }
     /// The cut the follow stream opened at; older pages must stay below it.
     private var throughSeq: Int = 0
 
@@ -509,9 +507,7 @@ public final class ChatModel {
             ?? summary.projections?.values?.modelSelection?.lastUsed
         permissionOptions = summary.projections?.values?.permissions?.options ?? []
         currentPermission = summary.projections?.values?.permissions?.currentValue
-        // 分页状态同样归上一个会话：在读到这个会话的尾部之前先清掉，
-        // 免得"向上翻页"拿着旧 pager 的游标去问新会话（跨会话取页）。
-        pager = nil
+        // 分页状态同样归上一个会话：先清掉，等这个会话的窗口观察再置位。
         hasOlder = false
 
         #if DEBUG
@@ -533,8 +529,7 @@ public final class ChatModel {
         visible = VisibleSession(summary: summary, timeline: seed)
         if let cached {
             throughSeq = max(cached.throughSeq, summary.asOfSeq)
-            installPager(sessionId: key, oldest: cached.oldestSeq, newest: throughSeq,
-                         hasMore: cached.hasOlder)
+            noteWindow(oldest: cached.oldestSeq, hasMore: cached.hasOlder)
             phase = .ready
             scrollSignal += 1
         } else {
@@ -575,7 +570,7 @@ public final class ChatModel {
             if syncPlan.reBase {
                 recentRecords = []
                 throughSeq = summary.asOfSeq
-                installPager(sessionId: key, oldest: nil, newest: throughSeq, hasMore: false)
+                noteWindow(oldest: nil, hasMore: false)
                 phase = .loading
             } else {
                 // 冷启动/新进程：用落盘的尾部立刻把转写画出来，**不进 loading**。
@@ -583,8 +578,7 @@ public final class ChatModel {
                 timeline.reset(with: stored.records)
                 recentRecords = stored.records
                 throughSeq = max(stored.newest ?? 0, summary.asOfSeq)
-                installPager(sessionId: key, oldest: stored.oldest, newest: throughSeq,
-                             hasMore: stored.hasOlder)
+                noteWindow(oldest: stored.oldest, hasMore: stored.hasOlder)
                 phase = .ready
                 scrollSignal += 1
                 ChatProbe.shared.probeNote?("transcript.loaded", [
@@ -595,7 +589,7 @@ public final class ChatModel {
                 ], true)
             }
         } else {
-            installPager(sessionId: key, oldest: nil, newest: throughSeq, hasMore: false)
+            noteWindow(oldest: nil, hasMore: false)
             phase = .loading
         }
 
@@ -699,7 +693,6 @@ public final class ChatModel {
         currentSelection = nil
         permissionOptions = []
         currentPermission = nil
-        pager = nil
         hasOlder = false
         setOlderState(.idle)
         throughSeq = 0
@@ -954,7 +947,7 @@ public final class ChatModel {
     ///
     /// 为什么必须是"换窗口"而不是"插一段"：时间线是连续的，命中在 seq 1685、而窗口从 2206 起，
     /// 中间隔着几百条——插段等于把整段都读进内存，既慢又推翻"按预算装一窗"的设计。
-    /// 换窗口之后，更早的一端由 pager 继续补，更晚的一端读者往下滑也能回来。
+    /// 换窗口之后，更早的一端由管道继续补，更晚的一端读者往下滑也能回来。
     ///
     /// 只从**本地库**读（0 网络）；库里没有这一段就返回 nil，界面保持原地并留一条诊断。
     public func rebaseWindow(around seq: Int, leading: Int = 20, limit: Int = 80) async -> String? {
@@ -991,10 +984,8 @@ public final class ChatModel {
         prependSignal += 1
         let oldest = records.first?.event.seq
         let newest = records.last?.event.seq
-        pager?.reset(oldestLoadedSeq: oldest, newestLoadedSeq: newest, hasMore: (oldest ?? 1) > 1)
+        hasOlder = (oldest ?? 1) > 1
         setOlderState(.idle)
-        hostHasMore = (oldest ?? 1) > 1
-        syncOlderState()
         let landed = TranscriptHitLocator.row(forSeq: seq, in: timeline.items)?.id
         ChatProbe.shared.probeNote?("search.rebase", [
             "seq": String(seq), "records": String(records.count), "source": source,
@@ -1219,7 +1210,7 @@ public final class ChatModel {
     /// 为什么不裁剪：运行时缩短 `items` 会让在飞的 `scrollTo` 目标失效并 SIGABRT
     /// （2026-10-08 run 20261008-202231）。"打开时只恢复最近一段"没有这个问题——
     /// 那是一次性的、发生在任何滚动之前；更早的部分读者往回滑时由已验过的本地读回补上
-    /// （用例 47：`window.backfill` 之前没有任何 `pager.page`，即 0 网络）。
+    /// （用例 47：窗口回填之前没有任何联网取页，即 0 网络）。
     ///
     /// 600 条 ≈ 300 行：足够填满一屏并留出上下滑动的余量，又不至于把上万条的会话一次性装进内存。
     private static let restoreRecordLimit = 600
@@ -1234,7 +1225,7 @@ public final class ChatModel {
             limit: min(Self.tailRecordLimit, Self.restoreRecordLimit))) ?? []
         guard !records.isEmpty else { return nil }
         // `state.oldestSeq` 是"库里存的最老一条"；恢复被限流之后，时间线的最老一条
-        // 可能比它新——pager 必须按**实际恢复**的那一条算，否则会以为"更早的都在手上"。
+        // 可能比它新——窗口下界必须按**实际恢复**的那一条算，否则会以为"更早的都在手上"。
         let restoredOldest = records.first?.event.seq ?? state.oldestSeq
         return StoredTail(records: records, oldest: restoredOldest, newest: state.newestSeq,
                           hasOlder: (restoredOldest ?? 1) > 1 || state.hasMore)
@@ -1467,13 +1458,10 @@ public final class ChatModel {
             // 本地可能已经存着比这次快照更老的一段（冷启动缓存）：取更小的那个，
             // 否则"往前翻"会从快照的第一条开始要，等于把本地已有的又拉一遍。
             if pipelineBridge == nil {
-                pager?.observe(oldestSeq: snapshot.records.first?.event.seq,
-                               newestSeq: snapshot.cursor,
-                               hasMore: snapshot.hasMore)
                 // 以 host 为准：`hasMore=false` 意味着这次快照的窗口已经退到日志开头，
-                // 那就真的没有更早的了。以前写成 `|| hasOlder`，本地旧状态会把"到底了"
-                // 硬说成"还能往前翻"，点下去什么也加载不出来。
-                syncOlderState()
+                // 那就真的没有更早的了；不再叠加本地旧状态。
+                hasOlder = snapshot.hasMore
+                    || (snapshot.records.first?.event.seq ?? 1) > 1
             }
             phase = .ready
             if pipelineBridge == nil { scrollSignal += 1 }
@@ -1682,97 +1670,16 @@ public final class ChatModel {
 
     // MARK: - History pagination
 
-    /// Loads one older page through the pager and prepends it.
+    /// 向上翻一页更早的历史。
     ///
-    /// Three things this deliberately does **not** do any more (they were the bug):
-    /// it never turns a failure into "no older history"; it never accepts a page
-    /// that does not abut the window; and it never guesses a corrected boundary —
-    /// the fetcher asks the connector for an exact window, and falls back to the
-    /// published `session/page` workaround only when the connector lacks the
-    /// capability (FR-002/FR-003/FR-037/FR-038).
+    /// 生产路径只有管道一条：缺口、重试、到头都由 `SessionPipeline` 的状态机表达。
+    /// 桥缺位（数据层未就绪）时给出可见失败，不把"未知"静默当"到底"。
     public func loadOlder() async {
-        // T013：管道接管渲染时，"向上翻页"是向管道请求对应范围（.userVisible），
-        // 缺口/重试/到头全部由管道的状态机表达（T016）。
-        if let bridge = pipelineBridge {
-            await bridge.loadOlder()
-            return
-        }
-        guard !isLoadingOlder else { return }
-        // 先看本地：窗口裁剪掉的、或上一次冷启动没画出来的那一段，读库就有，不联网。
-        if await backfillFromStore() { return }
-        guard let pager else { return }
-        guard let fetcher = makePageFetcher() else {
+        guard let bridge = pipelineBridge else {
             setOlderState(.failed(String(localized: "尚未连接")))
             return
         }
-        setOlderState(.loading)
-        setOlderState(.idle)
-        defer {
-            finishOlderIfLoading()
-            syncOlderState()
-        }
-        let previousOldest = pager.oldestLoadedSeq ?? Int.max
-        let failures = pageFailures
-        let outcome = await pager.loadOlder { before in
-            if failures.shouldFail() {
-                throw PageFailureInjected()
-            }
-            return try await fetcher.page(before: before)
-        }
-        switch outcome {
-        case .prepended:
-            didAutoRetry = false
-            guard let page = await pager.lastPage else { return }
-            let fresh = page.records.filter { $0.event.seq < previousOldest }
-            let change = timeline.prepend(older: fresh)
-            // 翻过的页也要落盘（FR-033）：以前只有搜索缓冲写盘，上滑补进来的更早记录
-            // 一冷启动就没了，读者得重新翻一遍。
-            if let sessionId = session?.sessionId, let scope = sessionScope, !fresh.isEmpty {
-                enqueueAppend(scope: scope, sessionId: sessionId, records: fresh)
-            }
-            ChatProbe.shared.probeNote?("pager.page", [
-                "start": String(page.startSeq), "end": String(page.endSeq),
-                "clamped": page.clamped ? "1" : "0",
-                "fresh": String(fresh.count),
-                "oldest": String(oldestSeq ?? -1),
-            ], true)
-            if case .none = change {} else { prependSignal += 1 }
-        case .endOfLog:
-            ChatProbe.shared.probeNote?("pager.end", ["oldest": String(oldestSeq ?? -1)], true)
-        case .failed(let reason):
-            setOlderState(.failed(reason))
-            ChatProbe.shared.probeNote?("pager.failed", ["reason": reason], true)
-            scheduleAutoRetry()
-        case .busy:
-            break
-        }
-    }
-
-    /// Reads the stretch between the pager's oldest seq and the topmost row out of
-    /// the local store (spec 007 FR-035).
-    ///
-    /// This is what makes a sliding memory window affordable: dropping the oldest
-    /// rows costs nothing, because coming back up is a disk read rather than a
-    /// network round trip (SC-013). Returns `true` when rows came back, which also
-    /// means "do not call the host".
-    private func backfillFromStore() async -> Bool {
-        guard let sessionId = session?.sessionId, let scope = sessionScope,
-              let store = messageBacking,
-              let firstRow = timeline.firstSeq,
-              let from = oldestSeq, from < firstRow else { return false }
-        let records = (try? await store.windowBefore(
-            scope: scope, sessionId: sessionId, seq: firstRow,
-            limit: Self.windowBackfillLimit)) ?? []
-        let older = records.filter { $0.event.seq < firstRow }
-        guard !older.isEmpty else { return false }
-        let change = timeline.prepend(older: older)
-        if case .none = change { return false }
-        ChatProbe.shared.probeNote?("window.backfill", [
-            "from": String(firstRow), "records": String(older.count),
-            "oldest": String(timeline.firstSeq ?? -1),
-        ], true)
-        prependSignal += 1
-        return true
+        await bridge.loadOlder()
     }
 
     /// Keeps the in-memory window inside its budget.
@@ -1812,45 +1719,21 @@ public final class ChatModel {
     /// Retries the page the reader is still waiting for (the top retry bar).
     public func retryOlder() async {
         setOlderState(.idle)
-        didAutoRetry = false
         await loadOlder()
     }
 
-    /// One automatic retry a few seconds after a failure, so a transient hiccup
-    /// heals without the reader having to notice the bar.
-    private func scheduleAutoRetry() {
-        guard !didAutoRetry else { return }
-        guard let pager, pager.currentState != .end, (pager.oldestLoadedSeq ?? 0) > 1 else { return }
-        didAutoRetry = true
-        autoRetryTask?.cancel()
-        autoRetryTask = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(ChatProbe.shared.autoRetryMs))
-            guard !Task.isCancelled, let self, self.olderFailure != nil else { return }
-            ChatProbe.shared.probeNote?("older.autoRetry", [:], true)
-            await self.loadOlder()
-        }
-    }
-
-    /// One state machine per (session, computer): reinstalled whenever the window
-    /// moves to another session, so nothing leaks across conversations (FR-006).
-    private func installPager(sessionId: String, oldest: Int?, newest: Int?, hasMore: Bool) {
-        pager = TranscriptPager(
-            sessionId: sessionId,
-            oldestLoadedSeq: oldest,
-            newestLoadedSeq: newest,
-            hasMore: hasMore
-        )
+    /// 记录一次窗口观察（打开会话时来自缓存/落盘，管道建立后由重建入口接管）。
+    ///
+    /// 旧 `TranscriptPager` 删除后，这里只落两个视图可见的事实：最老 seq 与"还有更早"。
+    private func noteWindow(oldest: Int?, hasMore: Bool) {
+        hasOlder = hasMore || (oldest ?? 1) > 1
         setOlderState(.idle)
-        hostHasMore = hasMore
-        autoRetryTask?.cancel()
-        didAutoRetry = false
-        syncOlderState()
     }
 
     // MARK: - 009 管道重建落点（tasks T013/T016；桥在 ChatModel+Pipeline.swift）
 
     /// 桥算好的整棵折叠结果落进时间线。在这里（而不是扩展里）落地，是因为它
-    /// 要写 `timeline` / `hasOlder` / `pager` 这些 private(private(set) 成员。
+    /// 要写 `timeline` / `hasOlder` 这些 private(private(set) 成员。
     ///
     /// 在飞状态（流式气泡、发送中的乐观回声）不在下行记录里，重建时必须接回
     /// （`restoreTransient`），否则每一次快照 diff 都会把它们抹掉一帧。
@@ -1873,9 +1756,7 @@ public final class ChatModel {
             scrollSignal += 1
         }
         // T016：「已到最早」只在管道判到顶（hasMore=false / clamped）时成立。
-        hostHasMore = !topExhausted
         hasOlder = !topExhausted && (oldestSeq ?? 1) > 1
-        pager?.observe(oldestSeq: oldestSeq, newestSeq: nil, hasMore: !topExhausted)
         searchScopeVersion += 1
         #if DEBUG
         // `-DSHProbeStaleSend`：把最后一条用户消息标成「已发送，未确认」。
@@ -1930,23 +1811,6 @@ public final class ChatModel {
         }
     }
 
-    /// Projects the pager's state onto the two values the view reads.
-    ///
-    /// `hasOlder` stays true while the state is `failed`, because that is exactly
-    /// when the reader must be able to try again.
-    private func syncOlderState() {
-        guard let pager else {
-            hasOlder = false
-            return
-        }
-        switch pager.currentState {
-        case .end: hostHasMore = false
-        case .more: hostHasMore = true
-        case .failed: break
-        }
-        hasOlder = pager.currentState != .end && (pager.oldestLoadedSeq ?? 0) > 1
-    }
-
     /// The channel-choosing fetcher for this session, or `nil` before a connection.
     /// 一页有多大：时间线要"一屏一屏"地补（60 条），搜索缓冲要"一大段"地读。
     ///
@@ -1979,7 +1843,7 @@ public final class ChatModel {
         #else
         let shortfall = 0
         #endif
-        let filter: (@Sendable (TranscriptPager.Page) -> TranscriptPager.Page)? = shortfall > 0
+        let filter: (@Sendable (TranscriptPage) -> TranscriptPage)? = shortfall > 0
             ? { @Sendable page in Self.droppingNewest(shortfall, from: page) }
             : nil
         return TranscriptPageFetcher(
@@ -1994,10 +1858,10 @@ public final class ChatModel {
 
     /// Drops the newest `count` records — the DEBUG reproduction of a host that
     /// hands back a short page (test case 43).
-    private nonisolated static func droppingNewest(_ count: Int, from page: TranscriptPager.Page) -> TranscriptPager.Page {
+    private nonisolated static func droppingNewest(_ count: Int, from page: TranscriptPage) -> TranscriptPage {
         guard page.records.count > count else { return page }
         let kept = Array(page.records.dropLast(count))
-        return TranscriptPager.Page(
+        return TranscriptPage(
             records: kept,
             startSeq: kept.first?.event.seq ?? page.startSeq,
             endSeq: kept.last?.event.seq ?? page.endSeq,
@@ -2025,12 +1889,10 @@ public final class ChatModel {
     /// 搜索还能不能往前扩。
     ///
     /// 以前这里还有第二个"还有没有更早"（`searchHasOlder`），一次失败就被置成 false，
-    /// 于是面板会显示"已经是最开头"而时间线还能继续翻。现在只问 pager（FR-005）。
+    /// 于是面板会显示"已经是最开头"而时间线还能继续翻。现在只问本地窗口（FR-005）。
     public var canExtendSearch: Bool {
-        // 只问"还能不能更早"，**不问 pager 的状态**：pager 描述的是"宿主那边还有没有"，
-        // 而这里要的是"本地库里还有没有"——两者不是同一件事（2026-10-08 用例 44/46 实测：
-        // 某些会话的宿主日志已经被裁到快照覆盖的范围，pager 判到底，但本地库里明明存着
-        // 更早的老提问，面板却被"到底了"挡住，读者再也搜不到它们）。
+        // 只问"本地库里还有没有"：宿主日志可能已被裁到快照覆盖的范围，而本地库仍存着
+        // 更早的老提问（2026-10-08 用例 44/46 实测）。宿主是否到底不是这里的判据。
         searchOldestSeq ?? oldestSeq ?? 1 > 1
     }
 
@@ -2094,11 +1956,6 @@ public final class ChatModel {
         searchScopeVersion += 1
         guard !fresh.isEmpty else { return false }
         let change = timeline.prepend(older: fresh)
-        if let first = fresh.first?.event.seq {
-            // 并入缓冲等于把窗口下界推到那段更早的地方；告诉 pager，而不是自己改一个字段。
-            pager?.observe(oldestSeq: first, newestSeq: nil, hasMore: hasOlder)
-            syncOlderState()
-        }
         if case .none = change { return false }
         prependSignal += 1
         ChatProbe.shared.probeNote?("search.committed", [

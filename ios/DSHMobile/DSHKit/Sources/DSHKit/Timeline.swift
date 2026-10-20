@@ -635,7 +635,7 @@ public struct ChatTimeline: Sendable {
 
     /// Drops the oldest rows to keep the in-memory window inside its budget.
     ///
-    /// Only the **rows** go: the pager's "is there older history" is untouched, and
+    /// Only the **rows** go: the host's "is there older history" is untouched, and
     /// the records themselves stay in the local store, so scrolling back up reads
     /// them from disk instead of the network (spec 007 FR-035). Returns the number
     /// of rows actually dropped.

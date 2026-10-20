@@ -1,6 +1,6 @@
 import Foundation
 
-/// Turns "give me the page before seq N" into one `TranscriptPager.Page`, over
+/// Turns "give me the page before seq N" into one `TranscriptPage`, over
 /// whichever channel the connector actually offers (spec 007 FR-002/FR-027).
 ///
 /// Why this lives in the protocol package and not in the chat model: choosing a
@@ -54,7 +54,7 @@ public struct TranscriptPageFetcher: Sendable {
     /// Test seam: rewrites a legacy page before the shortfall correction runs.
     /// The app passes this only under the DEBUG probe flag that reproduces "the
     /// host gave back a short page" (test case 43); production passes nothing.
-    private let pageFilter: (@Sendable (TranscriptPager.Page) -> TranscriptPager.Page)?
+    private let pageFilter: (@Sendable (TranscriptPage) -> TranscriptPage)?
 
     public init(
         client: DSHClient,
@@ -63,7 +63,7 @@ public struct TranscriptPageFetcher: Sendable {
         capabilities: Set<String>,
         pageSize: Int = 60,
         maxBytes: Int = 256 * 1024,
-        pageFilter: (@Sendable (TranscriptPager.Page) -> TranscriptPager.Page)? = nil
+        pageFilter: (@Sendable (TranscriptPage) -> TranscriptPage)? = nil
     ) {
         self.client = client
         self.address = address
@@ -78,14 +78,14 @@ public struct TranscriptPageFetcher: Sendable {
     }
 
     /// One page strictly older than `before`.
-    public func page(before: Int) async throws -> TranscriptPager.Page {
+    public func page(before: Int) async throws -> TranscriptPage {
         switch channel {
         case .exactWindow: return try await exactPage(before: before)
         case .legacyPage: return try await legacyPage(before: before)
         }
     }
 
-    private func exactPage(before: Int) async throws -> TranscriptPager.Page {
+    private func exactPage(before: Int) async throws -> TranscriptPage {
         let value = try await client.historyWindow(
             HistoryWindowRequest(address: address, before: before,
                                  through: throughSeq, limit: pageSize, maxBytes: maxBytes,
@@ -104,7 +104,7 @@ public struct TranscriptPageFetcher: Sendable {
     /// 代价是旧通道多几次往返——它本来就是降级路径，位置不跳比省一次往返重要。
     private static let legacyMessages = 20
 
-    private func legacyPage(before: Int) async throws -> TranscriptPager.Page {
+    private func legacyPage(before: Int) async throws -> TranscriptPage {
         var requested = before
         var lastShortfall: Int?
         for attempt in 1...TranscriptPageBoundary.maxAttempts {
@@ -115,7 +115,7 @@ public struct TranscriptPageFetcher: Sendable {
             guard let first = page.records.first?.event.seq, let last = page.records.last?.event.seq else {
                 throw Failure.emptyPage
             }
-            let raw = TranscriptPager.Page(records: page.records, startSeq: first, endSeq: last,
+            let raw = TranscriptPage(records: page.records, startSeq: first, endSeq: last,
                                            hasMore: page.hasMore, clamped: true)
             // The seam runs **before** the correction, so a short page injected here
             // makes the correction fire exactly as a real short page would.
