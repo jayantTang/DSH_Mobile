@@ -55,6 +55,8 @@ struct RootView: View {
     @State private var messageLayer = MessageLayer.withAppProbes()
     /// Holds the app awake in the background while there is work to report on.
     @State private var keepAlive = RunKeepAlive()
+    /// 前后台副作用执行器：首次 phase 变化时用当前 stores 装配。
+    @State private var lifecycle: ScenePhaseCoordinator?
 
     @Environment(\.scenePhase) private var scenePhase
     @State private var lastConnected = false
@@ -296,57 +298,11 @@ struct RootView: View {
     private var stageTwo: some View {
         stageOne
             .onChange(of: scenePhase) { _, phase in
-                // 退到后台/被挂起：把转写尾部立刻写盘——此刻之后进程可能就没了。
-                // 009 的写队列（pending / confirm）是另一条写链，旧路径的
-                // persistTranscriptNow 在管道模式下直接 return，必须单独冲。
-                if phase != .active {
-                    chatModel.persistTranscriptNow()
-                    Task { await chatModel.flushTranscript() }
-                    Task { await chatModel.flushPipelineWrites() }
-                }
-                // 前后台切换记一条（spec 020）：这是区分「App 被系统挂起」与「拨号卡住」
-                // 的唯一本地证据——两者在中转与连接器两侧看起来完全一样。
-                if phase == .background {
-                    Task { await store.noteScene(.background) }
-                } else if phase == .active {
-                    Task { await store.noteScene(.foreground) }
-                    // 032：推送是尽力而为的；回前台补拉一次账户级状态。
-                    Task { await AccountStateSync.shared.refresh() }
-                }
-                // Re-checked on every return to the foreground: that is when a
-                // user who just installed an update comes back to look.
-                if phase == .active { Task { await updates.refresh() } }
-                // 反馈通道同理：回到前台拉一次未读，用户不必手动刷新（SC-003）。
-                if phase == .active { Task { await FeedbackCenter.shared.applicationBecameActive() } }
-                // 回到前台是推送登记的自愈点：用户可能刚在 iOS 设置里允许了通知
-                // （此前从未拿到令牌），也可能换了网络后 Apple 才回过话来。
-                // 重新注册是幂等的，未变化时不会多打一次 relay。
-                if phase == .active {
-                    Task {
-                        await alerts.refreshAuthorization()
-                        await APNSRegistrar.shared.registerIfAuthorized()
-                        await APNSRegistrar.shared.reportToRelayIfNeeded()
-                    }
-                }
-                if phase == .active, store.state.isConnected {
-                    // The feed is left running while backgrounded — that is what
-                    // makes a notification possible at all — so coming back only
-                    // has to make the rows fresh again.
-                    hub.startIfNeeded(link: store.link)
-                    Task { await listModel.refresh() }
-                    // 可见性兜底（009 tasks T019）：回前台对一次 lastSeq，
-                    // 推送在后台漏掉的尾部增量向管道补齐（幂等，在飞不重复）。
-                    Task { await chatModel.syncTailWithHost(reason: "foreground") }
-                } else if phase == .active {
-                    // Sockets do not survive suspension; put the link back.
-                    Task { await store.reconnectIfNeeded() }
-                }
-                // Background: keep the app alive while there is something to be
-                // told about. See `RunKeepAlive`.
-                keepAlive.sync(
-                    isBackground: phase == .background,
-                    hasWorkInFlight: listModel.runningCount > 0 || !hub.pending.isEmpty
-                )
+                let coordinator = lifecycle ?? ScenePhaseCoordinator(
+                    store: store, hub: hub, listModel: listModel, chatModel: chatModel,
+                    updates: updates, alerts: alerts, keepAlive: keepAlive)
+                lifecycle = coordinator
+                coordinator.handle(phase.lifecyclePhase)
             }
             .onChange(of: hub.isLive) { _, live in
                 // The feed is back after a drop: whatever happened while it was
@@ -356,10 +312,14 @@ struct RootView: View {
                 Task { await listModel.refresh() }
             }
             .onChange(of: listModel.runningCount) { _, running in
-                keepAlive.sync(
-                    isBackground: scenePhase == .background,
-                    hasWorkInFlight: running > 0 || !hub.pending.isEmpty
-                )
+                if let lifecycle {
+                    lifecycle.syncHoldAwake(phase: scenePhase.lifecyclePhase)
+                } else {
+                    keepAlive.sync(
+                        isBackground: scenePhase == .background,
+                        hasWorkInFlight: running > 0 || !hub.pending.isEmpty
+                    )
+                }
             }
             .onChange(of: hub.hostHome) { _, home in
                 if let home { store.hostHome = home }
