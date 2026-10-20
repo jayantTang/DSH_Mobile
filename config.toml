@@ -1,0 +1,6 @@
+# OpenHands 本机原生配置（无 Docker）。
+# 运行时要靠环境变量 RUNTIME=process 选择 ProcessSandboxService，
+# 统一入口是 scripts/openhands-local.sh（它会导出该变量）。
+# 直接跑 `openhands` 时请先执行：export RUNTIME=process
+[core]
+max_iterations = 5

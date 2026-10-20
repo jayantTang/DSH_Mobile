@@ -1,0 +1,25 @@
+{
+  "runtime": "process",
+  "runtime_env": {
+    "RUNTIME": "process"
+  },
+  "max_iterations": 5,
+  "agent_mode": "single_developer",
+  "max_budget_per_task": 5,
+  "sandbox": {
+    "kind": "process",
+    "docker": false,
+    "remote_runtime": false,
+    "enable_browser": false
+  },
+  "guard": {
+    "targeted_tests_only": true,
+    "review_timeout_seconds": 5,
+    "precommit_budget_seconds": 30,
+    "block_on": [
+      "patch_if_else",
+      "ineffective_mock",
+      "swallowed_error"
+    ]
+  }
+}

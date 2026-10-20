@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# 本地提交防线（无 Docker）：
+#   第一步 · 靶向测试（≤30s，只跑受影响文件的用例）
+#   第二步 · Diff 审查（规则 + 本机模型，≤5s）
+# 跳过：SKIP_LOCAL_GUARD=1 git commit …，或 git commit --no-verify
+set -uo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT" || exit 2
+
+if [ "${SKIP_LOCAL_GUARD:-0}" = "1" ]; then
+  echo "[local-guard] SKIP_LOCAL_GUARD=1，本次不检查"
+  exit 0
+fi
+
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "[local-guard] 找不到 python3，无法执行本地防线" >&2
+  exit 2
+fi
+
+echo "[local-guard 1/2] 靶向测试"
+python3 scripts/targeted_tests.py --staged
+test_status=$?
+if [ "$test_status" -ne 0 ]; then
+  echo "[local-guard] 靶向测试失败或超时，提交已拦截。" >&2
+  echo "  只补受影响用例，不要改跑全量；确需跳过用 SKIP_LOCAL_GUARD=1。" >&2
+  exit 1
+fi
+
+echo "[local-guard 2/2] Diff 审查"
+python3 scripts/local_ai_review.py --mode staged
+review_status=$?
+case "$review_status" in
+  0) ;;
+  1)
+    echo "[local-guard] Diff 审查命中拦截项，提交已拦截。" >&2
+    echo "  按上面列出的文件与行号改实现，不要用新增 if-else 特例绕过。" >&2
+    exit 1
+    ;;
+  *)
+    echo "[local-guard] 审查脚本自身出错（退出码 $review_status），本次放行但请排查。" >&2
+    if [ "${LOCAL_GUARD_STRICT:-0}" = "1" ]; then
+      exit 1
+    fi
+    ;;
+esac
+
+exit 0
