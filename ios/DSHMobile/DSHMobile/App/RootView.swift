@@ -105,55 +105,13 @@ struct RootView: View {
                 Task { await AccountStateSync.shared.refresh() }
             }
             .task {
-                // 冷启动进前台：与"从后台回来"分开记（现场诊断发现的缺口）。
-                // 032：账户级状态只依赖**中转**，与"主机在不在线"无关，所以在这里就装配
-                // （不能等到 isConnected——电脑睡着时手机也要能对齐已读与开关）。
-                AccountStateSync.shared.attach(viewLog: viewLog, alertPrefs: alertPrefs,
-                                               answerLog: answerLog, hub: hub,
-                                               link: { [weak store] in store })
-                await AccountStateSync.shared.refresh()
-                await store.noteColdLaunch()
-                messageLayer.attach(link: store.link)
-                listModel.attach(to: store, hub: hub, viewLog: viewLog, messageLayer: messageLayer)
-                attachmentImages.attach(store: store)
-                chatModel.attach(store: store, hub: hub)
-                chatModel.attach(messageLayer: messageLayer)
-                // 宿主标题事件按会话归属转给列表：占位行据此显示真实标题，
-                // 不再等 session/list（宿主对新建会话的列表可见性滞后）。
-                chatModel.onSessionTitle = { [listModel] id, title in
-                    listModel.noteSessionTitle(id: id, title: title)
-                }
-                #if DEBUG
-                // 032 用例钩子：`-DSHProbeStaleFollowFrame` 时注入一帧上一个会话的迟到帧，
-                // 用来验证"跨会话的帧不落地"。注入的帧走真实守卫（见 ChatModel）。
-                if ProbeVariants.staleFollowFrame {
-                    chatModel.staleFrameInjector = { StaleFrameInjection.make() }
-                }
-                #endif
-                // The feed asks for the client each time it reopens, so a repair
-                // that swapped the carrier underneath is picked up by itself.
-                hub.attach { [store] in store.link }
-                // 018：活动名单跟着连接走：建连即订阅 + 取名单，断线冻结本地推断。
-                activity.attach(service: store, hub: hub)
-                listModel.activityModel = activity
-
-                // Automation hook first: a scripted run passes the target
-                // explicitly and must not fall back to a remembered profile.
-                if let link = Self.automationLink() {
-                    if let failure = await store.connect(link: link) {
-                        connectionError = failure
-                    }
-                    return
-                }
-
-                // Reconnect silently on launch so opening the app lands on the
-                // session list rather than the pairing screen.
-                //
-                // A screenshot run that wants the pairing screen asks for it
-                // instead of deleting a stored credential to get there.
-                guard !Self.automationShowsOnboarding() else { return }
-                forgetDirectProfilesIfAsked()
-                await connectToBestAvailableProfile()
+                let startup = AppStartupCoordinator(
+                    store: store, hub: hub, listModel: listModel, chatModel: chatModel,
+                    messageLayer: messageLayer, attachmentImages: attachmentImages,
+                    activity: activity, viewLog: viewLog, answerLog: answerLog,
+                    alertPrefs: alertPrefs,
+                    onConnectionFailure: { connectionError = $0 })
+                await startup.start()
             }
             .task {
                 // P-3 尾巴的复现钩子：把 `-DSHStageFile <路径>` 走**附件菜单那条路**
@@ -361,46 +319,6 @@ struct RootView: View {
         } else {
             ConnectionView(onPairingChanged: { await APNSRegistrar.shared.pairingChanged() })
         }
-    }
-
-    /// The profile to reconnect to on launch: most recently used, and only if
-    /// its credential is still present.
-    /// Connects to the first saved host that answers.
-    ///
-    /// Most recent first, then the rest. A direct profile that works on the
-    /// network the computer sits on is useless anywhere else, and a user who
-    /// leaves the house should not have to switch connections by hand when the
-    /// relay they already paired is saved right beside it.
-    private func connectToBestAvailableProfile() async {
-        let ordered = store.profiles
-            .filter { store.hasSecret(for: $0) }
-            .sorted { ($0.lastConnectedAt ?? .distantPast) > ($1.lastConnectedAt ?? .distantPast) }
-        for profile in ordered {
-            await store.connect(to: profile)
-            if store.state.isConnected { return }
-        }
-    }
-
-    /// Drops a saved DEBUG direct pairing when a run asks for the product path.
-    ///
-    /// `dsh://direct` is a test channel, but a profile saved by an earlier test
-    /// run survives in the simulator and wins the reconnect race, so every later
-    /// screenshot shows a transport the product does not offer.
-    private func forgetDirectProfilesIfAsked() {
-        #if DEBUG
-        guard CommandLine.arguments.contains("-DSHForgetDirect") else { return }
-        for profile in store.profiles {
-            if case .direct = profile.transport { store.removeProfile(profile) }
-        }
-        #else
-        // Release: 调试钩子不存在（`dsh://direct` 本身也是 DEBUG-only 通道）。
-        #endif
-    }
-
-    private var preferredProfile: ConnectionProfile? {
-        store.profiles
-            .filter { store.hasSecret(for: $0) }
-            .max { ($0.lastConnectedAt ?? .distantPast) < ($1.lastConnectedAt ?? .distantPast) }
     }
 
     #if DEBUG
