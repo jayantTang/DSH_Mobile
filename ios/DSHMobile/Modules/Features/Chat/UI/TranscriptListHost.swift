@@ -633,7 +633,9 @@ final class TranscriptListHost: UIView, UICollectionViewDelegate {
         applySnapshot(reloading: changedIds)
         collectionView.layoutIfNeeded()
         let after = visualY(of: effectiveAnchorId)
-        var delta = (after ?? 0) - (before ?? 0)
+        var delta = TranscriptScrollAdjustment.delta(
+            anchorBefore: before.map { Double($0) },
+            anchorAfter: after.map { Double($0) })
         if delta != 0 {
             collectionView.contentOffset.y += delta
             collectionView.layoutIfNeeded()
@@ -704,7 +706,9 @@ final class TranscriptListHost: UIView, UICollectionViewDelegate {
         collectionView.layoutIfNeeded()
         let layoutMs = (CFAbsoluteTimeGetCurrent() - started) * 1000
         let after = visualY(of: anchorId)
-        var delta = (after ?? 0) - (before ?? 0)
+        var delta = TranscriptScrollAdjustment.delta(
+            anchorBefore: before.map { Double($0) },
+            anchorAfter: after.map { Double($0) })
         if delta != 0 {
             collectionView.contentOffset.y += delta
             collectionView.layoutIfNeeded()
@@ -744,7 +748,9 @@ final class TranscriptListHost: UIView, UICollectionViewDelegate {
         applySnapshot()
         collectionView.layoutIfNeeded()
         let after = visualY(of: anchorId)
-        let delta = (after ?? 0) - (before ?? 0)
+        let delta = TranscriptScrollAdjustment.delta(
+            anchorBefore: before.map { Double($0) },
+            anchorAfter: after.map { Double($0) })
         if delta != 0 {
             collectionView.contentOffset.y += delta
             collectionView.layoutIfNeeded()
