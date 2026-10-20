@@ -511,7 +511,7 @@ final class TranscriptProcessFoldTests: XCTestCase {
         XCTAssertFalse(rows.contains { item in
             if case .processHeader(let header) = item.kind { return header.isPrefetched }
             return false
-        }, "展开后不应再出现摘要行")
+        }, "expanded turn must not keep a summary row")
     }
 
     // MARK: - 连接器折好下发的摘要（history-fold-summary）

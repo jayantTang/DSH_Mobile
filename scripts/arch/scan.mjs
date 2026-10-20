@@ -14,7 +14,7 @@
  * 解析函数在 parse.mjs，本文只负责"怎么分组、怎么连边"。
  */
 
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { extname, join } from 'node:path'
 
 import { buildFileLayer } from './files.mjs'
@@ -95,9 +95,13 @@ function defineGroups() {
   const kitRoot = join(ROOT, 'ios/DSHMobile/DSHKit/Sources')
   for (const target of dirsIn(kitRoot)) add(`ios/kit/${target}`, 'ios-kit', join(kitRoot, target))
 
-  // Modules 本地包（025/026 模块化重构后的新家）：一个 target 一个分组，名字就是 import 名
-  const modulesRoot = join(ROOT, 'ios/DSHMobile/Modules/Sources')
-  for (const target of dirsIn(modulesRoot)) add(`ios/mod/${target}`, 'ios-mod', join(modulesRoot, target))
+  // Modules 本地包（2026-10 层/单元目录重排）：target 用显式 path:，
+  // 分组名仍取 target 名（import 名），路径从 Package.swift 读，不能再假设 Sources/<Target>。
+  const modulesRoot = join(ROOT, 'ios/DSHMobile/Modules')
+  const modulesPkg = readFileSync(join(modulesRoot, 'Package.swift'), 'utf8')
+  for (const m of modulesPkg.matchAll(/\.target\(\s*name:\s*"(\w+)"[\s\S]*?path:\s*"([^"]+)"/g)) {
+    add(`ios/mod/${m[1]}`, 'ios-mod', join(modulesRoot, m[2]))
+  }
 
   for (const name of dirsIn(join(ROOT, 'plugins'))) add(`plugin/${name}`, 'js', join(ROOT, 'plugins', name))
   for (const name of dirsIn(join(ROOT, 'scripts'))) add(`scripts/${name}`, 'js', join(ROOT, 'scripts', name))

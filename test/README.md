@@ -71,14 +71,14 @@ test/.venv/bin/python test/tools/test_report.py    # 每条规则一个反例，
 |---|---|---|---|
 | DSHKit 单元测试 | 手机 iOS（协议层，与 DSH 本体的通信口径） | `ios/DSHMobile/DSHKit/Tests` | 协议、编解码、契约向量 |
 | DSHKit `Live*`（4 个文件） | 手机 iOS × DSH 本体（集成） | `ios/DSHMobile/DSHKit/Tests/DSHKitTests/Live*.swift` | 与真实实例交互：`LiveIntegrationTests`、`LiveDuplicateAuditTests`、`LiveWorkspaceFileVersionTests` 为只读接触；`LiveTurnTests` 需 `DSH_LIVE_TURN=1`，为写接触（建会话并发提示词） |
-| Modules `swift test` | 手机 iOS | `ios/DSHMobile/Modules/Tests` | 领域逻辑：会话、聊天、连接、文件、反馈、设置 |
-| `check:ios-modules` 的 iOS 半边 | 手机 iOS | `ios/DSHMobile/Modules/Tests` | 同上，在 iOS 运行时下执行 |
+| Modules `swift test` | 手机 iOS | `ios/DSHMobile/Modules/Features/*/Tests` | 领域逻辑：会话、聊天、连接、文件、反馈、设置 |
+| `check:ios-modules` 的 iOS 半边 | 手机 iOS | `ios/DSHMobile/Modules/Features/*/Tests` | 同上，在 iOS 运行时下执行 |
 | `test:app-unit` | 手机 iOS | `ios/DSHMobile/DSHMobileTests` | 测试宿主检测、钥匙串往返、平台相邻代码可测性 |
 | `plugins/mobile-link` `npm test` | 连接器 | `plugins/mobile-link/test` | 端点发现、配对、文件传输、journal、安装路径解析 |
 | `plugins/send-image`、`plugins/doubao-image` `npm test` | 图片插件（手机 iOS 与 DSH 本体之间的图片投递） | `plugins/send-image/test`、`plugins/doubao-image/test` | 图片生成、编码与投递 |
 | `relay` `pytest`（非 e2e） | 中转服务 | `relay/tests/test_*.py` | 中转协议、账户与配额、管理 CLI |
 | `relay` 信件与推送相关测试 | 邮件服务（中转侧信件线程、通知投递、APNs 注册与推送） | `relay/tests/test_feedback_*.py`、`test_push.py`、`test_notify_push.py`、`test_admin_push.py`、`test_app_push_registration.py` | 信件读写、未读、报告、通知投递、推送登记 |
-| 手机侧收件箱测试 | 邮件服务 × 手机 iOS | `ios/DSHMobile/Modules/Tests/DSHFeedbackDomainTests`、`ios/DSHMobile/DSHKit/Tests/DSHKitTests/RelayFeedbackTests.swift` | 信件解析、未读与已读、回信组合 |
+| 手机侧收件箱测试 | 邮件服务 × 手机 iOS | `ios/DSHMobile/Modules/Features/Feedback/Tests/DomainTests`、`ios/DSHMobile/DSHKit/Tests/DSHKitTests/RelayFeedbackTests.swift` | 信件解析、未读与已读、回信组合 |
 | `relay` `*_e2e.py` | 中转服务（渠道 L2） | `relay/tests/e2e_support.py`、`test_account_state_push_e2e.py` | 启动真实 Caddy 与 HTTP 服务的端到端 |
 | `scripts/**/*.test.mjs` | 非产品组件：仓库工具链 | `scripts/dev/*.test.mjs`、`scripts/release/*.test.mjs` | 重启、档案对等、插件热更、调试设备清扫 |
 | `test/cases/**` | 手机 iOS × 中转服务 × 连接器 × DSH 本体（端到端） | `test/cases/`、`test/tools/` | 真机形态界面、手势、真实链路；同时充当 `ios-app × l1` 的逐屏核对证据 |

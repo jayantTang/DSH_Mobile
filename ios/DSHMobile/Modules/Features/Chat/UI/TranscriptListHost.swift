@@ -352,7 +352,9 @@ final class TranscriptListHost: UIView, UICollectionViewDelegate {
     /// 预取余量：一屏半。
     private func prefetchMargin() -> CGFloat {
         // 触发口径只有一份：视口高度的两倍（下限 240pt），见 HistoryTriggerPolicy。
-        HistoryTriggerPolicy.margin(viewportHeight: collectionView.bounds.height)
+        // 策略在 DSHKit 里用 Double（禁 CoreGraphics），这里做一次显式换算。
+        CGFloat(HistoryTriggerPolicy.margin(
+            viewportHeight: Double(collectionView.bounds.height)))
     }
 
     /// 该回收这些行（由调用方决定最终是否回收）。

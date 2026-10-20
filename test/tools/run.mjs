@@ -639,7 +639,7 @@ async function runCase(flags, positional, pairing) {
         '--shots', shotsDir, '--manifest', JSON.stringify(manifest), '--checks', checks.join(','),
         // DSHTheme 在 025 模块拆分里搬进了 Modules/DSHDesign（这里原来写死的旧路径
         // `DSHMobile/Design/DSHTheme.swift` 已经不存在，像素核对因此整条崩掉）。
-        '--theme', join(PROJECT, 'Modules/Sources/DSHDesign/DSHTheme.swift')], { quiet: true }))
+        '--theme', join(PROJECT, 'Modules/Design/Sources/DSHTheme.swift')], { quiet: true }))
       writeFileSync(join(detailDir, 'verify.json'), JSON.stringify(pixel, null, 2))
       for (const item of pixel.results) {
         const mark = item.ok ? '\x1b[32m✓\x1b[0m' : '\x1b[31m✗\x1b[0m'

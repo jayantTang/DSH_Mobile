@@ -18,6 +18,7 @@
     "search-progress",
     "history-compression",
     "history-fold-summary",
+    "history-coverage",
     "jobs-roster",
     "device-subprotocol-auth",
     "persistent-pair-code",

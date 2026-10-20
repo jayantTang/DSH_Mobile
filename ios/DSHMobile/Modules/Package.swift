@@ -1,17 +1,22 @@
 // swift-tools-version: 5.9
 //
-// DSHMobile 模块包（025 模块化重构）
+// DSHMobile 模块包（025 模块化重构；2026-10-21 层/单元目录重排）
 //
-// 分层（依赖只允许向下）：
-//   L1 功能单元：DSH<X>UI → DSH<X>Domain；横切 DSHDesign
-//   L2 核心服务：DSHCore；纯协议 DSHConnectionAPI
-//   L4 基础：DSHFoundation
-//   L3 协议层 DSHKit/RelayKit 是独立包（ios/DSHMobile/DSHKit），本包按本地路径依赖它
+// 目录即层，层内按单元内聚：
 //
-// DSHTestingSupport 仅供 *Tests 依赖，产品 target 不得依赖它。
+//   Foundation/            基础层（无依赖）
+//   Design/                界面基础层（依赖 Foundation）
+//   Contracts/             App 契约层（LinkService 等，依赖 DSHKit）
+//   Core/                  服务层（HostEventHub / RouteIntent / ActivityModel）
+//   Features/<Unit>/       功能单元层，单元内 Domain / UI / Tests 同居
+//   Testing/               测试辅助（仅 test target 可依赖）
 //
-// 边界由 scripts/dev/check-module-boundaries.mjs 做文本级复核；
+// L0 协议与数据在独立包 `../DSHKit`（DSHKit / RelayKit）。
+// 依赖只允许向下；边界由 scripts/dev/check-module-boundaries.mjs 做路径级复核，
 // 例外登记在 BOUNDARY-EXCEPTIONS.md。
+//
+// 每个 target 都用显式 `path:`：不再依赖默认 `Sources/`、`Tests/` 布局，
+// 这样 `Features/Chat/Domain` 与 `Features/Sessions/Domain` 可以同名共存。
 
 import PackageDescription
 
@@ -48,70 +53,189 @@ let package = Package(
         .package(url: "https://github.com/pointfreeco/swift-snapshot-testing.git", from: "1.17.0"),
     ],
     targets: [
-        // L4 基础层：零业务、零 UI
-        .target(name: "DSHFoundation"),
-        .testTarget(name: "DSHFoundationTests", dependencies: ["DSHFoundation"]),
+        // MARK: - 基础层
 
-        // L1 横切设计系统：仅 SwiftUI
-        .target(name: "DSHDesign", dependencies: ["DSHFoundation"]),
-        .testTarget(name: "DSHDesignTests", dependencies: [
-            "DSHDesign",
-            .product(name: "SnapshotTesting", package: "swift-snapshot-testing"),
-        ]),
+        // 零业务、零 UI
+        .target(
+            name: "DSHFoundation",
+            path: "Foundation/Sources"
+        ),
+        .testTarget(
+            name: "DSHFoundationTests",
+            dependencies: ["DSHFoundation"],
+            path: "Foundation/Tests"
+        ),
 
-        // L2 纯协议：连接服务接口
-        .target(name: "DSHConnectionAPI", dependencies: [dshKit]),
+        // 横切设计系统：仅 SwiftUI
+        .target(
+            name: "DSHDesign",
+            dependencies: ["DSHFoundation"],
+            path: "Design/Sources"
+        ),
+        .testTarget(
+            name: "DSHDesignTests",
+            dependencies: [
+                "DSHDesign",
+                .product(name: "SnapshotTesting", package: "swift-snapshot-testing"),
+            ],
+            path: "Design/Tests",
+            // 快照由 SnapshotTesting 在运行期按 #filePath 读取，不需要作为 target 资源；
+            // 不 exclude 会被 SwiftPM 当成未处理文件报警。
+            exclude: ["__Snapshots__"]
+        ),
 
-        // L2 核心服务：事件分发 / 传输编排 / 路由意图（禁 UI）
-        .target(name: "DSHCore", dependencies: ["DSHConnectionAPI", "DSHFoundation", dshKit, relayKit]),
-        .testTarget(name: "DSHCoreTests", dependencies: [
-            "DSHCore", "DSHTestingSupport", dshKit,
-        ]),
+        // MARK: - 契约层
 
-        // L1 连接单元领域层：实现 LinkService（禁 UI）
-        .target(name: "DSHConnectionDomain", dependencies: ["DSHConnectionAPI", "DSHFoundation", dshKit, relayKit]),
-        .testTarget(name: "DSHConnectionDomainTests", dependencies: [
-            "DSHConnectionDomain", "DSHConnectionAPI", "DSHTestingSupport", dshKit, relayKit,
-        ]),
+        // 纯协议：连接服务接口
+        .target(
+            name: "DSHConnectionAPI",
+            dependencies: [dshKit],
+            path: "Contracts/Sources"
+        ),
 
-        // L1 连接单元界面层
-        .target(name: "DSHConnectionUI", dependencies: ["DSHConnectionDomain", "DSHDesign", "DSHCore", "DSHFoundation", dshKit]),
+        // MARK: - 服务层
 
-        // L1 会话单元
-        .target(name: "DSHSessionsDomain", dependencies: ["DSHCore", "DSHConnectionAPI", "DSHFoundation", dshKit]),
-        .target(name: "DSHSessionsUI", dependencies: ["DSHSessionsDomain", "DSHDesign", "DSHCore", "DSHConnectionDomain", "DSHFoundation", dshKit]),
+        // 事件分发 / 传输编排 / 路由意图（禁 UI）
+        .target(
+            name: "DSHCore",
+            dependencies: ["DSHConnectionAPI", "DSHFoundation", dshKit, relayKit],
+            path: "Core/Sources"
+        ),
+        .testTarget(
+            name: "DSHCoreTests",
+            dependencies: ["DSHCore", "DSHTestingSupport", dshKit],
+            path: "Core/Tests"
+        ),
 
-        // L1 聊天单元：转写/流式/分页的领域层，与转写界面层
-        .target(name: "DSHChatDomain", dependencies: ["DSHCore", "DSHConnectionAPI", "DSHFoundation", dshKit, relayKit]),
+        // MARK: - 功能单元层
+
+        // 连接单元
+        .target(
+            name: "DSHConnectionDomain",
+            dependencies: ["DSHConnectionAPI", "DSHFoundation", dshKit, relayKit],
+            path: "Features/Connection/Domain"
+        ),
+        .testTarget(
+            name: "DSHConnectionDomainTests",
+            dependencies: [
+                "DSHConnectionDomain", "DSHConnectionAPI", "DSHTestingSupport", dshKit, relayKit,
+            ],
+            path: "Features/Connection/Tests/DomainTests"
+        ),
+        .target(
+            name: "DSHConnectionUI",
+            dependencies: ["DSHConnectionDomain", "DSHDesign", "DSHCore", "DSHFoundation", dshKit],
+            path: "Features/Connection/UI"
+        ),
+
+        // 会话单元
+        .target(
+            name: "DSHSessionsDomain",
+            dependencies: ["DSHCore", "DSHConnectionAPI", "DSHFoundation", dshKit],
+            path: "Features/Sessions/Domain"
+        ),
+        .testTarget(
+            name: "DSHSessionsDomainTests",
+            dependencies: ["DSHSessionsDomain", "DSHTestingSupport", dshKit, "DSHConnectionAPI", "DSHCore"],
+            path: "Features/Sessions/Tests/DomainTests"
+        ),
+        .target(
+            name: "DSHSessionsUI",
+            dependencies: [
+                "DSHSessionsDomain", "DSHDesign", "DSHCore", "DSHConnectionDomain", "DSHFoundation", dshKit,
+            ],
+            path: "Features/Sessions/UI"
+        ),
+
+        // 聊天单元：转写/流式/分页的领域层，与转写界面层
+        .target(
+            name: "DSHChatDomain",
+            dependencies: ["DSHCore", "DSHConnectionAPI", "DSHFoundation", dshKit, relayKit],
+            path: "Features/Chat/Domain"
+        ),
         // 传输注入缝用例要 FakeLinkService + FakeCarrier（026 的 clientOverride），
         // 并直接点名 HostEventHub / ConnectionProfile。
-        .testTarget(name: "DSHChatDomainTests", dependencies: [
-            "DSHChatDomain", "DSHTestingSupport", "DSHCore", "DSHConnectionAPI", dshKit,
-        ]),
-        .target(name: "DSHChatUI", dependencies: ["DSHChatDomain", "DSHDesign", "DSHCore", "DSHConnectionDomain", "DSHFoundation", dshKit, relayKit]),
+        .testTarget(
+            name: "DSHChatDomainTests",
+            dependencies: [
+                "DSHChatDomain", "DSHTestingSupport", "DSHCore", "DSHConnectionAPI", dshKit,
+            ],
+            path: "Features/Chat/Tests/DomainTests"
+        ),
+        .target(
+            name: "DSHChatUI",
+            dependencies: [
+                "DSHChatDomain", "DSHDesign", "DSHCore", "DSHConnectionDomain", "DSHFoundation", dshKit, relayKit,
+            ],
+            path: "Features/Chat/UI"
+        ),
 
-        // L1 设置单元
-        .target(name: "DSHSettingsDomain", dependencies: ["DSHCore", "DSHConnectionAPI", "DSHFoundation", dshKit, relayKit]),
-        .target(name: "DSHSettingsUI", dependencies: ["DSHSettingsDomain", "DSHDesign", "DSHCore", "DSHConnectionDomain", "DSHFoundation", dshKit, relayKit]),
+        // 设置单元
+        .target(
+            name: "DSHSettingsDomain",
+            dependencies: ["DSHCore", "DSHConnectionAPI", "DSHFoundation", dshKit, relayKit],
+            path: "Features/Settings/Domain"
+        ),
+        .testTarget(
+            name: "DSHSettingsDomainTests",
+            dependencies: ["DSHSettingsDomain", "DSHTestingSupport", dshKit],
+            path: "Features/Settings/Tests/DomainTests"
+        ),
+        .target(
+            name: "DSHSettingsUI",
+            dependencies: [
+                "DSHSettingsDomain", "DSHDesign", "DSHCore", "DSHConnectionDomain", "DSHFoundation", dshKit, relayKit,
+            ],
+            path: "Features/Settings/UI"
+        ),
 
-        // L1 信箱单元
-        .target(name: "DSHFeedbackDomain", dependencies: ["DSHCore", "DSHConnectionAPI", "DSHFoundation", dshKit, relayKit]),
-        .target(name: "DSHFeedbackUI", dependencies: ["DSHFeedbackDomain", "DSHDesign", "DSHCore", relayKit]),
+        // 信箱单元
+        .target(
+            name: "DSHFeedbackDomain",
+            dependencies: ["DSHCore", "DSHConnectionAPI", "DSHFoundation", dshKit, relayKit],
+            path: "Features/Feedback/Domain"
+        ),
+        .testTarget(
+            name: "DSHFeedbackDomainTests",
+            dependencies: ["DSHFeedbackDomain", "DSHTestingSupport", "DSHFoundation", dshKit, relayKit],
+            path: "Features/Feedback/Tests/DomainTests"
+        ),
+        .target(
+            name: "DSHFeedbackUI",
+            dependencies: ["DSHFeedbackDomain", "DSHDesign", "DSHCore", relayKit],
+            path: "Features/Feedback/UI"
+        ),
 
-        // L1 插件网页单元
-        .target(name: "DSHPluginUI", dependencies: ["DSHCore", "DSHDesign", "DSHConnectionDomain", "DSHFoundation", dshKit]),
+        // 插件网页单元（暂无 Domain）
+        .target(
+            name: "DSHPluginUI",
+            dependencies: ["DSHCore", "DSHDesign", "DSHConnectionDomain", "DSHFoundation", dshKit],
+            path: "Features/Plugin/UI"
+        ),
 
-        // L1 文件单元
-        .target(name: "DSHFilesDomain", dependencies: ["DSHCore", "DSHConnectionAPI", "DSHFoundation", dshKit, relayKit]),
-        .target(name: "DSHFilesUI", dependencies: ["DSHFilesDomain", "DSHDesign", "DSHCore", "DSHConnectionDomain", dshKit]),
+        // 文件单元
+        .target(
+            name: "DSHFilesDomain",
+            dependencies: ["DSHCore", "DSHConnectionAPI", "DSHFoundation", dshKit, relayKit],
+            path: "Features/Files/Domain"
+        ),
+        .testTarget(
+            name: "DSHFilesDomainTests",
+            dependencies: ["DSHFilesDomain", "DSHTestingSupport", dshKit, "DSHConnectionAPI"],
+            path: "Features/Files/Tests/DomainTests"
+        ),
+        .target(
+            name: "DSHFilesUI",
+            dependencies: ["DSHFilesDomain", "DSHDesign", "DSHCore", "DSHConnectionDomain", dshKit],
+            path: "Features/Files/UI"
+        ),
 
-        // L1 各单元测试（027 补齐）
-        .testTarget(name: "DSHSessionsDomainTests", dependencies: ["DSHSessionsDomain", "DSHTestingSupport", dshKit, "DSHConnectionAPI", "DSHCore"]),
-        .testTarget(name: "DSHFilesDomainTests", dependencies: ["DSHFilesDomain", "DSHTestingSupport", dshKit, "DSHConnectionAPI"]),
-        .testTarget(name: "DSHSettingsDomainTests", dependencies: ["DSHSettingsDomain", "DSHTestingSupport", dshKit]),
-        .testTarget(name: "DSHFeedbackDomainTests", dependencies: ["DSHFeedbackDomain", "DSHTestingSupport", "DSHFoundation", dshKit, relayKit]),
+        // MARK: - 测试辅助（仅 test target 依赖）
 
-        // 测试辅助：仅测试依赖
-        .target(name: "DSHTestingSupport", dependencies: ["DSHCore", "DSHConnectionAPI", dshKit]),
+        .target(
+            name: "DSHTestingSupport",
+            dependencies: ["DSHCore", "DSHConnectionAPI", dshKit],
+            path: "Testing/TestingSupport"
+        ),
     ]
 )

@@ -14,7 +14,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
-const TARGET = 'ios/DSHMobile/Modules/Sources/DSHFoundation/ConnectorBaseline.swift'
+const TARGET = 'ios/DSHMobile/Modules/Foundation/Sources/ConnectorBaseline.swift'
 
 const contract = JSON.parse(readFileSync(join(REPO_ROOT, 'docs/relay-contract.json'), 'utf8'))
 const version = contract.connectorBaseline?.minVersion

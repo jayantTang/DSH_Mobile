@@ -8,6 +8,10 @@
     {
       "path": "ios/DSHMobile/DSHMobile/Debug/P13ResumeProbe.swift",
       "note": "调试仪器（探针）：后台续传的 P-13 复核要直接构造 RelayFileTransfer 观察 resumeData 落盘时机，产品接口观测不到。产品路径不经过它。"
+    },
+    {
+      "path": "ios/DSHMobile/DSHMobile/Diagnostics/AppDiagnostics.swift",
+      "note": "诊断构建（DIAGNOSTICS）的采集适配器：要挂 SessionPipeline 的 metrics/trace sink 才能把窗口与热点写进诊断环；产品构建里整个文件被 #if DIAGNOSTICS 编掉。"
     }
   ]
 }

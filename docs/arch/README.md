@@ -78,12 +78,12 @@ npm run arch:deep -- --force   # 忽略缓存全量重跑
 
 | 带 | 子块 | 配色 |
 |---|---|---|
-| iOS 侧（iPhone App） | App 壳与装配（App target 剩余：App/Support/Debug）；**Domain 层**（`Modules/Sources/*Domain` 与 `*API`，禁 UI）；**Feature UI 层**（`*UI`）；Core / Design / Foundation / 测试支撑；协议与数据层（DSHKit）；中转客户端（RelayKit） | 蓝 / 橙 / 青 |
+| iOS 侧（iPhone App） | App 壳与装配（App target 剩余：App/Support/Debug）；**Domain 层**（`Modules/Features/*/Domain` 与 `*API`，禁 UI）；**Feature UI 层**（`*UI`）；Core / Design / Foundation / 测试支撑；协议与数据层（DSHKit）；中转客户端（RelayKit） | 蓝 / 橙 / 青 |
 | 中转（公网主机） | `relay/` | 紫 |
 | 电脑侧 DSH（连接器与插件） | `plugins/`、`skills/`、`sidecars/`；`plugin/mobile-link` 是**连接器** | 绿 |
 | 仓库工程（不进产品链路） | `scripts/`、`test/tools` | 灰 |
 
-025/026 模块化重构后，iOS 业务代码住进 `ios/DSHMobile/Modules/`（本地 SPM 包，按 Feature 拆 Domain/UI 两层），
+025/026 模块化重构后，iOS 业务代码住进 `ios/DSHMobile/Modules/`（本地 SPM 包；2026-10 起按层分目录，功能单元在 `Features/<Unit>/` 内同居 Domain/UI/Tests），
 App target 只剩壳与装配；模块间的编译期边界由 `scripts/dev/check-module-boundaries.mjs`（`npm run check:module-boundaries`）守护，
 本页负责把实际依赖画出来供人看，两者互补。
 

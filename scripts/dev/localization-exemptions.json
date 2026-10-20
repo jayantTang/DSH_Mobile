@@ -34,14 +34,14 @@
     },
     {
       "rule": "unlocalized-binding",
-      "file": "ios/DSHMobile/Modules/Sources/DSHSettingsDomain/SettingsModels.swift",
+      "file": "ios/DSHMobile/Modules/Features/Settings/Domain/SettingsModels.swift",
       "symbol": "namespaceTitles|fieldLabels|valueLabels",
       "reason": "SettingsLabels 三张字典表：表值即键，出口经 localized(_:) 统一本地化一次（SettingsModels.swift:395-400 有注释说明）。设置页唯一允许的 unlocalized-binding 豁免",
       "backlog": "i18n-backlog-settings-labels"
     },
     {
       "rule": "hardcoded-string",
-      "file": "ios/DSHMobile/Modules/Sources/DSHSettingsDomain/SettingsModels.swift",
+      "file": "ios/DSHMobile/Modules/Features/Settings/Domain/SettingsModels.swift",
       "snippet": "^\"、\"$",
       "reason": "SettingsValueText 里数组/对象的列表分隔符（顿号），不是句子文案；该函数当前无调用点，design「不做什么」12 只要求包一层本地化、不改语义",
       "backlog": "i18n-backlog-settings-value-separator"
@@ -60,165 +60,165 @@
     },
     {
       "rule": "hardcoded-string",
-      "file": "ios/DSHMobile/Modules/Sources/DSHChatDomain/ChatModel.swift",
+      "file": "ios/DSHMobile/Modules/Features/Chat/Domain/ChatModel.swift",
       "reason": "会话数据层的文案出口，不在本轮范围（G5 backlog）",
       "backlog": "i18n-backlog-app-chatmodel"
     },
     {
       "rule": "hardcoded-string",
-      "file": "ios/DSHMobile/Modules/Sources/DSHChatUI/ChatView.swift",
+      "file": "ios/DSHMobile/Modules/Features/Chat/UI/ChatView.swift",
       "reason": "会话转写页的文案出口，不在本轮范围（G5 backlog）",
       "backlog": "i18n-backlog-app-chatview"
     },
     {
       "rule": "unlocalized-binding",
-      "file": "ios/DSHMobile/Modules/Sources/DSHChatUI/ChatView.swift",
+      "file": "ios/DSHMobile/Modules/Features/Chat/UI/ChatView.swift",
       "reason": "会话转写页的文案出口，不在本轮范围（G5 backlog）",
       "backlog": "i18n-backlog-app-chatview"
     },
     {
       "rule": "hardcoded-string",
-      "file": "ios/DSHMobile/Modules/Sources/DSHChatUI/Composer.swift",
+      "file": "ios/DSHMobile/Modules/Features/Chat/UI/Composer.swift",
       "reason": "输入区的文案出口，不在本轮范围（G5 backlog）",
       "backlog": "i18n-backlog-app-composer"
     },
     {
       "rule": "unlocalized-binding",
-      "file": "ios/DSHMobile/Modules/Sources/DSHChatUI/Composer.swift",
+      "file": "ios/DSHMobile/Modules/Features/Chat/UI/Composer.swift",
       "reason": "输入区的文案出口，不在本轮范围（G5 backlog）",
       "backlog": "i18n-backlog-app-composer"
     },
     {
       "rule": "unlocalized-binding",
-      "file": "ios/DSHMobile/Modules/Sources/DSHChatDomain/MessageSelectionPayload.swift",
+      "file": "ios/DSHMobile/Modules/Features/Chat/Domain/MessageSelectionPayload.swift",
       "reason": "消息选择的载荷文案，不在本轮范围（G5 backlog）",
       "backlog": "i18n-backlog-app-messageselectionpayload"
     },
     {
       "rule": "unlocalized-binding",
-      "file": "ios/DSHMobile/Modules/Sources/DSHChatUI/TimelineRowView.swift",
+      "file": "ios/DSHMobile/Modules/Features/Chat/UI/TimelineRowView.swift",
       "reason": "时间线行的文案出口，不在本轮范围（G5 backlog）",
       "backlog": "i18n-backlog-app-timelinerowview"
     },
     {
       "rule": "hardcoded-string",
-      "file": "ios/DSHMobile/Modules/Sources/DSHChatUI/TranscriptSearchSheet.swift",
+      "file": "ios/DSHMobile/Modules/Features/Chat/UI/TranscriptSearchSheet.swift",
       "reason": "转写搜索页的文案出口，不在本轮范围（G5 backlog）",
       "backlog": "i18n-backlog-app-transcriptsearchsheet"
     },
     {
       "rule": "hardcoded-string",
-      "file": "ios/DSHMobile/Modules/Sources/DSHConnectionDomain/ConnectionStore.swift",
+      "file": "ios/DSHMobile/Modules/Features/Connection/Domain/ConnectionStore.swift",
       "snippet": "正在连接",
       "reason": "直连时写入 state 的连接状态文案（「正在连接 …」），由连接页/状态胶囊显示；不含设置页的「主机地址」值（那一处已在 ConnectionStore.subtitle 本地化）。不在本轮范围（G5 backlog）",
       "backlog": "i18n-backlog-app-connectionstore"
     },
     {
       "rule": "unlocalized-binding",
-      "file": "ios/DSHMobile/Modules/Sources/DSHConnectionDomain/ConnectionStore.swift",
+      "file": "ios/DSHMobile/Modules/Features/Connection/Domain/ConnectionStore.swift",
       "snippet": "无法从启动令牌|我的电脑",
       "reason": "连接层的内部错误文案与默认设备名兜底；设置页显示值不在这里（「主机地址」已本地化）。不在本轮范围（G5 backlog）",
       "backlog": "i18n-backlog-app-connectionstore"
     },
     {
       "rule": "unlocalized-binding",
-      "file": "ios/DSHMobile/Modules/Sources/DSHDesign/CodeHighlighting.swift",
+      "file": "ios/DSHMobile/Modules/Design/Sources/CodeHighlighting.swift",
       "reason": "代码高亮的语言名文案，不在本轮范围（G5 backlog）",
       "backlog": "i18n-backlog-app-codehighlighting"
     },
     {
       "rule": "hardcoded-string",
-      "file": "ios/DSHMobile/Modules/Sources/DSHFilesUI/DiffView.swift",
+      "file": "ios/DSHMobile/Modules/Features/Files/UI/DiffView.swift",
       "reason": "diff 视图的文案出口，不在本轮范围（G5 backlog）",
       "backlog": "i18n-backlog-app-diffview"
     },
     {
       "rule": "unlocalized-binding",
-      "file": "ios/DSHMobile/Modules/Sources/DSHFilesDomain/GitModel.swift",
+      "file": "ios/DSHMobile/Modules/Features/Files/Domain/GitModel.swift",
       "reason": "git 数据层的文案出口，不在本轮范围（G5 backlog）",
       "backlog": "i18n-backlog-app-gitmodel"
     },
     {
       "rule": "unlocalized-binding",
-      "file": "ios/DSHMobile/Modules/Sources/DSHFilesUI/GitViews.swift",
+      "file": "ios/DSHMobile/Modules/Features/Files/UI/GitViews.swift",
       "reason": "git 页的文案出口，不在本轮范围（G5 backlog）",
       "backlog": "i18n-backlog-app-gitviews"
     },
     {
       "rule": "hardcoded-string",
-      "file": "ios/DSHMobile/Modules/Sources/DSHFilesUI/WorkspaceFilePreview.swift",
+      "file": "ios/DSHMobile/Modules/Features/Files/UI/WorkspaceFilePreview.swift",
       "reason": "文件预览页的文案出口，不在本轮范围（G5 backlog）",
       "backlog": "i18n-backlog-app-workspacefilepreview"
     },
     {
       "rule": "unlocalized-binding",
-      "file": "ios/DSHMobile/Modules/Sources/DSHFilesUI/WorkspaceFilePreview.swift",
+      "file": "ios/DSHMobile/Modules/Features/Files/UI/WorkspaceFilePreview.swift",
       "reason": "文件预览页的文案出口，不在本轮范围（G5 backlog）",
       "backlog": "i18n-backlog-app-workspacefilepreview"
     },
     {
       "rule": "unlocalized-binding",
-      "file": "ios/DSHMobile/Modules/Sources/DSHFilesUI/WorkspaceFileReaderView.swift",
+      "file": "ios/DSHMobile/Modules/Features/Files/UI/WorkspaceFileReaderView.swift",
       "reason": "文件阅读页的文案出口，不在本轮范围（G5 backlog）",
       "backlog": "i18n-backlog-app-workspacefilereaderview"
     },
     {
       "rule": "unlocalized-binding",
-      "file": "ios/DSHMobile/Modules/Sources/DSHFilesDomain/WorkspaceFilesModel.swift",
+      "file": "ios/DSHMobile/Modules/Features/Files/Domain/WorkspaceFilesModel.swift",
       "reason": "文件浏览数据层的文案出口，不在本轮范围（G5 backlog）",
       "backlog": "i18n-backlog-app-workspacefilesmodel"
     },
     {
       "rule": "hardcoded-string",
-      "file": "ios/DSHMobile/Modules/Sources/DSHFilesUI/WorkspaceFilesView.swift",
+      "file": "ios/DSHMobile/Modules/Features/Files/UI/WorkspaceFilesView.swift",
       "reason": "文件浏览页的文案出口，不在本轮范围（G5 backlog）",
       "backlog": "i18n-backlog-app-workspacefilesview"
     },
     {
       "rule": "unlocalized-binding",
-      "file": "ios/DSHMobile/Modules/Sources/DSHFilesUI/WorkspaceFilesView.swift",
+      "file": "ios/DSHMobile/Modules/Features/Files/UI/WorkspaceFilesView.swift",
       "reason": "文件浏览页的文案出口，不在本轮范围（G5 backlog）",
       "backlog": "i18n-backlog-app-workspacefilesview"
     },
     {
       "rule": "hardcoded-string",
-      "file": "ios/DSHMobile/Modules/Sources/DSHFilesDomain/WorkspaceWebPage.swift",
+      "file": "ios/DSHMobile/Modules/Features/Files/Domain/WorkspaceWebPage.swift",
       "reason": "网页视图的文案出口，不在本轮范围（G5 backlog）",
       "backlog": "i18n-backlog-app-workspacewebpage"
     },
     {
       "rule": "unlocalized-binding",
-      "file": "ios/DSHMobile/Modules/Sources/DSHSessionsDomain/DirectoryBrowserModel.swift",
+      "file": "ios/DSHMobile/Modules/Features/Sessions/Domain/DirectoryBrowserModel.swift",
       "reason": "目录浏览数据层的文案出口，不在本轮范围（G5 backlog）",
       "backlog": "i18n-backlog-app-directorybrowsermodel"
     },
     {
       "rule": "hardcoded-string",
-      "file": "ios/DSHMobile/Modules/Sources/DSHSessionsUI/SessionListView.swift",
+      "file": "ios/DSHMobile/Modules/Features/Sessions/UI/SessionListView.swift",
       "reason": "会话列表页的文案出口，不在本轮范围（G5 backlog）",
       "backlog": "i18n-backlog-app-sessionlistview"
     },
     {
       "rule": "unlocalized-binding",
-      "file": "ios/DSHMobile/Modules/Sources/DSHSessionsUI/SessionListView.swift",
+      "file": "ios/DSHMobile/Modules/Features/Sessions/UI/SessionListView.swift",
       "reason": "会话列表页的文案出口，不在本轮范围（G5 backlog）",
       "backlog": "i18n-backlog-app-sessionlistview"
     },
     {
       "rule": "unlocalized-binding",
-      "file": "ios/DSHMobile/Modules/Sources/DSHPluginUI/PluginWebView.swift",
+      "file": "ios/DSHMobile/Modules/Features/Plugin/UI/PluginWebView.swift",
       "reason": "插件网页容器的文案出口，不在本轮范围（G5 backlog）",
       "backlog": "i18n-backlog-app-pluginwebview"
     },
     {
       "rule": "unlocalized-binding",
-      "file": "ios/DSHMobile/Modules/Sources/DSHCore/HostEventHub.swift",
+      "file": "ios/DSHMobile/Modules/Core/Sources/HostEventHub.swift",
       "reason": "宿主事件诊断文案，不在本轮范围（G5 backlog）",
       "backlog": "i18n-backlog-app-hosteventhub"
     },
     {
       "rule": "unlocalized-binding",
-      "file": "ios/DSHMobile/Modules/Sources/DSHFoundation/Keychain.swift",
+      "file": "ios/DSHMobile/Modules/Foundation/Sources/Keychain.swift",
       "reason": "钥匙串错误的文案出口，不在本轮范围（G5 backlog）",
       "backlog": "i18n-backlog-app-keychain"
     },
@@ -236,74 +236,80 @@
     },
     {
       "rule": "hardcoded-string",
-      "file": "ios/DSHMobile/Modules/Sources/DSHChatUI/TranscriptListSpikeView.swift",
+      "file": "ios/DSHMobile/Modules/Features/Chat/UI/TranscriptListSpikeView.swift",
       "snippet": "内容",
       "reason": "spec 008 的 Phase 0 spike 屏专用：只有 -DSHProbeListSpike 打开时才显示，行内容是合成的假数据，不进产品界面；spike 收尾后连同这个文件一起删。"
     },
     {
       "rule": "hardcoded-string",
-      "file": "ios/DSHMobile/Modules/Sources/DSHChatUI/ChatView+Toolbar.swift",
+      "file": "ios/DSHMobile/Modules/Features/Chat/UI/ChatView+Toolbar.swift",
       "reason": "会话转写页的文案出口（026 P4 从 ChatView.swift 拆出，沿用同一豁免口径）",
       "backlog": "i18n-backlog-app-chatview"
     },
     {
       "rule": "unlocalized-binding",
-      "file": "ios/DSHMobile/Modules/Sources/DSHChatUI/ChatView+Toolbar.swift",
+      "file": "ios/DSHMobile/Modules/Features/Chat/UI/ChatView+Toolbar.swift",
       "reason": "会话转写页的文案出口（026 P4 从 ChatView.swift 拆出，沿用同一豁免口径）",
       "backlog": "i18n-backlog-app-chatview"
     },
     {
       "rule": "hardcoded-string",
-      "file": "ios/DSHMobile/Modules/Sources/DSHChatUI/ChatView+Panels.swift",
+      "file": "ios/DSHMobile/Modules/Features/Chat/UI/ChatView+Panels.swift",
       "reason": "会话转写页的文案出口（026 P4 从 ChatView.swift 拆出，沿用同一豁免口径）",
       "backlog": "i18n-backlog-app-chatview"
     },
     {
       "rule": "unlocalized-binding",
-      "file": "ios/DSHMobile/Modules/Sources/DSHChatUI/ChatView+Panels.swift",
+      "file": "ios/DSHMobile/Modules/Features/Chat/UI/ChatView+Panels.swift",
       "reason": "会话转写页的文案出口（026 P4 从 ChatView.swift 拆出，沿用同一豁免口径）",
       "backlog": "i18n-backlog-app-chatview"
     },
     {
       "rule": "hardcoded-string",
-      "file": "ios/DSHMobile/Modules/Tests/DSHSettingsDomainTests/SettingsValueTextTests.swift",
+      "file": "ios/DSHMobile/Modules/Features/Settings/Tests/DomainTests/SettingsValueTextTests.swift",
       "reason": "测试断言的期望值：中文分隔符「、」与「N 项」正是被测格式化函数的输出契约（产品侧键在 SettingsModels.swift，已有同口径豁免先例）",
       "backlog": "i18n-test-expectations"
     },
     {
       "rule": "hardcoded-string",
-      "file": "ios/DSHMobile/Modules/Tests/DSHSessionsDomainTests/DirectoryBrowserModelTests.swift",
+      "file": "ios/DSHMobile/Modules/Features/Sessions/Tests/DomainTests/DirectoryBrowserModelTests.swift",
       "reason": "测试断言的期望值：钉的是 DirectoryBrowserModel 码表的中文输出（键在 Localizable.strings，值为格式串）",
       "backlog": "i18n-test-expectations"
     },
     {
       "rule": "hardcoded-string",
-      "file": "ios/DSHMobile/Modules/Sources/DSHFoundation/CrashReport.swift",
+      "file": "ios/DSHMobile/Modules/Foundation/Sources/CrashReport.swift",
       "reason": "崩溃报告的信件正文与主题：这是发给团队收件箱的**报文内容**（与用户来信一样属于数据），不是界面文案；收到它的客户端按原文显示，不随设备语言翻译",
       "backlog": "i18n-crash-report-payload"
     },
     {
       "rule": "hardcoded-string",
-      "file": "ios/DSHMobile/Modules/Tests/DSHFoundationTests/CrashReportTests.swift",
+      "file": "ios/DSHMobile/Modules/Foundation/Tests/CrashReportTests.swift",
       "reason": "测试断言的期望值：钉的是 CrashReportDigest 的报文格式（产品侧同口径豁免见上一条）",
       "backlog": "i18n-test-expectations"
     },
     {
       "rule": "hardcoded-string",
-      "file": "ios/DSHMobile/Modules/Tests/DSHFeedbackDomainTests/CrashReportFlushTests.swift",
+      "file": "ios/DSHMobile/Modules/Features/Feedback/Tests/DomainTests/CrashReportFlushTests.swift",
       "reason": "测试断言的期望值：钉的是崩溃报告的主题格式（产品侧同口径豁免见 CrashReport.swift）",
       "backlog": "i18n-test-expectations"
     },
     {
       "rule": "hardcoded-string",
-      "file": "ios/DSHMobile/Modules/Tests/DSHChatDomainTests/ChatModelSearchChannelTests.swift",
+      "file": "ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/ChatModelSearchChannelTests.swift",
       "reason": "测试断言的输入值：中文关键词（「我」「迁移」）是喂给 ChatModel.searchChannel 的查询数据，不是用户可见文案；产品侧出口在 ChatDomain/ChatModel.swift，已有同口径豁免先例",
       "backlog": "i18n-test-expectations"
     },
     {
       "rule": "hardcoded-string",
-      "file": "ios/DSHMobile/Modules/Tests/DSHChatDomainTests/ChatModelUserInputIndexTests.swift",
+      "file": "ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/ChatModelUserInputIndexTests.swift",
       "reason": "测试断言的输入值：中文提问正文与关键词（「还没确认」「刚发」）是喂给「我问过的」读侧的会话数据，不是用户可见文案；断言里那句带「第 N 条」的是诊断说明，产品侧文案键在 TranscriptSearchSheet.swift，已有",
+      "backlog": "i18n-test-expectations"
+    },
+    {
+      "rule": "hardcoded-string",
+      "file": "ios/DSHMobile/Modules/Features/Sessions/Tests/DomainTests/SessionListCreateVisibilityTests.swift",
+      "reason": "测试断言与夹具：中文既是断言消息，也是 noteSessionTitle 的输入标题；该文件不产出用户可见文案",
       "backlog": "i18n-test-expectations"
     }
   ]

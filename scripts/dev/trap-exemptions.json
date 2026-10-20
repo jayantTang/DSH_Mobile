@@ -187,6 +187,48 @@
       "rule": "dbl2int",
       "snippet": "P13ResumeObserver.totalBytesWritten = Int(totalBytesWritten)",
       "reason": "同上：URLSession 的 Int64 字节数，64 位平台上不丢范围。"
+    },
+    {
+      "file": "ios/DSHMobile/DSHKit/Sources/DSHKit/MessageStore+Records.swift",
+      "rule": "range",
+      "snippet": "byRevision[revision, default: []].append(row[\"start_seq\"]...row[\"end_seq\"])",
+      "reason": "known_empty 只由 saveKnownEmpty 从 ClosedRange 拆出的 start/end 写入，读侧同源；该表是纯缓存，损坏最多让缺口判定失真。"
+    },
+    {
+      "file": "ios/DSHMobile/DSHKit/Sources/DSHKit/SessionPipeline+Paging.swift",
+      "rule": "range",
+      "snippet": "for span in asked.spans { covered.insert(span.start...span.end) }",
+      "reason": "asked 是 RangeIndex；Span 的两条构造路径都校验 start <= end（见 RangeIndex 的 trap 豁免）。"
+    },
+    {
+      "file": "ios/DSHMobile/DSHKit/Sources/DSHKit/SessionPipeline+Paging.swift",
+      "rule": "range",
+      "snippet": "for span in knownEmptyRanges().spans { covered.insert(span.start...span.end) }",
+      "reason": "knownEmptyRanges() 返回 RangeIndex 的 spans，构造时已校验 start <= end。"
+    },
+    {
+      "file": "ios/DSHMobile/DSHKit/Sources/DSHKit/SessionPipeline+Paging.swift",
+      "rule": "range",
+      "snippet": "return covered.gaps(within: oldest...newest).map { span in",
+      "reason": "上一行 guard let oldest = ranges.oldest, let newest = ranges.newest, oldest <= newest 就是这个区间的构造判据。"
+    },
+    {
+      "file": "ios/DSHMobile/DSHKit/Sources/DSHKit/SessionPipeline.swift",
+      "rule": "range",
+      "snippet": "switch asked.coverage(of: span.start...span.end) {",
+      "reason": "span 来自 missing（RangeIndex.Span），构造时已校验 start <= end。"
+    },
+    {
+      "file": "ios/DSHMobile/DSHKit/Sources/DSHKit/SessionPipeline.swift",
+      "rule": "range",
+      "snippet": "return span[0]...span[1]",
+      "reason": "上一行 guard span.count == 2, span[0] <= span[1] 就是这个区间的构造判据。"
+    },
+    {
+      "file": "ios/DSHMobile/DSHMobile/Diagnostics/AppDiagnostics.swift",
+      "rule": "range",
+      "snippet": "carry.removeSubrange(carry.startIndex...newline)",
+      "reason": "newline 由 carry.firstIndex(of: 0x0A) 得到，恒 >= startIndex。"
     }
   ]
 }
