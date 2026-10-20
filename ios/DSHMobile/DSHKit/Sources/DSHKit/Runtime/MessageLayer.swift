@@ -1,6 +1,6 @@
 import Foundation
 
-/// 消息数据层的宿主（spec 009 / 023 的 S4-1：搬进 DSHKit 的门面数据能力）。
+/// 消息数据层的宿主（spec 009 / 023 的 S4-1：搬进 DSHKit 的数据层能力）。
 ///
 /// 持有进程级唯一的 `MessageStore`（GRDB 磁盘层）与 `MessagePipeline`（内存层枢纽），
 /// 列表冷启动叠加、预取瀑布、进会话首帧都从这一个实例取数。网络面（按页拉取）
