@@ -424,6 +424,7 @@ public struct SessionListView: View {
                 SessionRow(session: session, rowState: model.state(of: session),
                            home: store.hostHome,
                            isJustCreated: session.sessionId == model.lastCreatedSessionId,
+                           isUnsynced: model.pendingState(for: session.sessionId) == .unsynced,
                            activity: activity.snapshot(sessionId: session.sessionId))
             }
             .buttonStyle(.plain)
@@ -652,6 +653,8 @@ public struct SessionRow: View {
     var isChild: Bool = false
     /// Whether this is the session the app just created in this run.
     var isJustCreated: Bool = false
+    /// 本地已创建、但宿主列表还没确认：可打开，但不冒充宿主事实。
+    var isUnsynced: Bool = false
     /// 018：活动快照（`ActivityStore.snapshot` 的产物）。能力位缺失时是 nil，
     /// 此时右侧计数与 `isBusy` 扩展的「运行中」都不出现。
     var activity: SessionActivity?
@@ -705,6 +708,10 @@ public struct SessionRow: View {
                         .lineLimit(1)
                     if isJustCreated {
                         CreatedBadge()
+                    }
+                    if isUnsynced {
+                        Badge(text: "未同步", tone: .attention)
+                            .accessibilityIdentifier("session.state.unsynced")
                     }
                 }
 

@@ -129,6 +129,22 @@ public struct SessionSummary: Sendable, Codable, Identifiable, Hashable {
 
     public var id: String { sessionId }
 
+    /// 本地构造一行（新建会话占位、测试夹具）：字段与宿主行同形。
+    public init(sessionId: String, updatedAt: Double, running: Bool = false,
+                blank: Bool = false, parentSessionId: String? = nil, origin: String? = nil,
+                cwd: String? = nil, projections: SessionProjectionHints? = nil,
+                agentAvailable: Bool? = nil) {
+        self.sessionId = sessionId
+        self.updatedAt = updatedAt
+        self.running = running
+        self.blank = blank
+        self.parentSessionId = parentSessionId
+        self.origin = origin
+        self.cwd = cwd
+        self.projections = projections
+        self.agentAvailable = agentAvailable
+    }
+
     public var updatedAtDate: Date { Date(timeIntervalSince1970: updatedAt / 1000) }
 
     /// Display title, falling back to the working directory's last component.

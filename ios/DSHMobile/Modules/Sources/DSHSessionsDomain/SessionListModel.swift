@@ -96,6 +96,34 @@ public final class SessionListModel {
     /// row is the one they just made.
     public private(set) var lastCreatedSessionId: String?
 
+    /// 新建会话的本地占位：宿主对空白会话的可见性由它决定，列表不能等它。
+    /// 只在进程内有效，不落盘（重启后宿主没列就不该凭空出现）。
+    public enum PendingState: String, Sendable, Equatable {
+        /// 刚创建，宿主的列表还没出现它。
+        case syncing
+        /// 超过等待窗口仍未出现：仍然可打开，但如实标记未同步。
+        case unsynced
+    }
+
+    public struct PendingSession: Sendable, Equatable, Identifiable {
+        public let id: String
+        public let directory: String
+        public let createdAt: Date
+        public var state: PendingState
+    }
+
+    public private(set) var pendingCreated: [String: PendingSession] = [:]
+
+    /// 宿主确认窗口：超过它仍不列出就标 unsynced。
+    public static let pendingSyncWindow: TimeInterval = 10
+
+    /// 测试可替换的时钟。
+    var now: () -> Date = { Date() }
+
+    public func pendingState(for id: String) -> PendingState? {
+        pendingCreated[id]?.state
+    }
+
     /// The session the app currently has open, when it has one.
     ///
     /// The desktop sidebar shows a session that has never run a turn only while
@@ -292,6 +320,7 @@ public final class SessionListModel {
     /// Looks up one session by id, for navigation destinations.
     public func session(withId id: String) -> SessionSummary? {
         if let match = allSessions.first(where: { $0.sessionId == id }) { return match }
+        if let pending = pendingCreated[id] { return Self.placeholder(from: pending) }
         if let match = loose.first(where: { $0.sessionId == id }) { return match }
         for group in groups {
             if let match = group.sessions.first(where: { $0.sessionId == id }) { return match }
@@ -416,11 +445,16 @@ public final class SessionListModel {
         // caller looks it up by id to build the chat screen. A blank session is
         // invisible to the desktop client until it is current, and the host can
         // take a moment to list it, so this waits rather than guessing.
+        // 宿主对空白会话的可见性由它自己决定：客户端不能等它把行吐出来。
+        // 先落一行本地占位，用户立刻能看到、能打开；后台刷一次，宿主要是
+        // 列出了同 id，reconcilePending() 会把它换成宿主行。
         lastCreatedSessionId = id
-        for _ in 0..<6 {
-            await refresh()
-            if self.session(withId: id) != nil { break }
-            try? await Task.sleep(for: .milliseconds(300))
+        pendingCreated[id] = PendingSession(id: id, directory: directory,
+                                            createdAt: now(), state: .syncing)
+        regroup()
+        Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(600))
+            await self?.refresh()
         }
         return id
     }
@@ -457,6 +491,7 @@ public final class SessionListModel {
         allSessions = []
         archivedSessionIds = []
         lastCreatedSessionId = nil
+        pendingCreated = [:]
         currentSessionId = nil
         searchText = ""
         finishedSignal = 0
@@ -493,6 +528,7 @@ public final class SessionListModel {
                 allSessions = SessionDigestMerge.apply(current: allSessions, value: value)
             }
             digestVersion = value.version
+            reconcilePending()
             // 018 T028：会话行喂给活动状态机（子会话计数 + 行轮次）。
             // 轮次口径沿用列表既有语义（`summary.running`）；聊天页当前会话由
             // `ActivityModel.bindChat` 用 `timeline.isTurnOpen` 覆盖。
@@ -685,11 +721,48 @@ public final class SessionListModel {
                                     lastCreatedSessionId: lastCreatedSessionId)
     }
 
+    /// 宿主行 + 尚未被宿主确认的占位（占位在前，宿主优先去重）。
+    private var displaySessions: [SessionSummary] {
+        guard !pendingCreated.isEmpty else { return allSessions }
+        let hostIds = Set(allSessions.map(\.sessionId))
+        let pending = pendingCreated.values
+            .filter { !hostIds.contains($0.id) }
+            .sorted { $0.createdAt > $1.createdAt }
+            .map(Self.placeholder(from:))
+        return pending + allSessions
+    }
+
+    /// 宿主列出同 id 就接管；超时仍没有就标 unsynced。
+    private func reconcilePending() {
+        guard !pendingCreated.isEmpty else { return }
+        let hostIds = Set(allSessions.map(\.sessionId))
+        let clock = now()
+        for (id, pending) in pendingCreated {
+            if hostIds.contains(id) {
+                pendingCreated.removeValue(forKey: id)
+                continue
+            }
+            if pending.state == .syncing,
+               clock.timeIntervalSince(pending.createdAt) > Self.pendingSyncWindow {
+                pendingCreated[id]?.state = .unsynced
+            }
+        }
+    }
+
+    private static func placeholder(from pending: PendingSession) -> SessionSummary {
+        SessionSummary(
+            sessionId: pending.id,
+            updatedAt: pending.createdAt.timeIntervalSince1970 * 1000,
+            running: false, blank: true,
+            parentSessionId: nil, origin: nil, cwd: pending.directory,
+            projections: nil, agentAvailable: nil)
+    }
+
     private func regroup() {
         // 切分判定（谁上列表、怎么按 workspace 分配、子代理挂给谁、没归档的归哪里）在 DSHKit
         // 的 `SessionGrouping` 里，带单测；这里只负责取用 + 排序 + 文案（都是 App 的东西）。
         let partition = SessionGrouping.partition(
-            sessions: allSessions,
+            sessions: displaySessions,
             archivedIds: archivedSessionIds,
             workspaces: workspaces,
             query: searchText,
