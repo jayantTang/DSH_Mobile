@@ -116,6 +116,11 @@ struct RootView: View {
                 attachmentImages.attach(store: store)
                 chatModel.attach(store: store, hub: hub)
                 chatModel.attach(messageLayer: messageLayer)
+                // 宿主标题事件按会话归属转给列表：占位行据此显示真实标题，
+                // 不再等 session/list（宿主对新建会话的列表可见性滞后）。
+                chatModel.onSessionTitle = { [listModel] id, title in
+                    listModel.noteSessionTitle(id: id, title: title)
+                }
                 #if DEBUG
                 // 032 用例钩子：`-DSHProbeStaleFollowFrame` 时注入一帧上一个会话的迟到帧，
                 // 用来验证"跨会话的帧不落地"。注入的帧走真实守卫（见 ChatModel）。

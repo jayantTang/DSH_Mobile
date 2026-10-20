@@ -110,6 +110,8 @@ public final class SessionListModel {
         public let directory: String
         public let createdAt: Date
         public var state: PendingState
+        /// 宿主标题事件带来的标题；有它就不再显示目录占位名。
+        public var title: String?
     }
 
     public private(set) var pendingCreated: [String: PendingSession] = [:]
@@ -122,6 +124,19 @@ public final class SessionListModel {
 
     public func pendingState(for id: String) -> PendingState? {
         pendingCreated[id]?.state
+    }
+
+    /// 宿主标题事件：写到对应占位，并清掉“未同步”（宿主已经认识它）。
+    public func noteSessionTitle(id: String, title: String) {
+        guard var pending = pendingCreated[id], !title.isEmpty else { return }
+        pending.title = title
+        pending.state = .syncing
+        pendingCreated[id] = pending
+        regroup()
+    }
+
+    public func pendingTitle(for id: String) -> String? {
+        pendingCreated[id]?.title
     }
 
     /// The session the app currently has open, when it has one.

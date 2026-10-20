@@ -528,6 +528,8 @@ public final class ChatModel {
         var seed = cached?.timeline ?? ChatTimeline()
         seed.clearStreaming()
         seed.record(usage: summary.projections?.values?.tokenUsage)
+        // 换会话就丢掉上一个会话的标题覆盖，避免把 A 的标题带到 B。
+        titleOverride = nil
         visible = VisibleSession(summary: summary, timeline: seed)
         if let cached {
             throughSeq = max(cached.throughSeq, summary.asOfSeq)
@@ -1490,6 +1492,12 @@ public final class ChatModel {
                 let change = timeline.apply(event)
                 if case .none = change {} else { scrollSignal += 1 }
             }
+            if event.type == "session/title",
+               let title = event.data["title"]?.stringValue,
+               !title.isEmpty {
+                titleOverride = title
+                if let id = session?.sessionId { onSessionTitle?(id, title) }
+            }
             mergeTail([SessionRecord(event: event)])
             persistIfDue()
             // A live event proves the stream is healthy even if the summary
@@ -1575,6 +1583,11 @@ public final class ChatModel {
             break
         }
     }
+
+    /// 宿主为当前会话生成/修改标题时的回调（会话级归属由这里决定）。
+    public var onSessionTitle: ((String, String) -> Void)?
+    /// 宿主给的标题：聊天页标题优先用它，不必等 session/list。
+    public private(set) var titleOverride: String?
 
     /// Watches the forwarded host feed for changes worth re-reading.
     private func subscribeToPrompts() {

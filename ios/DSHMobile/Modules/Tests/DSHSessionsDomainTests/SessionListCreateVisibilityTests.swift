@@ -65,6 +65,27 @@ final class SessionListCreateVisibilityTests: SessionsDomainTestCase {
         XCTAssertEqual(rows(withId: "new").count, 1, "未同步也仍然可见、可打开")
     }
 
+    func test_host_title_event_updates_the_placeholder_and_clears_unsynced() async throws {
+        var clock = Date(timeIntervalSince1970: 1_000)
+        model.now = { clock }
+        stubStandardList()
+        stubCreate(id: "new")
+        _ = try await model.startSession(directory: "/tmp/proj")
+        clock = clock.addingTimeInterval(SessionListModel.pendingSyncWindow + 1)
+        await model.refresh()
+        XCTAssertEqual(model.pendingState(for: "new"), .unsynced)
+
+        model.noteSessionTitle(id: "new", title: "发送今日日报")
+
+        XCTAssertEqual(model.pendingTitle(for: "new"), "发送今日日报")
+        XCTAssertEqual(model.pendingState(for: "new"), .syncing, "宿主已给标题，不再标未同步")
+    }
+
+    func test_title_for_an_unknown_session_is_ignored() {
+        model.noteSessionTitle(id: "ghost", title: "别人的标题")
+        XCTAssertNil(model.pendingTitle(for: "ghost"))
+    }
+
     func test_failed_create_leaves_no_placeholder() async throws {
         stubStandardList()
         carrier.unaryResponses["workspace/create"] = .success(.object([

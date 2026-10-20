@@ -325,7 +325,7 @@ public struct ChatView: View {
         if let cwd = model.session?.cwd, !cwd.isEmpty {
             return (cwd as NSString).lastPathComponent
         }
-        return model.session?.displayTitle ?? "会话"
+        return model.titleOverride ?? model.session?.displayTitle ?? "会话"
     }
 
     /// 018 §2：工具栏那个点是否出现（有活才出现入口；能力位缺失整块不出现）。

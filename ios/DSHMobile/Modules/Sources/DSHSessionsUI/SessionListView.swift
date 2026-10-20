@@ -425,6 +425,7 @@ public struct SessionListView: View {
                            home: store.hostHome,
                            isJustCreated: session.sessionId == model.lastCreatedSessionId,
                            isUnsynced: model.pendingState(for: session.sessionId) == .unsynced,
+                           localTitle: model.pendingTitle(for: session.sessionId),
                            activity: activity.snapshot(sessionId: session.sessionId))
             }
             .buttonStyle(.plain)
@@ -655,6 +656,8 @@ public struct SessionRow: View {
     var isJustCreated: Bool = false
     /// 本地已创建、但宿主列表还没确认：可打开，但不冒充宿主事实。
     var isUnsynced: Bool = false
+    /// 占位行的本地标题（宿主标题事件带来的），优先于目录占位名。
+    var localTitle: String?
     /// 018：活动快照（`ActivityStore.snapshot` 的产物）。能力位缺失时是 nil，
     /// 此时右侧计数与 `isBusy` 扩展的「运行中」都不出现。
     var activity: SessionActivity?
@@ -702,7 +705,7 @@ public struct SessionRow: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: DSHTheme.Spacing.hairline) {
-                    Text(session.displayTitle)
+                    Text(localTitle ?? session.displayTitle)
                         .font(DSHTheme.Typography.bodyStrong)
                         .foregroundStyle(session.blank ? DSHTheme.labelTertiary : DSHTheme.labelPrimary)
                         .lineLimit(1)
