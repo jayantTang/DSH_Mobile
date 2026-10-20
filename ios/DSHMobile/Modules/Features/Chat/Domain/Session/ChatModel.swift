@@ -145,6 +145,8 @@ public final class ChatModel {
 
     /// 输入区状态（草稿/图片/插入模式）。2026-10-21 从 ChatModel 拆出。
     public let composer = ComposerState()
+    /// 搜索缓冲状态（只在模块内使用）。
+    let searchState = SearchState()
 
     /// Pictures queued in the composer, sent with the next prompt.
     ///
@@ -267,9 +269,15 @@ public final class ChatModel {
     /// Bumped whenever the transcript grows, so the view can autoscroll.
     public private(set) var scrollSignal: Int = 0
     /// 搜索范围（时间线 + 搜索缓冲）变了多少次，给搜索面板当刷新信号。
-    public private(set) var searchScopeVersion: Int = 0
+    public private(set) var searchScopeVersion: Int {
+        get { searchState.scopeVersion }
+        set { searchState.scopeVersion = newValue }
+    }
     /// 正在往前取搜索缓冲（面板据此显示转圈）。
-    public private(set) var isExtendingSearch = false
+    public private(set) var isExtendingSearch: Bool {
+        get { searchState.isExtending }
+        set { searchState.isExtending = newValue }
+    }
     /// 补页（在时间线**头部**插入更早的消息）完成的次数。
     ///
     /// 要这一位是因为"追上尾部"和"往前补一页"必须分开：前者该钉到底部，后者
@@ -292,17 +300,20 @@ public final class ChatModel {
     /// Warm transcripts, most recently used last.
     private var cache: [String: CachedSession] = [:]
 
-    /// 搜索时往前读进来、但**还没进时间线**的更早记录（由旧到新）。
-    ///
-    /// 为什么不让搜索直接调 `loadOlder()`：那会往时间线头部插内容，而读者此刻可能停在
-    /// 会话中间或底部——`List` 保留的是偏移量，插进去的高度会把读者正在看的那一段整体
-    /// 挪走（`anchorAfterPrepend` 只在"视口就在顶部"时锚得回来）。搜索时往前翻历史
-    /// 不该动读者的位置，所以先放这里；等读者真的点了某一条，再把这段并进时间线
-    /// （`commitSearchHistory`），紧接着的跳转会把视口带到那一条上。
-    private var searchRecords: [SessionRecord] = []
-    private var searchOldestSeq: Int?
+    /// 搜索缓冲（存储在 `searchState`）：往前读进来、但还没并进时间线的那一段。
+    private var searchRecords: [SessionRecord] {
+        get { searchState.records }
+        set { searchState.records = newValue }
+    }
+    private var searchOldestSeq: Int? {
+        get { searchState.oldestSeq }
+        set { searchState.oldestSeq = newValue }
+    }
     /// `searchItems` 的结果缓存，键是"缓冲条数 + 时间线条数"。
-    private var cachedSearchItems: (key: String, items: [TimelineItem])?
+    private var cachedSearchItems: (key: String, items: [TimelineItem])? {
+        get { searchState.cachedItems }
+        set { searchState.cachedItems = newValue }
+    }
 
     /// 转写尾部的落盘层（T027：007 `TranscriptStore` 退役，统一到 009 `MessageStore`）。
     ///
@@ -850,7 +861,10 @@ public final class ChatModel {
     /// 为什么要有它：连接器拒绝（`link/unsupported` / `link/query-too-short` / 超时）
     /// 原来被 `try?` 吞成 nil，界面把它当成"没有命中"——正是 spec 007 FR-013 要求区分开的
     /// 两件事。现在界面据此显示一条提示，而不是假装搜到了零条。
-    public private(set) var searchRefusalReason: String?
+    public private(set) var searchRefusalReason: String? {
+        get { searchState.refusalReason }
+        set { searchState.refusalReason = newValue }
+    }
 
     /// 连接器拒绝时给读者的一句话（原因来自连接器，这里只包一层说明）。
     public var searchRefusalNotice: String? {
@@ -1171,10 +1185,7 @@ public final class ChatModel {
 
     /// 丢掉搜索缓冲：它属于刚关掉的那个会话。
     private func clearSearchHistory() {
-        searchRecords.removeAll()
-        searchOldestSeq = nil
-        cachedSearchItems = nil
-        searchScopeVersion += 1
+        searchState.reset()
     }
 
     /// Re-opens the session on screen after the link came back.
