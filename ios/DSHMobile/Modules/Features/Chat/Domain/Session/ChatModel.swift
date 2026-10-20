@@ -298,7 +298,7 @@ public final class ChatModel {
     /// internal：冷启动半边在 ChatModel+ColdStart.swift（文件按职责拆分）。
     public weak var messageLayer: MessageLayer?
     /// Warm transcripts, most recently used last.
-    private var cache: [String: CachedSession] = [:]
+    private let transcriptCache = TranscriptCache()
 
     /// 搜索缓冲（存储在 `searchState`）：往前读进来、但还没并进时间线的那一段。
     private var searchRecords: [SessionRecord] {
@@ -373,8 +373,6 @@ public final class ChatModel {
             text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && images.isEmpty
         }
     }
-    private var cacheOrder: [String] = []
-    private static let cacheLimit = 6
     /// 内存里最多留多少行；超出的从最老端丢（记录仍在库里，可读回）。
     private static var windowLimitRows: Int {
         #if DEBUG
@@ -519,7 +517,7 @@ public final class ChatModel {
         // 就是把 A 的内容盖到 B 上（用户看到的就是"记录丢了一部分"）。
         recentRecords = []
         lastDiskSave = .distantPast
-        let cached = cache[key]
+        let cached = transcriptCache.entry(for: key)
         // 换会话：更早历史的搜索缓冲属于上一个会话，任何分支都要清（FR-006）。
         // 以前只在"没有本地数据"那一支清，于是命中缓存/命中落盘时会把上一个会话
         // 的更早记录带进新会话，甚至能并进它的时间线。
@@ -714,8 +712,7 @@ public final class ChatModel {
         sessionScope = nil
         // 换电脑：可见状态整体清空（会话与那批行是同一个值，一起没了才不会留下半截状态）。
         visible = nil
-        cache.removeAll()
-        cacheOrder.removeAll()
+        transcriptCache.clear()
         composer.reset()
         lastError = nil
         catalogState.reset()
@@ -1210,16 +1207,6 @@ public final class ChatModel {
 
     // MARK: - Warm cache
 
-    /// A transcript kept in memory so returning to a session is instant.
-    private struct CachedSession {
-        public var timeline: ChatTimeline
-        public var hasOlder: Bool
-        public var oldestSeq: Int?
-        public var throughSeq: Int
-        /// 这个会话的原始记录尾部（落盘写的就是它）。
-        public var records: [SessionRecord]
-    }
-
     /// Keeps the composer's contents under the session it was typed for.
     ///
     /// Called on the way out of a session, so nothing typed is lost and nothing
@@ -1267,25 +1254,21 @@ public final class ChatModel {
 
     private func saveToCache() {
         guard let key = session?.sessionId, !timeline.items.isEmpty else { return }
-        cache[key] = CachedSession(
-            timeline: timeline,
-            hasOlder: hasOlder,
-            oldestSeq: oldestSeq,
-            throughSeq: throughSeq,
-            records: recentRecords
+        transcriptCache.store(
+            TranscriptCache.Entry(
+                timeline: timeline,
+                hasOlder: hasOlder,
+                oldestSeq: oldestSeq,
+                throughSeq: throughSeq,
+                records: recentRecords
+            ),
+            for: key
         )
-        cacheOrder.removeAll { $0 == key }
-        cacheOrder.append(key)
-        // Bounded so a long session-hopping run cannot grow without limit.
-        while cacheOrder.count > Self.cacheLimit {
-            cache.removeValue(forKey: cacheOrder.removeFirst())
-        }
     }
 
     /// Drops one session's cached transcript, e.g. after it is deleted.
     public func forget(_ sessionId: String) {
-        cache.removeValue(forKey: sessionId)
-        cacheOrder.removeAll { $0 == sessionId }
+        transcriptCache.remove(sessionId)
         let scope = sessionScope ?? scopeId
         enqueueWrite { [store = messageBacking] in try? await store?.clear(scope: scope, sessionId: sessionId) }
     }
