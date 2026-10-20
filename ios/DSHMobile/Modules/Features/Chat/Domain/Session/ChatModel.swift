@@ -224,18 +224,34 @@ public final class ChatModel {
     /// (a company gateway, a second vendor) while the phone is open, and waiting
     /// for an app restart to see it made the picker look like it was missing
     /// models it could actually use.
-    public private(set) var catalog: ModelCatalog?
-    /// When `catalog` was last read, so opening the picker can decide to re-read.
-    private var catalogFetchedAt: Date?
+    /// 模型目录与权限（存储在 `catalogState`，这里保留同名投影）。
+    public let catalogState = CatalogState()
+
+    public var catalog: ModelCatalog? { catalogState.catalog }
+    /// True while the "make this the default for new sessions" write is in flight.
+    public private(set) var isSettingDefaultModel: Bool {
+        get { catalogState.isSettingDefaultModel }
+        set { catalogState.isSettingDefaultModel = newValue }
+    }
+    /// Set when that write failed, so the picker can say why.
+    public private(set) var defaultModelError: String? {
+        get { catalogState.defaultModelError }
+        set { catalogState.defaultModelError = newValue }
+    }
+    public private(set) var currentSelection: ModelSelection? {
+        get { catalogState.currentSelection }
+        set { catalogState.currentSelection = newValue }
+    }
+    public private(set) var permissionOptions: [PermissionsProjection.Option] {
+        get { catalogState.permissionOptions }
+        set { catalogState.permissionOptions = newValue }
+    }
+    public private(set) var currentPermission: String? {
+        get { catalogState.currentPermission }
+        set { catalogState.currentPermission = newValue }
+    }
     /// How long a catalog stays fresh.
     private static let catalogMaxAge: TimeInterval = 300
-    /// True while the "make this the default for new sessions" write is in flight.
-    public private(set) var isSettingDefaultModel = false
-    /// Set when that write failed, so the picker can say why.
-    public private(set) var defaultModelError: String?
-    public private(set) var currentSelection: ModelSelection?
-    public private(set) var permissionOptions: [PermissionsProjection.Option] = []
-    public private(set) var currentPermission: String?
 
     /// Composer state（存储在 `composer`，这里保留同名投影）。
     public var draft: String {
@@ -509,10 +525,7 @@ public final class ChatModel {
         lastError = nil
         hostReportsRunning = summary.running
         isAwaitingTurnStart = false
-        currentSelection = summary.projections?.values?.modelSelection?.next
-            ?? summary.projections?.values?.modelSelection?.lastUsed
-        permissionOptions = summary.projections?.values?.permissions?.options ?? []
-        currentPermission = summary.projections?.values?.permissions?.currentValue
+        catalogState.load(from: summary)
         // 分页状态同样归上一个会话：先清掉，等这个会话的窗口观察再置位。
         hasOlder = false
 
@@ -694,9 +707,7 @@ public final class ChatModel {
         cacheOrder.removeAll()
         composer.reset()
         lastError = nil
-        currentSelection = nil
-        permissionOptions = []
-        currentPermission = nil
+        catalogState.reset()
         hasOlder = false
         setOlderState(.idle)
         throughSeq = 0
@@ -1611,12 +1622,12 @@ public final class ChatModel {
         // 依然是自洽的一对——不要在这里重发 `visible`，否则会把正在流式的时间线冲掉。
         visible?.summary = updated
         hostReportsRunning = updated.running
-        currentPermission = updated.projections?.values?.permissions?.currentValue
+        catalogState.currentPermission = updated.projections?.values?.permissions?.currentValue
         timeline.record(usage: updated.projections?.values?.tokenUsage)
     }
 
     private func loadCatalog(link: LinkGateway) async {
-        guard catalog == nil else { return }
+        guard catalogState.catalog == nil else { return }
         await refreshCatalog(link: link)
     }
 
@@ -1627,14 +1638,13 @@ public final class ChatModel {
     public func refreshCatalog(link: LinkGateway? = nil) async {
         guard let link = link ?? store?.link else { return }
         if let fresh = try? await link.modelCatalog() {
-            catalog = fresh
-            catalogFetchedAt = Date()
+            catalogState.adopt(fresh)
         }
     }
 
     /// Re-reads the catalog when it is older than the freshness window.
     public func refreshCatalogIfStale() async {
-        if let at = catalogFetchedAt, catalog != nil,
+        if let at = catalogState.fetchedAt, catalogState.catalog != nil,
            Date().timeIntervalSince(at) < Self.catalogMaxAge {
             return
         }
@@ -1642,7 +1652,7 @@ public final class ChatModel {
     }
 
     /// The model new sessions start with, as the host reports it.
-    public var defaultSelection: ModelSelection? { catalog?.default }
+    public var defaultSelection: ModelSelection? { catalogState.defaultSelection }
 
     /// Makes one model the default for sessions created from now on.
     ///
