@@ -813,6 +813,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.jayanttang.dsh;
 				PRODUCT_NAME = DSHMobile;
 				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DIAGNOSTICS;
 				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = OTA;

@@ -63,6 +63,8 @@ targets:
           CODE_SIGN_STYLE: Automatic
         Release:
           CODE_SIGN_STYLE: Automatic
+        OTA:
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: DIAGNOSTICS
     configFiles:
       Debug: Config.xcconfig
       Release: Config.xcconfig
