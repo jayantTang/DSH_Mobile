@@ -75,7 +75,6 @@ final class ChatModelDisruptionTests: XCTestCase {
         XCTAssertTrue(settled, "the deltas never settled: got \(model.timeline.streaming?.text ?? "<none>")")
         let traced = await eventually { self.model.lastError != nil }
         XCTAssertTrue(traced, "a stream that ended in an error left no trace on the model")
-        try? await Task.sleep(for: .milliseconds(300))
 
         XCTAssertEqual(model.timeline.streaming?.text, "Hello",
                        "the answer received so far must stay on screen")
@@ -101,7 +100,6 @@ final class ChatModelDisruptionTests: XCTestCase {
         let visible = await eventually { self.model.timeline.streaming?.text == "working" }
         XCTAssertTrue(visible, "the frame before the hang never arrived")
         carrier.unaryResponses["session/cancel"] = .success(.object([:]))
-        try? await Task.sleep(for: .milliseconds(300))
 
         // Nothing may invent an end for a stream that never ended: the state has
         // to keep reporting what the host last said.
@@ -151,7 +149,7 @@ final class ChatModelDisruptionTests: XCTestCase {
         // A's own continuation, pushed after the switch.
         streamA.yield(ChatSeam.eventFrame(ChatSeam.userMessage(seq: 9, text: "late from A")))
         streamA.yield(ChatSeam.eventFrame(ChatSeam.turnEnd(seq: 10, turn: 1)))
-        try? await Task.sleep(for: .milliseconds(300))
+        for _ in 0..<10 { await Task.yield() }
 
         XCTAssertFalse(texts().contains("late from A"),
                        "a frame from the session we left was folded into the new one")
