@@ -115,7 +115,7 @@ jobs:
       # cannot find type。这里在提交前按 basename 核对 pbxproj 是否都引用到。
       - name: App 工程与源文件一致（新增文件是否跑过 xcodegen）
         run: npm run check:project
-      # DSHKit 公开面预算：1,658 声明 / 282 类型；只减不增。
+      # DSHKit 导出面预算：优先 symbol graph（2,200 符号）；无 Swift 时退回 1,665/283 粗筛。
       - name: DSHKit 公开面预算（check:public-api）
         run: npm run check:public-api
 

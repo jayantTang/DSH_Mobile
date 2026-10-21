@@ -39,7 +39,8 @@ npm run check:module-boundaries
 npm run check:public-api
 ```
 
-`check:public-api` 对 `DSHKit/Sources/DSHKit` 的 public 声明/类型做预算
-（1,665 / 283，只减不增）；新增公开 API 前先删旧面。
+`check:public-api` 优先用 SwiftPM symbol graph 统计 DSHKit **真实可 import**
+的导出符号（预算 2,200）；本机没有 Swift 工具链时退回 public 关键字粗筛
+（1,665 声明 / 283 类型）。新增公开 API 前先删旧面。
 
 例外登记在 `BOUNDARY-EXCEPTIONS.md`，只减不增。
