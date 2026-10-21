@@ -338,7 +338,7 @@ public final class ChatModel {
 
     public typealias Draft = ComposerDraft
     /// 内存里最多留多少行；超出的从最老端丢（记录仍在库里，可读回）。
-    private static var windowLimitRows: Int {
+    static var windowLimitRows: Int {
         #if DEBUG
         if let override = ChatProbe.shared.windowRows, override > 0 { return override }
         #endif
@@ -1480,54 +1480,6 @@ public final class ChatModel {
     ///
     /// 生产路径只有管道一条：缺口、重试、到头都由 `SessionPipeline` 的状态机表达。
     /// 桥缺位（数据层未就绪）时给出可见失败，不把"未知"静默当"到底"。
-    public func loadOlder() async {
-        guard let bridge = pipelineBridge else {
-            setOlderState(.failed(String(localized: "尚未连接")))
-            return
-        }
-        await bridge.loadOlder()
-    }
-
-    /// Keeps the in-memory window inside its budget.
-    ///
-    /// Two guards, both learned the hard way (2026-10-08, run 20261008-202231):
-    ///
-    /// * **Only while following the live tail.** Dropping rows above a reader who is
-    ///   *reading* them shifts what they see (`List` keeps offsets, not visible
-    ///   content — the trap `anchorAfterPrepend` exists for).
-    /// * **Off by default until the P3 anchoring redesign.** Shrinking `items` while a
-    ///   programmatic `scrollTo` is in flight crashes UIKit
-    ///   (`_validateScrollingTargetIndexPath` → SIGABRT): the target index path no
-    ///   longer exists. The view now debounces this call until the open-pin sequence
-    ///   is done, but the whole interaction belongs with T045 (anchor once, after the
-    ///   content settles). Until then the only way to exercise it is the DEBUG
-    ///   `-DSHProbeWindowRows` flag, which is what case 47 uses.
-    public func trimWindowIfNeeded(readerIsFollowing: Bool) {
-        #if DEBUG
-        guard ChatProbe.shared.windowRows != nil else { return }
-        #else
-        return
-        #endif
-        guard readerIsFollowing else { return }
-        // 上限策略同样在 DSHKit（`TranscriptWindowPlanner.rowsToDrop(rowCount:limit:)`）：
-        // 这里只取"该丢几行"，丢的动作交给下面的 `timeline.dropOldestRows`。
-        let excess = TranscriptWindowPlanner.rowsToDrop(
-            rowCount: timeline.items.count, limit: Self.windowLimitRows)
-        guard excess > 0 else { return }
-        let dropped = timeline.dropOldestRows(excess)
-        guard dropped > 0 else { return }
-        ChatProbe.shared.probeNote?("window.trimmed", [
-            "dropped": String(dropped), "items": String(timeline.items.count),
-            "oldest": String(timeline.firstSeq ?? -1),
-        ], true)
-    }
-
-    /// Retries the page the reader is still waiting for (the top retry bar).
-    public func retryOlder() async {
-        setOlderState(.idle)
-        await loadOlder()
-    }
-
     /// 记录一次窗口观察（打开会话时来自缓存/落盘，管道建立后由重建入口接管）。
     ///
     /// 旧 `TranscriptPager` 删除后，这里只落两个视图可见的事实：最老 seq 与"还有更早"。
