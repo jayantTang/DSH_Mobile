@@ -178,7 +178,7 @@ final class ChatModelProcessFoldTests: XCTestCase {
                                    state: .connected(hostHome: "/Users/tester"))
         let profile = try XCTUnwrap(fake.profiles.first)
         fake.activeProfile = profile
-        fake.clientOverride = DSHClient(carrier: carrier)
+        fake.clientOverride = HostClientFactory.make(carrier: carrier)
         model.attach(store: fake, hub: hub)
         await model.open(try ChatSeam.summary(id: "s-1", asOfSeq: 6))
         await carrier.waitForLiveStream("session/follow")

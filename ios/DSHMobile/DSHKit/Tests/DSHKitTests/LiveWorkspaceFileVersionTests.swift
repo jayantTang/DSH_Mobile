@@ -29,7 +29,7 @@ final class LiveWorkspaceFileVersionTests: XCTestCase {
         let port: Int?
     }
 
-    private var client: DSHClient!
+    private var client: (any HostClient)!
 
     override func setUpWithError() throws {
         let path = FileManager.default.homeDirectoryForCurrentUser
@@ -46,7 +46,7 @@ final class LiveWorkspaceFileVersionTests: XCTestCase {
         else {
             throw XCTSkip("could not parse the DSH endpoint URL")
         }
-        client = DSHClient(carrier: HTTPCarrier(
+        client = HostClientFactory.make(carrier: HTTPCarrier(
             baseURL: base, credential: .launchToken(token), timeout: 30
         ))
     }

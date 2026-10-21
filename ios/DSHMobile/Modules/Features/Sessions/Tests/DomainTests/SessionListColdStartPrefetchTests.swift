@@ -34,7 +34,7 @@ final class SessionListColdStartPrefetchTests: SessionsDomainTestCase {
         stubWorkspaces([Wire.workspace("w1", path: "/Users/me/proj", title: "proj", sessions: ids)])
 
         // 消息层挂上之后才有瀑布。库文件指到本用例的临时目录：真实 Caches 那份一个字都不碰。
-        let client = DSHClient(carrier: carrier)
+        let client = HostClientFactory.make(carrier: carrier)
         let storeURL = temp.url.appendingPathComponent("messages.sqlite3")
         let layer = MessageLayer()
         layer.attach(client: { client }, storePath: storeURL)

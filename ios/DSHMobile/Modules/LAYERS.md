@@ -40,6 +40,6 @@ npm run check:public-api
 ```
 
 `check:public-api` 对 `DSHKit/Sources/DSHKit` 的 public 声明/类型做预算
-（1,655 / 280，只减不增）；新增公开 API 前先删旧面。
+（1,665 / 283，只减不增）；新增公开 API 前先删旧面。
 
 例外登记在 `BOUNDARY-EXCEPTIONS.md`，只减不增。

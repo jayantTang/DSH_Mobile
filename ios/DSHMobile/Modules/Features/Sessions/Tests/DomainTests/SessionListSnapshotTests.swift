@@ -93,7 +93,7 @@ final class SessionListSnapshotTests: SessionsDomainTestCase {
         let reopenedLink = FakeLinkService()
         reopenedLink.profiles = [profile]
         reopenedLink.activeProfile = profile
-        reopenedLink.clientOverride = DSHClient(carrier: carrier)
+        reopenedLink.clientOverride = HostClientFactory.make(carrier: carrier)
         reopened.attach(to: reopenedLink, hub: hub)
 
         reopened.loadCachedList()
@@ -118,7 +118,7 @@ final class SessionListSnapshotTests: SessionsDomainTestCase {
         let otherProfile = TestFixtures.relayProfile(name: "Other Mac")
         otherLink.profiles = [otherProfile]
         otherLink.activeProfile = otherProfile
-        otherLink.clientOverride = DSHClient(carrier: carrier)
+        otherLink.clientOverride = HostClientFactory.make(carrier: carrier)
         otherMac.attach(to: otherLink, hub: hub)
         otherMac.loadCachedList()
         XCTAssertFalse(otherMac.isShowingSnapshot, "another computer's snapshot is not this one's history")

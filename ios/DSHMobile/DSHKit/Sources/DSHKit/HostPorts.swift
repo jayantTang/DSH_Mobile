@@ -9,6 +9,8 @@ public protocol ChatHosting: Sendable {
     func sessions() async throws -> SessionListValue
     func historyWindow(_ request: HistoryWindowRequest) async throws -> HistoryWindowValue
     var historyWindowEncoding: String? { get }
+    var historyFoldEnabled: Bool { get }
+    var historyCoverageEnabled: Bool { get }
     func sessionPage(_ request: SessionPageRequest) async throws -> SessionPage
     func sessionFind(_ request: HistorySearchRequest) async throws -> HistorySearchValue
     func follow(_ request: SessionFollowRequest) async -> AsyncThrowingStream<SessionFollowFrame, any Error>
@@ -77,6 +79,7 @@ public extension DirectoryHosting {
     }
 }
 
+extension DSHClient: HostClient {}
 extension DSHClient: ChatHosting {}
 extension DSHClient: SettingsHosting {}
 extension DSHClient: FilesHosting {}
@@ -91,6 +94,10 @@ public protocol ActivityHosting: Sendable {
 }
 
 public extension ActivityHosting {
+    func jobFollow(jobId: String) async -> AsyncThrowingStream<JobFollowFrame, any Error> {
+        await jobFollow(sessionId: nil, jobId: jobId, from: nil)
+    }
+
     func jobFollow(sessionId: String?, jobId: String) async -> AsyncThrowingStream<JobFollowFrame, any Error> {
         await jobFollow(sessionId: sessionId, jobId: jobId, from: nil)
     }
@@ -122,3 +129,41 @@ public extension GitHosting {
 }
 
 extension GitClient: GitHosting {}
+
+/// 链路门面（`LinkGateway`）用到的宿主能力。
+public protocol GatewayHosting: Sendable {
+    func hostEvents() async -> AsyncThrowingStream<HostEvent, any Error>
+    func answer(_ result: EventAnswer) async throws
+    func sessionDigest(since: String?) async throws -> SessionListValue
+    func archiveSession(_ sessionId: String, archived: Bool) async throws -> [String]
+    func createWorkspace(path: String) async throws -> WorkspaceCreateValue
+    func deleteWorkspace(id: String) async throws
+    func createSession(_ request: SessionCreateRequest) async throws -> JSONValue
+    func workspaces(timeout: Duration) async throws -> WorkspaceBaseline
+    func linkHandshake(client: LinkHandshakeRequest) async throws -> LinkHandshake
+    func pushDiagnostics(_ request: LinkDiagnosticsRequest) async throws -> LinkDiagnosticsAck
+}
+
+/// 连接适配器持有的宿主对象：六个按域切开的协议 + 链路门面。
+/// App/Domain 只拿其中一段，不拿这个全量类型。
+public extension GatewayHosting {
+    func workspaces() async throws -> WorkspaceBaseline {
+        try await workspaces(timeout: .seconds(15))
+    }
+}
+
+public protocol HostClient: ChatHosting, SettingsHosting, FilesHosting, DirectoryHosting,
+    ActivityHosting, GatewayHosting, Sendable {
+    var carrier: any DSHCarrier { get }
+    var capabilities: Set<String> { get }
+}
+
+public enum HostClientFactory {
+    public static let sessionDigestCapability = "session-digest"
+    public static let jobsRosterMethod = "_link/jobRoster"
+
+    public static func make(carrier: any DSHCarrier,
+                            capabilities: Set<String> = []) -> any HostClient {
+        DSHClient(carrier: carrier, capabilities: capabilities)
+    }
+}

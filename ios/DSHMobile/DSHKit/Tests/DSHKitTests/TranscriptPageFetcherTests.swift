@@ -66,7 +66,7 @@ final class TranscriptPageFetcherTests: XCTestCase {
 
     private func fetcher(_ carrier: Recorder, capabilities: Set<String>) -> TranscriptPageFetcher {
         TranscriptPageFetcher(
-            client: DSHClient(carrier: carrier),
+            client: HostClientFactory.make(carrier: carrier),
             address: .session(sessionId: "s1"),
             throughSeq: 1000,
             capabilities: capabilities

@@ -35,7 +35,7 @@ public final class FakeLinkService: LinkService {
     }
     public var scopeId: String? { activeProfile?.id.uuidString }
     /// 测试可注入的假客户端（`DSHClient(carrier: FakeCarrier())`）。
-    public var clientOverride: DSHClient?
+    public var clientOverride: (any HostClient)?
     public var chatHost: (any ChatHosting)? { clientOverride }
     public var settingsHost: (any SettingsHosting)? { clientOverride }
     public var filesHost: (any FilesHosting)? { clientOverride }

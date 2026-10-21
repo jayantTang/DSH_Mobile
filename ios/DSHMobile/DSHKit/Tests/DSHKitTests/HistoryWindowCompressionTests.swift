@@ -61,9 +61,9 @@ final class HistoryWindowCompressionTests: XCTestCase {
     // MARK: - 请求侧
 
     func testEncodingOnlyRequestedWithTheCapability() {
-        let plain = DSHClient(carrier: EmptyCarrier(), capabilities: ["history-window"])
+        let plain = HostClientFactory.make(carrier: EmptyCarrier(), capabilities: ["history-window"])
         XCTAssertNil(plain.historyWindowEncoding)
-        let compressed = DSHClient(carrier: EmptyCarrier(),
+        let compressed = HostClientFactory.make(carrier: EmptyCarrier(),
                                    capabilities: ["history-window", HistoryWindowWire.compressionCapability])
         XCTAssertEqual(compressed.historyWindowEncoding, HistoryWindowRequest.deflateRaw)
     }
@@ -71,7 +71,7 @@ final class HistoryWindowCompressionTests: XCTestCase {
     func testClientSendsEncodingAndDecodesTheEnvelope() async throws {
         let carrier = Recorder()
         carrier["_link/sessionWindow"] = #"{"encoding":"deflate-raw","rawBytes":\#(Self.rawBytes),"value":"\#(Self.deflateBase64)"}"#
-        let client = DSHClient(carrier: carrier,
+        let client = HostClientFactory.make(carrier: carrier,
                                capabilities: [HistoryWindowWire.compressionCapability])
         let value = try await client.historyWindow(HistoryWindowRequest(
             address: .session(sessionId: "session-a"), before: 3,
@@ -84,7 +84,7 @@ final class HistoryWindowCompressionTests: XCTestCase {
     func testTranscriptPageFetcherRequestsCompressionOnTheExactChannel() async throws {
         let carrier = Recorder()
         carrier["_link/sessionWindow"] = #"{"encoding":"deflate-raw","rawBytes":\#(Self.rawBytes),"value":"\#(Self.deflateBase64)"}"#
-        let client = DSHClient(carrier: carrier,
+        let client = HostClientFactory.make(carrier: carrier,
                                capabilities: ["history-window", HistoryWindowWire.compressionCapability])
         let fetcher = TranscriptPageFetcher(
             client: client, address: .session(sessionId: "session-a"), throughSeq: 99,

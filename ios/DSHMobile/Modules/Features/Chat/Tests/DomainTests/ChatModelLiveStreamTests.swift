@@ -47,7 +47,7 @@ final class ChatModelLiveStreamTests: XCTestCase {
             state: .connected(hostHome: "/Users/tester")
         )
         fake.activeProfile = profile
-        fake.clientOverride = DSHClient(carrier: carrier)
+        fake.clientOverride = HostClientFactory.make(carrier: carrier)
         model.attach(store: fake, hub: hub)
         await model.open(try ChatSeam.summary())
     }

@@ -148,7 +148,7 @@ final class WorkspaceFileDownloaderTests: XCTestCase {
         // No backoff sleeps in tests: the schedule is the transport's problem,
         // what matters here is that the same offset is asked again.
         WorkspaceFileDownloader(
-            client: DSHClient(carrier: host),
+            client: HostClientFactory.make(carrier: host),
             pacing: .zero,
             retries: retries,
             backoff: { _ in .zero }

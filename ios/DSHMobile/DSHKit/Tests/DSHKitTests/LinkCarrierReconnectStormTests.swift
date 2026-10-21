@@ -140,7 +140,7 @@ struct LinkCarrierReconnectStormTests {
         await carrier.connect()
         #expect(await eventually { factory.count == 1 })
         let socket = try #require(factory.sockets.first)
-        let client = DSHClient(carrier: carrier, capabilities: [DSHClient.sessionDigestCapability])
+        let client = HostClientFactory.make(carrier: carrier, capabilities: [HostClientFactory.sessionDigestCapability])
 
         let listTask = Task { try? await client.sessions() }
         // u1–u3：摘要通道连挂三次（传输类）；u4：旧通道应答。

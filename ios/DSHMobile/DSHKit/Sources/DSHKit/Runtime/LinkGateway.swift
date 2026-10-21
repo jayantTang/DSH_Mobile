@@ -33,11 +33,11 @@ public struct LinkGateway: Sendable {
         }
     }
 
-    private let clientProvider: @MainActor @Sendable () -> DSHClient?
+    private let clientProvider: @MainActor @Sendable () -> (any HostClient)?
     private let statusStreamProvider: @MainActor @Sendable () async -> AsyncStream<HostStatus>
     private let accountStateStreamProvider: @MainActor @Sendable () async -> AsyncStream<[String]>
 
-    public init(clientProvider: @escaping @MainActor @Sendable () -> DSHClient?,
+    public init(clientProvider: @escaping @MainActor @Sendable () -> (any HostClient)?,
                 statusStreamProvider: @escaping @MainActor @Sendable () async -> AsyncStream<HostStatus> = {
                     AsyncStream { $0.finish() }
                 },
@@ -88,7 +88,7 @@ public struct LinkGateway: Sendable {
     public func sessions(since: String? = nil) async throws -> SessionListValue {
         guard let client = clientProvider() else { throw DSHTransportError.carrierClosed }
         guard let since, !since.isEmpty,
-              client.capabilities.contains(DSHClient.sessionDigestCapability) else {
+              client.capabilities.contains(HostClientFactory.sessionDigestCapability) else {
             return try await client.sessions()
         }
         do {
@@ -179,7 +179,7 @@ public struct LinkGateway: Sendable {
     /// 故意不是 `public`：App 拿不到它，所以"产品路径直接用 DSHClient"在类型层面就被挡住了；
     /// 包内的数据层仍然需要它（`historyWindow` / `prompt` 等方法面很宽，不值得逐个转发）。
     @MainActor
-    var clientValue: DSHClient? { clientProvider() }
+    var clientValue: (any HostClient)? { clientProvider() }
 
     // MARK: - 工作区
 

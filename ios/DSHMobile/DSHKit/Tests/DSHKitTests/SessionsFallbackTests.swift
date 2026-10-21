@@ -26,7 +26,7 @@ final class SessionsFallbackTests: XCTestCase {
             .failure(transportError()),
             .success(Self.listOK),
         ])
-        let client = DSHClient(carrier: carrier, capabilities: [DSHClient.sessionDigestCapability])
+        let client = HostClientFactory.make(carrier: carrier, capabilities: [HostClientFactory.sessionDigestCapability])
         let list = try await client.sessions()
         XCTAssertEqual(list.items.count, 0)
         XCTAssertEqual(
@@ -40,7 +40,7 @@ final class SessionsFallbackTests: XCTestCase {
             .failure(transportError()),
             .success(Self.digestOK),
         ])
-        let client = DSHClient(carrier: carrier, capabilities: [DSHClient.sessionDigestCapability])
+        let client = HostClientFactory.make(carrier: carrier, capabilities: [HostClientFactory.sessionDigestCapability])
         _ = try await client.sessions()
         XCTAssertEqual(carrier.methods, ["_link/sessionDigest", "_link/sessionDigest"],
                        "重试成功就不许回退，更不能碰 session/list")
@@ -51,7 +51,7 @@ final class SessionsFallbackTests: XCTestCase {
             .failure(DSHRPCFailure(code: "link/unsupported", message: "old connector")),
             .success(Self.listOK),
         ])
-        let client = DSHClient(carrier: carrier, capabilities: [DSHClient.sessionDigestCapability])
+        let client = HostClientFactory.make(carrier: carrier, capabilities: [HostClientFactory.sessionDigestCapability])
         _ = try await client.sessions()
         XCTAssertEqual(carrier.methods, ["_link/sessionDigest", "session/list"],
                        "能力类失败重试无意义：必须直接回退（US4 AC2）")
@@ -62,7 +62,7 @@ final class SessionsFallbackTests: XCTestCase {
             .failure(DSHTransportError.malformedResponse("bad digest frame")),
             .success(Self.listOK),
         ])
-        let client = DSHClient(carrier: carrier, capabilities: [DSHClient.sessionDigestCapability])
+        let client = HostClientFactory.make(carrier: carrier, capabilities: [HostClientFactory.sessionDigestCapability])
         _ = try await client.sessions()
         XCTAssertEqual(carrier.methods, ["_link/sessionDigest", "session/list"],
                        "格式类失败重试无意义：必须直接回退")

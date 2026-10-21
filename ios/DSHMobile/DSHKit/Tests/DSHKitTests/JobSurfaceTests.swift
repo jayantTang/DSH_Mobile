@@ -85,8 +85,8 @@ final class JobSurfaceTests: XCTestCase {
         func close() async {}
     }
 
-    private func client(_ recorder: Recorder) -> DSHClient {
-        DSHClient(carrier: recorder)
+    private func client(_ recorder: Recorder) -> any HostClient {
+        HostClientFactory.make(carrier: recorder)
     }
 
     // MARK: - 帧样本
@@ -393,7 +393,7 @@ final class JobSurfaceTests: XCTestCase {
         XCTAssertNil(roster.cell("session-not-in-roster"), "缺席 = 没有活，不是未知")
 
         let call = try XCTUnwrap(recorder.calls.first)
-        XCTAssertEqual(call.method, DSHClient.jobsRosterMethod)
+        XCTAssertEqual(call.method, HostClientFactory.jobsRosterMethod)
         XCTAssertEqual(call.method, "_link/jobRoster")
         XCTAssertTrue(call.args.isEmpty, "连接器本地方法的参数是空对象")
     }

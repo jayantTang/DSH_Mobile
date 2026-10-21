@@ -20,7 +20,7 @@ final class SessionListCombinationTests: SessionsDomainTestCase {
         let gated = GatedCarrier()
         carrier = gated.inner
         stubStandardList()
-        fake.clientOverride = DSHClient(carrier: gated)
+        fake.clientOverride = HostClientFactory.make(carrier: gated)
         gated.hold = { method in
             guard method == "session/list" else { return }
             entered.bump()

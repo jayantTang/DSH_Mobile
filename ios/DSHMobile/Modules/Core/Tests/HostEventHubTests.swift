@@ -63,7 +63,7 @@ final class HostEventHubTests: XCTestCase {
     private func makeGateway() -> LinkGateway {
         let carrier = FakeCarrier()
         carrier.streamResponses["$events"] = Self.feed()
-        let client = DSHClient(carrier: carrier)
+        let client = HostClientFactory.make(carrier: carrier)
         return LinkGateway(clientProvider: { client })
     }
 
@@ -193,7 +193,7 @@ final class HostEventHubTests: XCTestCase {
         // 固定 600ms 是否与重放窗口错开取决于调度（同一天实测同类写法在 iOS 上会偶发）。
         let carrier = FakeCarrier()
         carrier.streamResponses["$events"] = Self.feed()
-        let client = DSHClient(carrier: carrier)
+        let client = HostClientFactory.make(carrier: carrier)
         hub.start(link: LinkGateway(clientProvider: { client }))
 
         await eventually("the first round to settle") { hub.pending.first?.id == "event-2" }

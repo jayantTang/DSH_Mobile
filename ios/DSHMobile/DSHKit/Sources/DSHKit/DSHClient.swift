@@ -6,7 +6,7 @@ import Foundation
 /// a same-LAN connection, or a `LinkCarrier` to reach a machine behind NAT.
 /// The method surface mirrors DSH's own endpoint names one-to-one, so the DSH
 /// protocol reference doubles as the documentation for this type.
-public struct DSHClient: Sendable {
+struct DSHClient: Sendable {
     /// 连接器在 `_link/hello` 里声明的能力（连接时才知道，缺省为空表示"还不知道"）。
     public static let sessionDigestCapability = "session-digest"
 

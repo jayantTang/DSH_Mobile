@@ -59,7 +59,7 @@ final class ChatModelTransportTests: XCTestCase {
             state: .connected(hostHome: "/Users/tester")
         )
         fake.activeProfile = profile
-        fake.clientOverride = DSHClient(carrier: carrier)
+        fake.clientOverride = HostClientFactory.make(carrier: carrier)
         model.attach(store: fake, hub: hub)
     }
 

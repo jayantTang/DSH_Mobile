@@ -202,7 +202,7 @@ class SessionsDomainTestCase: XCTestCase {
         self.profile = profile
         fake.profiles = [profile]
         fake.activeProfile = profile
-        fake.clientOverride = DSHClient(carrier: carrier)
+        fake.clientOverride = HostClientFactory.make(carrier: carrier)
         model.attach(to: fake, hub: hub)
     }
 

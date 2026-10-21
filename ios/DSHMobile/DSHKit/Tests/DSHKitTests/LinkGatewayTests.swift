@@ -9,7 +9,7 @@ import XCTest
 @MainActor
 final class LinkGatewayTests: XCTestCase {
 
-    private func gateway(client: DSHClient? = nil,
+    private func gateway(client: (any HostClient)? = nil,
                          statuses: [LinkGateway.HostStatus] = []) -> LinkGateway {
         LinkGateway(clientProvider: { client }, statusStreamProvider: {
             AsyncStream { continuation in

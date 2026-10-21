@@ -96,7 +96,7 @@ final class SessionDigestTests: XCTestCase {
         let carrier = Recorder()
         carrier["_link/sessionDigest"] = #"{"encoding":"identity","value":\#(Self.fixtureJSON)}"#
         carrier["session/list"] = #"{"items":[]}"#
-        let client = DSHClient(carrier: carrier, capabilities: [DSHClient.sessionDigestCapability])
+        let client = HostClientFactory.make(carrier: carrier, capabilities: [HostClientFactory.sessionDigestCapability])
         let list = try await client.sessions()
         XCTAssertEqual(list.items.count, 2, "该走精简版")
         XCTAssertEqual(carrier.methods, ["_link/sessionDigest"])
@@ -108,7 +108,7 @@ final class SessionDigestTests: XCTestCase {
         let carrier = Recorder()
         carrier["session/list"] = #"{"items":[]}"#
         // 没给 `_link/sessionDigest` 的桩 → 那条调用会抛 `DSHRPCFailure`
-        let client = DSHClient(carrier: carrier, capabilities: [DSHClient.sessionDigestCapability])
+        let client = HostClientFactory.make(carrier: carrier, capabilities: [HostClientFactory.sessionDigestCapability])
         let list = try await client.sessions()
         XCTAssertEqual(list.items.count, 0)
         XCTAssertEqual(carrier.methods, ["_link/sessionDigest", "session/list"],
@@ -118,7 +118,7 @@ final class SessionDigestTests: XCTestCase {
     func testSessionsUsesTheLegacyPathWithoutTheCapability() async throws {
         let carrier = Recorder()
         carrier["*"] = #"{"items":[]}"#
-        let client = DSHClient(carrier: carrier)
+        let client = HostClientFactory.make(carrier: carrier)
         _ = try await client.sessions()
         XCTAssertEqual(carrier.methods, ["session/list"], "没有能力声明就该走老路径（老连接器）")
     }

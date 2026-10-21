@@ -261,7 +261,7 @@ struct LinkDiagnosticsUploadTests {
     @Test("推送走 _link/diagnostics，载荷带 sentAt/since/events/dropped")
     func requestShape() async throws {
         let carrier = RecordingCarrier()
-        let client = DSHClient(carrier: carrier)
+        let client = HostClientFactory.make(carrier: carrier)
         let request = LinkDiagnosticsRequest(
             since: 4, sentAt: 1_791_825_010_506, dropped: 1,
             events: [LinkDiagnostics.Event(seq: 5, at: "2026-10-12T17:10:10.506Z", ms: 1_791_825_010_506,
@@ -286,7 +286,7 @@ struct LinkDiagnosticsUploadTests {
     func unsupportedThrows() async {
         let carrier = RecordingCarrier()
         carrier.reply = #"{"accepted":0}"#   // 少一个 lastSeq：解码失败 → 抛
-        let client = DSHClient(carrier: carrier)
+        let client = HostClientFactory.make(carrier: carrier)
         var threw = false
         do {
             _ = try await client.pushDiagnostics(LinkDiagnosticsRequest(since: 0, sentAt: 1, dropped: 0, events: []))

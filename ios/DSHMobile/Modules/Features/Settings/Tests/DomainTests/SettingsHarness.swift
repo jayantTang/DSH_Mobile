@@ -23,7 +23,7 @@ struct SettingsHarness {
         let profile = relay ? TestFixtures.relayProfile() : TestFixtures.directProfile()
         let store = FakeLinkService(profiles: [profile])
         store.activeProfile = profile
-        store.clientOverride = DSHClient(carrier: carrier)
+        store.clientOverride = HostClientFactory.make(carrier: carrier)
         let model = SettingsModel()
         model.attach(to: store)
         return SettingsHarness(store: store, model: model)

@@ -26,7 +26,7 @@ final class TranscriptSearchServiceTests: XCTestCase {
     }
 
     private func service(_ carrier: Recorder, capabilities: Set<String>) -> TranscriptSearchService {
-        TranscriptSearchService(client: DSHClient(carrier: carrier),
+        TranscriptSearchService(client: HostClientFactory.make(carrier: carrier),
                                 address: .session(sessionId: "s1"),
                                 capabilities: capabilities)
     }

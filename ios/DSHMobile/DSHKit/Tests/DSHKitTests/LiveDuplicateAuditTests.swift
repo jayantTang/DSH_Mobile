@@ -38,7 +38,7 @@ final class LiveDuplicateAuditTests: XCTestCase {
 
     func testFoldingRealHistoryNeverRendersAUserMessageTwice() async throws {
         let carrier = try makeCarrier()
-        let client = DSHClient(carrier: carrier)
+        let client = HostClientFactory.make(carrier: carrier)
         defer { Task { await carrier.close() } }
 
         let sessions = try await client.sessions()

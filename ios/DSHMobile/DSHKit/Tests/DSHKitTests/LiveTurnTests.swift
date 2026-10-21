@@ -48,7 +48,7 @@ final class LiveTurnTests: XCTestCase {
 
     func testFollowDeliversAWholeTurnTriggeredByOurOwnPrompt() async throws {
         let carrier = try makeCarrier()
-        let client = DSHClient(carrier: carrier)
+        let client = HostClientFactory.make(carrier: carrier)
 
         // A throwaway session, so no existing conversation is disturbed.
         let created = try await client.createSession(

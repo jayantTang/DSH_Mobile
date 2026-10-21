@@ -27,7 +27,7 @@ final class ActivityModelTests: XCTestCase {
         try await super.setUp()
         carrier = FakeCarrier()
         carrier.registerLiveStream("$events")
-        let client = DSHClient(carrier: carrier)
+        let client = HostClientFactory.make(carrier: carrier)
         // `FakeLinkService` 起步是未连接，与 App 的时序一致：`RootView` 先
         // `activity.attach(service:hub:)`，再在连接态变化时喂 `setConnected(isConnected)`。
         // 这里不直接构造 `ConnectionState.connected`（本测试目标没声明 DSHConnectionAPI 依赖）。
@@ -70,7 +70,7 @@ final class ActivityModelTests: XCTestCase {
         let body = cells.map { cell in
             "\"\(cell.id)\":{\"running\":[\(jobRows(cell.jobs, sessionId: cell.id))],\"settled\":\(cell.settled)}"
         }.joined(separator: ",")
-        carrier.unaryResponses[DSHClient.jobsRosterMethod] = .success(
+        carrier.unaryResponses[HostClientFactory.jobsRosterMethod] = .success(
             try json("{\"at\":\(at),\"sessions\":{\(body)}}")
         )
     }
@@ -129,7 +129,7 @@ final class ActivityModelTests: XCTestCase {
         XCTAssertTrue(model.isAvailable)
         XCTAssertFalse(model.lastKnown)
         XCTAssertEqual(model.settledCount(sessionId: "s1"), 2, "settled count comes from the roster's first answer")
-        XCTAssertEqual(carrier.calls(to: DSHClient.jobsRosterMethod).count, 1, "attach asks the roster only once")
+        XCTAssertEqual(carrier.calls(to: HostClientFactory.jobsRosterMethod).count, 1, "attach asks the roster only once")
 
         // 断线：标志翻成"上次已知"，名单保留（不闪成 0）。
         model.setConnected(false)
@@ -141,7 +141,7 @@ final class ActivityModelTests: XCTestCase {
         model.setConnected(true)
 
         await eventually("roster after reconnect") {
-            self.carrier.calls(to: DSHClient.jobsRosterMethod).count == 2
+            self.carrier.calls(to: HostClientFactory.jobsRosterMethod).count == 2
                 && self.model.counts(sessionId: "s1").jobs == 2
         }
         XCTAssertFalse(model.lastKnown, "no longer last-known once a new roster arrives")

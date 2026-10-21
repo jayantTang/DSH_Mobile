@@ -36,7 +36,7 @@ final class ChatModelUserInputIndexTests: XCTestCase {
         directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("chat-user-input-index-tests-\(UUID().uuidString)")
         layer = MessageLayer()
-        let client = DSHClient(carrier: carrier)
+        let client = HostClientFactory.make(carrier: carrier)
         layer.attach(client: { client },
                      storePath: directory.appendingPathComponent("messages.sqlite3"))
         guard layer.store != nil else {
@@ -98,7 +98,7 @@ final class ChatModelUserInputIndexTests: XCTestCase {
         )
         fake.activeProfile = profile
         fake.capabilities = ["history-role-filter"]
-        fake.clientOverride = DSHClient(carrier: carrier)
+        fake.clientOverride = HostClientFactory.make(carrier: carrier)
         model.attach(store: fake, hub: hub)
         await model.open(try ChatSeam.summary(id: "s-user-inputs", asOfSeq: 3))
         XCTAssertNotNil(model.sessionScope, "the fixture needs a scope to write the store")

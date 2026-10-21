@@ -51,8 +51,8 @@ final class ActivityLiveTests: XCTestCase {
         launchToken = token
     }
 
-    private func makeClient() -> DSHClient {
-        DSHClient(carrier: HTTPCarrier(baseURL: baseURL, credential: .launchToken(launchToken), timeout: 30))
+    private func makeClient() -> any HostClient {
+        HostClientFactory.make(carrier: HTTPCarrier(baseURL: baseURL, credential: .launchToken(launchToken), timeout: 30))
     }
 
     /// 连不上本机宿主是"这次跑不了"，不是"代码坏了"：转成 skip 并写明原因。
@@ -68,7 +68,7 @@ final class ActivityLiveTests: XCTestCase {
     }
 
     /// 挑一条集成用例能安全读取的会话：绕开 `test/.quarantine.json` 里的（宿主打不开的那批）。
-    private func pickSession(_ client: DSHClient) async throws -> SessionSummary {
+    private func pickSession(_ client: any HostClient) async throws -> SessionSummary {
         let value: SessionListValue
         do {
             value = try await client.sessions()

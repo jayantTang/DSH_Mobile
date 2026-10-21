@@ -86,7 +86,7 @@ final class LiveIntegrationTests: XCTestCase {
 
     func testSessionListReturnsRealSessions() async throws {
         let carrier = makeCarrier()
-        let client = DSHClient(carrier: carrier)
+        let client = HostClientFactory.make(carrier: carrier)
 
         let value = try await client.sessions()
         XCTAssertFalse(value.items.isEmpty, "this DSH home should have sessions")
@@ -107,7 +107,7 @@ final class LiveIntegrationTests: XCTestCase {
 
     func testModelCatalogListsUsableRoutes() async throws {
         let carrier = makeCarrier()
-        let client = DSHClient(carrier: carrier)
+        let client = HostClientFactory.make(carrier: carrier)
 
         let catalog = try await client.modelCatalog()
         XCTAssertNotNil(catalog.default, "the host should publish a default model selection")
@@ -117,7 +117,7 @@ final class LiveIntegrationTests: XCTestCase {
 
     func testSessionPageReturnsDecodableHistory() async throws {
         let carrier = makeCarrier()
-        let client = DSHClient(carrier: carrier)
+        let client = HostClientFactory.make(carrier: carrier)
 
         let sessions = try await client.sessions()
         // Prefer a top-level session that has actually run, so there is real
@@ -158,7 +158,7 @@ final class LiveIntegrationTests: XCTestCase {
         // that disagrees with the transcript. Resolving that mode is easy to
         // get wrong and impossible to notice without a live host.
         let carrier = makeCarrier()
-        let client = DSHClient(carrier: carrier)
+        let client = HostClientFactory.make(carrier: carrier)
 
         let sessions = try await client.sessions()
         // 子代理的子会话也可能落在被隔离的父会话/目录里，同样先滤掉。
@@ -189,7 +189,7 @@ final class LiveIntegrationTests: XCTestCase {
         // invents groups the user never made and expands things the desktop
         // keeps folded away.
         let carrier = makeCarrier()
-        let client = DSHClient(carrier: carrier)
+        let client = HostClientFactory.make(carrier: carrier)
 
         let baseline = try await client.workspaces()
         XCTAssertFalse(baseline.items.isEmpty, "the host returned no workspaces at all")
@@ -217,7 +217,7 @@ final class LiveIntegrationTests: XCTestCase {
     /// into an explanation rather than an empty list.
     func testDirectoryListingWalksTheHostFilesystem() async throws {
         let carrier = makeCarrier()
-        let client = DSHClient(carrier: carrier)
+        let client = HostClientFactory.make(carrier: carrier)
 
         let home = try await client.directoryListing()
         XCTAssertEqual(home.path, home.home, "no path did not list the host's home directory")
@@ -277,7 +277,7 @@ final class LiveIntegrationTests: XCTestCase {
         // The timeline fold is the piece most likely to be subtly wrong, so it
         // is exercised against a real journal rather than only synthetic events.
         let carrier = makeCarrier()
-        let client = DSHClient(carrier: carrier)
+        let client = HostClientFactory.make(carrier: carrier)
 
         let sessions = try await client.sessions()
         // "历史最长"必须先滤掉被隔离的：本机历史最长的恰恰可能是宿主打不开的那条
@@ -334,7 +334,7 @@ final class LiveIntegrationTests: XCTestCase {
 
     func testHostEventStreamDeliversReadyFrame() async throws {
         let carrier = makeCarrier()
-        let client = DSHClient(carrier: carrier)
+        let client = HostClientFactory.make(carrier: carrier)
 
         let stream = await client.hostEvents()
         var ready: (clientId: String, home: String)?
@@ -357,7 +357,7 @@ final class LiveIntegrationTests: XCTestCase {
 
     func testSessionFollowYieldsSnapshotThenCancels() async throws {
         let carrier = makeCarrier()
-        let client = DSHClient(carrier: carrier)
+        let client = HostClientFactory.make(carrier: carrier)
 
         let sessions = try await client.sessions()
         let candidates = TestQuarantine.shared.usable(sessions.items)
@@ -400,7 +400,7 @@ final class LiveIntegrationTests: XCTestCase {
         // The phone will lose its socket constantly (backgrounding, network
         // changes). A reset must not poison the mux for later streams.
         let carrier = makeCarrier()
-        let client = DSHClient(carrier: carrier)
+        let client = HostClientFactory.make(carrier: carrier)
 
         let first = await client.hostEvents()
         var sawReady = false
@@ -414,7 +414,7 @@ final class LiveIntegrationTests: XCTestCase {
         // A fresh carrier must behave identically, proving no global state
         // leaked between connections.
         let second = makeCarrier()
-        let secondClient = DSHClient(carrier: second)
+        let secondClient = HostClientFactory.make(carrier: second)
         let sessions = try await secondClient.sessions()
         XCTAssertFalse(sessions.items.isEmpty)
         await second.close()

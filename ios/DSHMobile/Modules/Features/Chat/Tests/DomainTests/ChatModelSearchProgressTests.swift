@@ -109,7 +109,7 @@ final class ChatModelSearchProgressTests: XCTestCase {
         )
         fake.activeProfile = profile
         fake.capabilities = ["session-search", "search-progress"]
-        fake.clientOverride = DSHClient(carrier: carrier)
+        fake.clientOverride = HostClientFactory.make(carrier: carrier)
         model.attach(store: fake, hub: hub)
         await model.open(try ChatSeam.summary(id: "s-search", asOfSeq: 1))
     }

@@ -78,12 +78,12 @@ public final class MessageLayer {
     private(set) var store: MessageStore?
     private(set) var pipeline: MessagePipeline?
     /// attach 时注入的 client 现取闭包，T024 灌库也要用（重连后自动换 carrier）。
-    private var clientProvider: (@Sendable () -> DSHClient?)?
+    private var clientProvider: (@Sendable () -> (any ChatHosting)?)?
     /// 从链路能力接入时的现取闭包（能力挂在 MainActor 上，所以要异步取）。
-    private var asyncClientProvider: (@Sendable () async -> DSHClient?)?
+    private var asyncClientProvider: (@Sendable () async -> (any ChatHosting)?)?
 
     /// 现在该用哪个 client：优先异步 provider（能力接入），否则同步 provider（直接接入）。
-    private func currentClient() async -> DSHClient? {
+    private func currentClient() async -> (any ChatHosting)? {
         if let asyncClientProvider { return await asyncClientProvider() }
         return clientProvider?()
     }
@@ -114,7 +114,7 @@ public final class MessageLayer {
     /// 懒建磁盘层与内存层（各一次，进程级复用）。`client` 每次调用现取：
     /// 未连接时 fetch 抛 `notConnected`，预取方按"跳过"处理。
     /// `storePath`：测试注入临时目录；生产传 nil 走默认路径，行为不变。
-    public func attach(client: @escaping @Sendable () -> DSHClient?,
+    public func attach(client: @escaping @Sendable () -> (any ChatHosting)?,
                        storePath: URL? = nil) {
         clientProvider = client
         if store == nil {

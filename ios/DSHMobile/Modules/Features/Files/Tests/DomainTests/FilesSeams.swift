@@ -37,7 +37,7 @@ enum FilesSeam {
     @MainActor
     static func link(_ carrier: FakeCarrier, capabilities: Set<String> = []) -> FakeLinkService {
         let fake = FakeLinkService(state: .connected(hostHome: hostHome), capabilities: capabilities)
-        fake.clientOverride = DSHClient(carrier: carrier)
+        fake.clientOverride = HostClientFactory.make(carrier: carrier)
         return fake
     }
 

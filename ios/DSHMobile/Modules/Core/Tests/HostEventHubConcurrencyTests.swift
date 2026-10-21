@@ -102,7 +102,7 @@ final class HostEventHubConcurrencyTests: XCTestCase {
     /// An `$events` feed the case pushes frames into.
     private func liveGateway(_ carrier: AnswerCarrier) -> LinkGateway {
         carrier.inner.registerLiveStream("$events")
-        let client = DSHClient(carrier: carrier)
+        let client = HostClientFactory.make(carrier: carrier)
         return LinkGateway(clientProvider: { client })
     }
 

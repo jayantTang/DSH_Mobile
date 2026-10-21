@@ -375,7 +375,7 @@ final class ChatModelDisruptionTests: XCTestCase {
             state: .connected(hostHome: "/Users/tester")
         )
         fake.activeProfile = profile
-        fake.clientOverride = DSHClient(carrier: anyCarrier)
+        fake.clientOverride = HostClientFactory.make(carrier: anyCarrier)
         model.attach(store: fake, hub: hub)
     }
 
