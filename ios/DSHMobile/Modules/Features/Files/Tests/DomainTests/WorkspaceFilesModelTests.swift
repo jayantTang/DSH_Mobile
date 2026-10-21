@@ -334,3 +334,23 @@ final class WorkspaceFilesModelTests: XCTestCase {
         XCTAssertEqual(WorkspaceFilesModel.describe(transport), LinkErrors.describe(transport))
     }
 }
+
+// MARK: - Transfer failure paths (no real URLSession)
+
+extension WorkspaceFilesModelTests {
+    func test_download_without_a_link_marks_failed() async {
+        let model = WorkspaceFilesModel(scope: FilesSeam.scope())
+        let url = await model.download(path: "notes.txt")
+        XCTAssertNil(url)
+        guard case .failed = model.transferPhase(for: "notes.txt") else {
+            return XCTFail("expected failed phase")
+        }
+    }
+
+    func test_discard_without_a_target_returns_to_idle() async {
+        let model = browser()
+        link.transferTarget = nil
+        await model.discardDownload(path: "notes.txt")
+        XCTAssertEqual(model.transferPhase(for: "notes.txt"), .idle)
+    }
+}

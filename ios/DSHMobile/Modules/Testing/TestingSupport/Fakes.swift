@@ -63,8 +63,14 @@ public final class FakeLinkService: LinkService {
     public func uploadFile(fileURL: URL, name: String, sessionId: String) async throws -> StagedFile {
         throw NSError(domain: "FakeLinkService", code: 2, userInfo: [NSLocalizedDescriptionKey: "uploadFile not stubbed"])
     }
+    /// 测试可注入的文件传输目标；nil 时模拟“没有中转目标”。
+    public var transferTarget: (relayURL: URL, deviceToken: String)?
     public func fileTransferTarget() throws -> (relayURL: URL, deviceToken: String) {
-        throw NSError(domain: "FakeLinkService", code: 2, userInfo: [NSLocalizedDescriptionKey: "no transfer target in fake"])
+        guard let transferTarget else {
+            throw NSError(domain: "FakeLinkService", code: 2,
+                          userInfo: [NSLocalizedDescriptionKey: "no transfer target in fake"])
+        }
+        return transferTarget
     }
 }
 
