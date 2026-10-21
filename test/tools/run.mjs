@@ -15,7 +15,7 @@
 //     does not appear on the simulator's own display.
 
 import { spawn, spawnSync } from 'node:child_process'
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -148,6 +148,7 @@ function probeVerdicts({ simId, detailDir, verdicts, log }) {
 
 /// Pulls the event stream out of the result bundle when the live tail missed it.
 function harvestEventsAttachment({ resultBundle, detailDir, verdicts, applyEvent }) {
+  if (!resultBundle || !existsSync(resultBundle)) return
   const target = join(detailDir, 'attachments')
   let listed = []
   try {
@@ -180,6 +181,10 @@ function harvestEventsAttachment({ resultBundle, detailDir, verdicts, applyEvent
 /// Brings the evidence out of the result bundle and files it under the names the
 /// case asked for.
 function exportScreenshots({ resultBundle, shotsDir, manifest }) {
+  if (!resultBundle || !existsSync(resultBundle)) {
+    warn('xcodebuild 没有产出 result bundle，跳过截图导出')
+    return
+  }
   const target = join(shotsDir, '..', 'detail', 'attachments')
   rmSync(target, { recursive: true, force: true })
   try {
@@ -403,6 +408,20 @@ export async function execute(flags = {}, positional = []) {
   }
 }
 
+/// xcodebuild 自己会把结果写到 DERIVED/Logs/Test；显式 -resultBundlePath
+/// 会让它把 180MB 的 Staging 再复制一遍，UI 测试结束时反而挂住。
+/// 这里按开始时间挑最新的一份，截图/事件仍从同一份 xcresult 导出。
+function newestResultBundle(startedAt) {
+  const dir = join(DERIVED, 'Logs/Test')
+  if (!existsSync(dir)) return null
+  const candidates = readdirSync(dir)
+    .filter((name) => name.endsWith('.xcresult'))
+    .map((name) => ({ name, full: join(dir, name), mtime: statSync(join(dir, name)).mtimeMs }))
+    .filter((item) => item.mtime >= startedAt.getTime() - 2000)
+    .sort((a, b) => b.mtime - a.mtime)
+  return candidates[0]?.full ?? null
+}
+
 async function runCase(flags, positional, pairing) {
   const casePath = positional[0] ?? join(ROOT, DEFAULT_CASE)
   if (!existsSync(casePath)) throw new Error(`找不到用例文件 ${casePath}`)
@@ -512,8 +531,7 @@ async function runCase(flags, positional, pairing) {
   stagePlan(simId, plan)
 
   log('执行用例')
-  const resultBundle = join(detailDir, 'result.xcresult')
-  rmSync(resultBundle, { recursive: true, force: true })
+  let resultBundle = null
   const manifest = []
   const verdicts = []
   const stepWishes = {}
@@ -605,9 +623,7 @@ async function runCase(flags, positional, pairing) {
   const child = spawn('xcodebuild', ['-project', join(PROJECT, 'DSHMobile.xcodeproj'),
     '-scheme', 'DSHMobile', '-configuration', 'Debug',
     '-destination', `platform=iOS Simulator,id=${simId}`, '-derivedDataPath', DERIVED,
-    '-resultBundlePath', resultBundle,
-    '-test-timeouts-enabled', 'YES',
-    '-default-test-execution-time-allowance', '180',
+    '-collect-test-diagnostics', 'never',
     'test-without-building', '-only-testing:DSHMobileUITests/Engine'],
     { env: { ...process.env, DSH_RUN: runId, TEST_RUNNER_DSH_PLAN_JSON: JSON.stringify(plan) },
       stdio: ['ignore', 'inherit', 'inherit'] })
@@ -616,6 +632,7 @@ async function runCase(flags, positional, pairing) {
   const exitCode = await new Promise((done) => child.on('close', done))
   const seconds = (new Date() - startedAt) / 1000
   clearInterval(tailer)
+  resultBundle = newestResultBundle(startedAt)
   drain()
   writeFileSync(join(detailDir, 'events.ndjson'), readEvents(simId))
 

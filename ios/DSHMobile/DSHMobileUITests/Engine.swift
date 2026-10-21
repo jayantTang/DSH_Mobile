@@ -185,6 +185,15 @@ final class Engine: XCTestCase {
             run(steps: screen.steps)
         }
         event(["event": "end", "run": plan.run])
+        // 用例完成后显式终止被测 App；否则 test-without-building 会在
+        // App 仍活着时等待，xcodebuild 永不退出（case 27 的 29 步复现）。
+        app?.terminate()
+        app = nil
+    }
+
+    override func tearDownWithError() throws {
+        app?.terminate()
+        app = nil
     }
 
     private func run(steps: [Step]) {
