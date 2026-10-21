@@ -166,7 +166,7 @@ public actor MessagePipeline {
     // MARK: - 会话访问（产品/测试入口）
 
     /// 某会话的 SessionPipeline（懒建）。拉取/推送合并在这一层之下。
-    public func pipeline(for session: SessionRef) -> SessionPipeline {
+    func pipeline(for session: SessionRef) -> SessionPipeline {
         if let pipeline = pipelines[session] { return pipeline }
         let store = self.store
         let pipeline = SessionPipeline(
@@ -187,7 +187,7 @@ public actor MessagePipeline {
     ///
     /// 给 App 侧的空回包注入判方向用（`-DSHProbeEmptyPage`）：注入只许打在
     /// 「往更早方向」的请求上，而那件事只有热窗口知道。
-    public func hotNewest(for session: SessionRef) async -> Int? {
+    func hotNewest(for session: SessionRef) async -> Int? {
         guard let pipeline = pipelines[session] else { return nil }
         return await pipeline.hotNewestSeq
     }
@@ -195,7 +195,7 @@ public actor MessagePipeline {
     // MARK: - 快照订阅（契约面）
 
     /// 订阅某会话的快照流。首帧是当前快照（可能只有 gap 行），之后是增量。
-    public func snapshots(for session: SessionRef) async -> AsyncStream<SnapshotDiff> {
+    func snapshots(for session: SessionRef) async -> AsyncStream<SnapshotDiff> {
         let subscriptionID = UUID()
         let initial = await ensurePrimedState(for: session)
         return AsyncStream { continuation in
@@ -448,7 +448,7 @@ public actor MessagePipeline {
     /// `concurrency`（spec：3–4 个会话）。`persistedRanges` 是磁盘层持久化的区间集，
     /// 采纳后命中段零网络。单个会话失败静默——磁盘只是缓存，取用失败即拉取兜底，
     /// 预取不许成为错误来源。用户点开的会话由调用方传 `.jump`，抢占在途预取。
-    public func prefetchLatestPages(
+    func prefetchLatestPages(
         _ targets: [PrefetchTarget],
         persistedRanges: [SessionRef: RangeIndex] = [:],
         limit: Int = 10,

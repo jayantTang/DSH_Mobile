@@ -115,8 +115,8 @@ public actor SessionPipeline {
 
     // MARK: - 状态
 
-    public let scope: String
-    public let sessionId: String
+    let scope: String
+    let sessionId: String
     let pageSize: Int // internal：+Paging 扩展（页对齐工具）要用
     private let hotLimit: Int
     /// 单页取页的最长等待（秒）。超时按可重试失败计（`FetchError.timeout`）。
@@ -141,7 +141,7 @@ public actor SessionPipeline {
     /// 对端确认"这些号没有内容"。按版本分组：只有与当前版本一致的那组参与判定。
     private var knownEmptyByRevision: [String: RangeIndex] = [:]
     /// 版本 = 当前最新号；对端回包的 revision 与它一致才采纳。
-    public var coverageRevision: String? { ranges.newest.map(String.init) }
+    var coverageRevision: String? { ranges.newest.map(String.init) }
 
     /// 覆盖判定要用的已知为空（只取当前版本）。
     func knownEmptyRanges() -> RangeIndex {
@@ -157,15 +157,15 @@ public actor SessionPipeline {
     }
 
     /// 指标快照（只读；不参与判定）。
-    public func metricsSnapshot() -> FetchMetrics { metrics }
+    func metricsSnapshot() -> FetchMetrics { metrics }
 
-    public func applyKnownEmpty(_ spans: [ClosedRange<Int>], revision: String) {
+    func applyKnownEmpty(_ spans: [ClosedRange<Int>], revision: String) {
         guard adoptKnownEmpty(spans, revision: revision) else { return }
         emit(Diff(gaps: currentGaps()))
     }
 
     /// 冷启动装载：读回按版本分组的结论，当前版本立刻生效。
-    public func adoptPersistedKnownEmpty() async {
+    func adoptPersistedKnownEmpty() async {
         guard let store else { return }
         let rows = (try? await store.knownEmpty(scope: scope, sessionId: sessionId)) ?? []
         guard !rows.isEmpty else { return }
@@ -302,7 +302,7 @@ public actor SessionPipeline {
     // MARK: - diff 订阅
 
     /// 每次状态变化的增量流（多订阅者各自独立）。
-    public func diffs() -> AsyncStream<Diff> {
+    func diffs() -> AsyncStream<Diff> {
         let id = UUID()
         return AsyncStream { continuation in
             diffContinuations[id] = continuation
@@ -326,10 +326,10 @@ public actor SessionPipeline {
     // MARK: - 读（热窗口快照）
 
     /// 当前热窗口内某 seq 的记录（MessagePipeline 组装索引用）。
-    public func record(at seq: Int) -> SessionRecord? { hotWindow[seq] }
+    func record(at seq: Int) -> SessionRecord? { hotWindow[seq] }
 
     /// 当前快照：热窗口全部记录（升序）+ 派生 gap 行。新订阅者的首帧数据源。
-    public func snapshot() -> (records: [SessionRecord], gaps: [GapRow]) {
+    func snapshot() -> (records: [SessionRecord], gaps: [GapRow]) {
         (hotOrder.sorted().compactMap { hotWindow[$0] }, currentGaps())
     }
 
@@ -344,7 +344,7 @@ public actor SessionPipeline {
     ///
     /// 与 `records(in:)` 的分工：`records` 负责区间判定与水合；`ensure` 负责
     /// “现在要不要发、是不是已经有人在发”。调用方只报目标范围，不再自己算批次。
-    public func ensure(
+    func ensure(
         range: ClosedRange<Int>,
         priority: FetchPriority = .userVisible
     ) async throws -> [SessionRecord] {
@@ -417,7 +417,7 @@ public actor SessionPipeline {
 
     /// 取一个闭区间：命中部分本地直给，缺口按对齐页磁盘→网络补齐。
     /// 磁盘是纯缓存：区间声称覆盖但磁盘读不出（被淘汰/未落盘）同样转网络。
-    public func records(
+    func records(
         in range: ClosedRange<Int>,
         priority: FetchPriority = .userVisible
     ) async throws -> [SessionRecord] {
@@ -722,7 +722,7 @@ public actor SessionPipeline {
     /// 读者点了「加载失败，点击重试」（spec 009 失败语义 / tasks T016）：
     /// 清掉该范围覆盖对齐页的失败计数，再走一次「取不到就拉」。
     /// 除此之外没有任何路径能清零计数——失败到上限的缺口不会自己偷偷重试。
-    public func retry(range: ClosedRange<Int>) async throws {
+    func retry(range: ClosedRange<Int>) async throws {
         clearFailureCounts(for: range)
         _ = try await records(in: range, priority: .userVisible)
     }
@@ -738,13 +738,13 @@ public actor SessionPipeline {
     // MARK: - 下行合并（WSS 推送 / 流式）
 
     /// 服务端提交的日志事件：直接合并（流式帧走 apply(stream:)）。
-    public func apply(event: SessionEvent) {
+    func apply(event: SessionEvent) {
         apply(events: [event])
     }
 
     /// 一批日志事件（follow 快照下行）：合并成**一次** diff——逐条 apply 会让
     /// 订阅方按条数重建（009 ChatModel 接线实测要避免的写放大）。
-    public func apply(events: [SessionEvent]) {
+    func apply(events: [SessionEvent]) {
         guard !events.isEmpty else { return }
         var diff = Diff()
         var latestKey = 0
@@ -773,7 +773,7 @@ public actor SessionPipeline {
     /// 等同（预取停手、gap 行渲染「没有更多」），只是判定来源是本地事实而不是
     /// 服务端回包。桥在 `loadOlder` 看到窗口最老 ≤ 1 时调这里，替代原来的静默
     /// return；只置位不撤销（记录只往新处增长）。
-    public func markEarliestReached() {
+    func markEarliestReached() {
         guard !topExhausted else { return }
         topExhausted = true
         emit(Diff(gaps: currentGaps()))
@@ -785,7 +785,7 @@ public actor SessionPipeline {
 
     /// 乐观记录入队（pending）/ 确认替换（confirm）：不进热窗口——上行行
     /// 的身份与排序由 MessagePipeline 持有，这里只管落库队列。
-    public func enqueueWrite(_ change: MessageRecordChange, key: Int) {
+    func enqueueWrite(_ change: MessageRecordChange, key: Int) {
         writes.enqueue(key, change, now: now())
         if writes.shouldFlush(now: now()) {
             flushWrites(writes.drain(now: now()).map(\.value))
@@ -793,7 +793,7 @@ public actor SessionPipeline {
     }
 
     /// 强制落盘（测试与退后台路径用）。
-    public func flushPendingWrites() {
+    func flushPendingWrites() {
         guard !writes.isEmpty else { return }
         flushWrites(writes.drain(now: now()).map(\.value))
     }
