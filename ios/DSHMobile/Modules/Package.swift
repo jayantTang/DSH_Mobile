@@ -91,7 +91,7 @@ let package = Package(
         // 纯协议：连接服务接口
         .target(
             name: "DSHConnectionAPI",
-            dependencies: [dshKit],
+            dependencies: [dshKit, relayKit],
             path: "Contracts/Sources",
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
@@ -149,7 +149,7 @@ let package = Package(
         .target(
             name: "DSHSessionsUI",
             dependencies: [
-                "DSHSessionsDomain", "DSHDesign", "DSHCore", "DSHConnectionDomain", "DSHFoundation", dshKit,
+                "DSHSessionsDomain", "DSHDesign", "DSHCore", "DSHConnectionAPI", "DSHFoundation", dshKit,
             ],
             path: "Features/Sessions/UI",
             swiftSettings: [.swiftLanguageMode(.v6)]
@@ -174,7 +174,7 @@ let package = Package(
         .target(
             name: "DSHChatUI",
             dependencies: [
-                "DSHChatDomain", "DSHDesign", "DSHCore", "DSHConnectionDomain", "DSHFoundation", dshKit,
+                "DSHChatDomain", "DSHDesign", "DSHCore", "DSHConnectionAPI", "DSHFoundation", dshKit,
             ],
             path: "Features/Chat/UI",
             swiftSettings: [.swiftLanguageMode(.v6)]
@@ -195,7 +195,7 @@ let package = Package(
         .target(
             name: "DSHSettingsUI",
             dependencies: [
-                "DSHSettingsDomain", "DSHDesign", "DSHCore", "DSHConnectionDomain", "DSHFoundation", dshKit, relayKit,
+                "DSHSettingsDomain", "DSHDesign", "DSHCore", "DSHConnectionAPI", "DSHFoundation", dshKit, relayKit,
             ],
             path: "Features/Settings/UI",
             swiftSettings: [.swiftLanguageMode(.v6)]
@@ -223,7 +223,7 @@ let package = Package(
         // 插件网页单元（暂无 Domain）
         .target(
             name: "DSHPluginUI",
-            dependencies: ["DSHCore", "DSHDesign", "DSHConnectionDomain", "DSHFoundation", dshKit],
+            dependencies: ["DSHCore", "DSHDesign", "DSHConnectionAPI", "DSHFoundation", dshKit],
             path: "Features/Plugin/UI",
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
@@ -242,7 +242,7 @@ let package = Package(
         ),
         .target(
             name: "DSHFilesUI",
-            dependencies: ["DSHFilesDomain", "DSHDesign", "DSHCore", "DSHConnectionDomain", dshKit],
+            dependencies: ["DSHFilesDomain", "DSHDesign", "DSHCore", "DSHConnectionAPI", dshKit],
             path: "Features/Files/UI",
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),

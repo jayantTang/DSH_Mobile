@@ -1,5 +1,5 @@
 #if os(iOS)
-import DSHConnectionDomain
+import DSHConnectionAPI
 import DSHCore
 import DSHDesign
 import DSHFoundation
@@ -99,7 +99,7 @@ public struct PluginWebSurface: Identifiable, Hashable, Sendable {
     /// serves the plugin pages; a relay connection yields the relay origin, which
     /// serves the pairing console instead. `nil` means there is nothing to open.
     @MainActor
-    init?(store: ConnectionStore) {
+    init?(store: ConnectionEnv) {
         guard let profile = store.activeProfile else { return nil }
         self.init(profile: profile)
     }
@@ -578,12 +578,12 @@ public struct PluginWebFallback: View {
 
     /// The store-driven form: the surface comes from the active connection, and
     /// the reason explains exactly why there is none.
-    public init(store: ConnectionStore) {
+    public init(store: ConnectionEnv) {
         self.surface = PluginWebSurface(store: store)
         self.unavailableReason = Self.reason(for: store)
     }
 
-    private static func reason(for store: ConnectionStore) -> String {
+    private static func reason(for store: ConnectionEnv) -> String {
         guard let profile = store.activeProfile else {
             return "还没有连接到 DSH 主机，插件页面需要一条可用的连接。"
         }

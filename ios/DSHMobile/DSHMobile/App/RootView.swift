@@ -21,7 +21,8 @@ import UIKit
 /// The application root: owns the long-lived stores and routes between
 /// onboarding and the main workspace.
 struct RootView: View {
-    @State private var store = ConnectionStore()
+    @State private var store: ConnectionStore
+    @State private var connectionEnv: ConnectionEnv
     @State private var hub = HostEventHub()
     @State private var updates = UpdateChecker()
     @State private var alertPrefs = SessionAlertPrefs.shared
@@ -42,6 +43,9 @@ struct RootView: View {
 
     /// 026：探针从 static 改实例后，由装配点在构造期注入（行为与 static 版一致）。
     init() {
+        let store = ConnectionStore()
+        _store = State(initialValue: store)
+        _connectionEnv = State(initialValue: ConnectionEnv(store))
         let note: (String, [String: String], Bool) -> Void = { kind, fields, force in
             ViewportProbe.note(kind, fields, force: force)
         }
@@ -74,6 +78,7 @@ struct RootView: View {
     private var stageOne: some View {
         content
             .environment(store)
+            .environment(connectionEnv)
             .environment(hub)
             .environment(activity)
             .environment(updates)
@@ -550,6 +555,7 @@ enum AutomationDiagnostics {
 /// information architecture the desktop client uses at a narrow width.
 private struct MainView: View {
     @Environment(ConnectionStore.self) private var store
+    @Environment(ConnectionEnv.self) private var connectionEnv
     @Environment(HostEventHub.self) private var hub
     @Environment(SessionAlerts.self) private var alerts
     @Environment(AttachmentImages.self) private var attachmentImages
@@ -714,11 +720,11 @@ private struct MainView: View {
             }
         }
         .sheet(isPresented: $isShowingSettings) {
-            SettingsSheet(store: store)
+            SettingsSheet(store: connectionEnv)
         }
         .sheet(item: $filesScope) { scope in
             WorkspaceFilesView(
-                store: store,
+                store: connectionEnv,
                 scope: scope,
                 openPath: $filesOpenPath,
                 initialPath: automationFilesDir ?? ""
@@ -738,7 +744,7 @@ private struct MainView: View {
         .sheet(isPresented: $isShowingWebFallback) {
             // The fallback resolves its own surface from the active connection
             // and explains itself when a relay link cannot serve one.
-            PluginWebFallback(store: store)
+            PluginWebFallback(store: connectionEnv)
         }
         // 设置页清了缓存：内存里的转写尾部与图片桶一起放手（否则会被写回来）。
         .onReceive(NotificationCenter.default.publisher(for: .localCachesCleared)) { _ in

@@ -10,10 +10,10 @@
 |---|---|---|---|
 | 基础 | `Foundation/` | `DSHFoundation` | 无 |
 | 界面基础 | `Design/` | `DSHDesign` | `DSHFoundation` |
-| 契约 | `Contracts/` | `DSHConnectionAPI` | `DSHKit` |
+| 契约 | `Contracts/` | `DSHConnectionAPI` | `DSHKit`、`RelayKit` |
 | 服务 | `Core/` | `DSHCore` | `Contracts`、`Foundation`、`DSHKit`、`RelayKit` |
 | 功能单元 | `Features/<Unit>/Domain` | `DSH<Unit>Domain` | `Core`、`Contracts`、`Foundation`、`DSHKit`、`RelayKit` |
-| 功能单元 | `Features/<Unit>/UI` | `DSH<Unit>UI` | 本单元 Domain、`Design`、`Core`、`Foundation`、`DSHKit`、`RelayKit` |
+| 功能单元 | `Features/<Unit>/UI` | `DSH<Unit>UI` | 本单元 Domain、`Contracts`、`Design`、`Core`、`Foundation`、`DSHKit`、`RelayKit` |
 | 测试辅助 | `Testing/` | `DSHTestingSupport` | `Core`、`Contracts`、`Foundation`、`DSHKit`、`RelayKit`；只允许 test target 依赖 |
 
 `Features/Plugin` 目前只有 UI，没有 Domain。
@@ -21,9 +21,9 @@
 ## 约束
 
 1. 依赖只向下；`*Domain` 不得依赖 `*UI`，单元之间不得互相依赖。
-2. 唯一跨单元边：`Features/*/UI → Features/Connection/Domain`（SwiftUI `@Environment`
-   需要具体 `ConnectionStore`）。收敛方向：在 `Contracts` 增加 `ConnectionEnv`，
-   UI 只依赖契约；做完后从 C1 的 UI 允许集里删掉 `DSHConnectionDomain`。
+2. UI 只允许依赖**本单元** Domain；连接状态经 `Contracts` 的 `ConnectionEnv`
+   （`DSHConnectionAPI`），不再依赖 `Features/Connection/Domain`。ConnectionUI 走
+   “同单元 UI → Domain”的结构性配对边，不属于跨单元依赖。
 3. `*Domain` 不得直接引用实现层类型：`SessionPipeline`、`MessagePipeline`、
    `MessageStore`、`DSHClient`、`LinkCarrier`（Connection 适配器除外）。数据能力走
    `MessageLayer` / `SessionHandle`；连接能力走 `LinkService`。

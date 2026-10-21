@@ -1,5 +1,5 @@
 #if os(iOS)
-import DSHConnectionDomain
+import DSHConnectionAPI
 import DSHCore
 import Foundation
 import Observation
@@ -66,9 +66,9 @@ public final class AttachmentImages {
         "\(session)|\(attachmentId)"
     }
 
-    private weak var store: ConnectionStore?
+    private weak var store: (any LinkService)?
 
-    public func attach(store: ConnectionStore) {
+    public func attach(store: any LinkService) {
         self.store = store
     }
 

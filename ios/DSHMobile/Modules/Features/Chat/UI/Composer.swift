@@ -1,5 +1,5 @@
 #if os(iOS)
-import DSHConnectionDomain
+import DSHConnectionAPI
 import DSHCore
 import DSHDesign
 import DSHKit
@@ -15,7 +15,7 @@ import DSHChatDomain
 /// 025 阶段4b：整个 struct 是 public 的，但装配层只用得到 `stageForAutomation`
 /// （`-DSHStageFile` 的自动化入口，见 `RootView`）。
 public struct Composer: View {
-    @Environment(ConnectionStore.self) private var store
+    @Environment(ConnectionEnv.self) private var store
     @Bindable var model: ChatModel
     /// Owned by the transcript, which re-pins its scroll position when the
     /// keyboard resizes the viewport.

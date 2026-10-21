@@ -1,6 +1,6 @@
 #if os(iOS)
 @_exported import DSHChatDomain
-import DSHConnectionDomain
+import DSHConnectionAPI
 import DSHCore
 import DSHDesign
 import DSHFoundation
@@ -10,7 +10,7 @@ import SwiftUI
 /// One session transcript, with the composer pinned to the bottom.
 public struct ChatView: View {
     @Environment(AttachmentImages.self) private var attachmentImages
-    @Environment(ConnectionStore.self) var store
+    @Environment(ConnectionEnv.self) var store
     @Environment(HostEventHub.self) private var hub
     @Bindable var model: ChatModel
     /// Opens the workspace browser. Nil until that surface is available, in

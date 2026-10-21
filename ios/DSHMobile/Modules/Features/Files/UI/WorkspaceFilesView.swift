@@ -1,5 +1,5 @@
 #if os(iOS)
-import DSHConnectionDomain
+import DSHConnectionAPI
 import DSHCore
 import DSHDesign
 import DSHKit
@@ -13,7 +13,7 @@ import DSHFilesDomain
 /// set the host observes. Both filter client-side from the same search field, and
 /// both are pull-to-refresh.
 public struct WorkspaceFilesView: View {
-    public let store: ConnectionStore
+    public let store: any LinkService
 
     @State private var model: WorkspaceFilesModel
     @State private var git: GitModel
@@ -31,7 +31,7 @@ public struct WorkspaceFilesView: View {
     @Binding var openPath: String?
 
     public init(
-        store: ConnectionStore,
+        store: any LinkService,
         scope: WorkspaceFileScope,
         openPath: Binding<String?> = .constant(nil),
         initialPath: String = ""
@@ -53,7 +53,7 @@ public struct WorkspaceFilesView: View {
     ///
     /// The scope id is the session's own id — see `WorkspaceFileScope` for why
     /// that is the value `workspaceFileScopeId` carries.
-    init(store: ConnectionStore, summary: SessionSummary, hostHome: String? = nil) {
+    init(store: any LinkService, summary: SessionSummary, hostHome: String? = nil) {
         self.init(store: store, scope: WorkspaceFileScope(summary: summary, hostHome: hostHome))
     }
 

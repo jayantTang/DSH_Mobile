@@ -1,5 +1,6 @@
 import DSHKit
 import Foundation
+import RelayKit
 
 /// 连接服务的抽象（契约 C3/C6）：Core 与其它单元只依赖这个协议，
 /// 不依赖 DSHConnectionDomain 的具体实现 `ConnectionStore`。
@@ -46,11 +47,21 @@ public protocol LinkService: AnyObject {
     func uploadFile(fileURL: URL, name: String, sessionId: String) async throws -> StagedFile
     /// 文件传输目标（中转地址 + 设备令牌）。
     func fileTransferTarget() throws -> (relayURL: URL, deviceToken: String)
+
+    // 连接状态的展示派生值：放协议里，UI 不必再认识 ConnectionStore。
+    var supportsFileTransfer: Bool { get }
+    var showsOutdatedConnectorNotice: Bool { get }
+    func dismissOutdatedConnectorNotice()
+    func noteFirstRender() async
 }
 
 public extension LinkService {
     var isConnected: Bool { state.isConnected }
     var isConnecting: Bool { state.isConnecting }
+    var supportsFileTransfer: Bool { supports(RelayFileTransfer.capability) }
+    var showsOutdatedConnectorNotice: Bool { false }
+    func dismissOutdatedConnectorNotice() {}
+    func noteFirstRender() async {}
 }
 
 /// 连接错误文案（原 ConnectionStore.describe，025/026 下沉到协议层供全部单元共用）。

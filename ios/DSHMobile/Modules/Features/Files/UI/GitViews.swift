@@ -1,5 +1,5 @@
 #if os(iOS)
-import DSHConnectionDomain
+import DSHConnectionAPI
 import DSHCore
 import DSHDesign
 import DSHKit
@@ -13,7 +13,7 @@ import DSHFilesDomain
 /// for a full path on every row. Read-only, like everything git here.
 public struct GitChangesPane: View {
     public let model: GitModel
-    public let store: ConnectionStore
+    public let store: any LinkService
 
     @State private var openDiff: DiffRequest?
 
@@ -210,7 +210,7 @@ public struct GitChangesPane: View {
 /// 历史: the commits on the current branch, newest first.
 public struct GitHistoryPane: View {
     public let model: GitModel
-    public let store: ConnectionStore
+    public let store: any LinkService
 
     @State private var openCommit: GitCommit?
 

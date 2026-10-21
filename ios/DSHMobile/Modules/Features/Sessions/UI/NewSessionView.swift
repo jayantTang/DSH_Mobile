@@ -1,5 +1,5 @@
 #if os(iOS)
-import DSHConnectionDomain
+import DSHConnectionAPI
 import DSHCore
 import DSHDesign
 import DSHKit
@@ -24,7 +24,7 @@ public struct NewSessionView: View {
     let model: SessionListModel
     /// The connection is the browser's data source: the host walks its own
     /// filesystem, one level per call.
-    let store: ConnectionStore
+    let store: any LinkService
     /// Called with the created session's id, so the caller can open it.
     var onCreated: (String) -> Void
 

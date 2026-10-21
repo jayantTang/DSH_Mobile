@@ -1,9 +1,11 @@
 import DSHConnectionAPI
 import DSHKit
 import Foundation
+import Observation
 
 /// 假连接服务：LinkService 的可编程实现，供各单元 DomainTests 注入。
 @MainActor
+@Observable
 public final class FakeLinkService: LinkService {
     public var profiles: [ConnectionProfile]
     public var activeProfile: ConnectionProfile?

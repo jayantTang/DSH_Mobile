@@ -1,6 +1,6 @@
 #if os(iOS)
 @_exported import DSHSessionsDomain
-import DSHConnectionDomain
+import DSHConnectionAPI
 import DSHCore
 import DSHDesign
 import DSHFoundation
@@ -38,7 +38,7 @@ public final class SessionsServices {
 public struct SessionListView: View {
     @Environment(\.openURL) private var openURL
     @Environment(SessionsServices.self) private var services
-    @Environment(ConnectionStore.self) private var store
+    @Environment(ConnectionEnv.self) private var store
     @Environment(HostEventHub.self) private var hub
     @Environment(UpdateChecker.self) private var updates
     @Bindable public var model: SessionListModel
@@ -841,7 +841,7 @@ public struct SessionRow: View {
 
 /// The toolbar button that shows link health and opens the connection sheet.
 public struct ConnectionStatusButton: View {
-    let store: ConnectionStore
+    let store: ConnectionEnv
 
     public var body: some View {
         HStack(spacing: DSHTheme.Spacing.hairline) {

@@ -7,7 +7,7 @@
 //  C2 禁 UI：Foundation / Contracts / Core / Features/<U>/Domain / Testing/TestingSupport
 //     里出现 import SwiftUI|UIKit|AppKit 即判红。
 //  C1 依赖方向：解析 Package.swift 里每个 target 的 dependencies，按 path 归类到层，
-//     与每层允许依赖比对；未声明 target、自依赖、跨单元依赖（Connection 例外除外）判红。
+//     与每层允许依赖比对；未声明 target、自依赖、跨单元依赖判红。
 //  C6 声明一致：源码 import 了本包 target 却没写进 dependencies 判红
 //     （Debug 靠传递依赖能过，Release 归档会挂）。
 //  C7 路径覆盖：Modules/ 下每个 .swift 必须落在某个 target 的 path: 内；每个 path
@@ -123,15 +123,17 @@ function layerOf(t) {
 const ALLOWED = {
   foundation: new Set(),
   design: new Set(['DSHFoundation']),
-  contracts: new Set(['DSHKit']),
+  contracts: new Set(['DSHKit', 'RelayKit']),
   core: new Set(['DSHConnectionAPI', 'DSHFoundation', 'DSHKit', 'RelayKit']),
   'feature-domain': new Set([
     'DSHCore', 'DSHConnectionAPI', 'DSHFoundation', 'DSHKit', 'RelayKit',
   ]),
   // UI 允许跳级到协议层（DSHKit/RelayKit 的公开类型经 Domain 外露），
-  // 并允许连接单元的实现（@Environment 需要具体 ConnectionStore）；后者是唯一跨单元例外。
+  // 以及连接契约 DSHConnectionAPI（ConnectionEnv）；具体 ConnectionStore 只剩
+  // 连接单元自己的 UI 与 PluginWebView 的 cookie 入口还在用。
   'feature-ui': new Set([
-    'DSHDesign', 'DSHCore', 'DSHFoundation', 'DSHConnectionDomain', 'DSHKit', 'RelayKit',
+    'DSHDesign', 'DSHCore', 'DSHFoundation', 'DSHConnectionAPI',
+    'DSHKit', 'RelayKit',
   ]),
   testing: new Set([
     'DSHCore', 'DSHConnectionAPI', 'DSHFoundation', 'DSHKit', 'RelayKit',

@@ -1,6 +1,6 @@
 #if os(iOS)
 @_exported import DSHChatDomain
-import DSHConnectionDomain
+import DSHConnectionAPI
 import DSHCore
 import DSHDesign
 import DSHFoundation

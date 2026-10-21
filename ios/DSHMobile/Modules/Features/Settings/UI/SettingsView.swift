@@ -1,7 +1,7 @@
 import RelayKit
 import DSHSettingsDomain
 #if os(iOS)
-import DSHConnectionDomain
+import DSHConnectionAPI
 import DSHCore
 import DSHDesign
 import DSHFoundation
@@ -23,7 +23,7 @@ import SwiftUI
 /// pointed at the desktop rather than hidden, so a search for a setting ends in
 /// an answer instead of a dead end.
 public struct SettingsView: View {
-    public let store: ConnectionStore
+    public let store: ConnectionEnv
 
     @State private var model = SettingsModel()
     @State private var isShowingPCOnly = false
@@ -616,10 +616,10 @@ public struct SettingsView: View {
 
 /// Sheet presentation for `SettingsView`.
 public struct SettingsSheet: View {
-    public let store: ConnectionStore
+    public let store: ConnectionEnv
 
     /// 显式 public 初始化器（025 阶段4）：装配层在模块外构造它。
-    public init(store: ConnectionStore) { self.store = store }
+    public init(store: ConnectionEnv) { self.store = store }
 
     public var body: some View {
         NavigationStack {
