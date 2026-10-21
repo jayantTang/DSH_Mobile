@@ -48,6 +48,7 @@ if (useSymbolGraph) {
     const count = graph.symbols?.length ?? 0;
     if (count > budgets.symbols) {
       console.error(`✗ DSHKit 导出面超预算：${count} 个 symbol / 预算 ${budgets.symbols}`);
+      console.error('  先迁出等价旧 API，再考虑调高预算；不要只为本需求加公开面。');
       process.exit(1);
     }
     console.log(`✓ DSHKit symbol surface ${count}/${budgets.symbols} exported symbols`);

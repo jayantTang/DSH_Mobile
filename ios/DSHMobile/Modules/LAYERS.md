@@ -41,6 +41,9 @@ npm run check:public-api
 
 `check:public-api` 优先用 SwiftPM symbol graph 统计 DSHKit **真实可 import**
 的导出符号（预算 2,200）；本机没有 Swift 工具链时退回 public 关键字粗筛
-（1,665 声明 / 283 类型）。新增公开 API 前先删旧面。
+（1,665 声明 / 283 类型）。
+
+**公开面规则**：新增公开 API 必须同时迁出等价旧 API；预算不因单次需求直接调高。
+当前余量只有 19 个 symbol，任何新增公开模型/协议都要先说明“删了什么”。
 
 例外登记在 `BOUNDARY-EXCEPTIONS.md`，只减不增。

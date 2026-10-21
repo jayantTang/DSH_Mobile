@@ -3,16 +3,62 @@
   "title": "发送一条消息",
   "description": "从输入框到 host 的 RPC，再回到本地持久化。步骤里的 file + symbol 会被扫描器校验，代码改名后页面会标红。",
   "steps": [
-    { "id": "composer", "label": "输入框收草稿与附件", "file": "ios/DSHMobile/Modules/Sources/DSHChatUI/Composer.swift", "symbol": "Composer", "kind": "ui" },
-    { "id": "model", "label": "ChatModel 组装乐观行", "file": "ios/DSHMobile/Modules/Sources/DSHChatDomain/ChatModel.swift", "symbol": "ChatModel", "kind": "logic" },
-    { "id": "client", "label": "DSHClient 发 sessionPrompt / sessionControl", "file": "ios/DSHMobile/DSHKit/Sources/DSHKit/DSHClient.swift", "symbol": "DSHClient", "kind": "net" },
-    { "id": "pipeline", "label": "MessagePipeline 订阅事件流", "file": "ios/DSHMobile/DSHKit/Sources/DSHKit/MessagePipeline.swift", "symbol": "MessagePipeline", "kind": "logic" },
-    { "id": "store", "label": "MessageStore 落盘与 FTS", "file": "ios/DSHMobile/DSHKit/Sources/DSHKit/MessageStore.swift", "symbol": "MessageStore", "kind": "store" }
+    {
+      "id": "composer",
+      "label": "输入框收草稿与附件",
+      "file": "ios/DSHMobile/Modules/Features/Chat/UI/Composer.swift",
+      "symbol": "Composer",
+      "kind": "ui"
+    },
+    {
+      "id": "model",
+      "label": "ChatModel 组装乐观行",
+      "file": "ios/DSHMobile/Modules/Features/Chat/Domain/Session/ChatModel.swift",
+      "symbol": "ChatModel",
+      "kind": "logic"
+    },
+    {
+      "id": "client",
+      "label": "DSHClient 发 sessionPrompt / sessionControl",
+      "file": "ios/DSHMobile/DSHKit/Sources/DSHKit/DSHClient.swift",
+      "symbol": "DSHClient",
+      "kind": "net"
+    },
+    {
+      "id": "pipeline",
+      "label": "MessagePipeline 订阅事件流",
+      "file": "ios/DSHMobile/DSHKit/Sources/DSHKit/MessagePipeline.swift",
+      "symbol": "MessagePipeline",
+      "kind": "logic"
+    },
+    {
+      "id": "store",
+      "label": "MessageStore 落盘与 FTS",
+      "file": "ios/DSHMobile/DSHKit/Sources/DSHKit/MessageStore.swift",
+      "symbol": "MessageStore",
+      "kind": "store"
+    }
   ],
   "edges": [
-    ["composer", "model", "提交"],
-    ["model", "client", "RPC"],
-    ["model", "pipeline", "订阅"],
-    ["pipeline", "store", "落盘"]
+    [
+      "composer",
+      "model",
+      "提交"
+    ],
+    [
+      "model",
+      "client",
+      "RPC"
+    ],
+    [
+      "model",
+      "pipeline",
+      "订阅"
+    ],
+    [
+      "pipeline",
+      "store",
+      "落盘"
+    ]
   ]
 }
