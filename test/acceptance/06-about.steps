@@ -1,0 +1,11 @@
+# TC-UI-103 的执行指令（中文轮）
+#
+# 跑法：DSH_CONNECT=relay ./test/run.sh run test/cases/current/103-关于页四段版本核对.md
+#
+# 从列表点「设置」进入：直达时连接还没建立，「关于」里的后三段永远是「未上报」。
+# 「在电脑端配置」在「关于」下面，滚到它时「关于」整块在屏内。
+
+1  do: 连接本机 DSH, 打开页面 sessions | want: id:session.list
+2  do: 点击 label:设置                | want: id:settings.root
+3  do: 滚动到 text:在电脑端配置         | shot: about-versions check=texts,amber after
+4  do: 什么都不做                      | want: text:App 版本, text:连接器版本, text:DSH 版本, text:中转版本

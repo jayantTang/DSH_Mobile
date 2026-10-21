@@ -69,6 +69,8 @@
     "lane:l3": "node scripts/verify/lane.mjs l3",
     "plugin:hmr": "node scripts/dev/plugin-hmr.mjs",
     "check:module-boundaries": "node scripts/dev/check-module-boundaries.mjs",
-    "check:ios-modules": "cd ios/DSHMobile/Modules && swift test && xcodebuild test -scheme DSHMobileModules-Package -destination \"platform=iOS Simulator,name=DSH-Test\""
+    "check:ios-modules": "cd ios/DSHMobile/Modules && swift test && xcodebuild test -scheme DSHMobileModules-Package -destination \"platform=iOS Simulator,name=DSH-Test\"",
+    "check:acceptance": "node scripts/dev/check-acceptance.mjs",
+    "test:acceptance": "node scripts/dev/run-acceptance.mjs"
   }
 }

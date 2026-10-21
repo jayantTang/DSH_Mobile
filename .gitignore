@@ -50,7 +50,9 @@ AGENTS.md
 # 里面有对 agent 下的指令、以及只对部署方有意义的记录，不随开源仓库发布。
 # 公开面只留面向使用者的文档（README、docs/）与可复制的用例模板（test/examples/）。
 maintainers/
-test/cases/
+test/cases/*
+!test/cases/acceptance/
+!test/cases/acceptance/**
 
 # Spec Kit（SDD 流程）的本机产物：三处都是"过程记录 + 第三方套件骨架"，不是产品。
 #   .specify/    流程骨架（官方模板/脚本/宪法/本机指针），由 `specify init` 生成

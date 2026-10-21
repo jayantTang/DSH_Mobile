@@ -1,0 +1,8 @@
+# TC-MOB-107 的执行指令（需 owner 授权仿真器）
+#
+# DSH_CONNECT=relay ./test/run.sh run test/cases/current/107-过程折叠展开收起与锚点.md
+
+1  do: 连接本机 DSH, 打开页面 transcript args="-DSHOpenSession,{{session}},-DSHProbeProcessFoldFixture" | want: id:chat.transcript
+2  do: 等待 2 秒 | want: id:row.process.turn.1 | shot: 01-folded check=content,amber
+3  do: 点击 id:row.process.turn.1, 等待 1 秒 | shot: 02-expanded check=content,amber
+4  do: 点击 id:row.process.turn.1, 等待 1 秒 | shot: 03-collapsed check=content,amber

@@ -1,0 +1,13 @@
+# TC-UI-105 的执行指令
+#
+# 跑法：DSH_CONNECT=relay ./test/run.sh run test/cases/current/105-发送后不再永久停在等待开始.md
+#
+# `{{session}}` 是运行器新建的临时会话（本用例 front matter 声明了 `临时目录:`），
+# 跑完由运行器删除。直达转写用 `-DSHOpenSession`，不走列表，免得分组把它挤走。
+
+1  do: 连接本机 DSH, 打开页面 transcript args="-DSHOpenSession,{{session}}" | want: id:chat.transcript
+2  do: 点击 id:composer.field, 等待 1 秒 | want: id:composer.send
+3  do: 输入 示例消息：只回复两个字，收到 | want: id:composer.send
+4  do: 点击 id:composer.send | shot: 01-sent check=content,amber
+5  do: 等待 30 秒 | shot: 02-after-turn check=content,amber
+6  do: 什么都不做 | want: id:composer.field, text:示例消息：只回复两个字，收到

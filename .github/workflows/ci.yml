@@ -217,6 +217,10 @@ jobs:
       # 放在 macOS job：check:project 用 plutil 解析 pbxproj，必须与本地同一条判定。
       - name: App 工程与源文件一致（相对路径 / stale 引用）
         run: node scripts/dev/check-project.mjs
+      # UI 用例依赖真实宿主与中转，CI 只校验验收子集的完整性与禁止项；
+      # 真实执行由发版前在本机跑 `npm run test:acceptance`。
+      - name: 验收用例子集完整性
+        run: node scripts/dev/check-acceptance.mjs
       - name: Release 构建：clone 下来的样子（没有本机 xcconfig）
         working-directory: ios/DSHMobile
         run: |

@@ -1,0 +1,3 @@
+1  do: 打开页面 transcript args="-DSHProbeListHost,uikit,-DSHViewportProbe,-DSHProbeOlderScroll,2" | want: id:chat.transcript | shot: 01-opened check=texts
+2  do: 等待 7 秒 | shot: 02-first-page check=texts after | want: id:chat.transcript ; absent id:chat.gap.retry
+3  do: 等待 10 秒 | shot: 03-settled check=texts after | want: id:chat.transcript ; absent id:chat.gap.retry

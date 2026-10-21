@@ -1,0 +1,6 @@
+1  do: 打开页面 transcript | want: id:chat.transcript
+2  do: 点击 id:composer.field, 等待 1 秒 | want: id:composer.send
+3  do: 输入 chat-view-test | want: id:composer.send
+4  do: 点击 id:composer.send | shot: 01-sent check=content,amber after
+5  do: 等待 5 秒 | shot: 02-reply check=content,amber after | want: id:chat.transcript
+6  do: 滚动 up id:chat.transcript | shot: 03-scrolled check=content,amber after
