@@ -26,8 +26,32 @@ public typealias MessageSendStatus = MessagePipeline.RenderedMessage.Status
 /// 时间线上的缺口行（失败的取页区间）。
 public typealias TranscriptGapRow = SessionPipeline.GapRow
 
-/// 「我问过的」一条记录。
-public typealias UserInputEntry = MessageStore.UserInputEntry
+/// 一次落库变更（上行 pending / 下行记录共用）。
+public enum MessageRecordChange: Sendable {
+    case upsertRecords(scope: String, sessionId: String, records: [SessionRecord])
+    case upsertPending(scope: String, sessionId: String, clientId: String, record: SessionRecord)
+    case confirmPending(scope: String, sessionId: String, clientId: String, record: SessionRecord)
+}
 
-/// 列表页一行（`MessageStore.SessionListEntry` 的 App 侧名字）。
-public typealias MessageSessionState = MessageStore.SessionListEntry
+/// 「我问过的」一条记录。
+public struct UserInputEntry: Sendable {
+    public let sessionId: String
+    public let record: SessionRecord
+
+    public init(sessionId: String, record: SessionRecord) {
+        self.sessionId = sessionId
+        self.record = record
+    }
+}
+
+/// 列表页一行（session_state 的投影）。
+public struct MessageSessionState: Sendable, Equatable {
+    public let sessionId: String
+    public let oldestSeq: Int?
+    public let newestSeq: Int?
+    public let hasMore: Bool
+    public let lastSnippet: String?
+    public let unreadCount: Int
+    let lastOpened: Date
+    public let ranges: RangeIndex
+}

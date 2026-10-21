@@ -76,7 +76,7 @@ public struct UserInputBackfiller: Sendable {
     /// 单会话最多拉多少页（防失控）。
     let maxPages: Int
 
-    public init(store: MessageStore, now: @escaping @Sendable () -> Date = Date.init,
+    init(store: MessageStore, now: @escaping @Sendable () -> Date = Date.init,
                 roleFilterSupported: Bool = true,
                 freshWindow: TimeInterval = 24 * 3600, maxPages: Int = 100,
                 pageTimeout: TimeInterval = 45) {

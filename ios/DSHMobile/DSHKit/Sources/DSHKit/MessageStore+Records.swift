@@ -24,7 +24,7 @@ extension MessageStore {
     // MARK: - 写入（下行记录 / 上行 pending 共用一个入口，批量事务）
 
     /// 应用一批去重后的变更（内存层 PendingWriteQueue drain 的结果）。
-    public func applyWrites(_ changes: [RecordChange]) async throws {
+    public func applyWrites(_ changes: [MessageRecordChange]) async throws {
         try await pool.write { db in
             for change in changes {
                 switch change {
@@ -184,7 +184,7 @@ extension MessageStore {
     }
 
     /// 列表页：一次查询出全部会话聚合（冷启动零网络的关键）。
-    public func sessionStates(scope: String) async throws -> [SessionListEntry] {
+    public func sessionStates(scope: String) async throws -> [MessageSessionState] {
         try await pool.read { db in
             let rows = try Row.fetchAll(db, sql: """
                 SELECT session_id, oldest_seq, newest_seq, has_more, last_opened,
@@ -194,7 +194,7 @@ extension MessageStore {
                 """, arguments: [scope])
             return rows.map { row in
                 let rangesJSON: String = row["ranges_json"] ?? "[]"
-                return SessionListEntry(
+                return MessageSessionState(
                     sessionId: row["session_id"],
                     oldestSeq: row["oldest_seq"],
                     newestSeq: row["newest_seq"],
@@ -286,18 +286,6 @@ extension MessageStore {
           AND COALESCE(source_kind, 'user') = 'user'
           AND (source_id IS NULL OR source_id NOT LIKE 'agent-%')
         """
-
-    /// 「我问过的」一行：SessionRecord 本体不带 sessionId，列表/搜索按会话
-    /// 过滤要用，查询时一并投影出来。
-    public struct UserInputEntry: Sendable {
-        public let sessionId: String
-        public let record: SessionRecord
-
-        public init(sessionId: String, record: SessionRecord) {
-            self.sessionId = sessionId
-            self.record = record
-        }
-    }
 
     /// 用户输入全文搜索（record_fts，FTS5 trigram，本地唯一使用 FTS 的地方）。
     /// trigram 索引需要 ≥3 字符，短查询降级 LIKE 子串（用户输入量小，代价可忽略）。

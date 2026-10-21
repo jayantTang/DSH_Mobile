@@ -9,30 +9,7 @@ import GRDB
 ///
 /// 并发：`DatabasePool`（WAL，多读一写）天然匹配「读多写少、单写者」；
 /// 本 actor 只负责把我们自己的调用串行成一个域（宪法：层内一个串行域）。
-public actor MessageStore {
-
-    /// 一次落库变更（上行 pending / 下行记录共用）。
-    public enum RecordChange: Sendable {
-        /// 新到/更新的一批记录（同一 session）。
-        case upsertRecords(scope: String, sessionId: String, records: [SessionRecord])
-        /// 发送中的乐观记录（pending），`clientId` 是手机侧稳定身份。
-        case upsertPending(scope: String, sessionId: String, clientId: String, record: SessionRecord)
-        /// 服务端确认：pending 记录换成正式记录。
-        case confirmPending(scope: String, sessionId: String, clientId: String, record: SessionRecord)
-    }
-
-    /// 列表页一行（session_state 的投影）。
-    public struct SessionListEntry: Sendable, Equatable {
-        public let sessionId: String
-        public let oldestSeq: Int?
-        public let newestSeq: Int?
-        public let hasMore: Bool
-        public let lastSnippet: String?
-        public let unreadCount: Int
-        let lastOpened: Date
-        /// 冷启动预取判定用的有效连续区间（spec §6），JSON 序列化存储。
-        public let ranges: RangeIndex
-    }
+actor MessageStore {
 
     /// 传输类型 → 三角色（映射沿用连接器 `roleOf()`，spec「用户输入全量入库」）。
     public enum Role: String, Sendable {

@@ -27,7 +27,7 @@ extension MessageStore {
 
     // MARK: - 单个会话状态（冷启动尾部恢复用）
 
-    public func sessionState(scope: String, sessionId: String) async throws -> SessionListEntry? {
+    public func sessionState(scope: String, sessionId: String) async throws -> MessageSessionState? {
         try await pool.read { db in
             guard let row = try Row.fetchOne(db, sql: """
                 SELECT session_id, oldest_seq, newest_seq, has_more, last_opened,
@@ -35,7 +35,7 @@ extension MessageStore {
                 FROM session_state WHERE scope = ? AND session_id = ?
                 """, arguments: [scope, sessionId]) else { return nil }
             let rangesJSON: String = row["ranges_json"] ?? "[]"
-            return SessionListEntry(
+            return MessageSessionState(
                 sessionId: row["session_id"],
                 oldestSeq: row["oldest_seq"],
                 newestSeq: row["newest_seq"],

@@ -141,7 +141,7 @@ public actor MessagePipeline {
         var unconfirmedSweep: Task<Void, Never>?
     }
 
-    public init(
+    init(
         store: MessageStore?,
         fetchFactory: @escaping PageFetchFactory,
         sender: @escaping Sender,

@@ -215,7 +215,7 @@ public actor SessionPipeline {
     var inFlight = InFlightPageTable<Int>() // internal：+Paging 的 gapStatus 要读
     /// 在途任务本体（页表只存代数；搭车者 await 同一个 Task，任务覆盖到合并完成）。
     private var inFlightTasks: [Int: Task<Void, Error>] = [:]
-    private var writes = PendingWriteQueue<Int, MessageStore.RecordChange>()
+    private var writes = PendingWriteQueue<Int, MessageRecordChange>()
 
     /// 每页连续失败次数；≥ maxRetries 的缺口转 retryable。
     /// internal：gap 派生（+Paging 扩展）要读。
@@ -225,7 +225,7 @@ public actor SessionPipeline {
     public private(set) var topExhausted = false
 
     /// 落库回调：队列 drain 的批次交给 MessageStore（盘写由上层异步消费）。
-    private let flushWrites: @Sendable ([MessageStore.RecordChange]) -> Void
+    private let flushWrites: @Sendable ([MessageRecordChange]) -> Void
 
     // 流式合并状态在 SessionPipeline+Streaming.swift（internal：同模块扩展可见，
     // 并发安全仍由本 actor 保证，沿用 MessageStore 拆文件的先例）。
@@ -258,7 +258,7 @@ public actor SessionPipeline {
     /// 不会把剩余历史一次拉下来。
     static let prefetchDepth = 1
 
-    public init(
+    init(
         scope: String,
         sessionId: String,
         store: MessageStore?,
@@ -271,7 +271,7 @@ public actor SessionPipeline {
         fetchAttemptTimeout: TimeInterval = FetchJobMachine.defaultAttemptTimeout,
         fetchBatchBudget: TimeInterval = FetchJobMachine.defaultBatchBudget,
         fetchBackoff: [TimeInterval] = FetchJobMachine.defaultBackoff,
-        flushWrites: @escaping @Sendable ([MessageStore.RecordChange]) -> Void = { _ in },
+        flushWrites: @escaping @Sendable ([MessageRecordChange]) -> Void = { _ in },
         fetchTimeout: TimeInterval = 45
     ) {
         self.scope = scope
@@ -785,7 +785,7 @@ public actor SessionPipeline {
 
     /// 乐观记录入队（pending）/ 确认替换（confirm）：不进热窗口——上行行
     /// 的身份与排序由 MessagePipeline 持有，这里只管落库队列。
-    public func enqueueWrite(_ change: MessageStore.RecordChange, key: Int) {
+    public func enqueueWrite(_ change: MessageRecordChange, key: Int) {
         writes.enqueue(key, change, now: now())
         if writes.shouldFlush(now: now()) {
             flushWrites(writes.drain(now: now()).map(\.value))
