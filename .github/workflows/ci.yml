@@ -107,6 +107,14 @@ jobs:
       # 同样是纯文本扫描；S0–S3 是报告模式（只给证据），S4 起切拦截。
       - name: 模块边界守卫（依赖方向，白名单在 scripts/dev/layer-whitelist.json）
         run: npm run check:layers
+      # Modules 的路径级层规则：C1 依赖、C2 禁 UI、C6 声明一致、C7 路径覆盖、
+      # C8 Domain 禁实现层类型、C9 生产 target 必须 Swift 6。纯文本扫描。
+      - name: Modules 层与接口闸门（check-module-boundaries）
+        run: npm run check:module-boundaries
+      # App 工程由 XcodeGen 生成：新增源文件后忘记 generate，xcodebuild 才会报
+      # cannot find type。这里在提交前按 basename 核对 pbxproj 是否都引用到。
+      - name: App 工程与源文件一致（新增文件是否跑过 xcodegen）
+        run: npm run check:project
 
   node:
     runs-on: ubuntu-latest
