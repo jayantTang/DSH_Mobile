@@ -121,6 +121,8 @@ public final class ConnectionStore {
 
 
     var carrier: (any DSHCarrier)?
+    /// 测试注入的 carrier 工厂；nil 时按真实 transport 构造。
+    var makeCarrier: ((ConnectionProfile, String) -> any DSHCarrier)?
     var statusTask: Task<Void, Never>?
     var socketStateTask: Task<Void, Never>?
     /// Store 拨号路径的单飞（T005d，US3）：同时最多一次 connect 在飞。
@@ -383,14 +385,17 @@ public final class ConnectionStore {
         switch profile.transport {
         case .direct(let baseURL, let cookieName):
             state = .connecting("正在连接 \(baseURL.host() ?? "")…")
-            let carrier = HTTPCarrier(
-                baseURL: baseURL,
-                credential: .cookie(name: cookieName, value: secret),
-                // Short on purpose: this probe is the reachability test, and a
-                // phone that left the network the host lives on should fail
-                // over to the relay quickly rather than hang for a minute.
-                timeout: 12
-            )
+            let carrier: any DSHCarrier = {
+                if let makeCarrier { return makeCarrier(profile, secret) }
+                return HTTPCarrier(
+                    baseURL: baseURL,
+                    credential: .cookie(name: cookieName, value: secret),
+                    // Short on purpose: this probe is the reachability test, and a
+                    // phone that left the network the host lives on should fail
+                    // over to the relay quickly rather than hang for a minute.
+                    timeout: 12
+                )
+            }()
             do {
                 // A stale cookie is the common case after a DSH restart; the
                 // carrier reports it so the UI can ask for a fresh token.
@@ -412,8 +417,14 @@ public final class ConnectionStore {
             )
             // 拨号起点：`install()` 里要用它算"从拨号到握手/到首屏各多少毫秒"。
             let dialStartedAt = Date()
-            let link = LinkCarrier(configuration: configuration, diagnostics: linkDiagnostics)
-            await link.connect()
+            let link: any DSHCarrier
+            if let makeCarrier {
+                link = makeCarrier(profile, secret)
+            } else {
+                let real = LinkCarrier(configuration: configuration, diagnostics: linkDiagnostics)
+                await real.connect()
+                link = real
+            }
             do {
                 let probe = try await HostClientFactory.make(carrier: link, capabilities: probeCapabilities).sessions()
                 // 这次拨号已被更新的一次取代（用户换了目标或点了重连）：安静弃权，
@@ -421,7 +432,7 @@ public final class ConnectionStore {
                 guard generation == connectGeneration else { await link.close(); return }
                 await install(carrier: link, profile: profile, sampleCount: probe.items.count,
                               dialStartedAt: dialStartedAt)
-                observeStatus(of: link)
+                if let real = link as? LinkCarrier { observeStatus(of: real) }
             } catch {
                 await link.close()
                 guard generation == connectGeneration else { return }
