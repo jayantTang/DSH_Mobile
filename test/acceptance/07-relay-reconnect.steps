@@ -1,0 +1,10 @@
+# TC-MOB-93 的执行指令（030d）
+1  do: 打开页面 sessions args="-DSHLinkFlap,2"  | want: id:session.list
+2  do: 等待 4 秒
+3  do: 等待 text:已连接 timeout=40  | want: text:已连接
+4  do: 什么都不做  | shot: 01-after-first-flap check=texts after
+5  do: 等待 4 秒
+6  do: 等待 text:已连接 timeout=40  | want: text:已连接
+7  do: 什么都不做  | shot: 02-recovered check=texts after
+8  do: 点击 id~:session.row., 等待 id:chat.transcript timeout=20  | want: id:chat.transcript
+9  do: 什么都不做  | shot: 03-transcript-after-flap check=texts after

@@ -28,7 +28,7 @@ for (const name of files) {
   const commands = (steps.match(/^\d+\s+do:/gm) ?? []).length
   if (prose && prose !== commands) errors.push(`${name}: 步骤 ${prose} 条，指令 ${commands} 条`)
 }
-if (files.length !== 6) errors.push(`验收子集应为 6 条，实际 ${files.length}`)
+if (files.length !== 7) errors.push(`验收子集应为 7 条，实际 ${files.length}`)
 if (errors.length) {
   for (const error of errors) console.error(`✗ ${error}`)
   process.exit(1)

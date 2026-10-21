@@ -11,6 +11,7 @@
 | `04-chat-send-state` | 发送后不永久停在等待开始 |
 | `05-chat-fold-expand` | 过程折叠展开/收起锚点 |
 | `06-about` | 关于页四段版本 |
+| `07-relay-reconnect` | 强制断链后自愈、不崩 |
 
 ## 执行
 
