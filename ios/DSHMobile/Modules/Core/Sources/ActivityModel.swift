@@ -182,7 +182,7 @@ public final class ActivityModel {
         // 夹具优先：UI 用例要的是确定性名单，不让真实链路把它覆盖掉。
         if fixture != nil { return }
         #endif
-        guard let service, let client = service.client else { return }
+        guard let service, let client = service.activityHost else { return }
         let capabilities = service.capabilities
         store.apply(.capabilities(capabilities))
         store.setCurrentSession(chatSessionId)
@@ -256,7 +256,7 @@ public final class ActivityModel {
             return
         }
         #endif
-        guard let client = service?.client else { return }
+        guard let client = service?.activityHost else { return }
         do {
             let value = try await client.jobKill(sessionId: sessionId, jobId: jobId)
             if value.outcome == .alreadyFinished {
@@ -276,7 +276,7 @@ public final class ActivityModel {
     /// 停掉一个可持续子智能体（一次性子智能体没有独立入口，宿主 schema 只认
     /// `continuable`）。
     public func stopSubagent(childSessionId: String, parentSessionId: String) async {
-        guard let client = service?.client else { return }
+        guard let client = service?.activityHost else { return }
         do {
             let value = try await client.subagentInterrupt(
                 childSessionId: childSessionId,
@@ -311,7 +311,7 @@ public final class ActivityModel {
         }
         #endif
         outputFeed = feed
-        guard let client = service?.client else {
+        guard let client = service?.activityHost else {
             // 没有链路就没有流：这一步必须**落到可见结局**，不能把 feed 留在
             // "还没开流"那一格——视图对它的渲染是加载态，读者会一直转圈。
             markOpenOutputUnavailable(String(localized: "尚未连接，读不到这个任务的输出"))
@@ -374,7 +374,7 @@ public final class ActivityModel {
     public private(set) var isLoadingSettled = false
 
     public func loadSettledJobs(sessionId: String) async {
-        guard let client = service?.client, !isLoadingSettled else { return }
+        guard let client = service?.activityHost, !isLoadingSettled else { return }
         isLoadingSettled = true
         defer { isLoadingSettled = false }
         settledJobs = []

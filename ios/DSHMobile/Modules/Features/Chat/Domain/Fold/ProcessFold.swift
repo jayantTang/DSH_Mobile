@@ -109,7 +109,7 @@ public extension ChatModel {
                                range: ClosedRange<Int>,
                                turnKey: String) async {
         guard header.isPrefetched,
-              let client = store?.client, let address else { return }
+              let client = store?.chatHost, let address else { return }
         // 同一轮只允许一个在飞的详情请求；失败后（.failed）允许再次点按重试。
         if case .loading = prefetchStatus[header.id] { return }
         prefetchStatus[header.id] = .loading(loaded: 0)

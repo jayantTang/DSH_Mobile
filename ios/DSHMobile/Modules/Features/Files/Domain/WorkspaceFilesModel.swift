@@ -333,7 +333,7 @@ public final class WorkspaceFilesModel {
     @discardableResult
     public func freshCopy(for path: String) async -> URL? {
         let key = Self.cacheKey(path, root: scope.workspaceRoot)
-        guard let client = store?.client else {
+        guard let client = store?.filesHost else {
             transfers[key] = .failed("尚未连接")
             return nil
         }
@@ -433,7 +433,7 @@ public final class WorkspaceFilesModel {
     public func download(path: String) async -> URL? {
         let key = Self.cacheKey(path, root: scope.workspaceRoot)
         if let running = transferTasks[key] { return await running.value }
-        guard let client = store?.client else {
+        guard let client = store?.filesHost else {
             transfers[key] = .failed("尚未连接")
             return nil
         }
@@ -613,7 +613,7 @@ public final class WorkspaceFilesModel {
     public func discardDownload(path: String) async {
         let key = Self.cacheKey(path, root: scope.workspaceRoot)
         cancelTransferTask(path: path)
-        if let client = store?.client {
+        if let client = store?.filesHost {
             let downloader = WorkspaceFileDownloader(client: client)
             if let info = try? await downloader.info(scopeId: scope.sessionId, path: path) {
                 fileCache.discardPartial(

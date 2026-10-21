@@ -893,7 +893,7 @@ public final class ChatModel {
         let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
         // 空关键词只允许"浏览我的提问"这一种用法（连接器侧同样要求带 roles，
         // 否则一次无范围的全表扫描没有意义）。spec 008 的真机反馈修复。
-        guard !needle.isEmpty || onlyMine, let client = store?.client, let address else { return nil }
+        guard !needle.isEmpty || onlyMine, let client = store?.chatHost, let address else { return nil }
         let service = TranscriptSearchService(client: client, address: address,
                                               capabilities: effectiveCapabilities)
         switch service.source {
@@ -1158,7 +1158,7 @@ public final class ChatModel {
     /// Re-opening reuses the warm cache, so the rows and the reading position
     /// stay where the user left them.
     public func reopenAfterReconnect() async {
-        guard store?.client != nil else { return }
+        guard store?.chatHost != nil else { return }
         // 两种情况都要恢复：先打开再断线（session 还在），以及**没连上就打开过**
         // （session 还是 nil，只有 pendingOpen 记得用户想看谁）。
         if let current = session {
@@ -1573,7 +1573,7 @@ public final class ChatModel {
 
     /// internal：ChatModel+Follow 的尾部追平要对一次 host 的 lastSeq（T018/T019）。
     public func refreshSummary() async {
-        guard let client = store?.client, let current = session else { return }
+        guard let client = store?.chatHost, let current = session else { return }
         guard let value = try? await client.sessions(),
               let updated = value.items.first(where: { $0.sessionId == current.sessionId })
         else { return }
@@ -1620,7 +1620,7 @@ public final class ChatModel {
     /// setting and therefore every session started afterwards — including ones
     /// started on the desktop.
     public func setDefaultModel(_ selection: ModelSelection) async {
-        guard let client = store?.client, let link = store?.link else { return }
+        guard let client = store?.chatHost, let link = store?.link else { return }
         guard !isSettingDefaultModel else { return }
         isSettingDefaultModel = true
         defaultModelError = nil
@@ -1808,7 +1808,7 @@ public final class ChatModel {
     }
 
     private func makePageFetcher(pageSize: Int = PageSize.timeline) -> TranscriptPageFetcher? {
-        guard let client = store?.client, let address else { return nil }
+        guard let client = store?.chatHost, let address else { return nil }
         let capabilities = effectiveCapabilities
         #if DEBUG
         let shortfall = ChatProbe.shared.pageShortfall
@@ -1963,7 +1963,7 @@ public final class ChatModel {
     public func send() async {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         let images = draftImages
-        guard !text.isEmpty || !images.isEmpty, let client = store?.client, let session else { return }
+        guard !text.isEmpty || !images.isEmpty, let client = store?.chatHost, let session else { return }
         let owner = session.sessionId
 
         let mode: SessionPromptRequest.Mode = (steerNext && isRunning) ? .steer : .queue
@@ -2171,7 +2171,7 @@ public final class ChatModel {
 
     /// Cancels the running turn.
     public func cancel() async {
-        guard let client = store?.client, let session else { return }
+        guard let client = store?.chatHost, let session else { return }
         do {
             try await client.cancel(sessionId: session.sessionId)
             isAwaitingTurnStart = false
@@ -2181,7 +2181,7 @@ public final class ChatModel {
     }
 
     public func rename(to title: String) async {
-        guard let client = store?.client, let session else { return }
+        guard let client = store?.chatHost, let session else { return }
         do {
             try await client.rename(sessionId: session.sessionId, title: title)
             await refreshSummary()
@@ -2192,7 +2192,7 @@ public final class ChatModel {
 
     /// Forks the session, returning the new session's id when the host reports it.
     public func fork() async -> String? {
-        guard let client = store?.client, let session else { return nil }
+        guard let client = store?.chatHost, let session else { return nil }
         do {
             let value = try await client.forkSession(sessionId: session.sessionId)
             return value["sessionId"]?.stringValue ?? value["id"]?.stringValue
@@ -2203,7 +2203,7 @@ public final class ChatModel {
     }
 
     public func selectModel(_ selection: ModelSelection) async {
-        guard let client = store?.client, let session else { return }
+        guard let client = store?.chatHost, let session else { return }
         let previous = currentSelection
         currentSelection = selection
         do {
@@ -2245,7 +2245,7 @@ public final class ChatModel {
 
     /// Autocomplete candidates for `@` file references.
     public func fileReferences(query: String) async -> [FileReferenceCandidate] {
-        guard let client = store?.client, let session else { return [] }
+        guard let client = store?.chatHost, let session else { return [] }
         return (try? await client.fileReferences(agentId: session.sessionId, query: query)) ?? []
     }
 }

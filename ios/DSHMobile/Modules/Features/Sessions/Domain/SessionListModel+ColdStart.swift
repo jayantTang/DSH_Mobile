@@ -15,7 +15,7 @@ public extension SessionListModel {
     static let warmupSessions = 10
 
     public func scheduleColdStartPrefetch() {
-        guard let scope = store?.scopeId, store?.client != nil,
+        guard let scope = store?.scopeId, store?.chatHost != nil,
               lastPrefetchScope != scope,
               let layer = messageLayer, layer.isReady
         else { return }

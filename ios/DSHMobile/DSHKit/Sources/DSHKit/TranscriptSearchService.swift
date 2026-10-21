@@ -31,10 +31,10 @@ public struct TranscriptSearchService: Sendable {
     }
 
     public let source: Source
-    private let client: DSHClient
+    private let client: any ChatHosting
     private let address: SessionAddress
 
-    public init(client: DSHClient, address: SessionAddress, capabilities: Set<String>) {
+    public init(client: any ChatHosting, address: SessionAddress, capabilities: Set<String>) {
         self.client = client
         self.address = address
         self.source = capabilities.contains("session-search") ? .connector : .local

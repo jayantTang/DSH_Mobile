@@ -48,6 +48,12 @@ public final class ConnectionStore {
     public private(set) var profiles: [ConnectionProfile] = []
     public private(set) var state: State = .disconnected
     public private(set) var client: DSHClient?
+    public var chatHost: (any ChatHosting)? { client }
+    public var settingsHost: (any SettingsHosting)? { client }
+    public var filesHost: (any FilesHosting)? { client }
+    public var directoryHost: (any DirectoryHosting)? { client }
+    public var activityHost: (any ActivityHosting)? { client }
+    public var gitHost: (any GitHosting)? { client.map { GitClient(carrier: $0.carrier) } }
     public private(set) var lastError: String?
 
     /// The connected host's home directory.

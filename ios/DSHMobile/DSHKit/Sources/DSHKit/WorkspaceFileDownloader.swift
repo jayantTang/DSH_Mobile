@@ -41,7 +41,7 @@ public struct WorkspaceFileDownloader: Sendable {
     /// How many times one window is retried before the transfer gives up.
     public static let windowRetries = 4
 
-    private let client: DSHClient
+    private let client: any FilesHosting
     private let pacing: Duration
     private let retries: Int
     /// Injected so tests do not sleep through a backoff schedule.
@@ -53,7 +53,7 @@ public struct WorkspaceFileDownloader: Sendable {
     ///   - retries: attempts per window beyond the first.
     ///   - backoff: delay before attempt `n` (0-based). Default is 0.5s doubling.
     public init(
-        client: DSHClient,
+        client: any FilesHosting,
         pacing: Duration = .milliseconds(50),
         retries: Int = WorkspaceFileDownloader.windowRetries,
         backoff: @escaping @Sendable (Int) -> Duration = { attempt in

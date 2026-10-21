@@ -173,7 +173,7 @@ public final class SettingsModel {
             // landed. One more pass here — bounded, and skipped whenever the
             // document is already in — closes that ordering gap rather than
             // relying on who woke first.
-            if document == nil, store?.client != nil { await runReads() }
+            if document == nil, store?.settingsHost != nil { await runReads() }
             return
         }
         let task = Task { [weak self] in
@@ -196,7 +196,7 @@ public final class SettingsModel {
     private func runReads() async {
         await load()
         await loadDevices()
-        if document == nil, store?.client != nil {
+        if document == nil, store?.settingsHost != nil {
             await load()
             await loadDevices()
         }
@@ -493,7 +493,7 @@ public final class SettingsModel {
     /// Writes one namespace's pending edits.
     public func save(namespace ns: String) async {
         // Only a namespace the host still serves can be written.
-        guard let client = store?.client, document?.namespace(ns) != nil else { return }
+        guard let client = store?.settingsHost, document?.namespace(ns) != nil else { return }
         let dirty = dirtyKeys[ns] ?? []
         guard !dirty.isEmpty else { return }
         guard document?.writable == true else {
@@ -533,7 +533,7 @@ public final class SettingsModel {
     }
 
     private func reloadDocument() async {
-        guard let client = store?.client else { return }
+        guard let client = store?.settingsHost else { return }
         guard let raw = try? await client.settings() else { return }
         adopt(SettingsDocument(raw: raw))
     }
@@ -541,7 +541,7 @@ public final class SettingsModel {
     // MARK: - Credentials
 
     private func loadCredentials() async {
-        guard let client = store?.client else { return }
+        guard let client = store?.settingsHost else { return }
         let uses = credentialUses()
         guard !uses.isEmpty else {
             credentials = []
@@ -589,7 +589,7 @@ public final class SettingsModel {
 
     /// Stores a credential value. The value never round-trips back.
     public func setCredential(ref: String, value: String) async throws {
-        guard let client = store?.client else { throw DSHTransportError.notAuthenticated(String(localized: "尚未连接")) }
+        guard let client = store?.settingsHost else { throw DSHTransportError.notAuthenticated(String(localized: "尚未连接")) }
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw DSHTransportError.malformedResponse(String(localized: "密钥不能为空")) }
         try await client.setCredential(ref: .string(ref), value: trimmed)
@@ -598,7 +598,7 @@ public final class SettingsModel {
     }
 
     public func clearCredential(ref: String) async throws {
-        guard let client = store?.client else { throw DSHTransportError.notAuthenticated(String(localized: "尚未连接")) }
+        guard let client = store?.settingsHost else { throw DSHTransportError.notAuthenticated(String(localized: "尚未连接")) }
         try await client.unsetCredential(ref: .string(ref))
         await loadCredentials()
         await reloadDocument()

@@ -586,7 +586,7 @@ public struct DSHClient: Sendable {
     /// default) is refused with `workspace-file/too-large` rather than shortened,
     /// so a caller wanting a whole file pages until `eof` and shrinks its window
     /// if a deployment has a smaller cap.
-    func workspaceFileReadBytes(
+    public func workspaceFileReadBytes(
         scopeId: String,
         path: String,
         offset: Int,

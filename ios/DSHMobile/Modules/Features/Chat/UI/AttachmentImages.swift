@@ -139,7 +139,7 @@ public final class AttachmentImages {
         let flightKey = bucketKey(session, attachmentId)
         if let cached = cache.object(forKey: flightKey as NSString) { return cached }
         if let running = inFlight[flightKey] { return await running.value.image }
-        guard !attachmentId.isEmpty, let sessionId, let client = store?.client else { return nil }
+        guard !attachmentId.isEmpty, let sessionId, let client = store?.chatHost else { return nil }
 
         let scope = scopeId
         let disk = diskCache

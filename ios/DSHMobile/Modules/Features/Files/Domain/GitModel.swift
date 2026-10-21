@@ -43,7 +43,6 @@ public final class GitModel {
     public var searchText: String = ""
 
     private weak var store: (any LinkService)?
-    private var client: GitClient { GitClient(carrier: store!.client!.carrier) }
 
     public init(scope: WorkspaceFileScope) {
         self.scope = scope
@@ -77,7 +76,7 @@ public final class GitModel {
     }
 
     public func loadStatus() async {
-        guard let store, store.client != nil else {
+        guard let store, let client = store.gitHost else {
             phase = .failed("尚未连接")
             return
         }
@@ -100,7 +99,7 @@ public final class GitModel {
 
     /// The first page, or the next one.
     public func loadLog(reset: Bool = false) async {
-        guard let store, store.client != nil else { return }
+        guard let store, let client = store.gitHost else { return }
         guard store.supports(LinkHandshake.Capability.git) else {
             logPhase = .unsupported
             return
@@ -130,19 +129,23 @@ public final class GitModel {
     // MARK: - Per-file reads, for the views that ask as they open
 
     public func diff(path: String, staged: Bool) async throws -> GitPatch {
-        try await client.diff(cwd: workingDirectory, path: path, staged: staged)
+        guard let client = store?.gitHost else { throw DSHTransportError.notConnected }
+        return try await client.diff(cwd: workingDirectory, path: path, staged: staged)
     }
 
     public func commit(sha: String) async throws -> GitCommitDetail {
-        try await client.show(cwd: workingDirectory, sha: sha)
+        guard let client = store?.gitHost else { throw DSHTransportError.notConnected }
+        return try await client.show(cwd: workingDirectory, sha: sha)
     }
 
     public func commitPatch(sha: String, path: String) async throws -> GitPatch {
-        try await client.show(cwd: workingDirectory, sha: sha, path: path)
+        guard let client = store?.gitHost else { throw DSHTransportError.notConnected }
+        return try await client.show(cwd: workingDirectory, sha: sha, path: path)
     }
 
     public func file(rev: String, path: String) async throws -> GitFileAtRevision {
-        try await client.file(cwd: workingDirectory, rev: rev, path: path)
+        guard let client = store?.gitHost else { throw DSHTransportError.notConnected }
+        return try await client.file(cwd: workingDirectory, rev: rev, path: path)
     }
 
     /// The session's directory. Git resolves the repository root from here, so a

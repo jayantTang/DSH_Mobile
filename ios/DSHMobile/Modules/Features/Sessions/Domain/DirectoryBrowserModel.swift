@@ -53,7 +53,7 @@ public final class DirectoryBrowserModel {
 
     /// Reads one level and shows it. `nil` asks the host for its home.
     public func open(_ path: String?) async {
-        guard let client = store?.client else {
+        guard let client = store?.directoryHost else {
             failure = "尚未连接"
             return
         }
@@ -92,7 +92,7 @@ public final class DirectoryBrowserModel {
     public func createFolder(named name: String) async -> String? {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
-        guard let client = store?.client, let parent = listing?.path else {
+        guard let client = store?.directoryHost, let parent = listing?.path else {
             failure = "尚未连接"
             return nil
         }

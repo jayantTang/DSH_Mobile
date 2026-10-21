@@ -90,7 +90,7 @@ public extension ChatModel {
     /// （更细的"同页合并"由管道的 in-flight 页表把守）。
     public func syncTailWithHost(reason: String) async {
         guard pipelineBridge != nil, !tailSyncInFlight else { return }
-        guard let client = store?.client, let current = session else { return }
+        guard let client = store?.chatHost, let current = session else { return }
         tailSyncInFlight = true
         defer { tailSyncInFlight = false }
         guard let value = try? await client.sessions(),

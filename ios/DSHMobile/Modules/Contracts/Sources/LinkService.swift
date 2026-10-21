@@ -28,8 +28,13 @@ public protocol LinkService: AnyObject {
     var activeBaseURL: URL? { get }
     /// 本机标识（host 侧会话归档键）。
     var scopeId: String? { get }
-    /// 底层客户端（协议细节操作走它）。
-    var client: DSHClient? { get }
+    /// 按单元切开的宿主能力（Domain 不直接持 DSHClient）。
+    var chatHost: (any ChatHosting)? { get }
+    var settingsHost: (any SettingsHosting)? { get }
+    var filesHost: (any FilesHosting)? { get }
+    var directoryHost: (any DirectoryHosting)? { get }
+    var activityHost: (any ActivityHosting)? { get }
+    var gitHost: (any GitHosting)? { get }
     /// 链路门面（读状态、发事件应答）。
     var link: LinkGateway { get }
     /// 账户级状态变化（032）：给出变了的 key；值要去 `/account/state` 拉。

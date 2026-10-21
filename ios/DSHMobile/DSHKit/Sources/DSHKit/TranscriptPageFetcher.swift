@@ -44,7 +44,7 @@ public struct TranscriptPageFetcher: Sendable {
     }
 
     public let channel: Channel
-    private let client: DSHClient
+    private let client: any ChatHosting
     private let address: SessionAddress
     private let throughSeq: Int
     private let pageSize: Int
@@ -57,7 +57,7 @@ public struct TranscriptPageFetcher: Sendable {
     private let pageFilter: (@Sendable (TranscriptPage) -> TranscriptPage)?
 
     public init(
-        client: DSHClient,
+        client: any ChatHosting,
         address: SessionAddress,
         throughSeq: Int,
         capabilities: Set<String>,
