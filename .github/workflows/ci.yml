@@ -111,10 +111,6 @@ jobs:
       # C8 Domain 禁实现层类型、C9 生产 target 必须 Swift 6。纯文本扫描。
       - name: Modules 层与接口闸门（check-module-boundaries）
         run: npm run check:module-boundaries
-      # App 工程由 XcodeGen 生成：新增源文件后忘记 generate，xcodebuild 才会报
-      # cannot find type。这里在提交前按 basename 核对 pbxproj 是否都引用到。
-      - name: App 工程与源文件一致（新增文件是否跑过 xcodegen）
-        run: npm run check:project
       # DSHKit 导出面预算：优先 symbol graph（2,200 符号）；无 Swift 时退回 1,665/283 粗筛。
       - name: DSHKit 公开面预算（check:public-api）
         run: npm run check:public-api
@@ -218,6 +214,9 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+      # 放在 macOS job：check:project 用 plutil 解析 pbxproj，必须与本地同一条判定。
+      - name: App 工程与源文件一致（相对路径 / stale 引用）
+        run: node scripts/dev/check-project.mjs
       - name: Release 构建：clone 下来的样子（没有本机 xcconfig）
         working-directory: ios/DSHMobile
         run: |
