@@ -11,6 +11,9 @@ import RelayKit
 @Observable
 public final class ChatModel {
 
+    @ObservationIgnored lazy var sendService = ChatSendService(model: self)
+    @ObservationIgnored lazy var pagingService = ChatPagingService(model: self)
+
     public init() {}
 
     public enum Phase: Equatable {
