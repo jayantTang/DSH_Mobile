@@ -76,7 +76,7 @@ final class AppStartupCoordinator {
         listModel.activityModel = activity
 
         // 自动化优先：脚本给了明确目标，不能再回退到记住的档案。
-        if let link = RootView.automationLink() {
+        if let link = AppAutomation.link() {
             if let failure = await store.connect(link: link) {
                 onConnectionFailure(failure)
             }
@@ -84,7 +84,7 @@ final class AppStartupCoordinator {
         }
 
         // 静默重连：打开 App 应落在会话列表，而不是配对页。
-        guard !RootView.automationShowsOnboarding() else { return }
+        guard !AppAutomation.showsOnboarding() else { return }
         forgetDirectProfilesIfAsked()
         await connectToBestAvailableProfile()
     }

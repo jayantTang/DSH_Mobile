@@ -402,21 +402,6 @@ struct RootView: View {
     #endif
 
     #if DEBUG
-    /// Reads a connection link passed on the command line.
-    ///
-    /// This exists so `scripts/dev/verify-simulator.sh` can exercise a real
-    /// end-to-end run unattended: iOS raises a confirmation dialog for
-    /// `simctl openurl` on a custom scheme, and that dialog cannot be dismissed
-    /// from the command line. Debug-only, so a shipping build has no such path.
-    static func automationLink() -> ConnectLink? {
-        let arguments = CommandLine.arguments
-        guard let index = arguments.firstIndex(of: "-DSHConnectURL"),
-              index + 1 < arguments.count,
-              let url = URL(string: arguments[index + 1])
-        else { return nil }
-        return ConnectLink(url: url)
-    }
-
     /// Opens one named session on launch, for the same unattended verification.
     static func automationSessionId() -> String? {
         let arguments = CommandLine.arguments
@@ -445,15 +430,6 @@ struct RootView: View {
         return arguments[index + 1]
     }
 
-    /// Keeps the app on the pairing screen instead of reconnecting on launch.
-    ///
-    /// Deleting the stored pairing to photograph the connection page would leave
-    /// the simulator needing a fresh code for every later run; a flag costs
-    /// nothing and touches no credential.
-    static func automationShowsOnboarding() -> Bool {
-        CommandLine.arguments.contains("-DSHOnboarding")
-    }
-
     /// Seconds after launch at which to drop the link, for the unattended run.
     ///
     /// "The network blinked" cannot be produced from inside the simulator — the
@@ -468,12 +444,10 @@ struct RootView: View {
         return Double(arguments[index + 1])
     }
     #else
-    static func automationLink() -> ConnectLink? { nil }
     static func automationSessionId() -> String? { nil }
     static func automationScreen() -> String? { nil }
     static func automationFile() -> String? { nil }
     static func automationFilesDir() -> String? { nil }
-    static func automationShowsOnboarding() -> Bool { false }
     static func automationDropLinkAfter() -> Double? { nil }
     static func automationStageFile() -> String? { nil }
     static func stageAndSend(path: String, model: ChatModel) async {}

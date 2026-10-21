@@ -38,6 +38,7 @@
 		A09E74D5EA969B99C0A165F7 /* ViewportProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 861940A3134E8682E803F451 /* ViewportProbe.swift */; };
 		B91935A77834532A12794730 /* RelayKit in Frameworks */ = {isa = PBXBuildFile; productRef = 6C425537498F50E6BEA70D2F /* RelayKit */; };
 		B9603B3038FEC6CEE4CAD00E /* AppDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D2E6A407209D2028F58F6E9 /* AppDiagnostics.swift */; };
+		C4C77B1360EC5FF68A2BE762 /* AppAutomation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9AAC6CB6EB250F570CE6471A /* AppAutomation.swift */; };
 		C62C93F00E71B302226EA516 /* ScenePhaseCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 472F8705A8B97119B1C84494 /* ScenePhaseCoordinator.swift */; };
 		C6B6CE5AD988D09BAE0A3DEC /* DSHChatDomain in Frameworks */ = {isa = PBXBuildFile; productRef = 2BECD1B3EB265D435AF59898 /* DSHChatDomain */; };
 		D009A7D193647A0DB5BF4DF9 /* HostSmokeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08004ADE0CA0A0194E46BA3F /* HostSmokeTests.swift */; };
@@ -89,6 +90,7 @@
 		77D33CFF8AF54B0B3A7015D8 /* AppLifecyclePlanTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLifecyclePlanTests.swift; sourceTree = "<group>"; };
 		861940A3134E8682E803F451 /* ViewportProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewportProbe.swift; sourceTree = "<group>"; };
 		981C302A6EB2B585792CA2D4 /* zh-Hans */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "zh-Hans"; path = "zh-Hans.lproj/Localizable.strings"; sourceTree = "<group>"; };
+		9AAC6CB6EB250F570CE6471A /* AppAutomation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppAutomation.swift; sourceTree = "<group>"; };
 		A5CB8D05D12CE4348EDCDCD4 /* AppLifecyclePlan.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLifecyclePlan.swift; sourceTree = "<group>"; };
 		AFF59C8B75008DE0FF3FC446 /* DSHMobileApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DSHMobileApp.swift; sourceTree = "<group>"; };
 		B9260874C4B5CBABBA0027B6 /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.xcconfig; sourceTree = "<group>"; };
@@ -161,6 +163,7 @@
 		44D1D85BFEDF5D6CB6A77E7F /* Coordinator */ = {
 			isa = PBXGroup;
 			children = (
+				9AAC6CB6EB250F570CE6471A /* AppAutomation.swift */,
 				A5CB8D05D12CE4348EDCDCD4 /* AppLifecyclePlan.swift */,
 				6F8959370B6279C1CDAB61E6 /* AppStartupCoordinator.swift */,
 				472F8705A8B97119B1C84494 /* ScenePhaseCoordinator.swift */,
@@ -399,6 +402,7 @@
 			files = (
 				815A977B9321D3BDFADD0B8F /* APNSRegistrar.swift in Sources */,
 				65336B276F18FDBD4275D958 /* AccountStateSync.swift in Sources */,
+				C4C77B1360EC5FF68A2BE762 /* AppAutomation.swift in Sources */,
 				B9603B3038FEC6CEE4CAD00E /* AppDiagnostics.swift in Sources */,
 				099853A8558490874310E248 /* AppLifecyclePlan.swift in Sources */,
 				69048FC4D444EA89F3327385 /* AppStartupCoordinator.swift in Sources */,
