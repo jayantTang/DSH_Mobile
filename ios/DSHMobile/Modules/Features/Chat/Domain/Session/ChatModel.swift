@@ -28,7 +28,6 @@ public final class ChatModel {
     /// 合成一个值之后，这个中间态在类型上就写不出来。
     /// 会话可见状态（visible/timeline/session）已搬到 `transcriptStore`。
     let transcriptStore = TranscriptStore()
-    public typealias VisibleSession = TranscriptStore.VisibleSession
 
     /// 唯一被发布的会话可见状态（存储在 `transcriptStore`）。
     public private(set) var visible: VisibleSession? {

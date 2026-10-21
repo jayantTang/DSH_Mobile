@@ -6,20 +6,20 @@ import Observation
 ///
 /// 从 `ChatModel` 拆出的核心状态。它只发布一对自洽的 `(summary, timeline)`，
 /// 不碰网络、不碰折叠算法；ChatModel 在 open/close 时写入，UI 只读。
+/// 一次发布的会话可见状态。
+public struct VisibleSession {
+    public var summary: SessionSummary
+    public var timeline: ChatTimeline
+
+    public init(summary: SessionSummary, timeline: ChatTimeline) {
+        self.summary = summary
+        self.timeline = timeline
+    }
+}
+
 @MainActor
 @Observable
-public final class TranscriptStore {
-
-    /// 一次发布的会话可见状态。
-    public struct VisibleSession {
-        public var summary: SessionSummary
-        public var timeline: ChatTimeline
-
-        public init(summary: SessionSummary, timeline: ChatTimeline) {
-            self.summary = summary
-            self.timeline = timeline
-        }
-    }
+final class TranscriptStore {
 
     /// 唯一被发布的会话可见状态；换会话时只赋值一次。
     public internal(set) var visible: VisibleSession?
