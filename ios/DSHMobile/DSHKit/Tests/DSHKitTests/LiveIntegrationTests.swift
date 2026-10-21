@@ -330,6 +330,86 @@ final class LiveIntegrationTests: XCTestCase {
         await carrier.close()
     }
 
+
+    // MARK: - Read-only settings / search / digest
+
+    /// A read-only call with a hard deadline: a live host that stops answering
+    /// must fail this test instead of holding the suite.
+    private struct DeadlineExceeded: Error {}
+    private func withDeadline<T: Sendable>(
+        seconds: Double,
+        _ operation: @escaping @Sendable () async throws -> T
+    ) async throws -> T {
+        try await withThrowingTaskGroup(of: T.self) { group in
+            group.addTask { try await operation() }
+            group.addTask {
+                try await Task.sleep(for: .seconds(seconds))
+                throw DeadlineExceeded()
+            }
+            guard let value = try await group.next() else { throw DeadlineExceeded() }
+            group.cancelAll()
+            return value
+        }
+    }
+
+    func testSettingsDescribeReturnsReadableNamespaces() async throws {
+        let carrier = makeCarrier()
+        let client = HostClientFactory.make(carrier: carrier)
+        let document = try await withDeadline(seconds: 15) {
+            try await client.settings()
+        }
+        await carrier.close()
+
+        guard case .object(let root) = document else {
+            return XCTFail("settings/describe did not return an object")
+        }
+        guard case .array(let namespaces)? = root["namespaces"] else {
+            return XCTFail("settings/describe carried no namespaces array")
+        }
+        for entry in namespaces.prefix(10) {
+            guard case .object(let namespace) = entry else {
+                return XCTFail("a namespace entry was not an object")
+            }
+            XCTAssertNotNil(namespace["ns"]?.stringValue)
+        }
+    }
+
+    func testSessionSearchIsDecodableWhenSupported() async throws {
+        let carrier = makeCarrier()
+        let client = HostClientFactory.make(carrier: carrier)
+        guard client.capabilities.contains("session-search") else {
+            await carrier.close()
+            throw XCTSkip("connector does not declare session-search")
+        }
+        let sessions = try await client.sessions()
+        guard let target = TestQuarantine.shared.usable(sessions.items)
+            .first(where: { !$0.blank && !$0.isSubagent })
+        else {
+            await carrier.close()
+            throw XCTSkip("no readable session for search")
+        }
+        let value = try await withDeadline(seconds: 15) {
+            try await client.sessionFind(HistorySearchRequest(
+                address: target.address, query: "的"))
+        }
+        await carrier.close()
+        XCTAssertLessThanOrEqual(value.hits.count, 5)
+    }
+
+    func testSessionDigestIsReadableAndStable() async throws {
+        let carrier = makeCarrier()
+        let client = HostClientFactory.make(carrier: carrier)
+        guard client.capabilities.contains("session-digest") else {
+            await carrier.close()
+            throw XCTSkip("connector does not declare session-digest")
+        }
+        let first = try await withDeadline(seconds: 15) { try await client.sessionDigest(since: nil) }
+        let second = try await withDeadline(seconds: 15) { try await client.sessionDigest(since: nil) }
+        await carrier.close()
+        XCTAssertEqual(first.items.map { $0.sessionId }, second.items.map { $0.sessionId })
+        XCTAssertNotNil(first.version, "the digest carried no version for incremental requests")
+    }
+
     // MARK: - Streaming
 
     func testHostEventStreamDeliversReadyFrame() async throws {

@@ -58,6 +58,9 @@ final class LiveTurnTests: XCTestCase {
             return XCTFail("session/create returned no id: \(created.compactDescription)")
         }
         defer { Task { await carrier.close() } }
+        // The session is scratch: remove it even when an assertion fails, so a
+        // live run cannot accumulate test history in the developer's DSH.
+        defer { Self.removeScratchSession(sessionId) }
 
         let stream = await client.follow(
             SessionFollowRequest(
@@ -147,6 +150,24 @@ final class LiveTurnTests: XCTestCase {
         XCTAssertNotNil(duration, "the completion marker should carry the turn's duration")
         XCTAssertNotNil(timeline.lastCompletion, "no completion was recorded for the done indicator")
     }
+    /// Removes a session created by this test from `~/.dsh`. Mirrors
+    /// `scripts/dev/dsh-probe.mjs cleanup`: only the named scratch id is
+    /// touched; real sessions are never enumerated for deletion.
+    private static func removeScratchSession(_ sessionId: String) {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let sessionsRoot = home.appendingPathComponent(".dsh/sessions")
+        guard let groups = try? FileManager.default.contentsOfDirectory(
+            at: sessionsRoot, includingPropertiesForKeys: nil) else { return }
+        for group in groups {
+            let dir = group.appendingPathComponent(sessionId)
+            if FileManager.default.fileExists(atPath: dir.path) {
+                try? FileManager.default.removeItem(at: dir)
+            }
+        }
+        let cache = home.appendingPathComponent(
+            ".dsh/storages/session_projcache/sessions/\(sessionId).json")
+        try? FileManager.default.removeItem(at: cache)
+    }
 }
 
 /// Collects frames across the consumer task and the test body.
@@ -198,4 +219,5 @@ private actor FrameLog {
     func report() -> (error: String?, total: Int, sawSnapshot: Bool, sawTurnStart: Bool, sawAssistantMessage: Bool, sawTurnEnd: Bool, summary: [String: Int], timeline: ChatTimeline) {
         (error, total, sawSnapshot, sawTurnStart, sawAssistantMessage, sawTurnEnd, counts, timeline)
     }
+
 }
