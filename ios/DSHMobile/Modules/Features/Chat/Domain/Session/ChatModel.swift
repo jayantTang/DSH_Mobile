@@ -120,7 +120,7 @@ public final class ChatModel {
     /// 也不认识 UIKit（边界契约 C2、且 `swift build` 要在 macOS 上过）。位图由界面层
     /// 在加入时造好（`ChatModel.addDraftImages(_:names:)` 在 DSHChatUI 里），
     /// 只有 `Composer` 的那一个缩略图会读它。
-    public typealias DraftImage = ComposerState.DraftImage
+    public typealias DraftImage = ComposerDraftImage
 
     /// 输入区状态（草稿/图片/插入模式）。2026-10-21 从 ChatModel 拆出。
     let composer = ComposerState()
@@ -336,7 +336,7 @@ public final class ChatModel {
     /// 这次打开用的同步计划（快照到达时还要用它判断合并还是重来）。
     private var syncPlanRef = TranscriptSyncPlan.plan(localThrough: nil, hostCursor: 0)
 
-    public typealias Draft = ComposerState.Draft
+    public typealias Draft = ComposerDraft
     /// 内存里最多留多少行；超出的从最老端丢（记录仍在库里，可读回）。
     private static var windowLimitRows: Int {
         #if DEBUG
