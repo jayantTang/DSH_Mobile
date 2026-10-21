@@ -27,8 +27,7 @@ public struct Composer: View {
 
     private var canSend: Bool {
         // A picture on its own is a complete prompt.
-        !model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            || !model.draftImages.isEmpty
+        ComposerSendPolicy.canSend(draft: model.draft, images: model.draftImages)
     }
 
     @State private var pickedPhotos: [PhotosPickerItem] = []
