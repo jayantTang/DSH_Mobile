@@ -19,14 +19,13 @@
  *
  * 只做 GET：这个脚本拿不到也不会去动审核、构建、测试组之类的状态。
  */
-
-import { createSign } from 'node:crypto'
-import { fileURLToPath } from 'node:url'
-import { existsSync, readFileSync } from 'node:fs'
-import { homedir } from 'node:os'
+import { readFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-const API = 'https://api.appstoreconnect.apple.com'
+// 签名与请求在 asc-client.mjs 里只实现一份：日报取「哪天发了 TestFlight」用的是同一套。
+import { ascGet, credentials, listBuilds, token } from './asc-client.mjs'
 
 /** 本机真值（含 ASC Issuer ID）只写在 .env.local 里，不入库；这里按需读一次。 */
 function loadLocalEnv() {
@@ -42,51 +41,11 @@ function loadLocalEnv() {
 }
 loadLocalEnv()
 
-function credentials() {
-  const keyId = process.env.ASC_KEY_ID
-  const issuerId = process.env.ASC_ISSUER_ID
-  if (!keyId || !issuerId) {
-    throw new Error('缺 ASC_KEY_ID / ASC_ISSUER_ID（见本文件头部注释）')
-  }
-  const path = process.env.ASC_KEY_PATH
-    || join(homedir(), '.appstoreconnect', 'private_keys', `AuthKey_${keyId}.p8`)
-  if (!existsSync(path)) throw new Error(`找不到私钥：${path}`)
-  return { keyId, issuerId, privateKey: readFileSync(path, 'utf8') }
-}
-
-/// ES256 JWT，Apple 要求 20 分钟以内的有效期。
-function token({ keyId, issuerId, privateKey }) {
-  const now = Math.floor(Date.now() / 1000)
-  const encode = (value) => Buffer.from(JSON.stringify(value)).toString('base64url')
-  const header = encode({ alg: 'ES256', kid: keyId, typ: 'JWT' })
-  const payload = encode({ iss: issuerId, iat: now, exp: now + 900, aud: 'appstoreconnect-v1' })
-  const signature = createSign('SHA256').update(`${header}.${payload}`).sign({
-    key: privateKey, dsaEncoding: 'ieee-p1363',
-  })
-  return `${header}.${payload}.${signature.toString('base64url')}`
-}
-
-async function get(path, jwt) {
-  const response = await fetch(`${API}${path}`, { headers: { Authorization: `Bearer ${jwt}` } })
-  const body = await response.json().catch(() => ({}))
-  if (!response.ok) {
-    const detail = body?.errors?.map((error) => `${error.title}: ${error.detail}`).join('；')
-    throw new Error(`${response.status} ${path} → ${detail || JSON.stringify(body).slice(0, 200)}`)
-  }
-  return body
-}
-
-/// 找到本项目的 App 记录 id，这样 builds 只列它自己的构建。
-async function appIdForBundle(bundleId, jwt) {
-  const { data } = await get(`/v1/apps?filter[bundleId]=${bundleId}&limit=1`, jwt)
-  return data[0]?.id
-}
-
 const [command, argument] = process.argv.slice(2)
 const jwt = token(credentials())
 
 if (command === 'apps') {
-  const { data } = await get('/v1/apps?limit=20', jwt)
+  const { data } = ascGet('/v1/apps?limit=20', jwt)
   if (!data.length) console.log('账号下还没有 App 记录')
   for (const app of data) {
     console.log(`${app.attributes.name}  ·  ${app.attributes.bundleId}  ·  ${app.id}`)
@@ -94,14 +53,9 @@ if (command === 'apps') {
 } else if (command === 'builds') {
   // 默认只看本项目的 App：不筛的话会混进账号里其他 App 的构建，看起来像"上传成功了"
   // 其实不是这一个（第一次跑就差点被这个骗过去）。
-  let path = '/v1/builds?limit=10&sort=-uploadedDate'
-  if (argument !== '--all') {
-    const appId = argument || await appIdForBundle('com.jayanttang.dsh', jwt)
-    if (appId) path += `&filter[app]=${appId}`
-  }
-  const { data } = await get(path, jwt)
-  if (!data.length) console.log('还没有构建（或仍在处理队列里）')
-  for (const build of data) {
+  const builds = listBuilds({ jwt, appId: argument === '--all' ? null : argument, limit: 10 })
+  if (!builds.length) console.log('还没有构建（或仍在处理队列里）')
+  for (const build of builds) {
     const a = build.attributes
     console.log(`build ${a.version}  ·  ${a.processingState}  ·  ${a.uploadedDate}`
       + (a.expired ? '  ·  已过期' : ''))
@@ -110,14 +64,14 @@ if (command === 'apps') {
     }
   }
 } else if (command === 'groups') {
-  const { data } = await get('/v1/betaGroups?limit=20', jwt)
+  const { data } = ascGet('/v1/betaGroups?limit=20', jwt)
   for (const group of data) {
     const a = group.attributes
     console.log(`${a.name}  ·  内部=${a.isInternalGroup}  ·  公开链接=${a.publicLink || '（还没有）'}`)
   }
 } else if (command === 'build-info') {
   if (!argument) throw new Error('build-info 需要一个构建 id（先跑 builds 看 id）')
-  const { data } = await get(`/v1/builds/${argument}?include=betaBuildLocalizations,app`, jwt)
+  const { data } = ascGet(`/v1/builds/${argument}?include=betaBuildLocalizations,app`, jwt)
   console.log(JSON.stringify(data.attributes, null, 2))
 } else {
   console.log(readFileSync(new URL(import.meta.url)).toString().split('*/')[0].replace(/^\/\*\*?/, '').trim())

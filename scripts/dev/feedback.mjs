@@ -54,6 +54,7 @@ import { homedir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
+import { credentials, listBuilds, token } from './asc-client.mjs'
 import { renderReport, updateHistory } from './feedback-report.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -84,6 +85,12 @@ const DEFAULT_OUT = join(ROOT, 'maintainers', 'reports')
 const GITHUB_CACHE = join(DEFAULT_OUT, '.github-stats.json')
 const GITHUB_TTL_MS = 6 * 3600_000
 const GITHUB_BASE = 'https://api.github.com'
+
+/// 日报里的发版日 = iOS 发了 TestFlight 的那一天（owner 2026-10-20 定）。真值在
+/// App Store Connect，本机只缓存构建号与上传时间：6 小时内不重复请求，取不到时退回缓存，
+/// 没有缓存就不标线——ASC 不通不能让日报生成失败。
+const TESTFLIGHT_CACHE = join(DEFAULT_OUT, '.testflight-releases.json')
+const TESTFLIGHT_TTL_MS = 6 * 3600_000
 
 /// 子命令 → 服务：信件类打 mail，用量/报告数据打中转（拆分后的路由表）。
 const MAIL_SUBS = new Set(['list', 'show', 'template', 'reply', 'notify', 'delete'])
@@ -780,12 +787,43 @@ export function readGitHubStats({ cacheFile = GITHUB_CACHE, ttlMs = GITHUB_TTL_M
   }
 }
 
+/// 从 ASC 取最近的 TestFlight 构建（只读 GET，签名与请求见 asc-client.mjs）。
+export function fetchTestFlightReleases({ env = {}, exec = execFileSync, limit = 60 } = {}) {
+  const jwt = token(credentials({ ...process.env, ...env }))
+  return listBuilds({ jwt, limit, exec })
+    .map((row) => ({ build: String(row?.attributes?.version ?? ''),
+      uploadedAt: String(row?.attributes?.uploadedDate ?? '') }))
+    .filter((row) => row.build && row.uploadedAt)
+}
+
+/// 缓存优先取数，同一套口径照抄 GitHub 计数：过期就刷新，刷新失败退回旧缓存，
+/// 再不行返回空数组（页面不标发版日，其余照常渲染）。
+export function readTestFlightReleases({ cacheFile = TESTFLIGHT_CACHE, ttlMs = TESTFLIGHT_TTL_MS,
+  env = {}, now = Date.now(), fetchReleases = fetchTestFlightReleases } = {}) {
+  let cached = null
+  try {
+    cached = JSON.parse(readFileSync(cacheFile, 'utf8'))
+  } catch {
+    cached = null
+  }
+  const usable = Array.isArray(cached?.releases) ? cached.releases : null
+  if (usable && now - Number(cached.fetchedAt) < ttlMs) return usable
+  try {
+    const releases = fetchReleases({ env })
+    mkdirSync(dirname(cacheFile), { recursive: true })
+    writeFileSync(cacheFile, JSON.stringify({ releases, fetchedAt: now }), 'utf8')
+    return releases
+  } catch {
+    return usable ?? []
+  }
+}
+
 /// 日报的合并取数：中转 ops-report + mail feedback-stats，本机合并（I-3）。
 /// `feedback-stats` 的剔除口径要中转的调试设备 id（`DSH-` 前缀/测试台机型），
 /// 所以一共三次只读调用：device-list（中转）→ ops-report（中转）→ feedback-stats（mail）。
 /// GitHub 计数不进服务器：本机取，随合并结果一起渲染（`github` 为对象时用它，
 /// 为 null 时不取，未给时按缓存/接口取）。
-function fetchReportData(parsed, { env, exists, run, io, github }) {
+function fetchReportData(parsed, { env, exists, run, io, github, testflight }) {
   const { opts } = parsed
   const devices = JSON.parse(run(relayDevicesInvocation(parsed, { env, exists }).argv))
   const debugDevices = debugDeviceIds(devices)
@@ -805,6 +843,8 @@ function fetchReportData(parsed, { env, exists, run, io, github }) {
   const merged = mergeReportData(relayReport, mailStats)
   const counts = github === null ? null : (github ?? readGitHubStats())
   if (counts) merged.github = counts
+  const releases = testflight === null ? [] : (testflight ?? readTestFlightReleases({ env }))
+  if (releases.length) merged.testflight = { releases }
   return merged
 }
 
@@ -812,9 +852,9 @@ function fetchReportData(parsed, { env, exists, run, io, github }) {
 /// `feedback-notify --format html` → 删远端）完整顺序。`--local` 时报告文件本机
 /// 就能读到，不走 scp、也不需要清理。发给别人的日报（审批原因非空）在投递
 /// 成功后自动发件存档。
-function reportAndSend(parsed, { env, exists, run, io, owner, approvalReason, github }) {
+function reportAndSend(parsed, { env, exists, run, io, owner, approvalReason, github, testflight }) {
   const { opts } = parsed
-  const merged = fetchReportData(parsed, { env, exists, run, io, github })
+  const merged = fetchReportData(parsed, { env, exists, run, io, github, testflight })
   const { code, file } = writeReport(JSON.stringify(merged), opts, io)
   if (code !== 0) return code
 
@@ -943,7 +983,8 @@ export function main(argv, deps = {}) {
           + '或在 .env.local 里设 DSH_ACCOUNT_ID；本命令不会群发')
       }
       const approvalReason = requireOwnerApproval(parsed, { env, exists, run }, owner, io, deps)
-      return reportAndSend(parsed, { env, exists, run, io, owner, approvalReason, github: deps.github })
+      return reportAndSend(parsed, { env, exists, run, io, owner, approvalReason,
+        github: deps.github, testflight: deps.testflight })
     }
     const approvalReason = requireOwnerApproval(parsed, { env, exists, run }, owner, io, deps)
     // `notify --all` 的展开（审批之后：拒发时连只读的 account-list 也不跑）：
@@ -962,7 +1003,8 @@ export function main(argv, deps = {}) {
     }
     // report / report-data：双侧取数（中转 ops-report + mail feedback-stats）后合并。
     if (sub === 'report' || sub === 'report-data') {
-      const merged = fetchReportData(parsed, { env, exists, run, io, github: deps.github })
+      const merged = fetchReportData(parsed, { env, exists, run, io,
+        github: deps.github, testflight: deps.testflight })
       if (sub === 'report-data') {
         io.out(JSON.stringify(merged))
         return 0

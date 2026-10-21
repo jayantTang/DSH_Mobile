@@ -577,8 +577,17 @@ export function normalize(data) {
         fetchedAt: num(source.github.fetchedAt),
       }
     : null
+  // TestFlight 上传记录（本机从 ASC 取）：日报里「发版日」只有这一个来源，取不到时为 null。
+  const testflight = Array.isArray(source.testflight?.releases)
+    ? {
+        releases: source.testflight.releases
+          .map((row) => ({ build: text(row?.build, ''), uploadedAt: text(row?.uploadedAt, '') }))
+          .filter((row) => row.build && row.uploadedAt),
+      }
+    : null
   return {
     github,
+    testflight,
     today: {
       day: num(today.day),
       dayStartAt: num(today.dayStartAt),
@@ -996,12 +1005,28 @@ function retentionBlock(retention) {
     + '</div>'
 }
 
+/** 发版日（`YYYYMMDD`，升序）：只认一件事——iOS 发了 TestFlight 的那一天（owner 2026-10-20 定）。
+    `testflight.releases` 由本机从 App Store Connect 取（`{build, uploadedAt}`），
+    上传时间换成**本地日**（`2026-10-16T23:35-07:00` 是本机 10-17），同一天多次上传合并成一条。
+    不再用历史快照里的构建号推日期：那是"哪天有人装上了这个构建"，不是发版，
+    会把每个有构建在用的日子都标成发版（2026-10-20 实测 10-13…10-19 连成一片）。 */
+export function releaseMarkerDays(testflight) {
+  const days = new Set()
+  for (const row of testflight?.releases ?? []) {
+    if (!String(row?.build ?? '')) continue
+    const at = Date.parse(String(row?.uploadedAt ?? ''))
+    if (!Number.isFinite(at)) continue
+    days.add(String(localDayOf(at)))
+  }
+  return [...days].sort()
+}
+
 /** 最近 N 天板块：趋势图 + 近 7 天表 + 留存漏斗 + 三张清单（账号 / 设备 / 反馈）。
-    `completed` 见 `renderReport`；`history`（.ops-history.json）只用来给流量图标发版日。
+    `completed` 见 `renderReport`；流量图上的发版日来自 `report.testflight`（ASC 上传记录）。
 
     2026-10-17 精简：删掉窗口六张 KPI 卡（数字与概览、表重复）、每日新增设备柱状图、
     激活码登记清单、反馈状态栈与占比 chips、以及各段右侧的"前 N 条"小字。 */
-function rangeSection(report, days, completed = false, { history = null } = {}) {
+function rangeSection(report, days, completed = false) {
   const usage = report.usage
   const devices = report.devices
   const feedback = report.feedback
@@ -1012,25 +1037,14 @@ function rangeSection(report, days, completed = false, { history = null } = {}) 
     ? `峰值 ${fullDay(peak.day)} ${formatBytes(peak.egressBytes)}` : `最近 ${days} 天`
   const userPoints = (usage.perDay ?? []).map((row) => ({ label: row.day, value: row.accounts,
     fresh: row.newAccounts }))
-  const egressPoints = (usage.perDay ?? []).map((row) => ({ label: row.day, value: row.egressBytes }))  // 发版标注：历史快照里每个构建号第一次出现的那一天，在流量图上画一条竖线——
-  // 「10-12 发版后流量翻倍」这类因果不用翻日历对。没有历史文件就没有标注。
-  const releaseMarkers = (() => {
-    if (!history?.days) return []
-    const firstSeen = new Set()
-    const entries = Object.values(history.days)
-      .filter((entry) => entry && num(entry.dayStartAt))
-      .sort((a, b) => num(a.dayStartAt) - num(b.dayStartAt))
-    for (const entry of entries) {
-      for (const build of entry.builds ?? []) {
-        if (!firstSeen.has(build)) firstSeen.add(String(entry.day))
-      }
-    }
-    if (!firstSeen.size) return []
-    return egressPoints
-      .map((point, index) => ({ index, day: dayText(point.label) }))
-      .filter((marker) => marker.day && firstSeen.has(marker.day))
-      .map((marker) => ({ index: marker.index, label: '发版' }))
-  })()
+  const egressPoints = (usage.perDay ?? []).map((row) => ({ label: row.day, value: row.egressBytes }))
+  // 发版标注：在流量图上给每个 TestFlight 发版日画一条竖线——「10-13 发版后流量翻倍」
+  // 这类因果不用翻日历对。没有发版记录就没有标注；日期口径见 releaseMarkerDays。
+  const releaseDays = new Set(releaseMarkerDays(report.testflight))
+  const releaseMarkers = egressPoints
+    .map((point, index) => ({ index, day: dayText(point.label) }))
+    .filter((marker) => marker.day && releaseDays.has(marker.day))
+    .map((marker) => ({ index: marker.index, label: '发版' }))
   // 活跃账号图：服务端给了「新增 / 回访」拆分（`perDay[].newAccounts`）就叠成两段；
   // 老服务端没有这个字段时退回单条折线——本机不补算"首次活跃日"，口径只能有一个所有者。
   const hasSplit = userPoints.length > 0
@@ -1049,7 +1063,7 @@ function rangeSection(report, days, completed = false, { history = null } = {}) 
   const charts = activeChart + lineChart({
     title: '每日出口流量',
     // 竖虚线的含义写在这里：图上不再逐条标「发版」，密集发版时文字会互相压住。
-    note: releaseMarkers.length ? `${peakNote} · 竖虚线为发版日` : peakNote,
+    note: releaseMarkers.length ? `${peakNote} · 竖虚线为 TestFlight 发版日` : peakNote,
     points: egressPoints,
     format: formatBytes,
     markers: releaseMarkers,
@@ -1112,8 +1126,8 @@ function rangeSection(report, days, completed = false, { history = null } = {}) 
 }
 
 /** 组装整页。`now` 只在 ops-report 没给 generatedAt 时兜底（测试用固定值）。
-    `history` 是 `.ops-history.json` 的内容（{ days, alerts }），提供告警连续天数与
-    流量图上的发版标注；没有这份文件时整页照常渲染，只是没有这两样。 */
+    `history` 是 `.ops-history.json` 的内容（{ days, alerts }），只提供告警连续天数；
+    没有这份文件时整页照常渲染，只是告警不带连续天数。 */
 export function renderReport(data, { now = Date.now(), history = null } = {}) {
   const report = normalize(data)
   const generatedAt = num(data?.generatedAt) || now
@@ -1128,7 +1142,7 @@ export function renderReport(data, { now = Date.now(), history = null } = {}) {
   const body = [
     attentionSection(attentionItems(report, { completed, generatedAt, history })),
     todaySection(report, generatedAt, days, completed),
-    rangeSection(report, days, completed, { history }),
+    rangeSection(report, days, completed),
   ].join('\n')
   // 口径说明只留会让人误读数字的几条：活跃账号/活跃设备的区别、流量与调试设备的边界、
   // 72 小时图与版本分布的窗口。逐项细账不写在页面底部。

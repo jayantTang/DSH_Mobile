@@ -11,8 +11,9 @@ import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { buildInvocation, debugDeviceIds, fetchGitHubStats, foreignRecipients, main,
-  mergeReportData, readGitHubStats, renderAgentPlist, reportPath, resolveSshTarget } from './feedback.mjs'
-import { escapeHtml, humanModel, renderReport, updateHistory } from './feedback-report.mjs'
+  mergeReportData, readGitHubStats, readTestFlightReleases, renderAgentPlist, reportPath,
+  resolveSshTarget } from './feedback.mjs'
+import { escapeHtml, humanModel, releaseMarkerDays, renderReport, updateHistory } from './feedback-report.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const ROOT = join(HERE, '..', '..')
@@ -493,23 +494,63 @@ test('活跃用户有上周同期对照；留存漏斗不再写目标与上周�
   assert.ok(!html.includes('上周同日'), '没有历史文件时也不写上周同日')
 })
 
-test('发版日在流量图上标注（构建号第一次出现在历史快照里的那天）', () => {
+test('发版日在流量图上标注（只认 TestFlight 上传的那一天）', () => {
   const data = fixture()
   data.usage.perDay = [
     { day: 20261010, egressBytes: 1024 * 1024, connections: 3, devices: 1 },
     { day: 20261011, egressBytes: 2 * 1024 * 1024, connections: 4, devices: 2 },
     { day: 20261012, egressBytes: 3 * 1024 * 1024, connections: 9, devices: 2 }]
-  const history = { days: {
-    '20261010': { day: 20261010, dayStartAt: 1, builds: ['20261010.0900'] },
-    '20261011': { day: 20261011, dayStartAt: 2, builds: ['20261011.1447'] },
-  }, alerts: {} }
-  const html = renderReport(data, { history })
-  assert.ok(html.includes('stroke-dasharray="2,3"'), '新版首次出现的那天画竖虚线')
-  assert.ok(html.includes('竖虚线为发版日'), '含义写在图的说明里，不逐条压文字')
-  assert.ok(!html.includes('>发版</text>'), '不再在线上写「发版」：连续发版时会叠成一团')
-  assert.ok(!renderReport(data).includes('竖虚线为发版日'), '没有历史文件就不标')
+  data.testflight = { releases: [{ build: '20261011.1447', uploadedAt: '2026-10-10T16:00:00-07:00' }] }
+  const html = renderReport(data)
+  assert.ok(html.includes('stroke-dasharray="2,3"'), '发版那天画竖虚线')
+  assert.ok(html.includes('竖虚线为 TestFlight 发版日'), '含义写在图的说明里，不逐条压文字')
+  assert.ok(!html.includes('>发版</text>'), '不在线上写「发版」：连续发版时会叠成一团')
+  assert.ok(!renderReport(fixture()).includes('竖虚线为 TestFlight 发版日'), '没有 ASC 记录就不标')
 })
 
+test('发版日按 TestFlight 上传时间的本地日算：同一天合并，没上传的天不标', () => {
+  // 上传时间带 Apple 的 -07:00 偏移：10-16 23:35（太平洋）是本机 10-17，
+  // 按日期字符串直接切会标到 10-16 上去，必须换成本地日。
+  const days = releaseMarkerDays({ releases: [
+    { build: '20261017.1430', uploadedAt: '2026-10-16T23:35:23-07:00' },
+    { build: '20261013.2233', uploadedAt: '2026-10-13T08:15:06-07:00' },
+    { build: '20261013.1447', uploadedAt: '2026-10-13T01:00:00-07:00' },
+    { build: '', uploadedAt: '2026-10-14T01:00:00-07:00' },
+  ] })
+  assert.deepEqual(days, ['20261013', '20261017'], '同一天多次上传只留一条；缺字段的丢弃')
+
+  const data = fixture()
+  data.usage.perDay = [10, 11, 12, 13, 14, 15].map((day, i) => ({
+    day: 20261000 + day, egressBytes: 1024 * 1024 * (i + 1), connections: 3, devices: 1 }))
+  const html = renderReport({ ...data, testflight: { releases: [
+    { build: '20261012.1310', uploadedAt: '2026-10-11T22:15:09-07:00' },
+    { build: '20261013.2233', uploadedAt: '2026-10-13T08:15:06-07:00' },
+  ] } })
+  const marks = html.match(/stroke-dasharray="2,3"/g) ?? []
+  assert.equal(marks.length, 2, '只有 10-12、10-13 两个发版日有竖线；10-14、10-15 没有上传就不画')
+})
+
+test('TestFlight 记录走缓存：6 小时内不重复请求，取数失败退回旧缓存', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'tf-cache-'))
+  const cacheFile = join(dir, '.testflight-releases.json')
+  let calls = 0
+  const fetchReleases = () => {
+    calls += 1
+    return [{ build: '20261013.2233', uploadedAt: '2026-10-13T08:15:06-07:00' }]
+  }
+  const now = 1_800_000_000_000
+  const first = readTestFlightReleases({ cacheFile, now, fetchReleases })
+  assert.equal(first.length, 1)
+  assert.equal(calls, 1)
+  readTestFlightReleases({ cacheFile, now: now + 3_600_000, fetchReleases })
+  assert.equal(calls, 1, '6 小时内直接用缓存')
+  const stale = readTestFlightReleases({ cacheFile, now: now + 7 * 3_600_000,
+    fetchReleases: () => { calls += 1; throw new Error('ASC 不通') } })
+  assert.deepEqual(stale, first, '刷新失败退回旧缓存，报告照常生成')
+  const empty = readTestFlightReleases({ cacheFile: join(dir, 'none.json'), now,
+    fetchReleases: () => { throw new Error('ASC 不通') } })
+  assert.deepEqual(empty, [], '没有缓存且取不到时返回空数组，不写发版线')
+})
 test('updateHistory 只记过完的一整天，并累计告警连续天数', () => {
   // 半天数据不记：午间手动跑的报告不该污染 WoW 对照。
   assert.equal(updateHistory(fixture()), null)
