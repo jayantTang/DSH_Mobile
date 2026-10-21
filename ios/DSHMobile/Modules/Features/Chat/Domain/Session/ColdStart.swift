@@ -12,7 +12,7 @@ public extension ChatModel {
     /// 水合结果经 009 管道落库，下次冷启动首帧直接命中磁盘。失败静默：
     /// 会话内容照旧由 follow 快照提供，预取不许成为错误来源。
     public func warmMessageLayer(for summary: SessionSummary) {
-        guard let pipeline = messageLayer?.pipeline,
+        guard let layer = messageLayer, layer.isReady,
               let scope = sessionScope, summary.asOfSeq > 0
         else { return }
         messageLayer?.registerAddresses([summary])
@@ -20,7 +20,7 @@ public extension ChatModel {
             session: .init(scope: scope, sessionId: summary.sessionId),
             newestSeq: summary.asOfSeq)
         Task(priority: .utility) {
-            await pipeline.prefetchLatestPages(
+            await layer.prefetchLatestPages(
                 [target], limit: 1, concurrency: 1, priority: .jump)
         }
     }

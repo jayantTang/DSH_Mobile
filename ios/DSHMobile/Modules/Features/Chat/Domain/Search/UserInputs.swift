@@ -18,19 +18,14 @@ public extension ChatModel {
     /// 返回空数组有两种含义——本地库还没灌到（看 `userInputsSynced()`）、或确实没有
     /// 匹配——两者都由面板如实呈现，调用方**没有**第二条路可退。
     public func localUserInputHits(query: String) async -> [TranscriptSearchHit] {
-        guard let store = messageLayer?.store,
+        guard let layer = messageLayer,
               let scope = sessionScope,
               let sessionId = session?.sessionId
         else { return [] }
         let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        let entries: [UserInputEntry]
-        do {
-            entries = needle.isEmpty
-                ? try await store.userInputRecords(scope: scope)
-                : try await store.searchUserInputRecords(scope: scope, query: needle)
-        } catch {
-            return []
-        }
+        let entries = needle.isEmpty
+            ? await layer.userInputRecords(scope: scope)
+            : await layer.searchUserInputRecords(scope: scope, query: needle)
         return entries.filter { $0.sessionId == sessionId }
             .sorted { $0.record.event.seq > $1.record.event.seq }
             .compactMap { entry in
@@ -52,11 +47,11 @@ public extension ChatModel {
     /// 「同步中…」。磁盘层缺位、会话未挂、从没灌过都是 `false`（此时本来也没有
     /// 可展示的本地数据），语义只有一个——"这份列表还不完整"。
     public func userInputsSynced() async -> Bool {
-        guard let store = messageLayer?.store,
+        guard let layer = messageLayer,
               let scope = sessionScope,
               let sessionId = session?.sessionId
         else { return false }
-        return (try? await store.userInputsSyncedAt(scope: scope, sessionId: sessionId)) != nil
+        return await layer.userInputsSynced(scope: scope, sessionId: sessionId)
     }
 
     /// (a) 打开会话内搜索面板、切到「只看我的提问」时，把这个会话的用户输入按需灌上。

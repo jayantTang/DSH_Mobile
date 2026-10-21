@@ -13,6 +13,26 @@ import Foundation
 /// 所以不存在"两套口径"。转发全部 `async`（actor 隔离），调用点的 `await` 写法与原来一致。
 public struct SessionHandle: Sendable {
 
+    /// 取页优先级（把手自己的词表，不把 `SessionPipeline` 的类型透出去）。
+    public enum FetchPriority: Sendable {
+        case prefetch
+        case userVisible
+        case jump
+
+        var pipeline: SessionPipeline.FetchPriority {
+            switch self {
+            case .prefetch: return .prefetch
+            case .userVisible: return .userVisible
+            case .jump: return .jump
+            }
+        }
+    }
+
+    /// 用户槽位已被别的范围占用：调用方当成"稍后再说"，不是失败。
+    public struct FetchBusy: Error, Sendable {
+        public init() {}
+    }
+
     private let pipeline: SessionPipeline
 
     /// 只在 DSHKit 内部构造：App 从 `MessageLayer` 拿把手，不自己 new。
@@ -24,14 +44,22 @@ public struct SessionHandle: Sendable {
 
     /// 取一段 seq 的记录（按页对齐、可能触发网络）。
     public func records(in range: ClosedRange<Int>,
-                        priority: SessionPipeline.FetchPriority = .userVisible) async throws -> [SessionRecord] {
-        try await pipeline.records(in: range, priority: priority)
+                        priority: FetchPriority = .userVisible) async throws -> [SessionRecord] {
+        do {
+            return try await pipeline.records(in: range, priority: priority.pipeline)
+        } catch is SessionPipeline.FetchBusy {
+            throw FetchBusy()
+        }
     }
 
     /// 任务级单飞入口：同一范围只跑一次，搭车者等同一批结果。
     public func ensure(in range: ClosedRange<Int>,
-                       priority: SessionPipeline.FetchPriority = .userVisible) async throws -> [SessionRecord] {
-        try await pipeline.ensure(range: range, priority: priority)
+                       priority: FetchPriority = .userVisible) async throws -> [SessionRecord] {
+        do {
+            return try await pipeline.ensure(range: range, priority: priority.pipeline)
+        } catch is SessionPipeline.FetchBusy {
+            throw FetchBusy()
+        }
     }
 
     /// 取页指标快照（只读，不参与判定）。

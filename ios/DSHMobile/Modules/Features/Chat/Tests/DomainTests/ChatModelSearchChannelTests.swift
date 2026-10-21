@@ -1,4 +1,4 @@
-import DSHChatDomain
+@testable import DSHChatDomain
 import DSHConnectionAPI
 import DSHCore
 import DSHKit

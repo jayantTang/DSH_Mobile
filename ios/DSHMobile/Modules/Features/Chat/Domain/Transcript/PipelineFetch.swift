@@ -98,7 +98,7 @@ public extension ChatPipelineBridge {
                 "pages": String(pages),
                 "oldest": String(records.keys.min() ?? -1),
             ], true)
-        } catch is SessionPipeline.FetchBusy {
+        } catch is SessionHandle.FetchBusy {
             // 已在补别的范围：这次不重复发，也不制造失败行。
             failure = "busy"
         } catch is CancellationError {

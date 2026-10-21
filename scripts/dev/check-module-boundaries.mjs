@@ -12,6 +12,11 @@
 //     （Debug 靠传递依赖能过，Release 归档会挂）。
 //  C7 路径覆盖：Modules/ 下每个 .swift 必须落在某个 target 的 path: 内；每个 path
 //     必须存在且至少有一个 .swift。搬家后漏挂的文件不会被编译，必须由这条拦住。
+//  C8 Domain 禁实现层类型：Features/<U>/Domain 的代码里不得直接出现
+//     SessionPipeline / MessagePipeline / MessageStore / DSHClient / LinkCarrier；
+//     这些只能出现在 DSHKit 内部或 Connection 适配器里。注释与字符串先 mask。
+//  C9 生产 target 必须显式 Swift 6：包级默认是 v5，新 target 忘记写
+//     swiftSettings: [.swiftLanguageMode(.v6)] 会静默退回 v5。
 //  C5 例外清单：BOUNDARY-EXCEPTIONS.md 每条必须有 位置/条款/原因/收敛 四字段；
 //     例外数比上次记录上升也判红（例外只减不增）。
 //
@@ -73,7 +78,8 @@ function parseTargets(text) {
         deps.push(x[1] ?? (x[2] === 'dshKit' ? 'DSHKit' : 'RelayKit'));
       }
     }
-    out.push({ kind, name, path: targetPath, deps });
+    const v6 = /swiftLanguageMode\(\.v6\)/.test(block);
+    out.push({ kind, name, path: targetPath, deps, v6 });
   }
   return out;
 }
@@ -248,6 +254,47 @@ function walkAll(dir) {
   }
 }
 walkAll(moduleAbs);
+
+// ---------- 5.5 C8 Domain 禁实现层类型 ----------
+
+/** 把 Swift 注释与字符串抹成空格（保留换行与行号），只留代码做标识符匹配。 */
+function maskSwift(text) {
+  const blank = (segment) => segment.replace(/[^\n]/g, ' ');
+  return text
+    .replace(/"""[\s\S]*?"""/g, blank)
+    .replace(/"(?:\\.|[^"\\\n])*"/g, blank)
+    .replace(/\/\*[\s\S]*?\*\//g, blank)
+    .replace(/\/\/[^\n]*/g, blank);
+}
+
+const IMPLEMENTATION_TYPES = [
+  'SessionPipeline', 'MessagePipeline', 'MessageStore', 'DSHClient', 'LinkCarrier',
+];
+
+for (const t of targets) {
+  if (!FEATURE_DOMAIN.test(t.path)) continue;
+  // 连接单元是唯一被授权直接持实现层的适配器（LinkCarrier / DSHClient）。
+  if (t.path === 'Features/Connection/Domain') continue;
+  const dir = path.join(modulesDir, t.path);
+  if (!existsSync(dir)) continue;
+  walkSwift(dir, (p) => {
+    const masked = maskSwift(readFileSync(p, 'utf8'));
+    for (const name of IMPLEMENTATION_TYPES) {
+      if (new RegExp(`\\b${name}\\b`).test(masked)) {
+        err(`[C8] ${t.name}: Domain 直接引用实现层类型「${name}」→ ${path.relative(root, p)}`);
+      }
+    }
+  });
+}
+
+// ---------- 5.6 C9 生产 target 必须 Swift 6 ----------
+
+for (const t of targets) {
+  if (t.kind !== 'target') continue;
+  if (!t.v6) {
+    err(`[C9] ${t.name}: 生产 target 未声明 swiftSettings: [.swiftLanguageMode(.v6)]`);
+  }
+}
 
 // ---------- 6. C5 例外清单 ----------
 

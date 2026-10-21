@@ -1,4 +1,4 @@
-import DSHChatDomain
+@testable import DSHChatDomain
 import XCTest
 
 /// 025 T022 — the follow/reading state machine (`ChatModel+Follow`).

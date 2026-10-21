@@ -12,12 +12,46 @@ import Observation
 @Observable
 public final class ComposerState {
 
+    /// 输入区里的一张待发图片。
+    ///
+    /// `preview` 是**不透明句柄**（iOS 上是 `UIImage`），领域层不认识它，也不认识 UIKit；
+    /// 位图由界面层在加入时造好，只有 `Composer` 的缩略图会读它。
+    public struct DraftImage: Identifiable {
+        public let id = UUID()
+        public let mediaType: String
+        public let base64: String
+        public let name: String
+        public let preview: AnyObject
+
+        public init(mediaType: String, base64: String, name: String, preview: AnyObject) {
+            self.mediaType = mediaType
+            self.base64 = base64
+            self.name = name
+            self.preview = preview
+        }
+    }
+
+    /// 半写好的消息，按会话保存。
+    public struct Draft {
+        public var text: String = ""
+        public var images: [DraftImage] = []
+
+        public init(text: String = "", images: [DraftImage] = []) {
+            self.text = text
+            self.images = images
+        }
+
+        public var isEmpty: Bool {
+            text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && images.isEmpty
+        }
+    }
+
     public var draft: String = ""
-    public var images: [ChatModel.DraftImage] = []
+    public var images: [DraftImage] = []
     public var steerNext: Bool = false
 
     /// 每个会话自己的草稿：换会话不串味。
-    private var drafts: [String: ChatModel.Draft] = [:]
+    private var drafts: [String: Draft] = [:]
 
     public init() {}
 
@@ -29,7 +63,7 @@ public final class ComposerState {
 
     /// 离开某个会话时把当前草稿存回去（空草稿从表里删掉，不留空条目）。
     public func stash(sessionId: String) {
-        let current = ChatModel.Draft(text: draft, images: images)
+        let current = Draft(text: draft, images: images)
         if current.isEmpty {
             drafts.removeValue(forKey: sessionId)
         } else {
@@ -38,8 +72,8 @@ public final class ComposerState {
     }
 
     /// 把一段文本/图片记到指定会话（不改变当前输入区）。
-    public func store(text: String, images: [ChatModel.DraftImage], for sessionId: String) {
-        let value = ChatModel.Draft(text: text, images: images)
+    public func store(text: String, images: [DraftImage], for sessionId: String) {
+        let value = Draft(text: text, images: images)
         if value.isEmpty {
             drafts.removeValue(forKey: sessionId)
         } else {
@@ -48,7 +82,7 @@ public final class ComposerState {
     }
 
     /// 发送失败：把内容记回原会话；仍停在原会话时同时放回输入区。
-    public func restore(text: String, images: [ChatModel.DraftImage],
+    public func restore(text: String, images: [DraftImage],
                         for sessionId: String, isCurrent: Bool) {
         store(text: text, images: images, for: sessionId)
         guard isCurrent else { return }

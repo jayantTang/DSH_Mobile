@@ -1,4 +1,4 @@
-import DSHChatDomain
+@testable import DSHChatDomain
 import Observation
 import XCTest
 

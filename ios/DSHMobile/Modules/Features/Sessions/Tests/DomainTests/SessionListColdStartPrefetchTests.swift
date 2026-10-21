@@ -38,7 +38,7 @@ final class SessionListColdStartPrefetchTests: SessionsDomainTestCase {
         let storeURL = temp.url.appendingPathComponent("messages.sqlite3")
         let layer = MessageLayer()
         layer.attach(client: { client }, storePath: storeURL)
-        guard layer.store != nil, layer.pipeline != nil else {
+        guard layer.isReady else {
             throw XCTSkip("MessageLayer could not open its message store in this environment")
         }
         XCTAssertTrue(FileManager.default.fileExists(atPath: storeURL.path),

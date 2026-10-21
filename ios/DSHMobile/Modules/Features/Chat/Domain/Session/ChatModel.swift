@@ -27,7 +27,7 @@ public final class ChatModel {
     /// 就是它（`open()` 里 `session` 与 `timeline` 的赋值中间隔了两次磁盘等待）。
     /// 合成一个值之后，这个中间态在类型上就写不出来。
     /// 会话可见状态（visible/timeline/session）已搬到 `transcriptStore`。
-    public let transcriptStore = TranscriptStore()
+    let transcriptStore = TranscriptStore()
     public typealias VisibleSession = TranscriptStore.VisibleSession
 
     /// 唯一被发布的会话可见状态（存储在 `transcriptStore`）。
@@ -121,23 +121,10 @@ public final class ChatModel {
     /// 也不认识 UIKit（边界契约 C2、且 `swift build` 要在 macOS 上过）。位图由界面层
     /// 在加入时造好（`ChatModel.addDraftImages(_:names:)` 在 DSHChatUI 里），
     /// 只有 `Composer` 的那一个缩略图会读它。
-    public struct DraftImage: Identifiable {
-        public let id = UUID()
-        public let mediaType: String
-        public let base64: String
-        public let name: String
-        public let preview: AnyObject
-
-        public init(mediaType: String, base64: String, name: String, preview: AnyObject) {
-            self.mediaType = mediaType
-            self.base64 = base64
-            self.name = name
-            self.preview = preview
-        }
-    }
+    public typealias DraftImage = ComposerState.DraftImage
 
     /// 输入区状态（草稿/图片/插入模式）。2026-10-21 从 ChatModel 拆出。
-    public let composer = ComposerState()
+    let composer = ComposerState()
     /// 搜索缓冲状态（只在模块内使用）。
     let searchState = SearchState()
 
@@ -183,7 +170,7 @@ public final class ChatModel {
     /// 收尾走的是另一个方法、没有发事件——诊断事件必须挂在唯一写入口上。
     private var olderWatchdog: Task<Void, Never>?
 
-    public func setOlderState(_ next: OlderPageState) {
+    func setOlderState(_ next: OlderPageState) {
         // 相同状态不重复发事件：启动阶段会连续多次落到 idle，重复事件既无信息，
         // 又会挤占每条来源每秒 10 条的配额，把真正的 1→0 迁移挤掉。
         guard next != olderState else { return }
@@ -201,7 +188,7 @@ public final class ChatModel {
     }
 
     /// 请求收尾：只在仍处于进行中时回到空闲，失败/到头的终态保持不变。
-    public func finishOlderIfLoading() {
+    func finishOlderIfLoading() {
         setOlderState(olderState.finishing())
     }
     /// 视图只读这一位的投影；更早历史的状态由管道与宿主快照给出（FR-005/FR-038）。
@@ -220,7 +207,7 @@ public final class ChatModel {
     /// for an app restart to see it made the picker look like it was missing
     /// models it could actually use.
     /// 模型目录与权限（存储在 `catalogState`，这里保留同名投影）。
-    public let catalogState = CatalogState()
+    let catalogState = CatalogState()
 
     public var catalog: ModelCatalog? { catalogState.catalog }
     /// True while the "make this the default for new sessions" write is in flight.
@@ -285,11 +272,11 @@ public final class ChatModel {
     public private(set) var sendSignal: Int = 0
 
     /// internal(set)：ChatModel+Follow 的可见性兜底要读 client（T019）。
-    public private(set) var store: (any LinkService)?
+    private(set) var store: (any LinkService)?
     private var hub: HostEventHub?
     /// 009 消息层（T012：MessageStore 有数据时优先用它画进会话首帧）。
     /// internal：冷启动半边在 ChatModel+ColdStart.swift（文件按职责拆分）。
-    public weak var messageLayer: MessageLayer?
+    weak var messageLayer: MessageLayer?
     /// Warm transcripts, most recently used last.
     private let transcriptCache = TranscriptCache()
 
@@ -342,30 +329,15 @@ public final class ChatModel {
     /// 不能在落盘那一刻现取 `store.scopeId`：切换/断开时 profile 已经被清掉或换成
     /// 新电脑了，旧电脑的尾部会落到 `unknown/` 或**新电脑**的目录里——两台电脑的
     /// 会话 id 本来就可能撞（fork/clone），那就是把 A 的记录当成 B 的显示。
-    public private(set) var sessionScope: String?
+    private(set) var sessionScope: String?
 
     /// 「我问过的」按需灌库是否正在进行（面板切到该筛选时会触发一次，见 `+UserInputs`）。
-    public var isBackfillingUserInputs = false
+    var isBackfillingUserInputs = false
 
     /// 这次打开用的同步计划（快照到达时还要用它判断合并还是重来）。
     private var syncPlanRef = TranscriptSyncPlan.plan(localThrough: nil, hostCursor: 0)
 
-    /// Half-written messages, one per session.
-    ///
-    public struct Draft {
-        public var text: String = ""
-        public var images: [DraftImage] = []
-
-        /// 测试与外部构造入口（memberwise init 对 public struct 是 internal，026 补齐）。
-        public init(text: String = "", images: [DraftImage] = []) {
-            self.text = text
-            self.images = images
-        }
-
-        public var isEmpty: Bool {
-            text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && images.isEmpty
-        }
-    }
+    public typealias Draft = ComposerState.Draft
     /// 内存里最多留多少行；超出的从最老端丢（记录仍在库里，可读回）。
     private static var windowLimitRows: Int {
         #if DEBUG
@@ -398,14 +370,14 @@ public final class ChatModel {
     /// 抓不到——缺陷明明在，测试却只能看到一次原子切换。有了这个挂起点，用例可以停在
     /// "`open(B)` 已开始、可见状态还是 A"的那一刻，断言渲染入口不会把 A 的行交给 B 那一屏。
     /// 它只让出主线程，不做任何取舍；生产构建里这个属性不存在，也没有任何调用点。
-    public var beforeVisibleSwap: (@MainActor () async -> Void)?
+    var beforeVisibleSwap: (@MainActor () async -> Void)?
     #endif
     /// 009 渲染数据源桥（tasks T013）：非 nil 时，时间线由 MessagePipeline 的
     /// 快照驱动（订阅/折叠/重试全在 ChatModel+Pipeline.swift 的桥里）。
     ///
     /// 2026-10-21：旧的 `TranscriptPager` 回退路径已删除；生产路径恒有桥。
     /// 桥缺位时 `loadOlder` 报可见的「尚未连接」，不再静默当到底。
-    public var pipelineBridge: ChatPipelineBridge?
+    var pipelineBridge: ChatPipelineBridge?
     /// 009 跟底两态（tasks T017）：判定逻辑在 ChatModel+Follow.swift，
     /// 存储只能留在主文件（扩展不能有存储属性）。
     public enum FollowState: String { case atBottom, reading }
@@ -437,7 +409,7 @@ public final class ChatModel {
     /// The cut the follow stream opened at; older pages must stay below it.
     private var throughSeq: Int = 0
 
-    public var address: SessionAddress? { session?.address }
+    var address: SessionAddress? { session?.address }
 
     /// Host prompts waiting for the human on this session.
     public var pendingPrompts: [HostEventHub.Pending] {
@@ -1221,7 +1193,7 @@ public final class ChatModel {
     private static let restoreRecordLimit = 600
 
     /// 冷启动尾部恢复（T027 起直接读 009 `MessageStore`：session_state + 最新页）。
-    public func loadStoredTail(scope: String, sessionId: String) async -> StoredTail? {
+    func loadStoredTail(scope: String, sessionId: String) async -> StoredTail? {
         guard let store = messageBacking,
               let state = try? await store.sessionState(scope: scope, sessionId: sessionId)
         else { return nil }
@@ -1238,7 +1210,7 @@ public final class ChatModel {
 
     /// The tail the store can hand back on a cold start.
     /// internal：ChatModel+ColdStart.swift 的 009 首帧路径复用同一形状。
-    public struct StoredTail {
+    struct StoredTail {
         public let records: [SessionRecord]
         public let oldest: Int?
         public let newest: Int?
@@ -1737,7 +1709,7 @@ public final class ChatModel {
     ///
     /// 在飞状态（流式气泡、发送中的乐观回声）不在下行记录里，重建时必须接回
     /// （`restoreTransient`），否则每一次快照 diff 都会把它们抹掉一帧。
-    public func applyPipelineRebuild(
+    func applyPipelineRebuild(
         _ folded: ChatTimeline, gaps: [TimelineItem],
         topExhausted: Bool, oldestSeq: Int?
     ) {
@@ -1774,7 +1746,7 @@ public final class ChatModel {
     }
 
     /// 只刷新缺口行（加载/失败/到头三态变化，数据行不动）。
-    public func applyPipelineGaps(_ gaps: [TimelineItem]) {
+    func applyPipelineGaps(_ gaps: [TimelineItem]) {
         timeline.setGaps(gaps)
         scrollSignal += 1
     }
@@ -1784,7 +1756,7 @@ public final class ChatModel {
     /// 提交走 `scrollSignal` → 宿主 reconcile（008 统一锚一次修正，T021），
     /// 阅读中不冻结渲染也不推走视口。
     @discardableResult
-    public func applyStreamingRow(seq: Int, text: String, reasoning: String) -> Bool {
+    func applyStreamingRow(seq: Int, text: String, reasoning: String) -> Bool {
         guard timeline.applyStreamingUpdate(seq: seq, text: text, reasoning: reasoning) else {
             return false
         }
@@ -1794,7 +1766,7 @@ public final class ChatModel {
 
     /// 管道模式下的「向上翻页」进行中（顶部缺口行 spinner 与旧版小字共用此位）。
     /// 管道把取页状态写进来的唯一入口（旧的两个写点已删除）。
-    public func notePipelineOlder(state: OlderPageState) {
+    func notePipelineOlder(state: OlderPageState) {
         setOlderState(state)
     }
 
@@ -1828,7 +1800,7 @@ public final class ChatModel {
     private static let hitContextLimit = 60
     /// 行载荷预算（spec 008 的契约默认值：32MB）。DEBUG 下可被探针压小，
     /// 否则真实会话永远达不到预算、"丢弃"这条路在用例里就永远看不到。
-    public static var payloadBudgetBytes: Int {
+    static var payloadBudgetBytes: Int {
         #if DEBUG
         if let kb = ChatProbe.shared.payloadBudgetKB { return kb * 1024 }
         #endif
@@ -2061,7 +2033,7 @@ public final class ChatModel {
     /// 原地替换——不经过旧的 `echoUserPrompt` 回声（身份只有一套）。
     /// 发送失败行留在时间线上可点重发，所以草稿不回填（文字没丢，行还在）。
     private func sendViaPipeline(text: String, mode: SessionPromptRequest.Mode, owner: String) async {
-        guard let pipeline = messageLayer?.pipeline, let scope = sessionScope else { return }
+        guard let layer = messageLayer, let scope = sessionScope else { return }
         draft = ""
         composer.discard(sessionId: owner)
         scrollSignal += 1
@@ -2077,7 +2049,7 @@ public final class ChatModel {
         }
         let ref = MessageSessionRef(scope: scope, sessionId: owner)
         do {
-            _ = try await pipeline.send(text: text, to: ref, steer: mode == .steer)
+            _ = try await layer.send(text: text, to: ref, steer: mode == .steer)
         } catch {
             // 行已由管道标 failed（可点重发）；错误同时上错误条。
             isAwaitingTurnStart = false

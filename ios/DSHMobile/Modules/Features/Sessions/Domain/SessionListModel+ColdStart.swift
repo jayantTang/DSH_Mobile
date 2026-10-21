@@ -17,7 +17,7 @@ public extension SessionListModel {
     public func scheduleColdStartPrefetch() {
         guard let scope = store?.scopeId, store?.client != nil,
               lastPrefetchScope != scope,
-              let layer = messageLayer, let pipeline = layer.pipeline, let store = layer.store
+              let layer = messageLayer, layer.isReady
         else { return }
         // 列表顺序 = 分组顺序 + 折叠桶，与屏幕上一致；去重（child 不进组）。
         var seen = Set<String>()
@@ -30,7 +30,7 @@ public extension SessionListModel {
         // 没有 history-role-filter 时回填整体跳过（摘要不入新库，等升级）。
         let roleFilter = self.store?.supports(LinkHandshake.Capability.historyRoleFilter) ?? false
         Task(priority: .utility) {
-            let states = (try? await store.sessionStates(scope: scope)) ?? []
+            let states = (try? await layer.sessionStates(scope: scope)) ?? []
             var persistedRanges: [MessageSessionRef: RangeIndex] = [:]
             var newestBySession: [String: Int] = [:]
             for entry in states {
@@ -47,7 +47,7 @@ public extension SessionListModel {
             }
             if !targets.isEmpty {
                 probeNote?("prefetch.coldstart", ["sessions": String(targets.count)], true)
-                await pipeline.prefetchLatestPages(
+                await layer.prefetchLatestPages(
                     targets, persistedRanges: persistedRanges, limit: 10, concurrency: 3)
             }
             // T033：预取瀑布之后灌「我问过的」全量库（优先级天然低于最新页预取——

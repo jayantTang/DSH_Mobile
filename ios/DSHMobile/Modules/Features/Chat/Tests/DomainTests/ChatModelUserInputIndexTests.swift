@@ -1,6 +1,6 @@
-import DSHChatDomain
+@testable import DSHChatDomain
 import DSHCore
-import DSHKit
+@testable import DSHKit
 import DSHTestingSupport
 import XCTest
 

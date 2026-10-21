@@ -28,3 +28,6 @@ public typealias TranscriptGapRow = SessionPipeline.GapRow
 
 /// 「我问过的」一条记录。
 public typealias UserInputEntry = MessageStore.UserInputEntry
+
+/// 列表页一行（`MessageStore.SessionListEntry` 的 App 侧名字）。
+public typealias MessageSessionState = MessageStore.SessionListEntry

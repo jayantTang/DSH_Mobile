@@ -74,8 +74,9 @@ public final class MessageLayer {
     }
 
     public let addresses = AddressBook()
-    public private(set) var store: MessageStore?
-    public private(set) var pipeline: MessagePipeline?
+    /// 磁盘层与内存层只在 DSHKit 内部可见；App/Domain 走下面的窄方法。
+    private(set) var store: MessageStore?
+    private(set) var pipeline: MessagePipeline?
     /// attach 时注入的 client 现取闭包，T024 灌库也要用（重连后自动换 carrier）。
     private var clientProvider: (@Sendable () -> DSHClient?)?
     /// 从链路能力接入时的现取闭包（能力挂在 MainActor 上，所以要异步取）。
@@ -245,6 +246,30 @@ public final class MessageLayer {
 
     // MARK: - 门面出口（spec 023 边界收敛：App 不再直接持管道 / 磁盘层）
 
+    /// 管道上行：发一条 prompt（Domain 不再直接持 MessagePipeline）。
+    public func send(text: String, to ref: MessageSessionRef,
+                     steer: Bool = false) async throws -> UUID {
+        guard let pipeline else { throw FetchFailure.noAddress }
+        return try await pipeline.send(text: text, to: ref, steer: steer)
+    }
+
+    /// 按列表顺序预取最新页（Domain 不再直接持 MessagePipeline）。
+    public func prefetchLatestPages(
+        _ targets: [MessagePrefetchTarget],
+        persistedRanges: [MessageSessionRef: RangeIndex] = [:],
+        limit: Int = 10,
+        concurrency: Int = 3,
+        priority: SessionHandle.FetchPriority = .prefetch
+    ) async {
+        await pipeline?.prefetchLatestPages(
+            targets,
+            persistedRanges: persistedRanges,
+            limit: limit,
+            concurrency: concurrency,
+            priority: priority.pipeline
+        )
+    }
+
     /// 这个会话的读写把手。
     public func session(for ref: MessageSessionRef) async -> SessionHandle {
         SessionHandle(pipeline: await pipeline(for: ref))
@@ -295,10 +320,19 @@ public final class MessageLayer {
         return try await store.windowBefore(scope: scope, sessionId: sessionId, seq: seq, limit: limit)
     }
 
+    /// 磁盘层与内存层都已就绪（App 只需要的"能不能预取"判定）。
+    public var isReady: Bool { store != nil && pipeline != nil }
+
     /// 某会话的聚合信息（列表首帧叠加用）。
-    public func sessionState(scope: String, sessionId: String) async throws -> MessageStore.SessionListEntry? {
+    public func sessionState(scope: String, sessionId: String) async throws -> MessageSessionState? {
         guard let store else { return nil }
         return try await store.sessionState(scope: scope, sessionId: sessionId)
+    }
+
+    /// 一次取出全部会话的聚合信息（冷启动预取用，避免 Domain 直接拿 MessageStore）。
+    public func sessionStates(scope: String) async throws -> [MessageSessionState] {
+        guard let store else { return [] }
+        return try await store.sessionStates(scope: scope)
     }
 
     /// 丢掉这个会话的落盘记录（"清空对话"用）。
@@ -328,6 +362,12 @@ public final class MessageLayer {
     public func userInputRecords(scope: String) async -> [UserInputEntry] {
         guard let store else { return [] }
         return (try? await store.userInputRecords(scope: scope)) ?? []
+    }
+
+    /// 「我问过的」关键词命中（FTS5；短查询由 store 降级 LIKE）。
+    public func searchUserInputRecords(scope: String, query: String) async -> [UserInputEntry] {
+        guard let store else { return [] }
+        return (try? await store.searchUserInputRecords(scope: scope, query: query)) ?? []
     }
 
     /// 「我问过的」是否已经灌过（空数组的两种含义要靠它区分）。
