@@ -233,7 +233,7 @@ struct RootView: View {
                 #if DIAGNOSTICS
                 AppDiagnostics.shared.start()
                 while !Task.isCancelled {
-                    AppDiagnostics.shared.attachIfNeeded(store.client?.carrier)
+                    AppDiagnostics.shared.attachIfNeeded(store.diagnosticsCarrier)
                     try? await Task.sleep(for: .seconds(1))
                 }
                 #endif
@@ -242,7 +242,7 @@ struct RootView: View {
                 // 夹具：`-DSHProbeAsk <sessionId>` 时由 App 自己给那个会话发一条
                 // "立刻提问"的提示词——host 侧 RPC 发起的提问送不到手机，
                 // 只有走产品这条路（本设备发起的 turn）waterfall 才会回到 App。
-                await ViewportProbe.runAskProbe(provider: { store.client })
+                await ViewportProbe.runAskProbe(provider: { store.chatHost })
             }
             .task {
                 // Injected link drop: see `automationDropLinkAfter`. Debug only,

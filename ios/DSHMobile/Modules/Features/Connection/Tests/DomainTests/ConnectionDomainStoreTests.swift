@@ -69,7 +69,7 @@ final class ConnectionDomainStoreTests: XCTestCase {
         XCTAssertEqual(store.profiles, ConnectionStore.persistedProfiles())
         XCTAssertEqual(store.state, .disconnected)
         XCTAssertNil(store.activeProfile)
-        XCTAssertNil(store.client)
+        XCTAssertNil(store.diagnosticsCarrier)
         XCTAssertFalse(store.isConnecting)
         XCTAssertFalse(store.isReconnecting)
         XCTAssertTrue(store.capabilities.isEmpty)

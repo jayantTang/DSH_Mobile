@@ -389,7 +389,7 @@ enum ViewportProbe {
             log: ProbeLog(sink: ViewportProbe.note))
     }
 
-    static func runAskProbe(provider: @escaping @MainActor () -> DSHClient?) async {
+    static func runAskProbe(provider: @escaping @MainActor () -> (any ChatHosting)?) async {
         // 端口在调用点构造：工具收到的是"能不能发"与"怎么发"，不是连接对象本身。
         await ViewportAutomation.runAskProbe(
             isReady: { provider() != nil },
@@ -617,7 +617,7 @@ enum ViewportProbe {
     static func visibleRowIds() -> [String] { [] }
     static func pause() {}
     static func resume() {}
-    static func runAskProbe(provider: @escaping @MainActor () -> DSHClient?) async {}
+    static func runAskProbe(provider: @escaping @MainActor () -> (any ChatHosting)?) async {}
     static func note(_ kind: String, _ fields: [String: String] = [:], force: Bool = false) {}
     static func setViewport(_ rect: CGRect) {}
     static func setContent(items: Int, streaming: Int) {}

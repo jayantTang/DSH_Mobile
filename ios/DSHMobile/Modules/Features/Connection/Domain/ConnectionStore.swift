@@ -47,7 +47,9 @@ public final class ConnectionStore {
 
     public private(set) var profiles: [ConnectionProfile] = []
     public private(set) var state: State = .disconnected
-    public private(set) var client: DSHClient?
+    private(set) var client: DSHClient?
+    /// 诊断只需要的传输载体视图；不把 DSHClient 暴露到 App。
+    public var diagnosticsCarrier: (any DSHCarrier)? { client?.carrier }
     public var chatHost: (any ChatHosting)? { client }
     public var settingsHost: (any SettingsHosting)? { client }
     public var filesHost: (any FilesHosting)? { client }
