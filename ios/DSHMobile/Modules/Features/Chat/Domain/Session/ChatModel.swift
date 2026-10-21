@@ -130,19 +130,19 @@ public final class ChatModel {
     /// Pictures queued in the composer, sent with the next prompt.
     ///
     /// 存储已搬到 `composer`；这里保留同名投影，UI 与测试调用点不变。
-    public private(set) var draftImages: [DraftImage] {
+    public internal(set) var draftImages: [DraftImage] {
         get { composer.images }
         set { composer.images = newValue }
     }
 
     /// Name of the file being uploaded, for the composer to show.
-    public private(set) var isUploadingFile: String?
+    public internal(set) var isUploadingFile: String?
 
     /// Set between submitting a prompt and the host starting its turn.
-    private var isAwaitingTurnStart = false
+    var isAwaitingTurnStart = false
     /// The host's own view of whether it is running, from the session summary.
     private var hostReportsRunning = false
-    private var awaitingTimeout: Task<Void, Never>?
+    var awaitingTimeout: Task<Void, Never>?
     private var lastSeenCompletionAt: Date?
     /// 向上取页的唯一状态源：进行中、失败、已到最早、空闲。
     ///
@@ -197,7 +197,7 @@ public final class ChatModel {
     /// 区间里仍可能留着上次没补完的小洞，只靠 hasOlder 会永远不再发请求。
     public var hasUnfilledGaps: Bool { pipelineBridge?.hasUnfilledGaps ?? false }
     /// 宿主权威的"还有更早"由 `hasOlder` 直接表达；失败不写它（FR-003）。
-    public private(set) var lastError: String?
+    public internal(set) var lastError: String?
 
     /// Model routes the host can serve.
     ///
@@ -246,7 +246,7 @@ public final class ChatModel {
     }
 
     /// Bumped whenever the transcript grows, so the view can autoscroll.
-    public private(set) var scrollSignal: Int = 0
+    public internal(set) var scrollSignal: Int = 0
     /// 搜索范围（时间线 + 搜索缓冲）变了多少次，给搜索面板当刷新信号。
     public internal(set) var searchScopeVersion: Int {
         get { searchState.scopeVersion }
@@ -268,7 +268,7 @@ public final class ChatModel {
     /// Bumped when the user themselves adds something, which is the one case
     /// where the view should jump back to the bottom even if they had scrolled
     /// away: they are waiting to see their own message land.
-    public private(set) var sendSignal: Int = 0
+    public internal(set) var sendSignal: Int = 0
 
     /// internal(set)：ChatModel+Follow 的可见性兜底要读 client（T019）。
     private(set) var store: (any LinkService)?
@@ -1676,175 +1676,6 @@ public final class ChatModel {
     ///
     /// Steer mode interrupts the running turn instead of queueing behind it,
     /// which is how the desktop client's "steer" affordance behaves.
-    public func send() async {
-        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        let images = draftImages
-        guard !text.isEmpty || !images.isEmpty, let client = store?.chatHost, let session else { return }
-        let owner = session.sessionId
-
-        let mode: SessionPromptRequest.Mode = (steerNext && isRunning) ? .steer : .queue
-        // T022：管道模式下纯文本走 MessagePipeline（乐观插入贴底 → 落库 pending →
-        // 网络 → 下行 rpcId 确认原地替换）。带附件仍走旧路径——附件的压缩/上传与
-        // echo 耦合在现有 send 里，管道化留给后续任务（本任务不接管）。
-        if images.isEmpty, pipelineBridge != nil {
-            await sendViaPipeline(text: text, mode: mode, owner: owner)
-            return
-        }
-        // Which conversation this text belongs to, fixed here: the user may
-        // switch away while the send is in flight, and neither the clear nor a
-        // failure's restore may land on whatever happens to be on screen then.
-        // Cleared optimistically so the field empties the instant you send, but
-        // restored if the host refuses — losing typed text to a transient
-        // failure is worse than seeing it come back.
-        draft = ""
-        composer.discard(sessionId: owner)
-
-        // The request id is minted here because the host stores it on the
-        // durable message's source; that is what lets the transcript replace
-        // this optimistic row instead of showing the message twice.
-        let requestId = UUID().uuidString
-        timeline.echoUserPrompt(requestId: requestId, text: text)
-        scrollSignal += 1
-        sendSignal += 1
-        // 发送自己的消息一律贴底（spec 009「跟底两态」钦定例外，tasks T017）。
-        noteWantsBottom()
-        isAwaitingTurnStart = true
-        // If the host is already mid-turn the message sits in its queue, and
-        // `timeline.isTurnOpen` already reports running; otherwise a turn
-        // starts within a second. Either way this must not latch forever.
-        awaitingTimeout?.cancel()
-        awaitingTimeout = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(20))
-            guard !Task.isCancelled else { return }
-            self?.isAwaitingTurnStart = false
-        }
-
-        // Cleared only once the bytes are on their way; a failed send puts the
-        // pictures back alongside the text.
-        draftImages.removeAll()
-
-        do {
-            try await client.prompt(
-                SessionPromptRequest(
-                    requestId: requestId,
-                    sessionId: session.sessionId,
-                    mode: mode,
-                    content: Self.promptContent(text: text, images: images)
-                )
-            )
-        } catch {
-            isAwaitingTurnStart = false
-            // Back to the conversation it was typed in — visible if the user is
-            // still there, waiting quietly if they have moved on.
-            // `session` was captured by the guard at the top of this function,
-            // so it is this send's own session — not whatever is on screen now.
-            composer.restore(text: text, images: images, for: owner,
-                             isCurrent: session.sessionId == owner)
-            lastError = LinkErrors.describe(error)
-        }
-    }
-
-    /// T022 管道发送（纯文本、渲染数据源已切 009 时）：乐观插入由管道快照流
-    /// 进入时间线（贴底），requestId 就是管道 clientId，确认走下行 rpcId 回流
-    /// 原地替换——不经过旧的 `echoUserPrompt` 回声（身份只有一套）。
-    /// 发送失败行留在时间线上可点重发，所以草稿不回填（文字没丢，行还在）。
-    private func sendViaPipeline(text: String, mode: SessionPromptRequest.Mode, owner: String) async {
-        guard let layer = messageLayer, let scope = sessionScope else { return }
-        draft = ""
-        composer.discard(sessionId: owner)
-        scrollSignal += 1
-        sendSignal += 1
-        // 发送自己的消息一律贴底（spec 009「跟底两态」钦定例外，tasks T017）。
-        noteWantsBottom()
-        isAwaitingTurnStart = true
-        awaitingTimeout?.cancel()
-        awaitingTimeout = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(20))
-            guard !Task.isCancelled else { return }
-            self?.isAwaitingTurnStart = false
-        }
-        let ref = MessageSessionRef(scope: scope, sessionId: owner)
-        do {
-            _ = try await layer.send(text: text, to: ref, steer: mode == .steer)
-        } catch {
-            // 行已由管道标 failed（可点重发）；错误同时上错误条。
-            isAwaitingTurnStart = false
-            lastError = LinkErrors.describe(error)
-        }
-    }
-
-    /// Uploads one file and tells the agent where it landed.
-    ///
-    /// There is **one** route for file bytes now (the relay's HTTPS surface with
-    /// a background task), and it is a *file* route: iOS only continues
-    /// file-based tasks after the app is suspended, so a file has to stay a file
-    /// all the way down. This entry point therefore writes the bytes to disk
-    /// first and hands the URL to `sendFile(named:fileURL:)` — it is a
-    /// migration shim, not a second implementation. Its remaining caller is the
-    /// DEBUG automation hook `-DSHUploadFile`, which the next batch deletes
-    /// together with this method.
-    public func sendFile(named name: String, data: Data) async {
-        let scratch = FileManager.default.temporaryDirectory
-            .appendingPathComponent("incoming-staged", isDirectory: true)
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        do {
-            try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
-            let url = scratch.appendingPathComponent(name.isEmpty ? "file" : name)
-            try data.write(to: url)
-            defer { try? FileManager.default.removeItem(at: scratch) }
-            await sendFile(named: name, fileURL: url)
-        } catch {
-            lastError = String(
-                localized: "文件「\(name)」没发出去：\(LinkErrors.describe(error))。可以再点一次发送。"
-            )
-        }
-    }
-
-    /// Uploads a file the caller already has as a URL on disk.
-    ///
-    /// There is **one** route for file bytes (the relay's HTTPS surface with a
-    /// background task); `ConnectionStore` decides whether that route exists at
-    /// all from here, and a "no" is an error, not another path. This end hands
-    /// over a file and, when it fails, says so in words the person can act on.
-    ///
-    /// **The staged copy is deleted when this returns, whichever way it went**
-    /// (P-3). Only a copy this app made is deletable — `OutgoingFiles.remove`
-    /// checks the path against the staging root, so the file behind
-    /// `-DSHUploadFilePath` or a path the user picked in Files is never
-    /// touched. Leaving it behind was a disk leak that only grew, because
-    /// nothing else ever deleted one.
-    public func sendFile(named name: String, fileURL: URL) async {
-        guard let session, let store else { return }
-        let owner = session.sessionId
-        isUploadingFile = name
-        defer {
-            isUploadingFile = nil
-            // After the await, never before: the background task reads this
-            // file, and a delete that beat it would be the F-2 crash face.
-            OutgoingFiles.remove(fileURL)
-        }
-
-        do {
-            let staged = try await store.uploadFile(
-                fileURL: fileURL,
-                name: name,
-                sessionId: session.sessionId
-            )
-            await announceStagedFile(staged, name: name, owner: owner)
-        } catch {
-            // 落盘日志：大文件走的是"用户看不见进度"的那条路（后台上传、中转桥接、
-            // 连接器落盘），失败只会体现在输入框没动静。没有这一行时，真机上
-            // 「发了没反应」与「后端没收到」无法区分。
-            DSHLog.push("file send failed: \(name) "
-                + "(\(FileTransferAdapter.fileSize(fileURL)) bytes) — \(LinkErrors.describe(error))")
-            // 给用户的那句话：说清**哪个文件**、**为什么**、**能做什么**。
-            // 不再把内部错误原文丢出去（"中转没有返回落盘路径"就是反面样本）。
-            lastError = String(
-                localized: "文件「\(name)」没发出去：\(LinkErrors.describe(error))。可以再点一次发送。"
-            )
-        }
-    }
-
     /// Dismisses the failure notice the chat screen shows.
     ///
     /// `lastError` used to have exactly one reader (`Composer`'s prompt sheet), so
@@ -1861,7 +1692,7 @@ public final class ChatModel {
     /// for, which is not necessarily the one on screen by the time the upload
     /// finishes — so a late completion goes to that session's draft instead.
     /// **The wording is unchanged**: this is plumbing, not a prompt change.
-    private func announceStagedFile(
+    func announceStagedFile(
         _ staged: StagedFile,
         name: String,
         owner: String
@@ -1876,7 +1707,7 @@ public final class ChatModel {
     }
 
     /// The prompt body: the words, then one part per picture.
-    private static func promptContent(text: String, images: [DraftImage]) -> [PromptContentPart] {
+    static func promptContent(text: String, images: [DraftImage]) -> [PromptContentPart] {
         var content: [PromptContentPart] = []
         if !text.isEmpty { content.append(.text(text)) }
         for image in images {
