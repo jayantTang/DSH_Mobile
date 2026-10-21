@@ -1,3 +1,4 @@
+import RelayKit
 import DSHSettingsDomain
 #if os(iOS)
 import DSHConnectionDomain

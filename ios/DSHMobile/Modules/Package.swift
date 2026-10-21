@@ -195,7 +195,7 @@ let package = Package(
         .target(
             name: "DSHSettingsUI",
             dependencies: [
-                "DSHSettingsDomain", "DSHDesign", "DSHCore", "DSHConnectionDomain", "DSHFoundation", dshKit,
+                "DSHSettingsDomain", "DSHDesign", "DSHCore", "DSHConnectionDomain", "DSHFoundation", dshKit, relayKit,
             ],
             path: "Features/Settings/UI",
             swiftSettings: [.swiftLanguageMode(.v6)]
@@ -215,7 +215,7 @@ let package = Package(
         ),
         .target(
             name: "DSHFeedbackUI",
-            dependencies: ["DSHFeedbackDomain", "DSHDesign", "DSHCore"],
+            dependencies: ["DSHFeedbackDomain", "DSHDesign", "DSHCore", relayKit],
             path: "Features/Feedback/UI",
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
