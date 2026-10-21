@@ -24,7 +24,7 @@ import OSLog
 /// 淘汰语义（T028 裁定）：热窗口只是缓存，超上限缩窗**不进** `diff.removed`——被淘汰的行
 /// 仍由磁盘覆盖（ranges 语义不变），回看时「取不到就拉」会水合回来；UI 侧的行裁剪由 008
 /// 宿主的 reclaim/dropOldestRows 两层负责，重订阅首帧（`snapshot()`）以热窗口为准是合法的。
-public actor SessionPipeline {
+actor SessionPipeline {
 
     // MARK: - 对外类型
 
@@ -59,35 +59,13 @@ public actor SessionPipeline {
     /// 拉取优先级（沿用 InFlightPageTable：prefetch < userVisible < jump）。
     public typealias FetchPriority = InFlightPageTable<Int>.Priority
 
-    /// 缺口行（spec「缺口行的生命周期」）：身份 `gap:<start>-<end>` 由区间集派生。
-    public struct GapRow: Sendable, Equatable, Identifiable {
-        public enum Status: Sendable, Equatable {
-            case loading
-            case failed(retryable: Bool)
-            /// 已到顶（hasMore=false / clamped），渲染「没有更多」。
-            case exhausted
-        }
-
-        public let start: Int
-        public let end: Int
-        public let status: Status
-
-        public var id: String { "gap:\(start)-\(end)" }
-
-        public init(start: Int, end: Int, status: Status) {
-            self.start = start
-            self.end = end
-            self.status = status
-        }
-    }
-
     /// 一次状态变化给上层的增量（MessagePipeline 据此组装 SnapshotDiff）。
     public struct Diff: Sendable {
         public var inserted: [SessionRecord] = []
         public var updated: [SessionRecord] = []
         public var removed: [Int] = []
         /// 当前窗口内全部 gap 行（派生量，每次整体给出，生灭交给 diff 消费方比对）。
-        public var gaps: [GapRow] = []
+        public var gaps: [TranscriptGapRow] = []
 
         public var isEmpty: Bool { inserted.isEmpty && updated.isEmpty && removed.isEmpty }
     }
@@ -329,7 +307,7 @@ public actor SessionPipeline {
     func record(at seq: Int) -> SessionRecord? { hotWindow[seq] }
 
     /// 当前快照：热窗口全部记录（升序）+ 派生 gap 行。新订阅者的首帧数据源。
-    func snapshot() -> (records: [SessionRecord], gaps: [GapRow]) {
+    func snapshot() -> (records: [SessionRecord], gaps: [TranscriptGapRow]) {
         (hotOrder.sorted().compactMap { hotWindow[$0] }, currentGaps())
     }
 

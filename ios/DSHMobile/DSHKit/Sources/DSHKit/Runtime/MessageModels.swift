@@ -12,19 +12,109 @@ import Foundation
 // （协议只有 `transport` 一个成员且 App 从未使用），避免再出现“名义门面”。
 
 /// 一个会话的地址（scope + sessionId）。
-public typealias MessageSessionRef = MessagePipeline.SessionRef
+public struct MessageSessionRef: Hashable, Sendable {
+    public let scope: String
+    public let sessionId: String
 
-/// 预取目标：某个会话要预取到哪一条。
-public typealias MessagePrefetchTarget = MessagePipeline.PrefetchTarget
-
-/// 快照之间的差异（内存层广播给渲染侧）。
-public typealias MessageSnapshotDiff = MessagePipeline.SnapshotDiff
+    public init(scope: String, sessionId: String) {
+        self.scope = scope
+        self.sessionId = sessionId
+    }
+}
 
 /// 一条待发送/已发送消息的状态。
-public typealias MessageSendStatus = MessagePipeline.RenderedMessage.Status
+public enum MessageSendStatus: String, Sendable, Equatable {
+    case sent, pending, failed
+    /// 已受理、但确认帧永远没来（宿主撤单、轮次以错误结束）。
+    case unconfirmed
+}
+
+/// 数据行：排版已完成的不可变快照。`id` 是稳定 UUID，状态变化不改身份。
+public struct MessageRenderedMessage: Identifiable, Sendable {
+    public let id: UUID
+    public let seq: Int
+    public let record: SessionRecord
+    public let status: MessageSendStatus
+
+    public init(id: UUID, seq: Int, record: SessionRecord, status: MessageSendStatus) {
+        self.id = id
+        self.seq = seq
+        self.record = record
+        self.status = status
+    }
+}
 
 /// 时间线上的缺口行（失败的取页区间）。
-public typealias TranscriptGapRow = SessionPipeline.GapRow
+public struct TranscriptGapRow: Sendable, Equatable, Identifiable {
+    public enum Status: Sendable, Equatable {
+        case loading
+        case failed(retryable: Bool)
+        case exhausted
+    }
+
+    public let start: Int
+    public let end: Int
+    public let status: Status
+
+    public var id: String { "gap:\(start)-\(end)" }
+
+    public init(start: Int, end: Int, status: Status) {
+        self.start = start
+        self.end = end
+        self.status = status
+    }
+}
+
+/// 行：数据行或缺口行。
+public enum MessageRow: Identifiable, Sendable {
+    case message(MessageRenderedMessage)
+    case gap(TranscriptGapRow)
+
+    public var id: String {
+        switch self {
+        case .message(let message): return message.id.uuidString
+        case .gap(let gap): return gap.id
+        }
+    }
+}
+
+/// 一次原子提交。
+public struct MessageSnapshotDiff: Sendable {
+    public struct Anchor: Sendable, Equatable {
+        public let seq: Int
+        public let offset: Double
+
+        public init(seq: Int, offset: Double) {
+            self.seq = seq
+            self.offset = offset
+        }
+    }
+
+    public let anchor: Anchor?
+    public let changes: [Change]
+
+    public enum Change: Sendable {
+        case insert([MessageRow])
+        case remove([String])
+        case update([MessageRow])
+    }
+
+    public init(anchor: Anchor? = nil, changes: [Change]) {
+        self.anchor = anchor
+        self.changes = changes
+    }
+}
+
+/// 预取目标：某个会话要预取到哪一条。
+public struct MessagePrefetchTarget: Sendable, Hashable {
+    public let session: MessageSessionRef
+    public let newestSeq: Int
+
+    public init(session: MessageSessionRef, newestSeq: Int) {
+        self.session = session
+        self.newestSeq = newestSeq
+    }
+}
 
 /// 一次落库变更（上行 pending / 下行记录共用）。
 public enum MessageRecordChange: Sendable {

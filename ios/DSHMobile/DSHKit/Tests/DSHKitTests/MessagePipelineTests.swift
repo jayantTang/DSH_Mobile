@@ -21,7 +21,7 @@ final class MessagePipelineTests: XCTestCase {
         try? FileManager.default.removeItem(at: directory)
     }
 
-    private let session = MessagePipeline.SessionRef(scope: "mac", sessionId: "s1")
+    private let session = MessageSessionRef(scope: "mac", sessionId: "s1")
 
     private func record(_ seq: Int, type: String = "assistant/message",
                         text: String = "hello") -> SessionRecord {
@@ -452,7 +452,7 @@ final class MessagePipelineTests: XCTestCase {
     }
 
     /// 当前快照里的全部数据行（订阅即得全量首帧）。
-    private func messages(_ pipeline: MessagePipeline) async -> [MessagePipeline.RenderedMessage] {
+    private func messages(_ pipeline: MessagePipeline) async -> [MessageRenderedMessage] {
         let stream = await pipeline.snapshots(for: session)
         var iterator = stream.makeAsyncIterator()
         guard case .insert(let rows)? = await iterator.next()?.changes.first else { return [] }
@@ -483,7 +483,7 @@ final class MessagePipelineTests: XCTestCase {
         await pipeline.pipeline(for: session).apply(events: [
             Self.turnEndRecord(seq: 1102).event,
         ])
-        var unconfirmed: MessagePipeline.RenderedMessage?
+        var unconfirmed: MessageRenderedMessage?
         for _ in 0..<6 {
             guard case .update(let rows)? = await iterator.next()?.changes.first,
                   case .message(let message) = rows.first else { continue }
@@ -515,7 +515,7 @@ final class MessagePipelineTests: XCTestCase {
         await pipeline.pipeline(for: session).apply(events: [
             Self.userRecord(seq: 42, text: "晚到的确认", rpcId: clientId.uuidString).event,
         ])
-        var rescued: MessagePipeline.RenderedMessage?
+        var rescued: MessageRenderedMessage?
         for _ in 0..<4 {
             guard case .update(let rows)? = await iterator.next()?.changes.first,
                   case .message(let message) = rows.first else { continue }
@@ -544,7 +544,7 @@ final class MessagePipelineTests: XCTestCase {
 
         await lookup.set(Self.userRecord(seq: 77, text: "核对", rpcId: clientId.uuidString))
         await pipeline.verify(clientId: clientId, for: session)
-        var confirmed: MessagePipeline.RenderedMessage?
+        var confirmed: MessageRenderedMessage?
         for _ in 0..<3 {
             guard case .update(let rows)? = await iterator.next()?.changes.first,
                   case .message(let message) = rows.first else { continue }
@@ -565,7 +565,7 @@ final class MessagePipelineTests: XCTestCase {
         _ = await iterator.next() // pending 插入
 
         await pipeline.verify(clientId: clientId, for: session)
-        var failed: MessagePipeline.RenderedMessage?
+        var failed: MessageRenderedMessage?
         for _ in 0..<3 {
             guard case .update(let rows)? = await iterator.next()?.changes.first,
                   case .message(let message) = rows.first else { continue }

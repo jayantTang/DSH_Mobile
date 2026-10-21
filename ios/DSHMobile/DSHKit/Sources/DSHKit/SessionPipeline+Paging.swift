@@ -90,18 +90,18 @@ extension SessionPipeline {
         currentGaps().map { $0.start...$0.end }
     }
 
-    func currentGaps() -> [GapRow] {
+    func currentGaps() -> [TranscriptGapRow] {
         guard let oldest = ranges.oldest, let newest = ranges.newest, oldest <= newest else { return [] }
         // 已问过的区间也参与"覆盖"判定：空号是已知无内容，不是待加载的缺口。
         var covered = ranges
         for span in asked.spans { covered.insert(span.start...span.end) }
         for span in knownEmptyRanges().spans { covered.insert(span.start...span.end) }
         return covered.gaps(within: oldest...newest).map { span in
-            GapRow(start: span.start, end: span.end, status: gapStatus(for: span))
+            TranscriptGapRow(start: span.start, end: span.end, status: gapStatus(for: span))
         }
     }
 
-    private func gapStatus(for span: RangeIndex.Span) -> GapRow.Status {
+    private func gapStatus(for span: RangeIndex.Span) -> TranscriptGapRow.Status {
         let pages = alignedPages(covering: span)
         // 只有"确实有人在取"才显示加载中；没有在飞页的缺口不许无限转圈。
         if pages.contains(where: { inFlight.contains($0.lowerBound) }) { return .loading }

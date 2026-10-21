@@ -15,7 +15,7 @@ final class UntrustedCursorTests: XCTestCase {
 
     private var directory: URL!
     private var store: MessageStore!
-    private let session = MessagePipeline.SessionRef(scope: "mac", sessionId: "s1")
+    private let session = MessageSessionRef(scope: "mac", sessionId: "s1")
 
     /// 记录取页请求的取页器（预取是 fire-and-forget，用 actor 收）。
     private actor RequestLog {

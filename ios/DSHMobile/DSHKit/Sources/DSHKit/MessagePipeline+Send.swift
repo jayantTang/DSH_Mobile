@@ -9,7 +9,7 @@ extension MessagePipeline {
     /// 确认后原地替换（身份不变）。失败标 failed（可重发，不丢身份）。
     /// `steer` 透给网络面（打断当前轮 vs 排队），与乐观行无关。
     @discardableResult
-    public func send(text: String, to session: SessionRef, steer: Bool = false) async throws -> UUID {
+    public func send(text: String, to session: MessageSessionRef, steer: Bool = false) async throws -> UUID {
         _ = await ensurePrimedState(for: session)
         let clientId = UUID()
         guard let row = insertOptimistic(text: text, clientId: clientId, for: session) else {
@@ -36,7 +36,7 @@ extension MessagePipeline {
     ///
     /// 重发前先按 clientId 查重（`confirmationLookup`，T022）：服务端最新页已有
     /// 说明崩溃前其实确认了只是没落库——只原地替换，**不重发**（否则消息发两遍）。
-    public func resend(clientId: UUID, for session: SessionRef) async throws {
+    public func resend(clientId: UUID, for session: MessageSessionRef) async throws {
         _ = await ensurePrimedState(for: session)
         guard let state = states[session],
               let seq = state.pendingSeqs[clientId],
@@ -72,7 +72,7 @@ extension MessagePipeline {
     /// 本机日志里同一 rpcId 因此出现了两条 `agent/inbox/spliced`（12:09 与 12:57），
     /// 而手机端按 rpcId 折成一行，界面上看不出重复。要不要再发一次由读者点重发决定。
     /// 幂等：已跟踪的 clientId 不重复插入。
-    public func restorePending(for session: SessionRef) async {
+    public func restorePending(for session: MessageSessionRef) async {
         guard let store,
               let pending = try? await store.pendingRecords(
                   scope: session.scope, sessionId: session.sessionId),
@@ -91,7 +91,7 @@ extension MessagePipeline {
         }
         guard var state = states[session] else { return }
         let landed = Self.landedRecords(in: state)
-        var inserted: [Row] = []
+        var inserted: [MessageRow] = []
         /// 已经在宿主确认过的 uuid → 正式记录：只清磁盘残留，不进时间线。
         var settled: [(clientId: String, record: SessionRecord)] = []
         for item in inspected {
@@ -111,14 +111,14 @@ extension MessagePipeline {
             let record = SessionRecord(event: SessionEvent(
                 type: event.type, seq: seq, time: event.time,
                 data: event.data, surfaceOp: event.surfaceOp))
-            let message = RenderedMessage(id: clientId, seq: seq, record: record, status: .failed)
+            let message = MessageRenderedMessage(id: clientId, seq: seq, record: record, status: .failed)
             state.rows[seq] = message
             state.pendingSeqs[clientId] = seq
             inserted.append(.message(message))
         }
         states[session] = state
         if !inserted.isEmpty {
-            broadcast(SnapshotDiff(changes: [.insert(inserted)]), to: state.continuations)
+            broadcast(MessageSnapshotDiff(changes: [.insert(inserted)]), to: state.continuations)
         }
         // pending 行留在磁盘上就等于"还没发送"，下次启动还会被当成未发出：
         // 用确认写入把它换成正式行（按 client_id 删除后写入，幂等）。
@@ -157,7 +157,7 @@ extension MessagePipeline {
     /// 「已发送，未确认，点击核对」（2026-10-17）：先按 clientId 对服务端最新页查一次。
     /// 命中说明其实已确认（只是确认帧没到），只原地替换成 sent；没命中才退回
     /// failed（「发送失败，点击重发」），由读者决定是否真的再发一次——不替读者决定。
-    public func verify(clientId: UUID, for session: SessionRef) async {
+    public func verify(clientId: UUID, for session: MessageSessionRef) async {
         _ = await ensurePrimedState(for: session)
         guard let state = states[session],
               let seq = state.pendingSeqs[clientId],
@@ -176,8 +176,8 @@ extension MessagePipeline {
     /// 用户消息的形状构造（content + source.rpcId=clientId），折叠身份
     /// `user-<clientId>` 与确认行一致——身份只有这一套，没有第二套 requestId。
     private func insertOptimistic(
-        text: String, clientId: UUID, for session: SessionRef
-    ) -> RenderedMessage? {
+        text: String, clientId: UUID, for session: MessageSessionRef
+    ) -> MessageRenderedMessage? {
         guard var state = states[session] else { return nil }
         let syntheticSeq = state.nextSyntheticSeq
         state.nextSyntheticSeq -= 1
@@ -189,16 +189,16 @@ extension MessagePipeline {
                 "content": .array([.object(["type": .string("text"), "text": .string(text)])]),
                 "source": .object(["kind": .string("user"), "rpcId": .string(clientId.uuidString)]),
             ]), surfaceOp: nil))
-        let message = RenderedMessage(id: clientId, seq: syntheticSeq, record: pending, status: .pending)
+        let message = MessageRenderedMessage(id: clientId, seq: syntheticSeq, record: pending, status: .pending)
         state.rows[syntheticSeq] = message
         state.pendingSeqs[clientId] = syntheticSeq
         states[session] = state
-        broadcast(SnapshotDiff(changes: [.insert([.message(message)])]), to: state.continuations)
+        broadcast(MessageSnapshotDiff(changes: [.insert([.message(message)])]), to: state.continuations)
         return message
     }
 
     /// ③④：调网络面；回包非 nil 立即原地替换 + 落库确认，nil 则等下行 rpcId 确认。
-    private func dispatch(clientId: UUID, text: String, steer: Bool, for session: SessionRef) async throws {
+    private func dispatch(clientId: UUID, text: String, steer: Bool, for session: MessageSessionRef) async throws {
         guard let confirmed = try await sender(session, text, clientId, steer) else { return }
         replacePending(clientId: clientId, with: confirmed, status: .sent, for: session)
         await pipeline(for: session).enqueueWrite(.confirmPending(
@@ -207,20 +207,20 @@ extension MessagePipeline {
     }
 
     /// failed → pending（重发开始的视觉回标，身份与位置都不动）。
-    private func markPending(clientId: UUID, for session: SessionRef) {
+    private func markPending(clientId: UUID, for session: MessageSessionRef) {
         guard var state = states[session],
               let seq = state.pendingSeqs[clientId],
               let old = state.rows[seq], old.status != .pending else { return }
-        let message = RenderedMessage(id: clientId, seq: seq, record: old.record, status: .pending)
+        let message = MessageRenderedMessage(id: clientId, seq: seq, record: old.record, status: .pending)
         state.rows[seq] = message
         states[session] = state
-        broadcast(SnapshotDiff(changes: [.update([.message(message)])]), to: state.continuations)
+        broadcast(MessageSnapshotDiff(changes: [.update([.message(message)])]), to: state.continuations)
     }
 
     /// pending → sent/failed 原地替换：同一 UUID、同一行位置语义，只换内容与状态。
     private func replacePending(
         clientId: UUID, with confirmed: SessionRecord?,
-        status: RenderedMessage.Status, for session: SessionRef
+        status: MessageSendStatus, for session: MessageSessionRef
     ) {
         guard var state = states[session],
               let syntheticSeq = state.pendingSeqs[clientId],
@@ -231,10 +231,10 @@ extension MessagePipeline {
         if confirmed != nil { state.pendingSeqs.removeValue(forKey: clientId) }
         let record = confirmed ?? old.record
         let seq = confirmed?.event.seq ?? syntheticSeq
-        let message = RenderedMessage(id: clientId, seq: seq, record: record, status: status)
+        let message = MessageRenderedMessage(id: clientId, seq: seq, record: record, status: status)
         state.rows[seq] = message
         if confirmed != nil { state.identities[seq] = clientId }
         states[session] = state
-        broadcast(SnapshotDiff(changes: [.update([.message(message)])]), to: state.continuations)
+        broadcast(MessageSnapshotDiff(changes: [.update([.message(message)])]), to: state.continuations)
     }
 }

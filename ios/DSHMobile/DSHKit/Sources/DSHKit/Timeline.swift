@@ -682,7 +682,7 @@ public struct ChatTimeline: Sendable {
     /// 管道折叠只还原文本，发送状态（pending/failed）由内存层按 seq 回标——
     /// pending 走回声样式（降透明度 + 等待提示），failed 给可点重发标记。
     /// 身份与行位置都不动，只翻状态位。
-    public mutating func markSendStates(_ statuses: [Int: MessagePipeline.RenderedMessage.Status]) {
+    public mutating func markSendStates(_ statuses: [Int: MessageSendStatus]) {
         for index in items.indices {
             guard let status = statuses[items[index].seq],
                   case .userMessage(let text, let images, let isSteering, _, let isAgentSent) = items[index].kind

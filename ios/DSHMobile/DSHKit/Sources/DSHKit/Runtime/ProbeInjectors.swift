@@ -41,7 +41,7 @@ final class EmptyPageInjector: @unchecked Sendable {
     }
 
     /// 某会话热窗口的最新 seq（nil = 还没建管道 / 还没有窗口）。
-    func hotNewest(for ref: MessagePipeline.SessionRef) async -> Int? {
+    func hotNewest(for ref: MessageSessionRef) async -> Int? {
         await boundPipeline()?.hotNewest(for: ref)
     }
 

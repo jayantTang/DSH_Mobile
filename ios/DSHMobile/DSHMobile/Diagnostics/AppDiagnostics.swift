@@ -72,8 +72,8 @@ final class AppDiagnostics {
         // TestFlight 里 sink 为 nil，事件零成本。
         DSHLog.sink = { [ring] line in ring.append(level: "info", source: "app", text: line) }
         // 协议层的逐页耗时：系统日志在真机上没有稳定到达，直接接进环。
-        SessionPipeline.traceSink = { [ring] line in ring.append(level: "info", source: "app", text: line) }
-        SessionPipeline.metricsSink = { [ring] fields in
+        MessageRuntimeDiagnostics.traceSink = { [ring] line in ring.append(level: "info", source: "app", text: line) }
+        MessageRuntimeDiagnostics.metricsSink = { [ring] fields in
             ring.append(level: "info", source: "app", text: "metrics.snapshot " + Self.metricsText(fields))
         }
         // 真机验证入口：`xcrun devicectl device process launch … -DSHDiagCommand on`
@@ -188,8 +188,8 @@ final class AppDiagnostics {
             installCaptureIfNeeded()
             DSHLog.sink = { [ring] line in ring.append(level: "info", source: "app", text: line) }
         // 协议层的逐页耗时：系统日志在真机上没有稳定到达，直接接进环。
-        SessionPipeline.traceSink = { [ring] line in ring.append(level: "info", source: "app", text: line) }
-        SessionPipeline.metricsSink = { [ring] fields in
+        MessageRuntimeDiagnostics.traceSink = { [ring] line in ring.append(level: "info", source: "app", text: line) }
+        MessageRuntimeDiagnostics.metricsSink = { [ring] fields in
             ring.append(level: "info", source: "app", text: "metrics.snapshot " + Self.metricsText(fields))
         }
             record(level: "info", source: "diag", text: "enabled by dsh://diag/on")
