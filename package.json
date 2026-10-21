@@ -48,6 +48,7 @@
     "check:traps": "node scripts/dev/check-traps.mjs",
     "check:layers": "node scripts/dev/check-layers.mjs",
     "check:project": "node scripts/dev/check-project.mjs",
+    "check:public-api": "node scripts/dev/check-public-api.mjs",
     "test:app-unit": "bash scripts/dev/verify-app-unit.sh",
     "gen:connector-baseline": "node scripts/dev/gen-connector-baseline.mjs",
     "sync:send-image-script": "node scripts/dev/sync-send-image-script.mjs",

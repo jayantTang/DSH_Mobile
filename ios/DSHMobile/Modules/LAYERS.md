@@ -36,6 +36,10 @@
 
 ```bash
 npm run check:module-boundaries
+npm run check:public-api
 ```
+
+`check:public-api` 对 `DSHKit/Sources/DSHKit` 的 public 声明/类型做预算
+（1,700 / 282，只减不增）；新增公开 API 前先删旧面。
 
 例外登记在 `BOUNDARY-EXCEPTIONS.md`，只减不增。
