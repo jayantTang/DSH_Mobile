@@ -154,6 +154,11 @@ struct DSHClient: Sendable {
         capabilities.contains(HistoryWindowWire.coverageCapability)
     }
 
+    /// `history-window` 是连接器能力，不是所有部署都有；取页必须按它选通道。
+    public var supportsExactHistoryWindow: Bool {
+        capabilities.contains("history-window")
+    }
+
     public func historyWindow(_ request: HistoryWindowRequest) async throws -> HistoryWindowValue {
         // 先按未类型化的 JSON 取回：连接器可能回纯 JSON，也可能回压缩信封
         // （`history-compression`）。按 `encoding` 字段识别，两种形态都能解；

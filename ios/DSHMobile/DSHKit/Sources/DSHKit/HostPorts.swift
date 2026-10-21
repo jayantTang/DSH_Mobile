@@ -11,6 +11,8 @@ public protocol ChatHosting: Sendable {
     var historyWindowEncoding: String? { get }
     var historyFoldEnabled: Bool { get }
     var historyCoverageEnabled: Bool { get }
+    /// 连接器是否声明了 `history-window`；没有时取页必须走 `session/page`。
+    var supportsExactHistoryWindow: Bool { get }
     func sessionPage(_ request: SessionPageRequest) async throws -> SessionPage
     func sessionFind(_ request: HistorySearchRequest) async throws -> HistorySearchValue
     func follow(_ request: SessionFollowRequest) async -> AsyncThrowingStream<SessionFollowFrame, any Error>

@@ -54,6 +54,7 @@ public final class MessageLayer {
     /// 挂 MainActor，地址簿自带锁。
     public final class AddressBook: @unchecked Sendable {
         private var table: [String: SessionAddress] = [:]
+        private var cursors: [String: Int] = [:]
         private let lock = NSLock()
 
         public init() {}
@@ -63,6 +64,7 @@ public final class MessageLayer {
             defer { lock.unlock() }
             for summary in summaries {
                 table[summary.sessionId] = summary.address
+                if let seq = summary.projections?.asOfSeq { cursors[summary.sessionId] = seq }
             }
         }
 
@@ -70,6 +72,14 @@ public final class MessageLayer {
             lock.lock()
             defer { lock.unlock() }
             return table[sessionId]
+        }
+
+        /// 该会话在列表里的最新 seq；旧 `session/page` 的 `throughSeq` 必须
+        /// 落在这里，不能传 `safeMaxBefore`（连接器会答 "past cursor"）。
+        public func throughSeq(for sessionId: String) -> Int? {
+            lock.lock()
+            defer { lock.unlock() }
+            return cursors[sessionId]
         }
     }
 
@@ -163,19 +173,36 @@ public final class MessageLayer {
                     let started = Date()
                     do {
                         // `before` 是开区间上界：页必须结束在 before-1，正好盖住 range。
-                        let value = try await client.historyWindow(HistoryWindowRequest(
-                            address: address, before: range.upperBound + 1, through: nil,
-                            limit: range.count, maxBytes: 256 * 1024,
-                            encoding: client.historyWindowEncoding,
-                            fold: client.historyFoldEnabled ? true : nil,
-                            coverage: client.historyCoverageEnabled ? true : nil))
+                        // `history-window` 是较新连接器的能力；旧连接器没有
+                        // `_link/sessionWindow`，直接请求会 404。没有声明时必须
+                        // 退回 `session/page`，否则上拉永远停在「加载失败」。
+                        let page: SessionPipeline.FetchPage
+                        if client.supportsExactHistoryWindow {
+                            let value = try await client.historyWindow(HistoryWindowRequest(
+                                address: address, before: range.upperBound + 1, through: nil,
+                                limit: range.count, maxBytes: 256 * 1024,
+                                encoding: client.historyWindowEncoding,
+                                fold: client.historyFoldEnabled ? true : nil,
+                                coverage: client.historyCoverageEnabled ? true : nil))
+                            page = SessionPipeline.FetchPage(
+                                records: value.records, hasMore: value.hasMore,
+                                clamped: value.clamped ?? false,
+                                knownEmpty: value.knownEmpty ?? [],
+                                revision: value.revision)
+                        } else {
+                            let through = addresses.throughSeq(for: ref.sessionId)
+                                ?? HistoryWindowRequest.safeMaxBefore
+                            let legacy = try await client.sessionPage(SessionPageRequest(
+                                address: address,
+                                throughSeq: through,
+                                beforeSeq: range.upperBound + 1,
+                                maxMessages: 20))
+                            page = SessionPipeline.FetchPage(
+                                records: legacy.records, hasMore: legacy.hasMore, clamped: true)
+                        }
                         await Self.noteFetch(probes, priority: priority, range: range,
-                                             started: started, records: value.records.count)
-                        return SessionPipeline.FetchPage(
-                            records: value.records, hasMore: value.hasMore,
-                            clamped: value.clamped ?? false,
-                            knownEmpty: value.knownEmpty ?? [],
-                            revision: value.revision)
+                                             started: started, records: page.records.count)
+                        return page
                     } catch {
                         await Self.noteFetch(probes, priority: priority, range: range,
                                              started: started, records: nil, failure: error)
