@@ -53,6 +53,12 @@
       "backlog": "i18n-backlog-app-rootview"
     },
     {
+      "rule": "hardcoded-string",
+      "file": "ios/DSHMobile/DSHMobile/App/MainView.swift",
+      "reason": "从 RootView 拆出的诊断/状态文案出口，沿用 app-rootview backlog，不在本轮范围",
+      "backlog": "i18n-backlog-app-mainview"
+    },
+    {
       "rule": "unlocalized-binding",
       "file": "ios/DSHMobile/DSHMobile/App/RootView.swift",
       "reason": "根视图的入口/错误文案出口，不在本轮范围（design「不做什么」4：其余界面只出清单不修）",
