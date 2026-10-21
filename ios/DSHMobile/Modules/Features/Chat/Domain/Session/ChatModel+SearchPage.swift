@@ -52,4 +52,72 @@ extension ChatModel {
         let scanned = min(total, max(0, total - max(0, remaining)))
         return SearchPage.SearchProgress(scannedChunks: scanned, totalChunks: total)
     }
+    /// 往前取一页进**搜索缓冲**（时间线不动）。
+    @discardableResult
+    public func extendSearchHistory() async -> Bool {
+        guard let from = searchOldestSeq ?? oldestSeq, from > 1 else { return false }
+        guard !isExtendingSearch,
+              let fetcher = makePageFetcher(pageSize: PageSize.searchBuffer) else { return false }
+        isExtendingSearch = true
+        defer { isExtendingSearch = false }
+        // 先看本地：搜索缓冲要的是"更早的一段"，本地库通常就有（还能省一次往返）。
+        if let scope = sessionScope, let sessionId = session?.sessionId,
+           let store = messageBacking,
+           let local = try? await store.windowBefore(
+               scope: scope, sessionId: sessionId, seq: from,
+               limit: Self.localSearchReadLimit) {
+            let fresh = local.filter { $0.event.seq < from }
+            if !fresh.isEmpty {
+                searchRecords.insert(contentsOf: fresh, at: 0)
+                searchOldestSeq = fresh.first?.event.seq
+                searchScopeVersion += 1
+                persistSearchHistory()
+                ChatProbe.shared.probeNote?("search.extended", [
+                    "from": String(from), "records": String(fresh.count),
+                    "source": "disk", "searchOldest": String(searchOldestSeq ?? -1),
+                ], true)
+                return true
+            }
+        }
+        // 本地没有才问宿主。取不到就是取不到：不写任何"没有更早了"的状态，读者可以再试（FR-003）。
+        guard let page = try? await fetcher.page(before: from) else {
+            setOlderState(.failed(String(localized: "读取更早的记录失败，点按重试")))
+            return false
+        }
+        let fresh = page.records.filter { $0.event.seq < from }
+        guard !fresh.isEmpty else { return false }
+        searchRecords.insert(contentsOf: fresh, at: 0)
+        searchOldestSeq = fresh.first?.event.seq
+        searchScopeVersion += 1
+        persistSearchHistory()
+        ChatProbe.shared.probeNote?("search.extended", [
+            "from": String(from),
+            "records": String(fresh.count),
+            "searchOldest": String(searchOldestSeq ?? -1),
+            "hostHasMore": page.hasMore ? "1" : "0",
+        ], true)
+        return true
+    }
+
+    /// 把搜索缓冲并进时间线（读者点了缓冲里的某一条时才做）。
+    ///
+    /// 只并"比时间线最老那条还老"的记录；并完清空缓冲，视图那边会跟着跳转。
+    @discardableResult
+    public func commitSearchHistory() -> Bool {
+        guard !searchRecords.isEmpty, let oldest = oldestSeq else { return false }
+        let fresh = searchRecords.filter { $0.event.seq < oldest }
+        searchRecords.removeAll()
+        searchOldestSeq = nil
+        cachedSearchItems = nil
+        searchScopeVersion += 1
+        guard !fresh.isEmpty else { return false }
+        let change = timeline.prepend(older: fresh)
+        if case .none = change { return false }
+        prependSignal += 1
+        ChatProbe.shared.probeNote?("search.committed", [
+            "records": String(fresh.count),
+            "oldest": String(oldestSeq ?? -1),
+        ], true)
+        return true
+    }
 }

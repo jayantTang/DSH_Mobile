@@ -50,7 +50,7 @@ public final class ChatModel {
     /// 屏幕上这批行（读 `visible`）。
     ///
     /// 注意：**不要**用它判断"这些行是不是这一屏的"——判断用 `rowsFor(screen:)`。
-    public private(set) var timeline: ChatTimeline {
+    public internal(set) var timeline: ChatTimeline {
         get { transcriptStore.timeline }
         set { transcriptStore.timeline = newValue }
     }
@@ -248,12 +248,12 @@ public final class ChatModel {
     /// Bumped whenever the transcript grows, so the view can autoscroll.
     public private(set) var scrollSignal: Int = 0
     /// 搜索范围（时间线 + 搜索缓冲）变了多少次，给搜索面板当刷新信号。
-    public private(set) var searchScopeVersion: Int {
+    public internal(set) var searchScopeVersion: Int {
         get { searchState.scopeVersion }
         set { searchState.scopeVersion = newValue }
     }
     /// 正在往前取搜索缓冲（面板据此显示转圈）。
-    public private(set) var isExtendingSearch: Bool {
+    public internal(set) var isExtendingSearch: Bool {
         get { searchState.isExtending }
         set { searchState.isExtending = newValue }
     }
@@ -264,7 +264,7 @@ public final class ChatModel {
     /// 状态还没被判成"用户自己在滚"的时候，补回来的一页会把人拽回底部；
     /// 而新插入的内容本身又会把视口顶到"新那段的开头"（2026-09-24 用户反馈）。
     /// 现在由视图自己按 `timeline.items.first` 把位置锚回来，见 `ChatView.pumpOlder`。
-    public private(set) var prependSignal: Int = 0
+    public internal(set) var prependSignal: Int = 0
     /// Bumped when the user themselves adds something, which is the one case
     /// where the view should jump back to the bottom even if they had scrolled
     /// away: they are waiting to see their own message land.
@@ -280,16 +280,16 @@ public final class ChatModel {
     private let transcriptCache = TranscriptCache()
 
     /// 搜索缓冲（存储在 `searchState`）：往前读进来、但还没并进时间线的那一段。
-    private var searchRecords: [SessionRecord] {
+    var searchRecords: [SessionRecord] {
         get { searchState.records }
         set { searchState.records = newValue }
     }
-    private var searchOldestSeq: Int? {
+    var searchOldestSeq: Int? {
         get { searchState.oldestSeq }
         set { searchState.oldestSeq = newValue }
     }
     /// `searchItems` 的结果缓存，键是"缓冲条数 + 时间线条数"。
-    private var cachedSearchItems: (key: String, items: [TimelineItem])? {
+    var cachedSearchItems: (key: String, items: [TimelineItem])? {
         get { searchState.cachedItems }
         set { searchState.cachedItems = newValue }
     }
@@ -302,7 +302,7 @@ public final class ChatModel {
     /// 磁盘层缺位（建库失败）时读写一律空转，行为退化为"只有内存缓存"。
     /// 磁盘层的入口。**不再直接持 `MessageStore`**：读写都走门面（`MessageLayer`），
     /// 实现层的类型名不出现在产品路径里（spec 023 边界收敛）。
-    private var messageBacking: MessageLayer? { messageLayer }
+    var messageBacking: MessageLayer? { messageLayer }
     /// 落盘尾部保留多少条（沿用 007 `SessionTranscriptCache.maxRecords` 的值）。
     private static let tailRecordLimit = 200
     /// 搜索缓冲一次从磁盘读多少条（沿用 007 `maxOlderRecords` 的值）。
@@ -396,7 +396,7 @@ public final class ChatModel {
     /// 本地窗口最老的数据行 seq（搜索缓冲与落盘用）。
     ///
     /// 管道模式下以桥里的记录为准；其余情况取时间线里第一条非缺口、非过程节点行。
-    private var oldestSeq: Int? {
+    var oldestSeq: Int? {
         if let bridge = pipelineBridge { return bridge.records.keys.min() }
         return timeline.items.first(where: { item in
             switch item.kind {
@@ -1077,7 +1077,7 @@ public final class ChatModel {
     }
 
     /// 把搜索缓冲写盘（读者每次往下翻一页都会走一次）。
-    private func persistSearchHistory() {
+    func persistSearchHistory() {
         guard let sessionId = session?.sessionId, let scope = sessionScope else { return }
         guard !searchRecords.isEmpty else { return }
         enqueueAppend(scope: scope, sessionId: sessionId, records: searchRecords)
@@ -1738,13 +1738,13 @@ public final class ChatModel {
     /// 为什么搜索缓冲必须是大的（2026-10-08 用例 44 实测）：旧 `session/page` 的"60 条"
     /// 指的是**消息**条数，实际会回 ~300 条记录；换成精确窗口之后 "60" 指的是记录条数，
     /// 同样一次调用覆盖的历史短了约 5 倍，于是"只看我的提问"往下滑能看到的老提问少了一大截。
-    private enum PageSize {
+    enum PageSize {
         public static let timeline = 60
-        public static let searchBuffer = 300
+        static let searchBuffer = 300
     }
 
     /// 搜索缓冲一次从本地读多少条。
-    private static let localSearchReadLimit = 300
+    static let localSearchReadLimit = 300
     /// 为一条命中补上下文时读多少条（命中要能落到某一个已加载的行上）。
     private static let hitContextLimit = 60
     /// 行载荷预算（spec 008 的契约默认值：32MB）。DEBUG 下可被探针压小，
@@ -1756,7 +1756,7 @@ public final class ChatModel {
         return 32 * 1024 * 1024
     }
 
-    private func makePageFetcher(pageSize: Int = PageSize.timeline) -> TranscriptPageFetcher? {
+    func makePageFetcher(pageSize: Int = PageSize.timeline) -> TranscriptPageFetcher? {
         guard let client = store?.chatHost, let address else { return nil }
         let capabilities = effectiveCapabilities
         #if DEBUG
@@ -1816,76 +1816,6 @@ public final class ChatModel {
         // 更早的老提问（2026-10-08 用例 44/46 实测）。宿主是否到底不是这里的判据。
         searchOldestSeq ?? oldestSeq ?? 1 > 1
     }
-
-    /// 往前取一页进**搜索缓冲**（时间线不动）。
-    @discardableResult
-    public func extendSearchHistory() async -> Bool {
-        guard let from = searchOldestSeq ?? oldestSeq, from > 1 else { return false }
-        guard !isExtendingSearch,
-              let fetcher = makePageFetcher(pageSize: PageSize.searchBuffer) else { return false }
-        isExtendingSearch = true
-        defer { isExtendingSearch = false }
-        // 先看本地：搜索缓冲要的是"更早的一段"，本地库通常就有（还能省一次往返）。
-        if let scope = sessionScope, let sessionId = session?.sessionId,
-           let store = messageBacking,
-           let local = try? await store.windowBefore(
-               scope: scope, sessionId: sessionId, seq: from,
-               limit: Self.localSearchReadLimit) {
-            let fresh = local.filter { $0.event.seq < from }
-            if !fresh.isEmpty {
-                searchRecords.insert(contentsOf: fresh, at: 0)
-                searchOldestSeq = fresh.first?.event.seq
-                searchScopeVersion += 1
-                persistSearchHistory()
-                ChatProbe.shared.probeNote?("search.extended", [
-                    "from": String(from), "records": String(fresh.count),
-                    "source": "disk", "searchOldest": String(searchOldestSeq ?? -1),
-                ], true)
-                return true
-            }
-        }
-        // 本地没有才问宿主。取不到就是取不到：不写任何"没有更早了"的状态，读者可以再试（FR-003）。
-        guard let page = try? await fetcher.page(before: from) else {
-            setOlderState(.failed(String(localized: "读取更早的记录失败，点按重试")))
-            return false
-        }
-        let fresh = page.records.filter { $0.event.seq < from }
-        guard !fresh.isEmpty else { return false }
-        searchRecords.insert(contentsOf: fresh, at: 0)
-        searchOldestSeq = fresh.first?.event.seq
-        searchScopeVersion += 1
-        persistSearchHistory()
-        ChatProbe.shared.probeNote?("search.extended", [
-            "from": String(from),
-            "records": String(fresh.count),
-            "searchOldest": String(searchOldestSeq ?? -1),
-            "hostHasMore": page.hasMore ? "1" : "0",
-        ], true)
-        return true
-    }
-
-    /// 把搜索缓冲并进时间线（读者点了缓冲里的某一条时才做）。
-    ///
-    /// 只并"比时间线最老那条还老"的记录；并完清空缓冲，视图那边会跟着跳转。
-    @discardableResult
-    public func commitSearchHistory() -> Bool {
-        guard !searchRecords.isEmpty, let oldest = oldestSeq else { return false }
-        let fresh = searchRecords.filter { $0.event.seq < oldest }
-        searchRecords.removeAll()
-        searchOldestSeq = nil
-        cachedSearchItems = nil
-        searchScopeVersion += 1
-        guard !fresh.isEmpty else { return false }
-        let change = timeline.prepend(older: fresh)
-        if case .none = change { return false }
-        prependSignal += 1
-        ChatProbe.shared.probeNote?("search.committed", [
-            "records": String(fresh.count),
-            "oldest": String(oldestSeq ?? -1),
-        ], true)
-        return true
-    }
-
 
     // MARK: - Outbound actions
 
