@@ -392,7 +392,7 @@ public final class ChatModel {
     /// 尾部追平（点胶囊/可见性兜底）进行中：胶囊转 spinner，兜底去重（T018/T019）。
     public var isCatchingUpTail = false
     /// 可见性兜底的幂等闩（T019）：一次只跑一轮「对 lastSeq」。
-    public var tailSyncInFlight = false
+    var tailSyncInFlight = false
     /// 本地窗口最老的数据行 seq（搜索缓冲与落盘用）。
     ///
     /// 管道模式下以桥里的记录为准；其余情况取时间线里第一条非缺口、非过程节点行。
