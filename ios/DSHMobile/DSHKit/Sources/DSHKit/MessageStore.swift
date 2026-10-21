@@ -12,10 +12,10 @@ import GRDB
 actor MessageStore {
 
     /// 传输类型 → 三角色（映射沿用连接器 `roleOf()`，spec「用户输入全量入库」）。
-    public enum Role: String, Sendable {
+    enum Role: String, Sendable {
         case me, agent, tool, other
 
-        public init(eventType: String) {
+        init(eventType: String) {
             switch eventType {
             case "user/message": self = .me
             case "assistant/message": self = .agent
@@ -33,7 +33,7 @@ actor MessageStore {
     /// - Parameters:
     ///   - path: 数据库文件路径；默认 `<caches>/message-store/messages.sqlite3`。
     ///     测试传临时目录（宪法 III：不碰真实数据）。
-    public init(path: URL? = nil, now: @escaping @Sendable () -> Date = Date.init) throws {
+    init(path: URL? = nil, now: @escaping @Sendable () -> Date = Date.init) throws {
         let url = path ?? FileManager.default
             .urls(for: .cachesDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("message-store", isDirectory: true)

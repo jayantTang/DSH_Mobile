@@ -24,7 +24,7 @@ extension MessageStore {
     // MARK: - 写入（下行记录 / 上行 pending 共用一个入口，批量事务）
 
     /// 应用一批去重后的变更（内存层 PendingWriteQueue drain 的结果）。
-    public func applyWrites(_ changes: [MessageRecordChange]) async throws {
+    func applyWrites(_ changes: [MessageRecordChange]) async throws {
         try await pool.write { db in
             for change in changes {
                 switch change {
@@ -117,7 +117,7 @@ extension MessageStore {
     // MARK: - 读取（区间/窗口/列表/用户输入）
 
     /// 读一个闭区间内的记录（升序）。区间判定命中后的水合走这里。
-    public func records(
+    func records(
         scope: String, sessionId: String, in range: ClosedRange<Int>
     ) async throws -> [SessionRecord] {
         try await pool.read { db in
@@ -170,7 +170,7 @@ extension MessageStore {
     }
 
     /// 某 seq 之前的一页（降序取、返回升序），向上翻页用。
-    public func windowBefore(
+    func windowBefore(
         scope: String, sessionId: String, seq: Int, limit: Int
     ) async throws -> [SessionRecord] {
         try await pool.read { db in
@@ -184,7 +184,7 @@ extension MessageStore {
     }
 
     /// 列表页：一次查询出全部会话聚合（冷启动零网络的关键）。
-    public func sessionStates(scope: String) async throws -> [MessageSessionState] {
+    func sessionStates(scope: String) async throws -> [MessageSessionState] {
         try await pool.read { db in
             let rows = try Row.fetchAll(db, sql: """
                 SELECT session_id, oldest_seq, newest_seq, has_more, last_opened,
@@ -210,7 +210,7 @@ extension MessageStore {
     }
 
     /// 持久化某会话的区间集（冷启动预取判定用，data-model「ranges_json」）。
-    public func saveRanges(scope: String, sessionId: String, ranges: RangeIndex) async throws {
+    func saveRanges(scope: String, sessionId: String, ranges: RangeIndex) async throws {
         let json = String(decoding: try JSONEncoder().encode(ranges.spans), as: UTF8.self)
         try await pool.write { db in
             try db.execute(sql: """
@@ -221,16 +221,16 @@ extension MessageStore {
     }
 
     /// 带版本的已知为空结论（一次写入即替换该会话其它版本）。
-    public struct KnownEmptyRecord: Sendable, Equatable {
-        public let revision: String
-        public let spans: [ClosedRange<Int>]
-        public init(revision: String, spans: [ClosedRange<Int>]) {
+    struct KnownEmptyRecord: Sendable, Equatable {
+        let revision: String
+        let spans: [ClosedRange<Int>]
+        init(revision: String, spans: [ClosedRange<Int>]) {
             self.revision = revision
             self.spans = spans
         }
     }
 
-    public func saveKnownEmpty(scope: String, sessionId: String, revision: String,
+    func saveKnownEmpty(scope: String, sessionId: String, revision: String,
                                spans: [ClosedRange<Int>], observedAt: TimeInterval) async throws {
         guard !spans.isEmpty else { return }
         try await pool.write { db in
@@ -250,7 +250,7 @@ extension MessageStore {
         }
     }
 
-    public func knownEmpty(scope: String, sessionId: String) async throws -> [KnownEmptyRecord] {
+    func knownEmpty(scope: String, sessionId: String) async throws -> [KnownEmptyRecord] {
         try await pool.read { db in
             var byRevision: [String: [ClosedRange<Int>]] = [:]
             let rows = try Row.fetchAll(db, sql: """
@@ -290,7 +290,7 @@ extension MessageStore {
     /// 用户输入全文搜索（record_fts，FTS5 trigram，本地唯一使用 FTS 的地方）。
     /// trigram 索引需要 ≥3 字符，短查询降级 LIKE 子串（用户输入量小，代价可忽略）。
     /// 返回按 seq 降序（由近及远），最多 200 条。
-    public func searchUserInputRecords(scope: String, query: String) async throws -> [UserInputEntry] {
+    func searchUserInputRecords(scope: String, query: String) async throws -> [UserInputEntry] {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return [] }
         return try await pool.read { db in
@@ -324,7 +324,7 @@ extension MessageStore {
 
 
     /// 「我问过的」候选记录（完整 SessionRecord），按会话、seq 升序。
-    public func userInputRecords(scope: String) async throws -> [UserInputEntry] {
+    func userInputRecords(scope: String) async throws -> [UserInputEntry] {
         try await pool.read { db in
             let rows = try Row.fetchAll(db, sql: """
                 SELECT session_id, payload FROM record

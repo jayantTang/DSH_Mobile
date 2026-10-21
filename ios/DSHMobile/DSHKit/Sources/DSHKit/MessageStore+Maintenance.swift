@@ -11,14 +11,14 @@ extension MessageStore {
     /// kv 键在库内按 scope 隔离（旧库是"目录 + 键"，这里合成一个键，语义不变）。
     private static func scoped(_ key: String, scope: String) -> String { "\(scope)/\(key)" }
 
-    public func meta(_ key: String, scope: String) async throws -> String? {
+    func meta(_ key: String, scope: String) async throws -> String? {
         try await pool.read { db in
             try String.fetchOne(db, sql: "SELECT value FROM meta WHERE key = ?",
                                 arguments: [Self.scoped(key, scope: scope)])
         }
     }
 
-    public func setMeta(_ key: String, _ value: String, scope: String) async throws {
+    func setMeta(_ key: String, _ value: String, scope: String) async throws {
         try await pool.write { db in
             try db.execute(sql: "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
                            arguments: [Self.scoped(key, scope: scope), value])
@@ -27,7 +27,7 @@ extension MessageStore {
 
     // MARK: - 单个会话状态（冷启动尾部恢复用）
 
-    public func sessionState(scope: String, sessionId: String) async throws -> MessageSessionState? {
+    func sessionState(scope: String, sessionId: String) async throws -> MessageSessionState? {
         try await pool.read { db in
             guard let row = try Row.fetchOne(db, sql: """
                 SELECT session_id, oldest_seq, newest_seq, has_more, last_opened,
@@ -52,7 +52,7 @@ extension MessageStore {
     // MARK: - 清除
 
     /// 删掉一个会话在本库里的全部痕迹（记录、聚合行、kv）。
-    public func clear(scope: String, sessionId: String) async throws {
+    func clear(scope: String, sessionId: String) async throws {
         try await pool.write { db in
             try db.execute(sql: "DELETE FROM record WHERE scope = ? AND session_id = ?",
                            arguments: [scope, sessionId])
@@ -66,7 +66,7 @@ extension MessageStore {
     }
 
     /// 整库清空（「清除本地缓存」按钮、DEBUG 探针）。表保留，只清内容。
-    public func clearAll() async throws {
+    func clearAll() async throws {
         try await pool.write { db in
             try db.execute(sql: "DELETE FROM record")
             try db.execute(sql: "DELETE FROM session_state")
