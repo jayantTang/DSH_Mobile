@@ -605,8 +605,10 @@ async function runCase(flags, positional, pairing) {
   const child = spawn('xcodebuild', ['-project', join(PROJECT, 'DSHMobile.xcodeproj'),
     '-scheme', 'DSHMobile', '-configuration', 'Debug',
     '-destination', `platform=iOS Simulator,id=${simId}`, '-derivedDataPath', DERIVED,
-    '-resultBundlePath', resultBundle, 'test-without-building',
-    '-only-testing:DSHMobileUITests/Engine'],
+    '-resultBundlePath', resultBundle,
+    '-test-timeouts-enabled', 'YES',
+    '-default-test-execution-time-allowance', '180',
+    'test-without-building', '-only-testing:DSHMobileUITests/Engine'],
     { env: { ...process.env, DSH_RUN: runId, TEST_RUNNER_DSH_PLAN_JSON: JSON.stringify(plan) },
       stdio: ['ignore', 'inherit', 'inherit'] })
   const startedAt = new Date()
