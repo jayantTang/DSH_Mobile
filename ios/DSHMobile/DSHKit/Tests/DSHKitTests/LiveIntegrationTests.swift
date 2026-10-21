@@ -378,8 +378,20 @@ final class LiveIntegrationTests: XCTestCase {
         let carrier = makeCarrier()
         let client = HostClientFactory.make(carrier: carrier)
         guard client.capabilities.contains("session-search") else {
+            // 连接器没有声明能力时，真实宿主必须拒绝，而不是假装返回空结果。
+            do {
+                _ = try await withDeadline(seconds: 10) {
+                    try await client.sessionFind(HistorySearchRequest(
+                        address: .session(sessionId: "unsupported"), query: "的"))
+                }
+                XCTFail("a connector without session-search accepted the request")
+            } catch is DeadlineExceeded {
+                XCTFail("unsupported search hung instead of failing")
+            } catch {
+                // expected: unsupported capability is a clean failure
+            }
             await carrier.close()
-            throw XCTSkip("connector does not declare session-search")
+            return
         }
         let sessions = try await client.sessions()
         guard let target = TestQuarantine.shared.usable(sessions.items)
@@ -400,8 +412,18 @@ final class LiveIntegrationTests: XCTestCase {
         let carrier = makeCarrier()
         let client = HostClientFactory.make(carrier: carrier)
         guard client.capabilities.contains("session-digest") else {
+            do {
+                _ = try await withDeadline(seconds: 10) {
+                    try await client.sessionDigest(since: nil)
+                }
+                XCTFail("a connector without session-digest accepted the request")
+            } catch is DeadlineExceeded {
+                XCTFail("unsupported digest hung instead of failing")
+            } catch {
+                // expected: unsupported capability is a clean failure
+            }
             await carrier.close()
-            throw XCTSkip("connector does not declare session-digest")
+            return
         }
         let first = try await withDeadline(seconds: 15) { try await client.sessionDigest(since: nil) }
         let second = try await withDeadline(seconds: 15) { try await client.sessionDigest(since: nil) }
