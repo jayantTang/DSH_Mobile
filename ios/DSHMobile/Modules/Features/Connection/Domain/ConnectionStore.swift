@@ -46,7 +46,7 @@ public final class ConnectionStore {
     }
 
     public private(set) var profiles: [ConnectionProfile] = []
-    public private(set) var state: State = .disconnected
+    public internal(set) var state: State = .disconnected
     private(set) var client: (any HostClient)?
     /// 诊断只需要的传输载体视图；不把 DSHClient 暴露到 App。
     public var diagnosticsCarrier: (any DSHCarrier)? { client?.carrier }
@@ -76,8 +76,8 @@ public final class ConnectionStore {
     /// The profile currently connected, if any.
     public private(set) var activeProfile: ConnectionProfile?
     /// 032：账户级状态推送的订阅者（key 列表）与当前帧源任务。
-    private var accountStateObservers: [UUID: AsyncStream<[String]>.Continuation] = [:]
-    private var accountStateFrameTask: Task<Void, Never>?
+    var accountStateObservers: [UUID: AsyncStream<[String]>.Continuation] = [:]
+    var accountStateFrameTask: Task<Void, Never>?
 
     /// What identifies "the computer we are talking to", for caches that must
     /// not survive a switch: the agent id when there is one, otherwise the
@@ -120,7 +120,7 @@ public final class ConnectionStore {
     public private(set) var hostVersion: String? = nil
 
 
-    private var carrier: (any DSHCarrier)?
+    var carrier: (any DSHCarrier)?
     private var statusTask: Task<Void, Never>?
     private var socketStateTask: Task<Void, Never>?
     /// Store 拨号路径的单飞（T005d，US3）：同时最多一次 connect 在飞。
@@ -134,11 +134,11 @@ public final class ConnectionStore {
     /// 这里只保留**循环**（什么时候睡、睡完探还是拨）；判断一律问 `LinkSupervisor`，
     /// 于是"连续两次才算断""活得够久才清零退避"这些口径有了单测，不必再上真机验。
     /// Carrier 自愈用的策略与它同形（`ReconnectPolicy`）。
-    private var supervisor = LinkSupervisor()
+    var supervisor = LinkSupervisor()
     /// 上一次进入已连接的时刻，用于判断这次连接"活得够不够久"。
     private var connectedAt: Date?
     /// 最近一次列表采样条数（重装 client 时沿用它，不必为此再拉一次列表）。
-    private var lastSampleCount = 0
+    var lastSampleCount = 0
     /// Probes a live link and repairs a dropped one.
     private var watchTask: Task<Void, Never>?
 
@@ -147,7 +147,7 @@ public final class ConnectionStore {
     /// 为什么由 store 持有而不是每条 carrier 各建一个：修复连接时会换一个全新的 carrier，
     /// 而"上次为什么断、手机上几点发生的"必须跨 carrier 连起来看；每建一个就写一份文件
     /// 还会互相滚动覆盖。落在 App 容器的 Application Support 下（不是 `~/.dsh`）。
-    private let linkDiagnostics: LinkDiagnostics = {
+    let linkDiagnostics: LinkDiagnostics = {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
         let directory = base?.appendingPathComponent("link-diagnostics", isDirectory: true)
         return LinkDiagnostics(directory: directory)
@@ -156,63 +156,8 @@ public final class ConnectionStore {
     /// 前后台切换（spec 020 的 FR-009）。用来把"App 被系统挂起"与"拨号卡住"分开。
     public enum AppScene: String, Sendable { case foreground, background }
 
-    /// 探针这一次列表调用带的能力。
-    ///
-    /// **乐观地先按"对方支持精简版"试**：探针跑在握手之前，此时还不知道能力；而探针恰好是
-    /// 冷启动里最大的一次列表拉取（731 KB → 50 KB）。老连接器上这次调用会返回
-    /// `status=unsupported`，`sessions()` 捕获后自动回退到 `session/list`，代价只是一次几百毫秒的往返。
-    private var probeCapabilities: Set<String> { [HostClientFactory.sessionDigestCapability] }
-
-    /// 记一条前后台切换。**不依赖 carrier**：链路还没建起来时更要记——
-    /// "App 回到前台但一直没拨号"正是最需要看见的现场（记录走 store 自己那份流水）。
-    public func noteScene(_ scene: AppScene, cold: Bool = false) async {
-        await linkDiagnostics.record(kind: "app.scene", detail: [
-            "phase": .string(scene.rawValue), "cold": .bool(cold),
-        ])
-        // 回到前台是"用户主动回来"，退避清零并立刻探一次（spec 022 FR-002）：
-        // 用户等着的时候不该还在按退避倒计时。
-        if scene == .foreground {
-            supervisor.reset()
-        }
-        // 回到前台顺手把攒下的记录推上去（后台期间可能攒了"挂起—恢复"这一串）。
-        if scene == .foreground, let link = carrier as? LinkCarrier { await pushDiagnostics(link) }
-    }
-
-    /// 冷启动：进程从零起来并进入前台。与"从后台回来"必须分得开（现场诊断发现的缺口）。
-    public func noteColdLaunch() async {
-        await noteScene(.foreground, cold: true)
-    }
-
-    /// 首个内容真的画出来了（由会话行的 `onAppear` 调用）。一次拨号只记一条。
-    public func noteFirstRender() async {
-        await linkDiagnostics.markFirstRender()
-        if let link = carrier as? LinkCarrier { await pushDiagnostics(link) }
-    }
-
-    /// 把 App 攒下的阶段记录增量推给连接器（spec 020 的 FR-011）。
-    ///
-    /// 三条纪律：
-    ///   1. **失败当无事**（旧连接器回 `link/unsupported` 是预期内的），下次 install/回前台再试；
-    ///   2. 只推 `pending()`（未推过的），水位按连接器确认的 `lastSeq` 前进——不重发也不漏发；
-    ///   3. 绝不因为推送失败改变连接状态。
-    func pushDiagnostics(_ link: LinkCarrier) async {
-        let pending = await link.diagnostics.pending()
-        guard !pending.isEmpty, let client else { return }
-        let request = LinkDiagnosticsRequest(
-            since: await link.diagnostics.pushedUpTo,
-            sentAt: Int(Date().timeIntervalSince1970 * 1000),
-            dropped: await link.diagnostics.dropped,
-            events: pending,
-            client: LinkDiagnosticsClient(name: Self.clientName,
-                                          version: Self.clientVersion,
-                                          build: Self.clientBuild)
-        )
-        guard let ack = try? await client.pushDiagnostics(request) else { return }
-        await link.diagnostics.markPushed(upTo: ack.lastSeq)
-    }
-
     /// 只在两次动作之间记录**首个**交互的耗时（FR-010）：第一个数据请求发出与它的响应到达。
-    private var firstInteractionRecorded = false
+    var firstInteractionRecorded = false
 
     /// 记首个数据交互的耗时与字节（由消息管道在收到首个响应时调用）。
     public func noteFirstInteraction(method: String, ms: Int, bytes: Int) async {
@@ -375,49 +320,6 @@ public final class ConnectionStore {
     /// A failure here is reported as a failure. `fileTransferTarget()` says which
     /// of the "there is no route from here" cases applies, and anything else
     /// propagates untouched — the caller shows it and the person can send again.
-    public func uploadFile(
-        fileURL: URL,
-        name: String,
-        sessionId: String
-    ) async throws -> StagedFile {
-        let target = try fileTransferTarget()
-        return try await RelayFileTransfer(
-            relayURL: target.relayURL, deviceToken: target.deviceToken
-        ).upload(fileURL: fileURL, name: name, sessionId: sessionId).asStaged
-    }
-
-    /// The target of a file transfer — relay origin plus device credential — or
-    /// the reason there is no route from here.
-    ///
-    /// **Shared by both directions on purpose.** Upload and download must agree
-    /// on what "cannot transfer" means, and a second copy of this policy is
-    /// exactly how the two directions drifted apart before. The four ways it can
-    /// fail are statements about the *connection*, not a choice between
-    /// transports: none of them falls through to another route, because there
-    /// isn't one.
-    ///
-    /// `throws` rather than returning `nil`: a `nil` is what made the old code
-    /// silently take the WSS path.
-    public func fileTransferTarget() throws -> (relayURL: URL, deviceToken: String) {
-        guard case .relay(let relayURL, _)? = activeProfile?.transport else {
-            // `.direct` (`dsh://direct`) is the DEBUG-only test channel; the
-            // product has exactly one connection method. It stays usable, but it
-            // cannot carry file bytes — and saying so beats quietly using a
-            // different path than the product does.
-            throw RelayFileTransfer.Unavailable.noRelay
-        }
-        guard supports(RelayFileTransfer.capability) else {
-            throw RelayFileTransfer.Unavailable.connectorTooOld
-        }
-        guard let httpRelay = ConnectLink.normalizedRelayURL(relayURL) else {
-            throw RelayFileTransfer.Unavailable.relayAddressInvalid
-        }
-        guard let profile = activeProfile, let secret = Keychain.get(profile.secretAccount) else {
-            throw RelayFileTransfer.Unavailable.credentialMissing
-        }
-        return (httpRelay, secret)
-    }
-
     /// Connects using a saved profile, reusing its stored secret.
     public func connect(to profile: ConnectionProfile) async {
         // Re-resolved by the handshake: leftovers from another computer would
@@ -556,7 +458,7 @@ public final class ConnectionStore {
     /// - Parameter closePrevious: 用**同一个** carrier 重装（链路自愈后的恢复）时必须传
     ///   `false`：否则末尾那条"关掉上一个"会把刚恢复的 socket 自己关掉，当场又掉一次
     ///   （spec 022 的振荡现场就是这么来的）。
-    private func install(carrier: any DSHCarrier, profile: ConnectionProfile, sampleCount: Int,
+    func install(carrier: any DSHCarrier, profile: ConnectionProfile, sampleCount: Int,
                          dialStartedAt: Date? = nil, closePrevious: Bool = true) async {
         let previous = self.carrier
         self.carrier = carrier
@@ -721,45 +623,6 @@ public final class ConnectionStore {
                 await self.connectSingleFlight(profile: profile, secret: secret, join: true)
             }
             self?.watchTask = nil
-        }
-    }
-
-    /// 轻量探活 + 恢复。
-    ///
-    /// 探活用 `_link/hello`（实测 ~134 ms、几百字节，连接器本地应答），**不**用
-    /// `client.sessions()`：那条路会拉整份会话列表，失败时还会回退到 734 KB 的旧通道，
-    /// 于是"列表慢"被误判成"链路死"，正是风暴的放大器（research §二①②）。
-    private func probeHost(client: any HostClient, carrier: any DSHCarrier,
-                           profile: ConnectionProfile) async {
-        let started = Date()
-        do {
-            _ = try await client.linkHandshake(client: LinkHandshakeRequest(
-                clientName: Self.clientName,
-                clientVersion: Self.clientVersion,
-                clientBuild: Self.clientBuild
-            ))
-            let ms = Int(Date().timeIntervalSince(started) * 1000)
-            _ = supervisor.noteProbe(ok: true)
-            await linkDiagnostics.record(kind: "link.probe", detail: [
-                "ok": .bool(true), "ms": .int(ms), "fails": .int(supervisor.consecutiveProbeFailures),
-            ])
-            if !state.isConnected {
-                // Carrier 已经把 socket 自愈回来了：同一个 carrier 重装 client，
-                // 不建新 socket（FR-005）。
-                await install(carrier: carrier, profile: profile,
-                              sampleCount: lastSampleCount, closePrevious: false)
-            }
-        } catch {
-            let verdict = supervisor.noteProbe(ok: false)
-            let ms = Int(Date().timeIntervalSince(started) * 1000)
-            await linkDiagnostics.record(kind: "link.probe", detail: [
-                "ok": .bool(false), "ms": .int(ms), "fails": .int(supervisor.consecutiveProbeFailures),
-            ])
-            // 单次失败不判断开（FR-004）：链路抖一下不该让界面闪"重连中"。
-            // "几次才算断"由监管决定（`Policy.failuresToDeclareDown`，默认 2）。
-            if verdict == .declareDown, state.isConnected {
-                state = .connecting("连接中断，正在重连…")
-            }
         }
     }
 
@@ -1047,46 +910,3 @@ public final class ConnectionStore {
 
 }
 
-// MARK: - LinkService 协议符合
-extension ConnectionStore: LinkService {
-    /// 032：账户级状态推送的**稳定**订阅口。
-    ///
-    /// 为什么要经过 store 而不是直接订阅 carrier：一条链路一个 carrier，配对、重连、切档案
-    /// 都会换新的，而旧 carrier 的流既不会结束也不会再来帧——订阅方就此永远沉默。
-    /// 这里由 store 持有订阅者名单，每次装上新 carrier（`install`）就把帧源接过去。
-    public func accountStateStream() async -> AsyncStream<[String]> {
-        await MainActor.run {
-            let id = UUID()
-            let (stream, continuation) = AsyncStream<[String]>.makeStream()
-            accountStateObservers[id] = continuation
-            continuation.onTermination = { [weak self] _ in
-                Task { @MainActor in self?.accountStateObservers.removeValue(forKey: id) }
-            }
-            return stream
-        }
-    }
-
-    /// 把帧源接到当前 carrier 上（`install` 每次装新 carrier 都调）。旧的那条先取消。
-    @MainActor
-    private func rewireAccountStateFrames() {
-        accountStateFrameTask?.cancel()
-        guard let carrier = client?.carrier as? LinkCarrier else {
-            accountStateFrameTask = nil
-            return
-        }
-        probeNote?("accountState.wire", ["observers": String(accountStateObservers.count)], false)
-        accountStateFrameTask = Task { [weak self] in
-            let raw = await carrier.accountStateStream()
-            for await keys in raw {
-                guard let self else { return }
-                guard !Task.isCancelled else { return }
-                self.probeNote?("accountState.frame",
-                                ["keys": keys.joined(separator: ","),
-                                 "observers": String(self.accountStateObservers.count)], false)
-                for continuation in self.accountStateObservers.values {
-                    continuation.yield(keys)
-                }
-            }
-        }
-    }
-}
