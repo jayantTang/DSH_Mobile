@@ -44,7 +44,7 @@ public struct ChatView: View {
     /// there are only 3 items in section 0`——91 是上一个会话的最后一行，3 是新会话
     /// 空转写的两行占位 + 底部标记。UIKit 抛的异常没人接 = 闪退。
     /// 所以：不是我的会话，就一次都不滚。
-    private var ownsTranscript: Bool { model.session?.sessionId == sessionId }
+    private var ownsTranscript: Bool { ChatViewOwnership.isOwner(sessionId: model.session?.sessionId, viewSessionId: sessionId) }
 
     /// 这一屏**实际交给渲染器**的行。
     ///
