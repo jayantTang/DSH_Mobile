@@ -91,7 +91,7 @@ let package = Package(
         // 纯协议：连接服务接口
         .target(
             name: "DSHConnectionAPI",
-            dependencies: [dshKit, relayKit],
+            dependencies: [dshKit],
             path: "Contracts/Sources",
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),

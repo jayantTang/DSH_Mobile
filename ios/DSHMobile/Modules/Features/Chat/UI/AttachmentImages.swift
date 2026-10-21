@@ -66,9 +66,9 @@ public final class AttachmentImages {
         "\(session)|\(attachmentId)"
     }
 
-    private weak var store: (any LinkService)?
+    private weak var store: (any ConnectionStatus)?
 
-    public func attach(store: any LinkService) {
+    public func attach(store: any ConnectionStatus) {
         self.store = store
     }
 

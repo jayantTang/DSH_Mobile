@@ -10,7 +10,7 @@ import Observation
 /// （读 `env.state` 会读到 `ConnectionStore.state` 的 observation registrar）。
 @MainActor
 @Observable
-public final class ConnectionEnv: LinkService {
+public final class ConnectionEnv: ConnectionStatus, ConnectionLink, FileTransferring {
 
     private let service: any LinkService
 
@@ -38,16 +38,12 @@ public final class ConnectionEnv: LinkService {
     public var activityHost: (any ActivityHosting)? { service.activityHost }
     public var gitHost: (any GitHosting)? { service.gitHost }
     public var link: LinkGateway { service.link }
-    public var supportsFileTransfer: Bool { service.supportsFileTransfer }
+    public var supportsFileTransfer: Bool { service.supports(LinkHandshake.Capability.backgroundTransfer) }
     public var showsOutdatedConnectorNotice: Bool { service.showsOutdatedConnectorNotice }
 
     public func dismissOutdatedConnectorNotice() { service.dismissOutdatedConnectorNotice() }
     public func noteFirstRender() async { await service.noteFirstRender() }
-    public func accountStateStream() async -> AsyncStream<[String]> { await service.accountStateStream() }
     public func supports(_ capability: String) -> Bool { service.supports(capability) }
-    public func uploadFile(fileURL: URL, name: String, sessionId: String) async throws -> StagedFile {
-        try await service.uploadFile(fileURL: fileURL, name: name, sessionId: sessionId)
-    }
     public func fileTransferTarget() throws -> (relayURL: URL, deviceToken: String) {
         try service.fileTransferTarget()
     }

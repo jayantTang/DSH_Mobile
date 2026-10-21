@@ -32,9 +32,9 @@ public final class DirectoryBrowserModel {
     /// so the field is not merely a label: it is a jump target.
     public var pathDraft = ""
 
-    private weak var store: (any LinkService)?
+    private weak var store: (any ConnectionStatus)?
 
-    public func attach(to store: any LinkService) {
+    public func attach(to store: any ConnectionStatus) {
         self.store = store
     }
 

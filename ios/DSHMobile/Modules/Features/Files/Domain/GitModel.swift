@@ -42,7 +42,7 @@ public final class GitModel {
 
     public var searchText: String = ""
 
-    private weak var store: (any LinkService)?
+    private weak var store: (any ConnectionStatus)?
 
     public init(scope: WorkspaceFileScope) {
         self.scope = scope
@@ -52,7 +52,7 @@ public final class GitModel {
         self.init(scope: WorkspaceFileScope(summary: summary, hostHome: hostHome))
     }
 
-    public func attach(to store: any LinkService) {
+    public func attach(to store: any ConnectionStatus) {
         self.store = store
     }
 

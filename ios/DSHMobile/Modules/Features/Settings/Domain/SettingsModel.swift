@@ -134,7 +134,7 @@ public final class SettingsModel {
     private var resetKeys: [String: Set<String>] = [:]
     private var saveTasks: [String: Task<Void, Never>] = [:]
 
-    private weak var store: (any LinkService)?
+    private weak var store: (any ConnectionStatus & ConnectionLink)?
 
     /// How long typing pauses before a write goes out.
     private let debounce = Duration.milliseconds(650)
@@ -145,7 +145,7 @@ public final class SettingsModel {
 
     // MARK: - Lifecycle
 
-    public func attach(to store: any LinkService) {
+    public func attach(to store: any ConnectionStatus & ConnectionLink) {
         self.store = store
     }
 
@@ -368,7 +368,7 @@ public final class SettingsModel {
     /// resolved transport is the relay". `endpoint(from:)` already resolves which
     /// profile this phone is on — including the fallback to a single saved
     /// profile before the handshake — so the two cannot drift apart.
-    private static func canManageDevices(_ store: (any LinkService)?) -> Bool {
+    private static func canManageDevices(_ store: (any ConnectionStatus & ConnectionLink)?) -> Bool {
         if case .relay = endpoint(from: store).transport { return true }
         return false
     }
@@ -652,7 +652,7 @@ public final class SettingsModel {
     /// `ConnectionStore.activeProfile` is authoritative once connected; before
     /// that, a single saved profile is unambiguous enough to name, and anything
     /// less is reported as undetermined rather than guessed.
-    private static func endpoint(from store: (any LinkService)?) -> (endpoint: String?, transport: Transport) {
+    private static func endpoint(from store: (any ConnectionStatus)?) -> (endpoint: String?, transport: Transport) {
         guard let store else { return (nil, .unknown) }
         if let active = store.activeProfile {
             return (store.activeBaseURL?.absoluteString ?? active.subtitle, active.isDirect ? .direct : .relay)

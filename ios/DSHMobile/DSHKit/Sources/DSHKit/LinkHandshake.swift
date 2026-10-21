@@ -56,6 +56,8 @@ public struct LinkHandshake: Decodable, Sendable {
     /// name nothing calls would just be dead code.
     public enum Capability {
         static let fileTransfer = "file-transfer"
+        /// 经中转的后台文件传输（RelayFileTransfer.capability 的协议侧名字）。
+        public static let backgroundTransfer = "background-transfer"
         public static let events = "events"
         static let sessionStreams = "session-streams"
         public static let pairCode = "pair-code"

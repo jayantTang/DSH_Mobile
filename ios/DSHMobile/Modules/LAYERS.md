@@ -10,7 +10,7 @@
 |---|---|---|---|
 | 基础 | `Foundation/` | `DSHFoundation` | 无 |
 | 界面基础 | `Design/` | `DSHDesign` | `DSHFoundation` |
-| 契约 | `Contracts/` | `DSHConnectionAPI` | `DSHKit`、`RelayKit` |
+| 契约 | `Contracts/` | `DSHConnectionAPI` | `DSHKit` |
 | 服务 | `Core/` | `DSHCore` | `Contracts`、`Foundation`、`DSHKit`、`RelayKit` |
 | 功能单元 | `Features/<Unit>/Domain` | `DSH<Unit>Domain` | `Core`、`Contracts`、`Foundation`、`DSHKit`、`RelayKit` |
 | 功能单元 | `Features/<Unit>/UI` | `DSH<Unit>UI` | 本单元 Domain、`Contracts`、`Design`、`Core`、`Foundation`、`DSHKit`、`RelayKit` |

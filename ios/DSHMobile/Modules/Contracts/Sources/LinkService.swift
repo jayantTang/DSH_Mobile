@@ -1,68 +1,72 @@
 import DSHKit
 import Foundation
-import RelayKit
 
 /// 连接服务的抽象（契约 C3/C6）：Core 与其它单元只依赖这个协议，
 /// 不依赖 DSHConnectionDomain 的具体实现 `ConnectionStore`。
 ///
 /// 为什么放纯协议层：Core（L2）要拿连接状态、要让别人能注入假实现，
 /// 不能反过来依赖功能单元的实现 target。
+/// 只读连接状态与宿主能力：UI 与只读模型依赖这一段。
 @MainActor
-public protocol LinkService: AnyObject {
-    /// 已保存的连接方式列表。
+public protocol ConnectionStatus: AnyObject {
     var profiles: [ConnectionProfile] { get }
-    /// 当前选中的连接方式。
     var activeProfile: ConnectionProfile? { get }
-    /// 当前连接状态（UI 穷举展示）。
     var state: ConnectionState { get }
-    /// 最近一次错误（用户可读）。
     var lastError: String? { get }
-    /// 对端能力集（如文件传输）。
     var capabilities: Set<String> { get }
-    /// 连接器版本号。
     var connectorVersion: String? { get }
-    /// 跑连接器的宿主 DSH 版本（握手带回；未知为 nil）。
     var hostVersion: String? { get }
-    /// 对端家目录（路径缩写用）。
     var hostHome: String? { get set }
-    /// 当前连接的基地址。
     var activeBaseURL: URL? { get }
-    /// 本机标识（host 侧会话归档键）。
     var scopeId: String? { get }
-    /// 按单元切开的宿主能力（Domain 不直接持 DSHClient）。
     var chatHost: (any ChatHosting)? { get }
     var settingsHost: (any SettingsHosting)? { get }
     var filesHost: (any FilesHosting)? { get }
     var directoryHost: (any DirectoryHosting)? { get }
     var activityHost: (any ActivityHosting)? { get }
     var gitHost: (any GitHosting)? { get }
-    /// 链路门面（读状态、发事件应答）。
-    var link: LinkGateway { get }
-    /// 账户级状态变化（032）：给出变了的 key；值要去 `/account/state` 拉。
-    func accountStateStream() async -> AsyncStream<[String]>
-
-    /// 能力探测：对端是否支持某个能力 id。
     func supports(_ capability: String) -> Bool
-    /// 经中转上传一个文件。
-    func uploadFile(fileURL: URL, name: String, sessionId: String) async throws -> StagedFile
-    /// 文件传输目标（中转地址 + 设备令牌）。
-    func fileTransferTarget() throws -> (relayURL: URL, deviceToken: String)
-
-    // 连接状态的展示派生值：放协议里，UI 不必再认识 ConnectionStore。
-    var supportsFileTransfer: Bool { get }
     var showsOutdatedConnectorNotice: Bool { get }
     func dismissOutdatedConnectorNotice()
     func noteFirstRender() async
 }
 
-public extension LinkService {
+public extension ConnectionStatus {
     var isConnected: Bool { state.isConnected }
     var isConnecting: Bool { state.isConnecting }
-    var supportsFileTransfer: Bool { supports(RelayFileTransfer.capability) }
     var showsOutdatedConnectorNotice: Bool { false }
     func dismissOutdatedConnectorNotice() {}
     func noteFirstRender() async {}
 }
+
+/// 链路门面：需要发事件应答、读 relay 身份的模型依赖这一段。
+@MainActor
+public protocol ConnectionLink: AnyObject {
+    var link: LinkGateway { get }
+}
+
+/// 文件下载目标：文件浏览器依赖这一段。
+@MainActor
+public protocol FileTransferring: AnyObject {
+    func fileTransferTarget() throws -> (relayURL: URL, deviceToken: String)
+}
+
+/// 文件上传：只有发送路径依赖这一段。
+@MainActor
+public protocol FileUploading: AnyObject {
+    func uploadFile(fileURL: URL, name: String, sessionId: String) async throws -> StagedFile
+}
+
+/// 账户级状态变化（032）。
+@MainActor
+public protocol AccountStateStreaming: AnyObject {
+    func accountStateStream() async -> AsyncStream<[String]>
+}
+
+/// 完整连接服务：Core/App 的装配与需要上传/账户流的模型依赖它。
+/// UI 只依赖 ConnectionStatus（必要时加 ConnectionLink / FileTransferring）。
+@MainActor
+public protocol LinkService: ConnectionStatus, ConnectionLink, FileTransferring, FileUploading, AccountStateStreaming {}
 
 /// 连接错误文案（原 ConnectionStore.describe，025/026 下沉到协议层供全部单元共用）。
 public enum LinkErrors {

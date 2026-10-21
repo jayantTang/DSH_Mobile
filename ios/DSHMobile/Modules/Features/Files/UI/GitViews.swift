@@ -13,7 +13,7 @@ import DSHFilesDomain
 /// for a full path on every row. Read-only, like everything git here.
 public struct GitChangesPane: View {
     public let model: GitModel
-    public let store: any LinkService
+    public let store: any ConnectionStatus
 
     @State private var openDiff: DiffRequest?
 
@@ -210,7 +210,7 @@ public struct GitChangesPane: View {
 /// 历史: the commits on the current branch, newest first.
 public struct GitHistoryPane: View {
     public let model: GitModel
-    public let store: any LinkService
+    public let store: any ConnectionStatus
 
     @State private var openCommit: GitCommit?
 

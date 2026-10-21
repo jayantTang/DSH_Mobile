@@ -128,7 +128,7 @@ public final class WorkspaceFilesModel {
 
     public var searchText: String = ""
 
-    private weak var store: (any LinkService)?
+    private weak var store: (any ConnectionStatus & ConnectionLink & FileTransferring)?
 
     /// The live client, for the views that fetch their own content — the web
     /// preview pulls a page and its pictures, and has no business knowing how
@@ -156,7 +156,7 @@ public final class WorkspaceFilesModel {
 
     // MARK: - Lifecycle
 
-    public func attach(to store: any LinkService) {
+    public func attach(to store: any ConnectionStatus & ConnectionLink & FileTransferring) {
         self.store = store
     }
 

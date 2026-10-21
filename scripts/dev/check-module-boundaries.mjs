@@ -123,7 +123,7 @@ function layerOf(t) {
 const ALLOWED = {
   foundation: new Set(),
   design: new Set(['DSHFoundation']),
-  contracts: new Set(['DSHKit', 'RelayKit']),
+  contracts: new Set(['DSHKit']),
   core: new Set(['DSHConnectionAPI', 'DSHFoundation', 'DSHKit', 'RelayKit']),
   'feature-domain': new Set([
     'DSHCore', 'DSHConnectionAPI', 'DSHFoundation', 'DSHKit', 'RelayKit',
