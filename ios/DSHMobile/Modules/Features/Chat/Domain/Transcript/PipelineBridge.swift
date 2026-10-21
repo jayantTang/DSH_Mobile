@@ -78,7 +78,7 @@ public extension ChatModel {
 /// 被那个扩展用到的成员因此是 internal 而不是 private（沿用 DSHKit 里
 /// `SessionPipeline+Paging` 的同一做法）。
 @MainActor
-public final class ChatPipelineBridge {
+final class ChatPipelineBridge {
 
     public weak var model: ChatModel? // internal：+PipelineFetch（取页半边）要用
     /// 数据层门面（spec 023 边界收敛：不再直接持 `MessagePipeline`）。

@@ -10,7 +10,7 @@ import Foundation
 ///
 /// T037 纪律（spec 009 追加修订 1/3「加载状态不许静默」）：本文件里不允许存在
 /// 「正常返回但什么都不发生」的出口——每个结局都要落到一个可见状态行。
-public extension ChatPipelineBridge {
+extension ChatPipelineBridge {
 
     /// 向上翻页（.userVisible）：向管道请求窗口之上的对齐范围；缺口由管道拉取回填。
     ///

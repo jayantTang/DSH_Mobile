@@ -8,7 +8,7 @@ import Observation
 /// 和转写/网络/输入区没有关系。ChatModel 保留同名转发属性，UI 调用点不变。
 @MainActor
 @Observable
-public final class CatalogState {
+final class CatalogState {
 
     public var catalog: ModelCatalog?
     /// 目录最近一次读取的时刻；`refreshCatalogIfStale` 用它判定是否还要再问 host。
