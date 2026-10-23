@@ -331,6 +331,12 @@ func (g *Gate) Suppress(agentID, reason string, now time.Time) Decision {
 
 // refuseLocked 是拒绝记账的唯一实现。
 func (g *Gate) refuseLocked(state *agentState, now time.Time, reason string) Decision {
+	// 未验证退避正在生效时，真正让这次到达被拒的是退避，不是 duplicate：
+	// 否则 429 会说 duplicate-active，却要求等 60 秒，并把计数算进 duplicate。
+	// （pending 是更早、更具体的并发握手原因，保留它。）
+	if reason == ReasonDuplicate && state.unverified && now.Before(state.nextAllowed) {
+		reason = ReasonUnverified
+	}
 	state.streak++
 	g.stats.ReconnectStorm++
 	if reason == ReasonUnverified {

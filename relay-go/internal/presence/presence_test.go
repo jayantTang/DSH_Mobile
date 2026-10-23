@@ -248,3 +248,31 @@ func TestAllowReservesTheSlotAgainstAConcurrentArrival(t *testing.T) {
 		t.Fatalf("挂接完成后的到达 = %+v，期望 Allow", decision)
 	}
 }
+
+func TestSuppressInsideUnverifiedBackoffCountsAsUnverified(t *testing.T) {
+	// 回归：风暴里先等旧连接、等不到再 Suppress 时，如果退避窗口正在生效，
+	// 429 的原因与计数都必须是 unverified-backoff，不能写着 duplicate-active
+	// 却要求等 60 秒。
+	gate := New(Options{
+		HelloTimeout: 10 * time.Second,
+		ActiveIdle:   time.Hour,
+		BackoffBase:  5 * time.Second,
+		BackoffMax:   20 * time.Second,
+	})
+	ticket := connect(t, gate, "agt_1", base)
+	if !gate.MarkUnverified("agt_1", ticket.Generation(), base.Add(10*time.Second)) {
+		t.Fatal("到 helloTimeout 应当标记 unverified")
+	}
+	first := gate.Suppress("agt_1", ReasonDuplicate, base.Add(10*time.Second))
+	if first.RetryAfter != 5*time.Second {
+		t.Fatalf("第一次抑制退避 = %v，期望 5s", first.RetryAfter)
+	}
+	within := gate.Suppress("agt_1", ReasonDuplicate, base.Add(12*time.Second))
+	if within.Reason != ReasonUnverified {
+		t.Fatalf("退避窗口内 Suppress 的原因 = %q，期望 %q", within.Reason, ReasonUnverified)
+	}
+	stats := gate.Stats()
+	if stats.RefusedUnverified != 1 || stats.RefusedDuplicate != 1 {
+		t.Fatalf("计数 = %+v，期望 unverified=1 duplicate=1", stats)
+	}
+}
