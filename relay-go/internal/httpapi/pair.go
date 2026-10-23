@@ -66,7 +66,7 @@ func (s *server) handlePairClaim(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	peer := clientIdentifier(r)
+	peer := ClientIdentifier(r)
 	if s.claimLimiter.Blocked(peer) {
 		writeError(w, http.StatusTooManyRequests, "pair/rate-limited",
 			"too many failed pairing attempts; try again later", nil)

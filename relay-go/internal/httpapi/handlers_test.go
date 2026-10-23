@@ -12,10 +12,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jayantTang/DSH_Mobile/relay-go/internal/feedback"
+	"github.com/jayantTang/DSH_Mobile/relay-go/internal/files"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/hub"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/monitor"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/presence"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/store"
+	"github.com/jayantTang/DSH_Mobile/relay-go/internal/wsapi"
 )
 
 // testAPI 是一套隔离的 store + handler。每个用例一个临时库、一个独立限流器。
@@ -45,6 +48,22 @@ func newTestAPIWithOptions(t *testing.T, opts Options) *testAPI {
 	if opts.Limits == (Limits{}) {
 		opts.Limits = DefaultLimits()
 	}
+	// 子 handler 由组合根构造注入（步骤 1.4）：测试里这一层就是"组合根"。
+	if opts.Hub == nil {
+		opts.Hub = hub.New(hub.Options{
+			Store: st, Limits: opts.Limits, Logger: opts.Logger,
+			Push: opts.Push, Monitor: opts.Monitor,
+		})
+	}
+	wsOptions := wsapi.Options{Hub: opts.Hub, Store: st, Logger: opts.Logger}
+	if opts.Monitor != nil {
+		wsOptions.Monitor = opts.Monitor // 不把 typed nil 塞进接口字段
+	}
+	opts.WS = wsapi.New(wsOptions)
+	opts.Files = files.New(files.Options{Store: st, Hub: opts.Hub, Logger: opts.Logger})
+	opts.Feedback = feedback.New(feedback.Options{
+		Store: st, ClientID: ClientIdentifier, Logger: opts.Logger,
+	})
 	return &testAPI{t: t, store: st, handler: New(opts)}
 }
 
@@ -912,14 +931,14 @@ func TestClientIdentifierUsesForwardedForOnlyFromLoopback(t *testing.T) {
 	loopback := httptest.NewRequest(http.MethodPost, "/agents/enroll", nil)
 	loopback.RemoteAddr = "127.0.0.1:5555"
 	loopback.Header.Set("X-Forwarded-For", "198.51.100.7, 10.0.0.1")
-	if got := clientIdentifier(loopback); got != "198.51.100.7" {
+	if got := ClientIdentifier(loopback); got != "198.51.100.7" {
 		t.Fatalf("回环 + XFF = %q", got)
 	}
 
 	external := httptest.NewRequest(http.MethodPost, "/agents/enroll", nil)
 	external.RemoteAddr = "198.51.100.9:5555"
 	external.Header.Set("X-Forwarded-For", "203.0.113.1")
-	if got := clientIdentifier(external); got != "198.51.100.9" {
+	if got := ClientIdentifier(external); got != "198.51.100.9" {
 		t.Fatalf("非回环必须忽略 XFF: %q", got)
 	}
 }

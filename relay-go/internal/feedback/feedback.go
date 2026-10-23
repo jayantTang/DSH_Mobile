@@ -70,8 +70,8 @@ const (
 
 // Options 是装配四个端点需要的输入。
 type Options struct {
-	Store *store.Store
-	// ClientID 把请求映射成限流桶的键。生产注入 httpapi.clientIdentifier——
+	Store Store // 用户侧四端点的 9 个方法（见 ports.go）；不含 owner 侧方法
+	// ClientID 把请求映射成限流桶的键。生产注入 httpapi.ClientIdentifier——
 	// "客户端是什么"的信任边界只允许有一份实现。
 	ClientID func(*http.Request) string
 	Logger   *slog.Logger
@@ -79,7 +79,7 @@ type Options struct {
 
 // Handlers 是 /feedback/* 的四个处理器与其限流桶。
 type Handlers struct {
-	store    *store.Store
+	store    Store
 	clientID func(*http.Request) string
 	log      *slog.Logger
 

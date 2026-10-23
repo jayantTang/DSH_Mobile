@@ -23,4 +23,4 @@ func NewClaimLimiter(limit int, window time.Duration) *ClaimLimiter {
 //   - /agents/enroll 同时记两个桶——码哈希（闸门，会拒绝）与来源地址（只记账、
 //     永不否决合法邀请码，见 owner 2026-09-25 的决定）。
 //
-// "客户端是什么"由 clientIdentifier 决定，不在这里。
+// "客户端是什么"由 ClientIdentifier 决定，不在这里。

@@ -13,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jayantTang/DSH_Mobile/relay-go/internal/httpapi"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/hub"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/monitor"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/store"
@@ -32,10 +31,7 @@ func newMonitoredRelay(t *testing.T) (*relayFixture, string) {
 	monitorInstance := monitor.New(monitor.Options{AlertDir: alertDir, Logger: logger})
 	limits := hub.DefaultLimits()
 	live := hub.New(hub.Options{Store: st, Limits: limits, Logger: logger, Monitor: monitorInstance})
-	server := httptestServer(t, httpapi.New(httpapi.Options{
-		Store: st, Hub: live, Limits: limits, MaxPairedDevices: 8,
-		Logger: logger, Monitor: monitorInstance,
-	}))
+	server := httptestServer(t, newHTTPHandler(st, live, logger, monitorInstance, limits))
 	ctx := t.Context()
 	account, err := st.CreateAccount(ctx, "WS-monitor")
 	if err != nil {

@@ -63,7 +63,7 @@ var streamCORSHeaders = map[string]string{
 
 // Options 是装配两条端点需要的输入。
 type Options struct {
-	Store  *store.Store
+	Store  Store // 只用来认设备令牌（见 ports.go）
 	Hub    *hub.Hub
 	Logger *slog.Logger
 	// AckTimeout / IdleTimeout 零值取默认；单测用短值，不真等 5 秒/120 秒。
@@ -73,7 +73,7 @@ type Options struct {
 
 // Handlers 是 /files/up 与 /files/down 的处理器。
 type Handlers struct {
-	store       *store.Store
+	store       Store
 	hub         *hub.Hub
 	log         *slog.Logger
 	ackTimeout  time.Duration

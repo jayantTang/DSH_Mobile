@@ -104,6 +104,9 @@ func Run(ctx context.Context, options Options) (Report, error) {
 	}
 	stamp := now.UnixMilli()
 
+	// 运维例外（DESIGN-20261023 §2.5）：purge 是按路径自己打开库的一次性工具，
+	// 实际只用 4 个方法（AgentIDsWithDevices/DevicePurgeReport/DeleteDoomedDevices/
+	// BackupTo）。为它引入端口层只是多一层适配，故保留完整仓储类型 *store.Store。
 	live, err := store.Open(options.DBPath)
 	if err != nil {
 		return Report{}, err

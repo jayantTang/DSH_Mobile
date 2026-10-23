@@ -97,6 +97,11 @@ func Main(args []string, getenv func(string) string, stdout, stderr io.Writer) i
 	}
 
 	// 打开库会建目录、建表、迁移；admin 与 serve 用同一套 schema 口径。
+	//
+	// 运维例外（DESIGN-20261023 §2.5 / §2.8）：admin 是多子命令运维面（32 个仓储
+	// 方法），逐命令切端口会产生 20 个小接口，维护成本大于收益。因此这里保留完整
+	// 仓储类型 *store.Store；serve 侧的消费者（hub/httpapi/wsapi/files/feedback）
+	// 一律只依赖自己声明的最小端口。
 	st, err := store.Open(dbPath)
 	if err != nil {
 		fmt.Fprintf(stderr, "dsh-relay admin: %v\n", err)

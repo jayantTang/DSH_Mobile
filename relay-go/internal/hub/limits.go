@@ -9,7 +9,6 @@ import (
 
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/config"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/dlp"
-	"github.com/jayantTang/DSH_Mobile/relay-go/internal/store"
 )
 
 // Limits 是 hub 的全部可调项，也是 `/stats` 里 limits 段的唯一来源。
@@ -184,7 +183,7 @@ func (b *tokenBucket) take(size int, now time.Time) time.Duration {
 // 基线仍来自 usageDaily（与运维报表同一份数）。M2 不做周期冲盘（M3 补），所以
 // 进程重启后基线只等于上次落库的数——这段差距写在 M2 的未完成项里。
 type quotaLedger struct {
-	store *store.Store
+	store Store
 	limit int64
 	log   *slog.Logger
 	today func() int64
@@ -195,7 +194,7 @@ type quotaLedger struct {
 	seated map[string]bool
 }
 
-func newQuotaLedger(st *store.Store, limit int64, today func() int64, log *slog.Logger) *quotaLedger {
+func newQuotaLedger(st Store, limit int64, today func() int64, log *slog.Logger) *quotaLedger {
 	return &quotaLedger{
 		store: st, limit: limit, log: log, today: today,
 		used: map[string]int64{}, seated: map[string]bool{},

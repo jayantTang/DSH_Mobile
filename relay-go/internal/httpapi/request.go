@@ -100,7 +100,7 @@ func (s *server) noteAccess(r *http.Request, observed *observingWriter, elapsed 
 		"route", routeTemplate(r),
 		"status", status,
 		"duration_ms", math.Round(elapsed.Seconds()*1000*1000) / 1000,
-		"remote_ip", clientIdentifier(r),
+		"remote_ip", ClientIdentifier(r),
 		"bytes", observed.bytes,
 	}
 	if agentID != "" {

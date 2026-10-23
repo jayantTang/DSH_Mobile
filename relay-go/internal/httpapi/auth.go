@@ -38,13 +38,16 @@ func isLoopback(value string) bool {
 	return text == "localhost"
 }
 
-// clientIdentifier 是限流桶的键（Python api.client_identifier）。
+// ClientIdentifier 是限流桶的键（Python api.client_identifier）。
 //
 // 前面有前置时所有请求都来自 127.0.0.1，只用 socket 对端会把全互联网放进一个桶。
 // 规则：
 //   - 对端是回环**且** X-Forwarded-For 可用 → 取最左一项（部署的 Caddy 是替换语义）；
 //   - 其余情况一律用 socket 对端，完全忽略该头（客户端可以自己伪造它）。
-func clientIdentifier(r *http.Request) string {
+//
+// 导出是因为 feedback 的限流桶键也要用它：子 handler 在组合根构造（DESIGN §2.5），
+// 而"客户端是什么"的信任边界只允许有一份实现。
+func ClientIdentifier(r *http.Request) string {
 	peer := strings.TrimSpace(peerHost(r.RemoteAddr))
 	if isLoopback(peer) {
 		forwarded := r.Header.Get(forwardedFor)

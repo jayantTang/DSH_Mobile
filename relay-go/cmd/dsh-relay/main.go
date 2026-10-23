@@ -29,12 +29,15 @@ import (
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/admincli"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/config"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/dlp"
+	"github.com/jayantTang/DSH_Mobile/relay-go/internal/feedback"
+	"github.com/jayantTang/DSH_Mobile/relay-go/internal/files"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/httpapi"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/hub"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/monitor"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/purge"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/push"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/store"
+	"github.com/jayantTang/DSH_Mobile/relay-go/internal/wsapi"
 )
 
 // shutdownTimeout 是优雅退出的上限（DESIGN §5.5：目标 5 秒内完成）。
@@ -150,6 +153,18 @@ func runServe(args []string, getenv func(string) string, stderr io.Writer) int {
 		Monitor:                 incidents,
 	})
 
+	// 三个子 handler 在组合根构造：它们各自的仓储端口不同（wsapi 4、files 1、
+	// feedback 9），httpapi 只负责路由与中间件，不再替它们 new（DESIGN §2.5）。
+	// 注入的是同一个 Store；各包只看到自己声明的那几个方法。
+	wsHandlers := wsapi.New(wsapi.Options{
+		Hub: live, Store: st, Logger: logger, Monitor: incidents,
+	})
+	fileHandlers := files.New(files.Options{Store: st, Hub: live, Logger: logger})
+	// 限流桶的键复用 httpapi.ClientIdentifier：信任边界只允许有一份实现。
+	feedbackHandlers := feedback.New(feedback.Options{
+		Store: st, ClientID: httpapi.ClientIdentifier, Logger: logger,
+	})
+
 	handler := httpapi.New(httpapi.Options{
 		Store:            st,
 		Health:           httpapi.Health{Version: version, Build: build},
@@ -158,6 +173,9 @@ func runServe(args []string, getenv func(string) string, stderr io.Writer) int {
 		MaxPairedDevices: cfg.MaxPairedDevices,
 		Limits:           limits,
 		Hub:              live,
+		WS:               wsHandlers,
+		Files:            fileHandlers,
+		Feedback:         feedbackHandlers,
 		BasePath:         cfg.MountPath(),
 		Logger:           logger,
 		Monitor:          incidents,

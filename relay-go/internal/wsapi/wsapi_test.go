@@ -21,14 +21,36 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/dlp"
+	"github.com/jayantTang/DSH_Mobile/relay-go/internal/feedback"
+	"github.com/jayantTang/DSH_Mobile/relay-go/internal/files"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/httpapi"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/hub"
+	"github.com/jayantTang/DSH_Mobile/relay-go/internal/monitor"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/presence"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/store"
+	"github.com/jayantTang/DSH_Mobile/relay-go/internal/wsapi"
 )
 
 // readTimeout 是等一帧的上限：挂死必须表现成失败，不是把整轮时间吃掉。
 const readTimeout = 2 * time.Second
+
+// newHTTPHandler 是"组合根"的测试副本：子 handler 在这里构造并注入 httpapi，
+// 与 cmd/dsh-relay/main.go 的装配顺序一致（步骤 1.4 之后 httpapi 不再替它们 new）。
+func newHTTPHandler(st *store.Store, live *hub.Hub, logger *slog.Logger,
+	incidents *monitor.Monitor, limits hub.Limits) http.Handler {
+	wsOptions := wsapi.Options{Hub: live, Store: st, Logger: logger}
+	if incidents != nil {
+		// 只注入非 nil，避免把 typed nil 放进接口字段。
+		wsOptions.Monitor = incidents
+	}
+	return httpapi.New(httpapi.Options{
+		Store: st, Hub: live, Limits: limits, MaxPairedDevices: 8,
+		Logger: logger, Monitor: incidents,
+		WS:       wsapi.New(wsOptions),
+		Files:    files.New(files.Options{Store: st, Hub: live, Logger: logger}),
+		Feedback: feedback.New(feedback.Options{Store: st, ClientID: httpapi.ClientIdentifier, Logger: logger}),
+	})
+}
 
 // relayFixture 是一个跑在随机端口上的完整中转（临时库、独立 hub）。
 type relayFixture struct {
@@ -70,13 +92,7 @@ func newRelayWithPresence(t *testing.T, mutate func(*hub.Limits),
 		Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Presence: windows,
 	})
-	handler := httpapi.New(httpapi.Options{
-		Store:            st,
-		Hub:              live,
-		Limits:           limits,
-		MaxPairedDevices: 8,
-	})
-	server := httptest.NewServer(handler)
+	server := httptest.NewServer(newHTTPHandler(st, live, nil, nil, limits))
 
 	ctx := context.Background()
 	account, err := st.CreateAccount(ctx, "WS-mac")

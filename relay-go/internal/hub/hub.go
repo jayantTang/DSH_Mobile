@@ -57,7 +57,8 @@ type deviceShard struct {
 
 // Options 是装配一个 Hub 需要的全部输入。
 type Options struct {
-	Store            *store.Store
+	// Store 是 hub 的仓储端口（hub.Store，10 个方法；见 ports.go）。
+	Store            Store
 	Limits           Limits
 	Logger           *slog.Logger
 	RelayVersion     string
@@ -88,7 +89,7 @@ type Options struct {
 // 锁的规则只有一条：**不同时持有两把分片锁**。任何需要"先看 agent 再看设备"的
 // 操作都分成两步、各自加解锁，因此不存在交叉等待。
 type Hub struct {
-	store        *store.Store
+	store        Store
 	limits       Limits
 	log          *slog.Logger
 	relayVersion string
@@ -100,7 +101,7 @@ type Hub struct {
 
 	quota *quotaLedger
 	usage *usageLedger
-	// usageSink 是冲盘的去处（store.Store）；单测可注入失败实现验证回放。
+	// usageSink 是冲盘的去处（生产是 Store 端口）；单测可注入失败实现验证回放。
 	usageSink usageWriter
 
 	// presence 是连接器准入策略：重复连接抑制、未验证连接器的退避与计数。

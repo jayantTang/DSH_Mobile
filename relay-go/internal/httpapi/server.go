@@ -45,8 +45,8 @@ func DefaultLimits() Limits { return hub.DefaultLimits() }
 
 // Options 是装配一次 HTTP 服务需要的全部输入。
 type Options struct {
-	// Store 是仓储层；/healthz 不依赖它，其余端点都依赖。
-	Store *store.Store
+	// Store 是本包自己用到的 15 个仓储方法（见 ports.go）；/healthz 不依赖它。
+	Store Store
 	// Health 是 /healthz 的版本与部署指纹。
 	Health Health
 	// PairTTL / DeviceTTL 是配对码与设备令牌的有效期；零值取 Python 默认值。
@@ -67,6 +67,14 @@ type Options struct {
 	Monitor *monitor.Monitor
 	// Push 是 APNs 投递器；只在本包自己造 hub（Hub 为空）时用得上。
 	Push hub.PushSender
+	// WS / Files / Feedback 是三个子 handler，由组合根构造后注入（DESIGN §2.5）。
+	//
+	// 本包不再 new 它们：httpapi 的端口只有 15 个方法，凑不出 wsapi 的 4 个与
+	// feedback 的 9 个；把三者并成一个更大的接口等于换个名字的上帝接口。
+	// nil = 该组路由不挂（生产始终注入；只有 /healthz 这类单测会留空）。
+	WS       *wsapi.Handlers
+	Files    *files.Handlers
+	Feedback *feedback.Handlers
 	// AccessLog 是访问日志档位：off / errors（默认）/ all。空值取 errors。
 	AccessLog string
 	// SlowRequest 是"慢请求"判定线；零值取 DefaultSlowRequest（500 ms）。
@@ -75,7 +83,7 @@ type Options struct {
 
 // server 持有一份不可变配置与两个限流桶。
 type server struct {
-	store            *store.Store
+	store            Store
 	health           Health
 	pairTTLMS        int64
 	deviceTTLMS      int64
@@ -121,8 +129,10 @@ func New(opts Options) http.Handler {
 	}
 	liveHub := opts.Hub
 	if liveHub == nil {
+		// fallback hub 不接 Store：/stats 的 today 段走 errNoStore 的空段
+		// （行为与"读库失败"一致），生产始终注入 Hub，故生产路径无可观察变化。
 		liveHub = hub.New(hub.Options{
-			Store: opts.Store, Limits: limits, Logger: opts.Logger,
+			Limits: limits, Logger: opts.Logger,
 			Push: opts.Push, Monitor: opts.Monitor,
 		})
 	}
@@ -145,14 +155,9 @@ func New(opts Options) http.Handler {
 		accessLogMode:          NormalizeAccessLog(opts.AccessLog),
 		slowRequest:            slowRequest,
 	}
-	s.ws = wsapi.New(wsapi.Options{
-		Hub: liveHub, Store: opts.Store, Logger: opts.Logger, Monitor: opts.Monitor,
-	})
-	s.files = files.New(files.Options{Store: opts.Store, Hub: liveHub, Logger: opts.Logger})
-	// 限流桶的键复用本包的 clientIdentifier：信任边界只允许有一份实现。
-	s.feedback = feedback.New(feedback.Options{
-		Store: opts.Store, ClientID: clientIdentifier, Logger: opts.Logger,
-	})
+	s.ws = opts.WS
+	s.files = opts.Files
+	s.feedback = opts.Feedback
 
 	mux := http.NewServeMux()
 	s.registerRoutes(mux, "")
@@ -195,14 +200,20 @@ func (s *server) registerRoutes(mux *http.ServeMux, prefix string) {
 	handle(http.MethodPut, "/account/state", s.handleAccountStatePut)
 	handle(http.MethodPost, "/agents/enroll", s.handleAgentsEnroll)
 	// 文件通道：路由与鉴权在 handler 内部（与 Python 的 route 表一一对应）。
-	s.files.Register(mux, prefix)
+	if s.files != nil {
+		s.files.Register(mux, prefix)
+	}
 	// 反馈通道：四个追加式端点，鉴权可选（无效令牌降级匿名）。
-	s.feedback.Register(mux, prefix)
+	if s.feedback != nil {
+		s.feedback.Register(mux, prefix)
+	}
 	// 服务间端点（环回）：信件服务的运行时依赖，不对外。
 	handle(http.MethodPost, "/internal/tokens/resolve", s.handleInternalTokenResolve)
 	handle(http.MethodPost, "/internal/account-state/touch", s.handleInternalAccountStateTouch)
 	// WebSocket 两条端点由 wsapi 自带（方法模式由它注册，前缀原样拼）。
-	s.ws.Register(mux, prefix)
+	if s.ws != nil {
+		s.ws.Register(mux, prefix)
+	}
 }
 
 // corsMiddleware 应答所有路径的 OPTIONS，并给普通响应补上 ACAO。

@@ -26,7 +26,6 @@ import (
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/hub"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/presence"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/reqctx"
-	"github.com/jayantTang/DSH_Mobile/relay-go/internal/store"
 )
 
 // 连接收尾的等待上限。
@@ -50,7 +49,7 @@ type SurrogateReporter interface {
 // Options 是装配两条端点需要的输入。
 type Options struct {
 	Hub     *hub.Hub
-	Store   *store.Store
+	Store   Store // 握手期鉴权与 lastSeen（见 ports.go）；nil = 任何握手都认不出人
 	Logger  *slog.Logger
 	Monitor SurrogateReporter
 }
@@ -58,7 +57,7 @@ type Options struct {
 // Handlers 是 /link/agent 与 /link/device 的处理器。
 type Handlers struct {
 	hub    *hub.Hub
-	store  *store.Store
+	store  Store
 	limits hub.Limits
 	log    *slog.Logger
 	// monitor 只收"修好了一个坏字符"这一类事件；nil = 不记。

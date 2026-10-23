@@ -39,7 +39,7 @@ func (s *server) handleAgentsEnroll(w http.ResponseWriter, r *http.Request) {
 	}
 
 	codeKey := store.HashInviteCode(code)
-	clientKey := clientIdentifier(r)
+	clientKey := ClientIdentifier(r)
 	if s.enrollLimiter.Blocked(codeKey) {
 		writeError(w, http.StatusTooManyRequests, "enroll/rate-limited",
 			"too many failed attempts for that invite code; try again later", nil)

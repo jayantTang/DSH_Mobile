@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/monitor"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/push"
@@ -625,7 +626,9 @@ func TestOpsReportAsOfAnchorsTheWholePreviousDay(t *testing.T) {
 	if asOf >= generated {
 		t.Fatalf("as-of yesterday 的锚点应当早于生成时刻：%d vs %d", asOf, generated)
 	}
-	if report["today"].(map[string]any)["day"].(float64) != float64(localDayOf(asOf)) {
+	local := time.UnixMilli(asOf).In(time.Local)
+	wantDay := int64(local.Year())*10000 + int64(local.Month())*100 + int64(local.Day())
+	if report["today"].(map[string]any)["day"].(float64) != float64(wantDay) {
 		t.Fatalf("today.day 应当取锚点那天：%v", report["today"])
 	}
 }
