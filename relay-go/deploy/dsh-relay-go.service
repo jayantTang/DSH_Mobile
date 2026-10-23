@@ -1,0 +1,105 @@
+[Unit]
+Description=DSH Link Protocol (DLP) v1 relay (Go)
+Documentation=https://github.com/deepseek-ai/dsh
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=dsh-relay
+Group=dsh-relay
+WorkingDirectory=/opt/dsh-relay-go
+
+# 与 dsh-relay.service 同一套监听口径：只绑环回，Caddy 终止 TLS 后把
+# /dsh-link/* 反代到这里（handle_path 会剥掉前缀；Go 版带前缀与去前缀两种
+# 形式都服务，所以前端怎么转发都能用）。
+#
+# host/port/db/base-path 只在 ExecStart 出现一次。Go 版的命令行参数优先于
+# DLP_* 环境变量；与 Python unit 那样两处都写，会让"改了环境变量却不生效"
+# 变成一个难查的故障。其余环境变量（配额、告警、APNs）逐项保留，Go 的
+# internal/config 与 internal/monitor 读取同名变量。
+ExecStart=/opt/dsh-relay-go/bin/dsh-relay serve --host 127.0.0.1 --port 8787 --db /var/lib/dsh-relay/state.db --base-path /dsh-link
+
+# 日志级别与 Python unit 一致。Go 版不写 .pyc，因此没有 PYTHONDONTWRITEBYTECODE。
+Environment=DLP_LOG_LEVEL=INFO
+
+# ── 共享带宽的三道闸 ────────────────────────────────────────────────────────
+# 取值口径与 dsh-relay.service 完全相同，改一处必须同步另一处：
+#   DLP_MAX_DEVICES_PER_AGENT  一台电脑配几台手机（重连不重复计数）
+#   DLP_DEVICE_RATE_KBPS       单设备出口限速（200 Mbps 管子 ÷ 2 台大文件设备）
+#   DLP_DEVICE_DAILY_MB        单设备每日出口额度（5 GiB，防把中转当图床）
+# 留空或为 0 表示不限。改完：systemctl daemon-reload && systemctl restart dsh-relay-go
+Environment=DLP_MAX_DEVICES_PER_AGENT=8
+Environment=DLP_DEVICE_RATE_KBPS=100000
+Environment=DLP_DEVICE_DAILY_MB=5120
+
+# ── 异常告警 ────────────────────────────────────────────────────────────────
+# Go 版 internal/monitor 读同一组变量，往同一个 alerts.jsonl 追加记录；
+# dsh-relay-alerts.timer 仍可原样投递（它只读目录，不关心写队列的是哪种实现）。
+# 2026-10-17 的事故是"队列存在但没配收件人"的证据，所以默认开启写队列。
+Environment=DLP_ALERT_DIR=/var/lib/dsh-relay/alerts
+Environment=DLP_ALERT_RENOTIFY_HOURS=24
+Environment=DLP_ALERT_MAX_PER_HOUR=6
+Environment=DLP_ALERT_MAX_PER_DAY=40
+Environment=DLP_ALERT_FLAP_WINDOW_S=300
+Environment=DLP_ALERT_FLAP_THRESHOLD=5
+# Go 版把"上游落单代理项按天抽样"的上限也做成了变量；默认 20 与 Python 版一致。
+Environment=DLP_ALERT_SURROGATE_SAMPLES=20
+
+# ── APNs 推送 ───────────────────────────────────────────────────────────────
+# 默认关。未设或为 0 时转发行为与没有推送时逐字一致。
+# 真值放 /etc/dsh-relay/apns.env（deploy.sh 只在文件不存在时写模板，绝不覆盖）；
+# 文件里的赋值排在 Environment=DLP_APNS_ENABLED=0 之后，因此可以覆盖它。
+# `-` 前缀＝文件不存在不算失败（没配推送的部署照常启动）。
+# 密钥文件必须在 /etc/dsh-relay/apns/，不能放 /root 或 /home：下面有 ProtectHome=yes。
+Environment=DLP_APNS_ENABLED=0
+EnvironmentFile=-/etc/dsh-relay/apns.env
+
+# 刻意没有 ExecReload=/bin/kill -HUP $MAINPID：
+# Go 版只处理 SIGINT / SIGTERM，SIGHUP 会按默认动作终止进程。保留 HUP 会让
+# `systemctl reload dsh-relay-go` 静默杀掉服务；这里让 reload 明确不可用。
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=15
+
+# ── sandboxing ──────────────────────────────────────────────────────────────
+# 与 dsh-relay.service 逐项一致。Go 运行时不需要可写可执行内存页（没有 JIT），
+# MemoryDenyWriteExecute 与纯 Go / cgo 两种构建都兼容。
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallFilter=@system-service
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0077
+
+# 唯一可写的位置：SQLite 数据库与其 WAL、告警队列都在这个目录下。
+# build.json 与二进制在 /opt/dsh-relay-go（只读即可），迁移时不需要写它。
+StateDirectory=dsh-relay
+StateDirectoryMode=0700
+ReadWritePaths=/var/lib/dsh-relay
+
+LimitNOFILE=65536
+
+# 诊断面默认关。需要抓 heap / goroutine 时取消下面一行再 restart；
+# pprof 只接受环回地址（0.0.0.0 与内网地址会被启动校验拒绝）。
+#Environment=DLP_PPROF_ADDR=127.0.0.1:6060
+
+[Install]
+WantedBy=multi-user.target
