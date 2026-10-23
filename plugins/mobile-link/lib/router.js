@@ -27,6 +27,16 @@ import { isJobsMethod } from './jobs-roster.js'
 export const FSPUT_BEGIN = 'fsPutBegin'
 export const FSPUT_CHUNK = 'fsPutChunk'
 export const FSPUT_END = 'fsPutEnd'
+/**
+ * relay 叫停一次后台上传（占位型前向兼容）。
+ *
+ * 本仓库两个中转**目前都不发这一帧**：手机掐掉 `PUT /files/up` 时，它们在
+ * `finally` 里只摘掉本地的桥接，既不发取消帧、也不断开 agent 的 WebSocket。
+ * 因此真正兜住句柄的是 `FileInbox` 的空闲清扫与"重传接管暂存路径"；这一帧
+ * 让将来的/第三方中转能提前释放。按 bid 寻址，可以不带 `deviceId`
+ * （与 `fsGetCancel` 同口径，未知 bid 是空操作）。
+ */
+export const FSPUT_CANCEL = 'fsPutCancel'
 
 /**
  * 后台大文件下载的桥接帧（relay → 连接器），同一族的另一半：relay 终结
@@ -241,6 +251,11 @@ export class DeviceRouter {
       this.handleFsGetCancel(frame)
       return
     }
+    // 上传的取消帧同样是 bid 寻址，可能不带 `deviceId`；放在守卫之前，理由同上。
+    if (frame.t === FSPUT_CANCEL) {
+      this.handleFsPutCancel(frame)
+      return
+    }
     if (!deviceId) return
     const problem = deviceFrameError(frame)
     if (problem) {
@@ -323,6 +338,17 @@ export class DeviceRouter {
     } catch (error) {
       this.sendFsError(frame.bid, error)
     }
+  }
+
+  /**
+   * relay 叫停一次上传：立刻关句柄、删 `.part`。
+   *
+   * 不回帧：取消本身不是一次请求，也没有可报的错（与 `handleFsGetCancel` 同）。
+   */
+  handleFsPutCancel(frame) {
+    const bid = String(frame?.bid ?? '')
+    if (!bid) return
+    this.fileInbox.cancel(bid)
   }
 
   /**
@@ -598,6 +624,10 @@ export class DeviceRouter {
     // 不该有残留：上面的循环已经逐个收过；这里兜底，防止 attach 之后没进 devices 的路径留下脏项。
     this.timelines.clear()
     this._sentBytes.clear()
+    // 链路断了：在传的上传与下载都不可能再完成。上传要关句柄、删 `.part`；
+    // 下载要停掉还没读完的窗口。
+    this.fileInbox.clear()
+    this.fileFetcher.clear()
     // 活动名单（018）：设备都没了，宿主任务订阅与排队的帧一起放掉。
     this.jobsRoster?.releaseAll()
     return muxIds

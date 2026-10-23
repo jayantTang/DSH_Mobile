@@ -1,5 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, existsSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -25,6 +26,41 @@ function chunksOf(buffer, size) {
     parts.push(buffer.subarray(offset, offset + size))
   }
   return parts
+}
+
+/**
+ * 本进程当前打开着、路径里含 `needle` 的文件。
+ *
+ * 这是"句柄真的被关掉了吗"的唯一直接证据：`.part` 被删除后，泄漏的 fd 在
+ * POSIX 上仍然指着那个已被 unlink 的 inode，`existsSync` 看不见它，只有
+ * `lsof` 这类按 fd 列进程资源的工具能看见。lsof 不可用时返回 `null`，
+ * 调用方据此跳过（并会在前置断言处大声失败，不会静默变成"通过"）。
+ */
+function openFiles(needle) {
+  try {
+    const output = execFileSync('lsof', ['-p', String(process.pid), '-Fn'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      maxBuffer: 8 << 20,
+    })
+    return output
+      .split('\n')
+      .filter((line) => line.startsWith('n') && line.includes(needle))
+      .map((line) => line.slice(1))
+  } catch (error) {
+    if (error.code === 'ENOENT') return null
+    if (error.status === 1) return []
+    throw error
+  }
+}
+
+/** `lsof` 缺失时跳过依赖它的用例（前置断言会把"扫不到"暴露成失败，不是通过）。 */
+function requireLsof(t) {
+  if (openFiles(`.lsof-probe-${process.pid}`) === null) {
+    t.skip('本机没有 lsof，无法直接断言文件句柄')
+    return false
+  }
+  return true
 }
 
 test('isFileMethod claims only the reserved names', () => {
@@ -249,5 +285,167 @@ test('a 200 MB bridge sequence does not grow the heap with the file size', async
     `堆增长 ${(growth / 1048576).toFixed(1)} MB，疑似又把文件攒进内存了`,
   )
   rmSync(done.path, { force: true })
+  cleanup()
+})
+
+// ── 句柄所有权：中断上传必须释放 .part 与临时文件 ──────────────────────────
+// M8 文件联调实测的缺陷：上传被中断（relay 不再发分片/不再发 fsPutEnd）后，
+// `Transfer` 一直留在 FileInbox 里，`.part` 的 fd 不关；用新 bid 重传后旧 fd
+// 仍然打开。下面几条用例从"进程当前打开了哪些文件"取证，而不只看对象状态。
+
+test('一个再没有任何帧的上传，空闲超时后释放 .part 句柄并删掉暂存文件', (t) => {
+  if (!requireLsof(t)) return
+  t.mock.timers.enable({ apis: ['setInterval', 'Date'] })
+  cleanup()
+  const inbox = new FileInbox({}, { idleMs: 60_000, sweepMs: 10_000 })
+  inbox.handle(FILE_BEGIN, { transferId: 'idle-1', sessionId, name: 'idle.bin', bytes: 8 })
+  inbox.handle(FILE_CHUNK, {
+    transferId: 'idle-1', seq: 0, data: Buffer.from('abcd').toString('base64'),
+  })
+  assert.equal(openFiles('.idle.bin.part')?.length, 1, '前置：.part 句柄没有打开')
+
+  // 还没到空闲上限：正在慢慢传的上传不许被误杀。
+  t.mock.timers.tick(59_000)
+  assert.equal(openFiles('.idle.bin.part')?.length, 1, '还没到空闲上限就释放了上传')
+
+  t.mock.timers.tick(1_000)
+  assert.equal(openFiles('.idle.bin.part')?.length, 0, '空闲超时后 .part 句柄仍然打开')
+  assert.equal(existsSync(join(directory, '.idle.bin.part')), false, '空闲超时后暂存文件没有删掉')
+  // 被清扫之后，同一个 bid 的迟到分片只能得到"未知上传"，不会再写盘。
+  assert.throws(
+    () => inbox.handle(FILE_END, { transferId: 'idle-1' }),
+    /unknown transfer/,
+  )
+  cleanup()
+})
+
+test('重传（新 bid，同会话同文件名）接管暂存路径，旧句柄当场释放', (t) => {
+  if (!requireLsof(t)) return
+  cleanup()
+  const inbox = new FileInbox({}, { sweepMs: 60_000 })
+  inbox.handle(FILE_BEGIN, { transferId: 'old', sessionId, name: 'retry.bin', bytes: 8 })
+  inbox.handle(FILE_CHUNK, {
+    transferId: 'old', seq: 0, data: Buffer.from('abcd').toString('base64'),
+  })
+  assert.equal(openFiles('.retry.bin.part')?.length, 1, '前置：旧上传的 .part 句柄没有打开')
+
+  // 重传换了 bid，但落盘路径相同：一条暂存路径同时只允许一个写者。
+  inbox.handle(FILE_BEGIN, { transferId: 'new', sessionId, name: 'retry.bin', bytes: 4 })
+  assert.equal(openFiles('.retry.bin.part')?.length, 0, '重传开始后旧上传的 .part 句柄仍然打开')
+
+  const body = Buffer.from('wxyz')
+  inbox.handle(FILE_CHUNK, { transferId: 'new', seq: 0, data: body.toString('base64') })
+  const done = inbox.handle(FILE_END, { transferId: 'new' })
+  assert.ok(readFileSync(done.path).equals(body), '重传后的落盘内容不对')
+  assert.equal(openFiles('.retry.bin.part')?.length, 0, '重传完成后 .part 句柄仍然打开')
+  assert.throws(
+    () => inbox.handle(FILE_CHUNK, { transferId: 'old', seq: 1, data: 'AAAA' }),
+    /unknown transfer/,
+  )
+  cleanup()
+})
+
+test('乱序分片回 fsErr 的同时释放这次上传的句柄', async (t) => {
+  const { DeviceRouter, FSPUT_BEGIN, FSPUT_CHUNK } = await import('../lib/router.js')
+  if (!requireLsof(t)) return
+  cleanup()
+  const sent = []
+  const router = new DeviceRouter({
+    dsh: { ensureMux: async () => {}, openStream() {}, cancelStream() {} },
+    send: (deviceId, frame) => sent.push(frame),
+    logger: {},
+  })
+  await router.attachDevice('dev_1')
+  await router.handleRelayFrame({
+    t: FSPUT_BEGIN, deviceId: 'dev_1', bid: 'badseq', sessionId, name: 'badseq.bin', bytes: 8,
+  })
+  router.handleRelayFrame({
+    t: FSPUT_CHUNK, deviceId: 'dev_1', bid: 'badseq', seq: 0, data: 'YWJjZA==',
+  })
+  assert.equal(openFiles('.badseq.bin.part')?.length, 1, '前置：.part 句柄没有打开')
+
+  // 分片被拒之后这次上传不可能再完成：fsErr 已经发了，句柄也必须一起放掉。
+  router.handleRelayFrame({
+    t: FSPUT_CHUNK, deviceId: 'dev_1', bid: 'badseq', seq: 9, data: 'AAAA',
+  })
+  assert.ok(sent.find((frame) => frame.t === 'fsErr'), '乱序分片没有回 fsErr')
+  assert.equal(openFiles('.badseq.bin.part')?.length, 0, 'fsErr 之后 .part 句柄仍然打开')
+  assert.equal(existsSync(join(directory, '.badseq.bin.part')), false, 'fsErr 之后暂存文件没有删掉')
+  cleanup()
+})
+
+test('链路断开（teardownAll）释放所有在传上传', async (t) => {
+  const { DeviceRouter, FSPUT_BEGIN, FSPUT_CHUNK, FSPUT_END } = await import('../lib/router.js')
+  if (!requireLsof(t)) return
+  cleanup()
+  const sent = []
+  const router = new DeviceRouter({
+    dsh: { ensureMux: async () => {}, openStream() {}, cancelStream() {} },
+    send: (deviceId, frame) => sent.push(frame),
+    logger: {},
+  })
+  await router.attachDevice('dev_1')
+  await router.handleRelayFrame({
+    t: FSPUT_BEGIN, deviceId: 'dev_1', bid: 'tear', sessionId, name: 'tear.bin', bytes: 8,
+  })
+  router.handleRelayFrame({
+    t: FSPUT_CHUNK, deviceId: 'dev_1', bid: 'tear', seq: 0, data: 'YWJjZA==',
+  })
+  assert.equal(openFiles('.tear.bin.part')?.length, 1, '前置：.part 句柄没有打开')
+
+  // 中转连接断了：这条链路上所有上传都不可能再完成。
+  router.teardownAll()
+  assert.equal(openFiles('.tear.bin.part')?.length, 0, '链路断开后 .part 句柄仍然打开')
+  assert.equal(existsSync(join(directory, '.tear.bin.part')), false, '链路断开后暂存文件没有删掉')
+
+  router.handleRelayFrame({ t: FSPUT_END, deviceId: 'dev_1', bid: 'tear' })
+  const failure = sent.filter((frame) => frame.t === 'fsErr').at(-1)
+  assert.match(failure.message, /unknown transfer/)
+  cleanup()
+})
+
+test('fsPutCancel 释放对应上传，未知 bid 是空操作', async (t) => {
+  const { DeviceRouter, FSPUT_BEGIN, FSPUT_CHUNK } = await import('../lib/router.js')
+  if (!requireLsof(t)) return
+  cleanup()
+  const sent = []
+  const router = new DeviceRouter({
+    dsh: { ensureMux: async () => {}, openStream() {}, cancelStream() {} },
+    send: (deviceId, frame) => sent.push(frame),
+    logger: {},
+  })
+  await router.attachDevice('dev_1')
+  await router.handleRelayFrame({
+    t: FSPUT_BEGIN, deviceId: 'dev_1', bid: 'cancel-1', sessionId, name: 'cancel.bin', bytes: 8,
+  })
+  router.handleRelayFrame({
+    t: FSPUT_CHUNK, deviceId: 'dev_1', bid: 'cancel-1', seq: 0, data: 'YWJjZA==',
+  })
+  assert.equal(openFiles('.cancel.bin.part')?.length, 1, '前置：.part 句柄没有打开')
+
+  // 取消帧按 bid 寻址，**可以不带 deviceId**（与 fsGetCancel 同理）。
+  router.handleRelayFrame({ t: 'fsPutCancel', bid: 'cancel-1' })
+  assert.equal(openFiles('.cancel.bin.part')?.length, 0, '取消后 .part 句柄仍然打开')
+  assert.equal(existsSync(join(directory, '.cancel.bin.part')), false, '取消后暂存文件没有删掉')
+
+  // 重复取消、未知 bid 都不许抛，也不许发帧。
+  const before = sent.length
+  router.handleRelayFrame({ t: 'fsPutCancel', bid: 'cancel-1' })
+  router.handleRelayFrame({ t: 'fsPutCancel', bid: 'no-such-bid' })
+  router.handleRelayFrame({ t: 'fsPutCancel' })
+  assert.equal(sent.length, before, '取消帧不应产生任何回帧')
+  cleanup()
+})
+
+test('已完成的文件不会被清理路径误删', () => {
+  cleanup()
+  const inbox = new FileInbox({})
+  const body = Buffer.from('done bytes')
+  inbox.handle(FILE_BEGIN, { transferId: 'done-1', sessionId, name: 'done.bin', bytes: body.length })
+  inbox.handle(FILE_CHUNK, { transferId: 'done-1', seq: 0, data: body.toString('base64') })
+  const done = inbox.handle(FILE_END, { transferId: 'done-1' })
+  inbox.clear()
+  assert.ok(existsSync(done.path), '链路清理把已完成的文件删掉了')
+  assert.ok(readFileSync(done.path).equals(body), '已完成的文件内容被改动')
   cleanup()
 })
