@@ -1,0 +1,1331 @@
+{
+  "ok": true,
+  "generatedAt": 1792940400000,
+  "asOf": 1792943999999,
+  "days": 30,
+  "versions": [
+    {
+      "appVersion": "20261006.0100",
+      "devices": 1,
+      "accounts": 1,
+      "lastSeenAt": 1792801800000
+    },
+    {
+      "appVersion": "20261020.0900",
+      "devices": 1,
+      "accounts": 1,
+      "lastSeenAt": 1792807200000
+    },
+    {
+      "appVersion": "20261023.1200",
+      "devices": 1,
+      "accounts": 1,
+      "lastSeenAt": 1792807200000
+    }
+  ],
+  "versionsWindowHours": 48,
+  "hourlyActivity": {
+    "windowHours": 72,
+    "buckets": [
+      {
+        "hourStartAt": 1792681200000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792684800000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792688400000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792692000000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792695600000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792699200000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792702800000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792706400000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792710000000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792713600000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792717200000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792720800000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792724400000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792728000000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792731600000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792735200000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792738800000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792742400000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792746000000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792749600000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792753200000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792756800000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792760400000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792764000000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792767600000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792771200000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792774800000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792778400000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792782000000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792785600000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792789200000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792792800000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792796400000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792800000000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792803600000,
+        "accounts": 1,
+        "devices": 1
+      },
+      {
+        "hourStartAt": 1792807200000,
+        "accounts": 1,
+        "devices": 1
+      },
+      {
+        "hourStartAt": 1792810800000,
+        "accounts": 1,
+        "devices": 1
+      },
+      {
+        "hourStartAt": 1792814400000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792818000000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792821600000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792825200000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792828800000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792832400000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792836000000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792839600000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792843200000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792846800000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792850400000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792854000000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792857600000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792861200000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792864800000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792868400000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792872000000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792875600000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792879200000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792882800000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792886400000,
+        "accounts": 1,
+        "devices": 1
+      },
+      {
+        "hourStartAt": 1792890000000,
+        "accounts": 1,
+        "devices": 1
+      },
+      {
+        "hourStartAt": 1792893600000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792897200000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792900800000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792904400000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792908000000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792911600000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792915200000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792918800000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792922400000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792926000000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792929600000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792933200000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792936800000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792940400000,
+        "accounts": 0,
+        "devices": 0
+      }
+    ]
+  },
+  "today": {
+    "day": 20261025,
+    "dayStartAt": 1792857600000,
+    "usage": {
+      "egressBytes": 15000,
+      "connections": 24,
+      "devices": 3,
+      "accounts": 2,
+      "firstSeenAt": 1792888200000,
+      "lastSeenAt": 1792893600000,
+      "builds": [
+        {
+          "build": "20261006.0100",
+          "devices": 1,
+          "accounts": 1
+        },
+        {
+          "build": "20261020.0900",
+          "devices": 1,
+          "accounts": 1
+        },
+        {
+          "build": "20261023.1200",
+          "devices": 1,
+          "accounts": 1
+        }
+      ]
+    },
+    "topAccounts": [
+      {
+        "accountId": "acc_alpha",
+        "name": "alpha",
+        "egressBytes": 14300,
+        "connections": 23,
+        "devices": 2
+      },
+      {
+        "accountId": "acc_beta",
+        "name": "beta",
+        "egressBytes": 700,
+        "connections": 1,
+        "devices": 1
+      }
+    ],
+    "devices": {
+      "list": [
+        {
+          "deviceId": "dev_one",
+          "name": "Alpha iPhone",
+          "model": "iPhone17,1",
+          "appVersion": "20261023.1200",
+          "accountId": "acc_alpha",
+          "accountName": "alpha",
+          "egressBytes": 11000,
+          "connections": 12,
+          "firstSeenAt": 1792893600000,
+          "lastSeenAt": 1792893600000,
+          "lastBuild": "20261023.1200",
+          "revoked": false
+        },
+        {
+          "deviceId": "dev_two",
+          "name": "Alpha iPad",
+          "model": "iPhone16,2",
+          "appVersion": "20261020.0900",
+          "accountId": "acc_alpha",
+          "accountName": "alpha",
+          "egressBytes": 3300,
+          "connections": 11,
+          "firstSeenAt": 1792893600000,
+          "lastSeenAt": 1792893600000,
+          "lastBuild": "20261020.0900",
+          "revoked": false
+        },
+        {
+          "deviceId": "dev_beta",
+          "name": "Beta iPhone",
+          "model": "iPhone15,3",
+          "appVersion": "20261006.0100",
+          "accountId": "acc_beta",
+          "accountName": "beta",
+          "egressBytes": 700,
+          "connections": 1,
+          "firstSeenAt": 1792888200000,
+          "lastSeenAt": 1792888200000,
+          "lastBuild": "20261006.0100",
+          "revoked": false
+        }
+      ],
+      "new": 0,
+      "newRaw": 0,
+      "active": 2,
+      "revoked": 0,
+      "live": 3
+    },
+    "feedback": {
+      "new": 1,
+      "open": 1,
+      "replied": 0,
+      "threads": [
+        {
+          "threadId": "th_today",
+          "subject": "今天的问题",
+          "createdAt": 1792886400000,
+          "lastMessageAt": 1792886400000,
+          "status": "open",
+          "ownerUnread": 0,
+          "source": {
+            "kind": "device",
+            "deviceId": "dev_beta",
+            "accountId": "acc_beta",
+            "deviceModel": "iPhone15,3",
+            "appVersion": null,
+            "systemVersion": null
+          },
+          "excerpt": "今天的问题",
+          "format": "text",
+          "messages": 1
+        }
+      ]
+    },
+    "invites": {
+      "used": 1,
+      "enrollments": [
+        {
+          "usedAt": 1792893600000,
+          "inviteNote": "later",
+          "accountId": "acc_beta",
+          "accountName": "beta",
+          "agentId": "agt_beta",
+          "agentName": "beta-mac",
+          "devices": 1,
+          "lastSeenAt": 1792888200000
+        }
+      ]
+    }
+  },
+  "feedback": {
+    "new": 3,
+    "open": 2,
+    "replied": 1,
+    "medianFirstReplyHours": 29,
+    "test": 2,
+    "threads": [
+      {
+        "threadId": "th_alpha",
+        "subject": "无法连接中转",
+        "createdAt": 1792461600000,
+        "lastMessageAt": 1792566000000,
+        "status": "replied",
+        "ownerUnread": 2,
+        "source": {
+          "kind": "device",
+          "deviceId": "dev_one",
+          "accountId": "acc_alpha",
+          "deviceModel": "iPhone17,1",
+          "appVersion": "20261023.1200",
+          "systemVersion": "iOS 18.2"
+        },
+        "excerpt": "连接一直失败，重装了也没有用，麻烦看一下。",
+        "format": "text",
+        "messages": 2
+      },
+      {
+        "threadId": "th_open",
+        "subject": null,
+        "createdAt": 1792630800000,
+        "lastMessageAt": 1792630800000,
+        "status": "open",
+        "ownerUnread": 1,
+        "source": {
+          "kind": "anonymous",
+          "deviceId": null,
+          "accountId": null,
+          "deviceModel": "iPad14,1",
+          "appVersion": null,
+          "systemVersion": null
+        },
+        "excerpt": "打开 App 之后一直是灰色的。",
+        "format": "html",
+        "messages": 1
+      },
+      {
+        "threadId": "th_today",
+        "subject": "今天的问题",
+        "createdAt": 1792886400000,
+        "lastMessageAt": 1792886400000,
+        "status": "open",
+        "ownerUnread": 0,
+        "source": {
+          "kind": "device",
+          "deviceId": "dev_beta",
+          "accountId": "acc_beta",
+          "deviceModel": "iPhone15,3",
+          "appVersion": null,
+          "systemVersion": null
+        },
+        "excerpt": "今天的问题",
+        "format": "text",
+        "messages": 1
+      }
+    ]
+  },
+  "devices": {
+    "paired": 3,
+    "active7d": 3,
+    "activeWindow": 3,
+    "newInWindow": 4,
+    "newRawInWindow": 4,
+    "windowDays": 30,
+    "revoked": 1,
+    "debug": 1,
+    "newPerDay": [
+      {
+        "day": 20260926,
+        "count": 0
+      },
+      {
+        "day": 20260927,
+        "count": 0
+      },
+      {
+        "day": 20260928,
+        "count": 0
+      },
+      {
+        "day": 20260929,
+        "count": 0
+      },
+      {
+        "day": 20260930,
+        "count": 0
+      },
+      {
+        "day": 20261001,
+        "count": 1
+      },
+      {
+        "day": 20261002,
+        "count": 0
+      },
+      {
+        "day": 20261003,
+        "count": 0
+      },
+      {
+        "day": 20261004,
+        "count": 0
+      },
+      {
+        "day": 20261005,
+        "count": 1
+      },
+      {
+        "day": 20261006,
+        "count": 0
+      },
+      {
+        "day": 20261007,
+        "count": 0
+      },
+      {
+        "day": 20261008,
+        "count": 0
+      },
+      {
+        "day": 20261009,
+        "count": 0
+      },
+      {
+        "day": 20261010,
+        "count": 0
+      },
+      {
+        "day": 20261011,
+        "count": 0
+      },
+      {
+        "day": 20261012,
+        "count": 0
+      },
+      {
+        "day": 20261013,
+        "count": 0
+      },
+      {
+        "day": 20261014,
+        "count": 0
+      },
+      {
+        "day": 20261015,
+        "count": 0
+      },
+      {
+        "day": 20261016,
+        "count": 0
+      },
+      {
+        "day": 20261017,
+        "count": 0
+      },
+      {
+        "day": 20261018,
+        "count": 0
+      },
+      {
+        "day": 20261019,
+        "count": 0
+      },
+      {
+        "day": 20261020,
+        "count": 1
+      },
+      {
+        "day": 20261021,
+        "count": 1
+      },
+      {
+        "day": 20261022,
+        "count": 0
+      },
+      {
+        "day": 20261023,
+        "count": 0
+      },
+      {
+        "day": 20261024,
+        "count": 0
+      },
+      {
+        "day": 20261025,
+        "count": 0
+      }
+    ],
+    "newRawPerDay": [
+      {
+        "day": 20260926,
+        "count": 0
+      },
+      {
+        "day": 20260927,
+        "count": 0
+      },
+      {
+        "day": 20260928,
+        "count": 0
+      },
+      {
+        "day": 20260929,
+        "count": 0
+      },
+      {
+        "day": 20260930,
+        "count": 0
+      },
+      {
+        "day": 20261001,
+        "count": 1
+      },
+      {
+        "day": 20261002,
+        "count": 0
+      },
+      {
+        "day": 20261003,
+        "count": 0
+      },
+      {
+        "day": 20261004,
+        "count": 0
+      },
+      {
+        "day": 20261005,
+        "count": 1
+      },
+      {
+        "day": 20261006,
+        "count": 0
+      },
+      {
+        "day": 20261007,
+        "count": 0
+      },
+      {
+        "day": 20261008,
+        "count": 0
+      },
+      {
+        "day": 20261009,
+        "count": 0
+      },
+      {
+        "day": 20261010,
+        "count": 0
+      },
+      {
+        "day": 20261011,
+        "count": 0
+      },
+      {
+        "day": 20261012,
+        "count": 0
+      },
+      {
+        "day": 20261013,
+        "count": 0
+      },
+      {
+        "day": 20261014,
+        "count": 0
+      },
+      {
+        "day": 20261015,
+        "count": 0
+      },
+      {
+        "day": 20261016,
+        "count": 0
+      },
+      {
+        "day": 20261017,
+        "count": 0
+      },
+      {
+        "day": 20261018,
+        "count": 0
+      },
+      {
+        "day": 20261019,
+        "count": 0
+      },
+      {
+        "day": 20261020,
+        "count": 1
+      },
+      {
+        "day": 20261021,
+        "count": 1
+      },
+      {
+        "day": 20261022,
+        "count": 0
+      },
+      {
+        "day": 20261023,
+        "count": 0
+      },
+      {
+        "day": 20261024,
+        "count": 0
+      },
+      {
+        "day": 20261025,
+        "count": 0
+      }
+    ],
+    "list": [
+      {
+        "deviceId": "dev_one",
+        "deviceTokenHash": "hash-one-012…",
+        "agentId": "agt_mac",
+        "accountId": "acc_alpha",
+        "name": "Alpha iPhone",
+        "model": "iPhone17,1",
+        "appVersion": "20261023.1200",
+        "createdAt": 1792454400000,
+        "expiresAt": 1823990400000,
+        "lastSeenAt": 1792893600000,
+        "revokedAt": null,
+        "apnsToken": "abcdef01…",
+        "apnsEnv": "production",
+        "pushTurnEnd": 1,
+        "pushAttention": 1,
+        "pushUpdatedAt": 1792890000000,
+        "deviceKey": "phone-key",
+        "connectorVersion": "0.4.1",
+        "hostVersion": "1.2.3",
+        "versionsAt": 1792458000000,
+        "revoked": false,
+        "push": {
+          "registered": true,
+          "env": "production",
+          "turnEnd": true,
+          "attention": true,
+          "updatedAt": 1792890000000
+        },
+        "accountName": "alpha"
+      },
+      {
+        "deviceId": "dev_two",
+        "deviceTokenHash": "hash-two-012…",
+        "agentId": "agt_mac",
+        "accountId": "acc_alpha",
+        "name": "Alpha iPad",
+        "model": "iPhone16,2",
+        "appVersion": "20261020.0900",
+        "createdAt": 1792540800000,
+        "expiresAt": 1824076800000,
+        "lastSeenAt": 1792893600000,
+        "revokedAt": null,
+        "apnsToken": null,
+        "apnsEnv": null,
+        "pushTurnEnd": 0,
+        "pushAttention": 0,
+        "pushUpdatedAt": null,
+        "deviceKey": null,
+        "connectorVersion": "0.4.1",
+        "hostVersion": "1.2.3",
+        "versionsAt": 1792458000000,
+        "revoked": false,
+        "push": {
+          "registered": false,
+          "env": null,
+          "turnEnd": false,
+          "attention": false,
+          "updatedAt": null
+        },
+        "accountName": "alpha"
+      },
+      {
+        "deviceId": "dev_beta",
+        "deviceTokenHash": "hash-beta-01…",
+        "agentId": "agt_beta",
+        "accountId": "acc_beta",
+        "name": "Beta iPhone",
+        "model": "iPhone15,3",
+        "appVersion": "20261006.0100",
+        "createdAt": 1791158400000,
+        "expiresAt": 1822694400000,
+        "lastSeenAt": 1792888200000,
+        "revokedAt": null,
+        "apnsToken": null,
+        "apnsEnv": null,
+        "pushTurnEnd": 0,
+        "pushAttention": 0,
+        "pushUpdatedAt": null,
+        "deviceKey": null,
+        "connectorVersion": null,
+        "hostVersion": null,
+        "versionsAt": null,
+        "revoked": false,
+        "push": {
+          "registered": false,
+          "env": null,
+          "turnEnd": false,
+          "attention": false,
+          "updatedAt": null
+        },
+        "accountName": "beta"
+      }
+    ]
+  },
+  "usage": {
+    "perDay": [
+      {
+        "day": 20260926,
+        "egressBytes": 0,
+        "connections": 0,
+        "devices": 0,
+        "accounts": 0,
+        "newAccounts": 0,
+        "returningAccounts": 0
+      },
+      {
+        "day": 20260927,
+        "egressBytes": 0,
+        "connections": 0,
+        "devices": 0,
+        "accounts": 0,
+        "newAccounts": 0,
+        "returningAccounts": 0
+      },
+      {
+        "day": 20260928,
+        "egressBytes": 1000,
+        "connections": 2,
+        "devices": 1,
+        "accounts": 1,
+        "newAccounts": 1,
+        "returningAccounts": 0
+      },
+      {
+        "day": 20260929,
+        "egressBytes": 0,
+        "connections": 0,
+        "devices": 0,
+        "accounts": 0,
+        "newAccounts": 0,
+        "returningAccounts": 0
+      },
+      {
+        "day": 20260930,
+        "egressBytes": 2000,
+        "connections": 3,
+        "devices": 1,
+        "accounts": 1,
+        "newAccounts": 0,
+        "returningAccounts": 1
+      },
+      {
+        "day": 20261001,
+        "egressBytes": 3000,
+        "connections": 4,
+        "devices": 1,
+        "accounts": 1,
+        "newAccounts": 0,
+        "returningAccounts": 1
+      },
+      {
+        "day": 20261002,
+        "egressBytes": 0,
+        "connections": 0,
+        "devices": 0,
+        "accounts": 0,
+        "newAccounts": 0,
+        "returningAccounts": 0
+      },
+      {
+        "day": 20261003,
+        "egressBytes": 0,
+        "connections": 0,
+        "devices": 0,
+        "accounts": 0,
+        "newAccounts": 0,
+        "returningAccounts": 0
+      },
+      {
+        "day": 20261004,
+        "egressBytes": 0,
+        "connections": 0,
+        "devices": 0,
+        "accounts": 0,
+        "newAccounts": 0,
+        "returningAccounts": 0
+      },
+      {
+        "day": 20261005,
+        "egressBytes": 0,
+        "connections": 0,
+        "devices": 0,
+        "accounts": 0,
+        "newAccounts": 0,
+        "returningAccounts": 0
+      },
+      {
+        "day": 20261006,
+        "egressBytes": 700,
+        "connections": 1,
+        "devices": 1,
+        "accounts": 1,
+        "newAccounts": 1,
+        "returningAccounts": 0
+      },
+      {
+        "day": 20261007,
+        "egressBytes": 0,
+        "connections": 0,
+        "devices": 0,
+        "accounts": 0,
+        "newAccounts": 0,
+        "returningAccounts": 0
+      },
+      {
+        "day": 20261008,
+        "egressBytes": 0,
+        "connections": 0,
+        "devices": 0,
+        "accounts": 0,
+        "newAccounts": 0,
+        "returningAccounts": 0
+      },
+      {
+        "day": 20261009,
+        "egressBytes": 0,
+        "connections": 0,
+        "devices": 0,
+        "accounts": 0,
+        "newAccounts": 0,
+        "returningAccounts": 0
+      },
+      {
+        "day": 20261010,
+        "egressBytes": 0,
+        "connections": 0,
+        "devices": 0,
+        "accounts": 0,
+        "newAccounts": 0,
+        "returningAccounts": 0
+      },
+      {
+        "day": 20261011,
+        "egressBytes": 0,
+        "connections": 0,
+        "devices": 0,
+        "accounts": 0,
+        "newAccounts": 0,
+        "returningAccounts": 0
+      },
+      {
+        "day": 20261012,
+        "egressBytes": 0,
+        "connections": 0,
+        "devices": 0,
+        "accounts": 0,
+        "newAccounts": 0,
+        "returningAccounts": 0
+      },
+      {
+        "day": 20261013,
+        "egressBytes": 0,
+        "connections": 0,
+        "devices": 0,
+        "accounts": 0,
+        "newAccounts": 0,
+        "returningAccounts": 0
+      },
+      {
+        "day": 20261014,
+        "egressBytes": 0,
+        "connections": 0,
+        "devices": 0,
+        "accounts": 0,
+        "newAccounts": 0,
+        "returningAccounts": 0
+      },
+      {
+        "day": 20261015,
+        "egressBytes": 0,
+        "connections": 0,
+        "devices": 0,
+        "accounts": 0,
+        "newAccounts": 0,
+        "returningAccounts": 0
+      },
+      {
+        "day": 20261016,
+        "egressBytes": 0,
+        "connections": 0,
+        "devices": 0,
+        "accounts": 0,
+        "newAccounts": 0,
+        "returningAccounts": 0
+      },
+      {
+        "day": 20261017,
+        "egressBytes": 0,
+        "connections": 0,
+        "devices": 0,
+        "accounts": 0,
+        "newAccounts": 0,
+        "returningAccounts": 0
+      },
+      {
+        "day": 20261018,
+        "egressBytes": 4000,
+        "connections": 5,
+        "devices": 1,
+        "accounts": 1,
+        "newAccounts": 0,
+        "returningAccounts": 1
+      },
+      {
+        "day": 20261019,
+        "egressBytes": 5000,
+        "connections": 6,
+        "devices": 1,
+        "accounts": 1,
+        "newAccounts": 0,
+        "returningAccounts": 1
+      },
+      {
+        "day": 20261020,
+        "egressBytes": 8500,
+        "connections": 14,
+        "devices": 3,
+        "accounts": 2,
+        "newAccounts": 0,
+        "returningAccounts": 2
+      },
+      {
+        "day": 20261021,
+        "egressBytes": 9100,
+        "connections": 15,
+        "devices": 2,
+        "accounts": 1,
+        "newAccounts": 0,
+        "returningAccounts": 1
+      },
+      {
+        "day": 20261022,
+        "egressBytes": 10400,
+        "connections": 17,
+        "devices": 2,
+        "accounts": 1,
+        "newAccounts": 0,
+        "returningAccounts": 1
+      },
+      {
+        "day": 20261023,
+        "egressBytes": 11700,
+        "connections": 19,
+        "devices": 2,
+        "accounts": 1,
+        "newAccounts": 0,
+        "returningAccounts": 1
+      },
+      {
+        "day": 20261024,
+        "egressBytes": 13700,
+        "connections": 22,
+        "devices": 3,
+        "accounts": 2,
+        "newAccounts": 0,
+        "returningAccounts": 2
+      },
+      {
+        "day": 20261025,
+        "egressBytes": 15000,
+        "connections": 24,
+        "devices": 3,
+        "accounts": 2,
+        "newAccounts": 0,
+        "returningAccounts": 2
+      }
+    ],
+    "topAccounts": [
+      {
+        "accountId": "acc_alpha",
+        "name": "alpha",
+        "egressBytes": 81300,
+        "connections": 128,
+        "lastSeenAt": 1792893600000,
+        "lastBuild": "20261023.1200",
+        "devices": 2
+      },
+      {
+        "accountId": "acc_beta",
+        "name": "beta",
+        "egressBytes": 2800,
+        "connections": 4,
+        "lastSeenAt": 1792888200000,
+        "lastBuild": "20261006.0100",
+        "devices": 1
+      }
+    ],
+    "totals": {
+      "egressBytes": 84100,
+      "connections": 132
+    },
+    "averagePerDay": 2803,
+    "peakDay": {
+      "day": 20261025,
+      "egressBytes": 15000
+    },
+    "activeDays": 12,
+    "activeAccounts": 2,
+    "activeAccounts7d": 2
+  },
+  "retention": {
+    "scope": "external",
+    "users": {
+      "dau": 1,
+      "wau": 1,
+      "mau": 1,
+      "stickiness": 1,
+      "external": 1
+    },
+    "d1": {
+      "rate": 0,
+      "cohort": 1,
+      "active": 0
+    },
+    "d7": {
+      "rate": 0,
+      "cohort": 1,
+      "active": 0
+    },
+    "activation": {
+      "rate": 1,
+      "cohort": 1,
+      "active": 1
+    },
+    "weeks": [
+      {
+        "week": "2026-W41",
+        "size": 1,
+        "active": 0,
+        "rate": 0
+      }
+    ]
+  },
+  "invites": {
+    "minted": 4,
+    "used": 1,
+    "remaining": 3,
+    "test": 1,
+    "usable": 2,
+    "expiringSoon": 1,
+    "expiredUnused": 1,
+    "unused": [
+      {
+        "createdAt": 1792454400000,
+        "expiresAt": 1793145600000,
+        "note": "soon"
+      },
+      {
+        "createdAt": 1792454400000,
+        "expiresAt": 1794268800000,
+        "note": "later"
+      }
+    ],
+    "enrollments": [
+      {
+        "usedAt": 1791158400000,
+        "inviteNote": "bob",
+        "accountId": "acc_beta",
+        "accountName": "beta",
+        "agentId": "agt_beta",
+        "agentName": "beta-mac",
+        "devices": 1,
+        "lastSeenAt": 1792888200000
+      },
+      {
+        "usedAt": 1792893600000,
+        "inviteNote": "later",
+        "accountId": "acc_beta",
+        "accountName": "beta",
+        "agentId": "agt_beta",
+        "agentName": "beta-mac",
+        "devices": 1,
+        "lastSeenAt": 1792888200000
+      }
+    ]
+  }
+}

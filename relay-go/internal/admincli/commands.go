@@ -5,6 +5,7 @@ import (
 	"flag"
 	"io"
 
+	"github.com/jayantTang/DSH_Mobile/relay-go/internal/opsreport"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/store"
 )
 
@@ -188,49 +189,32 @@ func runInviteMint(ctx context.Context, st *store.Store, args []string,
 	return emit(stdout, minted)
 }
 
-// pushInfo 是 device-list 里 push 段（Python 同名结构）。
-type pushInfo struct {
-	Registered bool    `json:"registered"`
-	Env        *string `json:"env"`
-	TurnEnd    bool    `json:"turnEnd"`
-	Attention  bool    `json:"attention"`
-	UpdatedAt  *int64  `json:"updatedAt"`
-}
-
 // deviceListEntry 是 device-list 的一行：设备全列 + 那台电脑的版本三段 + 推送登记。
 //
 // 字段名与 admin.py 输出逐项一致；deviceTokenHash 与 apnsToken 打码（终端记录不该
 // 留下可用凭据）。
 type deviceListEntry struct {
-	DeviceID         string   `json:"deviceId"`
-	DeviceTokenHash  string   `json:"deviceTokenHash"`
-	AgentID          string   `json:"agentId"`
-	AccountID        string   `json:"accountId"`
-	Name             string   `json:"name"`
-	Model            *string  `json:"model"`
-	AppVersion       *string  `json:"appVersion"`
-	CreatedAt        int64    `json:"createdAt"`
-	ExpiresAt        int64    `json:"expiresAt"`
-	LastSeenAt       *int64   `json:"lastSeenAt"`
-	RevokedAt        *int64   `json:"revokedAt"`
-	APNSToken        *string  `json:"apnsToken"`
-	APNSEnv          *string  `json:"apnsEnv"`
-	PushTurnEnd      int      `json:"pushTurnEnd"`
-	PushAttention    int      `json:"pushAttention"`
-	PushUpdatedAt    *int64   `json:"pushUpdatedAt"`
-	DeviceKey        *string  `json:"deviceKey"`
-	ConnectorVersion *string  `json:"connectorVersion"`
-	HostVersion      *string  `json:"hostVersion"`
-	VersionsAt       *int64   `json:"versionsAt"`
-	Push             pushInfo `json:"push"`
-}
-
-// maskPrefix 复刻 admin.py 的打码：保留前 n 个字符再加省略号。
-func maskPrefix(value string, n int) string {
-	if len(value) <= n {
-		return value + "…"
-	}
-	return value[:n] + "…"
+	DeviceID         string             `json:"deviceId"`
+	DeviceTokenHash  string             `json:"deviceTokenHash"`
+	AgentID          string             `json:"agentId"`
+	AccountID        string             `json:"accountId"`
+	Name             string             `json:"name"`
+	Model            *string            `json:"model"`
+	AppVersion       *string            `json:"appVersion"`
+	CreatedAt        int64              `json:"createdAt"`
+	ExpiresAt        int64              `json:"expiresAt"`
+	LastSeenAt       *int64             `json:"lastSeenAt"`
+	RevokedAt        *int64             `json:"revokedAt"`
+	APNSToken        *string            `json:"apnsToken"`
+	APNSEnv          *string            `json:"apnsEnv"`
+	PushTurnEnd      int                `json:"pushTurnEnd"`
+	PushAttention    int                `json:"pushAttention"`
+	PushUpdatedAt    *int64             `json:"pushUpdatedAt"`
+	DeviceKey        *string            `json:"deviceKey"`
+	ConnectorVersion *string            `json:"connectorVersion"`
+	HostVersion      *string            `json:"hostVersion"`
+	VersionsAt       *int64             `json:"versionsAt"`
+	Push             opsreport.PushInfo `json:"push"`
 }
 
 // runDeviceList 实现 device-list [--agent] [--all]。
@@ -269,7 +253,7 @@ func runDeviceList(ctx context.Context, st *store.Store, args []string,
 	for _, device := range devices {
 		agent := versions[device.AgentID]
 		entry := deviceListEntry{
-			DeviceID: device.DeviceID, DeviceTokenHash: maskPrefix(device.DeviceTokenHash, 12),
+			DeviceID: device.DeviceID, DeviceTokenHash: opsreport.MaskPrefix(device.DeviceTokenHash, 12),
 			AgentID: device.AgentID, AccountID: device.AccountID, Name: device.Name,
 			Model: device.Model, AppVersion: device.AppVersion, CreatedAt: device.CreatedAt,
 			ExpiresAt: device.ExpiresAt, LastSeenAt: device.LastSeenAt,
@@ -280,10 +264,10 @@ func runDeviceList(ctx context.Context, st *store.Store, args []string,
 			VersionsAt: agent.VersionsAt,
 		}
 		if device.APNSToken != nil {
-			masked := maskPrefix(*device.APNSToken, 8)
+			masked := opsreport.MaskPrefix(*device.APNSToken, 8)
 			entry.APNSToken = &masked
 		}
-		entry.Push = pushInfo{
+		entry.Push = opsreport.PushInfo{
 			Registered: device.APNSToken != nil,
 			Env:        device.APNSEnv,
 			TurnEnd:    device.PushTurnEnd != 0,

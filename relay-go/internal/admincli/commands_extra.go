@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/jayantTang/DSH_Mobile/relay-go/internal/opsreport"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/push"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/store"
 )
@@ -119,7 +120,7 @@ func runAgentList(ctx context.Context, st *store.Store, args []string,
 	for _, agent := range agents {
 		rows = append(rows, agentListEntry{
 			AgentID: agent.AgentID, AccountID: agent.AccountID, Name: agent.Name,
-			SecretHash: maskPrefix(agent.SecretHash, 12),
+			SecretHash: opsreport.MaskPrefix(agent.SecretHash, 12),
 			CreatedAt:  agent.CreatedAt, UpdatedAt: agent.UpdatedAt,
 			Disabled: agent.Disabled, LastSeenAt: agent.LastSeenAt,
 			ConnectorVersion: agent.ConnectorVersion, HostVersion: agent.HostVersion,
@@ -189,7 +190,7 @@ func runInviteList(ctx context.Context, st *store.Store, args []string,
 			remaining = 0
 		}
 		rows = append(rows, inviteListEntry{
-			CodeHash: maskPrefix(invite.CodeHash, 12), Note: invite.Note,
+			CodeHash: opsreport.MaskPrefix(invite.CodeHash, 12), Note: invite.Note,
 			CreatedAt: invite.CreatedAt, ExpiresAt: invite.ExpiresAt,
 			ExpiresInSeconds: remaining / 1000,
 			UsedAt:           invite.UsedAt, UsedByAgentID: invite.UsedByAgentID,

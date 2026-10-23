@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jayantTang/DSH_Mobile/relay-go/internal/opsreport"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/store"
 )
 
@@ -20,9 +21,6 @@ import (
 // defaultReplySignature 是 `feedback-reply --template` 的默认署名。
 const defaultReplySignature = "DSH Mobile 团队"
 
-// feedbackDigestExcerptChars 是清单摘要的长度（Python `_feedback_rows` 的口径）。
-const feedbackDigestExcerptChars = 80
-
 // reported 表示"结论已经作为 JSON 打到 stdout，退出码 1"。
 //
 // Python 的 `_emit({"ok": False, ...}); return 1` 是这种形态：人要看的是 JSON，
@@ -30,30 +28,6 @@ const feedbackDigestExcerptChars = 80
 type reported struct{}
 
 func (reported) Error() string { return "already reported" }
-
-// feedbackSource 是清单里的来源段（Python `_feedback_rows` 的 `source`）。
-type feedbackSource struct {
-	Kind          string  `json:"kind"`
-	DeviceID      *string `json:"deviceId"`
-	AccountID     *string `json:"accountId"`
-	DeviceModel   *string `json:"deviceModel"`
-	AppVersion    *string `json:"appVersion"`
-	SystemVersion *string `json:"systemVersion"`
-}
-
-// feedbackListRow 是 feedback-list 的一行；字段名与 admin.py 一致。
-type feedbackListRow struct {
-	ThreadID      string         `json:"threadId"`
-	Subject       *string        `json:"subject"`
-	CreatedAt     int64          `json:"createdAt"`
-	LastMessageAt int64          `json:"lastMessageAt"`
-	Status        string         `json:"status"`
-	OwnerUnread   int            `json:"ownerUnread"`
-	Source        feedbackSource `json:"source"`
-	Excerpt       string         `json:"excerpt"`
-	Format        string         `json:"format"`
-	Messages      int            `json:"messages"`
-}
 
 // feedbackShowOutput 是 feedback-show 的完整线程（列序与表结构一致）。
 type feedbackShowOutput struct {
@@ -177,59 +151,11 @@ func runFeedbackList(ctx context.Context, st *store.Store, args []string,
 		sinceMS = &value
 	}
 
-	rows, err := feedbackRows(ctx, st, statusValue, sinceMS, maxInt(*limit, 1))
+	rows, err := opsreport.FeedbackRows(ctx, st, statusValue, sinceMS, maxInt(*limit, 1))
 	if err != nil {
 		return err
 	}
 	return emit(stdout, rows)
-}
-
-// feedbackRows 是 owner 清单的每一行。
-//
-// 未读数与摘要各一次查完：清单默认不带留言，而 owner 要的两个数都在消息表里。
-func feedbackRows(ctx context.Context, st *store.Store, status *string, sinceMS *int64,
-	limit int) ([]feedbackListRow, error) {
-	unread, err := st.OwnerUnreadCounts(ctx)
-	if err != nil {
-		return nil, err
-	}
-	threads, err := st.ListFeedbackThreads(ctx, status, sinceMS, limit, 0)
-	if err != nil {
-		return nil, err
-	}
-	ids := make([]string, 0, len(threads))
-	for _, thread := range threads {
-		ids = append(ids, thread.ThreadID)
-	}
-	digest, err := st.FeedbackDigest(ctx, ids, feedbackDigestExcerptChars)
-	if err != nil {
-		return nil, err
-	}
-
-	rows := make([]feedbackListRow, 0, len(threads))
-	for _, thread := range threads {
-		entry := digest[thread.ThreadID]
-		kind := "anonymous"
-		if thread.DeviceID != nil || thread.AccountID != nil {
-			kind = "device"
-		}
-		format := entry.Format
-		if format == "" {
-			format = store.DefaultFeedbackFormat
-		}
-		rows = append(rows, feedbackListRow{
-			ThreadID: thread.ThreadID, Subject: thread.Subject,
-			CreatedAt: thread.CreatedAt, LastMessageAt: thread.LastMessageAt,
-			Status: thread.Status, OwnerUnread: unread[thread.ThreadID],
-			Source: feedbackSource{
-				Kind: kind, DeviceID: thread.DeviceID, AccountID: thread.AccountID,
-				DeviceModel: thread.DeviceModel, AppVersion: thread.AppVersion,
-				SystemVersion: thread.SystemVersion,
-			},
-			Excerpt: entry.Excerpt, Format: format, Messages: thread.MessageCount,
-		})
-	}
-	return rows, nil
 }
 
 // runFeedbackShow 实现 feedback-show --thread：看全文并把 ownerReadAt 推到最新一条
@@ -267,7 +193,7 @@ func runFeedbackShow(ctx context.Context, st *store.Store, args []string,
 	}
 
 	output := feedbackShowOutput{
-		ThreadID: thread.ThreadID, TicketHash: maskPrefix(thread.TicketHash, 12),
+		ThreadID: thread.ThreadID, TicketHash: opsreport.MaskPrefix(thread.TicketHash, 12),
 		AccountID: thread.AccountID, DeviceID: thread.DeviceID,
 		AppVersion: thread.AppVersion, DeviceModel: thread.DeviceModel,
 		SystemVersion: thread.SystemVersion, CreatedAt: thread.CreatedAt,
