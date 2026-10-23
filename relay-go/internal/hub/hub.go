@@ -224,7 +224,10 @@ func (h *Hub) PresenceStats() presence.Stats {
 func (h *Hub) noteControlDrop(link *Link, frameType string) {
 	total := h.controlDrops.Add(1)
 	h.log.Warn("relay: dropped a lossy control frame under backpressure",
-		"link", link.Label(), "frame", frameType, "total", total)
+		"link", link.Label(), "frame", frameType, "total", total,
+		"linkControlDrops", link.ControlDrops(),
+		"queueDepth", link.QueueDepth(), "queuedBytes", link.QueuedBytes(),
+		"remote_ip", link.Remote(), "lastInboundAge", link.LastInboundAge().String())
 	if h.monitor != nil {
 		h.monitor.NoteControlDrop(link.Label(), frameType)
 	}
@@ -297,6 +300,16 @@ func (h *Hub) Agent(agentID string) *AgentLink {
 type AgentRefusal struct {
 	Reason     string
 	RetryAfter time.Duration
+
+	// 以下是诊断字段（只进日志，不改变 429 响应）：一次拒绝要能回答
+	// "等了多久、旧连接退没退、它是不是从没报过版本"。
+	Waited        time.Duration
+	WaitResult    string // exited / timeout / canceled / not-waited
+	Unverified    bool
+	Streak        int
+	OldGeneration uint64
+	OldConnected  bool
+	OldIdle       time.Duration
 }
 
 func (e *AgentRefusal) Error() string {
@@ -312,14 +325,32 @@ func (e *AgentRefusal) Error() string {
 //
 // 旧连接已退出（正常网络抖动后的重连）时 presence 直接 Allow，没有任何等待。
 func (h *Hub) AdmitAgent(ctx context.Context, agent store.Agent) (*presence.Ticket, *AgentRefusal) {
+	waitResult := "not-waited"
+	var waited time.Duration
+	var observation presence.Observation
 	refuse := func(decision presence.Decision) (*presence.Ticket, *AgentRefusal) {
-		h.noteAgentRefusal(agent, decision)
-		return nil, &AgentRefusal{Reason: decision.Reason, RetryAfter: decision.RetryAfter}
+		refusal := &AgentRefusal{
+			Reason: decision.Reason, RetryAfter: decision.RetryAfter,
+			Waited: waited, WaitResult: waitResult, Unverified: decision.Unverified,
+			Streak: decision.Streak, OldGeneration: observation.Generation,
+			OldConnected: observation.Connected,
+		}
+		if observation.Connected {
+			reference := observation.AttachedAt
+			if observation.LastInbound.After(reference) {
+				reference = observation.LastInbound
+			}
+			if !reference.IsZero() {
+				refusal.OldIdle = time.Since(reference)
+			}
+		}
+		h.noteAgentRefusal(agent, refusal)
+		return nil, refusal
 	}
 	for attempt := 0; attempt < 2; attempt++ {
 		now := time.Now()
 		current := h.Agent(agent.AgentID)
-		observation := presence.Observation{}
+		observation = presence.Observation{}
 		if current != nil && !current.Closed() {
 			observation = presence.Observation{
 				Connected: true, Generation: current.generation,
@@ -335,15 +366,27 @@ func (h *Hub) AdmitAgent(ctx context.Context, agent store.Agent) (*presence.Tick
 		case presence.Wait:
 			if current == nil || attempt > 0 {
 				// 第二次仍然只能等：这不是「旧连接正要退出」，而是「它还在用」。
-				return refuse(h.presence.Suppress(agent.AgentID, presence.ReasonDuplicate, time.Now()))
+				return refuse(h.presence.Suppress(
+					agent.AgentID, presence.ReasonDuplicate, time.Now()))
 			}
+			start := time.Now()
 			exited, canceled := waitForOld(current.Done(), decision.WaitFor, ctx)
-			if canceled {
-				// 客户端在等待期间自己走了：不记账（不是一次被抑制的到达）。
-				return nil, &AgentRefusal{Reason: "client-gone", RetryAfter: decision.WaitFor}
-			}
-			if !exited {
-				return refuse(h.presence.Suppress(agent.AgentID, presence.ReasonDuplicate, time.Now()))
+			waited = time.Since(start)
+			switch {
+			case canceled:
+				waitResult = "canceled"
+				// 客户端在等待期间自己走了：不记账（不是一次被抑制的到达），
+				// 也不该按"被拒绝"记日志——它只是没等。
+				return nil, &AgentRefusal{
+					Reason: "client-gone", RetryAfter: decision.WaitFor,
+					Waited: waited, WaitResult: waitResult,
+				}
+			case !exited:
+				waitResult = "timeout"
+				return refuse(h.presence.Suppress(
+					agent.AgentID, presence.ReasonDuplicate, time.Now()))
+			default:
+				waitResult = "exited"
 			}
 			// 旧连接在窗口内退出了：再问一次，这次会走「已退出」的立即允许。
 		}
@@ -351,21 +394,30 @@ func (h *Hub) AdmitAgent(ctx context.Context, agent store.Agent) (*presence.Tick
 	return refuse(h.presence.Suppress(agent.AgentID, presence.ReasonDuplicate, time.Now()))
 }
 
-// noteAgentRefusal 记一条拒绝日志；频率由 presence 控制（同一 agent 每分钟一条
-// Info，其余降到 Debug），风暴不会把 journal 冲掉。
-func (h *Hub) noteAgentRefusal(agent store.Agent, decision presence.Decision) {
-	level := slog.LevelDebug
-	if decision.Log {
-		level = slog.LevelInfo
-	}
+// noteAgentRefusal 记一条拒绝日志。
+//
+// 级别固定为 INFO（未上报版本用 WARN）：连接风暴在 journal 里必须看得见，不能
+// 默认落在 DEBUG 里被运维漏掉。频率仍然由 presence 统计（streak 逐次累加），
+// 但不再把后续到达降级——"每分钟只看得到一条"正是 2026-10-23 那类事件被漏掉的
+// 原因。字段里带上等待结果与旧连接状态，一行就能判断是顶替、退避还是并发到达。
+func (h *Hub) noteAgentRefusal(agent store.Agent, refusal *AgentRefusal) {
+	level := slog.LevelInfo
 	message := "relay: refused a duplicate agent connection"
-	if decision.Reason == presence.ReasonUnverified {
+	switch refusal.Reason {
+	case presence.ReasonUnverified:
+		level = slog.LevelWarn
 		message = "relay: refused a reconnect from an agent that never reported its versions; " +
 			"backing off"
+	case presence.ReasonPending:
+		message = "relay: refused an agent connection while another arrival is in flight"
 	}
 	h.log.Log(context.Background(), level, message,
-		"agentId", agent.AgentID, "name", agent.Name, "reason", decision.Reason,
-		"retryAfterMs", decision.RetryAfter.Milliseconds(), "streak", decision.Streak)
+		"agentId", agent.AgentID, "name", agent.Name, "reason", refusal.Reason,
+		"retryAfterMs", refusal.RetryAfter.Milliseconds(), "streak", refusal.Streak,
+		"waitResult", refusal.WaitResult, "waitedMs", refusal.Waited.Milliseconds(),
+		"unverified", refusal.Unverified, "oldGeneration", refusal.OldGeneration,
+		"oldConnected", refusal.OldConnected,
+		"oldIdleMs", refusal.OldIdle.Milliseconds())
 }
 
 // waitForOld 等旧连接的写循环退出；返回 (退出了, 请求被取消)。
@@ -416,13 +468,14 @@ func (h *Hub) AttachAgent(ctx context.Context, agent store.Agent, sink Sink,
 		attachedAt: now,
 		devices:    map[string]*DeviceLink{},
 	}
+	link.Link.SetRemote(remoteOf(sink))
 	// 文件上行桥的字节额度跟着**这条**连接器链路走：帧压在它的队列里，额度就该
 	// 记在它头上；连接器被顶替时新链路拿一份新的，旧链路的额度随旧队列一起清空。
 	link.Link.credits = newBridgeCredits(h.limits.BridgeBytes)
 	// 连接器链路的心跳是 DLP ping：连接器的读循环会把 ping 原样回成 pong。
 	link.Link.heartbeatKind = heartbeatDLP
 
-	h.retireAgent(agent.AgentID)
+	h.retireAgent(agent.AgentID, link.generation)
 
 	shard := &h.agentShards[shardIndex(agent.AgentID)]
 	shard.mu.Lock()
@@ -437,16 +490,18 @@ func (h *Hub) AttachAgent(ctx context.Context, agent store.Agent, sink Sink,
 	adopted := h.adoptDevices(ctx, link)
 	h.tellAgentAboutTheGone(ctx, link, agent)
 
+	connector, host := link.Versions()
 	h.log.Info("relay: agent connected",
 		"agentId", agent.AgentID, "name", agent.Name, "devices", adopted,
-		"generation", link.generation)
+		"generation", link.generation, "accountId", agent.AccountID,
+		"remote_ip", link.Remote(), "connectorVersion", connector, "hostVersion", host)
 	return link
 }
 
 // retireAgent 让某个 agent 的旧连接按「停读 → 排空写 → 关闭」的顺序退场。
 //
 // 返回时旧连接的写循环要么已经退出，要么等满了 supersedeDrain（记一条 WARN）。
-func (h *Hub) retireAgent(agentID string) {
+func (h *Hub) retireAgent(agentID string, newGeneration uint64) {
 	previous := h.Agent(agentID)
 	if previous == nil {
 		return
@@ -457,13 +512,31 @@ func (h *Hub) retireAgent(agentID string) {
 		previous.superseded.Store(true)
 		previous.RequestClose(dlp.CloseSuperseded, "superseded by a new agent connection")
 		h.presence.NoteSuperseded()
+		connector, host := previous.Versions()
 		h.log.Info("relay: agent superseded by a new connection",
-			"agentId", agentID, "generation", previous.generation)
+			"agentId", agentID,
+			"oldGeneration", previous.generation, "newGeneration", newGeneration,
+			"oldDurationMs", previous.Lifetime().Milliseconds(),
+			"oldLastInboundAge", previous.LastInboundAge().String(),
+			"remote_ip", previous.Remote(),
+			"connectorVersion", connector, "hostVersion", host)
 	}
 	if !waitForOldLink(previous.Done(), supersedeDrain) {
 		h.log.Warn("relay: the superseded agent link did not finish closing in time",
-			"agentId", agentID, "generation", previous.generation, "drain", supersedeDrain)
+			"agentId", agentID, "oldGeneration", previous.generation,
+			"newGeneration", newGeneration, "drain", supersedeDrain,
+			"queueDepth", previous.QueueDepth())
 	}
+}
+
+// Versions 返回这条连接上报的两段版本（连接器与宿主）；还没报时都是空串。
+func (a *AgentLink) Versions() (connector, host string) {
+	if a == nil {
+		return "", ""
+	}
+	a.versionMu.Lock()
+	defer a.versionMu.Unlock()
+	return a.connectorVersion, a.hostVersion
 }
 
 // waitForOldLink 是 retireAgent 的无 ctx 等待版本（关闭顺序不能被单个请求的
@@ -623,7 +696,19 @@ func (h *Hub) DetachAgent(link *AgentLink) {
 	if link.superseded.Load() {
 		return
 	}
-	h.log.Info("relay: agent disconnected", "agentId", link.AgentID)
+	closeCode, closeReason := link.CloseInfo()
+	if closeCode == 0 {
+		closeCode, closeReason = 1001, "socket closed"
+	}
+	connector, host := link.Versions()
+	h.log.Info("relay: agent disconnected",
+		"agentId", link.AgentID, "name", link.Name, "generation", link.generation,
+		"duration_ms", link.Lifetime().Milliseconds(),
+		"closeCode", closeCode, "reason", closeReason,
+		"remote_ip", link.Remote(), "connectorVersion", connector, "hostVersion", host,
+		"lastInbound", link.LastInboundMS(),
+		"lastInboundAge", link.LastInboundAge().String(),
+		"lastError", link.LastError())
 	// 一条链路断了本身是常态（锁屏、断网、换网），**反复断**才是故障。是不是
 	// "反复"由监控器按窗口判定，hub 只报"断了一条"（2026-10-17 那次连接器每
 	// 分钟重连一轮，日志里 702 条 disconnected，没人注意到）。
@@ -718,6 +803,7 @@ func (h *Hub) AttachDevice(ctx context.Context, device store.Device, sink Sink) 
 	}
 	link.Link = newLink(sink, "device "+device.DeviceID, h.limits.QueueDepth,
 		h.limits.QueueBytes, h.log, h.linkOptions)
+	link.Link.SetRemote(remoteOf(sink))
 	link.idMember = dlp.DeviceIDMember(device.DeviceID)
 	link.bucket = newTokenBucket(h.limits.DeviceBytesPerSecond, time.Now())
 	link.Link.pace = link.pace
@@ -755,7 +841,9 @@ func (h *Hub) AttachDevice(ctx context.Context, device store.Device, sink Sink) 
 	}
 	h.usage.NoteConnection(link)
 	h.log.Info("relay: device attached",
-		"deviceId", device.DeviceID, "name", device.Name, "agentId", device.AgentID)
+		"deviceId", device.DeviceID, "name", device.Name, "agentId", device.AgentID,
+		"accountId", device.AccountID, "remote_ip", link.Remote(),
+		"hostOnline", agent != nil)
 	return link, nil
 }
 
@@ -841,7 +929,11 @@ func (h *Hub) detachDevice(link *DeviceLink, reason string, closeCode int) {
 
 	link.RequestClose(closeCode, reason)
 	h.log.Info("relay: device detached",
-		"deviceId", link.DeviceID, "reason", reason, "agentId", link.AgentID)
+		"deviceId", link.DeviceID, "agentId", link.AgentID, "reason", reason,
+		"closeCode", closeCode, "duration_ms", link.Lifetime().Milliseconds(),
+		"remote_ip", link.Remote(), "notified", notified,
+		"lastInboundAge", link.LastInboundAge().String(),
+		"lastError", link.LastError())
 	// 断开时冲一次：这一批的尾巴不留在内存里，运维命令跑完就是准的。
 	// 异步是为了不让一次写库（最坏等满 busy_timeout）拖住拆除路径。
 	h.flushUsageOnDetach()
@@ -1184,7 +1276,8 @@ func (h *Hub) sendReminders(link *AgentLink, kind, sid string, eid *string) {
 			// Apple 的判定是这套系统唯一的自动清理：App 没了或重装了，登记就是
 			// 陈旧记录，等它回来重新登记。
 			h.log.Info("relay: device push token is dead; clearing it",
-				"deviceId", row.DeviceID, "reason", stringValue(result.Reason))
+				"deviceId", row.DeviceID, "kind", kind,
+				"status", statusValue(result.Status), "reason", stringValue(result.Reason))
 			if err := h.store.ClearPush(ctx, row.DeviceID); err != nil {
 				h.log.Warn("relay: could not clear push",
 					"deviceId", row.DeviceID, "error", err)
@@ -1192,12 +1285,13 @@ func (h *Hub) sendReminders(link *AgentLink, kind, sid string, eid *string) {
 			continue
 		}
 		if result.Skipped != nil {
-			h.log.Debug("relay: push skipped",
-				"deviceId", row.DeviceID, "skipped", stringValue(result.Skipped))
+			h.log.Info("relay: push skipped", "deviceId", row.DeviceID,
+				"kind", kind, "skipped", stringValue(result.Skipped))
 			continue
 		}
 		h.log.Warn("relay: push failed",
-			"deviceId", row.DeviceID, "status", statusValue(result.Status),
+			"deviceId", row.DeviceID, "kind", kind,
+			"status", statusValue(result.Status),
 			"reason", stringValue(result.Reason))
 	}
 }

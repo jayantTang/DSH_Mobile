@@ -109,6 +109,8 @@ type fixtureOptions struct {
 	idleTimeout  time.Duration
 	writeTimeout time.Duration
 	presence     presence.Options
+	// logger 为空时丢弃日志；传输诊断的用例注入一个 JSON 缓冲。
+	logger *slog.Logger
 }
 
 func newFileFixture(t *testing.T, options fixtureOptions) *fileFixture {
@@ -129,7 +131,10 @@ func newFileFixture(t *testing.T, options fixtureOptions) *fileFixture {
 	}
 	t.Cleanup(func() { _ = st.Close() })
 
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	logger := options.logger
+	if logger == nil {
+		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
 	ctx := context.Background()
 	account, err := st.CreateAccount(ctx, "files")
 	if err != nil {

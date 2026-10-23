@@ -59,7 +59,7 @@ func (h Health) register(mux *http.ServeMux, pattern string) {
 	mux.HandleFunc("GET "+pattern, h.serveHTTP)
 }
 
-func (h Health) serveHTTP(w http.ResponseWriter, _ *http.Request) {
+func (h Health) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	version := h.Version
 	if strings.TrimSpace(version) == "" {
 		version = Unversioned
@@ -73,7 +73,7 @@ func (h Health) serveHTTP(w http.ResponseWriter, _ *http.Request) {
 	})
 	if err != nil {
 		// 结构体不可能序列化失败；真发生了也必须给 JSON 信封，不能回退纯文本。
-		writeError(w, http.StatusInternalServerError, "internal/error",
+		writeErrorFor(w, r, http.StatusInternalServerError, "internal/error",
 			"healthz: encode response", nil)
 		return
 	}

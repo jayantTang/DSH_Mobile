@@ -11,6 +11,7 @@ import (
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/files"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/hub"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/monitor"
+	"github.com/jayantTang/DSH_Mobile/relay-go/internal/reqctx"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/store"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/wsapi"
 )
@@ -66,6 +67,10 @@ type Options struct {
 	Monitor *monitor.Monitor
 	// Push 是 APNs 投递器；只在本包自己造 hub（Hub 为空）时用得上。
 	Push hub.PushSender
+	// AccessLog 是访问日志档位：off / errors（默认）/ all。空值取 errors。
+	AccessLog string
+	// SlowRequest 是"慢请求"判定线；零值取 DefaultSlowRequest（500 ms）。
+	SlowRequest time.Duration
 }
 
 // server 持有一份不可变配置与两个限流桶。
@@ -91,6 +96,10 @@ type server struct {
 	enrollLimiter *ClaimLimiter
 	// internalResolveLimiter 只服务 /internal/tokens/resolve（环回来源）。
 	internalResolveLimiter *ClaimLimiter
+
+	// 访问日志的档位与慢请求判定线（装配时定好，不再变）。
+	accessLogMode string
+	slowRequest   time.Duration
 }
 
 // 与 Python api.py 的限流口径一致。
@@ -117,6 +126,10 @@ func New(opts Options) http.Handler {
 			Push: opts.Push, Monitor: opts.Monitor,
 		})
 	}
+	slowRequest := opts.SlowRequest
+	if slowRequest <= 0 {
+		slowRequest = DefaultSlowRequest
+	}
 	s := &server{
 		store:                  opts.Store,
 		health:                 opts.Health,
@@ -129,6 +142,8 @@ func New(opts Options) http.Handler {
 		claimLimiter:           NewClaimLimiter(claimFailures, claimWindow),
 		enrollLimiter:          NewClaimLimiter(enrollFailures, enrollWindow),
 		internalResolveLimiter: NewClaimLimiter(internalResolveLimit, internalResolveWindow),
+		accessLogMode:          NormalizeAccessLog(opts.AccessLog),
+		slowRequest:            slowRequest,
 	}
 	s.ws = wsapi.New(wsapi.Options{
 		Hub: liveHub, Store: opts.Store, Logger: opts.Logger, Monitor: opts.Monitor,
@@ -144,7 +159,11 @@ func New(opts Options) http.Handler {
 	if s.basePath != "" {
 		s.registerRoutes(mux, s.basePath)
 	}
-	return corsMiddleware(monitor.Middleware(opts.Monitor, s.log())(mux))
+	// 顺序固定：requestId 最外层（内层都要读它）→ 访问日志 → CORS → 异常兜底。
+	// 异常兜底在内层，访问日志才看得到它写出的 500；CORS 在兜底之外，升级/普通
+	// 响应的 ACAO 与旧行为一致。
+	return reqctx.Middleware(s.accessLog(
+		corsMiddleware(monitor.Middleware(opts.Monitor, s.log())(mux))))
 }
 
 // durationMS 把时长换成毫秒；零值取 fallback（Python 的默认值）。
@@ -163,6 +182,8 @@ func (s *server) registerRoutes(mux *http.ServeMux, prefix string) {
 
 	s.health.register(mux, prefix+"/healthz")
 	handle(http.MethodGet, "/stats", s.handleStats)
+	// 环回诊断快照：连接、队列、版本、最后错误（非环回 404，见 handler）。
+	handle(http.MethodGet, "/debug/conns", s.handleDebugConns)
 	handle(http.MethodPost, "/pair/claim", s.handlePairClaim)
 	handle(http.MethodPost, "/pair/refresh", s.handlePairRefresh)
 	handle(http.MethodPost, "/pair/code", s.handlePairCode)
@@ -203,10 +224,18 @@ func corsMiddleware(next http.Handler) http.Handler {
 }
 
 // deviceFromBearer 用 Bearer 设备令牌认人；ok=false 时调用方回 401。
+//
+// 认出来之后把 deviceId/agentId 记进请求作用域：访问日志的两个身份字段由此而来，
+// 没有第二条"日志自己解析令牌"的路径。
 func (s *server) deviceFromBearer(r *http.Request) (store.Device, bool, error) {
 	token := bearerToken(r)
 	if token == "" {
 		return store.Device{}, false, nil
 	}
-	return s.store.DeviceByToken(r.Context(), token)
+	device, found, err := s.store.DeviceByToken(r.Context(), token)
+	if err == nil && found {
+		reqctx.NoteDevice(r.Context(), device.DeviceID)
+		reqctx.NoteAgent(r.Context(), device.AgentID)
+	}
+	return device, found, err
 }

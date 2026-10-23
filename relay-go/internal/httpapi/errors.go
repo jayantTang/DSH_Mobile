@@ -11,6 +11,7 @@ import (
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/apierr"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/authn"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/httpjson"
+	"github.com/jayantTang/DSH_Mobile/relay-go/internal/reqctx"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/store"
 )
 
@@ -25,6 +26,20 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 
 // writeError 写一次错误信封（形状由 internal/apierr 统一定义，WS 握手用同一份）。
 func writeError(w http.ResponseWriter, status int, code, message string, details map[string]any) {
+	apierr.Write(w, status, code, message, details)
+}
+
+// writeErrorFor 写一次错误信封；5xx 额外带上这次请求的 requestId。
+//
+// 只有 5xx 带：4xx 是协议的一部分，响应形状保持与 Python 版逐字一致；5xx 是
+// 事故，运维要能用响应里的 id 直接检索日志与告警。
+func writeErrorFor(w http.ResponseWriter, r *http.Request, status int, code, message string,
+	details map[string]any) {
+	if status >= 500 {
+		apierr.WriteWithRequestID(w, status, code, message, details,
+			reqctx.ID(r.Context()))
+		return
+	}
 	apierr.Write(w, status, code, message, details)
 }
 
@@ -74,13 +89,18 @@ func marshalCompact(value any) ([]byte, error) {
 func (s *server) writeStoreError(w http.ResponseWriter, r *http.Request, err error) {
 	if store.IsBusy(err) {
 		w.Header().Set("Retry-After", "1")
-		writeError(w, http.StatusServiceUnavailable, "db/busy",
+		s.log().Warn("relay: request failed",
+			"requestId", reqctx.ID(r.Context()), "method", r.Method,
+			"route", routeTemplate(r), "status", http.StatusServiceUnavailable,
+			"error", err)
+		writeErrorFor(w, r, http.StatusServiceUnavailable, "db/busy",
 			"the relay database is busy; retry shortly", nil)
 		return
 	}
 	s.log().Error("relay: request failed",
-		"method", r.Method, "path", r.URL.Path, "error", err)
-	writeError(w, http.StatusInternalServerError, "internal/error",
+		"requestId", reqctx.ID(r.Context()),
+		"method", r.Method, "route", routeTemplate(r), "error", err)
+	writeErrorFor(w, r, http.StatusInternalServerError, "internal/error",
 		"the relay could not complete this request", nil)
 }
 

@@ -313,7 +313,7 @@ func TestDisabledMonitorIsANoOp(t *testing.T) {
 	}
 	m.NoteException(errors.New("boom"), "/x", "http")
 	m.NoteAgentDisconnect("agt_1", "")
-	m.NoteHTTPStatus("GET", "/x", 500)
+	m.NoteHTTPStatus("GET", "/x", "", 500)
 	m.NoteUnpairedSurrogates("agt_1", "dev_1", "item", dlp.SurrogateDamage{})
 	m.Flush()
 	m.SaveState()

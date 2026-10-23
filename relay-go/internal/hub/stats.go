@@ -2,6 +2,7 @@ package hub
 
 import (
 	"sort"
+	"time"
 )
 
 // `/stats` 的 live 段：load / traffic / snapshot。
@@ -145,6 +146,107 @@ func (h *Hub) Snapshot() Snapshot {
 			DroppedFrames:       device.DroppedFrames(),
 		})
 	}
+	sort.Slice(snapshot.Devices, func(i, j int) bool {
+		return snapshot.Devices[i].DeviceID < snapshot.Devices[j].DeviceID
+	})
+	return snapshot
+}
+
+// ── /debug/conns（仅环回）────────────────────────────────────────────────────
+
+// DebugConn 是一条活连接的诊断快照。
+//
+// 它只回答"这条 socket 现在怎么样"，不包含令牌、Authorization、帧内容或文件路径：
+// 这个端点虽然只允许环回来源，仍然按"要能被运维贴进工单"的隐私标准来写。
+type DebugConn struct {
+	Kind string `json:"kind"` // agent / device
+	// AgentID 在设备行上是它所属的电脑（连接器）；连接器行上就是自己。
+	AgentID  string `json:"agentId"`
+	DeviceID string `json:"deviceId,omitempty"`
+
+	Remote      string `json:"remote"`
+	ConnectedAt int64  `json:"connectedAt"` // Unix 毫秒
+	LastInbound int64  `json:"lastInbound"` // Unix 毫秒；0 = 从未收到
+	// LastInboundAgeMs 是"距最后一次入站多久"，运维不用自己拿 now 去减。
+	LastInboundAgeMs int64 `json:"lastInboundAgeMs"`
+
+	QueueDepth    int   `json:"queueDepth"`
+	QueuedBytes   int64 `json:"queuedBytes"`
+	ControlDrops  int64 `json:"controlDrops"`
+	DroppedFrames int64 `json:"droppedFrames"`
+
+	ConnectorVersion string `json:"connectorVersion"`
+	HostVersion      string `json:"hostVersion"`
+
+	Generation uint64 `json:"generation"`
+	Closing    bool   `json:"closing"`
+	CloseCode  int    `json:"closeCode"` // 0 = 还没要求关闭
+	LastError  string `json:"lastError"`
+}
+
+// DebugConns 是全量连接快照（/debug/conns 的唯一数据来源）。
+type DebugConns struct {
+	Now     int64       `json:"now"`
+	Agents  []DebugConn `json:"agents"`
+	Devices []DebugConn `json:"devices"`
+}
+
+// DebugConns 采集此刻的 agent 与 device 连接快照。
+//
+// 逐分片读锁、不跨片持锁（与 Snapshot 同一条规则），所以它不会在连接风暴时把
+// 转发卡住；输出的顺序按 id 排序，便于两次抓取做 diff。
+func (h *Hub) DebugConns() DebugConns {
+	now := time.Now()
+	snapshot := DebugConns{Now: now.UnixMilli(), Agents: []DebugConn{}, Devices: []DebugConn{}}
+	describe := func(link *Link) DebugConn {
+		lastInbound := link.LastInbound()
+		lastInboundMS := int64(0)
+		ageMS := int64(0)
+		if !lastInbound.IsZero() {
+			lastInboundMS = lastInbound.UnixMilli()
+			ageMS = now.Sub(lastInbound).Milliseconds()
+		}
+		code, _ := link.CloseInfo()
+		return DebugConn{
+			Remote:           link.Remote(),
+			ConnectedAt:      link.ConnectedAt().UnixMilli(),
+			LastInbound:      lastInboundMS,
+			LastInboundAgeMs: ageMS,
+			QueueDepth:       link.QueueDepth(),
+			QueuedBytes:      link.QueuedBytes(),
+			ControlDrops:     link.ControlDrops(),
+			DroppedFrames:    link.DroppedFrames(),
+			Closing:          link.Closed(),
+			CloseCode:        code,
+			LastError:        link.LastError(),
+		}
+	}
+
+	for index := range h.agentShards {
+		shard := &h.agentShards[index]
+		shard.mu.RLock()
+		for _, agent := range shard.agents {
+			connector, host := agent.Versions()
+			row := describe(agent.Link)
+			row.Kind = "agent"
+			row.AgentID = agent.AgentID
+			row.ConnectorVersion = connector
+			row.HostVersion = host
+			row.Generation = agent.generation
+			snapshot.Agents = append(snapshot.Agents, row)
+		}
+		shard.mu.RUnlock()
+	}
+	for _, device := range h.allDevices() {
+		row := describe(device.Link)
+		row.Kind = "device"
+		row.AgentID = device.AgentID
+		row.DeviceID = device.DeviceID
+		snapshot.Devices = append(snapshot.Devices, row)
+	}
+	sort.Slice(snapshot.Agents, func(i, j int) bool {
+		return snapshot.Agents[i].AgentID < snapshot.Agents[j].AgentID
+	})
 	sort.Slice(snapshot.Devices, func(i, j int) bool {
 		return snapshot.Devices[i].DeviceID < snapshot.Devices[j].DeviceID
 	})

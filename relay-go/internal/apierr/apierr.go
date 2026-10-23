@@ -18,14 +18,26 @@ type Body struct {
 }
 
 // Envelope 是全站唯一的错误形状：{"ok": false, "error": {...}}。
+//
+// RequestID 只在 5xx 上出现（omitempty）：运维拿到一个 500 就能按这个 id 去日志
+// 与告警队列里找同一次请求。4xx 是协议的一部分，不占用这个字段，旧响应逐字不变。
 type Envelope struct {
-	OK    bool `json:"ok"`
-	Error Body `json:"error"`
+	OK        bool   `json:"ok"`
+	RequestID string `json:"requestId,omitempty"`
+	Error     Body   `json:"error"`
 }
 
-// Write 写一次错误信封。
+// Write 写一次错误信封（不带 requestId，与旧响应逐字一致）。
 func Write(w http.ResponseWriter, status int, code, message string, details map[string]any) {
-	payload, err := json.Marshal(Envelope{OK: false, Error: Body{
+	WriteWithRequestID(w, status, code, message, details, "")
+}
+
+// WriteWithRequestID 与 Write 相同，但把 requestId 写进信封顶层。
+//
+// 调用方只应在 5xx 上带 id（见 Envelope 的注释）；空 id 时与 Write 逐字一致。
+func WriteWithRequestID(w http.ResponseWriter, status int, code, message string,
+	details map[string]any, requestID string) {
+	payload, err := json.Marshal(Envelope{OK: false, RequestID: requestID, Error: Body{
 		Code: code, Message: message, Details: details,
 	}})
 	if err != nil {

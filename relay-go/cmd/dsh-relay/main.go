@@ -109,7 +109,7 @@ func runServe(args []string, getenv func(string) string, stderr io.Writer) int {
 	defer stopPprof()
 
 	// 打开库会建目录、建表、迁移到当前 schema 版本；失败就不带病启动。
-	st, err := store.Open(cfg.DBPath)
+	st, err := store.OpenWith(cfg.DBPath, store.Options{Logger: logger})
 	if err != nil {
 		logger.Error("relay: open store failed", "error", err, "db", cfg.DBPath)
 		return 1
@@ -161,6 +161,7 @@ func runServe(args []string, getenv func(string) string, stderr io.Writer) int {
 		BasePath:         cfg.MountPath(),
 		Logger:           logger,
 		Monitor:          incidents,
+		AccessLog:        cfg.AccessLog,
 	})
 	server := &http.Server{
 		Handler: handler,

@@ -67,7 +67,7 @@ func (s *server) handleAgentsEnroll(w http.ResponseWriter, r *http.Request) {
 		case errors.As(err, &storeErr):
 			// 邀请码看着没问题、但建身份失败：事务已回滚，码仍可兑换。
 			s.log().Warn("relay: invite redemption failed", "error", err)
-			writeError(w, http.StatusInternalServerError, "enroll/store-error",
+			writeErrorFor(w, r, http.StatusInternalServerError, "enroll/store-error",
 				"the relay could not complete the enrollment", nil)
 			return
 		default:

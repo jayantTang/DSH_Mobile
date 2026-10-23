@@ -125,6 +125,9 @@ type Decision struct {
 	Log bool
 	// Streak 是该 agent 连续被抑制的到达次数（1 表示刚进入风暴），供日志与用例读。
 	Streak int
+	// Unverified 表示这次拒绝发生在"该 agent 从未上报版本"的退避窗口内。
+	// 日志用它把一次普通顶替与被降级的连接器分开。
+	Unverified bool
 }
 
 // Stats 是 /stats 暴露的生命周期计数。
@@ -350,6 +353,7 @@ func (g *Gate) refuseLocked(state *agentState, now time.Time, reason string) Dec
 	return Decision{
 		Verdict: Refuse, Reason: reason,
 		RetryAfter: g.retryAfterLocked(state, now), Log: logNow, Streak: state.streak,
+		Unverified: state.unverified,
 	}
 }
 

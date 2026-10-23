@@ -39,6 +39,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
@@ -47,6 +48,7 @@ import (
 
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/apierr"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/dlp"
+	"github.com/jayantTang/DSH_Mobile/relay-go/internal/reqctx"
 )
 
 // 队列与状态文件的固定名字（与 Python 版同一个目录、同一组文件）。
@@ -306,7 +308,12 @@ func (m *Monitor) noteException(err error, path, source string, stack []uintptr)
 }
 
 // NotePanic 记录一个被 recover 的 panic；stack 由调用方在 defer 里取。
-func (m *Monitor) NotePanic(recovered any, path string, stack []uintptr) {
+//
+// requestID 是这次请求的关联 ID（为空时省略），运维据此把告警与访问日志对上；
+// stackText 是完整栈的前若干行，只进告警详情，不进普通日志（普通日志由中间件
+// 自己写一条带完整栈的 ERROR）。
+func (m *Monitor) NotePanic(recovered any, method, path, requestID string,
+	stack []uintptr, stackText string) {
 	if !m.Enabled() || recovered == nil {
 		return
 	}
@@ -315,13 +322,20 @@ func (m *Monitor) NotePanic(recovered any, path string, stack []uintptr) {
 	typeName := shortType(recovered)
 	summary := truncateRunes(fmt.Sprintf("%s: %v", typeName, recovered), 300)
 	summary = strings.ReplaceAll(summary, "\n", " ")
+	details := map[string]any{
+		"source": "http", "method": method, "path": path, "place": place, "frames": frames,
+	}
+	if requestID != "" {
+		details["requestId"] = requestID
+	}
+	if stackText != "" {
+		details["stack"] = truncateRunes(stackText, 2000)
+	}
 	m.record(categoryKey(typeName, place), recordInput{
 		kind:    "exception",
 		title:   fmt.Sprintf("中转异常：%s @ %s", typeName, place),
 		summary: fmt.Sprintf("%s → %s", path, summary),
-		details: map[string]any{
-			"source": "http", "path": path, "place": place, "frames": frames,
-		},
+		details: details,
 	})
 }
 
@@ -329,21 +343,25 @@ func (m *Monitor) NotePanic(recovered any, path string, stack []uintptr) {
 //
 // Python 版只记未处理异常；DESIGN §8 要求 Go 版把 5xx 也纳入可观测性，所以这是有意的
 // 扩展。类别按"状态码 + 方法 + 路径"归：同一个端点的 5xx 只在首次（或 24 小时后）
-// 打扰一次，不同端点互不掩盖。
-func (m *Monitor) NoteHTTPStatus(method, path string, status int) {
+// 打扰一次，不同端点互不掩盖。requestId 是首次那条告警的关联 ID。
+func (m *Monitor) NoteHTTPStatus(method, path, requestID string, status int) {
 	if !m.Enabled() || status < 500 {
 		return
 	}
 	defer m.guard("note an HTTP status")
 	place := method + " " + path
 	typeName := fmt.Sprintf("HTTP%d", status)
+	details := map[string]any{
+		"source": "http", "method": method, "path": path, "status": status,
+	}
+	if requestID != "" {
+		details["requestId"] = requestID
+	}
 	m.record(categoryKey(typeName, place), recordInput{
 		kind:    "exception",
 		title:   fmt.Sprintf("中转异常：HTTP %d @ %s", status, place),
 		summary: fmt.Sprintf("%s %s → status %d", method, path, status),
-		details: map[string]any{
-			"source": "http", "method": method, "path": path, "status": status,
-		},
+		details: details,
 	})
 }
 
@@ -762,6 +780,9 @@ func captureStack(skip int) []uintptr {
 // 正常请求路径上只多一层 ResponseWriter 包装；异常分支里才有日志与序列化。
 // m 为 nil 时只做 panic 兜底（不记录），保证单测与未配置的部署行为不变。
 //
+// requestId 从 context 读（由 reqctx.Middleware 最外层写入），因此 panic 的日志、
+// 告警详情与 500 响应体带的是同一个 ID。
+//
 // 包装器只实现 Unwrap，不实现 Hijacker：coder/websocket 会顺着 Unwrap 找到真正的
 // ResponseWriter，WebSocket 升级因此不受影响。
 func Middleware(m *Monitor, logger *slog.Logger) func(http.Handler) http.Handler {
@@ -770,8 +791,9 @@ func Middleware(m *Monitor, logger *slog.Logger) func(http.Handler) http.Handler
 	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requestID := reqctx.ID(r.Context())
 			recorder := &statusRecorder{ResponseWriter: w, monitor: m,
-				method: r.Method, path: r.URL.Path}
+				method: r.Method, path: r.URL.Path, requestID: requestID}
 			defer func() {
 				recovered := recover()
 				if recovered == nil {
@@ -781,15 +803,20 @@ func Middleware(m *Monitor, logger *slog.Logger) func(http.Handler) http.Handler
 					// net/http 用这个值主动中止响应；不是事故，也不该写 500。
 					panic(recovered)
 				}
+				// 完整栈只在这里取一次：日志要它定位，告警要它的前 2000 字符。
+				stackText := string(debug.Stack())
 				logger.Error("relay: handler panicked",
-					"method", r.Method, "path", r.URL.Path, "panic", recovered)
+					"method", r.Method, "path", r.URL.Path, "requestId", requestID,
+					"panic", recovered, "stack", stackText)
 				if m.Enabled() {
-					m.NotePanic(recovered, r.URL.Path, captureStack(3))
+					m.NotePanic(recovered, r.Method, r.URL.Path, requestID,
+						captureStack(3), stackText)
 				}
 				recorder.silent = true
 				if !recorder.wroteHeader {
-					apierr.Write(recorder, http.StatusInternalServerError, "internal/error",
-						"the relay could not complete this request", nil)
+					apierr.WriteWithRequestID(recorder, http.StatusInternalServerError,
+						"internal/error", "the relay could not complete this request",
+						nil, requestID)
 				}
 			}()
 			next.ServeHTTP(recorder, r)
@@ -803,6 +830,7 @@ type statusRecorder struct {
 	monitor     *Monitor
 	method      string
 	path        string
+	requestID   string
 	status      int
 	wroteHeader bool
 	// silent 为 true 时不把状态码算成事故（panic 已经单独记过）。
@@ -816,7 +844,7 @@ func (r *statusRecorder) WriteHeader(status int) {
 	r.wroteHeader = true
 	r.status = status
 	if !r.silent && status >= 500 && r.monitor.Enabled() {
-		r.monitor.NoteHTTPStatus(r.method, r.path, status)
+		r.monitor.NoteHTTPStatus(r.method, r.path, r.requestID, status)
 	}
 	r.ResponseWriter.WriteHeader(status)
 }

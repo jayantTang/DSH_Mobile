@@ -3,6 +3,7 @@ package hub
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -22,6 +23,23 @@ type Sink interface {
 	Ping(ctx context.Context) error
 	// Close 走关闭握手并带上应用层关闭码。
 	Close(code int, reason string) error
+}
+
+// RemoteSink 是能报告 socket 对端地址的 Sink。
+//
+// wsapi 的 socket 适配器实现它（生产里 /debug/conns 与连接日志的 remote_ip 由此而来）；
+// 单测的桩 Sink 不实现，地址就是空串——不给 Sink 接口本身加方法，避免为了一个诊断
+// 字段去改所有测试桩。
+type RemoteSink interface {
+	RemoteAddr() string
+}
+
+// remoteOf 取一条 Sink 的对端地址；不支持时返回空串。
+func remoteOf(sink Sink) string {
+	if remote, ok := sink.(RemoteSink); ok {
+		return remote.RemoteAddr()
+	}
+	return ""
 }
 
 // Class 决定一帧在队列满时能不能丢。
@@ -133,6 +151,25 @@ type Link struct {
 	// "流式帧把优先队列挤慢"重新变成可能。
 	queuedBytes atomic.Int64
 	byteLimit   int64
+
+	// connectedAt 是这条连接建立（Link 构造）的时刻：断开日志的 duration 与
+	// /debug/conns 的 connectedAt 都取它，不另记一份。
+	connectedAt time.Time
+
+	// remote 是 socket 对端地址（由 wsapi 在升级成功后写入；单测的桩 Sink 没有
+	// 地址，读出来是空串）。lastError 是这条连接上最后一次传输错误，回答
+	// "它为什么断了"；两者都由读/写循环写，诊断面只读。
+	remote    atomic.Pointer[string]
+	lastError atomic.Pointer[string]
+
+	// controlDrops 是这条连接被丢弃的可丢控制帧数（/debug/conns 的逐连接计数）；
+	// 进程级总数在 hub.controlDrops，两者同源：都来自 noteControlDrop。
+	controlDrops atomic.Int64
+
+	// closeCode/closeReason 是这条连接被要求以什么方式关闭（第一个请求说了算），
+	// 断开日志要回答"4001 还是 1001"。
+	closeCode   atomic.Int32
+	closeReason atomic.Pointer[string]
 	// credits 是**文件上行桥**的字节额度（只有连接器链路有）。它约束的是那类
 	// 不可丢的 ClassControl 分片：它们绕过 byteLimit，所以必须另有一份账。
 	credits *bridgeCredits
@@ -193,6 +230,7 @@ func newLink(sink Sink, label string, depth int, byteLimit int64, log *slog.Logg
 	return &Link{
 		label:            label,
 		sink:             sink,
+		connectedAt:      time.Now(),
 		log:              log,
 		out:              make(chan *outbound, depth),
 		control:          make(chan *outbound, DefaultControlQueueDepth),
@@ -386,10 +424,75 @@ func (l *Link) enqueueOrderedControl(payload []byte, frameType string, droppable
 }
 
 // noteControlDrop 记一次可丢控制帧的丢弃；回调由 hub 注入（单测里可以为 nil）。
+//
+// 逐连接计数先记，再交给 hub 记进程级总数：/debug/conns 与 /stats 的
+// controlDrops 是同一件事的两个粒度，不是两份口径。
 func (l *Link) noteControlDrop(frameType string) {
+	l.controlDrops.Add(1)
 	if l.onControlDrop != nil {
 		l.onControlDrop(l, frameType)
 	}
+}
+
+// SetRemote 记下 socket 对端地址（wsapi 在升级成功后调用）。
+func (l *Link) SetRemote(addr string) {
+	text := strings.TrimSpace(addr)
+	l.remote.Store(&text)
+}
+
+// Remote 是对端地址；没设置过时是空串。
+func (l *Link) Remote() string {
+	if pointer := l.remote.Load(); pointer != nil {
+		return *pointer
+	}
+	return ""
+}
+
+// NoteError 记下这条连接上最后一次传输错误（正常关闭不是错误，不要记）。
+func (l *Link) NoteError(err error) {
+	if err == nil {
+		return
+	}
+	text := err.Error()
+	l.lastError.Store(&text)
+}
+
+// LastError 是最后一条传输错误的文本；没有错误时是空串。
+func (l *Link) LastError() string {
+	if pointer := l.lastError.Load(); pointer != nil {
+		return *pointer
+	}
+	return ""
+}
+
+// ConnectedAt 是这条连接挂上的时刻。
+func (l *Link) ConnectedAt() time.Time { return l.connectedAt }
+
+// Lifetime 是连接存活时长（断开日志与 /debug/conns 用同一个算法）。
+func (l *Link) Lifetime() time.Duration { return time.Since(l.connectedAt) }
+
+// ControlDrops 是这条连接上被丢弃的可丢控制帧数。
+func (l *Link) ControlDrops() int64 { return l.controlDrops.Load() }
+
+// QueueDepth 是队列里还没写出去的帧数（流式 + 控制；诊断面用）。
+func (l *Link) QueueDepth() int { return l.Pending() }
+
+// CloseInfo 返回这条连接被要求的关闭码与原因；还没要求关闭时是 (0, "")。
+func (l *Link) CloseInfo() (int, string) {
+	reason := ""
+	if pointer := l.closeReason.Load(); pointer != nil {
+		reason = *pointer
+	}
+	return int(l.closeCode.Load()), reason
+}
+
+// LastInboundAge 是距离最后一次入站帧的时长；从未收到过时返回 0。
+func (l *Link) LastInboundAge() time.Duration {
+	last := l.LastInbound()
+	if last.IsZero() {
+		return 0
+	}
+	return time.Since(last)
 }
 
 // NoteInbound 由读循环在收到对端任意一帧时调用。
@@ -398,6 +501,18 @@ func (l *Link) noteControlDrop(frameType string) {
 // 但会照常发业务帧与自己的 ping，这类链路不该被误判为失联。
 func (l *Link) NoteInbound() {
 	l.lastInboundAt.Store(time.Now().UnixNano())
+}
+
+// LastInboundMS 是最后一次入站时刻的 Unix 毫秒；从未收到过时是 0。
+//
+// 日志与 /debug/conns 都取它：零值时刻直接 UnixMilli() 会得到负数（公元 1 年），
+// 运维不该看到那个数字。
+func (l *Link) LastInboundMS() int64 {
+	last := l.LastInbound()
+	if last.IsZero() {
+		return 0
+	}
+	return last.UnixMilli()
 }
 
 // LastInbound 是最后一次收到对端任意一帧的时刻；从未收到过时为零值。
@@ -491,10 +606,14 @@ func (l *Link) RequestClose(code int, reason string) {
 	if code == 0 {
 		code = 1001
 	}
+	reason = truncateReason(reason)
+	// 关闭原因属于"谁先要求关闭谁说了算"：心跳超时与顶替可能同时发生，
+	// 日志要记的是先到达的那个决定，而不是最后覆盖的那个。
+	l.closeCode.CompareAndSwap(0, int32(code))
+	l.closeReason.CompareAndSwap(nil, &reason)
 	if !l.closing.CompareAndSwap(false, true) {
 		return
 	}
-	reason = truncateReason(reason)
 	if !l.started.Load() {
 		l.closeSink(code, reason)
 		return
@@ -660,8 +779,12 @@ func (l *Link) watchDLPHeartbeat(ctx context.Context) {
 			if now.Sub(time.Unix(0, sent)) < l.heartbeatTimeout {
 				continue
 			}
-			l.log.Info("relay: heartbeat timed out, closing",
-				"link", l.label, "silentFor", now.Sub(time.Unix(0, sent)).String())
+			l.log.Warn("relay: heartbeat timed out, closing",
+				"link", l.label, "timeout", l.heartbeatTimeout.String(),
+				"silentFor", now.Sub(time.Unix(0, sent)).String(),
+				"lastInbound", l.LastInboundMS(),
+				"lastInboundAge", l.LastInboundAge().String(),
+				"queueDepth", l.QueueDepth())
 			l.abort(dlp.CloseGoingAway, "heartbeat timeout")
 			return
 		case <-l.done:
@@ -686,7 +809,12 @@ func (l *Link) watchWebSocketHeartbeat(ctx context.Context) {
 			err := l.sink.Ping(pingCtx)
 			cancel()
 			if err != nil {
-				l.log.Info("relay: heartbeat failed, closing", "link", l.label, "error", err)
+				l.NoteError(err)
+				l.log.Warn("relay: heartbeat failed, closing", "link", l.label,
+					"error", err, "timeout", l.heartbeatTimeout.String(),
+					"lastInbound", l.LastInboundMS(),
+					"lastInboundAge", l.LastInboundAge().String(),
+					"queueDepth", l.QueueDepth())
 				l.abort(dlp.CloseGoingAway, "heartbeat timeout")
 				return
 			}
@@ -748,7 +876,17 @@ func (l *Link) write(ctx context.Context, payload []byte) bool {
 		// （写上下文已被取消，下一帧会直接失败），也可能是刚好在触发边界上。
 	}
 	if err != nil {
-		l.log.Debug("relay: write failed", "link", l.label, "error", err)
+		l.NoteError(err)
+		// 写超时是"对端读不动了"的直接证据；只有计时器触发（closing 还没置位）
+		// 才按超时记一条 WARN，正常关停导致的写入失败保持 Debug。
+		if l.writeCtx != nil && l.writeCtx.Err() != nil && !l.closing.Load() {
+			l.log.Warn("relay: write timed out; closing the link",
+				"link", l.label, "error", err, "timeout", l.writeTimeout.String(),
+				"queueDepth", l.QueueDepth(), "queuedBytes", l.QueuedBytes(),
+				"lastInboundAge", l.LastInboundAge().String())
+		} else {
+			l.log.Debug("relay: write failed", "link", l.label, "error", err)
+		}
 		return false
 	}
 	l.egress.Add(int64(len(payload)))

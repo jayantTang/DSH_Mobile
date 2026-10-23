@@ -89,6 +89,7 @@ SIGINT / SIGTERM 后停止接收请求、5 秒内收尾并关闭数据库；日�
 | `--dead-device-warn-threshold` | `DLP_DEAD_DEVICE_WARN_THRESHOLD` | `200` |
 | `--base-path` | `DLP_BASE_PATH` | `""` |
 | `--log-level` | `DLP_LOG_LEVEL` | `INFO` |
+| `--access-log` | `DLP_ACCESS_LOG` | `errors`（只记 5xx 与 >500ms 慢请求） |
 | `--pprof-addr` | `DLP_PPROF_ADDR` | `""`（关闭） |
 | `--gogc` | `DLP_GOGC` | `50`（Go 默认 100） |
 | — | `DLP_REVOKE_RECONCILE_S` | `5`（秒；0 或负数关闭对账） |
@@ -264,6 +265,108 @@ pprof 在 M2.5 加入（DESIGN §8 要求）。
   `Accept: text/html` 时返回与 Python 运维页同口径的页面（连接数、限额、死设备记录、
   每设备流量、今日用量），其余客户端继续拿 JSON。
 
+## 可观测性（M7.5）
+
+### 请求关联与访问日志
+
+每个 HTTP 请求都会带一个 `X-Request-Id`：客户端带合法值时透传，否则生成
+`req_<16 hex>`。它写进请求 context、响应头（包括 WebSocket 101 握手）、访问日志、
+panic 日志与告警记录；5xx 的错误信封顶层额外带 `requestId` 字段（4xx 与旧响应
+逐字不变）。只接受 1–128 个 `[A-Za-z0-9._:-]`，换行/引号/空格一律替换成新 ID。
+
+访问日志由 `--access-log` 控制：
+
+| 档位 | 记录范围 |
+|---|---|
+| `off` | 不记 |
+| `errors`（默认） | 5xx（ERROR）与耗时 ≥ 500 ms 的慢请求（WARN） |
+| `all` | 每个请求一条（INFO；5xx/慢请求仍按上面的级别） |
+
+字段（JSON 日志，`msg` 为 `relay: access` 或 `relay: slow request`）：
+
+| 字段 | 含义 |
+|---|---|
+| `requestId` | 本次请求的关联 ID（与响应头、5xx 信封、告警相同） |
+| `method` | HTTP 方法 |
+| `route` | 路由模板（如 `/files/down`）；未匹配到路由时为 `<unmatched>`。**不含 query 与路径值** |
+| `status` | 响应状态码（WebSocket 升级还原为 101） |
+| `duration_ms` | 处理耗时（毫秒，保留 3 位小数） |
+| `remote_ip` | 来源 IP：socket 对端；对端是回环前置时取 `X-Forwarded-For` 最左项（与限流同一口径） |
+| `bytes` | 响应字节数 |
+| `agentId` / `deviceId` | 认证成功后写入的身份；没有认证时不出现 |
+
+排查一次 5xx：`grep <requestId> relay.log` 能同时拿到访问日志（含路由、耗时、来源）、
+处理函数写的错误日志、panic 栈，以及 `alerts.jsonl` 里对应类别的告警（含
+`requestId`）。同一端点 5xx 的告警按类别去重：首次（或 24 小时后）那一条带当时的
+requestId，后续同类只累计次数。
+
+### 连接与 presence 日志
+
+| 事件 | 级别 | 字段 |
+|---|---|---|
+| `relay: agent connected` | INFO | `agentId` `name` `accountId` `devices` `generation` `remote_ip` `connectorVersion` `hostVersion` |
+| `relay: agent disconnected` | INFO | `agentId` `name` `generation` `duration_ms` `closeCode` `reason` `remote_ip` `connectorVersion` `hostVersion` `lastInbound` `lastInboundAge` `lastError` |
+| `relay: device attached` | INFO | `deviceId` `name` `agentId` `accountId` `remote_ip` `hostOnline` |
+| `relay: device detached` | INFO | `deviceId` `agentId` `reason` `closeCode` `duration_ms` `remote_ip` `notified` `lastInboundAge` `lastError` |
+| `relay: agent superseded by a new connection` | INFO | `agentId` `oldGeneration` `newGeneration` `oldDurationMs` `oldLastInboundAge` `remote_ip` `connectorVersion` `hostVersion` |
+| `relay: refused a duplicate agent connection` | INFO | `agentId` `name` `reason` `retryAfterMs` `streak` `waitResult`（exited/timeout/canceled/not-waited） `waitedMs` `unverified` `oldGeneration` `oldConnected` `oldIdleMs` |
+| `relay: refused a reconnect from an agent that never reported its versions; backing off` | WARN | 同上 |
+| `relay: dropped a lossy control frame under backpressure` | WARN | `link` `frame` `total` `linkControlDrops` `queueDepth` `queuedBytes` `remote_ip` `lastInboundAge` |
+| `relay: heartbeat timed out, closing` / `relay: heartbeat failed, closing` | WARN | `link` `timeout` `silentFor`/`error` `lastInbound` `lastInboundAge` `queueDepth` |
+| `relay: write timed out; closing the link` | WARN | `link` `error` `timeout` `queueDepth` `queuedBytes` `lastInboundAge` |
+
+`refused` 不再落在 DEBUG：连接风暴在 journal 里必须看得见。`/stats` 的
+`superseded` / `reconnectStorm` / `unverifiedAgents` 与这些日志同源。
+
+### `/debug/conns`（仅环回）
+
+`GET /debug/conns` 返回 live 连接快照，与 `/stats`、`/internal/*` 共用同一道守卫：
+非环回来源回 **404**（不暴露端点是否存在），并记一条拒绝日志。响应：
+
+```json
+{"ok":true,"now":1790000000000,
+ "agents":[{"kind":"agent","agentId":"agt_x","remote":"203.0.113.9:5555",
+            "connectedAt":1790000000000,"lastInbound":1790000000123,
+            "lastInboundAgeMs":10,"queueDepth":0,"queuedBytes":0,
+            "controlDrops":0,"droppedFrames":0,
+            "connectorVersion":"0.6.6","hostVersion":"1.0.0",
+            "generation":3,"closing":false,"closeCode":0,"lastError":""}],
+ "devices":[{"kind":"device","agentId":"agt_x","deviceId":"dev_x","remote":"198.51.100.8:5555",
+             "connectedAt":1790000000000,"lastInbound":0,"lastInboundAgeMs":0,
+             "queueDepth":2,"queuedBytes":512,"controlDrops":1,"droppedFrames":0,
+             "connectorVersion":"","hostVersion":"","generation":0,
+             "closing":false,"closeCode":0,"lastError":""}]}
+```
+
+`lastInbound` 为 0 表示这条连接还没收到过任何帧；`lastError` 只记异常结束（正常
+关闭不写）。快照里没有令牌、Authorization、帧内容或文件路径。
+
+### 数据库
+
+- 单条语句超过 100 ms → `relay: slow database query`（WARN，`sql` 是名称如
+  `select devices`、`insert paircodes`，**不是 SQL 全文**）。
+- 写事务超过 100 ms → `relay: slow database transaction`（WARN，`sql=write transaction`）。
+- `database is locked` / `SQLITE_BUSY` → `relay: database is busy`（WARN，带 `sql`、
+  `duration_ms`；写事务的带 `tx=true`）。业务结果（冲突、未找到）不按数据库故障记。
+- 阈值目前固定为 100 ms（`store.DefaultSlowQuery`），由 `store.OpenWith` 注入进程日志器。
+
+### 文件 / 反馈 / 推送
+
+- 文件：`relay: file transfer started` / `relay: file transfer finished`，字段
+  `op`（upload/download）`deviceId` `agentId` `bid` `scope` `status` `bytes`
+  `duration_ms` `code` `ok`。`scope` 是上传的 `sessionId` 或下载的 `scopeId`；
+  **不记 `name`/`path`**（可能是用户目录里的完整文件名）。
+- 反馈：`relay: feedback handled`，字段 `requestId` `op`（submit/inbox/append/read）
+  `threadId`/`threads`/`messageId` `unread` `anonymous` `status` `ok`。不记正文、凭据。
+- 推送：`relay: pushed a reminder` / `push failed` / `push skipped` / `device push
+  token is dead; clearing it`，字段 `deviceId` `kind` `status` `reason`；不记 APNs 令牌。
+
+### 日志隐私边界
+
+诊断日志**不记录**：设备令牌 / 连接器密钥 / `Authorization` 头、请求或响应正文、
+消息帧内容、完整文件路径。路由只记模板，file 传输只记 `bid` 与 `scope`，DB 只记
+SQL 名称。`/debug/conns` 与 `/stats` 同样只描述连接与计数。
+
 ## 运维 timer（M7）
 
 `deploy/` 交付四个 unit，**默认不启用**（启用/回退顺序见 `deploy/README.md` §10.1）：
@@ -409,6 +512,12 @@ internal/admincli/  管理子命令（account-create / agent-register / code-min
     后者会把异常连接器放大成秒级重连循环。
 19. 新增 `dsh-relay alert-dispatch` / `dsh-relay purge` 两个顶层运维子命令与四个
     timer unit；`purge` 的手工输出是 JSON（Python 脚本是文本），安全约定一致。
+20. 可观测性是 Go 版独有的扩展（M7.5）：`X-Request-Id`（响应头 + 5xx 信封顶层
+    `requestId`）、`--access-log=off|errors|all`、`/debug/conns`、DB 慢查询/忙等
+    日志、文件传输 begin/end 日志。协议行为与既有 JSON 字段不变；4xx 响应不带
+    `requestId`。
+21. presence 拒绝日志从 DEBUG 提到 INFO/WARN（带等待结果、`unverified`、新旧连接
+    代号），风暴期间每个被拒握手一行；这是为可诊断性有意接受的日志量。
 
 ## M4 之前仍未覆盖
 

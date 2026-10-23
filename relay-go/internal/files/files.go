@@ -31,6 +31,7 @@ import (
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/authn"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/dlp"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/hub"
+	"github.com/jayantTang/DSH_Mobile/relay-go/internal/reqctx"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/store"
 )
 
@@ -105,6 +106,90 @@ func (h *Handlers) Register(mux *http.ServeMux, prefix string) {
 	mux.HandleFunc("GET "+prefix+"/files/down", h.HandleDownload)
 }
 
+// ── 传输诊断 ───────────────────────────────────────────────────────────────
+
+// transferWriter 记录一次文件传输的响应状态、写出字节与错误码。
+//
+// 它只观察，不改变响应；Flush/Unwrap 保证流式下载与 ResponseController 照常工作。
+// 传输日志的 status/bytes/errorCode 全部取自它，不在每个 return 前手抄一遍。
+type transferWriter struct {
+	http.ResponseWriter
+	status    int
+	bytes     int64
+	errorCode string
+
+	op       string
+	deviceID string
+	agentID  string
+	bid      string
+	scope    string
+	start    time.Time
+}
+
+func (w *transferWriter) WriteHeader(status int) {
+	if w.status == 0 {
+		w.status = status
+	}
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *transferWriter) Write(payload []byte) (int, error) {
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	written, err := w.ResponseWriter.Write(payload)
+	w.bytes += int64(written)
+	return written, err
+}
+
+func (w *transferWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
+func (w *transferWriter) Flush() {
+	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+// beginTransfer 记传输开始，并把后续写响应导入记录器。
+//
+// scope 是本次传输的范围标识：上传是 sessionId、下载是 scopeId。**不记文件路径**：
+// `name`/`path` 可能含用户目录结构，运维只需要"哪次传输、多少字节、结果如何"。
+func (h *Handlers) beginTransfer(w http.ResponseWriter, op string, device store.Device,
+	bid, scope string) (*transferWriter, http.ResponseWriter) {
+	tracked := &transferWriter{
+		ResponseWriter: w, op: op, deviceID: device.DeviceID, agentID: device.AgentID,
+		bid: bid, scope: scope, start: time.Now(),
+	}
+	h.log.Info("relay: file transfer started",
+		"op", op, "deviceId", device.DeviceID, "agentId", device.AgentID,
+		"bid", bid, "scope", scope)
+	return tracked, tracked
+}
+
+// finishTransfer 记传输结束：状态码、实际字节、耗时与错误码。
+//
+// bytes 传本次传输的有效字节（上传=已转发的原始字节，下载=已写出的正文字节）；
+// 两者都不想混进 HTTP 响应体的字节数，所以不用 tracked.bytes。
+func (h *Handlers) finishTransfer(r *http.Request, tracked *transferWriter, bytes int64) {
+	status := tracked.status
+	if status == 0 {
+		status = http.StatusOK
+	}
+	code := tracked.errorCode
+	if code == "" && r.Context().Err() != nil {
+		code = "client/gone"
+	}
+	level := slog.LevelInfo
+	if status >= 400 || code != "" {
+		level = slog.LevelWarn
+	}
+	h.log.Log(r.Context(), level, "relay: file transfer finished",
+		"op", tracked.op, "deviceId", tracked.deviceID, "agentId", tracked.agentID,
+		"bid", tracked.bid, "scope", tracked.scope, "status", status,
+		"bytes", bytes, "duration_ms", time.Since(tracked.start).Milliseconds(),
+		"code", code, "ok", status < 400 && code == "")
+}
+
 // ── 上行 ────────────────────────────────────────────────────────────────────
 
 // bridgeFrameOverhead 是分片帧里除 data 之外的字段（t / deviceId / bid / seq）在
@@ -166,13 +251,19 @@ func (h *Handlers) HandleUpload(w http.ResponseWriter, r *http.Request) {
 
 	agent := h.hub.Agent(device.AgentID)
 	if agent == nil || agent.Closed() {
-		writeError(w, http.StatusServiceUnavailable, "host/offline",
+		writeErrorFor(w, r, http.StatusServiceUnavailable, "host/offline",
 			"the PC connector is not connected")
 		return
 	}
 
 	bridge := h.hub.OpenPutBridge(bid, agent)
 	defer h.hub.CloseBridge(bid)
+
+	// 从这里开始是一条真正的文件传输记录：bid、范围、结果、字节与耗时。
+	// `name` 不进日志（可能是用户目录里的完整文件名）。
+	tracked, w := h.beginTransfer(w, "upload", device, bid, sessionID)
+	received := int64(0)
+	defer func() { h.finishTransfer(r, tracked, received) }()
 
 	h.hub.SendControl(agent, dlp.Frame{
 		"t": "fsPutBegin", "deviceId": device.DeviceID, "bid": bid,
@@ -191,7 +282,6 @@ func (h *Handlers) HandleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	seq := 0
-	received := int64(0)
 	// 额度与分片一一对应：**先取得额度，再读请求体**。
 	//
 	// credit 是当前这一片"已经揣在手里、还没交给队列"的那笔；defer 保证每一条提前
@@ -219,7 +309,7 @@ func (h *Handlers) HandleUpload(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			// 连接器被顶替/断开：这条上传不可能完成，给它一个明确的答复。
-			writeError(w, http.StatusServiceUnavailable, "host/offline",
+			writeErrorFor(w, r, http.StatusServiceUnavailable, "host/offline",
 				"the PC connector went away while the upload was in flight")
 			return
 		}
@@ -246,7 +336,7 @@ func (h *Handlers) HandleUpload(w http.ResponseWriter, r *http.Request) {
 		creditForFrame := credit
 		credit = 0
 		if !h.hub.SendBridgeChunk(agent, frame, creditForFrame) {
-			writeError(w, http.StatusServiceUnavailable, "host/offline",
+			writeErrorFor(w, r, http.StatusServiceUnavailable, "host/offline",
 				"the PC connector went away while the upload was in flight")
 			return
 		}
@@ -324,7 +414,7 @@ func (h *Handlers) HandleDownload(w http.ResponseWriter, r *http.Request) {
 
 	agent := h.hub.Agent(device.AgentID)
 	if agent == nil || agent.Closed() {
-		writeError(w, http.StatusServiceUnavailable, "host/offline",
+		writeErrorFor(w, r, http.StatusServiceUnavailable, "host/offline",
 			"the PC connector is not connected")
 		return
 	}
@@ -342,6 +432,9 @@ func (h *Handlers) HandleDownload(w http.ResponseWriter, r *http.Request) {
 	bridge := h.hub.OpenFetchBridge(bid, agent)
 	current := bid
 	defer func() { h.hub.CloseBridge(current) }()
+
+	tracked, w := h.beginTransfer(w, "download", device, bid, scopeID)
+	defer func() { h.finishTransfer(r, tracked, tracked.bytes) }()
 
 	begin := dlp.Frame{
 		"t": "fsGetBegin", "deviceId": device.DeviceID, "bid": bid,
@@ -395,6 +488,7 @@ func (h *Handlers) HandleDownload(w http.ResponseWriter, r *http.Request) {
 		h.hub.CloseBridge(current)
 		bid = newBridgeID()
 		current = bid
+		tracked.bid = bid // 换 bid 重开后，结束日志记的是真正在用的那个
 		bridge = h.hub.OpenFetchBridge(bid, agent)
 		h.hub.SendControl(agent, dlp.Frame{
 			"t": "fsGetBegin", "deviceId": device.DeviceID, "bid": bid,
@@ -463,24 +557,27 @@ func (h *Handlers) HandleDownload(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(status)
 	flush(w)
 
-	h.stream(w, r, device, link, bridge, frame, declared)
+	h.stream(w, r, tracked, device, link, bridge, frame, declared)
 }
 
 // stream 是正文写作循环：每一片都先限速、再计费，最后才写出。
-func (h *Handlers) stream(w http.ResponseWriter, r *http.Request, device store.Device,
-	link *hub.DeviceLink, bridge *hub.FetchBridge, frame dlp.Frame, declared *int64) {
+func (h *Handlers) stream(w http.ResponseWriter, r *http.Request, tracked *transferWriter,
+	device store.Device, link *hub.DeviceLink, bridge *hub.FetchBridge, frame dlp.Frame,
+	declared *int64) {
 
 	remaining := declared
 	for frame != nil && (remaining == nil || *remaining > 0) {
 		if code, message, failed := frameError(frame); failed {
 			// 状态行已经发出，唯一诚实的收场是停下来：手机拿到短包，当成一次
 			// 中断的传输（客户端会用 Range 续传）。
+			tracked.errorCode = code
 			h.log.Warn("relay: download failed mid-stream",
 				"bid", bridge.Bid(), "code", code, "message", message)
 			return
 		}
 		piece, err := base64.StdEncoding.DecodeString(textValue(frame["data"]))
 		if err != nil {
+			tracked.errorCode = "file/bad-window"
 			h.log.Warn("relay: download window is not valid base64",
 				"bid", bridge.Bid(), "error", err)
 			return
@@ -505,6 +602,7 @@ func (h *Handlers) stream(w http.ResponseWriter, r *http.Request, device store.D
 				}
 			}
 			if allowed, _ := h.hub.ChargeDeviceQuota(device.DeviceID, len(slice)); !allowed {
+				tracked.errorCode = "quota/exceeded"
 				h.log.Warn("relay: device exceeded its daily allowance during a download",
 					"deviceId", device.DeviceID, "bid", bridge.Bid())
 				return
@@ -515,6 +613,7 @@ func (h *Handlers) stream(w http.ResponseWriter, r *http.Request, device store.D
 			if _, err := w.Write(slice); err != nil {
 				// 手机在下载途中走了（关 App、切网、锁屏被杀）。这不是故障，
 				// 但也是"没人读了"：退出后由 defer 叫停连接器。
+				tracked.errorCode = "client/gone"
 				h.log.Debug("relay: client went away mid-download",
 					"bid", bridge.Bid(), "error", err)
 				return
@@ -533,8 +632,9 @@ func (h *Handlers) stream(w http.ResponseWriter, r *http.Request, device store.D
 		next, ok := h.waitFrame(r.Context(), bridge)
 		if !ok {
 			if r.Context().Err() != nil {
-				return // 手机走了
+				return // 手机走了；finishTransfer 会把它记成 client/gone
 			}
+			tracked.errorCode = "file/stalled"
 			h.log.Warn("relay: download stalled", "bid", bridge.Bid(),
 				"idleTimeout", h.idleTimeout)
 			return
@@ -555,7 +655,7 @@ func (h *Handlers) writeNoStart(w http.ResponseWriter, r *http.Request) {
 	if r.Context().Err() != nil {
 		return // 手机已经不在了，写什么都没有意义
 	}
-	writeError(w, http.StatusServiceUnavailable, "host/offline", "连接器没有开始传输")
+	writeErrorFor(w, r, http.StatusServiceUnavailable, "host/offline", "连接器没有开始传输")
 }
 
 // ── 参数解析 ────────────────────────────────────────────────────────────────
@@ -690,11 +790,31 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 }
 
 // writeError 写一次错误信封（形状与全站一致）。
+//
+// 如果 w 是本包的传输记录器，顺手把错误码记进去：传输结束日志要回答"以什么码
+// 结束"，而错误码只有写响应的这一刻知道。
 func writeError(w http.ResponseWriter, status int, code, message string) {
+	if tracked, ok := w.(*transferWriter); ok {
+		tracked.errorCode = code
+	}
+	apierr.Write(w, status, code, message, nil)
+}
+
+// writeErrorFor 写一次错误信封；5xx 带上这次请求的 requestId（与 httpapi 同口径）。
+func writeErrorFor(w http.ResponseWriter, r *http.Request, status int, code, message string) {
+	if tracked, ok := w.(*transferWriter); ok {
+		tracked.errorCode = code
+	}
+	if status >= 500 {
+		apierr.WriteWithRequestID(w, status, code, message, nil, reqctx.ID(r.Context()))
+		return
+	}
 	apierr.Write(w, status, code, message, nil)
 }
 
 // deviceFromBearer 用 Bearer 设备令牌认人；ok=false 时调用方回 401。
+//
+// 认出来之后把身份记进请求作用域（访问日志的 agentId/deviceId 由此而来）。
 func (h *Handlers) deviceFromBearer(r *http.Request) (store.Device, bool, error) {
 	token := authn.BearerToken(r)
 	if token == "" {
@@ -703,19 +823,28 @@ func (h *Handlers) deviceFromBearer(r *http.Request) (store.Device, bool, error)
 	if h.store == nil {
 		return store.Device{}, false, nil
 	}
-	return h.store.DeviceByToken(r.Context(), token)
+	device, found, err := h.store.DeviceByToken(r.Context(), token)
+	if err == nil && found {
+		reqctx.NoteDevice(r.Context(), device.DeviceID)
+		reqctx.NoteAgent(r.Context(), device.AgentID)
+	}
+	return device, found, err
 }
 
 // writeStoreError 把仓储错误兜底成 5xx JSON 信封（busy → 503 + Retry-After）。
 func (h *Handlers) writeStoreError(w http.ResponseWriter, r *http.Request, err error) {
 	if store.IsBusy(err) {
 		w.Header().Set("Retry-After", "1")
-		writeError(w, http.StatusServiceUnavailable, "db/busy",
+		h.log.Warn("relay: file request failed",
+			"requestId", reqctx.ID(r.Context()), "method", r.Method,
+			"route", r.Pattern, "status", http.StatusServiceUnavailable, "error", err)
+		writeErrorFor(w, r, http.StatusServiceUnavailable, "db/busy",
 			"the relay database is busy; retry shortly")
 		return
 	}
 	h.log.Error("relay: file request failed",
-		"method", r.Method, "path", r.URL.Path, "error", err)
-	writeError(w, http.StatusInternalServerError, "internal/error",
+		"requestId", reqctx.ID(r.Context()), "method", r.Method,
+		"route", r.Pattern, "error", err)
+	writeErrorFor(w, r, http.StatusInternalServerError, "internal/error",
 		"the relay could not complete this request")
 }

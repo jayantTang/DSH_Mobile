@@ -32,6 +32,7 @@ import (
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/authn"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/httpjson"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/ratelimit"
+	"github.com/jayantTang/DSH_Mobile/relay-go/internal/reqctx"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/store"
 )
 
@@ -249,6 +250,9 @@ func (h *Handlers) HandleSubmit(w http.ResponseWriter, r *http.Request) {
 	httpjson.WriteJSON(w, http.StatusOK, submitResponse{
 		OK: true, ThreadID: thread.ThreadID, TicketKey: ticket, CreatedAt: thread.CreatedAt,
 	})
+	h.log.Info("relay: feedback handled", "requestId", reqctx.ID(r.Context()),
+		"op", "submit", "threadId", thread.ThreadID, "anonymous", device == nil,
+		"status", http.StatusOK, "ok", true)
 }
 
 // HandleInbox 拉取；**只读**：拉一次不会把未读清掉。
@@ -283,6 +287,10 @@ func (h *Handlers) HandleInbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpjson.WriteJSON(w, http.StatusOK, payload)
+	h.log.Info("relay: feedback handled", "requestId", reqctx.ID(r.Context()),
+		"op", "inbox", "threads", len(payload.Threads), "notices", len(payload.Notices),
+		"unread", payload.UnreadCount, "anonymous", device == nil,
+		"status", http.StatusOK, "ok", true)
 }
 
 // HandleAppend 用户在已有线程下补充一句（异步留言，不是即时对话）。
@@ -349,6 +357,9 @@ func (h *Handlers) HandleAppend(w http.ResponseWriter, r *http.Request) {
 	httpjson.WriteJSON(w, http.StatusOK, appendResponse{
 		OK: true, ThreadID: threadID, MessageID: message.MessageID, CreatedAt: message.CreatedAt,
 	})
+	h.log.Info("relay: feedback handled", "requestId", reqctx.ID(r.Context()),
+		"op", "append", "threadId", threadID, "messageId", message.MessageID,
+		"anonymous", device == nil, "status", http.StatusOK, "ok", true)
 }
 
 // HandleRead 标记已读；只有调用方能证明的线程才标得动，通知按账号标。
@@ -410,6 +421,9 @@ func (h *Handlers) HandleRead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpjson.WriteJSON(w, http.StatusOK, readResponse{OK: true, UnreadCount: payload.UnreadCount})
+	h.log.Info("relay: feedback handled", "requestId", reqctx.ID(r.Context()),
+		"op", "read", "threads", len(threadIDs), "notices", len(noticeIDs),
+		"unread", payload.UnreadCount, "status", http.StatusOK, "ok", true)
 }
 
 // ── 组装与授权 ──────────────────────────────────────────────────────────────
@@ -524,6 +538,9 @@ func (h *Handlers) caller(r *http.Request) (*store.Device, error) {
 	if !ok {
 		return nil, nil
 	}
+	// 有效令牌：把身份记进请求作用域（访问日志与聚合日志由此得到 deviceId）。
+	reqctx.NoteDevice(r.Context(), device.DeviceID)
+	reqctx.NoteAgent(r.Context(), device.AgentID)
 	return &device, nil
 }
 
@@ -805,6 +822,15 @@ func writeProblem(w http.ResponseWriter, status int, code, message string) {
 	apierr.Write(w, status, code, message, nil)
 }
 
+// writeProblemFor 与 writeProblem 相同；5xx 额外带上这次请求的 requestId。
+func writeProblemFor(w http.ResponseWriter, r *http.Request, status int, code, message string) {
+	if status >= 500 {
+		apierr.WriteWithRequestID(w, status, code, message, nil, reqctx.ID(r.Context()))
+		return
+	}
+	apierr.Write(w, status, code, message, nil)
+}
+
 // writeRateLimited 是四个端点共用的 429。
 func writeRateLimited(w http.ResponseWriter) {
 	writeProblem(w, http.StatusTooManyRequests, "feedback/rate-limited",
@@ -821,12 +847,16 @@ func (h *Handlers) storeFailure(w http.ResponseWriter, r *http.Request, code, me
 	err error) {
 	if store.IsBusy(err) {
 		w.Header().Set("Retry-After", "1")
-		writeProblem(w, http.StatusServiceUnavailable, "db/busy",
+		h.log.Warn("relay: feedback request failed",
+			"requestId", reqctx.ID(r.Context()), "route", r.Pattern,
+			"status", http.StatusServiceUnavailable, "error", err)
+		writeProblemFor(w, r, http.StatusServiceUnavailable, "db/busy",
 			"the relay database is busy; retry shortly")
 		return
 	}
-	h.log.Error("relay: feedback request failed", "path", r.URL.Path, "error", err)
-	writeProblem(w, http.StatusInternalServerError, code, message)
+	h.log.Error("relay: feedback request failed",
+		"requestId", reqctx.ID(r.Context()), "route", r.Pattern, "error", err)
+	writeProblemFor(w, r, http.StatusInternalServerError, code, message)
 }
 
 // ── 小工具 ──────────────────────────────────────────────────────────────────

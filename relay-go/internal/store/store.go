@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 )
 
 const (
@@ -36,11 +37,13 @@ const (
 // 读走 *sql.DB 的连接池（最多 4 条并发），写只走 write 这一条被独占的连接并在
 // writeMu 下串行化；所有写事务统一 BEGIN IMMEDIATE。
 type Store struct {
-	path    string
-	db      *sql.DB
-	write   *sql.Conn
+	path string
+	// db / write 是加了计时与 SQL 名称的包装；仓储方法看到的接口不变。
+	db      *observedDB
+	write   *observedConn
 	writeMu sync.Mutex
 	version int
+	observe observer
 
 	closeOnce sync.Once
 	closeErr  error
@@ -60,10 +63,24 @@ func Open(path string) (*Store, error) {
 
 // OpenContext 是 Open 的上下文版本；ctx 只作用于打开与迁移阶段。
 func OpenContext(ctx context.Context, path string) (*Store, error) {
+	return OpenContextWith(ctx, path, Options{})
+}
+
+// OpenWith 与 Open 相同，但带可观测性配置（日志器与慢查询阈值）。
+//
+// serve 用它把库层的慢查询/忙等日志接到进程的 JSON 日志器上；admin/purge 等
+// 一次性命令用 Open 即可（默认 slog.Default）。
+func OpenWith(path string, options Options) (*Store, error) {
+	return OpenContextWith(context.Background(), path, options)
+}
+
+// OpenContextWith 是 OpenWith 的上下文版本。
+func OpenContextWith(ctx context.Context, path string, options Options) (*Store, error) {
 	abs, err := preparePath(path)
 	if err != nil {
 		return nil, err
 	}
+	observed := newObserver(options)
 
 	db, err := sql.Open(driverName, dsn(abs))
 	if err != nil {
@@ -98,7 +115,12 @@ func OpenContext(ctx context.Context, path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("store: 取写连接: %w", err)
 	}
-	return &Store{path: abs, db: db, write: write, version: version}, nil
+	return &Store{
+		path:    abs,
+		db:      &observedDB{DB: db, observer: observed},
+		write:   &observedConn{Conn: write, observer: observed},
+		version: version, observe: observed,
+	}, nil
 }
 
 // writeTx 在一个 BEGIN IMMEDIATE 事务里执行 fn。
@@ -106,7 +128,9 @@ func OpenContext(ctx context.Context, path string) (*Store, error) {
 // 事务由专用写连接承载并全程持有 writeMu：同一时刻只有一个写事务，且它一开始
 // 就拿写锁（不是"先读后升级"）。fn 返回错误、提交失败或 panic 都会回滚；回滚走
 // 自己的 context，避免调用方的 ctx 已取消导致事务悬挂。
-func (s *Store) writeTx(ctx context.Context, fn func(context.Context, execQuerier) error) error {
+func (s *Store) writeTx(ctx context.Context, fn func(context.Context, execQuerier) error) (err error) {
+	start := time.Now()
+	defer func() { s.observe.observeTx(ctx, "write transaction", start, err) }()
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 

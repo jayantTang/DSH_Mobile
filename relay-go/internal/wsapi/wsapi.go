@@ -25,6 +25,7 @@ import (
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/dlp"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/hub"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/presence"
+	"github.com/jayantTang/DSH_Mobile/relay-go/internal/reqctx"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/store"
 )
 
@@ -100,9 +101,10 @@ func (h *Handlers) ServeAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	agent, found, err := h.store.AgentBySecret(r.Context(), token)
 	if err != nil {
-		h.log.Error("relay: agent lookup failed", "error", err)
-		apierr.Write(w, http.StatusInternalServerError, "internal/error",
-			"the relay could not complete this request", nil)
+		h.log.Error("relay: agent lookup failed",
+			"requestId", reqctx.ID(r.Context()), "error", err)
+		apierr.WriteWithRequestID(w, http.StatusInternalServerError, "internal/error",
+			"the relay could not complete this request", nil, reqctx.ID(r.Context()))
 		return
 	}
 	if !found {
@@ -110,6 +112,7 @@ func (h *Handlers) ServeAgent(w http.ResponseWriter, r *http.Request) {
 			"unknown or disabled agent token", nil)
 		return
 	}
+	reqctx.NoteAgent(r.Context(), agent.AgentID)
 	if wanted := r.URL.Query().Get("agentId"); wanted != "" && wanted != agent.AgentID {
 		apierr.Write(w, http.StatusForbidden, "auth/agent-mismatch",
 			"agentId does not match the bearer token", nil)
@@ -132,11 +135,8 @@ func (h *Handlers) ServeAgent(w http.ResponseWriter, r *http.Request) {
 		}
 		apierr.Write(w, http.StatusTooManyRequests, "presence/refused", message,
 			map[string]any{"reason": refusal.Reason, "retryAfterMs": refusal.RetryAfter.Milliseconds()})
-		// 拒绝日志的唯一汇总点在 hub（按 agent 限频）；这里只留 Debug，风暴下不会
-		// 每个握手一行 Info 把 journal 冲掉。
-		h.log.Debug("relay: refused an agent handshake",
-			"agentId", agent.AgentID, "reason", refusal.Reason,
-			"retryAfterMs", refusal.RetryAfter.Milliseconds())
+		// 拒绝日志的唯一所有者是 hub.noteAgentRefusal（带等待结果、退避与
+		// unverified 标记，且按 agent 限频）：这里不再重复记一条。
 		return
 	}
 	// 升级失败或客户端在升级前断开：把票还回去，否则同一 agent 的下一次到达会
@@ -149,7 +149,7 @@ func (h *Handlers) ServeAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	conn.SetReadLimit(int64(h.limits.MaxFrameBytes))
 
-	link := h.hub.AttachAgent(r.Context(), agent, &sink{conn: conn}, ticket)
+	link := h.hub.AttachAgent(r.Context(), agent, &sink{conn: conn, remote: r.RemoteAddr}, ticket)
 	h.touchAgent(r.Context(), agent.AgentID)
 	h.readAgent(r.Context(), conn, link)
 
@@ -172,9 +172,10 @@ func (h *Handlers) ServeDevice(w http.ResponseWriter, r *http.Request) {
 	}
 	device, found, err := h.store.DeviceByToken(r.Context(), token)
 	if err != nil {
-		h.log.Error("relay: device lookup failed", "error", err)
-		apierr.Write(w, http.StatusInternalServerError, "internal/error",
-			"the relay could not complete this request", nil)
+		h.log.Error("relay: device lookup failed",
+			"requestId", reqctx.ID(r.Context()), "error", err)
+		apierr.WriteWithRequestID(w, http.StatusInternalServerError, "internal/error",
+			"the relay could not complete this request", nil, reqctx.ID(r.Context()))
 		return
 	}
 	if !found {
@@ -182,6 +183,8 @@ func (h *Handlers) ServeDevice(w http.ResponseWriter, r *http.Request) {
 			"unknown, revoked, or expired device token", nil)
 		return
 	}
+	reqctx.NoteAgent(r.Context(), device.AgentID)
+	reqctx.NoteDevice(r.Context(), device.DeviceID)
 	if wanted := r.URL.Query().Get("agentId"); wanted != "" && wanted != device.AgentID {
 		apierr.Write(w, http.StatusForbidden, "auth/agent-mismatch",
 			"agentId does not match the device token", nil)
@@ -206,7 +209,7 @@ func (h *Handlers) ServeDevice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	link, err := h.hub.AttachDevice(r.Context(), device, &sink{conn: conn})
+	link, err := h.hub.AttachDevice(r.Context(), device, &sink{conn: conn, remote: r.RemoteAddr})
 	if err != nil {
 		if errors.Is(err, hub.ErrDeviceLimit) {
 			// 最后防线：预检查放行之后、升级期间别人挤满了名额。
@@ -273,7 +276,7 @@ func (h *Handlers) readAgent(ctx context.Context, conn *websocket.Conn, link *hu
 					"link", link.Label(), "error", err)
 				continue
 			}
-			h.logReadEnd(link.Label(), err)
+			h.logReadEnd(link.Link, err)
 			return
 		}
 		if messageType == websocket.MessageBinary {
@@ -305,7 +308,7 @@ func (h *Handlers) readDevice(ctx context.Context, conn *websocket.Conn, link *h
 				h.hub.SendControl(link, dlp.ErrorFrame("protocol/bad-frame", err.Error(), false, nil))
 				continue
 			}
-			h.logReadEnd(link.Label(), err)
+			h.logReadEnd(link.Link, err)
 			return
 		}
 		switch messageType {
@@ -422,13 +425,23 @@ func (h *Handlers) noteSurrogate(link *hub.AgentLink, wire dlp.Wire,
 }
 
 // logReadEnd 只把异常结束记成 info：对端正常关闭是最常见的情况。
-func (h *Handlers) logReadEnd(label string, err error) {
+//
+// 异常结束同时记进链路（/debug/conns 的 lastError）：拆除日志回答"为什么断"，
+// 诊断端点回答"它断之前最后一次错是什么"。
+func (h *Handlers) logReadEnd(link *hub.Link, err error) {
 	if errors.Is(err, context.Canceled) || websocket.CloseStatus(err) != -1 {
-		h.log.Info("relay: socket closed", "link", label,
-			"status", int(websocket.CloseStatus(err)))
+		status := int(websocket.CloseStatus(err))
+		h.log.Info("relay: socket closed", "link", link.Label(), "status", status,
+			"remote_ip", link.Remote(), "duration_ms", link.Lifetime().Milliseconds(),
+			"lastInboundAge", link.LastInboundAge().String(),
+			"queueDepth", link.QueueDepth(), "lastError", link.LastError())
 		return
 	}
-	h.log.Info("relay: socket read ended", "link", label, "error", err)
+	link.NoteError(err)
+	h.log.Info("relay: socket read ended", "link", link.Label(), "error", err,
+		"remote_ip", link.Remote(), "duration_ms", link.Lifetime().Milliseconds(),
+		"lastInboundAge", link.LastInboundAge().String(),
+		"queueDepth", link.QueueDepth(), "lastError", link.LastError())
 }
 
 // touchAgent / touchDevice 记一次在线时间；失败不影响转发。
@@ -461,9 +474,16 @@ func waitDone(done <-chan struct{}, timeout time.Duration) {
 }
 
 // sink 把 coder/websocket 适配成 hub 需要的写口。
+//
+// remote 是握手时的 socket 对端地址：hub 通过 hub.RemoteSink 读它，用于连接日志
+// 的 remote_ip 与 /debug/conns（Sink 接口本身不加这个方法，测试桩不必跟着改）。
 type sink struct {
-	conn *websocket.Conn
+	conn   *websocket.Conn
+	remote string
 }
+
+// RemoteAddr 实现 hub.RemoteSink。
+func (s *sink) RemoteAddr() string { return s.remote }
 
 func (s *sink) Write(ctx context.Context, payload []byte) error {
 	return s.conn.Write(ctx, websocket.MessageText, payload)

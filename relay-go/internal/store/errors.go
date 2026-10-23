@@ -12,6 +12,13 @@ type StoreError struct {
 
 func (e *StoreError) Error() string { return e.Message }
 
+// domainError 是"这是一次业务结果，不是数据库故障"的标记。
+//
+// NotFound / Conflict / InviteRejected 等类型都嵌入 StoreError，方法被提升，
+// 所以日志层用一次接口断言就能把"配对码已被占用"与"database is locked"分开，
+// 不必枚举每个业务错误类型。
+func (*StoreError) domainError() {}
+
 // NotFound 表示请求的行不存在、已被禁用或已过期（Python 的 store.NotFound）。
 type NotFound struct {
 	StoreError

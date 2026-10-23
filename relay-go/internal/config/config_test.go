@@ -48,6 +48,9 @@ func TestDefaultsMatchPythonParser(t *testing.T) {
 }
 
 // TestFlagSetMatchesPythonParser 钉住参数名清单：relay.py 改了参数，这里应该红。
+//
+// access-log 是 Go 版独有的诊断开关（Python 版没有访问日志），与 pprof-addr/gogc
+// 同属"只在 Go 侧存在"的一类，所以也列在这里，防止无意增删。
 func TestFlagSetMatchesPythonParser(t *testing.T) {
 	cfg := Default()
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
@@ -57,7 +60,8 @@ func TestFlagSetMatchesPythonParser(t *testing.T) {
 	fs.VisitAll(func(f *flag.Flag) { names = append(names, f.Name) })
 	sort.Strings(names)
 	want := []string{
-		"base-path", "bridge-bytes", "db", "dead-device-warn-threshold", "device-daily-mb",
+		"access-log", "base-path", "bridge-bytes", "db", "dead-device-warn-threshold",
+		"device-daily-mb",
 		"device-rate-kbps", "device-ttl-days", "gogc", "host", "log-level",
 		"max-devices-per-agent", "max-paired-devices", "pair-ttl-seconds",
 		"port", "pprof-addr", "queue-bytes", "queue-depth",
@@ -375,5 +379,34 @@ func TestRevokeReconcileIntervalEnv(t *testing.T) {
 		if got := cfg.RevokeReconcileInterval(); got != c.want {
 			t.Fatalf("%s: interval = %s, 期望 %s", c.raw, got, c.want)
 		}
+	}
+}
+
+func TestAccessLogDefaultsAndValidation(t *testing.T) {
+	if got := Default().AccessLog; got != "errors" {
+		t.Fatalf("默认 access-log = %q，期望 errors", got)
+	}
+
+	// 命令行优先，并且规范化成小写。
+	cfg, err := Load([]string{"--access-log", "ALL"}, env(nil))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.AccessLog != "all" {
+		t.Fatalf("access-log = %q", cfg.AccessLog)
+	}
+
+	// 环境变量在命令行未给时生效。
+	cfg, err = Load(nil, env(map[string]string{EnvAccessLog: "off"}))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.AccessLog != "off" {
+		t.Fatalf("DLP_ACCESS_LOG = %q", cfg.AccessLog)
+	}
+
+	// 认不出的档位必须在启动时报错，不能悄悄回退。
+	if _, err := Load([]string{"--access-log", "verbose"}, env(nil)); err == nil {
+		t.Fatal("非法 access-log 未被拒绝")
 	}
 }

@@ -40,6 +40,8 @@ const (
 	DefaultDeadDeviceWarnThreshold = 200 // hub.DEFAULT_DEAD_DEVICE_WARN_THRESHOLD
 	DefaultBasePath                = ""
 	DefaultLogLevel                = "INFO"
+	// DefaultAccessLog 是访问日志档位：默认只记 5xx 与慢请求，全量要显式开。
+	DefaultAccessLog = "errors"
 	// DefaultPprofAddr 为空 = 不监听。pprof 是诊断面，必须显式开启（DESIGN §8）。
 	DefaultPprofAddr = ""
 	// DefaultRevokeReconcileSeconds 是撤销对账周期（Python hub 的
@@ -68,6 +70,7 @@ const (
 	EnvDeadDeviceWarnThreshold = "DLP_DEAD_DEVICE_WARN_THRESHOLD"
 	EnvBasePath                = "DLP_BASE_PATH"
 	EnvLogLevel                = "DLP_LOG_LEVEL"
+	EnvAccessLog               = "DLP_ACCESS_LOG"
 	// EnvPprofAddr 是 Go 版独有的诊断开关（Python 版没有），与 DLP_* 同前缀便于部署。
 	EnvPprofAddr = "DLP_PPROF_ADDR"
 	// EnvGCPercent 是 Go 版的 GC 百分比（Python 版没有），与 Go 的 GOGC 同义。
@@ -103,6 +106,8 @@ type Config struct {
 	DeadDeviceWarnThreshold int
 	BasePath                string
 	LogLevel                string
+	// AccessLog 是访问日志档位：off / errors / all（默认 errors）。
+	AccessLog string
 	// PprofAddr 是 pprof 监听地址（host:port）；空 = 关闭。只接受环回地址。
 	PprofAddr string
 	// GCPercent 是 GOGC（100 = Go 默认；越小越省内存、GC 越频繁）。
@@ -130,6 +135,7 @@ func Default() Config {
 		DeadDeviceWarnThreshold: DefaultDeadDeviceWarnThreshold,
 		BasePath:                DefaultBasePath,
 		LogLevel:                DefaultLogLevel,
+		AccessLog:               DefaultAccessLog,
 		PprofAddr:               DefaultPprofAddr,
 		GCPercent:               DefaultGCPercent,
 		RevokeReconcileSeconds:  DefaultRevokeReconcileSeconds,
@@ -154,6 +160,8 @@ func Load(args []string, getenv func(string) string) (Config, error) {
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
 	}
+	// Validate 只做判定；规范化在这里落地一次，运行期只会看到 off/errors/all。
+	cfg.AccessLog = strings.ToLower(strings.TrimSpace(cfg.AccessLog))
 	return cfg, nil
 }
 
@@ -194,6 +202,8 @@ func (c *Config) register(fs *flag.FlagSet) {
 	fs.StringVar(&c.BasePath, "base-path", c.BasePath,
 		"挂载前缀，例如 /dsh-link；带前缀与去前缀两种形式都服务")
 	fs.StringVar(&c.LogLevel, "log-level", c.LogLevel, "日志级别：debug / info / warn / error")
+	fs.StringVar(&c.AccessLog, "access-log", c.AccessLog,
+		"访问日志档位：off / errors（默认：5xx 与 >500ms 慢请求）/ all")
 	fs.StringVar(&c.PprofAddr, "pprof-addr", c.PprofAddr,
 		"pprof 监听地址（host:port，只允许环回；默认关闭）")
 	fs.IntVar(&c.GCPercent, "gogc", c.GCPercent,
@@ -270,6 +280,9 @@ func (c *Config) applyEnv(getenv func(string) string) error {
 	if v := getenv(EnvLogLevel); v != "" {
 		c.LogLevel = v
 	}
+	if v := getenv(EnvAccessLog); v != "" {
+		c.AccessLog = v
+	}
 	if v := getenv(EnvPprofAddr); v != "" {
 		c.PprofAddr = v
 	}
@@ -310,6 +323,11 @@ func (c Config) Validate() error {
 	// 中间态，而是一次静默的回退；要放宽就给一个大数。
 	if c.BridgeBytes <= 0 {
 		return fmt.Errorf("bridge-bytes 需要正整数（默认 %d）", DefaultBridgeBytes)
+	}
+	switch strings.ToLower(strings.TrimSpace(c.AccessLog)) {
+	case "off", "errors", "all":
+	default:
+		return fmt.Errorf("access-log 只接受 off / errors / all，收到 %q", c.AccessLog)
 	}
 	return nil
 }

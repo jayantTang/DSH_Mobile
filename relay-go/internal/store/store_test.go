@@ -105,11 +105,11 @@ func TestOpenCreatesSchema(t *testing.T) {
 		t.Fatalf("Version = %d, 期望 %d", s.Version(), SchemaVersion)
 	}
 
-	if got := tableNames(t, s.db); strings.Join(got, ",") != strings.Join(wantTables, ",") {
+	if got := tableNames(t, s.db.DB); strings.Join(got, ",") != strings.Join(wantTables, ",") {
 		t.Fatalf("表清单 = %v\n期望 %v", got, wantTables)
 	}
 
-	if got := pragmaInt(t, s.db, "PRAGMA user_version"); got != SchemaVersion {
+	if got := pragmaInt(t, s.db.DB, "PRAGMA user_version"); got != SchemaVersion {
 		t.Fatalf("user_version = %d, 期望 %d", got, SchemaVersion)
 	}
 
@@ -120,21 +120,21 @@ func TestOpenCreatesSchema(t *testing.T) {
 	if !strings.EqualFold(journal, "wal") {
 		t.Fatalf("journal_mode = %q, 期望 wal", journal)
 	}
-	if got := pragmaInt(t, s.db, "PRAGMA foreign_keys"); got != 1 {
+	if got := pragmaInt(t, s.db.DB, "PRAGMA foreign_keys"); got != 1 {
 		t.Fatalf("foreign_keys = %d, 期望 1", got)
 	}
-	if got := pragmaInt(t, s.db, "PRAGMA busy_timeout"); got != BusyTimeoutMS {
+	if got := pragmaInt(t, s.db.DB, "PRAGMA busy_timeout"); got != BusyTimeoutMS {
 		t.Fatalf("busy_timeout = %d, 期望 %d", got, BusyTimeoutMS)
 	}
 
 	// 新库的列必须与 Python 版一致（抽查末尾几列：它们靠 ALTER TABLE 追加）。
-	if !hasColumn(t, s.db, "agents", "versionsAt") {
+	if !hasColumn(t, s.db.DB, "agents", "versionsAt") {
 		t.Fatal("agents 缺 versionsAt")
 	}
-	if !hasColumn(t, s.db, "devices", "deviceKey") {
+	if !hasColumn(t, s.db.DB, "devices", "deviceKey") {
 		t.Fatal("devices 缺 deviceKey")
 	}
-	if !hasColumn(t, s.db, "pairCodes", "useCount") {
+	if !hasColumn(t, s.db.DB, "pairCodes", "useCount") {
 		t.Fatal("pairCodes 缺 useCount")
 	}
 }
@@ -159,7 +159,7 @@ func TestOpenPathWithSpaces(t *testing.T) {
 		t.Fatalf("Open: %v", err)
 	}
 	defer s.Close()
-	if got := len(tableNames(t, s.db)); got != len(wantTables) {
+	if got := len(tableNames(t, s.db.DB)); got != len(wantTables) {
 		t.Fatalf("表数量 = %d", got)
 	}
 }
@@ -206,7 +206,7 @@ func TestReopenIsIdempotent(t *testing.T) {
 	if name != "测试账户" {
 		t.Fatalf("账户名 = %q", name)
 	}
-	if got := len(tableNames(t, second.db)); got != len(wantTables) {
+	if got := len(tableNames(t, second.db.DB)); got != len(wantTables) {
 		t.Fatalf("重复打开后表数量 = %d", got)
 	}
 }
@@ -307,7 +307,7 @@ func TestMigratesOlderDatabase(t *testing.T) {
 	if s.Version() != SchemaVersion {
 		t.Fatalf("迁移后 Version = %d", s.Version())
 	}
-	if got := pragmaInt(t, s.db, "PRAGMA user_version"); got != SchemaVersion {
+	if got := pragmaInt(t, s.db.DB, "PRAGMA user_version"); got != SchemaVersion {
 		t.Fatalf("迁移后 user_version = %d", got)
 	}
 
@@ -317,7 +317,7 @@ func TestMigratesOlderDatabase(t *testing.T) {
 		{"feedbackThreads", "subject"}, {"feedbackMessages", "format"},
 		{"notices", "format"}, {"agents", "connectorVersion"}, {"agents", "versionsAt"},
 	} {
-		if !hasColumn(t, s.db, col.table, col.column) {
+		if !hasColumn(t, s.db.DB, col.table, col.column) {
 			t.Errorf("迁移后 %s 仍缺 %s", col.table, col.column)
 		}
 	}
@@ -373,7 +373,7 @@ func TestNewerSchemaVersionIsLeftAlone(t *testing.T) {
 	if second.Version() != 99 {
 		t.Fatalf("Version = %d, 期望保持 99", second.Version())
 	}
-	if got := pragmaInt(t, second.db, "PRAGMA user_version"); got != 99 {
+	if got := pragmaInt(t, second.db.DB, "PRAGMA user_version"); got != 99 {
 		t.Fatalf("user_version = %d, 期望 99", got)
 	}
 }
