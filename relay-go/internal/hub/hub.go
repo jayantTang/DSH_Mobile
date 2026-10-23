@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/jayantTang/DSH_Mobile/relay-go/internal/bridge"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/dlp"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/presence"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/push"
@@ -128,10 +129,9 @@ type Hub struct {
 	revokeReconcileInterval time.Duration
 	backgroundOnce          sync.Once
 
-	// 文件桥登记表（bid → bridge）。它不在转发热路径上：只有 fs* 控制帧和
-	// /files/* 的 HTTP handler 会碰它，所以一把普通互斥锁就够。
-	bridgesMu sync.Mutex
-	bridges   map[string]bridge
+	// 文件桥登记表（bid → 桥）。状态机与锁都在 internal/bridge；这里只持有它，
+	// 并在断线/顶替/关停时按连接身份收尾。
+	bridges *bridge.Registry
 
 	closed atomic.Bool
 }
@@ -176,7 +176,7 @@ func New(options Options) *Hub {
 	hub.quota = quota.NewLedger(sink, limits.DeviceDailyBytes, today, log)
 	hub.usage = quota.NewUsage(sink, today, log)
 	hub.presence = presence.New(options.Presence)
-	hub.bridges = map[string]bridge{}
+	hub.bridges = bridge.NewRegistry(log)
 	hub.usageFlushInterval = options.UsageFlushInterval
 	if hub.usageFlushInterval <= 0 {
 		hub.usageFlushInterval = DefaultUsageFlushInterval
@@ -478,7 +478,7 @@ func (h *Hub) AttachAgent(ctx context.Context, agent store.Agent, sink Sink,
 	link.Link.SetRemote(remoteOf(sink))
 	// 文件上行桥的字节额度跟着**这条**连接器链路走：帧压在它的队列里，额度就该
 	// 记在它头上；连接器被顶替时新链路拿一份新的，旧链路的额度随旧队列一起清空。
-	link.Link.credits = newBridgeCredits(h.limits.BridgeBytes)
+	link.Link.credits = bridge.NewCredits(h.limits.BridgeBytes)
 	// 连接器链路的心跳是 DLP ping：连接器的读循环会把 ping 原样回成 pong。
 	link.Link.heartbeatKind = heartbeatDLP
 

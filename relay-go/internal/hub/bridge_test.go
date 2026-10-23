@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jayantTang/DSH_Mobile/relay-go/internal/bridge"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/dlp"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/presence"
 )
@@ -180,8 +181,8 @@ func TestFetchBridgeMetadataChunksAndEnd(t *testing.T) {
 	// 请求结束后登记被摘掉：迟到的窗口找不到桥，只能被丢掉（与 Python 的
 	// `test_a_window_for_a_finished_bridge_is_refused` 同一口径）。
 	fx.hub.CloseBridge("bid-down")
-	if bridge := fx.hub.bridgeFor("bid-down"); bridge != nil {
-		t.Fatalf("登记没有被摘掉：%+v", bridge)
+	if entry, found := fx.hub.bridges.Lookup("bid-down"); found {
+		t.Fatalf("登记没有被摘掉：%+v", entry)
 	}
 }
 
@@ -189,23 +190,23 @@ func TestFetchBridgeQueueFullMeansTheReaderIsGone(t *testing.T) {
 	fx := newFixture(t, Options{})
 	owner := fx.newTenant("bridge-queue")
 	agent, _ := fx.attachAgent(owner)
-	bridge := fx.hub.OpenFetchBridge("bid-queue", agent)
+	fetch := fx.hub.OpenFetchBridge("bid-queue", agent)
 	defer fx.hub.CloseBridge("bid-queue")
 
-	for index := 0; index < FetchQueueDepth; index++ {
-		if !bridge.deliver("fsGetChunk", dlp.Frame{
-			"t": "fsGetChunk", "bid": "bid-queue",
-			"data": "YQ==", "eof": false,
-		}) {
-			t.Fatalf("第 %d 片不该被拒", index)
+	chunk := dlp.Frame{"t": "fsGetChunk", "bid": "bid-queue", "data": "YQ==", "eof": false}
+	for index := 0; index < bridge.FetchQueueDepth; index++ {
+		if cancel, found := fx.hub.bridges.Deliver("bid-queue", "fsGetChunk", chunk); !found || cancel != nil {
+			t.Fatalf("第 %d 片不该被拒（cancel=%v found=%v）", index, cancel, found)
 		}
 	}
-	if bridge.deliver("fsGetChunk", dlp.Frame{
-		"t": "fsGetChunk", "bid": "bid-queue", "data": "YQ==",
-	}) {
+	cancel, found := fx.hub.bridges.Deliver("bid-queue", "fsGetChunk", chunk)
+	if !found || cancel == nil {
 		t.Fatal("队列满了应当报告读者已走")
 	}
-	if _, ok := bridge.NextFrame(context.Background()); ok {
+	if cancel != fetch {
+		t.Fatalf("需要叫停的不是这条桥：%+v", cancel)
+	}
+	if _, ok := fetch.NextFrame(context.Background()); ok {
 		t.Fatal("放弃之后不该再取到窗口")
 	}
 }
@@ -292,8 +293,48 @@ func TestCloseBridgeRemovesTheRegistration(t *testing.T) {
 	agent, _ := fx.attachAgent(owner)
 	fx.hub.OpenPutBridge("bid-close", agent)
 	fx.hub.CloseBridge("bid-close")
-	if bridge := fx.hub.bridgeFor("bid-close"); bridge != nil {
-		t.Fatalf("登记没有被摘掉：%+v", bridge)
+	if entry, found := fx.hub.bridges.Lookup("bid-close"); found {
+		t.Fatalf("登记没有被摘掉：%+v", entry)
+	}
+}
+
+// 登记表里的归属必须是 (agentId, generation)：顶替时只按这个身份收尾，
+// 不会误伤同一台电脑上新连接刚开的传输（DESIGN §3.4）。
+func TestOpenBridgeCarriesTheConnectionGeneration(t *testing.T) {
+	fx := newFixture(t, Options{Presence: presence.Options{ActiveIdle: time.Millisecond}})
+	owner := fx.newTenant("bridge-owner")
+	first, _ := fx.attachAgent(owner)
+	firstPut := fx.hub.OpenPutBridge("bid-owner-1", first)
+	defer fx.hub.CloseBridge("bid-owner-1")
+	time.Sleep(5 * time.Millisecond)
+
+	second, _ := fx.attachAgent(owner) // 顶掉第一条连接
+	defer fx.hub.CloseBridge("bid-owner-2")
+	secondPut := fx.hub.OpenPutBridge("bid-owner-2", second)
+
+	want := []struct {
+		bid   string
+		entry bridge.Bridge
+		agent *AgentLink
+	}{
+		{"bid-owner-1", firstPut, first},
+		{"bid-owner-2", secondPut, second},
+	}
+	for _, item := range want {
+		registered, found := fx.hub.bridges.Lookup(item.bid)
+		if !found {
+			t.Fatalf("%s 没有登记", item.bid)
+		}
+		if got := registered.Bid(); got != item.bid {
+			t.Fatalf("Bid = %q，期望 %q", got, item.bid)
+		}
+		expected := bridge.Owner{AgentID: item.agent.AgentID, Generation: item.agent.generation}
+		if got := registered.Owner(); got != expected {
+			t.Fatalf("%s 的归属 = %+v，期望 %+v", item.bid, got, expected)
+		}
+	}
+	if first.generation == second.generation {
+		t.Fatal("顶替后的两代连接代编号相同，归属无法区分")
 	}
 }
 

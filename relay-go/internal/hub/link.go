@@ -9,6 +9,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/jayantTang/DSH_Mobile/relay-go/internal/bridge"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/dlp"
 )
 
@@ -75,7 +76,7 @@ type outbound struct {
 	owned *dlp.Buffer
 	// credit 是这条消息预先取得的桥字节额度；写出去（或被丢弃、随连接关闭清空）
 	// 之后才归还。它与 payload 同生共死：只要帧还在队列里，内存就还是它占着。
-	credit      *bridgeCredits
+	credit      *bridge.Credits
 	creditBytes int64
 	// counted 表示这条消息的字节已经记进 queuedBytes（只有大队列里的帧会记）。
 	counted     bool
@@ -172,7 +173,7 @@ type Link struct {
 	closeReason atomic.Pointer[string]
 	// credits 是**文件上行桥**的字节额度（只有连接器链路有）。它约束的是那类
 	// 不可丢的 ClassControl 分片：它们绕过 byteLimit，所以必须另有一份账。
-	credits *bridgeCredits
+	credits *bridge.Credits
 
 	heartbeat        time.Duration
 	heartbeatTimeout time.Duration
@@ -313,7 +314,7 @@ func (l *Link) Enqueue(payload []byte, class Class, owned *dlp.Buffer) EnqueueRe
 //
 // 额度的所有权**只在入队成功时转移**给写循环；失败时仍归调用方（调用方必须自己
 // 归还），与 owned 的规则一致——两个"随帧归还"的资源只有一条转移路径。
-func (l *Link) EnqueueWithCredit(payload []byte, class Class, credit *bridgeCredits,
+func (l *Link) EnqueueWithCredit(payload []byte, class Class, credit *bridge.Credits,
 	creditBytes int64) EnqueueResult {
 	if credit == nil || creditBytes <= 0 {
 		return l.Enqueue(payload, class, nil)
@@ -322,7 +323,7 @@ func (l *Link) EnqueueWithCredit(payload []byte, class Class, credit *bridgeCred
 }
 
 func (l *Link) enqueue(payload []byte, class Class, owned *dlp.Buffer,
-	credit *bridgeCredits, creditBytes int64) EnqueueResult {
+	credit *bridge.Credits, creditBytes int64) EnqueueResult {
 	if l.closing.Load() {
 		return Overloaded
 	}

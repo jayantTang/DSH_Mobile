@@ -8,8 +8,8 @@
 // relay/api.py 的 files_up / files_down，行为参考见 relay/tests/test_files_up.py
 // 与 test_files_down.py。
 //
-// 桥的状态机在 internal/hub（谁拥有连接，谁拥有与连接相关的等待）；这个包只拥有
-// HTTP 面：参数校验、分片、Range 解析、响应头与正文写作。
+// 桥的状态机与登记表在 internal/bridge；这个包只拥有 HTTP 面：参数校验、分片、
+// Range 解析、响应头与正文写作。
 package files
 
 import (
@@ -29,6 +29,7 @@ import (
 
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/apierr"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/authn"
+	"github.com/jayantTang/DSH_Mobile/relay-go/internal/bridge"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/dlp"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/hub"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/reqctx"
@@ -47,7 +48,7 @@ const DownChargeSlice = BridgeChunkBytes
 // 默认时限。ack 期限只用于"连接器是否认识这族帧"；静默上限只约束两片之间，
 // 不是请求级超时（那会掐死一个正在慢慢传的大文件）。
 const (
-	DefaultAckTimeout  = hub.BridgeAckTimeout
+	DefaultAckTimeout  = bridge.AckTimeout
 	DefaultIdleTimeout = 120 * time.Second
 )
 
@@ -256,7 +257,7 @@ func (h *Handlers) HandleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	bridge := h.hub.OpenPutBridge(bid, agent)
+	put := h.hub.OpenPutBridge(bid, agent)
 	defer h.hub.CloseBridge(bid)
 
 	// 从这里开始是一条真正的文件传输记录：bid、范围、结果、字节与耗时。
@@ -269,13 +270,13 @@ func (h *Handlers) HandleUpload(w http.ResponseWriter, r *http.Request) {
 		"t": "fsPutBegin", "deviceId": device.DeviceID, "bid": bid,
 		"sessionId": sessionID, "name": name, "bytes": declared,
 	})
-	if !bridge.WaitAck(r.Context(), h.ackTimeout) {
+	if !put.WaitAck(r.Context(), h.ackTimeout) {
 		// 旧连接器会静默忽略这一族帧——给个明确的错误，别让它挂死。
 		writeError(w, http.StatusNotImplemented, "file/unsupported",
 			"连接器版本过旧，不支持后台上传；请更新连接器")
 		return
 	}
-	if outcome, settled := bridge.TryOutcome(); settled {
+	if outcome, settled := put.TryOutcome(); settled {
 		// 连接器在 begin 就拒绝了（fsErr）：那也是一个答复，原样把它的码带回去。
 		writeBridgeError(w, outcome)
 		return
@@ -362,7 +363,7 @@ func (h *Handlers) HandleUpload(w http.ResponseWriter, r *http.Request) {
 		"t": "fsPutEnd", "deviceId": device.DeviceID, "bid": bid,
 	})
 
-	outcome, settled := bridge.WaitDone(r.Context())
+	outcome, settled := put.WaitDone(r.Context())
 	if !settled {
 		// 请求被取消（手机走了）：没有可写的响应，连接会由 net/http 收掉。
 		return
@@ -429,7 +430,7 @@ func (h *Handlers) HandleDownload(w http.ResponseWriter, r *http.Request) {
 	// App 的 bid 只作为 `replaces` 传给连接器：告诉它这次要顶替哪个 run。
 	replaced := query.Get("bid")
 	bid := newBridgeID()
-	bridge := h.hub.OpenFetchBridge(bid, agent)
+	fetch := h.hub.OpenFetchBridge(bid, agent)
 	current := bid
 	defer func() { h.hub.CloseBridge(current) }()
 
@@ -444,13 +445,13 @@ func (h *Handlers) HandleDownload(w http.ResponseWriter, r *http.Request) {
 		begin["replaces"] = replaced
 	}
 	h.hub.SendControl(agent, begin)
-	if !bridge.WaitAck(r.Context(), h.ackTimeout) {
+	if !fetch.WaitAck(r.Context(), h.ackTimeout) {
 		writeError(w, http.StatusNotImplemented, "file/unsupported",
 			"连接器版本过旧，不支持后台下载；请更新连接器")
 		return
 	}
 
-	frame, ok := h.waitFrame(r.Context(), bridge)
+	frame, ok := h.waitFrame(r.Context(), fetch)
 	if !ok {
 		h.writeNoStart(w, r)
 		return
@@ -462,8 +463,8 @@ func (h *Handlers) HandleDownload(w http.ResponseWriter, r *http.Request) {
 
 	// total/version 是连接器 stat 的产物（P-13b）。旧连接器两个都可能没有，下面
 	// 每一处使用都必须容忍：缺总长只是"回到流式答复"，不是失败。
-	total, hasTotal := bridge.Size()
-	version := bridge.Version()
+	total, hasTotal := fetch.Size()
+	version := fetch.Version()
 	var etag *string
 	if version != "" && hasTotal {
 		value := fmt.Sprintf(`"dsh-%s-%d"`, version, total)
@@ -483,23 +484,23 @@ func (h *Handlers) HandleDownload(w http.ResponseWriter, r *http.Request) {
 	if ifRange := r.Header.Get("If-Range"); ifRange != "" && etag != nil &&
 		ifRange != *etag && offset != 0 {
 		// 旧 run 还在送它收不回的窗口：放弃**并且叫停**，再用新 bid 从 0 重开。
-		h.hub.CancelFetch(agent, bridge)
-		bridge.Abandon()
+		h.hub.CancelFetch(agent, fetch)
+		fetch.Abandon()
 		h.hub.CloseBridge(current)
 		bid = newBridgeID()
 		current = bid
 		tracked.bid = bid // 换 bid 重开后，结束日志记的是真正在用的那个
-		bridge = h.hub.OpenFetchBridge(bid, agent)
+		fetch = h.hub.OpenFetchBridge(bid, agent)
 		h.hub.SendControl(agent, dlp.Frame{
 			"t": "fsGetBegin", "deviceId": device.DeviceID, "bid": bid,
 			"scopeId": scopeID, "path": path, "offset": 0,
 		})
-		if !bridge.WaitAck(r.Context(), h.ackTimeout) {
+		if !fetch.WaitAck(r.Context(), h.ackTimeout) {
 			writeError(w, http.StatusNotImplemented, "file/unsupported",
 				"连接器版本过旧，不支持后台下载；请更新连接器")
 			return
 		}
-		frame, ok = h.waitFrame(r.Context(), bridge)
+		frame, ok = h.waitFrame(r.Context(), fetch)
 		if !ok {
 			h.writeNoStart(w, r)
 			return
@@ -514,8 +515,8 @@ func (h *Handlers) HandleDownload(w http.ResponseWriter, r *http.Request) {
 	// 从这里开始，任何出口都意味着"没人再读正文了"：放弃接收窗口，并叫停连接器
 	// 的那一次 run（否则它会为没人读的正文读到底）。
 	defer func() {
-		bridge.Abandon()
-		h.hub.CancelFetch(agent, bridge)
+		fetch.Abandon()
+		h.hub.CancelFetch(agent, fetch)
 	}()
 
 	status := http.StatusOK
@@ -557,12 +558,12 @@ func (h *Handlers) HandleDownload(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(status)
 	flush(w)
 
-	h.stream(w, r, tracked, device, link, bridge, frame, declared)
+	h.stream(w, r, tracked, device, link, fetch, frame, declared)
 }
 
 // stream 是正文写作循环：每一片都先限速、再计费，最后才写出。
 func (h *Handlers) stream(w http.ResponseWriter, r *http.Request, tracked *transferWriter,
-	device store.Device, link *hub.DeviceLink, bridge *hub.FetchBridge, frame dlp.Frame,
+	device store.Device, link *hub.DeviceLink, fetch *bridge.FetchBridge, frame dlp.Frame,
 	declared *int64) {
 
 	remaining := declared
@@ -572,14 +573,14 @@ func (h *Handlers) stream(w http.ResponseWriter, r *http.Request, tracked *trans
 			// 中断的传输（客户端会用 Range 续传）。
 			tracked.errorCode = code
 			h.log.Warn("relay: download failed mid-stream",
-				"bid", bridge.Bid(), "code", code, "message", message)
+				"bid", fetch.Bid(), "code", code, "message", message)
 			return
 		}
 		piece, err := base64.StdEncoding.DecodeString(textValue(frame["data"]))
 		if err != nil {
 			tracked.errorCode = "file/bad-window"
 			h.log.Warn("relay: download window is not valid base64",
-				"bid", bridge.Bid(), "error", err)
+				"bid", fetch.Bid(), "error", err)
 			return
 		}
 		for start := 0; start < len(piece); start += DownChargeSlice {
@@ -604,7 +605,7 @@ func (h *Handlers) stream(w http.ResponseWriter, r *http.Request, tracked *trans
 			if allowed, _ := h.hub.ChargeDeviceQuota(device.DeviceID, len(slice)); !allowed {
 				tracked.errorCode = "quota/exceeded"
 				h.log.Warn("relay: device exceeded its daily allowance during a download",
-					"deviceId", device.DeviceID, "bid", bridge.Bid())
+					"deviceId", device.DeviceID, "bid", fetch.Bid())
 				return
 			}
 			if link != nil {
@@ -615,7 +616,7 @@ func (h *Handlers) stream(w http.ResponseWriter, r *http.Request, tracked *trans
 				// 但也是"没人读了"：退出后由 defer 叫停连接器。
 				tracked.errorCode = "client/gone"
 				h.log.Debug("relay: client went away mid-download",
-					"bid", bridge.Bid(), "error", err)
+					"bid", fetch.Bid(), "error", err)
 				return
 			}
 			flush(w)
@@ -629,13 +630,13 @@ func (h *Handlers) stream(w http.ResponseWriter, r *http.Request, tracked *trans
 		if terminalFrame(frame) {
 			return
 		}
-		next, ok := h.waitFrame(r.Context(), bridge)
+		next, ok := h.waitFrame(r.Context(), fetch)
 		if !ok {
 			if r.Context().Err() != nil {
 				return // 手机走了；finishTransfer 会把它记成 client/gone
 			}
 			tracked.errorCode = "file/stalled"
-			h.log.Warn("relay: download stalled", "bid", bridge.Bid(),
+			h.log.Warn("relay: download stalled", "bid", fetch.Bid(),
 				"idleTimeout", h.idleTimeout)
 			return
 		}
@@ -644,10 +645,10 @@ func (h *Handlers) stream(w http.ResponseWriter, r *http.Request, tracked *trans
 }
 
 // waitFrame 等下一片，最多等 idleTimeout；返回 false 表示读者该收尾了。
-func (h *Handlers) waitFrame(ctx context.Context, bridge *hub.FetchBridge) (dlp.Frame, bool) {
+func (h *Handlers) waitFrame(ctx context.Context, fetch *bridge.FetchBridge) (dlp.Frame, bool) {
 	waitCtx, cancel := context.WithTimeout(ctx, h.idleTimeout)
 	defer cancel()
-	return bridge.NextFrame(waitCtx)
+	return fetch.NextFrame(waitCtx)
 }
 
 // writeNoStart 处理"连接器接受了 ack 却没有开始传输"。
@@ -765,7 +766,7 @@ func flush(w http.ResponseWriter) {
 }
 
 // writeBridgeError 把桥的终局写成 HTTP 错误（连接器的码原样带回）。
-func writeBridgeError(w http.ResponseWriter, outcome hub.BridgeOutcome) {
+func writeBridgeError(w http.ResponseWriter, outcome bridge.Outcome) {
 	if outcome.ErrCode == "" {
 		outcome.ErrCode = "file/rejected"
 	}
