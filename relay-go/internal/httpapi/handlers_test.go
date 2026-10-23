@@ -23,8 +23,11 @@ import (
 
 // testAPI 是一套隔离的 store + handler。每个用例一个临时库、一个独立限流器。
 type testAPI struct {
-	t       *testing.T
-	store   *store.Store
+	t *testing.T
+	// store 是具体库：用例直接用仓储方法准备数据（建账户、配对）。
+	store *store.Store
+	// port 是交给 handler 的仓储端口；故障注入用例在这里换成包装。
+	port    Store
 	handler http.Handler
 }
 
@@ -35,6 +38,12 @@ func newTestAPI(t *testing.T) *testAPI {
 
 func newTestAPIWithOptions(t *testing.T, opts Options) *testAPI {
 	t.Helper()
+	return newTestAPIWithStore(t, opts, openTestStore(t))
+}
+
+// openTestStore 建一个隔离的临时库；cleanup 时关闭。
+func openTestStore(t *testing.T) *store.Store {
+	t.Helper()
 	st, err := store.Open(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatalf("Open: %v", err)
@@ -44,7 +53,23 @@ func newTestAPIWithOptions(t *testing.T, opts Options) *testAPI {
 			t.Errorf("Close: %v", err)
 		}
 	})
-	opts.Store = st
+	return st
+}
+
+// newTestAPIWithStore 用调用方给的库装配 handler。
+//
+// 故障注入用例需要把写方法换成真实 SQLite 错误（只读/busy），同时不想复制一整套
+// 子 handler 装配，所以这里把"库"作为参数；正常用例走上面的封装。
+func newTestAPIWithStore(t *testing.T, opts Options, st *store.Store) *testAPI {
+	t.Helper()
+	return newTestAPIWithPort(t, opts, st, st)
+}
+
+// newTestAPIWithPort 与 newTestAPIWithStore 相同，但交给 handler 的仓储端口可以
+// 与具体库不同（故障注入用真实错误替换某一个写方法）。
+func newTestAPIWithPort(t *testing.T, opts Options, st *store.Store, port Store) *testAPI {
+	t.Helper()
+	opts.Store = port
 	if opts.Limits == (Limits{}) {
 		opts.Limits = DefaultLimits()
 	}
@@ -64,7 +89,7 @@ func newTestAPIWithOptions(t *testing.T, opts Options) *testAPI {
 	opts.Feedback = feedback.New(feedback.Options{
 		Store: st, ClientID: ClientIdentifier, Logger: opts.Logger,
 	})
-	return &testAPI{t: t, store: st, handler: New(opts)}
+	return &testAPI{t: t, store: st, port: port, handler: New(opts)}
 }
 
 type testTenant struct {

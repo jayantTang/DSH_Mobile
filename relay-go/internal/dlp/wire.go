@@ -38,6 +38,13 @@ var errWireFallback = errors.New("dlp: frame shape needs full decode")
 //
 // 校验口径与 Parse 完全一致：合法 UTF-8、不超过 MaxFrameBytes、是 JSON 对象、
 // `t` 是非空字符串。形状不认识时退回 Parse，因此**不会**比 M2 更严格。
+//
+// "形状不认识"除了嵌套过深，还包括两种"字节扫描与 map 语义对不上"的输入：
+// 顶层键名带转义（`"\u0069d"` 解码后就是 `id`）与顶层重复键（map 最后一个生效，
+// 字节扫描看到第一个）。这两种输入必须退回全量解析：否则同一帧会因为键名写法
+// 不同而被结构校验误拒、或按不同的 deviceId/类型路由。转义键还会让就地剥离后的
+// 帧里残留一个解码后重复的内部键——那是 Python 版不会交给设备的东西
+// （差分 fuzz 与回归用例见 fuzz_test.go）。
 func Scan(raw []byte) (Wire, *SurrogateDamage, error) {
 	if !utf8.Valid(raw) {
 		return Wire{}, nil, &FrameError{Reason: "frame is not valid UTF-8"}
@@ -46,9 +53,9 @@ func Scan(raw []byte) (Wire, *SurrogateDamage, error) {
 		return Wire{}, nil, &FrameError{Reason: fmt.Sprintf("frame exceeds %d bytes", MaxFrameBytes)}
 	}
 	// json.Valid 是完整的结构校验（一次扫描、零分配）。有了它，下面的字段扫描
-	// 才能在找到目标字段后提前退出：合法性已经由这里判定过，不需要再看后半段。
+	// 才能提前退出：合法性已经由这里判定过，不需要再看后半段。
 	if json.Valid(raw) {
-		if kind, ok := scanType(raw); ok && len(kind) > 0 && !bytes.ContainsRune(kind, '\\') {
+		if kind, ok := scanFastPath(raw); ok {
 			wire := Wire{raw: raw, kind: kind}
 			return wire, ScanSurrogates(raw), nil
 		}
@@ -608,6 +615,113 @@ func scanJSONNumber(raw []byte, start int) (int, bool) {
 		}
 	}
 	return index, true
+}
+
+// maxScannedKeys 是字节扫描愿意处理的最大顶层键数。
+//
+// 正常 DLP 帧不超过 10 个顶层键；超过这个数的形状不像正常流量，交给全量解析
+// 比在这里做 O(k²) 的重复键比较更划算（同时把比较次数钉在上界）。
+const maxScannedKeys = 32
+
+// span 是一段字节区间（键名在 raw 里的位置），只用于栈上的重复键检测。
+type span struct {
+	start int
+	end   int
+}
+
+// scanFastPath 在"字节扫描与 map 语义一定一致"的帧上取顶层 `t` 的内容。
+//
+// 相比 scanType 多做两件事：拒绝键名带转义的帧、拒绝顶层键重复的帧。两者都是
+// map 与字节两种读法的分叉点（见 Scan 的注释与 fuzz_test.go 的回归用例）。
+//
+// 成本是一次顶层遍历：json.Valid 已经校验过语法，这里只做"键名无转义 + 无重复 +
+// 找到 t"，不再校验 JSON 文法。键区间存在定长栈数组里，热路径仍然零分配。
+func scanFastPath(raw []byte) ([]byte, bool) {
+	index := skipJSONSpace(raw, 0)
+	if index >= len(raw) || raw[index] != '{' {
+		return nil, false
+	}
+	index = skipJSONSpace(raw, index+1)
+	// 空对象没有 t；交给 Parse 给出统一错误文案。
+	if index < len(raw) && raw[index] == '}' {
+		return nil, false
+	}
+	var (
+		keys  [maxScannedKeys]span
+		count int
+	)
+	var (
+		kind    []byte
+		foundT  bool
+		stringT bool
+	)
+scan:
+	for {
+		if index >= len(raw) || raw[index] != '"' {
+			return nil, false
+		}
+		keyStart := index
+		keyEnd, ok := scanJSONString(raw, index)
+		if !ok {
+			return nil, false
+		}
+		key := raw[keyStart+1 : keyEnd-1]
+		// 键名带转义时无法用字节比较判断它解码后是不是 `t`/`id`/`deviceId`。
+		if bytes.IndexByte(key, '\\') >= 0 {
+			return nil, false
+		}
+		if count >= len(keys) {
+			return nil, false
+		}
+		for seen := 0; seen < count; seen++ {
+			if bytes.Equal(raw[keys[seen].start:keys[seen].end], key) {
+				// 重复键：map 语义最后一个生效，字节扫描只能看到第一个。
+				return nil, false
+			}
+		}
+		keys[count] = span{start: keyStart + 1, end: keyEnd - 1}
+		count++
+
+		index = skipJSONSpace(raw, keyEnd)
+		if index >= len(raw) || raw[index] != ':' {
+			return nil, false
+		}
+		index = skipJSONSpace(raw, index+1)
+		valueStart := index
+		valueKind, valueEnd, ok := scanJSONValue(raw, index)
+		if !ok {
+			return nil, false
+		}
+		if sameBytes(key, "t") {
+			kind = raw[valueStart:valueEnd]
+			foundT = true
+			stringT = valueKind == jsonString
+		}
+		index = skipJSONSpace(raw, valueEnd)
+		if index >= len(raw) {
+			return nil, false
+		}
+		switch raw[index] {
+		case ',':
+			index = skipJSONSpace(raw, index+1)
+		case '}':
+			if skipJSONSpace(raw, index+1) != len(raw) {
+				return nil, false
+			}
+			break scan
+		default:
+			return nil, false
+		}
+	}
+	if !foundT || !stringT || len(kind) < 3 {
+		return nil, false
+	}
+	content := kind[1 : len(kind)-1]
+	// t 自己带转义时按解码值比较：`\u0072eq` 与 `req` 是同一个类型，但字节不等。
+	if len(content) == 0 || bytes.IndexByte(content, '\\') >= 0 {
+		return nil, false
+	}
+	return content, true
 }
 
 // scanType 取顶层 `t` 的值（字符串内容）；ok=false 表示形状不认识。
