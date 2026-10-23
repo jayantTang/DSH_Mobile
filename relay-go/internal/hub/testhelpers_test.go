@@ -235,7 +235,17 @@ func newFixtureWithStore(t *testing.T, st *store.Store, options Options) *fixtur
 	if options.Logger == nil {
 		options.Logger = testLogger(t)
 	}
-	return &fixture{t: t, store: st, hub: New(options)}
+	fixture := &fixture{t: t, store: st, hub: New(options)}
+	// 用例结束时关掉它挂过的全部连接：写循环与心跳 watchdog 用的是
+	// context.Background()，不关就活到进程结束——-count=N 时前一轮的 watchdog
+	// 会在后一轮里打日志（t.Logf 在用例结束后会 panic），泄漏的 goroutine 也会
+	// 让 -race 的结论失真。这是收尾，不是放宽任何断言。
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		fixture.hub.Shutdown(ctx)
+	})
+	return fixture
 }
 
 // tenant 是"一个账户 + 一台电脑"。

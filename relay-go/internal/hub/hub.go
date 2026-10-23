@@ -2,8 +2,6 @@ package hub
 
 import (
 	"context"
-	"errors"
-	"hash/fnv"
 	"log/slog"
 	"sort"
 	"strings"
@@ -18,15 +16,6 @@ import (
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/quota"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/store"
 )
-
-// shardCount 是注册表的分片数（DESIGN §5.2：默认 64 片）。
-//
-// 分片的意义是**没有全局大锁**：查找、挂接、摘除只锁一片，1000 台设备同时上线时
-// 不会在一条 RWMutex 上排队。
-const shardCount = 64
-
-// ErrDeviceLimit 表示这台电脑的在线设备数已达上限（调用方回 4012）。
-var ErrDeviceLimit = errors.New("relay: device limit reached")
 
 // PushSender 是 hub 需要的 APNs 投递面（*push.Sender 实现；单测可注入桩）。
 //
@@ -43,18 +32,6 @@ type PushSender interface {
 type IncidentReporter interface {
 	NoteAgentDisconnect(agentID, name string)
 	NoteControlDrop(link, frameType string)
-}
-
-// agentShard 是 agentId 哈希到的一片 agent 注册表。
-type agentShard struct {
-	mu     sync.RWMutex
-	agents map[string]*AgentLink
-}
-
-// deviceShard 是 deviceId 哈希到的一片设备注册表（含未挂上电脑的设备）。
-type deviceShard struct {
-	mu      sync.RWMutex
-	devices map[string]*DeviceLink
 }
 
 // Options 是装配一个 Hub 需要的全部输入。
@@ -89,13 +66,15 @@ type Options struct {
 	Presence presence.Options
 }
 
-// Hub 是活连接的唯一所有者：注册表、路由、背压与心跳都在这里。
+// Hub 是活连接的编排者：准入、路由、背压、心跳与关停都在这里。
 //
-// 日额度、用量账本与每设备令牌桶的状态在 internal/quota（DESIGN §3.3）；本类型
-// 持有它们的具体实现并对外委托，热路径仍然只有一次具体方法调用。
+// 连接图（谁在线、谁挂在谁身上）归 registry（同包的 registry.go）：本类型只持有它
+// 并调用它的方法，不直接碰分片 map。日额度、用量账本与每设备令牌桶的状态在
+// internal/quota（DESIGN §3.3）；本类型持有它们的具体实现并对外委托，热路径仍然
+// 只有一次具体方法调用。
 //
-// 锁的规则只有一条：**不同时持有两把分片锁**。任何需要"先看 agent 再看设备"的
-// 操作都分成两步、各自加解锁，因此不存在交叉等待。
+// 锁的规则只有一条：**不同时持有两把分片锁**（锁在 registry 内部）。任何需要
+// "先看 agent 再看设备"的操作都分成两步、各自加解锁，因此不存在交叉等待。
 type Hub struct {
 	store        Store
 	limits       Limits
@@ -103,8 +82,8 @@ type Hub struct {
 	relayVersion string
 	linkOptions  linkOptions
 
-	agentShards  [shardCount]agentShard
-	deviceShards [shardCount]deviceShard
+	// registry 是连接图三份索引的唯一写者与唯一读入口。
+	registry *registry
 
 	quota *quota.Ledger
 	usage *quota.Usage
@@ -169,10 +148,7 @@ func New(options Options) *Hub {
 	}
 	// 控制帧丢弃的记账回调要在 hub 建好之后挂：它需要 hub 的计数器与监控器。
 	hub.linkOptions.onControlDrop = hub.noteControlDrop
-	for index := range hub.agentShards {
-		hub.agentShards[index].agents = map[string]*AgentLink{}
-		hub.deviceShards[index].devices = map[string]*DeviceLink{}
-	}
+	hub.registry = newRegistry()
 	hub.quota = quota.NewLedger(sink, limits.DeviceDailyBytes, today, log)
 	hub.usage = quota.NewUsage(sink, today, log)
 	hub.presence = presence.New(options.Presence)
@@ -214,15 +190,10 @@ func (h *Hub) ControlDrops() int64 { return h.controlDrops.Load() }
 func (h *Hub) PresenceStats() presence.Stats {
 	stats := h.presence.Stats()
 	now := time.Now()
-	for index := range h.agentShards {
-		shard := &h.agentShards[index]
-		shard.mu.RLock()
-		for _, agent := range shard.agents {
-			if h.presence.Unverified(agent.AgentID, agent.generation, now) {
-				stats.UnverifiedAgents++
-			}
+	for _, agent := range h.registry.agents() {
+		if h.presence.Unverified(agent.AgentID, agent.generation, now) {
+			stats.UnverifiedAgents++
 		}
-		shard.mu.RUnlock()
 	}
 	return stats
 }
@@ -240,13 +211,6 @@ func (h *Hub) noteControlDrop(link *Link, frameType string) {
 	}
 }
 
-// shardIndex 把 id 映射到分片。
-func shardIndex(id string) uint32 {
-	hasher := fnv.New32a()
-	_, _ = hasher.Write([]byte(id))
-	return hasher.Sum32() % shardCount
-}
-
 // ── agent 生命周期 ───────────────────────────────────────────────────────────
 
 // AgentLink 是一个 agentId 对应的连接器 WebSocket。
@@ -261,7 +225,7 @@ type AgentLink struct {
 	generation uint64
 	attachedAt time.Time
 
-	// devices 只在所属分片的写锁下修改（同一个 agent 永远落在同一片）。
+	// devices 只在所属分片的写锁下由 registry 修改（同一个 agent 永远落在同一片）。
 	devices map[string]*DeviceLink
 
 	superseded atomic.Bool
@@ -276,27 +240,12 @@ type AgentLink struct {
 
 // Devices 返回某个 agent 当前挂着的设备 id（按 id 排序，供诊断与测试）。
 func (h *Hub) Devices(agentID string) []string {
-	shard := &h.agentShards[shardIndex(agentID)]
-	shard.mu.RLock()
-	defer shard.mu.RUnlock()
-	agent := shard.agents[agentID]
-	if agent == nil {
-		return nil
-	}
-	ids := make([]string, 0, len(agent.devices))
-	for id := range agent.devices {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-	return ids
+	return h.registry.devices(agentID)
 }
 
 // Agent 返回 agentId 当前登记的那条连接（没有时 nil）。
 func (h *Hub) Agent(agentID string) *AgentLink {
-	shard := &h.agentShards[shardIndex(agentID)]
-	shard.mu.RLock()
-	defer shard.mu.RUnlock()
-	return shard.agents[agentID]
+	return h.registry.agent(agentID)
 }
 
 // AgentRefusal 是一次被连接生命周期策略拒绝的连接器握手。
@@ -484,10 +433,7 @@ func (h *Hub) AttachAgent(ctx context.Context, agent store.Agent, sink Sink,
 
 	h.retireAgent(agent.AgentID, link.generation)
 
-	shard := &h.agentShards[shardIndex(agent.AgentID)]
-	shard.mu.Lock()
-	shard.agents[agent.AgentID] = link
-	shard.mu.Unlock()
+	h.registry.registerAgent(link)
 	ticket.Commit(now)
 
 	// 写循环要先于 adoptDevices / tellAgentAboutTheGone 启动：这两步会发必达的
@@ -561,13 +507,13 @@ func waitForOldLink(done <-chan struct{}, timeout time.Duration) bool {
 
 // adoptDevices 把仍然活着的设备挂回新连接，并让两边都看到当前状态。
 func (h *Hub) adoptDevices(_ context.Context, link *AgentLink) int {
-	devices := h.devicesOfAgent(link.AgentID)
+	devices := h.registry.devicesOfAgent(link.AgentID)
 	adopted := 0
 	for _, device := range devices {
 		if device.Closed() {
 			continue
 		}
-		if !h.bindDevice(link, device) {
+		if !h.registry.bindDevice(link, device) {
 			continue // 这条 agent 连接已被更新的连接顶替，不要再往它身上挂
 		}
 		adopted++
@@ -577,38 +523,6 @@ func (h *Hub) adoptDevices(_ context.Context, link *AgentLink) int {
 			map[string]any{"relayVersion": h.relayVersion}))
 	}
 	return adopted
-}
-
-// bindDevice 在 agent 分片写锁下把设备挂到链路上；返回 false 表示本次不该挂。
-func (h *Hub) bindDevice(link *AgentLink, device *DeviceLink) bool {
-	shard := &h.agentShards[shardIndex(link.AgentID)]
-	shard.mu.Lock()
-	defer shard.mu.Unlock()
-	if shard.agents[link.AgentID] != link {
-		return false // 已经被新连接顶替
-	}
-	if device.Closed() {
-		return false
-	}
-	device.agent.Store(link)
-	link.devices[device.DeviceID] = device
-	return true
-}
-
-// devicesOfAgent 从设备注册表里取某台电脑名下的活设备（不持锁返回）。
-func (h *Hub) devicesOfAgent(agentID string) []*DeviceLink {
-	var found []*DeviceLink
-	for index := range h.deviceShards {
-		shard := &h.deviceShards[index]
-		shard.mu.RLock()
-		for _, device := range shard.devices {
-			if device.AgentID == agentID && !device.Closed() {
-				found = append(found, device)
-			}
-		}
-		shard.mu.RUnlock()
-	}
-	return found
 }
 
 // tellAgentAboutTheGone 告诉刚连上的连接器：这些设备永远回不来了（已撤销或已过期）。
@@ -633,7 +547,7 @@ func (h *Hub) tellAgentAboutTheGone(ctx context.Context, link *AgentLink, agent 
 		expired = map[string]struct{}{}
 	}
 	live := map[string]struct{}{}
-	for _, device := range h.devicesOfAgent(agent.AgentID) {
+	for _, device := range h.registry.devicesOfAgent(agent.AgentID) {
 		live[device.DeviceID] = struct{}{}
 	}
 	gone := map[string]struct{}{}
@@ -677,23 +591,14 @@ func (h *Hub) DetachAgent(link *AgentLink) {
 			"its reconnects will be backed off", "agentId", link.AgentID, "name", link.Name,
 			"generation", link.generation)
 	}
-	shard := &h.agentShards[shardIndex(link.AgentID)]
-	shard.mu.Lock()
-	if shard.agents[link.AgentID] != link {
-		shard.mu.Unlock()
+	devices, current := h.registry.detachAgent(link)
+	if !current {
 		// 已经被更新的连接顶替，摘除与通知都归新连接——但**挂在这条旧 socket 上的
 		// 文件桥**必须在这里结束：它们的 fs* 回帧永远不会再来了。按链接身份而不是
 		// agentId 收尾，才不会误伤新连接刚开的传输。
 		h.dropAgentBridges(link, "the PC connector reconnected")
 		return
 	}
-	delete(shard.agents, link.AgentID)
-	devices := make([]*DeviceLink, 0, len(link.devices))
-	for _, device := range link.devices {
-		devices = append(devices, device)
-	}
-	link.devices = map[string]*DeviceLink{}
-	shard.mu.Unlock()
 
 	// 挂在断掉这条链路的上传/下载立刻以 host/offline 结束，不让 HTTP 请求等到
 	// 自己的超时。Python 只在"真断线"路径做这件事；这里把被顶替的那条也一并
@@ -722,10 +627,8 @@ func (h *Hub) DetachAgent(link *AgentLink) {
 	if h.monitor != nil {
 		h.monitor.NoteAgentDisconnect(link.AgentID, link.Name)
 	}
-	for _, device := range devices {
-		if device.agent.CompareAndSwap(link, nil) {
-			h.SendControl(device, dlp.HostStatus(false, link.AgentID, "", "", nil))
-		}
+	for _, device := range h.registry.releaseDevices(link, devices) {
+		h.SendControl(device, dlp.HostStatus(false, link.AgentID, "", "", nil))
 	}
 }
 
@@ -740,6 +643,8 @@ type DeviceLink struct {
 	Name      string
 	Model     string
 
+	// agent 是"这台设备此刻挂在哪条电脑连接上"的热路径只读缓存（每帧原子 Load）；
+	// 写入只允许 registry（见 registry.go 的三索引规则）。
 	agent      atomic.Pointer[AgentLink]
 	appVersion atomic.Pointer[string]
 
@@ -757,10 +662,7 @@ type DeviceLink struct {
 
 // Device 返回 deviceId 当前登记的那条连接（没有时 nil）。
 func (h *Hub) Device(deviceID string) *DeviceLink {
-	shard := &h.deviceShards[shardIndex(deviceID)]
-	shard.mu.RLock()
-	defer shard.mu.RUnlock()
-	return shard.devices[deviceID]
+	return h.registry.device(deviceID)
 }
 
 // DeviceBudgetExceeded 判断再接入 deviceID 是否会超过这台电脑的设备上限。
@@ -771,30 +673,7 @@ func (h *Hub) Device(deviceID string) *DeviceLink {
 // 重连的设备不算**新**设备：手机可能在新连接到达时还没清掉旧 socket，把自己算进
 // 名额里会把一台手机锁在自己的中转外面。
 func (h *Hub) DeviceBudgetExceeded(agentID, deviceID string) bool {
-	shard := &h.agentShards[shardIndex(agentID)]
-	shard.mu.RLock()
-	defer shard.mu.RUnlock()
-	agent := shard.agents[agentID]
-	if agent == nil {
-		return false
-	}
-	return h.budgetExceededLocked(agent, deviceID)
-}
-
-// budgetExceededLocked 是设备上限规则的唯一实现；调用方持有对应分片的锁。
-func (h *Hub) budgetExceededLocked(agent *AgentLink, deviceID string) bool {
-	limit := h.limits.MaxDevicesPerAgent
-	if limit <= 0 {
-		return false
-	}
-	live := 0
-	for id, device := range agent.devices {
-		if id == deviceID || device.Closed() {
-			continue
-		}
-		live++
-	}
-	return live >= limit
+	return h.registry.deviceBudgetExceeded(agentID, deviceID, h.limits.MaxDevicesPerAgent)
 }
 
 // AttachDevice 登记一条设备连接并挂到它的电脑上。
@@ -821,12 +700,15 @@ func (h *Hub) AttachDevice(ctx context.Context, device store.Device, sink Sink) 
 	// 日额度的基线要在挂上去之前定好（读库，不在转发热路径上）。
 	h.quota.Seat(ctx, device.DeviceID)
 
-	agent, err := h.attachToAgent(link)
+	agent, err := h.registry.attachToAgent(link, h.limits.MaxDevicesPerAgent)
 	if err != nil {
+		h.log.Warn("relay: refused a device socket at the device limit",
+			"agentId", link.AgentID, "deviceId", link.DeviceID,
+			"limit", h.limits.MaxDevicesPerAgent)
 		return nil, err
 	}
 
-	previous := h.registerDevice(link)
+	previous := h.registry.registerDevice(link)
 	if previous != nil && previous != link {
 		// 同一台设备又开了一条、旧的还活着：直接覆盖登记（与 Python 一致，不关旧
 		// socket、也不通知连接器）。区别在于这里**留下一条 WARNING**——否则旧连接
@@ -855,36 +737,6 @@ func (h *Hub) AttachDevice(ctx context.Context, device store.Device, sink Sink) 
 	return link, nil
 }
 
-// attachToAgent 在 agent 分片写锁下做**判定 + 挂接**，两者必须原子。
-func (h *Hub) attachToAgent(link *DeviceLink) (*AgentLink, error) {
-	shard := &h.agentShards[shardIndex(link.AgentID)]
-	shard.mu.Lock()
-	defer shard.mu.Unlock()
-	agent := shard.agents[link.AgentID]
-	if agent == nil {
-		return nil, nil // 电脑不在线：设备照样能连，只是收不到帧
-	}
-	if h.budgetExceededLocked(agent, link.DeviceID) {
-		h.log.Warn("relay: refused a device socket at the device limit",
-			"agentId", link.AgentID, "deviceId", link.DeviceID,
-			"limit", h.limits.MaxDevicesPerAgent)
-		return nil, ErrDeviceLimit
-	}
-	agent.devices[link.DeviceID] = link
-	link.agent.Store(agent)
-	return agent, nil
-}
-
-// registerDevice 把设备登记进注册表，返回被顶替的那条（可能为 nil）。
-func (h *Hub) registerDevice(link *DeviceLink) *DeviceLink {
-	shard := &h.deviceShards[shardIndex(link.DeviceID)]
-	shard.mu.Lock()
-	defer shard.mu.Unlock()
-	previous := shard.devices[link.DeviceID]
-	shard.devices[link.DeviceID] = link
-	return previous
-}
-
 // DetachDevice 摘掉一条设备连接，并（在应当通知时）告诉电脑它下线了。
 //
 // 这是设备拆除的唯一路径：撤销、配额、背压、对端关闭都走这里，所以
@@ -900,26 +752,10 @@ func (h *Hub) detachDevice(link *DeviceLink, reason string, closeCode int) {
 	}
 	notified := false
 	replaced := false
-	// `closed` 已经置位，接下来读 agent 并摘除必须和 bindDevice **同一把锁**：
+	// 关系摘除与"要不要通知"的判定在 registry 里用同一把 agent 分片锁完成：
 	// 电脑重连认领设备的那个瞬间如果不互斥，拆除会漏掉刚挂上的那条登记。
-	if agent := link.agent.Load(); agent != nil {
-		shard := &h.agentShards[shardIndex(agent.AgentID)]
-		shard.mu.Lock()
-		current, registered := agent.devices[link.DeviceID]
-		switch {
-		case !registered:
-			// 已经被摘掉了：没有可发的通知。
-		case current == link:
-			delete(agent.devices, link.DeviceID)
-			notified = true
-		default:
-			// 这条 socket 已经被同 deviceId 的新连接顶替过。连接器会认为那台设备
-			// 还在（新连接也是它），所以**没有** deviceDetach 可发；留下这条日志，
-			// 免得把 attach/detach 条数相等误读成"每条都通知到了"。
-			replaced = true
-		}
-		link.agent.Store(nil)
-		shard.mu.Unlock()
+	if agent, didNotify, didReplace := h.registry.detachFromAgent(link); agent != nil {
+		notified, replaced = didNotify, didReplace
 		if notified {
 			h.SendControl(agent, dlp.DeviceDetachFrame(link.DeviceID, reason))
 		} else if replaced {
@@ -928,12 +764,7 @@ func (h *Hub) detachDevice(link *DeviceLink, reason string, closeCode int) {
 		}
 	}
 
-	shard := &h.deviceShards[shardIndex(link.DeviceID)]
-	shard.mu.Lock()
-	if shard.devices[link.DeviceID] == link {
-		delete(shard.devices, link.DeviceID)
-	}
-	shard.mu.Unlock()
+	h.registry.unregisterDevice(link)
 
 	link.RequestClose(closeCode, reason)
 	h.log.Info("relay: device detached",
@@ -1162,7 +993,7 @@ func (h *Hub) RouteFromAgent(link *AgentLink, wire dlp.Wire) {
 		return
 	}
 
-	device := h.deviceOfAgent(link, deviceID)
+	device := h.registry.deviceOfAgent(link, deviceID)
 	if device == nil {
 		h.log.Debug("relay: agent sent a frame for an unknown device",
 			"agentId", link.AgentID, "deviceId", string(deviceID), "frame", wire.Type())
@@ -1315,7 +1146,7 @@ func (h *Hub) sendReminders(link *AgentLink, kind, sid string, eid *string) {
 // shouldPush 判断一台设备要不要收这条提醒。
 func (h *Hub) shouldPush(link *AgentLink, row store.Device, kind string) bool {
 	// ① 此刻不在线。在线的手机自己会弹本地通知（$events → App），再推就是重复。
-	if h.deviceOnlineOn(link, row.DeviceID) {
+	if h.registry.deviceOnlineOn(link, row.DeviceID) {
 		return false
 	}
 	// ② 有推送登记（令牌与环境都有效；store 已把撤销/过期滤掉）。
@@ -1329,42 +1160,12 @@ func (h *Hub) shouldPush(link *AgentLink, row store.Device, kind string) bool {
 	return row.PushAttention != 0
 }
 
-// deviceOnlineOn 报告这台设备是否挂在**这一条**（且仍是当前）的 agent 连接上。
-//
-// 只查 map 不够：被顶替的旧连接还留着 devices 时，答案会从"在线"漂成"离线"或
-// 反过来。所以先确认这条连接仍是注册表里的那一条。
-func (h *Hub) deviceOnlineOn(link *AgentLink, deviceID string) bool {
-	shard := &h.agentShards[shardIndex(link.AgentID)]
-	shard.mu.RLock()
-	defer shard.mu.RUnlock()
-	current := shard.agents[link.AgentID]
-	if current == nil || current != link {
-		return false
-	}
-	_, online := current.devices[deviceID]
-	return online
-}
-
 // classOf 把帧类型映射成背压类别。
 func classOf(kind []byte) Class {
 	if dlp.IsStreamingKind(kind) {
 		return ClassStream
 	}
 	return ClassControl
-}
-
-// deviceOfAgent 只在这台电脑自己名下的设备里找。
-//
-// 不能查全局设备表：一枚设备令牌只该寻址自己那台电脑的设备，否则任意连接器都能
-// 往别人的手机上投帧。
-func (h *Hub) deviceOfAgent(link *AgentLink, deviceID []byte) *DeviceLink {
-	shard := &h.agentShards[shardIndex(link.AgentID)]
-	shard.mu.RLock()
-	defer shard.mu.RUnlock()
-	if shard.agents[link.AgentID] != link {
-		return nil
-	}
-	return link.devices[string(deviceID)]
 }
 
 // broadcast 把一条无寻址帧发给这台电脑的全部设备（hostStatus 的常规路径）。
@@ -1380,21 +1181,9 @@ func (h *Hub) broadcast(link *AgentLink, frame dlp.Frame) {
 	}
 	kind := frame.Type()
 	droppable := dlp.IsDroppableControl(kind)
-	for _, device := range h.attachedDevices(link) {
+	for _, device := range h.registry.attachedDevices(link) {
 		device.EnqueueControl(payload, kind, droppable)
 	}
-}
-
-// attachedDevices 取这台电脑当前挂着的设备（不持锁返回）。
-func (h *Hub) attachedDevices(link *AgentLink) []*DeviceLink {
-	shard := &h.agentShards[shardIndex(link.AgentID)]
-	shard.mu.RLock()
-	defer shard.mu.RUnlock()
-	devices := make([]*DeviceLink, 0, len(link.devices))
-	for _, device := range link.devices {
-		devices = append(devices, device)
-	}
-	return devices
 }
 
 // Target 是 SendControl 需要的最小接口。*AgentLink / *DeviceLink 通过内嵌的
@@ -1565,7 +1354,7 @@ func (h *Hub) NotifyAccountState(accountID string, keys []string, excludeDeviceI
 		return 0
 	}
 	sent := 0
-	for _, device := range h.allDevices() {
+	for _, device := range h.registry.allDevices() {
 		if device.AccountID != accountID || device.Closed() {
 			continue
 		}
@@ -1577,20 +1366,6 @@ func (h *Hub) NotifyAccountState(accountID string, keys []string, excludeDeviceI
 		}
 	}
 	return sent
-}
-
-// allDevices 取全部在线设备（跨分片快照）。
-func (h *Hub) allDevices() []*DeviceLink {
-	var devices []*DeviceLink
-	for index := range h.deviceShards {
-		shard := &h.deviceShards[index]
-		shard.mu.RLock()
-		for _, device := range shard.devices {
-			devices = append(devices, device)
-		}
-		shard.mu.RUnlock()
-	}
-	return devices
 }
 
 // ── 关停 ─────────────────────────────────────────────────────────────────────
@@ -1605,15 +1380,10 @@ func (h *Hub) Shutdown(ctx context.Context) {
 	// 先让等待中的文件请求以 host/offline 结束：连接即将断开，回帧不会再来。
 	h.failAllBridges("the relay is shutting down")
 	links := make([]*Link, 0, 64)
-	for index := range h.agentShards {
-		shard := &h.agentShards[index]
-		shard.mu.RLock()
-		for _, agent := range shard.agents {
-			links = append(links, agent.Link)
-		}
-		shard.mu.RUnlock()
+	for _, agent := range h.registry.agents() {
+		links = append(links, agent.Link)
 	}
-	for _, device := range h.allDevices() {
+	for _, device := range h.registry.allDevices() {
 		links = append(links, device.Link)
 	}
 	for _, link := range links {

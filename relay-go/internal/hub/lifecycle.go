@@ -63,24 +63,15 @@ func (h *Hub) presenceSweepLoop(ctx context.Context) {
 
 // sweepUnverified 标记一次并记一条 WARN；每条连接最多标记一次。
 func (h *Hub) sweepUnverified(now time.Time) {
-	for index := range h.agentShards {
-		shard := &h.agentShards[index]
-		shard.mu.RLock()
-		agents := make([]*AgentLink, 0, len(shard.agents))
-		for _, agent := range shard.agents {
-			agents = append(agents, agent)
+	for _, agent := range h.registry.agents() {
+		if !h.presence.MarkUnverified(agent.AgentID, agent.generation, now) {
+			continue
 		}
-		shard.mu.RUnlock()
-		for _, agent := range agents {
-			if !h.presence.MarkUnverified(agent.AgentID, agent.generation, now) {
-				continue
-			}
-			h.log.Warn("relay: an agent has not reported its connector/host version; "+
-				"reconnect backoff armed",
-				"agentId", agent.AgentID, "name", agent.Name,
-				"connectedFor", now.Sub(agent.attachedAt).String(),
-				"helloTimeout", h.presence.Options().HelloTimeout.String())
-		}
+		h.log.Warn("relay: an agent has not reported its connector/host version; "+
+			"reconnect backoff armed",
+			"agentId", agent.AgentID, "name", agent.Name,
+			"connectedFor", now.Sub(agent.attachedAt).String(),
+			"helloTimeout", h.presence.Options().HelloTimeout.String())
 	}
 }
 
@@ -115,7 +106,7 @@ func (h *Hub) revokeReconcileLoop(ctx context.Context) {
 //
 // 返回被踢的设备 id（排序），供日志与测试断言。
 func (h *Hub) ReconcileRevokedDevices(ctx context.Context) ([]string, error) {
-	devices := h.allDevices()
+	devices := h.registry.allDevices()
 	if len(devices) == 0 {
 		return nil, nil // 没人在线就不查库
 	}

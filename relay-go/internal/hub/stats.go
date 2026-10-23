@@ -64,13 +64,7 @@ type Snapshot struct {
 
 // Load 是当前活跃的连接数（/stats 的 load 段）。
 func (h *Hub) Load() (agents int, devices int) {
-	for index := range h.agentShards {
-		shard := &h.agentShards[index]
-		shard.mu.RLock()
-		agents += len(shard.agents)
-		shard.mu.RUnlock()
-	}
-	return agents, len(h.allDevices())
+	return h.registry.countAgents(), len(h.registry.allDevices())
 }
 
 // Traffic 是出口流量记账，最有用的一条排最前。
@@ -78,7 +72,7 @@ func (h *Hub) Load() (agents int, devices int) {
 // 机器自己的网卡计数回答不了"哪台电脑在用带宽"（它混进了 SSH、OTA 与机器上其他
 // 一切）；这些数字是中转自己的，判断该不该给某台设备更小的额度时看的就是它。
 func (h *Hub) Traffic() Traffic {
-	devices := h.allDevices()
+	devices := h.registry.allDevices()
 	sort.Slice(devices, func(i, j int) bool {
 		return devices[i].EgressBytes() > devices[j].EgressBytes()
 	})
@@ -105,33 +99,24 @@ func (h *Hub) Snapshot() Snapshot {
 		Agents:  []SnapshotAgent{},
 		Devices: []SnapshotDevice{},
 	}
-	for index := range h.agentShards {
-		shard := &h.agentShards[index]
-		shard.mu.RLock()
-		for _, agent := range shard.agents {
-			ids := make([]string, 0, len(agent.devices))
-			for id := range agent.devices {
-				ids = append(ids, id)
-			}
-			sort.Strings(ids)
-			snapshot.Agents = append(snapshot.Agents, SnapshotAgent{
-				AgentID:          agent.AgentID,
-				Name:             agent.Name,
-				Devices:          ids,
-				Pending:          agent.Pending(),
-				QueuedBytes:      agent.QueuedBytes(),
-				EgressBytes:      agent.deviceEgress.Load(),
-				DroppedFrames:    agent.DroppedFrames(),
-				BridgeBytesInUse: agent.BridgeBytesInUse(),
-			})
-		}
-		shard.mu.RUnlock()
+	for _, view := range h.registry.agentViews() {
+		agent := view.link
+		snapshot.Agents = append(snapshot.Agents, SnapshotAgent{
+			AgentID:          agent.AgentID,
+			Name:             agent.Name,
+			Devices:          view.devices,
+			Pending:          agent.Pending(),
+			QueuedBytes:      agent.QueuedBytes(),
+			EgressBytes:      agent.deviceEgress.Load(),
+			DroppedFrames:    agent.DroppedFrames(),
+			BridgeBytesInUse: agent.BridgeBytesInUse(),
+		})
 	}
 	sort.Slice(snapshot.Agents, func(i, j int) bool {
 		return snapshot.Agents[i].AgentID < snapshot.Agents[j].AgentID
 	})
 
-	for _, device := range h.allDevices() {
+	for _, device := range h.registry.allDevices() {
 		agent := device.Agent()
 		snapshot.Devices = append(snapshot.Devices, SnapshotDevice{
 			DeviceID:            device.DeviceID,
@@ -222,22 +207,17 @@ func (h *Hub) DebugConns() DebugConns {
 		}
 	}
 
-	for index := range h.agentShards {
-		shard := &h.agentShards[index]
-		shard.mu.RLock()
-		for _, agent := range shard.agents {
-			connector, host := agent.Versions()
-			row := describe(agent.Link)
-			row.Kind = "agent"
-			row.AgentID = agent.AgentID
-			row.ConnectorVersion = connector
-			row.HostVersion = host
-			row.Generation = agent.generation
-			snapshot.Agents = append(snapshot.Agents, row)
-		}
-		shard.mu.RUnlock()
+	for _, agent := range h.registry.agents() {
+		connector, host := agent.Versions()
+		row := describe(agent.Link)
+		row.Kind = "agent"
+		row.AgentID = agent.AgentID
+		row.ConnectorVersion = connector
+		row.HostVersion = host
+		row.Generation = agent.generation
+		snapshot.Agents = append(snapshot.Agents, row)
 	}
-	for _, device := range h.allDevices() {
+	for _, device := range h.registry.allDevices() {
 		row := describe(device.Link)
 		row.Kind = "device"
 		row.AgentID = device.AgentID
