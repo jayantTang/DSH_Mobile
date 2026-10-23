@@ -138,7 +138,8 @@ func runServe(args []string, getenv func(string) string, stderr io.Writer) int {
 	sender := push.FromEnv(getenv, nil)
 	defer func() { _ = sender.Close() }()
 
-	// hub 是活连接、队列、心跳、配额与用量的所有者；HTTP 与 WS 都只通过它读写。
+	// hub 是活连接、队列与心跳的所有者；日额度与用量在 internal/quota。HTTP 与
+	// WS 都只通过 hub 读写。
 	revokeInterval := cfg.RevokeReconcileInterval()
 	if revokeInterval <= 0 {
 		revokeInterval = -1 // 0/负数 = 关闭（Python 的 `> 0` 判据）

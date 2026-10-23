@@ -14,6 +14,7 @@ import (
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/dlp"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/presence"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/push"
+	"github.com/jayantTang/DSH_Mobile/relay-go/internal/quota"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/store"
 )
 
@@ -58,7 +59,10 @@ type deviceShard struct {
 // Options 是装配一个 Hub 需要的全部输入。
 type Options struct {
 	// Store 是 hub 的仓储端口（hub.Store，10 个方法；见 ports.go）。
-	Store            Store
+	Store Store
+	// UsageSink 覆盖 quota 的落库/取数去处（Sink 的 3 个方法），nil 时用 Store。
+	// 单测用它注入失败实现，验证"写失败就把这批放回内存"的回放路径；生产不设置。
+	UsageSink        quota.Sink
 	Limits           Limits
 	Logger           *slog.Logger
 	RelayVersion     string
@@ -84,7 +88,10 @@ type Options struct {
 	Presence presence.Options
 }
 
-// Hub 是活连接的唯一所有者：注册表、路由、背压、心跳、配额与用量记账都在这里。
+// Hub 是活连接的唯一所有者：注册表、路由、背压与心跳都在这里。
+//
+// 日额度、用量账本与每设备令牌桶的状态在 internal/quota（DESIGN §3.3）；本类型
+// 持有它们的具体实现并对外委托，热路径仍然只有一次具体方法调用。
 //
 // 锁的规则只有一条：**不同时持有两把分片锁**。任何需要"先看 agent 再看设备"的
 // 操作都分成两步、各自加解锁，因此不存在交叉等待。
@@ -94,15 +101,12 @@ type Hub struct {
 	log          *slog.Logger
 	relayVersion string
 	linkOptions  linkOptions
-	today        func() int64
 
 	agentShards  [shardCount]agentShard
 	deviceShards [shardCount]deviceShard
 
-	quota *quotaLedger
-	usage *usageLedger
-	// usageSink 是冲盘的去处（生产是 Store 端口）；单测可注入失败实现验证回放。
-	usageSink usageWriter
+	quota *quota.Ledger
+	usage *quota.Usage
 
 	// presence 是连接器准入策略：重复连接抑制、未验证连接器的退避与计数。
 	// 它不持有连接，注册表仍然只有这里一份（见 internal/presence 的包注释）。
@@ -143,12 +147,17 @@ func New(options Options) *Hub {
 	if today == nil {
 		today = store.LocalDay
 	}
+	// 额度与用量的仓储面（quota.Sink）默认就是 hub 的 Store 端口；单测可以整体
+	// 换成一个会失败的实现，验证回放路径。
+	sink := options.UsageSink
+	if sink == nil && options.Store != nil {
+		sink = options.Store
+	}
 	hub := &Hub{
 		store:        options.Store,
 		limits:       limits,
 		log:          log,
 		relayVersion: options.RelayVersion,
-		today:        today,
 		push:         options.Push,
 		monitor:      options.Monitor,
 		linkOptions: linkOptions{
@@ -164,13 +173,10 @@ func New(options Options) *Hub {
 		hub.agentShards[index].agents = map[string]*AgentLink{}
 		hub.deviceShards[index].devices = map[string]*DeviceLink{}
 	}
-	hub.quota = newQuotaLedger(options.Store, limits.DeviceDailyBytes, today, log)
-	hub.usage = newUsageLedger(today, log)
+	hub.quota = quota.NewLedger(sink, limits.DeviceDailyBytes, today, log)
+	hub.usage = quota.NewUsage(sink, today, log)
 	hub.presence = presence.New(options.Presence)
 	hub.bridges = map[string]bridge{}
-	if options.Store != nil {
-		hub.usageSink = options.Store
-	}
 	hub.usageFlushInterval = options.UsageFlushInterval
 	if hub.usageFlushInterval <= 0 {
 		hub.usageFlushInterval = DefaultUsageFlushInterval
@@ -740,12 +746,13 @@ type DeviceLink struct {
 	// idMember 是 `"deviceId":"<id>"` 的预编码字节：每帧就地追加，不在热路径上编码。
 	idMember []byte
 
-	bucket     *tokenBucket
+	bucket     *quota.Bucket
 	pacedNanos atomic.Int64
 	closed     atomic.Bool
 
-	// hub 用来记当天用量（设备对象不持有账本，只持有回调）。
-	hub *Hub
+	// usage 是当天用量的唯一账本（状态在 quota）。设备对象不反向持有 Hub
+	// （DESIGN §3.3）；nil 只出现在单测直接构造的 DeviceLink 上。
+	usage *quota.Usage
 }
 
 // Device 返回 deviceId 当前登记的那条连接（没有时 nil）。
@@ -806,10 +813,10 @@ func (h *Hub) AttachDevice(ctx context.Context, device store.Device, sink Sink) 
 		h.limits.QueueBytes, h.log, h.linkOptions)
 	link.Link.SetRemote(remoteOf(sink))
 	link.idMember = dlp.DeviceIDMember(device.DeviceID)
-	link.bucket = newTokenBucket(h.limits.DeviceBytesPerSecond, time.Now())
+	link.bucket = quota.NewBucket(h.limits.DeviceBytesPerSecond, time.Now())
 	link.Link.pace = link.pace
 	link.Link.onSent = link.countEgress
-	link.hub = h
+	link.usage = h.usage
 
 	// 日额度的基线要在挂上去之前定好（读库，不在转发热路径上）。
 	h.quota.Seat(ctx, device.DeviceID)
@@ -840,7 +847,7 @@ func (h *Hub) AttachDevice(ctx context.Context, device store.Device, sink Sink) 
 		h.SendControl(agent, dlp.DeviceAttachFrame(
 			device.DeviceID, link.Name, link.Model, agent.AgentID))
 	}
-	h.usage.NoteConnection(link)
+	h.usage.NoteConnection(link.ref())
 	h.log.Info("relay: device attached",
 		"deviceId", device.DeviceID, "name", device.Name, "agentId", device.AgentID,
 		"accountId", device.AccountID, "remote_ip", link.Remote(),
@@ -935,8 +942,9 @@ func (h *Hub) detachDevice(link *DeviceLink, reason string, closeCode int) {
 		"remote_ip", link.Remote(), "notified", notified,
 		"lastInboundAge", link.LastInboundAge().String(),
 		"lastError", link.LastError())
-	// 断开时冲一次：这一批的尾巴不留在内存里，运维命令跑完就是准的。
-	// 异步是为了不让一次写库（最坏等满 busy_timeout）拖住拆除路径。
+	// 断开时同步冲一次：这一批的尾巴不留在内存里，运维命令跑完就是准的。
+	// 同步是为了"拆完就能读到"；上限 usageWriteTimeout 保证不会真的挂住拆除路径
+	// （DESIGN §3.3：不改成异步）。
 	h.flushUsageOnDetach()
 }
 
@@ -952,7 +960,7 @@ func (h *Hub) DropDevice(deviceID, reason string, closeCode int) bool {
 
 // pace 是这台设备唯一的限速点：写循环在每次发送前调用。
 func (d *DeviceLink) pace(ctx context.Context, size int) error {
-	wait := d.bucket.take(size, time.Now())
+	wait := d.bucket.Take(size, time.Now())
 	if wait <= 0 {
 		return nil
 	}
@@ -972,8 +980,15 @@ func (d *DeviceLink) countEgress(size int) {
 	if agent := d.agent.Load(); agent != nil {
 		agent.deviceEgress.Add(int64(size))
 	}
-	if d.hub != nil {
-		d.hub.usage.NoteEgress(d, size)
+	if d.usage != nil {
+		d.usage.NoteEgress(d.ref(), size)
+	}
+}
+
+// ref 是 quota 记账需要的设备身份（账本按 deviceId，冲盘行还要 agent/account）。
+func (d *DeviceLink) ref() quota.DeviceRef {
+	return quota.DeviceRef{
+		DeviceID: d.DeviceID, AgentID: d.AgentID, AccountID: d.AccountID,
 	}
 }
 
@@ -1464,7 +1479,7 @@ func (h *Hub) noteClientBuild(link *DeviceLink, wire dlp.Wire) {
 	reported := strings.Join(parts, " ")
 	// 记进当天那行要在"和上次一样就跳过"之前：重连时设备行里已经是这个构建号，
 	// 早退的话当天那行的 lastBuild 永远是空的。
-	h.usage.NoteBuild(link, reported)
+	h.usage.NoteBuild(link.ref(), reported)
 	if current := link.appVersion.Load(); current != nil && *current == reported {
 		return
 	}

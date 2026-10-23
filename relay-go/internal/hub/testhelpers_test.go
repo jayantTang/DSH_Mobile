@@ -2,6 +2,7 @@ package hub
 
 import (
 	"context"
+	"io"
 	"log/slog"
 	"path/filepath"
 	"sync"
@@ -194,14 +195,13 @@ func (w testWriter) Write(payload []byte) (int, error) {
 	return len(payload), nil
 }
 
-// fixture 是一套隔离的 store + hub。
-type fixture struct {
-	t     *testing.T
-	store *store.Store
-	hub   *Hub
+// discardLogger 把后台任务的日志丢进虚空（用例只关心状态，不关心日志文本）。
+func discardLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-func newFixture(t *testing.T, options Options) *fixture {
+// openTestStore 开一个临时库，随用例结束关闭（给需要自建 Hub 的用例用）。
+func openTestStore(t *testing.T) *store.Store {
 	t.Helper()
 	st, err := store.Open(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
@@ -212,6 +212,25 @@ func newFixture(t *testing.T, options Options) *fixture {
 			t.Errorf("关闭临时库: %v", err)
 		}
 	})
+	return st
+}
+
+// fixture 是一套隔离的 store + hub。
+type fixture struct {
+	t     *testing.T
+	store *store.Store
+	hub   *Hub
+}
+
+func newFixture(t *testing.T, options Options) *fixture {
+	t.Helper()
+	return newFixtureWithStore(t, openTestStore(t), options)
+}
+
+// newFixtureWithStore 用调用方准备好的库建 Hub（需要在装配时就注入 UsageSink 的
+// 用例用它：注入口在 Options 里，晚于 New 就没有 Hook 了）。
+func newFixtureWithStore(t *testing.T, st *store.Store, options Options) *fixture {
+	t.Helper()
 	options.Store = st
 	if options.Logger == nil {
 		options.Logger = testLogger(t)

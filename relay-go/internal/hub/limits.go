@@ -2,10 +2,6 @@ package hub
 
 import (
 	"context"
-	"log/slog"
-	"math"
-	"sync"
-	"time"
 
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/config"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/dlp"
@@ -15,6 +11,8 @@ import (
 //
 // 这些值来自启动参数（config.Config），但**行为与展示都从这里读**：/stats 报的和
 // 转发实行的必须是同一份数，否则运维看到的限额与真正生效的限额会悄悄分叉。
+//
+// 额度与令牌桶的**状态**在 internal/quota（DESIGN §3.3）；这里只保留配置值与展示。
 type Limits struct {
 	MaxFrameBytes   int
 	QueueDepth      int
@@ -123,161 +121,6 @@ func (l Limits) Describe() Description {
 		described.DeadDeviceWarnThreshold = &value
 	}
 	return described
-}
-
-// tokenBucket 是一台设备的每秒字节额度（Python hub.TokenBucket）。
-//
-// 中转跑在固定带宽的机器上，那份带宽由所有设备共享。一台设备传几张截图（十张就
-// 27 MB）就会把整条通道占满几十秒，别人全都变慢。这不是恶意行为，所以做法是限速
-// 而不是封禁：桶一开始是满的，并有至少 64 KiB 的突发额度，普通一轮对话完全不会等。
-//
-// 限速发生在**写循环**里，不是丢弃：帧照常到达，只是摊开在时间上。若在入队时收费，
-// 慢下来就会变成队列被填满、进而被判"背压"断开（4008）——那是完全不同的坏消息。
-//
-// 一个桶会被两条写路径同时使用：WebSocket 写循环与 /files/down 的 HTTP 正文。
-// Python 版只有一个事件循环，所以它的 TokenBucket 不需要锁；Go 版必须加，
-// 否则一次下载与一条正在转发的连接会在 tokens/updated 上竞争。
-type tokenBucket struct {
-	mu      sync.Mutex
-	rate    float64
-	burst   float64
-	tokens  float64
-	updated time.Time
-}
-
-// newTokenBucket 建一个满桶；rate<=0 表示不限速。
-func newTokenBucket(rate float64, now time.Time) *tokenBucket {
-	bucket := &tokenBucket{rate: math.Max(0, rate), updated: now}
-	bucket.burst = math.Max(bucket.rate, 64*1024)
-	bucket.tokens = bucket.burst
-	return bucket
-}
-
-// take 为 n 字节计费，返回发送前应等待的时长。
-//
-// 正数表示已超额；无论是否超额都立即记账，保证一串小帧按写入顺序排队。
-func (b *tokenBucket) take(size int, now time.Time) time.Duration {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if b.rate <= 0 {
-		return 0
-	}
-	if now.After(b.updated) {
-		b.tokens = math.Min(b.burst, b.tokens+now.Sub(b.updated).Seconds()*b.rate)
-		b.updated = now
-	}
-	b.tokens -= float64(size)
-	if b.tokens >= 0 {
-		return 0
-	}
-	return time.Duration(-b.tokens / b.rate * float64(time.Second))
-}
-
-// quotaLedger 是"每台设备每天已经收了多少字节"的唯一账本。
-//
-// 与 Python 的一处有意差异：Python 的 DailyQuota 是每个连接一个对象，基线在 attach
-// 时从库里读一次；Go 版把计数放在 hub 上、按 **deviceId** 记，所以同一台设备断开
-// 重连不会把当天的额度清零（手机换网、锁屏、中转重启都会重连，而"2 GB 一天"说的是
-// 一天，不是一个连接）。
-//
-// 基线仍来自 usageDaily（与运维报表同一份数）。M2 不做周期冲盘（M3 补），所以
-// 进程重启后基线只等于上次落库的数——这段差距写在 M2 的未完成项里。
-type quotaLedger struct {
-	store Store
-	limit int64
-	log   *slog.Logger
-	today func() int64
-
-	mu     sync.Mutex
-	day    int64
-	used   map[string]int64
-	seated map[string]bool
-}
-
-func newQuotaLedger(st Store, limit int64, today func() int64, log *slog.Logger) *quotaLedger {
-	return &quotaLedger{
-		store: st, limit: limit, log: log, today: today,
-		used: map[string]int64{}, seated: map[string]bool{},
-	}
-}
-
-// rollLocked 在跨本地日时把账本清空；调用方必须持有 mu。
-func (q *quotaLedger) rollLocked(day int64) {
-	if q.day == day {
-		return
-	}
-	q.day = day
-	q.used = map[string]int64{}
-	q.seated = map[string]bool{}
-}
-
-// Seat 为这台设备确定当天的基线，只在本次进程第一次见到它时读库。
-//
-// 读库失败只记一条告警、把基线当 0：记账出错时宁可给额度，也不能因此拒绝连接。
-func (q *quotaLedger) Seat(ctx context.Context, deviceID string) {
-	if q.limit <= 0 || q.store == nil {
-		return
-	}
-	day := q.today()
-	q.mu.Lock()
-	q.rollLocked(day)
-	if q.seated[deviceID] {
-		q.mu.Unlock()
-		return
-	}
-	q.seated[deviceID] = true
-	q.mu.Unlock()
-
-	stored, err := q.store.UsageBytesOn(ctx, day, deviceID)
-	if err != nil {
-		q.log.Warn("relay: could not read today's usage; starting the allowance from zero",
-			"deviceId", deviceID, "error", err)
-		return
-	}
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	if q.day == day && stored > q.used[deviceID] {
-		q.used[deviceID] = stored
-	}
-}
-
-// Charge 记一次出口字节，返回是否仍在额度内。
-//
-// 与 Python 的 DailyQuota.charge 同口径：**先记账再判定**，所以把额度撑爆的那一帧
-// 本身不会送达（调用方据此发 error 帧再以 4011 关闭）。
-func (q *quotaLedger) Charge(deviceID string, size int) (bool, int64) {
-	if q.limit <= 0 {
-		return true, 0
-	}
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	q.rollLocked(q.today())
-	q.used[deviceID] += int64(size)
-	used := q.used[deviceID]
-	return used <= q.limit, used
-}
-
-// Remaining 是这台设备今天还剩多少字节；不限量时返回 -1（Python 同口径）。
-func (q *quotaLedger) Remaining(deviceID string) int64 {
-	if q.limit <= 0 {
-		return -1
-	}
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	q.rollLocked(q.today())
-	remaining := q.limit - q.used[deviceID]
-	if remaining < 0 {
-		return 0
-	}
-	return remaining
-}
-
-// Used 是这台设备今天已经收到的字节（诊断用）。
-func (q *quotaLedger) Used(deviceID string) int64 {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	q.rollLocked(q.today())
-	return q.used[deviceID]
 }
 
 // ── /files/down 的计费入口 ──────────────────────────────────────────────────

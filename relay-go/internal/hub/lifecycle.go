@@ -28,7 +28,9 @@ const (
 func (h *Hub) StartBackground(ctx context.Context) {
 	h.backgroundOnce.Do(func() {
 		if h.usageFlushInterval > 0 {
-			go h.usageFlushLoop(ctx)
+			// 冲盘循环由 quota 拥有（跨日判断、字节阈值、失败回放都在那边）；
+			// hub 只提供两个装配参数。
+			go h.usage.Start(ctx, h.usageFlushInterval, h.usageFlushBytes)
 		}
 		if h.revokeReconcileInterval > 0 {
 			h.log.Info("relay: revoke reconcile loop every " +
@@ -82,28 +84,8 @@ func (h *Hub) sweepUnverified(now time.Time) {
 	}
 }
 
-// usageFlushLoop 是周期冲盘（Python hub._usage_flush_loop）。
-func (h *Hub) usageFlushLoop(ctx context.Context) {
-	ticker := time.NewTicker(h.usageFlushInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-		}
-		today := h.today()
-		if h.usage.CurrentDay() != today {
-			// 跨日：先把上一天的尾巴（以及今天已经产生的部分）写掉。账本按
-			// (日, 设备) 记，Drain 会一起取走，不会把昨天的丢了。
-			_ = h.FlushUsage(ctx)
-			continue
-		}
-		if h.usage.BytesSinceFlush() >= h.usageFlushBytes {
-			_ = h.FlushUsage(ctx)
-		}
-	}
-}
+// usageFlushLoop 已迁入 internal/quota（Usage.Start，DESIGN §2.6）：跨日判断、
+// 字节阈值与失败回放都跟着账本走，hub 只保留周期任务的装配参数。
 
 // revokeReconcileLoop 是撤销对账的周期任务。
 func (h *Hub) revokeReconcileLoop(ctx context.Context) {
@@ -163,11 +145,11 @@ func (h *Hub) ReconcileRevokedDevices(ctx context.Context) ([]string, error) {
 	return detached, nil
 }
 
-// flushUsageOnDetach 在设备断开后冲一次账。
+// flushUsageOnDetach 在设备断开后同步冲一次账。
 //
 // 与 Python 的 detach_device 一样**在拆除路径上等它**：这一批的尾巴不留在内存里，
 // 运维命令跑完就是准的。代价是这条连接（不是整个进程）多一次本地 SQLite 写；
-// 时限 usageWriteTimeout 保证数据库卡死时也不会真的挂住。
+// 时限 usageWriteTimeout 保证数据库卡死时也不会真的挂住（DESIGN §3.3：不改成异步）。
 func (h *Hub) flushUsageOnDetach() {
 	if !h.usage.Pending() {
 		return

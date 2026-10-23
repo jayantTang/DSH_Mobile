@@ -379,8 +379,8 @@ func (h *Handlers) HandleUpload(w http.ResponseWriter, r *http.Request) {
 // HandleDownload 把连接器送来的窗口逐片写进 HTTP 正文。
 //
 // 与上行的关键不对称在**计费**：上行读的是手机推来的正文，下行写出去的是这台设备
-// 的出口流量，所以每一片都过同一套限速桶与日额度账本（hub 的 quotaLedger 与
-// DeviceLink.bucket），HTTP 下载不能成为绕开它们的第二条通路。
+// 的出口流量，所以每一片都过同一套限速桶与日额度账本（internal/quota 的 Bucket 与
+// Ledger，经 DeviceLink 与 Hub 门面使用），HTTP 下载不能成为绕开它们的第二条通路。
 func (h *Handlers) HandleDownload(w http.ResponseWriter, r *http.Request) {
 	device, ok, err := h.deviceFromBearer(r)
 	if err != nil {

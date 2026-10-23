@@ -12,6 +12,9 @@ import (
 )
 
 // fakeUsageWriter 记录冲盘批次；可注入一次失败。
+//
+// 它是 quota.Sink 的测试替身，只覆盖冲盘去路：这些用例没有真实挂接设备，
+// 所以不 Seat 额度、也不读 today；基线与今日查询返回空是从未被观察到的分支。
 type fakeUsageWriter struct {
 	mu      sync.Mutex
 	batches [][]store.UsageEntry
@@ -28,6 +31,14 @@ func (w *fakeUsageWriter) AddUsage(_ context.Context, entries []store.UsageEntry
 	}
 	w.batches = append(w.batches, append([]store.UsageEntry(nil), entries...))
 	return len(entries), nil
+}
+
+func (w *fakeUsageWriter) UsageBytesOn(context.Context, int64, string) (int64, error) {
+	return 0, nil
+}
+
+func (w *fakeUsageWriter) TodayUsage(context.Context, int64) (store.TodayUsage, error) {
+	return store.TodayUsage{}, nil
 }
 
 func (w *fakeUsageWriter) setError(err error) {
@@ -58,15 +69,14 @@ func (w *fakeUsageWriter) entriesFor(deviceID string) []store.UsageEntry {
 }
 
 func TestFlushUsageRestoresTheBatchWhenTheWriteFails(t *testing.T) {
-	fx := newFixture(t, Options{})
+	writer := &fakeUsageWriter{err: context.DeadlineExceeded}
+	fx := newFixture(t, Options{UsageSink: writer})
 	// 账本方法只认设备字段；这里不挂真连接，免得连接建立本身写出的 hostStatus
 	// 帧混进"这一批到底有多少字节"的断言。
 	link := &DeviceLink{DeviceID: "dev_retry", AgentID: "agt_1", AccountID: "acc_1"}
 
-	writer := &fakeUsageWriter{err: context.DeadlineExceeded}
-	fx.hub.usageSink = writer
-	fx.hub.usage.NoteConnection(link)
-	fx.hub.usage.NoteEgress(link, 100)
+	fx.hub.usage.NoteConnection(link.ref())
+	fx.hub.usage.NoteEgress(link.ref(), 100)
 
 	if err := fx.hub.FlushUsage(context.Background()); err == nil {
 		t.Fatal("写库失败时应当返回错误")
@@ -80,7 +90,7 @@ func TestFlushUsageRestoresTheBatchWhenTheWriteFails(t *testing.T) {
 	}
 
 	// 失败期间又产生了一些字节：恢复时要合并，而不是覆盖。
-	fx.hub.usage.NoteEgress(link, 50)
+	fx.hub.usage.NoteEgress(link.ref(), 50)
 	writer.setError(nil)
 	if err := fx.hub.FlushUsage(context.Background()); err != nil {
 		t.Fatalf("第二次冲盘失败：%v", err)
@@ -98,8 +108,9 @@ func TestFlushUsageRestoresTheBatchWhenTheWriteFails(t *testing.T) {
 }
 
 // flakyUsageWriter 第一次写失败，之后委托给真实仓储：用来证明"回放之后真的落库"。
+// 嵌入 *store.Store 补齐 quota.Sink 的另外两个方法（基线也读真实库）。
 type flakyUsageWriter struct {
-	store    *store.Store
+	*store.Store
 	failures int
 }
 
@@ -108,19 +119,22 @@ func (w *flakyUsageWriter) AddUsage(ctx context.Context, entries []store.UsageEn
 		w.failures--
 		return 0, context.DeadlineExceeded
 	}
-	return w.store.AddUsage(ctx, entries)
+	return w.Store.AddUsage(ctx, entries)
 }
 
 func TestFlushUsageLandsInTheRealStoreAndSeedsTheQuota(t *testing.T) {
 	limits := DefaultLimits()
 	limits.DeviceDailyBytes = 1000
-	fx := newFixture(t, Options{Limits: limits})
+	st := openTestStore(t)
+	fx := newFixtureWithStore(t, st, Options{
+		Limits:    limits,
+		UsageSink: &flakyUsageWriter{Store: st, failures: 1},
+	})
 	link := &DeviceLink{DeviceID: "dev_real", AgentID: "agt_1", AccountID: "acc_1"}
-	fx.hub.usage.NoteEgress(link, 100)
-	fx.hub.usage.NoteConnection(link)
+	fx.hub.usage.NoteEgress(link.ref(), 100)
+	fx.hub.usage.NoteConnection(link.ref())
 
 	// 第一次写失败：这批必须回到内存，库里仍然是空的。
-	fx.hub.usageSink = &flakyUsageWriter{store: fx.store, failures: 1}
 	if err := fx.hub.FlushUsage(context.Background()); err == nil {
 		t.Fatal("第一次冲盘应当失败")
 	}
@@ -150,44 +164,21 @@ func TestFlushUsageLandsInTheRealStoreAndSeedsTheQuota(t *testing.T) {
 	}
 }
 
-func TestUsageLedgerKeepsBothSidesOfADayRollover(t *testing.T) {
-	day := int64(1_000_000)
-	ledger := newUsageLedger(func() int64 { return day }, discardLogger())
-	device := &DeviceLink{DeviceID: "dev_1", AgentID: "agt_1", AccountID: "acc_1"}
-	ledger.NoteEgress(device, 100)
-	day = 1_000_001
-	ledger.NoteEgress(device, 50)
-
-	entries := ledger.Drain()
-	if len(entries) != 2 {
-		t.Fatalf("跨日的两条记录都必须保留：%+v", entries)
-	}
-	if entries[0].Day != 1_000_000 || entries[0].EgressBytes != 100 {
-		t.Fatalf("前一天 = %+v", entries[0])
-	}
-	if entries[1].Day != 1_000_001 || entries[1].EgressBytes != 50 {
-		t.Fatalf("当天 = %+v", entries[1])
-	}
-	if pending := ledger.Pending(); pending {
-		t.Fatal("Drain 之后账本应当是空的")
-	}
-}
-
 func TestUsageFlushLoopWritesAtTheByteThreshold(t *testing.T) {
+	writer := &fakeUsageWriter{}
 	fx := newFixture(t, Options{
+		UsageSink:          writer,
 		UsageFlushInterval: 5 * time.Millisecond,
 		UsageFlushBytes:    10,
 		Logger:             discardLogger(),
 	})
 	link := &DeviceLink{DeviceID: "dev_loop", AgentID: "agt_1", AccountID: "acc_1"}
 
-	writer := &fakeUsageWriter{}
-	fx.hub.usageSink = writer
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	fx.hub.StartBackground(ctx)
 
-	fx.hub.usage.NoteEgress(link, 32)
+	fx.hub.usage.NoteEgress(link.ref(), 32)
 	waitFor(t, "冲盘循环写出 32 字节", func() bool {
 		entries := writer.entriesFor(link.DeviceID)
 		return len(entries) == 1 && entries[0].EgressBytes == 32
@@ -202,21 +193,21 @@ func TestUsageFlushLoopWritesAtTheByteThreshold(t *testing.T) {
 func TestUsageFlushLoopFlushesThePreviousDayOnRollover(t *testing.T) {
 	var day atomic.Int64
 	day.Store(2_000_000)
+	writer := &fakeUsageWriter{}
 	fx := newFixture(t, Options{
 		Day:                func() int64 { return day.Load() },
+		UsageSink:          writer,
 		UsageFlushInterval: 10 * time.Millisecond,
 		UsageFlushBytes:    1 << 30, // 不靠字节阈值，只靠跨日
 		Logger:             discardLogger(),
 	})
 	link := &DeviceLink{DeviceID: "dev_rollover", AgentID: "agt_1", AccountID: "acc_1"}
 
-	writer := &fakeUsageWriter{}
-	fx.hub.usageSink = writer
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	fx.hub.StartBackground(ctx)
 
-	fx.hub.usage.NoteEgress(link, 7)
+	fx.hub.usage.NoteEgress(link.ref(), 7)
 	day.Store(2_000_001)
 
 	waitFor(t, "跨日冲盘", func() bool {

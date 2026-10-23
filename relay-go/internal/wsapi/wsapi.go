@@ -3,7 +3,8 @@
 //	WS  /link/agent?agentId=<id>   电脑侧连接器，Bearer <agentSecret>
 //	WS  /link/device?agentId=<id>  手机，Bearer <deviceToken> 或 dsh.device.<token>
 //
-// 这个包只做"认出是谁 + 跑读循环"：写队列、心跳、背压、路由与配额都在 internal/hub。
+// 这个包只做"认出是谁 + 跑读循环"：写队列、心跳、背压与路由都在 internal/hub，
+// 日额度、用量账本与令牌桶在 internal/quota。
 // 分界线的判据是"谁拥有这条连接的生命周期"——hub 拥有，所以关闭也由它执行；
 // wsapi 只在读循环结束时告诉 hub"这条连接没了"。
 package wsapi

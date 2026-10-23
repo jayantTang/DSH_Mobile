@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -501,6 +502,47 @@ func TestTheQuotaIsPerDeviceNotPerAccount(t *testing.T) {
 	fine := waitFrame(t, frugalSink, "另一台设备", isKind("res"))
 	if fine.ID() != "frugal-fine" {
 		t.Fatalf("另一台设备的帧 = %v", fine)
+	}
+}
+
+// TestTheWebSocketEgressLandsInTodaysUsage：写循环真正送出的字节要进当天账本。
+//
+// 这是 DeviceLink 用 *quota.Usage 取代 *Hub 反向指针后的关键接线：/stats 的 today
+// 与运维命令读的是同一份内存账本，WebSocket 与 /files/down 两条出口都不能漏记。
+func TestTheWebSocketEgressLandsInTodaysUsage(t *testing.T) {
+	fixture := newFixture(t, Options{Limits: DefaultLimits()})
+	owner := fixture.newTenant("M2-mac")
+	device := fixture.pairDevice(owner, "M2-iPhone")
+	agentLink, agentSink := fixture.attachAgent(owner)
+	_, deviceSink := fixture.mustAttachDevice(device)
+	waitFrame(t, agentSink, "deviceAttach", isKind("deviceAttach"))
+	waitFrame(t, deviceSink, "hostStatus", isKind("hostStatus"))
+
+	before, err := fixture.hub.Today(context.Background())
+	if err != nil {
+		t.Fatalf("Today: %v", err)
+	}
+	fixture.hub.RouteFromAgent(agentLink, wireOf(t, dlp.Frame{
+		"t": "res", "id": "usage", "deviceId": device.DeviceID,
+		"value": map[string]any{"text": "egress"},
+	}))
+	waitFrame(t, deviceSink, "res", isKind("res"))
+
+	after, err := fixture.hub.Today(context.Background())
+	if err != nil {
+		t.Fatalf("Today: %v", err)
+	}
+	if delta := after.TotalEgressBytes - before.TotalEgressBytes; delta <= 0 {
+		t.Fatalf("写出去的帧没有进当天账本：%d", delta)
+	}
+	found := false
+	for _, row := range after.Devices {
+		if row.DeviceID == device.DeviceID && row.EgressBytes > 0 {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("today.devices 缺少设备行：%+v", after.Devices)
 	}
 }
 
