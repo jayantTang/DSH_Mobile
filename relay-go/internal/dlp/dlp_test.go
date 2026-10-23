@@ -255,6 +255,39 @@ func TestErrorAndControlFrames(t *testing.T) {
 	if value, present := pong["ts"]; !present || value != nil {
 		t.Fatalf("缺 ts 时应输出 null：%v", pong)
 	}
+	ping := Ping(123)
+	if ping.Type() != "ping" || ping["ts"] != 123 {
+		t.Fatalf("Ping = %v", ping)
+	}
+}
+
+// TestControlFrameDropPolicy 钉住"哪些控制帧可以丢"的唯一口径：
+// 心跳与状态广播可丢；生命周期、错误与文件通道必须等队列。
+func TestControlFrameDropPolicy(t *testing.T) {
+	for _, kind := range []string{"pong", "ping", "hostStatus", "accountState"} {
+		if !IsDroppableControl(kind) {
+			t.Fatalf("%s 应当可丢", kind)
+		}
+	}
+	for _, kind := range []string{"deviceAttach", "deviceDetach", "error",
+		"fsPutBegin", "fsPutEnd", "fsGetBegin", "fsGetCancel"} {
+		if IsDroppableControl(kind) {
+			t.Fatalf("%s 必须必达", kind)
+		}
+	}
+	// 保序：error 与 fs* 必须排在它们所属的数据帧之后；心跳/生命周期/状态不用。
+	for _, kind := range []string{"error", "fsPutBegin", "fsPutEnd", "fsGetBegin",
+		"fsGetCancel"} {
+		if !IsOrderedControl(kind) {
+			t.Fatalf("%s 必须与数据帧保序", kind)
+		}
+	}
+	for _, kind := range []string{"pong", "ping", "hostStatus", "accountState",
+		"deviceAttach", "deviceDetach"} {
+		if IsOrderedControl(kind) {
+			t.Fatalf("%s 不依赖数据帧顺序，应走优先队列", kind)
+		}
+	}
 }
 
 func TestSurrogateDamageLocatesTheBreak(t *testing.T) {

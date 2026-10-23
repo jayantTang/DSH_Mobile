@@ -59,6 +59,8 @@ type outbound struct {
 	// 之后才归还。它与 payload 同生共死：只要帧还在队列里，内存就还是它占着。
 	credit      *bridgeCredits
 	creditBytes int64
+	// counted 表示这条消息的字节已经记进 queuedBytes（只有大队列里的帧会记）。
+	counted     bool
 	closeCode   int
 	closeReason string
 }
@@ -81,8 +83,33 @@ const (
 	DefaultHeartbeat        = 15 * time.Second
 	DefaultHeartbeatTimeout = 10 * time.Second
 	DefaultWriteTimeout     = 10 * time.Second
+	// DefaultControlQueueDepth 是中转控制帧优先队列的深度。
+	//
+	// 它只装不依赖数据帧顺序、且都很小的控制帧（pong/ping/hostStatus/accountState/
+	// deviceAttach/deviceDetach）：一帧 32 MiB 的响应或一串流式帧不能把它们挤到
+	// 后面（2026-10-23 生产回滚的直接原因）。64 槽足够覆盖一次重连要补发的
+	// deviceAttach/deviceDetach。error 与 fs* 为了与数据帧保序走大队列，
+	// 见 dlp.IsOrderedControl。
+	DefaultControlQueueDepth = 64
+	// DefaultControlWait 是必达控制帧在优先队列满时的等待上限（DESIGN §5.1）。
+	// 超过就以 4008 断开：对端已经读不动了，再等只会让内存继续涨。
+	DefaultControlWait = 5 * time.Second
 	// maxCloseReason 是 WebSocket 关闭原因的上限（协议规定 123 字节，留 3 字节余量）。
 	maxCloseReason = 120
+)
+
+// heartbeatKind 决定一条连接的活性证据从哪里来。
+type heartbeatKind int
+
+const (
+	// heartbeatWebSocket 由 watchdog 发 WS 控制帧 ping 并等 pong（设备链路）。
+	//
+	// 设备侧（iOS）只实现 WS 层 ping/pong，DLP 的 ping 在它的读循环里被忽略
+	// （LinkCarrier 的 "pong", "ping" 分支），所以不能拿 DLP pong 当活性证据。
+	heartbeatWebSocket heartbeatKind = iota
+	// heartbeatDLP 由写循环把 DLP ping 帧放进控制队列，读循环记下 pong 的时刻；
+	// 连接器（plugins/mobile-link）会原样回 pong。这是连接器链路的心跳方式。
+	heartbeatDLP
 )
 
 // Link 是一条连接：一个有界发送队列 + 一个写循环。
@@ -93,12 +120,17 @@ type Link struct {
 	label string
 	sink  Sink
 	log   *slog.Logger
-	out   chan *outbound
-	done  chan struct{}
+	// out 是流式帧、业务控制帧与保序控制帧（error/fs*）的大队列；
+	// control 是不依赖数据帧顺序的控制帧小优先队列。写循环永远先取 control。
+	out     chan *outbound
+	control chan *outbound
+	done    chan struct{}
 
 	egress  atomic.Int64
 	dropped atomic.Int64
-	// queuedBytes 是队列里还没写出去的帧字节数；byteLimit 是它的上限（见 Enqueue）。
+	// queuedBytes 是 out 里还没写出去的帧字节数；byteLimit 是它的上限（见 Enqueue）。
+	// control 里的帧不进这份账：它由深度约束，字节都很小，而且把它们算进来会让
+	// "流式帧把优先队列挤慢"重新变成可能。
 	queuedBytes atomic.Int64
 	byteLimit   int64
 	// credits 是**文件上行桥**的字节额度（只有连接器链路有）。它约束的是那类
@@ -108,6 +140,23 @@ type Link struct {
 	heartbeat        time.Duration
 	heartbeatTimeout time.Duration
 	writeTimeout     time.Duration
+	// controlWait 是必达控制帧在 control 满时的有界等待上限。
+	controlWait time.Duration
+	// onControlDrop 在可丢控制帧被丢弃时调用（hub 用它累计 /stats 的 controlDrops
+	// 与 monitor 的 backpressure:control 告警）。nil = 只丢不记（单测直接建 Link）。
+	onControlDrop func(link *Link, frameType string)
+
+	// 心跳状态。三者都是原子值：写循环写 pingOutstandingAt，读循环写 lastPongAt /
+	// lastInboundAt，watchdog 只读。
+	heartbeatKind heartbeatKind
+	// lastPongAt 是最后一次收到 pong 的时刻（UnixNano）。
+	lastPongAt atomic.Int64
+	// lastInboundAt 是最后一次收到对端**任意**帧的时刻，用于兼容旧连接器：
+	// 它们可能不回答中转的 DLP ping，但会照常发业务帧与自己的 ping。
+	lastInboundAt atomic.Int64
+	// pingOutstandingAt 是"已经入队、还在等回答"的那个 ping 的发出时刻（UnixNano）。
+	// 0 表示没有待回答的 ping。
+	pingOutstandingAt atomic.Int64
 
 	// 写超时用"一条连接一个复用计时器 + 一个可取消的写上下文"实现。
 	//
@@ -127,9 +176,12 @@ type Link struct {
 	started   atomic.Bool
 	closing   atomic.Bool
 	closeOnce sync.Once
+	// stopLoop 取消写循环与 watchdog 的上下文；心跳判定对端已死时由 abort 调用。
+	// 它不改写 HTTP 请求自己的 ctx——读循环要自己从 socket 错误里收尾。
+	stopLoop context.CancelFunc
 }
 
-// newLink 建一条连接；depth 是队列深度，byteLimit 是队列的字节上限。
+// newLink 建一条连接；depth 是流式大队列的深度，byteLimit 是它的字节上限。
 func newLink(sink Sink, label string, depth int, byteLimit int64, log *slog.Logger,
 	options linkOptions) *Link {
 	if depth <= 0 {
@@ -143,28 +195,26 @@ func newLink(sink Sink, label string, depth int, byteLimit int64, log *slog.Logg
 		sink:             sink,
 		log:              log,
 		out:              make(chan *outbound, depth),
+		control:          make(chan *outbound, DefaultControlQueueDepth),
 		byteLimit:        byteLimit,
 		done:             make(chan struct{}),
 		heartbeat:        options.heartbeat,
 		heartbeatTimeout: options.heartbeatTimeout,
 		writeTimeout:     options.writeTimeout,
+		controlWait:      options.controlWait,
+		onControlDrop:    options.onControlDrop,
 	}
 }
 
-// linkOptions 是三条连接共用的心跳/超时设置。
+// linkOptions 是全部连接共用的心跳/超时设置。
 type linkOptions struct {
 	heartbeat        time.Duration
 	heartbeatTimeout time.Duration
 	writeTimeout     time.Duration
-
-	// 写超时用"一条连接一个复用计时器 + 一个可取消的写上下文"实现。
-	//
-	// M2 是每帧 context.WithTimeout(...)：一帧一次 timer + 三个 context 结构
-	// （pprof 实测每帧约 500 B，60k 帧合计 30 MiB）。超时的语义本来就是"这条
-	// 连接已经死了"，所以取消整条链路的写上下文是正确反应，不需要每帧新建一个。
-	writeCtx    context.Context
-	cancelWrite context.CancelFunc
-	writeTimer  *time.Timer
+	// controlWait 是必达控制帧在优先队列满时的等待上限；零值取 DefaultControlWait。
+	controlWait time.Duration
+	// onControlDrop 是可丢控制帧被丢弃时的记账回调（hub 注入）。
+	onControlDrop func(link *Link, frameType string)
 }
 
 func (o linkOptions) withDefaults() linkOptions {
@@ -176,6 +226,9 @@ func (o linkOptions) withDefaults() linkOptions {
 	}
 	if o.writeTimeout <= 0 {
 		o.writeTimeout = DefaultWriteTimeout
+	}
+	if o.controlWait <= 0 {
+		o.controlWait = DefaultControlWait
 	}
 	return o
 }
@@ -193,17 +246,22 @@ func (l *Link) Start(ctx context.Context) {
 			close(l.done)
 			return
 		}
-		go l.writeLoop(ctx)
+		loopCtx, stop := context.WithCancel(ctx)
+		l.stopLoop = stop
+		go l.writeLoop(loopCtx)
+		go l.watchdog(loopCtx)
 	})
 }
 
 // Label 是日志里的连接标识（`device <id>` / `agent <id>`）。
 func (l *Link) Label() string { return l.label }
 
-// Enqueue 把一条待写消息放进队列。
+// Enqueue 把一条待写消息放进**流式大队列**。
 //
-// 队列满时按帧类型分流：流式帧丢弃并计数（DESIGN §5.1），控制帧返回 Overloaded，
-// 由调用方断开这条连接——控制帧静默丢失比断线更难排查。
+// 队列满时按帧类型分流：流式帧丢弃并计数（DESIGN §5.1），其余帧（业务控制帧、
+// 文件分片）返回 Overloaded，由调用方断开这条连接——这些帧静默丢失比断线更难排查。
+//
+// 中转自己发出的控制帧不要走这里，走 EnqueueControl：它们有独立的小优先队列。
 //
 // 字节限额只约束**小帧的堆积**：比限额还大的单帧永远放行，否则一张 32 MiB 的图片
 // 会被自己的体积挡在门外；真正需要防的是"几百个小帧把队列填满"和"多张大图排队"。
@@ -238,7 +296,8 @@ func (l *Link) enqueue(payload []byte, class Class, owned *dlp.Buffer,
 		}
 	}
 	l.queuedBytes.Add(size)
-	item := &outbound{payload: payload, owned: owned, credit: credit, creditBytes: creditBytes}
+	item := &outbound{payload: payload, owned: owned, credit: credit, creditBytes: creditBytes,
+		counted: true}
 	select {
 	case l.out <- item:
 		return Enqueued
@@ -251,6 +310,111 @@ func (l *Link) enqueue(payload []byte, class Class, owned *dlp.Buffer,
 		return FrameDropped
 	}
 	return Overloaded
+}
+
+// EnqueueControl 把一帧**中转自己发出的控制帧**放进发送通道。
+//
+// 通道按帧是否依赖数据帧顺序分两类（见 dlp.IsOrderedControl）：
+//   - 心跳/生命周期/状态通知（pong/ping/hostStatus/accountState/deviceAttach/
+//     deviceDetach）走独立的小优先队列，写循环永远先取它：一帧 32 MiB 的响应或
+//     一串流式帧不能把它们挡在后面（2026-10-23 的故障形态）。
+//   - error 与文件通道 fs* 走流式大队列，与它们所属的 res/item/fsPutChunk 保持
+//     入队顺序；它们同样优先于流式帧排队是做不到的，先发结束帧只会让客户端在
+//     数据之前看到"结束"。但它们仍然必达：队列满时有界等待，而不是静默丢。
+//
+// droppable 为 true 的帧（pong/ping/hostStatus/accountState）在队列满时直接丢弃，
+// 经 onControlDrop 计数并告警，连接继续用；
+// droppable 为 false 的帧（deviceAttach/deviceDetach/error/fs*）在队列满时最多等
+// controlWait 让写循环腾出位置，仍进不去才返回 Overloaded，由调用方以 4008 断开。
+func (l *Link) EnqueueControl(payload []byte, frameType string, droppable bool) EnqueueResult {
+	if l.closing.Load() {
+		return Overloaded
+	}
+	if dlp.IsOrderedControl(frameType) {
+		return l.enqueueOrderedControl(payload, frameType, droppable)
+	}
+	item := &outbound{payload: payload}
+	select {
+	case l.control <- item:
+		return Enqueued
+	default:
+	}
+	if droppable {
+		l.noteControlDrop(frameType)
+		return FrameDropped
+	}
+	timer := time.NewTimer(l.controlWait)
+	defer timer.Stop()
+	select {
+	case l.control <- item:
+		return Enqueued
+	case <-l.done:
+		// 写循环已经退出：不会有人再来取这帧，等满 5 秒只是拖慢收尾。
+		return Overloaded
+	case <-timer.C:
+		return Overloaded
+	}
+}
+
+// enqueueOrderedControl 把保序控制帧放进流式大队列（不计 byteLimit，但计字节）。
+func (l *Link) enqueueOrderedControl(payload []byte, frameType string, droppable bool) EnqueueResult {
+	size := int64(len(payload))
+	l.queuedBytes.Add(size)
+	item := &outbound{payload: payload, counted: true}
+	if droppable {
+		select {
+		case l.out <- item:
+			return Enqueued
+		default:
+			l.queuedBytes.Add(-size)
+			l.noteControlDrop(frameType)
+			return FrameDropped
+		}
+	}
+	timer := time.NewTimer(l.controlWait)
+	defer timer.Stop()
+	select {
+	case l.out <- item:
+		return Enqueued
+	case <-l.done:
+		l.queuedBytes.Add(-size)
+		return Overloaded
+	case <-timer.C:
+		l.queuedBytes.Add(-size)
+		return Overloaded
+	}
+}
+
+// noteControlDrop 记一次可丢控制帧的丢弃；回调由 hub 注入（单测里可以为 nil）。
+func (l *Link) noteControlDrop(frameType string) {
+	if l.onControlDrop != nil {
+		l.onControlDrop(l, frameType)
+	}
+}
+
+// NoteInbound 由读循环在收到对端任意一帧时调用。
+//
+// 它只用于心跳判定"对端还活着"：旧连接的连接器可能不回答中转的 DLP ping，
+// 但会照常发业务帧与自己的 ping，这类链路不该被误判为失联。
+func (l *Link) NoteInbound() {
+	l.lastInboundAt.Store(time.Now().UnixNano())
+}
+
+// NotePong 由读循环在收到 DLP pong 时调用：这是心跳最直接的活性证据。
+func (l *Link) NotePong() {
+	now := time.Now().UnixNano()
+	l.lastPongAt.Store(now)
+	l.lastInboundAt.Store(now)
+	l.pingOutstandingAt.Store(0)
+}
+
+// LastPong 是最后一次收到 pong 的时刻；没有收到过时为 0（诊断用）。
+func (l *Link) LastPong() time.Time {
+	value := l.lastPongAt.Load()
+	if value == 0 {
+		return time.Time{}
+	}
+	return time.Unix(0, value)
 }
 
 // AcquireBridgeBytes 取得 n 字节上行桥额度；额度不够时阻塞到有人归还。
@@ -337,8 +501,8 @@ func (l *Link) Done() <-chan struct{} { return l.done }
 // Closed 表示这条连接已经在关闭路上（不再接受新帧）。
 func (l *Link) Closed() bool { return l.closing.Load() }
 
-// Pending 是队列里还没写出去的帧数（/stats 的 pending）。
-func (l *Link) Pending() int { return len(l.out) }
+// Pending 是队列里还没写出去的帧数（/stats 的 pending）：流式大队列 + 控制优先队列。
+func (l *Link) Pending() int { return len(l.out) + len(l.control) }
 
 // EgressBytes 是这条连接写出的字节数。
 func (l *Link) EgressBytes() int64 { return l.egress.Load() }
@@ -347,6 +511,10 @@ func (l *Link) EgressBytes() int64 { return l.egress.Load() }
 func (l *Link) DroppedFrames() int64 { return l.dropped.Load() }
 
 // writeLoop 是唯一写 socket 的 goroutine。
+//
+// 心跳不再在这里等 pong：DLP 心跳只是"按周期把 ping 帧放进优先队列"，写一帧 ping
+// 与写一帧 pong 一样是普通发送；等 pong 由 watchdog 在另一条 goroutine 里做。
+// 2026-10-23 的故障就是这里调 conn.Ping 同步等 pong，最长 10 秒不消费发送队列。
 func (l *Link) writeLoop(ctx context.Context) {
 	defer close(l.done)
 	// 写循环一退出，这条连接就不该再收新帧：否则队列会继续被填，直到某条控制帧
@@ -364,38 +532,36 @@ func (l *Link) writeLoop(ctx context.Context) {
 	l.writeCtx, l.cancelWrite = context.WithCancel(ctx)
 	defer l.cancelWrite()
 	l.writeTimer = time.AfterFunc(l.writeTimeout, l.cancelWrite)
+	// 计时器只在**一次写**进行期间有效：空闲 10 秒不代表连接坏了。不在这里停掉的话，
+	// 它会在连接建立 10 秒后无条件取消写上下文，下一次写（例如 20 秒时回答连接器
+	// 的 ping）立刻失败，整条链路被误杀——2026-10-23 本地复现时看到的 20 秒断开
+	// 就是这条路径。每次 write() 之前 Reset、之后 Stop。
+	l.writeTimer.Stop()
 	defer l.writeTimer.Stop()
 
 	for {
+		// 控制帧优先：先非阻塞地把优先队列取空，再进入阻塞选择。这样即使大队列
+		// 里已经排着一串流式帧，下一帧被写的也一定是控制帧。
 		select {
-		case item := <-l.out:
-			// 出队即不再占队列字节；缓冲要等真正写出去才归还。
-			l.queuedBytes.Add(-int64(len(item.payload)))
-			if item.closeCode != 0 {
-				item.release()
-				l.closeSink(item.closeCode, item.closeReason)
+		case item := <-l.control:
+			if !l.handleOutbound(item, ctx) {
 				return
 			}
-			if l.pace != nil {
-				if err := l.pace(ctx, len(item.payload)); err != nil {
-					item.release()
-					return
-				}
+			continue
+		default:
+		}
+		select {
+		case item := <-l.control:
+			if !l.handleOutbound(item, ctx) {
+				return
 			}
-			wrote := l.write(ctx, item.payload)
-			item.release()
-			if !wrote {
+		case item := <-l.out:
+			if !l.handleOutbound(item, ctx) {
 				return
 			}
 		case <-ticker.C:
-			// 心跳：对方还在不在，是这条连接唯一的活性证据。
-			pingCtx, cancel := context.WithTimeout(ctx, l.heartbeatTimeout)
-			err := l.sink.Ping(pingCtx)
-			cancel()
-			if err != nil {
-				l.log.Info("relay: heartbeat failed, closing", "link", l.label, "error", err)
-				l.closeSink(1001, "heartbeat timeout")
-				return
+			if l.heartbeatKind == heartbeatDLP {
+				l.enqueueHeartbeatPing()
 			}
 		case <-ctx.Done():
 			return
@@ -403,17 +569,156 @@ func (l *Link) writeLoop(ctx context.Context) {
 	}
 }
 
-// drainQueue 把队列里剩下的帧缓冲归还给池；关停时最多被调用一次。
+// handleOutbound 写一条已出队的消息；返回 false 表示写循环应当退出。
+func (l *Link) handleOutbound(item *outbound, ctx context.Context) bool {
+	// 出队即不再占大队列的字节；缓冲要等真正写出去才归还。
+	if item.counted {
+		l.queuedBytes.Add(-int64(len(item.payload)))
+	}
+	if item.closeCode != 0 {
+		item.release()
+		l.closeSink(item.closeCode, item.closeReason)
+		return false
+	}
+	if l.pace != nil {
+		if err := l.pace(ctx, len(item.payload)); err != nil {
+			item.release()
+			return false
+		}
+	}
+	wrote := l.write(ctx, item.payload)
+	item.release()
+	return wrote
+}
+
+// enqueueHeartbeatPing 把一个 DLP ping 放进优先队列，**不等回答**。
+//
+// 帧的 ts 由连接器原样带回 pong，可以用来量这条链路的往返；这里只关心"发出了
+// 一个还需要回答的 ping"，回答由 watchdog 检查。
+func (l *Link) enqueueHeartbeatPing() {
+	if l.closing.Load() {
+		return
+	}
+	now := time.Now()
+	payload, err := dlp.Encode(dlp.Ping(now.UnixMilli()))
+	if err != nil {
+		return
+	}
+	if l.EnqueueControl(payload, "ping", true) != Enqueued {
+		return
+	}
+	// 只保留最早的那个待回答 ping：后面的 ping 覆盖截止时间会让真正的失联晚发现。
+	l.pingOutstandingAt.CompareAndSwap(0, now.UnixNano())
+}
+
+// watchdog 是心跳判定，独立于写循环：写一帧大响应要 10 秒时，它仍然按周期检查
+// 对端有没有回答，不会被那次写挡住。
+func (l *Link) watchdog(ctx context.Context) {
+	if l.heartbeatKind == heartbeatDLP {
+		l.watchDLPHeartbeat(ctx)
+		return
+	}
+	l.watchWebSocketHeartbeat(ctx)
+}
+
+// watchDLPHeartbeat 检查 DLP ping 有没有回答。
+//
+// 判定口径：ping 入队后 heartbeatTimeout 内既没有 pong、也没有收到对端任何一帧，
+// 就认为链路已死。把"任意帧"也算作进展是为了兼容旧连接器：它们可能不回答中转的
+// DLP ping，但会照常发业务帧和自己的 ping；反过来，真正断网的链路什么都收不到。
+func (l *Link) watchDLPHeartbeat(ctx context.Context) {
+	interval := l.heartbeatTimeout / 4
+	if interval < 5*time.Millisecond {
+		interval = 5 * time.Millisecond
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case now := <-ticker.C:
+			sent := l.pingOutstandingAt.Load()
+			if sent == 0 {
+				continue
+			}
+			// 收到 pong，或 ping 之后对端还发过别的帧：这条链路还活着。
+			if l.lastPongAt.Load() >= sent || l.lastInboundAt.Load() > sent {
+				l.pingOutstandingAt.CompareAndSwap(sent, 0)
+				continue
+			}
+			if now.Sub(time.Unix(0, sent)) < l.heartbeatTimeout {
+				continue
+			}
+			l.log.Info("relay: heartbeat timed out, closing",
+				"link", l.label, "silentFor", now.Sub(time.Unix(0, sent)).String())
+			l.abort(dlp.CloseGoingAway, "heartbeat timeout")
+			return
+		case <-l.done:
+			return
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+// watchWebSocketHeartbeat 是设备链路的活性检查：WS 控制帧 ping/pong。
+//
+// 设备侧只实现 WS 层 ping/pong（DLP 的 ping 在 iOS 读循环里被忽略），所以这里仍走
+// socket 的心跳；但它运行在 watchdog goroutine 里，写循环不参与、不被它阻塞。
+func (l *Link) watchWebSocketHeartbeat(ctx context.Context) {
+	ticker := time.NewTicker(l.heartbeat)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			pingCtx, cancel := context.WithTimeout(ctx, l.heartbeatTimeout)
+			err := l.sink.Ping(pingCtx)
+			cancel()
+			if err != nil {
+				l.log.Info("relay: heartbeat failed, closing", "link", l.label, "error", err)
+				l.abort(dlp.CloseGoingAway, "heartbeat timeout")
+				return
+			}
+		case <-l.done:
+			return
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+// abort 立即关闭连接：心跳已经判定对端死亡，没必要再等队列排空。
+//
+// 只关 socket 不够：写循环可能正停在"等下一帧"上，对 socket 关闭毫无感知。
+// 这里同时取消写循环/看门狗自己的上下文，让 Done() 准时关闭，读循环随后从
+// socket 错误里收尾。
+func (l *Link) abort(code int, reason string) {
+	l.closing.Store(true)
+	if l.stopLoop != nil {
+		l.stopLoop()
+	}
+	l.closeSink(code, reason)
+}
+
+// drainQueue 把两个队列里剩下的帧缓冲归还给池；关停时最多被调用一次。
 func (l *Link) drainQueue() {
 	for {
 		select {
 		case item := <-l.out:
-			l.queuedBytes.Add(-int64(len(item.payload)))
-			item.release()
+			l.releaseQueued(item)
+		case item := <-l.control:
+			l.releaseQueued(item)
 		default:
 			return
 		}
 	}
+}
+
+// releaseQueued 归还一条没写出去的消息占的计数与缓冲。
+func (l *Link) releaseQueued(item *outbound) {
+	if item.counted {
+		l.queuedBytes.Add(-int64(len(item.payload)))
+	}
+	item.release()
 }
 
 // write 写一条消息；失败即认为连接已坏。

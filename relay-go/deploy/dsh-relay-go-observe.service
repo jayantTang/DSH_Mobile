@@ -1,0 +1,7 @@
+[Unit]
+Description=DSH relay Go observation sample
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/dsh-relay-go/deploy/observe.sh

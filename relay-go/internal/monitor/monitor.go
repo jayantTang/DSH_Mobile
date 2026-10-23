@@ -400,6 +400,27 @@ func (m *Monitor) NoteAgentDisconnect(agentID, name string) {
 	}, now)
 }
 
+// NoteControlDrop 记录一次可丢控制帧（pong/ping/hostStatus/accountState）因
+// 优先队列满而被丢弃。
+//
+// 类别按"链路 + 帧类型"归：同一条连接的同一种帧只在首次（或 24 小时后）打扰一次，
+// 之后只累计。链路标识里带 agentId / deviceId，所以不同 agent 互不掩盖。
+// 这是 2026-10-23 回滚事件要补的观察点：当时控制帧丢弃只有一条 closing 日志，
+// 无法区分"丢的是 pong"还是"丢的是 deviceAttach"。
+func (m *Monitor) NoteControlDrop(link, frameType string) {
+	if !m.Enabled() {
+		return
+	}
+	defer m.guard("note a control drop")
+	m.record("backpressure:control:"+link+":"+frameType, recordInput{
+		kind:  "backpressure:control",
+		title: "控制帧因背压被丢弃",
+		summary: fmt.Sprintf("%s 的 %s 控制帧在优先队列满时被丢弃（可丢类别，连接继续）",
+			link, frameType),
+		details: map[string]any{"link": link, "frame": frameType},
+	})
+}
+
 // NoteUnpairedSurrogates 记录转发路径刚修好一个落单代理项。这是定位上游根因的取样点。
 //
 // 详情每次都写落盘日志（那本来就有），但**进告警的样本按天限量**：坏字符可能每分钟

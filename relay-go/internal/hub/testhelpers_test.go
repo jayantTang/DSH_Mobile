@@ -62,6 +62,13 @@ func (s *fakeSink) Ping(context.Context) error {
 	return s.pingErr
 }
 
+// pingCount 是 WS 控制帧心跳的次数（agent 链路不该再用它）。
+func (s *fakeSink) pingCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.pings
+}
+
 func (s *fakeSink) Close(code int, reason string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

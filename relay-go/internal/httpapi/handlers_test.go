@@ -641,10 +641,13 @@ func TestStatsLoopbackOnly(t *testing.T) {
 	}
 	body := decodeJSON(t, rec)
 	for _, key := range []string{"ok", "version", "now", "limits", "load", "traffic",
-		"snapshot", "deviceRecords", "today"} {
+		"controlDrops", "snapshot", "deviceRecords", "today"} {
 		if _, ok := body[key]; !ok {
 			t.Fatalf("/stats 缺字段 %q: %v", key, body)
 		}
+	}
+	if drops := body["controlDrops"]; drops != float64(0) {
+		t.Fatalf("没有连接时 controlDrops = %v，期望 0", drops)
 	}
 	limits := body["limits"].(map[string]any)
 	if limits["maxFrameBytes"] != float64(MaxFrameBytes) {

@@ -110,6 +110,9 @@ func (r *fakeReporter) NoteAgentDisconnect(agentID, name string) {
 	r.calls = append(r.calls, disconnectCall{agentID: agentID, name: name})
 }
 
+// NoteControlDrop 是 IncidentReporter 的第二条方法；推送用例不关心控制帧丢弃。
+func (r *fakeReporter) NoteControlDrop(link, frameType string) {}
+
 func (r *fakeReporter) count() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()

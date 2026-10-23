@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"unicode/utf8"
 )
 
@@ -255,6 +256,37 @@ func ErrorFrame(code, message string, fatal bool, details map[string]any) Frame 
 // Pong 构造 ping 的回答；`ts` 缺失时与 Python 一样输出 null。
 func Pong(ts any) Frame {
 	return Frame{"t": "pong", "ts": ts}
+}
+
+// Ping 构造中转自己的心跳帧；连接器把 `ts` 原样带回 `pong`。
+//
+// 协议里 ping 本来是设备发、agent 回 pong；中转对连接器复用同一个形状，连接器
+// 的读循环已经把 `ping` 当成需要回 `pong` 的帧处理（plugins/mobile-link/lib/link.js）。
+func Ping(ts any) Frame {
+	return Frame{"t": "ping", "ts": ts}
+}
+
+// IsDroppableControl 判断中转**发出**的控制帧在拥塞时能不能丢。
+//
+// 可丢的是"再发一次或客户端自己会重查"的帧：心跳（pong/ping）、hostStatus 广播、
+// accountState 通知。其余控制帧（deviceAttach/deviceDetach/error/文件通道 fs*）
+// 丢了就是坏一次结果，必须等队列腾出位置。
+func IsDroppableControl(kind string) bool {
+	switch kind {
+	case "pong", "ping", "hostStatus", "accountState":
+		return true
+	}
+	return false
+}
+
+// IsOrderedControl 判断一帧控制帧必须与它所属的数据帧保持入队顺序。
+//
+// error 是一条流的结局，fs* 是文件通道的 begin/end：它们若走优先队列，会越过
+// 先入队的 res/item/fsPutChunk，客户端就会先看到"结束/出错"再看到数据（实测
+// fsPutEnd 越过两个 fsPutChunk 会让上传卡死在等待 fsPutDone）。
+// 其余控制帧（心跳、生命周期、状态广播）不依赖任何数据帧，走优先队列。
+func IsOrderedControl(kind string) bool {
+	return kind == "error" || strings.HasPrefix(kind, "fs")
 }
 
 // HostStatus 构造推给设备/电脑的 hostStatus 帧。

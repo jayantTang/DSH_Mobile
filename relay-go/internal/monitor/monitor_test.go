@@ -236,6 +236,29 @@ func TestFlappingIsReportedOncePerWindow(t *testing.T) {
 	}
 }
 
+// TestControlDropsAreDeduplicatedPerLinkAndFrame：backpressure:control 按"链路 +
+// 帧类型"归类别，同一位置在重报窗口内只打扰一次，不同 agent 互不掩盖。
+func TestControlDropsAreDeduplicatedPerLinkAndFrame(t *testing.T) {
+	clock := newClock()
+	dir := t.TempDir()
+	m := newMonitor(t, dir, clock, monitor.Options{
+		RenotifyAfter: 3600 * time.Second, MaxAlertsPerHour: 100, MaxAlertsPerDay: 100,
+	})
+	m.NoteControlDrop("agent agt_1", "pong")
+	m.NoteControlDrop("agent agt_1", "pong")
+	m.NoteControlDrop("agent agt_2", "hostStatus")
+	records := readRecords(t, dir)
+	if len(records) != 2 {
+		t.Fatalf("期望两条（同链路同帧去重、不同 agent 各自一条），实际 %d 条", len(records))
+	}
+	if records[0].Kind != "backpressure:control" {
+		t.Fatalf("kind = %q，期望 backpressure:control", records[0].Kind)
+	}
+	if records[0].Details["frame"] != "pong" || records[0].Details["link"] != "agent agt_1" {
+		t.Fatalf("首条 details = %v", records[0].Details)
+	}
+}
+
 func TestSurrogateSamplesAreCappedPerDay(t *testing.T) {
 	clock := newClock()
 	dir := t.TempDir()

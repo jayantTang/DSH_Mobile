@@ -35,9 +35,11 @@ type PushSender interface {
 		eid *string, ignoreThrottle bool) []push.Result
 }
 
-// IncidentReporter 是"一条 agent 链路断了"的接收方（*monitor.Monitor 实现）。
+// IncidentReporter 是"一条 agent 链路断了"与"控制帧被丢了"的接收方
+// （*monitor.Monitor 实现）。
 type IncidentReporter interface {
 	NoteAgentDisconnect(agentID, name string)
+	NoteControlDrop(link, frameType string)
 }
 
 // agentShard 是 agentId 哈希到的一片 agent 注册表。
@@ -61,6 +63,8 @@ type Options struct {
 	Heartbeat        time.Duration
 	HeartbeatTimeout time.Duration
 	WriteTimeout     time.Duration
+	// ControlWait 是必达控制帧在优先队列满时的有界等待上限；零值取 5 秒。
+	ControlWait time.Duration
 	// Day 覆盖"本地日"的计算；单测用它验证跨日重置。默认 store.LocalDay。
 	Day func() int64
 	// UsageFlushInterval / UsageFlushBytes 是周期冲盘的两个触发条件（Python 的
@@ -96,10 +100,15 @@ type Hub struct {
 	// usageSink 是冲盘的去处（store.Store）；单测可注入失败实现验证回放。
 	usageSink usageWriter
 
-	// push 是 APNs 投递器；monitor 是"断链"告警的接收方。两者都是注入的，
-	// hub 不为推送与告警负责，只为它们取数。
+	// push 是 APNs 投递器；monitor 是"断链""控制帧丢弃"告警的接收方。两者都是
+	// 注入的，hub 不为推送与告警负责，只为它们取数。
 	push    PushSender
 	monitor IncidentReporter
+
+	// controlDrops 是进程生命周期内被丢弃的可丢控制帧数（/stats 的 controlDrops）。
+	// 它由 Link 在丢弃时经 onControlDrop 回调累计，是运维判"是否又在丢 pong"的唯一
+	// 全局证据：连接一断，逐链路的计数就没了，恰好会在最需要它的时候归零。
+	controlDrops atomic.Int64
 
 	// 周期任务的参数（见 StartBackground）。
 	usageFlushInterval      time.Duration
@@ -138,8 +147,11 @@ func New(options Options) *Hub {
 			heartbeat:        options.Heartbeat,
 			heartbeatTimeout: options.HeartbeatTimeout,
 			writeTimeout:     options.WriteTimeout,
+			controlWait:      options.ControlWait,
 		}.withDefaults(),
 	}
+	// 控制帧丢弃的记账回调要在 hub 建好之后挂：它需要 hub 的计数器与监控器。
+	hub.linkOptions.onControlDrop = hub.noteControlDrop
 	for index := range hub.agentShards {
 		hub.agentShards[index].agents = map[string]*AgentLink{}
 		hub.deviceShards[index].devices = map[string]*DeviceLink{}
@@ -175,6 +187,19 @@ func (h *Hub) Limits() Limits { return h.limits }
 
 // RelayVersion 是中转自己的部署版本号（随 hostStatus 一起发给手机）。
 func (h *Hub) RelayVersion() string { return h.relayVersion }
+
+// ControlDrops 是进程启动以来被丢弃的可丢控制帧总数（/stats 的 controlDrops）。
+func (h *Hub) ControlDrops() int64 { return h.controlDrops.Load() }
+
+// noteControlDrop 是 Link 丢弃可丢控制帧时的唯一记账点（/stats 与 monitor 都从这里取数）。
+func (h *Hub) noteControlDrop(link *Link, frameType string) {
+	total := h.controlDrops.Add(1)
+	h.log.Warn("relay: dropped a lossy control frame under backpressure",
+		"link", link.Label(), "frame", frameType, "total", total)
+	if h.monitor != nil {
+		h.monitor.NoteControlDrop(link.Label(), frameType)
+	}
+}
 
 // shardIndex 把 id 映射到分片。
 func shardIndex(id string) uint32 {
@@ -246,6 +271,8 @@ func (h *Hub) AttachAgent(ctx context.Context, agent store.Agent, sink Sink) *Ag
 	// 文件上行桥的字节额度跟着**这条**连接器链路走：帧压在它的队列里，额度就该
 	// 记在它头上；连接器被顶替时新链路拿一份新的，旧链路的额度随旧队列一起清空。
 	link.Link.credits = newBridgeCredits(h.limits.BridgeBytes)
+	// 连接器链路的心跳是 DLP ping：连接器的读循环会把 ping 原样回成 pong。
+	link.Link.heartbeatKind = heartbeatDLP
 
 	shard := &h.agentShards[shardIndex(agent.AgentID)]
 	shard.mu.Lock()
@@ -260,10 +287,13 @@ func (h *Hub) AttachAgent(ctx context.Context, agent store.Agent, sink Sink) *Ag
 		h.log.Info("relay: agent superseded by a new connection", "agentId", agent.AgentID)
 	}
 
+	// 写循环要先于 adoptDevices / tellAgentAboutTheGone 启动：这两步会发必达的
+	// deviceAttach/deviceDetach 控制帧，优先队列满时它们要等写循环腾位置。
+	link.Start(ctx)
+
 	adopted := h.adoptDevices(ctx, link)
 	h.tellAgentAboutTheGone(ctx, link, agent)
 
-	link.Start(ctx)
 	h.log.Info("relay: agent connected",
 		"agentId", agent.AgentID, "name", agent.Name, "devices", adopted)
 	return link
@@ -525,6 +555,9 @@ func (h *Hub) AttachDevice(ctx context.Context, device store.Device, sink Sink) 
 			"deviceId", device.DeviceID, "agentId", device.AgentID)
 	}
 
+	// 写循环先于首批控制帧启动：hostStatus 是可丢帧，但 deviceAttach 是必达帧，
+	// 优先队列满时它要等写循环腾位置，不能等一个还没启动的写循环。
+	link.Start(ctx)
 	if agent == nil {
 		h.SendControl(link, dlp.HostStatus(false, device.AgentID, "", "", nil))
 	} else {
@@ -534,8 +567,6 @@ func (h *Hub) AttachDevice(ctx context.Context, device store.Device, sink Sink) 
 			device.DeviceID, link.Name, link.Model, agent.AgentID))
 	}
 	h.usage.NoteConnection(link)
-	// 写循环在这里启动：前面两帧（hostStatus / deviceAttach）已经在队列里，按序发出。
-	link.Start(ctx)
 	h.log.Info("relay: device attached",
 		"deviceId", device.DeviceID, "name", device.Name, "agentId", device.AgentID)
 	return link, nil
@@ -701,6 +732,9 @@ func (d *DeviceLink) Agent() *AgentLink { return d.agent.Load() }
 // 重编码"，一帧 48 字节要付 1.8 KiB 分配（M2.5 报告 §3）。缓冲的归属在这里唯一：
 // 成功入队才把所有权交给写循环，其余每个出口都由 defer 归还。
 func (h *Hub) RouteFromDevice(link *DeviceLink, wire dlp.Wire) {
+	// 任意一帧都算"对端还活着"：设备链路的心跳走 WS ping/pong，这份记录只用于
+	// 诊断与后续统一两套心跳口径。
+	link.NoteInbound()
 	owned := wire.Buffer()
 	defer func() {
 		if owned != nil {
@@ -775,6 +809,9 @@ func (h *Hub) RouteFromDevice(link *DeviceLink, wire dlp.Wire) {
 
 // RouteFromAgent 处理一条结构校验通过的电脑帧。
 func (h *Hub) RouteFromAgent(link *AgentLink, wire dlp.Wire) {
+	// 读循环在这里记下"最后收到对端一帧的时刻"：DLP 心跳的 watchdog 用它区分
+	// "真断网"（什么都收不到）与"旧连接器不回答中转 ping"（还在发业务帧）。
+	link.NoteInbound()
 	// 与设备侧同一条所有权规则：默认在本函数返回时归还，入队成功才转移。
 	owned := wire.Buffer()
 	defer func() {
@@ -796,6 +833,8 @@ func (h *Hub) RouteFromAgent(link *AgentLink, wire dlp.Wire) {
 		}
 		return
 	case wire.Is("pong"):
+		// 这是中转自己 DLP ping 的回答：心跳 watchdog 用它清掉截止时间。
+		link.NotePong()
 		return
 	case wire.Is("notify"):
 		// `notify` 是 agent 侧控制帧：**不跨到设备**，只在"手机此刻不在线"时
@@ -1027,6 +1066,9 @@ func (h *Hub) deviceOfAgent(link *AgentLink, deviceID []byte) *DeviceLink {
 }
 
 // broadcast 把一条无寻址帧发给这台电脑的全部设备（hostStatus 的常规路径）。
+//
+// 走控制优先队列而不是流式大队列：hostStatus 是可丢的状态广播，不能因为某台手机
+// 正在收一堆大帧就把它的连接按 4008 断掉，也不能排在那些大帧后面。
 func (h *Hub) broadcast(link *AgentLink, frame dlp.Frame) {
 	payload, err := dlp.Encode(frame)
 	if err != nil {
@@ -1034,11 +1076,10 @@ func (h *Hub) broadcast(link *AgentLink, frame dlp.Frame) {
 			"agentId", link.AgentID, "error", err)
 		return
 	}
+	kind := frame.Type()
+	droppable := dlp.IsDroppableControl(kind)
 	for _, device := range h.attachedDevices(link) {
-		switch device.Enqueue(payload, classOf([]byte(frame.Type())), nil) {
-		case Overloaded:
-			h.detachDevice(device, "backpressure", dlp.CloseBackpressure)
-		}
+		device.EnqueueControl(payload, kind, droppable)
 	}
 }
 
@@ -1058,22 +1099,31 @@ func (h *Hub) attachedDevices(link *AgentLink) []*DeviceLink {
 // *Link 满足它，所以调用方不必写两次类型转换。
 type Target interface {
 	Enqueue(payload []byte, class Class, owned *dlp.Buffer) EnqueueResult
+	EnqueueControl(payload []byte, frameType string, droppable bool) EnqueueResult
 	Label() string
 	RequestClose(code int, reason string)
 }
 
-// sendControl 发一帧不可丢的控制帧；发不进去就按 4008 断开这条连接。
+// SendControl 发一帧中转控制帧。
 //
-// 所有控制帧都走这里，"控制帧不丢"因此只有一处实现。
+// 分级只看帧类型（dlp.IsDroppableControl）：
+//   - 可丢（pong/ping/hostStatus/accountState）：队列满时丢弃并计数，不断链；
+//   - 必达（deviceAttach/deviceDetach/error/fs*）：最多等 controlWait，仍发不进去
+//     才以 4008 断开这条连接——必达帧静默丢失比断线更难排查。
+//
+// 走哪条通道由 dlp.IsOrderedControl 决定：心跳/生命周期/状态走优先队列，永远排在
+// 流式帧之前；error/fs* 与它们所属的数据帧共用大队列以保序。这是 2026-10-23 故障
+// 之后"pong 不再被流式帧挤掉"的落点。
 func (h *Hub) SendControl(link Target, frame dlp.Frame) {
 	payload, err := dlp.Encode(frame)
 	if err != nil {
 		h.log.Warn("relay: could not encode a control frame", "link", link.Label(), "error", err)
 		return
 	}
-	if link.Enqueue(payload, ClassControl, nil) == Overloaded {
+	kind := frame.Type()
+	if link.EnqueueControl(payload, kind, dlp.IsDroppableControl(kind)) == Overloaded {
 		h.log.Warn("relay: control frame could not be queued; closing the link",
-			"link", link.Label())
+			"link", link.Label(), "frame", kind)
 		link.RequestClose(dlp.CloseBackpressure, "backpressure")
 	}
 }
@@ -1213,7 +1263,7 @@ func (h *Hub) NotifyAccountState(accountID string, keys []string, excludeDeviceI
 		if excludeDeviceID != "" && device.DeviceID == excludeDeviceID {
 			continue
 		}
-		if device.Enqueue(payload, ClassControl, nil) == Enqueued {
+		if device.EnqueueControl(payload, "accountState", true) == Enqueued {
 			sent++
 		}
 	}

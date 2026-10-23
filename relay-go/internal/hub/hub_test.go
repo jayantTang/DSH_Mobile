@@ -344,12 +344,15 @@ func (f *fixture) deviceDropped(deviceID string) int64 {
 	return 0
 }
 
-// TestControlFramesNeverDisappearSilently：控制帧塞不进队列时必须断开慢连接，
-// 而不是像流式帧那样被静默丢掉。
+// TestControlFramesNeverDisappearSilently：控制帧走独立的优先队列之后，
+//   - 可丢控制帧（accountState 等）在优先队列满时被丢弃并计数，连接继续；
+//   - 必达控制帧（error/deviceAttach/fs*）等不到槽位才按 4008 断开。
+//
+// 流式大队列塞满不再能挤掉控制帧——那正是 2026-10-23 故障的形态。
 func TestControlFramesNeverDisappearSilently(t *testing.T) {
 	limits := DefaultLimits()
 	limits.QueueDepth = 1
-	fixture := newFixture(t, Options{Limits: limits})
+	fixture := newFixture(t, Options{Limits: limits, ControlWait: 50 * time.Millisecond})
 	owner := fixture.newTenant("M2-mac")
 	device := fixture.pairDevice(owner, "M2-iPhone")
 	fixture.attachAgent(owner)
@@ -359,11 +362,24 @@ func TestControlFramesNeverDisappearSilently(t *testing.T) {
 	release := deviceSink.setBlocking()
 	defer release()
 	link := fixture.hub.Device(device.DeviceID)
-	// 写循环拿住一条，队列里再塞满一条，下一条控制帧就没地方去了。
+	// 写循环拿住一条，大队列里再塞满一条，下一条流式帧就没地方去了。
 	for index := 0; index < 3; index++ {
 		link.Enqueue([]byte(`{"t":"item","id":"x"}`), ClassStream, nil)
 	}
-	fixture.hub.SendControl(link, dlp.AccountStateFrame([]string{"alertPrefs"}))
+	// 优先队列还是空的：可丢帧先占满 64 槽，再来的那一条被丢弃。
+	for index := 0; index < DefaultControlQueueDepth; index++ {
+		fixture.hub.SendControl(link,
+			dlp.AccountStateFrame([]string{fmt.Sprintf("k%d", index)}))
+	}
+	fixture.hub.SendControl(link, dlp.AccountStateFrame([]string{"one-too-many"}))
+	if drops := fixture.hub.ControlDrops(); drops != 1 {
+		t.Fatalf("controlDrops = %d，期望 1", drops)
+	}
+	if closeStatus(deviceSink) != 0 {
+		t.Fatalf("可丢控制帧被丢弃不该断开连接，实际关闭码 %d", closeStatus(deviceSink))
+	}
+	// 必达控制帧等满 ControlWait 仍没有槽位：4008 断开，而不是继续丢。
+	fixture.hub.SendControl(link, dlp.ErrorFrame("test/required", "must arrive", false, nil))
 	waitFor(t, "慢连接按 4008 断开", func() bool {
 		return closeStatus(deviceSink) == dlp.CloseBackpressure
 	})
@@ -506,7 +522,11 @@ func TestAccountStateNotificationsSkipTheWriter(t *testing.T) {
 	expectNoFrame(t, writerSink, "写入者不该收到通知", isKind("accountState"))
 }
 
-// TestHeartbeatClosesADeadConnection：ping 失败即断开（DESIGN §5.3）。
+// TestHeartbeatClosesADeadConnection：连接器链路用 DLP ping 做心跳，ping 发出后
+// 在 heartbeatTimeout 内没有任何回音即断开（DESIGN §5.3）。
+//
+// 这里刻意断言 sink.pings == 0：agent 链路不再用 WS 控制帧 ping，更不允许写循环
+// 同步等 pong（2026-10-23 生产回滚的根因）。
 func TestHeartbeatClosesADeadConnection(t *testing.T) {
 	limits := DefaultLimits()
 	fixture := newFixture(t, Options{
@@ -515,18 +535,57 @@ func TestHeartbeatClosesADeadConnection(t *testing.T) {
 		HeartbeatTimeout: 20 * time.Millisecond,
 	})
 	owner := fixture.newTenant("M2-mac")
-	sink := &fakeSink{pingErr: context.DeadlineExceeded}
+	sink := newFakeSink()
 	link := fixture.hub.AttachAgent(context.Background(), owner.agent, sink)
 
-	waitFor(t, "心跳失败后关闭", func() bool { return closeStatus(sink) == dlp.CloseGoingAway })
+	waitFor(t, "心跳超时后关闭", func() bool { return closeStatus(sink) == dlp.CloseGoingAway })
 	select {
 	case <-link.Done():
 	case <-time.After(2 * time.Second):
 		t.Fatal("写循环没有退出")
 	}
-	if sink.pings == 0 {
-		t.Fatal("一次心跳都没发（心跳根本没跑）")
+	// 先等到第一条 ping 被写出去：它证明心跳确实走了 DLP 控制帧。
+	waitFrame(t, sink, "DLP ping", isKind("ping"))
+	if sink.pingCount() != 0 {
+		t.Fatalf("agent 链路不该再用 WS ping，实际 %d 次", sink.pingCount())
 	}
+}
+
+// TestAgentLinkStaysUpWhilePongsArrive：pong 是 DLP 心跳的活性证据；读循环每收到
+// 一帧 pong 就清掉截止时间，链路应当一直保持。
+func TestAgentLinkStaysUpWhilePongsArrive(t *testing.T) {
+	fixture := newFixture(t, Options{
+		Limits:           DefaultLimits(),
+		Heartbeat:        10 * time.Millisecond,
+		HeartbeatTimeout: 20 * time.Millisecond,
+	})
+	owner := fixture.newTenant("M2-mac")
+	sink := newFakeSink()
+	link := fixture.hub.AttachAgent(context.Background(), owner.agent, sink)
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(5 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+				// 走真实读循环入口（RouteFromAgent），不直接改内部状态。
+				fixture.hub.RouteFromAgent(link, scanWire(t, `{"t":"pong","ts":1}`))
+			}
+		}
+	}()
+	time.Sleep(150 * time.Millisecond)
+	close(stop)
+	<-done
+	if status := closeStatus(sink); status != 0 {
+		t.Fatalf("持续收到 pong 时不该断开，关闭码 %d", status)
+	}
+	// 停止喂 pong 之后必须能正常判死，证明上面的"没断"不是 watchdog 根本没跑。
+	waitFor(t, "停止 pong 后断开", func() bool { return closeStatus(sink) != 0 })
 }
 
 // TestStatsLoadTrafficAndSnapshot：/stats 的三段都从注册表实时取数。

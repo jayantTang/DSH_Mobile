@@ -16,12 +16,16 @@ type statsLoad struct {
 }
 
 type statsResponse struct {
-	OK            bool             `json:"ok"`
-	Version       int              `json:"version"`
-	Now           int64            `json:"now"`
-	Limits        hub.Description  `json:"limits"`
-	Load          statsLoad        `json:"load"`
-	Traffic       hub.Traffic      `json:"traffic"`
+	OK      bool            `json:"ok"`
+	Version int             `json:"version"`
+	Now     int64           `json:"now"`
+	Limits  hub.Description `json:"limits"`
+	Load    statsLoad       `json:"load"`
+	Traffic hub.Traffic     `json:"traffic"`
+	// ControlDrops 是进程启动以来被丢弃的可丢控制帧数（pong/ping/hostStatus/
+	// accountState）。它是"背压有没有重新把 pong 挤掉"的全局证据：逐链路的计数
+	// 会随重连归零，恰好会在事故最需要它的时候消失。
+	ControlDrops  int64            `json:"controlDrops"`
 	Snapshot      hub.Snapshot     `json:"snapshot"`
 	DeviceRecords store.Hygiene    `json:"deviceRecords"`
 	Today         store.TodayUsage `json:"today"`
@@ -63,6 +67,7 @@ func (s *server) handleStats(w http.ResponseWriter, r *http.Request) {
 		Limits:        s.hub.Limits().Describe(),
 		Load:          statsLoad{Agents: agents, Devices: devices},
 		Traffic:       s.hub.Traffic(),
+		ControlDrops:  s.hub.ControlDrops(),
 		Snapshot:      s.hub.Snapshot(),
 		DeviceRecords: hygiene,
 		Today:         today,
