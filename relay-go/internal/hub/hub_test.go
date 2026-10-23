@@ -127,6 +127,27 @@ func TestPingIsAnsweredLocally(t *testing.T) {
 	expectNoFrame(t, agentSink, "电脑不该看到 ping", isKind("ping"))
 }
 
+// TestAgentPingIsAnsweredLocally 是设备侧 ping 用例的回程补位。
+//
+// 两个方向的 ping 现在共用 routePing：只测设备侧会让"连接器发来的 ping 也回
+// pong"这条分支失去覆盖，所以在这里单独钉一次，且断言它不跨到设备。
+func TestAgentPingIsAnsweredLocally(t *testing.T) {
+	fixture := newFixture(t, Options{Limits: DefaultLimits()})
+	owner := fixture.newTenant("M2-mac")
+	device := fixture.pairDevice(owner, "M2-iPhone")
+	agentLink, agentSink := fixture.attachAgent(owner)
+	_, deviceSink := fixture.mustAttachDevice(device)
+	waitFrame(t, agentSink, "deviceAttach", isKind("deviceAttach"))
+	waitFrame(t, deviceSink, "hostStatus", isKind("hostStatus"))
+
+	fixture.hub.RouteFromAgent(agentLink, scanWire(t, `{"t":"ping","ts":42}`))
+	pong := waitFrame(t, agentSink, "pong", isKind("pong"))
+	if pong["ts"] != json.Number("42") {
+		t.Fatalf("pong = %v", pong)
+	}
+	expectNoFrame(t, deviceSink, "设备不该看到 ping", isKind("ping"))
+}
+
 // TestDeviceWithoutTheConnectorIsToldTheHostIsOffline 覆盖"电脑不在线"：
 // 设备照样能连，只是首帧是 online=false，发帧会得到 host/offline 错误帧。
 func TestDeviceWithoutTheConnectorIsToldTheHostIsOffline(t *testing.T) {
