@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/dlp"
+	"github.com/jayantTang/DSH_Mobile/relay-go/internal/presence"
 )
 
 // deliverFrame 把一条连接器帧经**生产路由**交给桥（不是直接调用 deliver），
@@ -116,13 +117,14 @@ func TestPutBridgeFailsWhenTheAgentDisconnects(t *testing.T) {
 }
 
 func TestSupersededAgentOnlyFailsItsOwnBridges(t *testing.T) {
-	fx := newFixture(t, Options{})
+	fx := newFixture(t, Options{Presence: presence.Options{ActiveIdle: time.Millisecond}})
 	owner := fx.newTenant("bridge-supersede")
 	first, _ := fx.attachAgent(owner)
 	firstBridge := fx.hub.OpenPutBridge("bid-first", first)
 	defer fx.hub.CloseBridge("bid-first")
+	time.Sleep(5 * time.Millisecond)
 
-	second, _ := fx.attachAgent(owner) // 顶掉第一条连接
+	second, _ := fx.attachAgent(owner) // 顶掉第一条（已僵死的）连接
 	secondBridge := fx.hub.OpenPutBridge("bid-second", second)
 	defer fx.hub.CloseBridge("bid-second")
 

@@ -23,6 +23,7 @@ import (
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/dlp"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/httpapi"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/hub"
+	"github.com/jayantTang/DSH_Mobile/relay-go/internal/presence"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/store"
 )
 
@@ -48,6 +49,13 @@ type tenant struct {
 
 func newRelay(t *testing.T, mutate func(*hub.Limits)) *relayFixture {
 	t.Helper()
+	return newRelayWithPresence(t, mutate, presence.Options{})
+}
+
+// newRelayWithPresence 是 newRelay 的窗口可调版本（连接生命周期用例需要毫秒级窗口）。
+func newRelayWithPresence(t *testing.T, mutate func(*hub.Limits),
+	windows presence.Options) *relayFixture {
+	t.Helper()
 	st, err := store.Open(t.TempDir() + "/state.db")
 	if err != nil {
 		t.Fatalf("打开临时库: %v", err)
@@ -57,9 +65,10 @@ func newRelay(t *testing.T, mutate func(*hub.Limits)) *relayFixture {
 		mutate(&limits)
 	}
 	live := hub.New(hub.Options{
-		Store:  st,
-		Limits: limits,
-		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Store:    st,
+		Limits:   limits,
+		Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Presence: windows,
 	})
 	handler := httpapi.New(httpapi.Options{
 		Store:            st,
@@ -152,8 +161,8 @@ func (f *relayFixture) dial(path, token string, subprotocols ...string) *websock
 	return conn
 }
 
-// handshakeStatus 发一次裸握手，返回 HTTP 状态码（用来断言 401/403 这类拒绝）。
-func (f *relayFixture) handshakeStatus(path, token string, subprotocols ...string) int {
+// handshakeResponse 发一次裸握手并返回响应（调用方负责关 Body）。
+func (f *relayFixture) handshakeResponse(path, token string, subprotocols ...string) *http.Response {
 	f.t.Helper()
 	req, err := http.NewRequest(http.MethodGet, f.server.URL+path, nil)
 	if err != nil {
@@ -174,6 +183,13 @@ func (f *relayFixture) handshakeStatus(path, token string, subprotocols ...strin
 	if err != nil {
 		f.t.Fatalf("握手请求失败：%v", err)
 	}
+	return response
+}
+
+// handshakeStatus 发一次裸握手，返回 HTTP 状态码（用来断言 401/403 这类拒绝）。
+func (f *relayFixture) handshakeStatus(path, token string, subprotocols ...string) int {
+	f.t.Helper()
+	response := f.handshakeResponse(path, token, subprotocols...)
 	defer response.Body.Close()
 	return response.StatusCode
 }
@@ -396,6 +412,73 @@ func TestStatsReflectLiveConnections(t *testing.T) {
 	}
 	if len(body.Snapshot.Agents) != 1 || len(body.Snapshot.Agents[0].Devices) != 1 {
 		t.Fatalf("snapshot.agents = %+v", body.Snapshot.Agents)
+	}
+}
+
+// TestASecondAgentSocketIsRefusedWhileTheFirstIsActive 钉住 2026-10-23 的回滚形态：
+// 同一 agent 的旧连接还活着时，新握手必须在**升级之前**被 429 拒绝（不是升级后
+// 用 4001 顶替），旧连接继续可用；旧连接退出以后新连接立即放行。
+func TestASecondAgentSocketIsRefusedWhileTheFirstIsActive(t *testing.T) {
+	fixture := newRelayWithPresence(t, nil, presence.Options{
+		ActiveIdle: time.Hour, // 旧连接始终算活跃
+		WaitForOld: 30 * time.Millisecond,
+	})
+	first := fixture.dial(fixture.agentPath(), fixture.tenant.secret)
+	sendFrame(t, first, `{"t":"ping","ts":1}`)
+	if pong := readFrame(t, first); pong.Type() != "pong" {
+		t.Fatalf("旧连接的首帧 = %v", pong)
+	}
+
+	response := fixture.handshakeResponse(fixture.agentPath(), fixture.tenant.secret)
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("第二条 agent 握手状态 = %d，期望 429", response.StatusCode)
+	}
+	if retry := response.Header.Get("Retry-After"); retry == "" {
+		t.Fatal("429 缺 Retry-After 头")
+	}
+
+	// 被拒绝的新连接不能伤到旧连接。
+	sendFrame(t, first, `{"t":"ping","ts":2}`)
+	if pong := readFrame(t, first); pong["ts"] != json.Number("2") {
+		t.Fatalf("旧连接在拒绝新连接后不可用：%v", pong)
+	}
+
+	// /stats 的计数：没有顶替，只有一次被抑制的重复到达。
+	statsResponse, err := http.Get(fixture.server.URL + "/stats")
+	if err != nil {
+		t.Fatalf("GET /stats: %v", err)
+	}
+	defer statsResponse.Body.Close()
+	var stats struct {
+		Superseded     int64 `json:"superseded"`
+		ReconnectStorm int64 `json:"reconnectStorm"`
+	}
+	if err := json.NewDecoder(statsResponse.Body).Decode(&stats); err != nil {
+		t.Fatalf("解析 /stats: %v", err)
+	}
+	if stats.Superseded != 0 || stats.ReconnectStorm != 1 {
+		t.Fatalf("/stats = %+v，期望 superseded=0 reconnectStorm=1", stats)
+	}
+
+	// 旧连接正常退出后：立即允许新连接（不等抑制窗口）。
+	if err := first.Close(websocket.StatusNormalClosure, "done"); err != nil {
+		t.Fatalf("关闭旧连接：%v", err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if agents, _ := fixture.hub.Load(); agents == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("旧连接退出后注册表仍有 agent")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	second := fixture.dial(fixture.agentPath(), fixture.tenant.secret)
+	sendFrame(t, second, `{"t":"ping","ts":3}`)
+	if pong := readFrame(t, second); pong["ts"] != json.Number("3") {
+		t.Fatalf("重连后的 pong = %v", pong)
 	}
 }
 

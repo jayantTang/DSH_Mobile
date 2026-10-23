@@ -26,9 +26,9 @@
 目标；启动成功后把目标设为开机自启、把另一个设为不自启，因此重启机器不会出现两个
 实现同时抢 8787 的情况。
 
-在 24 小时观察期内，`/opt/dsh-relay` 必须保留：它既是回滚目标，也是
-`dsh-relay-alerts.timer` 与 `dsh-relay-purge.timer` 目前调用的 Python 代码
-（见 §10）。
+在 24 小时观察期内，`/opt/dsh-relay` 必须保留：它是回滚目标。M7 起另有两套
+Go 的运维 timer（`dsh-relay-go-alerts.*` / `dsh-relay-go-purge.*`），**默认不启用**，
+与 Python 的 `dsh-relay-alerts.*` / `dsh-relay-purge.*` 并存；切换步骤见 §10.1。
 
 ## 2. 文件与目录
 
@@ -37,6 +37,8 @@
 | `/opt/dsh-relay-go/bin/dsh-relay` | Go 二进制（root:root，0755） |
 | `/opt/dsh-relay-go/bin/build.json` | 部署指纹，`relayVersion` 读它；必须与二进制同目录 |
 | `/etc/systemd/system/dsh-relay-go.service` | 本目录的 unit |
+| `/etc/systemd/system/dsh-relay-go-alerts.{service,timer}` | 告警投递（Go，默认不启用；见 §10.1） |
+| `/etc/systemd/system/dsh-relay-go-purge.{service,timer}` | 设备死记录清理（Go，默认不启用；见 §10.1） |
 | `/var/lib/dsh-relay/state.db` | 两种实现共用的 SQLite 库 |
 | `/var/backups/dsh-relay/<UTC 时间>-to-go/` | `--to-go` 的库备份、`MANIFEST`、`SHA256SUMS`、旧 unit 文件 |
 | `/var/log/dsh-relay-switch.log` | 切换审计日志（每次 begin / ok / rollback / failed 各一行） |
@@ -129,17 +131,28 @@ sudo tee /opt/dsh-relay-go/bin/build.json >/dev/null <<EOF
 EOF
 sudo chmod 0644 /opt/dsh-relay-go/bin/build.json
 
-# 3. unit
+# 3. unit（运维 timer 也装上，但**不启用**：见 §10.1 的切换顺序）
 sudo install -m 0644 relay-go/deploy/dsh-relay-go.service \
   /etc/systemd/system/dsh-relay-go.service
+sudo install -m 0644 \
+  relay-go/deploy/dsh-relay-go-alerts.service relay-go/deploy/dsh-relay-go-alerts.timer \
+  relay-go/deploy/dsh-relay-go-purge.service  relay-go/deploy/dsh-relay-go-purge.timer \
+  /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl cat dsh-relay-go.service >/dev/null && echo "unit installed"
 # Linux 上再做一次语法/依赖校验；没有 systemd-analyze 的机器跳过
 sudo systemd-analyze verify /etc/systemd/system/dsh-relay-go.service || true
+sudo systemd-analyze verify /etc/systemd/system/dsh-relay-go-alerts.service || true
+sudo systemd-analyze verify /etc/systemd/system/dsh-relay-go-purge.service || true
 
 # 4. 只做本机冒烟：--help 不碰数据库、不监听端口
 sudo /opt/dsh-relay-go/bin/dsh-relay --help | head -20
 sudo /opt/dsh-relay-go/bin/dsh-relay admin --help | head -20
+# 两个运维子命令：一个只读队列（--dry-run 不动队列），一个只预演（不给 --apply 不改库）
+sudo DLP_ALERT_DIR=/var/lib/dsh-relay/alerts \
+  /opt/dsh-relay-go/bin/dsh-relay alert-dispatch --dry-run | head -20
+sudo /opt/dsh-relay-go/bin/dsh-relay purge \
+  --db /var/lib/dsh-relay/state.db --all-agents | head -c 800
 ```
 
 **不要**在此时 `systemctl enable/start dsh-relay-go`：8787 还被 Python 占用。
@@ -386,14 +399,14 @@ diff -u /tmp/py-usage.pretty /tmp/go-usage.pretty || true
 3. **APNs 真实联调未做**：M3b2 只用注入桩验证，未调用 Apple。unit 默认
    `DLP_APNS_ENABLED=0`；打开前先看 `relay-go/README.md` 的推送章节与 24 小时
    日志里的 `push failed`。
-4. **告警与清理仍是 Python**：`dsh-relay-alerts.timer` 调
-   `/opt/dsh-relay/alert-dispatch.py`，`dsh-relay-purge.timer` 调
-   `purge-revoked-devices.py`。Go 写的 `alerts.jsonl` 与 Python 格式兼容，投递可以
-   原样工作；等 Python 目录要删除时，再把这两个 unit 的 ExecStart 换成
-   `dsh-relay admin alert-dispatch ...`（Go 版）或保留最小 Python 运行环境。这属于
-   后续独立变更，不在本次切换脚本里做。
-5. **`/stats` 只有 JSON**：Go 版不渲染 Python 的 HTML 运维页；Caddy 对公网
-   `/dsh-link/stats` 仍然回 404，运维从主机上读。
+4. **Go 运维 timer 已交付但默认未启用**：`dsh-relay-go-alerts.*` 调
+   `dsh-relay alert-dispatch`，`dsh-relay-go-purge.*` 调 `dsh-relay purge`；两套 unit
+   与 Python 的 `dsh-relay-alerts.*` / `dsh-relay-purge.*` 独立命名，切换顺序见
+   §10.1。在启用前 Python timer 仍负责告警投递与清理，不要两套同时开——同一队列被
+   投递两次。
+5. **`/stats` 的 HTML 页是本机运维面**：`Accept: text/html` 时渲染与 Python 同口径的
+   页面（连接数、限额、设备流量、今日用量）；Caddy 对公网 `/dsh-link/stats` 仍然回
+   404，页面只从主机环回读。
 6. **cgo 产物未在 Linux 上实际运行**：M5 只验证纯 Go 静态 ELF。若改用 cgo，先在
    目标机做一次 `dsh-relay --help`、临时库启动与 `/healthz` 检查，再替换生产二进制。
 7. **Linux 产物未在目标机实跑**：M5 只做 ELF/元数据核验，以及在 macOS 上用同一份
@@ -407,6 +420,44 @@ diff -u /tmp/py-usage.pretty /tmp/go-usage.pretty || true
 9. **`switch.sh` 不做安装**：它不复制二进制、不生成 `build.json`、不改 Caddy；
    安装步骤见 §4。`--to-go` 也不负责升级已运行的二进制（见 §6 末尾）。
 10. **审计日志只追加**：没有轮转；按 `/var/log` 的现有策略处理，或后续加 logrotate。
+
+### 10.1 Go 运维 timer（M7 交付，默认不启用）
+
+四个 unit 已随仓库交付，但在生产**不要**在切换当天直接启用；建议顺序：
+
+```bash
+# 1. 预演两个动作（手工跑二进制；service 里的 ExecStart 带 --apply，别拿它预演）
+sudo /opt/dsh-relay-go/bin/dsh-relay purge \
+  --db /var/lib/dsh-relay/state.db --all-agents | head -c 800
+sudo DLP_ALERT_DIR=/var/lib/dsh-relay/alerts \
+  /opt/dsh-relay-go/bin/dsh-relay alert-dispatch --dry-run | head -40
+# 预演确认后，可以手工真跑一次清理（与 timer 的 ExecStart 相同）：
+#   sudo systemctl start dsh-relay-go-purge.service
+#   sudo journalctl -u dsh-relay-go-purge -n 30 --no-pager
+
+# 2. 接替 Python 的 timer（先停旧的，再开新的；同一时刻只留一套）
+sudo systemctl disable --now dsh-relay-alerts.timer dsh-relay-purge.timer
+sudo systemctl enable --now dsh-relay-go-alerts.timer dsh-relay-go-purge.timer
+
+# 3. 回滚：换回来即可，队列与库都没被改写
+sudo systemctl disable --now dsh-relay-go-alerts.timer dsh-relay-go-purge.timer
+sudo systemctl enable --now dsh-relay-alerts.timer dsh-relay-purge.timer
+```
+
+注意 `dsh-relay purge` 是 `purge-revoked-devices.py` 的 Go 版本（删设备死记录），
+与 `dsh-relay admin purge`（删过期配对码）不是同一件事；两者都不带 `--apply` 时只
+预演。`--keep 14` 只清理由本工具命名的旧备份。
+
+### 10.2 `/stats` 运维页
+
+```bash
+curl -s localhost:8787/stats | head -c 400                  # JSON（脚本用）
+curl -s -H 'Accept: text/html' localhost:8787/stats | head  # 页面（浏览器打开同一 URL）
+```
+
+页面与 JSON 读同一份 `statsResponse`：本次连接数、限额、死设备记录、每设备本次出口
+与被限速时长、今日用量，外加 M7 的连接生命周期计数（顶替、重复连接抑制、未上报版本
+的在线连接）。只允许环回来源，与非 HTML 请求共用同一道守卫。
 
 ## 11. 故障排查
 
@@ -422,7 +473,9 @@ diff -u /tmp/py-usage.pretty /tmp/go-usage.pretty || true
 | `systemctl reload dsh-relay-go` 报不支持 | unit 没有 `ExecReload` | 这是刻意设计：SIGHUP 会终止 Go 进程；用 `restart` |
 | 两个 unit 同时 active/enabled | `switch.sh --status`；`systemctl is-enabled` | 手工 `disable` 错误的一项；正常路径由 `switch.sh` 维护 |
 | 公网 `/dsh-link/healthz` 502 | `journalctl -u caddy -n 50`；`ss` 看 8787 | 本脚本不碰 Caddy；先确认 Go 在本机 200，再查反代 |
-| 告警 timer 在 Go 切换后失败 | `journalctl -u dsh-relay-alerts -n 50` | 它仍调用 Python；保留 `/opt/dsh-relay`，或按 §10.4 迁移 |
+| 告警 timer 在 Go 切换后失败 | `journalctl -u dsh-relay-go-alerts -n 50`；先手工跑 §10.1 的 `--dry-run` | 检查 `alert.env` 的收件账号与 mail 路径；回退见 §10.1 |
+| `purge` 报「数据库不可读」 | `ls -l /var/lib/dsh-relay/state.db`；unit 的 `--db` | 路径必须与 `dsh-relay-go.service` 一致；不要在缺库的机器上跑 |
+| `/stats` 打开仍是 JSON | 请求头有没有 `Accept: text/html` | 浏览器默认带；`curl` 需要显式 `-H` |
 | `database is locked` 增多 | `journalctl`、`/stats`、`quick_check` | 按 §7 的硬阈值回滚；不要用重启掩盖 |
 
 ## 12. 本次交付的验证记录

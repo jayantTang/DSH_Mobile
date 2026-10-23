@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/hub"
+	"github.com/jayantTang/DSH_Mobile/relay-go/internal/presence"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/store"
 )
 
@@ -29,6 +30,10 @@ type statsResponse struct {
 	Snapshot      hub.Snapshot     `json:"snapshot"`
 	DeviceRecords store.Hygiene    `json:"deviceRecords"`
 	Today         store.TodayUsage `json:"today"`
+	// 连接生命周期计数（内嵌 = JSON 平铺）：superseded / reconnectStorm /
+	// unverifiedAgents / unverifiedTotal / refusedDuplicate / refusedUnverified。
+	// 新增字段，旧读法不受影响。
+	presence.Stats
 }
 
 // handleStats 是运维用的实时负载与流量页（Python api.stats）。
@@ -60,7 +65,7 @@ func (s *server) handleStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	agents, devices := s.hub.Load()
-	writeJSON(w, http.StatusOK, statsResponse{
+	payload := statsResponse{
 		OK:            true,
 		Version:       ProtocolVersion,
 		Now:           now,
@@ -71,5 +76,11 @@ func (s *server) handleStats(w http.ResponseWriter, r *http.Request) {
 		Snapshot:      s.hub.Snapshot(),
 		DeviceRecords: hygiene,
 		Today:         today,
-	})
+		Stats:         s.hub.PresenceStats(),
+	}
+	if wantsStatsPage(r) {
+		writeStatsPage(w, payload)
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
 }

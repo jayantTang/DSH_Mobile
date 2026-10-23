@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/dlp"
+	"github.com/jayantTang/DSH_Mobile/relay-go/internal/presence"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/store"
 )
 
@@ -124,6 +125,13 @@ func (s *fakeSink) frames(t *testing.T) []dlp.Frame {
 }
 
 // lastClose 返回最后一次关闭调用；还没有时 ok=false。
+// closeCalls 返回全部关闭调用（副本）。
+func (s *fakeSink) closeCalls() []closeCall {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]closeCall(nil), s.closes...)
+}
+
 func (s *fakeSink) lastClose() (closeCall, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -255,12 +263,28 @@ func (f *fixture) pairDevice(owner tenant, name string) store.Device {
 	return device
 }
 
-// attachAgent 把一条假电脑连接挂进 hub。
+// attachAgent 把一条假电脑连接挂进 hub（走真实的准入路径，被拒即用例失败）。
 func (f *fixture) attachAgent(owner tenant) (*AgentLink, *fakeSink) {
 	f.t.Helper()
 	sink := newFakeSink()
-	link := f.hub.AttachAgent(context.Background(), owner.agent, sink)
+	link := f.hub.AttachAgent(context.Background(), owner.agent, sink, f.admitAgent(owner))
 	return link, sink
+}
+
+// attachAgentWithSink 用调用方给的 sink 走真实准入并挂接。
+func (f *fixture) attachAgentWithSink(owner tenant, sink *fakeSink) *AgentLink {
+	f.t.Helper()
+	return f.hub.AttachAgent(context.Background(), owner.agent, sink, f.admitAgent(owner))
+}
+
+// admitAgent 取一张准入票；单测里被拒绝说明策略窗口配得不对。
+func (f *fixture) admitAgent(owner tenant) *presence.Ticket {
+	f.t.Helper()
+	ticket, refusal := f.hub.AdmitAgent(context.Background(), owner.agent)
+	if refusal != nil {
+		f.t.Fatalf("AdmitAgent: %v（reason=%s）", refusal, refusal.Reason)
+	}
+	return ticket
 }
 
 // attachDevice 把一条假手机连接挂进 hub。

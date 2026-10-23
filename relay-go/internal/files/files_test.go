@@ -19,6 +19,7 @@ import (
 
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/dlp"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/hub"
+	"github.com/jayantTang/DSH_Mobile/relay-go/internal/presence"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/store"
 )
 
@@ -107,6 +108,7 @@ type fixtureOptions struct {
 	ackTimeout   time.Duration
 	idleTimeout  time.Duration
 	writeTimeout time.Duration
+	presence     presence.Options
 }
 
 func newFileFixture(t *testing.T, options fixtureOptions) *fileFixture {
@@ -155,6 +157,7 @@ func newFileFixture(t *testing.T, options fixtureOptions) *fileFixture {
 	live := hub.New(hub.Options{
 		Store: st, Limits: options.limits, Logger: logger,
 		WriteTimeout: options.writeTimeout, RevokeReconcileInterval: -1,
+		Presence: options.presence,
 	})
 	handlers := New(Options{
 		Store: st, Hub: live, Logger: logger,
@@ -176,7 +179,11 @@ func newFileFixture(t *testing.T, options fixtureOptions) *fileFixture {
 func (f *fileFixture) attachAgent() *agentSink {
 	f.t.Helper()
 	sink := newAgentSink()
-	f.agent = f.hub.AttachAgent(context.Background(), f.agentRow, sink)
+	ticket, refusal := f.hub.AdmitAgent(context.Background(), f.agentRow)
+	if refusal != nil {
+		f.t.Fatalf("AdmitAgent: %v", refusal)
+	}
+	f.agent = f.hub.AttachAgent(context.Background(), f.agentRow, sink, ticket)
 	f.agentSink = sink
 	f.t.Cleanup(func() { f.hub.DetachAgent(f.agent) })
 	return sink
@@ -1314,6 +1321,8 @@ func TestSupersedingTheConnectorReleasesTheBridgeBudget(t *testing.T) {
 	fx := newFileFixture(t, fixtureOptions{
 		limits:       hub.Limits{BridgeBytes: budget},
 		writeTimeout: 50 * time.Millisecond,
+		// 顶替只对僵死旧连接发生：把僵死窗口调到毫秒级，用例才模拟得出「重连」。
+		presence: presence.Options{ActiveIdle: time.Millisecond},
 	})
 	fx.attachAgent()
 	fx.agentSink.blockChunks()
@@ -1338,7 +1347,12 @@ func TestSupersedingTheConnectorReleasesTheBridgeBudget(t *testing.T) {
 	})
 
 	old := fx.agent
-	superseding := fx.hub.AttachAgent(context.Background(), fx.agentRow, newAgentSink())
+	time.Sleep(5 * time.Millisecond) // 旧连接过了僵死窗口，这次重连才允许顶替
+	ticket, refusal := fx.hub.AdmitAgent(context.Background(), fx.agentRow)
+	if refusal != nil {
+		t.Fatalf("AdmitAgent: %v", refusal)
+	}
+	superseding := fx.hub.AttachAgent(context.Background(), fx.agentRow, newAgentSink(), ticket)
 	t.Cleanup(func() { fx.hub.DetachAgent(superseding) })
 
 	select {

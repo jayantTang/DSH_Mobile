@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/dlp"
+	"github.com/jayantTang/DSH_Mobile/relay-go/internal/presence"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/push"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/store"
 )
@@ -78,6 +79,8 @@ type Options struct {
 	Push PushSender
 	// Monitor 是异常监控；nil = 不记（测试与未配置的部署）。
 	Monitor IncidentReporter
+	// Presence 是连接器准入策略的窗口；零值取 presence 的默认（见该包的常量）。
+	Presence presence.Options
 }
 
 // Hub 是活连接的唯一所有者：注册表、路由、背压、心跳、配额与用量记账都在这里。
@@ -99,6 +102,10 @@ type Hub struct {
 	usage *usageLedger
 	// usageSink 是冲盘的去处（store.Store）；单测可注入失败实现验证回放。
 	usageSink usageWriter
+
+	// presence 是连接器准入策略：重复连接抑制、未验证连接器的退避与计数。
+	// 它不持有连接，注册表仍然只有这里一份（见 internal/presence 的包注释）。
+	presence *presence.Gate
 
 	// push 是 APNs 投递器；monitor 是"断链""控制帧丢弃"告警的接收方。两者都是
 	// 注入的，hub 不为推送与告警负责，只为它们取数。
@@ -158,6 +165,7 @@ func New(options Options) *Hub {
 	}
 	hub.quota = newQuotaLedger(options.Store, limits.DeviceDailyBytes, today, log)
 	hub.usage = newUsageLedger(today, log)
+	hub.presence = presence.New(options.Presence)
 	hub.bridges = map[string]bridge{}
 	if options.Store != nil {
 		hub.usageSink = options.Store
@@ -191,6 +199,27 @@ func (h *Hub) RelayVersion() string { return h.relayVersion }
 // ControlDrops 是进程启动以来被丢弃的可丢控制帧总数（/stats 的 controlDrops）。
 func (h *Hub) ControlDrops() int64 { return h.controlDrops.Load() }
 
+// PresenceStats 是连接生命周期的计数（/stats 的 superseded / reconnectStorm /
+// unverifiedAgents 等字段的唯一来源）。
+//
+// 未验证连接数是 gauge：遍历注册表逐条问 presence「这一代连接报了版本没有」。
+// 注册表仍然是「谁在线」的唯一所有者，presence 只回答某一代连接的状态。
+func (h *Hub) PresenceStats() presence.Stats {
+	stats := h.presence.Stats()
+	now := time.Now()
+	for index := range h.agentShards {
+		shard := &h.agentShards[index]
+		shard.mu.RLock()
+		for _, agent := range shard.agents {
+			if h.presence.Unverified(agent.AgentID, agent.generation, now) {
+				stats.UnverifiedAgents++
+			}
+		}
+		shard.mu.RUnlock()
+	}
+	return stats
+}
+
 // noteControlDrop 是 Link 丢弃可丢控制帧时的唯一记账点（/stats 与 monitor 都从这里取数）。
 func (h *Hub) noteControlDrop(link *Link, frameType string) {
 	total := h.controlDrops.Add(1)
@@ -216,6 +245,11 @@ type AgentLink struct {
 	AgentID   string
 	AccountID string
 	Name      string
+
+	// generation 是 presence 在准入时分配的连接代编号；迟到的事件按它对齐，
+	// 不会把新连接的状态改错。attachedAt 是这一代挂上注册表的时刻。
+	generation uint64
+	attachedAt time.Time
 
 	// devices 只在所属分片的写锁下修改（同一个 agent 永远落在同一片）。
 	devices map[string]*DeviceLink
@@ -255,18 +289,132 @@ func (h *Hub) Agent(agentID string) *AgentLink {
 	return shard.agents[agentID]
 }
 
-// AttachAgent 登记一条连接器连接，并把旧连接顶掉。
+// AgentRefusal 是一次被连接生命周期策略拒绝的连接器握手。
 //
-// 设备在电脑掉线时**不关闭**（它们只是被告知 host offline 然后等），所以新连接
-// 要把仍然活着的设备全部认领回来：一台设备不会因为电脑重连而重新握手。
-func (h *Hub) AttachAgent(ctx context.Context, agent store.Agent, sink Sink) *AgentLink {
+// 拒绝发生在 WebSocket 升级**之前**（wsapi 据此回 429）：连接器把非 101 的握手
+// 当成连接失败，自己那套指数退避会逐步拉长间隔；如果先升级再关（4001），连接器
+// 的会话循环会把退避归零，又回到秒级重连——这是 2026-10-23 两次回滚的共同形态。
+type AgentRefusal struct {
+	Reason     string
+	RetryAfter time.Duration
+}
+
+func (e *AgentRefusal) Error() string {
+	return "relay: refused the agent connection (" + e.Reason + ")"
+}
+
+// AdmitAgent 是连接器握手前的准入判定，返回一张票或一次拒绝。
+//
+// 判定本身在 internal/presence；这里只做它要求的两件 hub 才能做的事：
+//
+//  1. 策略说「等旧连接退出」时，等在旧连接的 Done 上（有界，随请求 ctx 取消）；
+//  2. 等不到就按抑制记账并拒绝，不把旧连接顶掉。
+//
+// 旧连接已退出（正常网络抖动后的重连）时 presence 直接 Allow，没有任何等待。
+func (h *Hub) AdmitAgent(ctx context.Context, agent store.Agent) (*presence.Ticket, *AgentRefusal) {
+	refuse := func(decision presence.Decision) (*presence.Ticket, *AgentRefusal) {
+		h.noteAgentRefusal(agent, decision)
+		return nil, &AgentRefusal{Reason: decision.Reason, RetryAfter: decision.RetryAfter}
+	}
+	for attempt := 0; attempt < 2; attempt++ {
+		now := time.Now()
+		current := h.Agent(agent.AgentID)
+		observation := presence.Observation{}
+		if current != nil && !current.Closed() {
+			observation = presence.Observation{
+				Connected: true, Generation: current.generation,
+				AttachedAt: current.attachedAt, LastInbound: current.LastInbound(),
+			}
+		}
+		decision := h.presence.Admit(agent.AgentID, now, observation)
+		switch decision.Verdict {
+		case presence.Allow:
+			return h.presence.Grant(agent.AgentID), nil
+		case presence.Refuse:
+			return refuse(decision)
+		case presence.Wait:
+			if current == nil || attempt > 0 {
+				// 第二次仍然只能等：这不是「旧连接正要退出」，而是「它还在用」。
+				return refuse(h.presence.Suppress(agent.AgentID, presence.ReasonDuplicate, time.Now()))
+			}
+			exited, canceled := waitForOld(current.Done(), decision.WaitFor, ctx)
+			if canceled {
+				// 客户端在等待期间自己走了：不记账（不是一次被抑制的到达）。
+				return nil, &AgentRefusal{Reason: "client-gone", RetryAfter: decision.WaitFor}
+			}
+			if !exited {
+				return refuse(h.presence.Suppress(agent.AgentID, presence.ReasonDuplicate, time.Now()))
+			}
+			// 旧连接在窗口内退出了：再问一次，这次会走「已退出」的立即允许。
+		}
+	}
+	return refuse(h.presence.Suppress(agent.AgentID, presence.ReasonDuplicate, time.Now()))
+}
+
+// noteAgentRefusal 记一条拒绝日志；频率由 presence 控制（同一 agent 每分钟一条
+// Info，其余降到 Debug），风暴不会把 journal 冲掉。
+func (h *Hub) noteAgentRefusal(agent store.Agent, decision presence.Decision) {
+	level := slog.LevelDebug
+	if decision.Log {
+		level = slog.LevelInfo
+	}
+	message := "relay: refused a duplicate agent connection"
+	if decision.Reason == presence.ReasonUnverified {
+		message = "relay: refused a reconnect from an agent that never reported its versions; " +
+			"backing off"
+	}
+	h.log.Log(context.Background(), level, message,
+		"agentId", agent.AgentID, "name", agent.Name, "reason", decision.Reason,
+		"retryAfterMs", decision.RetryAfter.Milliseconds(), "streak", decision.Streak)
+}
+
+// waitForOld 等旧连接的写循环退出；返回 (退出了, 请求被取消)。
+func waitForOld(done <-chan struct{}, timeout time.Duration, ctx context.Context) (bool, bool) {
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-done:
+		return true, false
+	case <-timer.C:
+		return false, false
+	case <-ctx.Done():
+		return false, true
+	}
+}
+
+// supersedeDrain 是顶替一条旧连接时等待它退出写循环的上限。
+//
+// 能走到顶替这一步，旧连接要么已经僵死、要么已经在关闭路上，正常情况下是毫秒级；
+// 上限只防一条卡在坏 socket 上的写循环把新连接永远挡在门外。
+const supersedeDrain = 2 * time.Second
+
+// AttachAgent 登记一条已通过准入的连接器连接，并让旧连接按顺序退场。
+//
+// 关闭顺序是固定的，且必须在注册新连接**之前**完成：
+//
+//	① 标记旧连接退出（superseded）：路由层从此丢弃它的帧，读侧不再影响世界；
+//	② RequestClose 走旧连接自己的队列：排空写队列、必要时发关闭帧；
+//	③ 等写循环退出（有界），socket 随之关闭，读循环自行收尾；
+//	④ 才把新连接登记进注册表并启动写循环。
+//
+// 这样两台电脑的帧不会同时写同一批设备，连接器也不会在旧 socket 还活着时看到
+// 新连接已经接管。旧连接退出后设备不关闭，由新连接重新认领（见 adoptDevices）。
+func (h *Hub) AttachAgent(ctx context.Context, agent store.Agent, sink Sink,
+	ticket *presence.Ticket) *AgentLink {
+	if ticket == nil {
+		// 票只能来自 AdmitAgent：没有票就挂接等于绕过准入，这条路径不允许存在。
+		panic("hub: AttachAgent requires a ticket from AdmitAgent")
+	}
+	now := time.Now()
 	link := &AgentLink{
 		Link: newLink(sink, "agent "+agent.AgentID, h.limits.AgentQueueDepth,
 			h.limits.QueueBytes, h.log, h.linkOptions),
-		AgentID:   agent.AgentID,
-		AccountID: agent.AccountID,
-		Name:      agent.Name,
-		devices:   map[string]*DeviceLink{},
+		AgentID:    agent.AgentID,
+		AccountID:  agent.AccountID,
+		Name:       agent.Name,
+		generation: ticket.Generation(),
+		attachedAt: now,
+		devices:    map[string]*DeviceLink{},
 	}
 	// 文件上行桥的字节额度跟着**这条**连接器链路走：帧压在它的队列里，额度就该
 	// 记在它头上；连接器被顶替时新链路拿一份新的，旧链路的额度随旧队列一起清空。
@@ -274,18 +422,13 @@ func (h *Hub) AttachAgent(ctx context.Context, agent store.Agent, sink Sink) *Ag
 	// 连接器链路的心跳是 DLP ping：连接器的读循环会把 ping 原样回成 pong。
 	link.Link.heartbeatKind = heartbeatDLP
 
+	h.retireAgent(agent.AgentID)
+
 	shard := &h.agentShards[shardIndex(agent.AgentID)]
 	shard.mu.Lock()
-	previous := shard.agents[agent.AgentID]
 	shard.agents[agent.AgentID] = link
 	shard.mu.Unlock()
-
-	if previous != nil && previous != link {
-		// 旧连接必须真的被关掉：否则两台电脑的帧会同时往同一批设备上写。
-		previous.superseded.Store(true)
-		previous.RequestClose(dlp.CloseSuperseded, "superseded by a new agent connection")
-		h.log.Info("relay: agent superseded by a new connection", "agentId", agent.AgentID)
-	}
+	ticket.Commit(now)
 
 	// 写循环要先于 adoptDevices / tellAgentAboutTheGone 启动：这两步会发必达的
 	// deviceAttach/deviceDetach 控制帧，优先队列满时它们要等写循环腾位置。
@@ -295,8 +438,45 @@ func (h *Hub) AttachAgent(ctx context.Context, agent store.Agent, sink Sink) *Ag
 	h.tellAgentAboutTheGone(ctx, link, agent)
 
 	h.log.Info("relay: agent connected",
-		"agentId", agent.AgentID, "name", agent.Name, "devices", adopted)
+		"agentId", agent.AgentID, "name", agent.Name, "devices", adopted,
+		"generation", link.generation)
 	return link
+}
+
+// retireAgent 让某个 agent 的旧连接按「停读 → 排空写 → 关闭」的顺序退场。
+//
+// 返回时旧连接的写循环要么已经退出，要么等满了 supersedeDrain（记一条 WARN）。
+func (h *Hub) retireAgent(agentID string) {
+	previous := h.Agent(agentID)
+	if previous == nil {
+		return
+	}
+	if !previous.Closed() {
+		// superseded 必须在 RequestClose 之前置位：读循环可能还有最后的帧在
+		// 路上，RouteFromAgent 按它丢弃，旧连接不能在新连接登记后继续改状态。
+		previous.superseded.Store(true)
+		previous.RequestClose(dlp.CloseSuperseded, "superseded by a new agent connection")
+		h.presence.NoteSuperseded()
+		h.log.Info("relay: agent superseded by a new connection",
+			"agentId", agentID, "generation", previous.generation)
+	}
+	if !waitForOldLink(previous.Done(), supersedeDrain) {
+		h.log.Warn("relay: the superseded agent link did not finish closing in time",
+			"agentId", agentID, "generation", previous.generation, "drain", supersedeDrain)
+	}
+}
+
+// waitForOldLink 是 retireAgent 的无 ctx 等待版本（关闭顺序不能被单个请求的
+// 取消打断，否则新旧连接会交错）。
+func waitForOldLink(done <-chan struct{}, timeout time.Duration) bool {
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-done:
+		return true
+	case <-timer.C:
+		return false
+	}
 }
 
 // adoptDevices 把仍然活着的设备挂回新连接，并让两边都看到当前状态。
@@ -410,6 +590,13 @@ func (h *Hub) tellAgentAboutTheGone(ctx context.Context, link *AgentLink, agent 
 
 // DetachAgent 摘掉一条连接器连接；设备保留并被告知 host offline。
 func (h *Hub) DetachAgent(link *AgentLink) {
+	// 生命周期策略先记账：一次版本都没报就退出的连接器会被标记 unverified，
+	// 它接下来的重连走有界退避。被顶替的旧连接按代编号自然被忽略。
+	if h.presence.Detached(link.AgentID, link.generation, time.Now()) {
+		h.log.Warn("relay: an agent disconnected without ever reporting its versions; "+
+			"its reconnects will be backed off", "agentId", link.AgentID, "name", link.Name,
+			"generation", link.generation)
+	}
 	shard := &h.agentShards[shardIndex(link.AgentID)]
 	shard.mu.Lock()
 	if shard.agents[link.AgentID] != link {
@@ -819,6 +1006,11 @@ func (h *Hub) RouteFromAgent(link *AgentLink, wire dlp.Wire) {
 			owned.Release()
 		}
 	}()
+	if link.superseded.Load() {
+		// 旧连接正在退场（新连接已经或即将登记）：它读循环里残留的帧不能再认领设备、
+		// 记账或发推送，否则新旧两条连接会同时改写同一份世界状态。
+		return
+	}
 
 	var hostStatus dlp.Frame
 	switch {
@@ -1223,6 +1415,13 @@ func (h *Hub) noteAgentVersions(link *AgentLink, frame dlp.Frame) {
 	}
 	link.connectorVersion, link.hostVersion = connector, host
 	link.versionMu.Unlock()
+
+	// 这条连接完成了初始化：解除该 agent 的 unverified 标记与重连退避。
+	// 只认当前代（迟到的旧连接上报不能给新连接背书）。
+	if h.presence.Verified(link.AgentID, link.generation, time.Now()) {
+		h.log.Info("relay: agent cleared its unverified state",
+			"agentId", link.AgentID, "connector", connector, "host", host)
+	}
 
 	if h.store == nil {
 		return

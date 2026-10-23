@@ -13,7 +13,9 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/coder/websocket"
@@ -22,6 +24,7 @@ import (
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/authn"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/dlp"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/hub"
+	"github.com/jayantTang/DSH_Mobile/relay-go/internal/presence"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/store"
 )
 
@@ -113,13 +116,40 @@ func (h *Handlers) ServeAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 连接生命周期准入：必须在**升级之前**判定。先升级再以 4001 关掉，连接器会
+	// 把一次会话结束当成「连接成功」并把退避归零，于是每秒重连一次；握手失败则
+	// 走连接器自己的指数退避。
+	ticket, refusal := h.hub.AdmitAgent(r.Context(), agent)
+	if refusal != nil {
+		seconds := int(math.Ceil(refusal.RetryAfter.Seconds()))
+		if seconds < 1 {
+			seconds = 1
+		}
+		w.Header().Set("Retry-After", strconv.Itoa(seconds))
+		message := "the relay is still holding this agent's previous connection"
+		if refusal.Reason == presence.ReasonUnverified {
+			message = "this agent has not reported its connector version; retry after the backoff"
+		}
+		apierr.Write(w, http.StatusTooManyRequests, "presence/refused", message,
+			map[string]any{"reason": refusal.Reason, "retryAfterMs": refusal.RetryAfter.Milliseconds()})
+		// 拒绝日志的唯一汇总点在 hub（按 agent 限频）；这里只留 Debug，风暴下不会
+		// 每个握手一行 Info 把 journal 冲掉。
+		h.log.Debug("relay: refused an agent handshake",
+			"agentId", agent.AgentID, "reason", refusal.Reason,
+			"retryAfterMs", refusal.RetryAfter.Milliseconds())
+		return
+	}
+	// 升级失败或客户端在升级前断开：把票还回去，否则同一 agent 的下一次到达会
+	// 被当成「另一条到达还在进行中」。
+	defer ticket.Release()
+
 	conn, err := h.accept(w, r)
 	if err != nil {
 		return // Accept 已经把拒绝写进 HTTP 响应
 	}
 	conn.SetReadLimit(int64(h.limits.MaxFrameBytes))
 
-	link := h.hub.AttachAgent(r.Context(), agent, &sink{conn: conn})
+	link := h.hub.AttachAgent(r.Context(), agent, &sink{conn: conn}, ticket)
 	h.touchAgent(r.Context(), agent.AgentID)
 	h.readAgent(r.Context(), conn, link)
 

@@ -1,0 +1,14 @@
+[Unit]
+Description=Deliver DSH relay (Go) incident alerts every 2 minutes
+
+[Timer]
+# 两分钟一趟，与 Python 版 dsh-relay-alerts.timer 完全一致：告警不是实时的救命
+# 通道，晚两分钟拿到比把人叫醒更重要；队列在磁盘上，relay 挂掉期间攒下的记录
+# 照样会被投出去（重启后第一次触发）。
+OnBootSec=3min
+OnUnitActiveSec=2min
+AccuracySec=30s
+Unit=dsh-relay-go-alerts.service
+
+[Install]
+WantedBy=timers.target

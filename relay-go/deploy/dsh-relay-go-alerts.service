@@ -1,0 +1,38 @@
+[Unit]
+Description=DSH relay (Go) incident alerts -> owner inbox
+Documentation=https://github.com/deepseek-ai/dsh
+# 与 dsh-relay-go.service 同机；信箱服务不在这台机器上时 dsh-mail.service 不存在，
+# systemd 会忽略不存在的 After 单元（与本目录 Python 版 unit 同口径）。
+After=network-online.target dsh-relay-go.service dsh-mail.service
+Wants=network-online.target
+
+# 中转把「没见过的异常 / 连接反复断开 / 上游坏字符 / 控制帧丢弃」写进
+# /var/lib/dsh-relay/alerts，这一趟取走并投进 owner 的信箱。
+#
+# 为什么是独立进程而不是 relay 自己发信：relay 只负责转发，不该持有发信凭据，也
+# 不该因为发信慢或失败而影响转发（dsh-relay-go.service 是 ProtectSystem=strict）。
+#
+# 为什么以 root 跑：告警队列属于 dsh-relay（目录 0700），要投的信箱库属于 dsh-mail。
+# 跨这两个用户只做这一件事，所以本 unit 只装必要的路径，不写任何用户数据。
+#
+# 与 Python 版 dsh-relay-alerts.service 的差别只有可执行文件：投递逻辑已经 Go 化
+# （`dsh-relay alert-dispatch`，与 `dsh-relay admin alert-dispatch` 同一份实现）。
+# 两个 unit 的 timer 独立命名，可以并存观察；切换完成后停用 Python 那一套即可。
+[Service]
+Type=oneshot
+Environment=DLP_ALERT_DIR=/var/lib/dsh-relay/alerts
+Environment=DLP_ALERT_MAIL_DB=/var/lib/dsh-mail/mail.db
+Environment=DLP_ALERT_MAIL_ADMIN=/opt/dsh-mail/admin.py
+Environment=DLP_ALERT_MAIL_PYTHON=/opt/dsh-mail/.venv/bin/python
+# 收件账号（owner 本人 = 开发者账号）。真值不写进仓库，由 deploy.sh 在文件不存在时
+# 写一份占位模板、由人填；与 apns.env 同一条约定。Go 版从 DLP_ALERT_ACCOUNT 读，
+# 也可以用 `--account` 显式给。
+EnvironmentFile=-/etc/dsh-relay/alert.env
+ExecStart=/opt/dsh-relay-go/bin/dsh-relay alert-dispatch
+
+Nice=10
+NoNewPrivileges=yes
+PrivateTmp=yes
+# 一次投递最多 60 秒（Go 侧 alertMailTimeout）；卡住就杀掉，下一趟再试——
+# 队列不会丢，失败会把记录放回去。
+TimeoutStartSec=120

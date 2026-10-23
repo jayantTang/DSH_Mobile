@@ -12,7 +12,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jayantTang/DSH_Mobile/relay-go/internal/hub"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/monitor"
+	"github.com/jayantTang/DSH_Mobile/relay-go/internal/presence"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/store"
 )
 
@@ -641,9 +643,17 @@ func TestStatsLoopbackOnly(t *testing.T) {
 	}
 	body := decodeJSON(t, rec)
 	for _, key := range []string{"ok", "version", "now", "limits", "load", "traffic",
-		"controlDrops", "snapshot", "deviceRecords", "today"} {
+		"controlDrops", "snapshot", "deviceRecords", "today",
+		// 连接生命周期字段（M7 新增；旧字段一个没动）。
+		"superseded", "reconnectStorm", "unverifiedAgents",
+		"unverifiedTotal", "refusedDuplicate", "refusedUnverified"} {
 		if _, ok := body[key]; !ok {
 			t.Fatalf("/stats 缺字段 %q: %v", key, body)
+		}
+	}
+	for _, key := range []string{"superseded", "reconnectStorm", "unverifiedAgents"} {
+		if body[key] != float64(0) {
+			t.Fatalf("没有连接时 %s = %v，期望 0", key, body[key])
 		}
 	}
 	if drops := body["controlDrops"]; drops != float64(0) {
@@ -683,6 +693,88 @@ func TestStatsLoopbackOnly(t *testing.T) {
 	nonLoopback := httptest.NewRecorder()
 	api.handler.ServeHTTP(nonLoopback, req)
 	assertEnvelope(t, nonLoopback, http.StatusNotFound, "not-found")
+}
+
+// TestStatsReturnsHTMLWhenAsked 钉住内容协商：Accept: text/html 拿运维页，
+// 其余客户端继续拿 JSON（旧读法不变）。
+func TestStatsReturnsHTMLWhenAsked(t *testing.T) {
+	api := newTestAPI(t)
+	req := httptest.NewRequest(http.MethodGet, "/stats", nil)
+	req.RemoteAddr = "127.0.0.1:51000"
+	req.Header.Set("Accept", "text/html,application/xhtml+xml")
+	rec := httptest.NewRecorder()
+	api.handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/stats (html) = %d: %s", rec.Code, rec.Body.String())
+	}
+	if contentType := rec.Header().Get("Content-Type"); !strings.HasPrefix(contentType, "text/html") {
+		t.Fatalf("Content-Type = %q，期望 text/html", contentType)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{"DLP relay", "实时负载与流量", "每 agent 设备数", "今日用量"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("运维页缺 %q", want)
+		}
+	}
+}
+
+// TestStatsPageMatchesThePythonOperationalPage 用一份真实的 statsResponse 渲染，
+// 逐项核对与 Python `_stats_page` 同口径的数字：连接数、限额、死记录、每设备流量、
+// 今日用量；设备名必须转义。
+func TestStatsPageMatchesThePythonOperationalPage(t *testing.T) {
+	payload := statsResponse{
+		OK:      true,
+		Version: ProtocolVersion,
+		Now:     store.NowMS(),
+		Limits: hub.Limits{
+			MaxFrameBytes: 32 << 20, QueueDepth: 512, AgentQueueDepth: 4096,
+			QueueBytes: 8 << 20, DeadDeviceWarnThreshold: 200,
+			MaxDevicesPerAgent: 8, DeviceBytesPerSecond: 102400, DeviceDailyBytes: 5 << 30,
+		}.Describe(),
+		Load: statsLoad{Agents: 2, Devices: 1},
+		Traffic: hub.Traffic{TotalEgressBytes: 3 << 20, Devices: []hub.TrafficDevice{{
+			DeviceID: "dev_1", Name: `<script>alert(1)</script>`, EgressBytes: 2 << 20,
+			PacedSeconds: 1.25, QuotaRemainingBytes: 100 << 20,
+		}}},
+		DeviceRecords: store.Hygiene{Total: 5, Live: 3, Revoked: 1, Expired: 1, Dead: 2},
+		Today: store.TodayUsage{
+			Day: 20261023, TotalEgressBytes: 1 << 20,
+			Devices: []store.TodayDevice{{DeviceID: "dev_1", AccountID: "acc_1",
+				EgressBytes: 1 << 20, Connections: 1}},
+			Accounts: []store.TodayAccount{{AccountID: "acc_1", Devices: 1, EgressBytes: 1 << 20}},
+		},
+		Stats: presence.Stats{Superseded: 3, ReconnectStorm: 7, UnverifiedAgents: 1},
+	}
+
+	var buffer bytes.Buffer
+	if err := statsPageTemplate.Execute(&buffer, newStatsPageData(payload)); err != nil {
+		t.Fatalf("渲染运维页: %v", err)
+	}
+	body := buffer.String()
+	for _, want := range []string{
+		"agent <span class=big>2</span> 个",
+		"连接设备 <span class=big>1</span> 台",
+		"本次启动累计出口 <span class=big>3.00 MB</span>",
+		"死设备记录 <span class=big>2</span> 条",
+		"已撤销 1", "已过期 1", "在用 3",
+		"每 agent 设备数 8",
+		"102400 B/s", "5368709120 B",
+		"<td class=num>2.00 MB</td>", "<td class=num>1.2s</td>", "<td class=num>100.0 MB</td>",
+		"今日用量（本地日 2026-10-23）",
+		"总出口 <span class=big>1.00 MB</span>", "1 台设备",
+		"acc_1",
+		"顶替 3 次", "重复连接抑制 7 次", "未上报版本的在线连接 1 条",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("运维页缺 %q\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "<script>alert(1)</script>") {
+		t.Fatal("设备名没有 HTML 转义")
+	}
+	if !strings.Contains(body, "&lt;script&gt;alert(1)&lt;/script&gt;") {
+		t.Fatalf("设备名的转义形态不对：%s", body)
+	}
 }
 
 func TestCORSAndBasePath(t *testing.T) {

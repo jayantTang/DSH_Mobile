@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/dlp"
+	"github.com/jayantTang/DSH_Mobile/relay-go/internal/presence"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/push"
 )
 
@@ -327,9 +328,13 @@ func TestAnAgentDisconnectIsReportedToTheMonitor(t *testing.T) {
 
 func TestASupersededAgentDoesNotReportADisconnect(t *testing.T) {
 	reporter := &fakeReporter{}
-	f := newFixture(t, Options{Monitor: reporter})
+	f := newFixture(t, Options{
+		Monitor:  reporter,
+		Presence: presence.Options{ActiveIdle: time.Millisecond},
+	})
 	owner := f.newTenant("flapper")
 	first, _ := f.attachAgent(owner)
+	time.Sleep(5 * time.Millisecond) // 旧连接过了僵死窗口
 	second, _ := f.attachAgent(owner)
 
 	f.hub.DetachAgent(first) // 旧连接收尾：被顶替不算断开

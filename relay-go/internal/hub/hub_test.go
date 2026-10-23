@@ -1,7 +1,6 @@
 package hub
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -9,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/dlp"
+	"github.com/jayantTang/DSH_Mobile/relay-go/internal/presence"
 )
 
 // TestDeviceFramesAreStampedWithTheDeviceID 钉住设备 → 电脑的寻址约定：
@@ -167,12 +167,17 @@ func TestHelloWithTheWrongAgentIsFatal(t *testing.T) {
 
 // TestAgentReconnectReAdoptsLiveDevices：电脑重连不关闭设备，新连接要把它们认回来。
 func TestAgentReconnectReAdoptsLiveDevices(t *testing.T) {
-	fixture := newFixture(t, Options{Limits: DefaultLimits()})
+	// 顶替只发生在旧连接僵死时：把窗口调到毫秒级，并在两次连接之间让它空闲过界。
+	fixture := newFixture(t, Options{
+		Limits:   DefaultLimits(),
+		Presence: presence.Options{ActiveIdle: time.Millisecond},
+	})
 	owner := fixture.newTenant("M2-mac")
 	device := fixture.pairDevice(owner, "M2-iPhone")
 	firstAgent, firstSink := fixture.attachAgent(owner)
 	_, deviceSink := fixture.mustAttachDevice(device)
 	waitFrame(t, firstSink, "deviceAttach", isKind("deviceAttach"))
+	time.Sleep(5 * time.Millisecond)
 
 	secondAgent, secondSink := fixture.attachAgent(owner)
 	attach := waitFrame(t, secondSink, "重连后的 deviceAttach", isKind("deviceAttach"))
@@ -536,7 +541,7 @@ func TestHeartbeatClosesADeadConnection(t *testing.T) {
 	})
 	owner := fixture.newTenant("M2-mac")
 	sink := newFakeSink()
-	link := fixture.hub.AttachAgent(context.Background(), owner.agent, sink)
+	link := fixture.attachAgentWithSink(owner, sink)
 
 	waitFor(t, "心跳超时后关闭", func() bool { return closeStatus(sink) == dlp.CloseGoingAway })
 	select {
@@ -561,7 +566,7 @@ func TestAgentLinkStaysUpWhilePongsArrive(t *testing.T) {
 	})
 	owner := fixture.newTenant("M2-mac")
 	sink := newFakeSink()
-	link := fixture.hub.AttachAgent(context.Background(), owner.agent, sink)
+	link := fixture.attachAgentWithSink(owner, sink)
 	stop := make(chan struct{})
 	done := make(chan struct{})
 	go func() {

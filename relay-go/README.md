@@ -47,6 +47,12 @@ curl -s http://127.0.0.1:8787/healthz
 ./bin/dsh-relay admin alert-dispatch --alert-dir /var/lib/dsh-relay/alerts \
   --account acc_owner --mail-db /var/lib/dsh-mail/mail.db \
   --mail-admin /opt/dsh-mail/admin.py --mail-python /opt/dsh-mail/.venv/bin/python
+
+# 运维 timer 的两个顶层子命令（与 admin 的同名动作共用实现）
+./bin/dsh-relay alert-dispatch --dry-run --alert-dir /var/lib/dsh-relay/alerts
+./bin/dsh-relay purge --db state.db --all-agents              # 预演
+./bin/dsh-relay purge --db state.db --all-agents --apply \
+  --backup-dir backups --keep 14                              # 真删（先备份再删）
 ```
 
 健康检查响应与 Python 版逐字段一致：
@@ -232,6 +238,45 @@ pprof 在 M2.5 加入（DESIGN §8 要求）。
 | 失效令牌 | `410`、`BadDeviceToken`、`Unregistered`、`DeviceTokenNotForTopic` → `deadToken=true`；hub 与 `push-test` 据此清掉登记 |
 | 投递时机 | 只推**此刻不在线**、有登记、且该类开关打开的设备和类型；投递在 goroutine 里，不阻塞转发 |
 
+## 连接生命周期（M7）
+
+代码在 `internal/presence/`；hub 只做编排（等待旧连接退出、按顺序关闭、把事件转给
+策略层），策略窗口与计数都在这个独立包里。
+
+- **重复连接抑制**：同一 agent 的旧连接仍然活跃时，新连接不会被立即接受并顶替。
+  hub 先等旧连接自己退出（`WaitForOld`，默认 1.5 秒；正常网络抖动/连接器重启时旧
+  socket 已经关了，这一步是毫秒级），等不到才在**握手前**回 429。连接器把非 101 的
+  握手当成连接失败，走它自己的指数退避；先升级再以 4001 关闭会让它把退避归零，
+  回到每秒重连（2026-10-23 两次回滚的形态）。
+- **僵死判据**：连接从「挂上」与「最后入站」里较晚的时刻起算，超过 `ActiveIdle`
+  （45 秒，覆盖中转 15 秒/连接器 20 秒两套心跳）没有任何入站帧才算僵死，允许被新
+  连接顶替。刚连上还没发过帧的连接**不算**僵死。
+- **未上报版本的连接器**：连上超过 `HelloTimeout`（10 秒）仍没有
+  `connectorVersion/hostVersion`，或一次版本都没报就断开，标记 `unverified`；之后
+  的重连按 5 秒 → 10 秒 → … → 60 秒退避（只在允许窗口过后升一档，风暴本身不会把
+  窗口无限拉长）。上报版本即清除标记与退避。扫描是一个进程级 5 秒循环，不为每条
+  连接起定时器。
+- **关闭顺序**：标记旧连接 superseded（路由层丢弃它的残留帧）→ `RequestClose`
+  排空写队列 → 等写循环退出（上限 2 秒）→ 才登记并启动新连接。关闭码仍是 4001
+  （协议语义不变）；循环的消除靠“不关仍在工作的连接”与“握手前拒绝”，不靠换关闭码。
+- `/stats` 新增 `superseded` / `reconnectStorm` / `unverifiedAgents`，以及细分
+  `unverifiedTotal` / `refusedDuplicate` / `refusedUnverified`；旧字段不变。
+  `Accept: text/html` 时返回与 Python 运维页同口径的页面（连接数、限额、死设备记录、
+  每设备流量、今日用量），其余客户端继续拿 JSON。
+
+## 运维 timer（M7）
+
+`deploy/` 交付四个 unit，**默认不启用**（启用/回退顺序见 `deploy/README.md` §10.1）：
+
+| unit | 动作 | Python 对应物 |
+|---|---|---|
+| `dsh-relay-go-alerts.{service,timer}` | `dsh-relay alert-dispatch`（每 2 分钟） | `dsh-relay-alerts.*` → `alert-dispatch.py` |
+| `dsh-relay-go-purge.{service,timer}` | `dsh-relay purge --all-agents --apply --keep 14`（每天 04:30） | `dsh-relay-purge.*` → `purge-revoked-devices.py` |
+
+`dsh-relay purge` 是设备死记录的清理（只删已撤销/已过期，先做整库备份并核对行数），
+与 `dsh-relay admin purge`（删过期配对码，对应 `admin.py purge`）不是同一件事。
+不带 `--apply` 只预演；没有待删行时不写备份。
+
 ## 监控告警（M3b2）
 
 代码在 `internal/monitor/`；开关是 `DLP_ALERT_DIR`（空 = 完全关闭）。
@@ -285,11 +330,13 @@ cmd/dsh-relay/      serve / admin 子命令（参数、store、hub、HTTP、信�
 cmd/driverbench/    SQLite 驱动基准（mattn vs modernc）
 internal/config/    参数、环境变量、默认值与换算
 internal/store/     SQLite：schema、迁移、账户/电脑/邀请码/配对码/设备/状态/用量仓储
-internal/httpapi/   HTTP 端点、错误信封、Bearer 鉴权、CORS、限流、/stats、/internal/*
+internal/httpapi/   HTTP 端点、错误信封、Bearer 鉴权、CORS、限流、/stats（JSON+HTML）、/internal/*
 internal/files/     /files/up 与 /files/down 的 HTTP 面（分片、Range/ETag、正文流、计费）
 internal/dlp/       帧编解码、结构校验、错误帧、关闭码、deviceId 注入/剥离、代理项诊断
 internal/hub/       分片注册表、路由、有界队列与写循环、心跳、背压、设备上限、配额、
                     文件桥状态机、用量账本与冲盘、撤销对账、/stats 的 load/traffic/snapshot
+internal/presence/  连接器准入策略：重复连接抑制、僵死判定、未验证退避与计数
+internal/purge/     `dsh-relay purge`：设备死记录清理（备份、核对、--keep 轮转）
 internal/wsapi/     /link/agent 与 /link/device 的握手、鉴权与读循环
 internal/authn/     Bearer 与设备子协议凭据解析（HTTP 与 WS 共用一份）
 internal/apierr/    错误信封（HTTP 与 WS 握手共用一份）
@@ -322,9 +369,10 @@ internal/admincli/  管理子命令（account-create / agent-register / code-min
 1. `--db` 默认值是工作目录下的 `.local/state.db`。Python 版落在源码目录下；生产部署
    systemd 显式传 `--db`，不受影响。
 2. `DLP_DB=""` 视为未设置；Python 版会把空路径交给 sqlite3，得到一个临时库。
-3. `/stats` 只返回 JSON，不按 `Accept: text/html` 渲染运维页；`load`/`traffic`/
-   `snapshot` 已由 hub 实时填充，`traffic.devices[]` 与 `snapshot.*` 多一个
-   `droppedFrames`（DESIGN §8 要求丢帧可见）。
+3. `/stats` 在 `Accept: text/html` 时渲染运维页（与 Python 同口径，数字格式可能
+   略有差异，例如 102400 与 102400.0）；`load`/`traffic`/`snapshot` 已由 hub 实时
+   填充，`traffic.devices[]` 与 `snapshot.*` 多一个 `droppedFrames`。另新增连接
+   生命周期字段（见“连接生命周期”一节），旧字段不变。
 4. 文件通道的四处实现差异：① 冲盘用 `Drain`（原子的 Snapshot+清空）而不是
    `Snapshot` 后再清，避免两份状态；② 下载即使设备没有 WebSocket 也按 deviceId
    记日额度（Python 只在 `link` 存在时计费）；③ 被新连接顶替的旧连接器上的文件桥
@@ -356,6 +404,11 @@ internal/admincli/  管理子命令（account-create / agent-register / code-min
     这一处用整数相减，跨月会把边界算错（本仓库按语义修正，输出仅在跨月日期不同）。
 17. `alert-dispatch` 放回队列时，如果追加失败会**保留** `alerts.taken.jsonl`
     （Python 的 finally 会删掉它，可能丢记录）；成功路径与正文逐字一致。
+18. 同一 agent 的旧连接仍活跃时，Go 版**拒绝**新握手（429，连接器自己退避），
+    Python 版立即接受新连接并以 4001 顶掉旧的。这是 M7 有意引入的行为差异：
+    后者会把异常连接器放大成秒级重连循环。
+19. 新增 `dsh-relay alert-dispatch` / `dsh-relay purge` 两个顶层运维子命令与四个
+    timer unit；`purge` 的手工输出是 JSON（Python 脚本是文本），安全约定一致。
 
 ## M4 之前仍未覆盖
 

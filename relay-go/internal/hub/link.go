@@ -400,6 +400,18 @@ func (l *Link) NoteInbound() {
 	l.lastInboundAt.Store(time.Now().UnixNano())
 }
 
+// LastInbound 是最后一次收到对端任意一帧的时刻；从未收到过时为零值。
+//
+// 连接生命周期策略用它区分「还活着的旧连接」与「僵死的旧连接」：后者可以被新
+// 连接顶替，前者不许（顶替一个仍在工作的连接正是重连风暴的成因）。
+func (l *Link) LastInbound() time.Time {
+	value := l.lastInboundAt.Load()
+	if value == 0 {
+		return time.Time{}
+	}
+	return time.Unix(0, value)
+}
+
 // NotePong 由读循环在收到 DLP pong 时调用：这是心跳最直接的活性证据。
 func (l *Link) NotePong() {
 	now := time.Now().UnixNano()

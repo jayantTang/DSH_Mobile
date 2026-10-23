@@ -35,7 +35,51 @@ func (h *Hub) StartBackground(ctx context.Context) {
 				h.revokeReconcileInterval.String() + " (0 = off)")
 			go h.revokeReconcileLoop(ctx)
 		}
+		// 连接生命周期扫描：只做一件小事——把「连上超过 helloTimeout 仍没上报
+		// 版本」的连接标成 unverified。一次遍历几十个 agent，不是热路径。
+		go h.presenceSweepLoop(ctx)
 	})
+}
+
+// presenceSweepLoop 周期标记未上报版本的连接器。
+//
+// 为什么不用每条连接一个定时器：连接数会随风暴涨落，每个连接再挂一个 goroutine
+// 正是要避免的放大；一个进程级扫描的代价与连接数成正比、次数固定。
+func (h *Hub) presenceSweepLoop(ctx context.Context) {
+	interval := h.presence.Options().SweepInterval
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-ticker.C:
+			h.sweepUnverified(now)
+		}
+	}
+}
+
+// sweepUnverified 标记一次并记一条 WARN；每条连接最多标记一次。
+func (h *Hub) sweepUnverified(now time.Time) {
+	for index := range h.agentShards {
+		shard := &h.agentShards[index]
+		shard.mu.RLock()
+		agents := make([]*AgentLink, 0, len(shard.agents))
+		for _, agent := range shard.agents {
+			agents = append(agents, agent)
+		}
+		shard.mu.RUnlock()
+		for _, agent := range agents {
+			if !h.presence.MarkUnverified(agent.AgentID, agent.generation, now) {
+				continue
+			}
+			h.log.Warn("relay: an agent has not reported its connector/host version; "+
+				"reconnect backoff armed",
+				"agentId", agent.AgentID, "name", agent.Name,
+				"connectedFor", now.Sub(agent.attachedAt).String(),
+				"helloTimeout", h.presence.Options().HelloTimeout.String())
+		}
+	}
 }
 
 // usageFlushLoop 是周期冲盘（Python hub._usage_flush_loop）。

@@ -1,0 +1,66 @@
+[Unit]
+Description=DSH Link Protocol (DLP) v1 relay (Go) — purge revoked/expired device records
+Documentation=https://github.com/deepseek-ai/dsh
+# 只是让清理别和 relay 的启动抢同一秒；relay 不在跑也照样清（直接改库，不经过它）。
+After=dsh-relay-go.service
+
+# 死设备记录会在**每次连接器连上时**被逐条重放给连接器（hub.tellAgentAboutTheGone），
+# 2012 条曾把连接器的处理链堵住（maintainers/ANALYSIS-20261012-connector-flap.md）。
+# 这个单元把库里已撤销 / 已过期的行真删掉——在用的设备一行都不碰（判据只有一份，
+# 在 internal/store/purge.go）。
+#
+# 与 Python 版 dsh-relay-purge.service 的差别只有可执行文件与
+# WorkingDirectory（Go 不需要 .pyc，故没有 PYTHONDONTWRITEBYTECODE）：
+# `dsh-relay purge` 是 purge-revoked-devices.py 的 Go 版本。注意它**不是**
+# `dsh-relay admin purge`（那个删的是过期配对码，对应 admin.py purge）。
+#
+# --all-agents：库里每个 agent 都清，不只是某个人的机器。
+# --backup-dir：relay 服务写不了 /root（unit 里有 ProtectHome=yes），而这个单元
+#   也用了同一套沙箱；备份必须落在唯一可写的 StateDirectory 里。
+# --keep 14：每天一份全库备份，留两周。这个数字是「能回滚到多久之前」，
+#   不是「清理本身需要两星期」——磁盘紧就调小。
+[Service]
+Type=oneshot
+User=dsh-relay
+Group=dsh-relay
+WorkingDirectory=/opt/dsh-relay-go
+
+ExecStart=/opt/dsh-relay-go/bin/dsh-relay purge \
+    --db /var/lib/dsh-relay/state.db --all-agents --apply \
+    --backup-dir /var/lib/dsh-relay/backups --keep 14
+
+# ── sandboxing ──────────────────────────────────────────────────────────────
+# 与 Python 版 dsh-relay-purge.service 同一套；唯一的差别是这里**不需要任何网络**
+# ——清理只读写本机 SQLite 文件，所以地址族收到 AF_UNIX。
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallFilter=@system-service
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0077
+
+# 唯一可写的位置（数据库与其 WAL、备份都在这里）。
+StateDirectory=dsh-relay
+StateDirectoryMode=0700
+ReadWritePaths=/var/lib/dsh-relay
+
+# 跑不完的清理不该在夜里堆积：一次全库 COUNT + 一次 DELETE + 一次 VACUUM INTO，
+# 分钟级已经算慢。
+TimeoutStartSec=600

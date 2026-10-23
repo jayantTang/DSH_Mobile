@@ -6,6 +6,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/jayantTang/DSH_Mobile/relay-go/internal/presence"
 )
 
 // bridgeCredits 的用例只回答四个问题：额度会不会等、等的人会不会被叫醒、
@@ -189,33 +191,40 @@ func TestBridgeCreditsOversizedRequestWaitsForAnEmptyBudget(t *testing.T) {
 	}
 }
 
+// 并发拿额度时占用不超过容量，且容量真的能被用满（第 33 个字节必须等）。
+//
+// 旧写法用「峰值接近 32」做下界，在 -race + 全包并行的负载下会因为 goroutine
+// 没被同时调度而偶发（实测 21/32）；这里改成显式的等待栅栏：16 个 worker 各占
+// 2 字节，占满后第 33 个字节必须阻塞，放行后全部归还。判定不再依赖调度时序。
 func TestBridgeCreditsConcurrentBudgetNeverExceeded(t *testing.T) {
-	credits := newBridgeCredits(32)
-	var peak int64
-	var peakMu sync.Mutex
+	const (
+		capacity  = 32
+		workers   = 16
+		perWorker = 2
+	)
+	credits := newBridgeCredits(capacity)
+	holding := make(chan struct{})
 	var group sync.WaitGroup
-	for worker := 0; worker < 16; worker++ {
+	for worker := 0; worker < workers; worker++ {
 		group.Add(1)
 		go func() {
 			defer group.Done()
-			for round := 0; round < 200; round++ {
-				if err := credits.Acquire(context.Background(), 3); err != nil {
-					t.Errorf("Acquire: %v", err)
-					return
-				}
-				peakMu.Lock()
-				if used := credits.InUse(); used > peak {
-					peak = used
-				}
-				peakMu.Unlock()
-				credits.Release(3)
+			if err := credits.Acquire(context.Background(), perWorker); err != nil {
+				t.Errorf("Acquire: %v", err)
+				return
 			}
+			<-holding
+			credits.Release(perWorker)
 		}()
 	}
+	waitFor(t, "全部额度被 worker 占满", func() bool { return credits.InUse() == capacity })
+
+	extra := acquireAsync(context.Background(), credits, 1)
+	expectStillWaiting(t, "额度占满时的第 33 个字节", extra)
+	close(holding)
+	waitGranted(t, "释放后的第 33 个字节", extra)
+	credits.Release(1)
 	group.Wait()
-	if peak > 32 || peak < 30 {
-		t.Fatalf("峰值占用 = %d，期望接近且不超过 32", peak)
-	}
 	if got := credits.InUse(); got != 0 {
 		t.Fatalf("全部归还后 InUse = %d", got)
 	}
@@ -270,7 +279,10 @@ func TestLinkReleasesQueuedCreditsWhenItStops(t *testing.T) {
 // 连接器被顶替：旧链路上等额度的请求立刻失败（不许无限期挂着），新链路拿一份
 // 全新的、未被旧连接占用的额度。旧链路已占用的部分在它退出时归零。
 func TestSupersededAgentReleasesBridgeCredits(t *testing.T) {
-	f := newFixture(t, Options{Limits: Limits{BridgeBytes: 2 << 20}})
+	f := newFixture(t, Options{
+		Limits:   Limits{BridgeBytes: 2 << 20},
+		Presence: presence.Options{ActiveIdle: time.Millisecond},
+	})
 	owner := f.newTenant("bridge-credits")
 	first, _ := f.attachAgent(owner)
 	if got := first.BridgeBytesCapacity(); got != 2<<20 {
@@ -283,7 +295,8 @@ func TestSupersededAgentReleasesBridgeCredits(t *testing.T) {
 	waiting := acquireAsync(context.Background(), first.credits, 1<<20)
 	waitFor(t, "等待者入队", func() bool { return first.BridgeBytesWaiting() == 1 })
 
-	second := f.hub.AttachAgent(context.Background(), owner.agent, newFakeSink())
+	time.Sleep(5 * time.Millisecond) // 让旧连接过了僵死窗口，允许顶替
+	second := f.hub.AttachAgent(context.Background(), owner.agent, newFakeSink(), f.admitAgent(owner))
 	t.Cleanup(func() { f.hub.DetachAgent(second) })
 
 	if err := waitError(t, "被顶替链路上的等待者", waiting); !errors.Is(err, ErrBridgeCreditClosed) {

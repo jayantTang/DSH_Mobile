@@ -93,16 +93,7 @@ func Main(args []string, getenv func(string) string, stdout, stderr io.Writer) i
 	// alert-dispatch 用的是**信箱的**库（--mail-db），不碰中转库；它必须能在没有
 	// 中转库的机器上跑（投递进程与转发进程是分开部署的）。
 	if command == cmdAlertDispatch {
-		if err := runAlertDispatch(commandArgs, getenv, stdout, stderr); err != nil {
-			var usageErr usageError
-			if errors.As(err, &usageErr) {
-				fmt.Fprintf(stderr, "dsh-relay admin %s: %v\n", command, err)
-				return 2
-			}
-			fmt.Fprintf(stderr, "dsh-relay admin: %v\n", err)
-			return 3
-		}
-		return 0
+		return AlertDispatch(commandArgs, getenv, stdout, stderr)
 	}
 
 	// 打开库会建目录、建表、迁移；admin 与 serve 用同一套 schema 口径。
@@ -359,4 +350,21 @@ func qrPayload(relay, code string) string {
 // enrollCommand 是收到邀请码的人在自己电脑上跑的那一条命令。
 func enrollCommand(relay, code string) string {
 	return fmt.Sprintf("dsh-mobile-link enroll --invite %s --relay %s", code, relay)
+}
+
+// AlertDispatch 是 `dsh-relay alert-dispatch`（运维 timer）的入口。
+//
+// 与 `dsh-relay admin alert-dispatch` 共用同一份 runAlertDispatch：运维 timer 与
+// 手工排障不可能给出两种投递语义。退出码：0 成功、2 用法错误、3 投递失败。
+func AlertDispatch(args []string, getenv func(string) string, stdout, stderr io.Writer) int {
+	if err := runAlertDispatch(args, getenv, stdout, stderr); err != nil {
+		var usageErr usageError
+		if errors.As(err, &usageErr) {
+			fmt.Fprintf(stderr, "dsh-relay alert-dispatch: %v\n", err)
+			return 2
+		}
+		fmt.Fprintf(stderr, "dsh-relay alert-dispatch: %v\n", err)
+		return 3
+	}
+	return 0
 }

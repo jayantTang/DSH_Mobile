@@ -1,9 +1,11 @@
 // dsh-relay 是 DSH 中转的 Go 实现。
 //
-// 两个入口共用一个二进制：
+// 三类入口共用一个二进制：
 //   - `dsh-relay [serve] <参数>`：起 HTTP 服务。**不带子命令时默认 serve**，
 //     所以黑盒测试的 RELAY_CMD 可以直接指向这个二进制；
-//   - `dsh-relay admin --db <path> <子命令>`：管理面，JSON 输出对齐 admin.py。
+//   - `dsh-relay admin --db <path> <子命令>`：管理面，JSON 输出对齐 admin.py；
+//   - `dsh-relay alert-dispatch` / `dsh-relay purge`：运维 timer 用的两个动作，
+//     分别投递告警队列与清理设备死记录（见 relay-go/deploy 的两个 timer）。
 package main
 
 import (
@@ -30,6 +32,7 @@ import (
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/httpapi"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/hub"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/monitor"
+	"github.com/jayantTang/DSH_Mobile/relay-go/internal/purge"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/push"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/store"
 )
@@ -51,6 +54,13 @@ func run(args []string, getenv func(string) string, stdout, stderr io.Writer) in
 		return runServe(args[1:], getenv, stderr)
 	case "admin":
 		return admincli.Main(args[1:], getenv, stdout, stderr)
+	case "alert-dispatch":
+		// 运维 timer 入口：与 `admin alert-dispatch` 共用同一份实现。
+		return admincli.AlertDispatch(args[1:], getenv, stdout, stderr)
+	case "purge":
+		// 设备死记录清理（Python purge-revoked-devices.py 的 Go 版本）。
+		// 注意与 `admin purge`（过期配对码）不是同一件事，见两个命令的帮助。
+		return purge.Main(args[1:], getenv, stdout, stderr)
 	case "-h", "--help", "help":
 		usage(stdout)
 		return 0
@@ -261,6 +271,8 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  dsh-relay [serve] [参数]              起中转（不带子命令时默认 serve）")
 	fmt.Fprintln(w, "  dsh-relay admin --db <path> <子命令>  管理面（account-create / agent-register /")
 	fmt.Fprintln(w, "                                        code-mint / invite-mint / device-list）")
+	fmt.Fprintln(w, "  dsh-relay alert-dispatch [参数]      把告警队列投进信箱（运维 timer）")
+	fmt.Fprintln(w, "  dsh-relay purge --db <path> ...      清理已撤销/已过期设备行（运维 timer）")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "serve 参数（默认值见下；同名 DLP_* 环境变量改默认值，命令行覆盖环境变量）:")
 	config.Usage(w)
