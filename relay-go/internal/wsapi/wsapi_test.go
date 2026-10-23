@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -27,6 +28,7 @@ import (
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/hub"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/monitor"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/presence"
+	"github.com/jayantTang/DSH_Mobile/relay-go/internal/push"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/store"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/wsapi"
 )
@@ -71,12 +73,21 @@ type tenant struct {
 
 func newRelay(t *testing.T, mutate func(*hub.Limits)) *relayFixture {
 	t.Helper()
-	return newRelayWithPresence(t, mutate, presence.Options{})
+	return newRelayWithOptions(t, mutate, presence.Options{}, nil)
 }
 
 // newRelayWithPresence 是 newRelay 的窗口可调版本（连接生命周期用例需要毫秒级窗口）。
 func newRelayWithPresence(t *testing.T, mutate func(*hub.Limits),
 	windows presence.Options) *relayFixture {
+	t.Helper()
+	return newRelayWithOptions(t, mutate, windows, nil)
+}
+
+// newRelayWithOptions 是完整版本：窗口与 APNs 投递器都可注入。
+//
+// pushSender 为 nil 时 hub 不推送，与未配置的部署一致。
+func newRelayWithOptions(t *testing.T, mutate func(*hub.Limits),
+	windows presence.Options, pushSender hub.PushSender) *relayFixture {
 	t.Helper()
 	st, err := store.Open(t.TempDir() + "/state.db")
 	if err != nil {
@@ -91,6 +102,7 @@ func newRelayWithPresence(t *testing.T, mutate func(*hub.Limits),
 		Limits:   limits,
 		Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Presence: windows,
+		Push:     pushSender,
 	})
 	server := httptest.NewServer(newHTTPHandler(st, live, nil, nil, limits))
 
@@ -704,4 +716,116 @@ func TestTheDailyQuotaClosesWith4011(t *testing.T) {
 	if detach.Type() != "deviceDetach" || detach["reason"] != "daily quota" {
 		t.Fatalf("配额断开的电脑通知 = %v", detach)
 	}
+}
+
+// ── 在线 notify → APNs ──────────────────────────────────────────────────────
+
+// wsPushCall 是一次被 stub 记录下来的投递调用。
+type wsPushCall struct {
+	targets []push.Target
+	kind    string
+	sid     string
+	eid     *string
+}
+
+// wsRecordingPusher 是注入 hub 的推送桩：只记录，不联网。
+type wsRecordingPusher struct {
+	mu     sync.Mutex
+	calls  []wsPushCall
+	signal chan struct{}
+}
+
+func newWSRecordingPusher() *wsRecordingPusher {
+	return &wsRecordingPusher{signal: make(chan struct{}, 4)}
+}
+
+func (p *wsRecordingPusher) Enabled() bool { return true }
+
+func (p *wsRecordingPusher) SendMany(_ context.Context, targets []push.Target,
+	kind, sid string, eid *string, _ bool) []push.Result {
+	copied := append([]push.Target(nil), targets...)
+	p.mu.Lock()
+	p.calls = append(p.calls, wsPushCall{
+		targets: copied, kind: kind, sid: sid, eid: eid,
+	})
+	p.mu.Unlock()
+	select {
+	case p.signal <- struct{}{}:
+	default:
+	}
+	results := make([]push.Result, len(targets))
+	for index := range results {
+		results[index] = push.Result{OK: true}
+	}
+	return results
+}
+
+func (p *wsRecordingPusher) wait(t *testing.T) wsPushCall {
+	t.Helper()
+	select {
+	case <-p.signal:
+	case <-time.After(readTimeout):
+		t.Fatal("等待推送超时")
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(p.calls) == 0 {
+		t.Fatal("没有记录到推送调用")
+	}
+	return p.calls[len(p.calls)-1]
+}
+
+// TestANotifyFrameOverTheAgentSocketOnlyPushesTheOfflineDevice 走真实 WS：
+// 连接器发 notify → wsapi 读循环 → hub 选目标 → 注入的推送桩。
+// 同时在线的设备既不收 notify，也不影响随后的转发。
+func TestANotifyFrameOverTheAgentSocketOnlyPushesTheOfflineDevice(t *testing.T) {
+	pusher := newWSRecordingPusher()
+	fixture := newRelayWithOptions(t, nil, presence.Options{}, pusher)
+	offline := fixture.pairDevice("WS-offline")
+	online := fixture.pairDevice("WS-online")
+
+	token := strings.Repeat("ab", 32)
+	env := "sandbox"
+	if err := fixture.store.SetPush(context.Background(), offline.DeviceID,
+		&token, &env, true, true); err != nil {
+		t.Fatalf("SetPush: %v", err)
+	}
+
+	agentConn := fixture.dial(fixture.agentPath(), fixture.tenant.secret)
+	onlineConn := fixture.dial(devicePath(online), fixture.tokenOf(online))
+	readFrame(t, onlineConn) // hostStatus：设备已挂在这台电脑上
+	readUntil(t, agentConn, "deviceAttach")
+
+	// 先确认这条连接上的转发是通的（后面的否定窗口会关闭读上下文，
+	// coder/websocket 的读超时等同于放弃这条连接）。
+	sendFrame(t, agentConn, `{"t":"res","id":"r-before-notify","deviceId":"`+
+		online.DeviceID+`","value":{"ok":true}}`)
+	forwarded := readUntil(t, onlineConn, "res")
+	if forwarded["id"] != "r-before-notify" {
+		t.Fatalf("转发帧 = %v", forwarded)
+	}
+	value, ok := forwarded["value"].(map[string]any)
+	if !ok || value["ok"] != true {
+		t.Fatalf("转发内容 = %v", forwarded["value"])
+	}
+
+	sendFrame(t, agentConn,
+		`{"t":"notify","kind":"attention","sid":"s-ws","eid":"e-ws"}`)
+	call := pusher.wait(t)
+	if call.kind != "attention" || call.sid != "s-ws" ||
+		call.eid == nil || *call.eid != "e-ws" {
+		t.Fatalf("推送参数 = %+v", call)
+	}
+	if len(call.targets) != 1 || call.targets[0].DeviceID != offline.DeviceID {
+		t.Fatalf("targets = %+v，期望只有离线设备 %s", call.targets, offline.DeviceID)
+	}
+	if call.targets[0].Token != token {
+		t.Fatalf("target 令牌 = %q，期望 %q", call.targets[0].Token, token)
+	}
+	if call.targets[0].Env == nil || *call.targets[0].Env != env {
+		t.Fatalf("target 环境 = %v", call.targets[0].Env)
+	}
+
+	// notify 是 agent 控制帧，在线设备不该收到它。
+	expectSilence(t, onlineConn, 300*time.Millisecond)
 }

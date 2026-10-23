@@ -19,7 +19,10 @@ type fakePusher struct {
 	mu      sync.Mutex
 	calls   []pushCall
 	results []push.Result
-	done    chan struct{}
+	// resultFor 按设备给结果；需要"同一次扇出里一台死令牌、其余正常"的用例用它。
+	// 非 nil 时优先于 results（按 targets 顺序套 results 会依赖仓储排序）。
+	resultFor func(push.Target) push.Result
+	done      chan struct{}
 	// block 非 nil 时 SendMany 会等它关闭（验证路由不阻塞）。
 	block chan struct{}
 }
@@ -50,11 +53,19 @@ func (f *fakePusher) SendMany(_ context.Context, targets []push.Target, kind, si
 	f.mu.Lock()
 	f.calls = append(f.calls, call)
 	results := f.results
+	resultFor := f.resultFor
 	f.mu.Unlock()
 	select {
 	case <-f.done:
 	default:
 		close(f.done)
+	}
+	if resultFor != nil {
+		out := make([]push.Result, len(targets))
+		for index, target := range targets {
+			out[index] = resultFor(target)
+		}
+		return out
 	}
 	if len(results) > 0 {
 		out := make([]push.Result, len(targets))
@@ -94,6 +105,28 @@ func (f *fakePusher) callCount() int {
 	return len(f.calls)
 }
 
+// callsCopy 返回迄今全部推送调用的副本（按发生顺序）。
+func (f *fakePusher) callsCopy() []pushCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]pushCall(nil), f.calls...)
+}
+
+// setResults 替换后续 SendMany 的预设结果（第二次推送要看清理结果的用例用）。
+func (f *fakePusher) setResults(results ...push.Result) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.results = results
+	f.resultFor = nil
+}
+
+// setResultFor 让结果按设备决定（同一次扇出里模拟部分设备死令牌）。
+func (f *fakePusher) setResultFor(resultFor func(push.Target) push.Result) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.resultFor = resultFor
+}
+
 // fakeReporter 记录 agent 断开事件。
 type fakeReporter struct {
 	mu    sync.Mutex
@@ -122,8 +155,13 @@ func (r *fakeReporter) count() int {
 
 func registerPush(t *testing.T, f *fixture, deviceID string, turnEnd, attention bool) {
 	t.Helper()
-	token := strings.Repeat("ab", 32)
-	env := "sandbox"
+	registerPushWith(t, f, deviceID, strings.Repeat("ab", 32), "sandbox", turnEnd, attention)
+}
+
+// registerPushWith 用指定令牌与环境登记，多设备用例据此区分目标。
+func registerPushWith(t *testing.T, f *fixture, deviceID, token, env string,
+	turnEnd, attention bool) {
+	t.Helper()
 	if err := f.store.SetPush(context.Background(), deviceID, &token, &env,
 		turnEnd, attention); err != nil {
 		t.Fatalf("SetPush: %v", err)
