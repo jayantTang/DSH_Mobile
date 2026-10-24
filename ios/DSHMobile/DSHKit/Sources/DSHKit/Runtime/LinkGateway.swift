@@ -190,9 +190,29 @@ public struct LinkGateway: Sendable {
     }
 
     /// 列一个工作区目录。
-    @MainActor public func workspaceFiles(scopeId: String, path: String) async throws -> JSONValue {
+    ///
+    /// `root` 是这个工作区根在**电脑上的绝对路径**（`SessionSummary.cwd`）；给了它、且连接器
+    /// 声明了 `dir-mtimes`，就走连接器自答的 `_link/dirListing`——同一份宿主清单，条目多一个
+    /// 本机 `mtimeMs`。两者缺一都走宿主的 `workspaceFiles/list`（旧连接器、没有 cwd 的会话）。
+    ///
+    /// 回退只有一条规矩：错误码以 `workspace-file/` 开头时**原样上抛**（那是目录本身的事实，
+    /// 重试必现，回退只会把同一个失败问两遍）；其余任何失败（`link/*`、传输层）一律回退旧通道
+    /// ——增强通道不可用不弄坏列表，与 `sessions(since:)` 同一纪律。
+    @MainActor public func workspaceFiles(scopeId: String, path: String,
+                                          root: String? = nil) async throws -> JSONValue {
         guard let client = clientProvider() else { throw DSHTransportError.carrierClosed }
-        return try await client.workspaceFiles(scopeId: scopeId, path: path)
+        guard let root, !root.isEmpty,
+              client.capabilities.contains(HostClientFactory.dirMtimesCapability) else {
+            return try await client.workspaceFiles(scopeId: scopeId, path: path)
+        }
+        do {
+            return try await client.dirListing(scopeId: scopeId, path: path, root: root)
+        } catch {
+            if let failure = error as? DSHRPCFailure, failure.code.hasPrefix("workspace-file/") {
+                throw error
+            }
+            return try await client.workspaceFiles(scopeId: scopeId, path: path)
+        }
     }
 
     /// 读一个工作区文件（可带区间）。

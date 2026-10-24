@@ -20,6 +20,7 @@
     "history-fold-summary",
     "history-coverage",
     "jobs-roster",
+    "dir-mtimes",
     "device-subprotocol-auth",
     "persistent-pair-code",
     "account-state",

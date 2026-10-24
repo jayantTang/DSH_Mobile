@@ -108,6 +108,7 @@ export function trimHistoryPageForWire(method, result) {
 
 import { DeviceTimeline } from './diagnostics.js'
 import { SESSION_DIGEST_METHOD, digestSessionList, encodeDigest, digestDelta } from './session-digest.js'
+import { DIR_LISTING_METHOD, dirListing } from './dir-listing.js'
 
 /** 慢请求阈值默认值（毫秒）；0 = 关闭逐条慢请求记录。 */
 export const DEFAULT_SLOW_REQUEST_MS = 2000
@@ -675,6 +676,26 @@ export class DeviceRouter {
         payload = { ok: true, value: encodeDigest(value, args.encoding) }
       }
       this.send(deviceId, resultFrame(frame.id, payload, deviceId))
+      return
+    }
+
+    // 目录清单的本机增强（设计 20261024）：连接器读宿主的 `workspaceFiles/list`，
+    // 在电脑本机对每个条目 `fs.stat` 补一个 `mtimeMs`——宿主没有时间字段，而
+    // `workspaceFiles/stat` 的 `version` 是 opaque token（推不出时间）。
+    // 与 sessionDigest 同款：清单的内容仍是宿主的，连接器只加字段；任何一步出问题
+    // 都退回未增强的原始清单（装饰永不弄坏清单）。
+    if (frame.method === DIR_LISTING_METHOD) {
+      let result
+      try {
+        // `dirListing` 认宿主信封本身（`{ ok, value: { entries } }`）并原样回同形状的值：
+        // 宿主报错时**信封逐字透传**，`resultFrame` 照常把它翻成 `ok:false` + 原错误码。
+        // 这里不能再包一层 `{ ok: true, value }`——那会把宿主的失败塞进 `value` 里，
+        // 帧上反而成了 `ok:true`（手机就会把"目录不存在"读成"空目录"）。
+        result = await dirListing({ dsh: this.dsh, args: frame.args ?? {}, logger: this.logger })
+      } catch (error) {
+        result = { ok: false, error: errorObject(error?.code ?? 'link/failed', messageOf(error), error?.details ?? {}) }
+      }
+      this.send(deviceId, resultFrame(frame.id, result, deviceId))
       return
     }
 

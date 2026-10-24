@@ -84,6 +84,11 @@ public struct WorkspaceDirectoryEntry: Sendable, Hashable, Identifiable {
     public let name: String
     public let kind: Kind
     public let size: Int?
+    /// 内容最近一次修改的**瞬时值**，由电脑侧连接器 `fs.stat` 补上（`mtimeMs`）。
+    ///
+    /// 拿不到就是 nil——旧连接器不给这个字段、断链或竞态删除也会省略它。
+    /// 这里只持有事实，**不做格式化**：相对时间的格式属于 `RelativeTime`。
+    public let mtime: Date?
 
     public var id: String { name }
 
@@ -92,6 +97,10 @@ public struct WorkspaceDirectoryEntry: Sendable, Hashable, Identifiable {
         self.name = name
         self.kind = Kind(rawValue: json["type"]?.stringValue ?? "") ?? .other
         self.size = json["size"]?.intValue
+        // 纪元毫秒是 UTC 瞬时值，不带时区；畸形（字符串、布尔、非有限数、超出 Int 范围）
+        // 读作"未知"，而不是编一个时间——更不该因为一个字段把整条目录打不开。
+        // `intValue` 对 Double 走 `Int(exactly:)`，所以 `1e30` 这类回包返回 nil 而不是 trap。
+        self.mtime = json["mtimeMs"]?.intValue.map { Date(timeIntervalSince1970: Double($0) / 1000) }
     }
 
     /// A child's path is its parent's joined with the name.

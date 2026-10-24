@@ -110,6 +110,11 @@ export const SERVER_CAPABILITIES = [
   // `link/jobs` 帧（spec 018）。手机**只按这条能力**决定是否渲染任务面板、列表行
   // 右侧计数与卡片新行：无此能力的旧连接器，手机整块不出现（界面与升级前逐屏一致）。
   'jobs-roster',
+  // dir-mtimes: 连接器答 `_link/dirListing`——宿主 `workspaceFiles/list` 的同形副本，
+  // 在电脑本机对每个条目补一个 `mtimeMs`（宿主类型里没有时间字段，`stat` 的 version
+  // 是 opaque token，推不出时间）。手机**只按这条能力**决定要不要走新方法：没有它的
+  // 旧连接器仍走 `workspaceFiles/list`，文件页与升级前逐屏一致（只是没有时间），不报错。
+  'dir-mtimes',
   'device-subprotocol-auth', 'persistent-pair-code', 'account-state', 'account-state-push',
 ]
 

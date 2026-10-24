@@ -497,6 +497,14 @@ public final class ConnectionStore {
             await link.diagnosticsNote("app.hello", since: dialStartedAt)
         }
         capabilities = Set(handshake?.capabilities ?? [])
+        #if DEBUG
+        // `-DSHNoDirMtimes`：假装连接器不会补 mtime，逼 App 走 `workspaceFiles/list`。
+        // 用来核对 owner 拍板的那条"旧连接器只是不显示时间，不报错"（设计 §M2 的
+        // 验收口径）。与 `ChatProbe.noHistoryWindow` 同一族手法，只在 DEBUG 下存在。
+        if ProcessInfo.processInfo.arguments.contains("-DSHNoDirMtimes") {
+            capabilities.remove(HostClientFactory.dirMtimesCapability)
+        }
+        #endif
         // 用刚拿到的能力重建 client（DSHClient 是值类型，换一份即可，carrier 不变）：
         // 从这一刻起的列表调用都会走精简版。
         self.client = HostClientFactory.make(carrier: carrier, capabilities: capabilities)

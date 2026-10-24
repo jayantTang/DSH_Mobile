@@ -390,10 +390,22 @@ private struct DirectoryEntryRow: View {
                 }
             }
             Spacer(minLength: DSHTheme.Spacing.tight)
-            if let size = entry.sizeText {
-                Text(size)
-                    .font(DSHTheme.Typography.micro)
-                    .foregroundStyle(DSHTheme.labelTertiary)
+            // 右栏两行：上行大小、下行时间。目录没有大小，只显示时间；两者都拿不到时
+            // 整块不出现（与改动前一致）。时间文本复用 `RelativeTime`——密集行的既有说法，
+            // 不在视图里做第二套格式化。
+            if entry.sizeText != nil || mtimeText != nil {
+                VStack(alignment: .trailing, spacing: 1) {
+                    if let size = entry.sizeText {
+                        Text(size)
+                    }
+                    if let time = mtimeText {
+                        Text(time)
+                    }
+                }
+                .font(DSHTheme.Typography.micro)
+                .foregroundStyle(DSHTheme.labelTertiary)
+                .multilineTextAlignment(.trailing)
+                .lineLimit(1)
             }
             if entry.isDirectory {
                 Image(systemName: "chevron.right")
@@ -403,7 +415,19 @@ private struct DirectoryEntryRow: View {
         }
         .frame(minHeight: 44)
         .contentShape(Rectangle())
-        .accessibilityLabel(entry.isDirectory ? "\(displayName)，目录" : "\(displayName)，\(entry.sizeText ?? "文件")")
+        .accessibilityLabel(accessibilityText)
+    }
+
+    /// 右栏的时间文本；连接器没补上 mtime（旧连接器）时为 nil，那一行就不出现。
+    private var mtimeText: String? {
+        entry.mtime.map(RelativeTime.string(from:))
+    }
+
+    /// 无障碍标签：现有拼接后追加时间子句。三个组成部分都是既有键，不产生新文案。
+    private var accessibilityText: String {
+        let head = entry.isDirectory ? "\(displayName)，目录" : "\(displayName)，\(entry.sizeText ?? "文件")"
+        guard let mtimeText else { return head }
+        return "\(head)，\(mtimeText)"
     }
 }
 

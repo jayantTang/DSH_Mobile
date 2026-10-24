@@ -550,6 +550,20 @@ struct DSHClient: Sendable {
         )
     }
 
+    /// 连电脑本机补过 mtime 的目录清单（连接器自答方法，设计 20261024）。
+    ///
+    /// 与 `workspaceFiles/list` 同形，条目可多一个 `mtimeMs`（Unix 纪元毫秒）。
+    /// `root` 是工作区根的**本机绝对路径**——宿主不把根路径给出来，连接器要把条目名
+    /// 解析成本机路径才能 `stat`，所以由 App 带上（它持有 `SessionSummary.cwd`）。
+    /// 走哪条通道由 `LinkGateway.workspaceFiles` 决定，调用方不感知能力。
+    public func dirListing(scopeId: String, path: String, root: String) async throws -> JSONValue {
+        try await carrier.unary(
+            method: "_link/dirListing",
+            args: DirListingArgs(workspaceFileScopeId: scopeId, path: path, root: root),
+            as: JSONValue.self
+        )
+    }
+
     public func workspaceFileRead(scopeId: String, path: String, range: JSONValue? = nil) async throws -> JSONValue {
         try await carrier.unary(
             method: "workspaceFiles/read",
@@ -951,6 +965,13 @@ struct WorkspaceScopeArgs: Encodable, Sendable {
 struct WorkspaceFileArgs: Encodable, Sendable {
     public let workspaceFileScopeId: String
     public let path: String
+}
+
+/// `_link/dirListing` 的参数：与 `workspaceFiles/list` 同语法，多一个本机工作区根。
+struct DirListingArgs: Encodable, Sendable {
+    public let workspaceFileScopeId: String
+    public let path: String
+    let root: String
 }
 
 struct WorkspaceFileRangeArgs: Encodable, Sendable {

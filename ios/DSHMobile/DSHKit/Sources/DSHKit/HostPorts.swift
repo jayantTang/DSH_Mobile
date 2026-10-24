@@ -137,6 +137,9 @@ public protocol GatewayHosting: Sendable {
     func hostEvents() async -> AsyncThrowingStream<HostEvent, any Error>
     func answer(_ result: EventAnswer) async throws
     func sessionDigest(since: String?) async throws -> SessionListValue
+    /// 连接器自答的目录清单（在电脑本机补过 `mtimeMs`）。与 `sessionDigest` 归同一个协议：
+    /// 自答方法的归宿是链路门面；`FilesHosting` **不含**它，Domain 不许绕过门面直连。
+    func dirListing(scopeId: String, path: String, root: String) async throws -> JSONValue
     func archiveSession(_ sessionId: String, archived: Bool) async throws -> [String]
     func createWorkspace(path: String) async throws -> WorkspaceCreateValue
     func deleteWorkspace(id: String) async throws
@@ -162,6 +165,9 @@ public protocol HostClient: ChatHosting, SettingsHosting, FilesHosting, Director
 
 public enum HostClientFactory {
     public static let sessionDigestCapability = "session-digest"
+    /// 连接器能答 `_link/dirListing`（目录条目带本机 mtime）。没有它就走 `workspaceFiles/list`，
+    /// 文件页与升级前逐屏一致——只是不显示时间，不报错。
+    public static let dirMtimesCapability = "dir-mtimes"
     public static let jobsRosterMethod = "_link/jobRoster"
 
     public static func make(carrier: any DSHCarrier,

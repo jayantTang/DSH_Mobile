@@ -206,7 +206,11 @@ public final class WorkspaceFilesModel {
         }
         if listing == nil { phase = .loading }
         do {
-            let raw = try await link.workspaceFiles(scopeId: scope.sessionId, path: path.isEmpty ? "." : path)
+            // `root` 是门面选通道的依据：不给它，连接器就补不了 mtime（它要把条目名解析成
+            // 本机绝对路径），新通道永远用不上。见设计 §M2 补充（原调用点只传 scopeId/path）。
+            let raw = try await link.workspaceFiles(scopeId: scope.sessionId,
+                                                    path: path.isEmpty ? "." : path,
+                                                    root: scope.workspaceRoot)
             guard let listing = WorkspaceDirectoryListing(json: raw) else {
                 phase = .failed("主机返回的目录结构无法解析。")
                 return

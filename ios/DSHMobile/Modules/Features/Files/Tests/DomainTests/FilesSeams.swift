@@ -52,9 +52,10 @@ enum FilesSeam {
         ])
     }
 
-    static func entry(_ name: String, type: String, size: Int? = nil) -> JSONValue {
+    static func entry(_ name: String, type: String, size: Int? = nil, mtimeMs: Int? = nil) -> JSONValue {
         var fields: [String: JSONValue] = ["name": .string(name), "type": .string(type)]
         if let size { fields["size"] = .int(size) }
+        if let mtimeMs { fields["mtimeMs"] = .int(mtimeMs) }
         return .object(fields)
     }
 
