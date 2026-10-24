@@ -17,6 +17,8 @@ make build            # bin/dsh-relay（CGO_ENABLED=1，SQLite 用 mattn/go-sqli
 make test             # 单元测试
 make build-purego     # 无 cgo 回退：bin/dsh-relay-purego（modernc.org/sqlite）
 make test-purego      # 纯 Go 构建下再跑一遍测试
+make test-blackbox    # relay/tests/blackbox 契约套件对 bin/dsh-relay 跑一遍
+make soak-smoke       # 20 秒 soak 冒烟（scripts/m4b/soak.py，不进默认测试）
 ```
 
 需要 Go 1.27（见 `go.mod`）。所有 go 命令经 `make` 执行，环境变量在 Makefile 里固定。
@@ -425,7 +427,6 @@ Makefile 同时固定 `GOPROXY=https://goproxy.cn,direct` 与 `GOSUMDB=off`。`G
 
 ```
 cmd/dsh-relay/      serve / admin 子命令（参数、store、hub、HTTP、信号）
-cmd/driverbench/    SQLite 驱动基准（mattn vs modernc）
 internal/config/    参数、环境变量、默认值与换算
 internal/store/     SQLite：schema、迁移、账户/电脑/邀请码/配对码/设备/状态/用量仓储
 internal/httpapi/   HTTP 端点、错误信封、Bearer 鉴权、CORS、限流、/stats（JSON+HTML）、/internal/*

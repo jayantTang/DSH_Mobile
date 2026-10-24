@@ -15,7 +15,7 @@ export CGO_ENABLED := 1
 BIN   := bin
 RELAY := $(BIN)/dsh-relay
 
-.PHONY: all build build-purego test test-purego vet fmt fmt-check bench bench-nocgo size run clean
+.PHONY: all build build-purego test test-purego test-blackbox soak-smoke vet fmt fmt-check size run clean
 
 all: build
 
@@ -34,6 +34,17 @@ build-purego:
 test-purego:
 	CGO_ENABLED=0 go test ./...
 
+# 黑盒契约套件对本二进制跑（relay/tests/blackbox 只认 RELAY_CMD / ADMIN_CMD
+# 两个环境变量，见该目录 conftest.py）。
+test-blackbox: build
+	RELAY_CMD="$(CURDIR)/$(RELAY)" ADMIN_CMD="$(CURDIR)/$(RELAY) admin" \
+		../relay/.venv/bin/python -m pytest ../relay/tests/blackbox -q
+
+# soak 冒烟档（20 秒注入，验证脚本与二进制本身能跑通；不进默认 test）。
+soak-smoke: build
+	../relay/.venv/bin/python scripts/m4b/soak.py \
+		--seconds 20 --sample 5 --devices 20 --agents 4
+
 vet:
 	go vet ./...
 
@@ -45,26 +56,11 @@ fmt:
 fmt-check:
 	@out="$$(gofmt -l cmd internal)"; if [ -n "$$out" ]; then echo "$$out"; exit 1; fi
 
-# 驱动基准：需要 CGO_ENABLED=1 才能同时编进 mattn/go-sqlite3（cgo）。
-# 原始数据写到 bin/driverbench.json，结论进 maintainers/20261023-SQLite驱动基准.md。
-bench:
-	mkdir -p $(BIN)
-	CGO_ENABLED=1 go build -o $(BIN)/driverbench ./cmd/driverbench
-	./$(BIN)/driverbench -runs 3 -json $(BIN)/driverbench.json
-
-# 纯 Go 对照：不编 cgo 驱动，只跑 modernc。
-bench-nocgo:
-	mkdir -p $(BIN)
-	CGO_ENABLED=0 go build -o $(BIN)/driverbench-nocgo ./cmd/driverbench
-	./$(BIN)/driverbench-nocgo -runs 3 -drivers modernc
-
-# 二进制体积对照（-s -w 与发布构建同口径）；数据写进驱动基准报告。
+# 二进制体积对照（-s -w 与发布构建同口径）。
 size:
 	mkdir -p $(BIN)/size
 	CGO_ENABLED=0 go build -ldflags "-s -w" -o $(BIN)/size/dsh-relay-nocgo ./cmd/dsh-relay
 	CGO_ENABLED=1 go build -ldflags "-s -w" -o $(BIN)/size/dsh-relay-cgo ./cmd/dsh-relay
-	CGO_ENABLED=0 go build -ldflags "-s -w" -o $(BIN)/size/driverbench-nocgo ./cmd/driverbench
-	CGO_ENABLED=1 go build -ldflags "-s -w" -o $(BIN)/size/driverbench-cgo ./cmd/driverbench
 	@ls -l $(BIN)/size
 
 # 本机跑一次：随机端口、临时库更容易看清启动流程。
