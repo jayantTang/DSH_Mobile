@@ -2,7 +2,7 @@
 #
 # 本机沙箱不允许写 ~/go，Go 的模块缓存与构建缓存固定在本目录下；所有 go 命令
 # 都经 make 执行，保证环境变量一致。GOSUMDB=off 只用于本机开发，发布构建按 CI
-# 口径恢复校验（见 maintainers/design/DESIGN-20261023-go-relay-rewrite.md）。
+# 口径恢复校验（见 maintainers/设计/20261023-Go中转重写.md）。
 export GOMODCACHE := $(CURDIR)/.gocache/mod
 export GOCACHE    := $(CURDIR)/.gocache/build
 export GOPROXY    := https://goproxy.cn,direct
@@ -46,7 +46,7 @@ fmt-check:
 	@out="$$(gofmt -l cmd internal)"; if [ -n "$$out" ]; then echo "$$out"; exit 1; fi
 
 # 驱动基准：需要 CGO_ENABLED=1 才能同时编进 mattn/go-sqlite3（cgo）。
-# 原始数据写到 bin/driverbench.json，结论进 maintainers/BENCH-20261023-sqlite-driver.md。
+# 原始数据写到 bin/driverbench.json，结论进 maintainers/20261023-SQLite驱动基准.md。
 bench:
 	mkdir -p $(BIN)
 	CGO_ENABLED=1 go build -o $(BIN)/driverbench ./cmd/driverbench

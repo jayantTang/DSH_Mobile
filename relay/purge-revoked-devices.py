@@ -4,7 +4,7 @@
 为什么要清：中转在每次连接器连上时，会把该 agent 名下所有"永远回不来的设备"
 逐条通知连接器（`hub.py:_tell_agent_about_the_gone`）。2026-10-12 那次"重连风暴"
 就是库里攒了 2012 条调试/用例留下的已撤销记录，每次重连灌 2012 帧，把连接器的
-处理链堵住，手机跟着断断续续（分析见 maintainers/ANALYSIS-20261012-connector-flap.md）。
+处理链堵住，手机跟着断断续续（分析见 maintainers/20261012-连接器断续分析.md）。
 所以这件事现在有两条腿：`hub.py` 在条数超阈值时记 WARNING（见 `Limits.dead_device_warn_threshold`），
 `deploy/dsh-relay-purge.timer` 每天调本脚本 `--all-agents --apply` 真删。
 为什么这个数字会涨、怎么清：`README.md` 的「Dead device records」一节。

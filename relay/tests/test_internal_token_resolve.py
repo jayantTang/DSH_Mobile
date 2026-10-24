@@ -1,6 +1,6 @@
 """``POST /internal/tokens/resolve``：拆分后信件服务对中转的唯一运行时依赖。
 
-契约（maintainers/design/DESIGN-20261015-mail-service-split.md I-1）：
+契约（maintainers/设计/20261015-信件服务拆分.md I-1）：
 
 - loopback-only：公网对端（无论伪造什么转发头）一律 404，且是 404 不是 403——
   与 /stats 同一道守卫、同一个"探测者不该分辨端点存在"的理由。

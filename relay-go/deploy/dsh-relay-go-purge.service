@@ -5,7 +5,7 @@ Documentation=https://github.com/deepseek-ai/dsh
 After=dsh-relay-go.service
 
 # 死设备记录会在**每次连接器连上时**被逐条重放给连接器（hub.tellAgentAboutTheGone），
-# 2012 条曾把连接器的处理链堵住（maintainers/ANALYSIS-20261012-connector-flap.md）。
+# 2012 条曾把连接器的处理链堵住（maintainers/20261012-连接器断续分析.md）。
 # 这个单元把库里已撤销 / 已过期的行真删掉——在用的设备一行都不碰（判据只有一份，
 # 在 internal/store/purge.go）。
 #

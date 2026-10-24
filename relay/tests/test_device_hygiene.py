@@ -3,7 +3,7 @@
 背景（已确认的事实）：中转在**连接器每次连上时**会把该 agent 名下所有"永远回不来"的设备
 逐条重放给它（`hub.py:_tell_agent_about_the_gone`，一条一帧 `deviceDetach`）。2026-10-12
 库里攒了 2012 条历次用例/调试留下的已撤销记录，一次重连灌 2012 帧，把连接器的处理链堵住
-（maintainers/ANALYSIS-20261012-connector-flap.md）。真删由
+（maintainers/20261012-连接器断续分析.md）。真删由
 `tests/test_purge_revoked_devices.py` 覆盖；这里钉的是"在它爆掉之前看得见"：`/stats` 与
 `admin.py device-hygiene` 的数字必须就是库里的数字，超过阈值必须真的落一条 WARNING。
 

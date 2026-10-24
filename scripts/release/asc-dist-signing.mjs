@@ -3,7 +3,7 @@
  * 用 App Store Connect API Key 在 portal 上签一张 Apple Distribution 证书，并建一张
  * App Store 描述文件装到本机——`deploy-testflight.sh` 的「API Key + 云签名」这条路在
  * 本团队走不通（Cloud signing permission error，团队里原本一张分发证书都没有），
- * 所以分发签名靠这里准备，导出改成 manual（见 maintainers/APPSTORE.md）。
+ * 所以分发签名靠这里准备，导出改成 manual（见 maintainers/上架流程.md）。
  *
  *   node scripts/release/asc-dist-signing.mjs cert      # 签证书 → 导进 ~/Library/Keychains/dshbuild.keychain-db
  *   node scripts/release/asc-dist-signing.mjs profile <证书 id>   # 建 App Store 描述文件并装入 Xcode

@@ -6,7 +6,7 @@
 #   sudo switch.sh --to-python    Go → Python（停旧 → WAL checkpoint → 启动 → 健康检查）
 #        switch.sh --status       只读：两个 unit 的状态、端口监听、健康与数据库
 #
-# 设计约束（见 maintainers/design/DESIGN-20261023-go-relay-rewrite.md §10）：
+# 设计约束（见 maintainers/设计/20261023-Go中转重写.md §10）：
 #   * 两种实现同 schema、同端口、同路径；切换只换进程，不换数据库；
 #   * --to-go 失败自动回到 Python；--to-python 失败默认回到 Go（可用
 #     DSH_RELAY_AUTO_ROLLBACK=0 关闭）；

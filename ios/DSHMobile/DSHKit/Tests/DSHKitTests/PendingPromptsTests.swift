@@ -5,7 +5,7 @@ import XCTest
 /// 待答集合的用例（spec 023 边界收敛：判定从 `HostEventHub` 抽进 DSHKit）。
 ///
 /// 这一小段逻辑决定"用户在手机上看得见什么在等他"——本仓库反复踩过这类问题
-/// （见 `maintainers/PENDING-WATERFALL-LOSS.md`），所以每条规则都钉住。
+/// （见 `maintainers/待答丢失根因.md`），所以每条规则都钉住。
 final class PendingPromptsTests: XCTestCase {
 
     private let t0 = Date(timeIntervalSince1970: 1_000)

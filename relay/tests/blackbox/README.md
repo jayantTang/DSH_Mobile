@@ -5,7 +5,7 @@
 同一份用例先用现在的 Python 实现跑通、作为基线，Go 版必须逐条通过。
 
 设计与分层（L0 契约 / L1 场景 / L2 性能 / L3 可靠性）见
-`maintainers/design/DESIGN-20261023-go-migration-testbed.md`。目前包含第一批（HTTP、WS、
+`maintainers/设计/20261023-Go迁移测试基座.md`。目前包含第一批（HTTP、WS、
 配对与账户状态）、第二批（反馈、文件、登记、限流、配额、`/internal/*`、设备子协议）
 与第三批的可靠性用例；性能基线是手动脚本，不进默认套件。
 

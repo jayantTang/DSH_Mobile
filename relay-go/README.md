@@ -454,13 +454,13 @@ internal/admincli/  管理子命令（account-create / agent-register / code-min
 - 建表与迁移在同一个 `BEGIN IMMEDIATE` 事务里执行，版本写进 `PRAGMA user_version`；
   版本比代码新时保持原样（回滚到旧版不降级）。
 - Go 建的库可被 Python 版直接打开：表名集合、每表列名与列序、索引集合、`user_version`
-  已逐项对比一致（见 `maintainers/BENCH-20261023-sqlite-driver.md`）。
+  已逐项对比一致（见 `maintainers/20261023-SQLite驱动基准.md`）。
 
 ## 驱动选择
 
 默认（`CGO_ENABLED=1`）用 `mattn/go-sqlite3`，纯 Go 构建退回 `modernc.org/sqlite`
 （`internal/store/driver_cgo.go` / `driver_nocgo.go`，schema 与 SQL 完全相同）。
-选择依据与实测数字见 `maintainers/BENCH-20261023-sqlite-driver.md`。
+选择依据与实测数字见 `maintainers/20261023-SQLite驱动基准.md`。
 
 ## 与 Python 版的已知差异
 

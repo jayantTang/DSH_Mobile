@@ -115,7 +115,7 @@ if (!text.endsWith('\n')) text += '\n'
 const added = plan.filter((item) => item.action === 'add')
 if (added.length) {
   text += `\n# 004 对齐（${new Date().toISOString().slice(0, 10)}）：以下配置从 ${from} 档案补齐，\n`
-    + `# 让 ${to} 宿主与它功能对等；根因与验证见 maintainers/verification/VERIFY-004-desktop-host-parity.md。\n`
+    + `# 让 ${to} 宿主与它功能对等；根因与验证见 maintainers/验收/004-桌面宿主对等.md。\n`
   for (const item of added) text += `${item.block.text}\n\n`
 }
 

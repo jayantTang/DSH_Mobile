@@ -199,7 +199,7 @@ value, updatedAt, updatedByDeviceId)`，值是一段 JSON，**中转不解释内
 （`hub.py:_tell_agent_about_the_gone`，一条一帧 `deviceDetach`），连接器要为每条放下一条
 值班流。2026-10-12 库里攒到 **2012 条**（历次用例与调试设备留下的），一次重连灌 2012 帧，
 把连接器的处理链堵住，手机跟着断断续续（那次的分析记在本机
-`maintainers/ANALYSIS-20261012-connector-flap.md`，不随仓库发布）。每跑一次仿真器用例
+`maintainers/20261012-连接器断续分析.md`，不随仓库发布）。每跑一次仿真器用例
 就会新配一台、再撤销一台，所以这个数字只会涨，得有人清。
 
 **看得到**（三个出口；设备明细不外露）：

@@ -470,7 +470,7 @@ async function probeHost(host, dshHome) {
  * 为什么需要它：`LinkCarrier` 断开时只把 socket 置 nil、不 cancel，丢引用的
  * `URLSessionWebSocketTask` 会继续活着（并继续回 Pong），中转那边同一 deviceId 就攒出
  * 多条僵尸链路（2026-10-12 线上一个 deviceId 14 条，分析见
- * `maintainers/ANALYSIS-20261012-connector-flap.md`）。这条改动是协议层的，权威口径在
+ * `maintainers/20261012-连接器断续分析.md`）。这条改动是协议层的，权威口径在
  * 本机 `swift test`；另外经产品通道（中转）在仿真器里跑一条用例，确认没有回归。
  *
  * 判定：钉住修复的单测通过 + 仿真器用例引擎 PASS 且像素核对通过 → `pass`；

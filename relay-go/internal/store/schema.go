@@ -14,7 +14,7 @@ import (
 // （database/sql 的连接池会让"一次性脚本"设不全）。
 //
 // 改这里必须同步 Python 版：M0 用一次性对比脚本核对了表名、列名、索引与
-// user_version（见 maintainers/BENCH-20261023-sqlite-driver.md §7），回滚到
+// user_version（见 maintainers/20261023-SQLite驱动基准.md §7），回滚到
 // Python 版时库必须能直接打开。
 const Schema = `
 CREATE TABLE IF NOT EXISTS accounts (

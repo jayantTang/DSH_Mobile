@@ -522,7 +522,7 @@ def _device_hygiene(store: Store, args: argparse.Namespace) -> int:
 
     为什么需要它：已撤销与已过期的设备行会在**每次连接器连上时**被逐条重放给
     连接器（`hub.py:_tell_agent_about_the_gone`），2012 条曾把连接器的处理链堵住
-    （maintainers/ANALYSIS-20261012-connector-flap.md）。`device-list --all` 能看到
+    （maintainers/20261012-连接器断续分析.md）。`device-list --all` 能看到
     明细，但"现在攒了多少、离告警线还有多远"需要一个数字——这就是那个数字。
     真删是另一件事：`purge-revoked-devices.py`（默认预演，`--apply` 才删）。
 
@@ -1082,7 +1082,7 @@ def _is_orphan_usage(row: dict[str, Any], *, known_ids: set[str],
 
     为什么会有这种行：`relay/purge-revoked-devices.py` 会删掉已撤销/已过期的
     设备行（不删的话连接器每次重连都要被灌几千帧"回不来的设备"，见
-    maintainers/ANALYSIS-20261012-connector-flap.md），但按约定保留 `usageDaily`
+    maintainers/20261012-连接器断续分析.md），但按约定保留 `usageDaily`
     ——账目不能丢。代价就是历史用量里留下找不到设备主体的行：2026-10-13 实测
     近 30 天有 636 台这样的设备、29.5 GB，全部属于 owner 自用账号（历次用例的
     模拟器设备），把「活跃手机」「每日出口」抬到真实值的两倍以上。

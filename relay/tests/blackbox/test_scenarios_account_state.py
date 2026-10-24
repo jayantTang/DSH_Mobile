@@ -1,6 +1,6 @@
 """功能场景：账户级状态（读写、单调、隔离、跨设备通知、并发探针）。
 
-并发探针是**已知缺陷**的固定观察点（``maintainers/design/DESIGN-20261023-go-migration-testbed.md``
+并发探针是**已知缺陷**的固定观察点（``maintainers/设计/20261023-Go迁移测试基座.md``
 §4）：当前 Python 实现的 ``/account/state`` 共享一条 SQLite 连接，并发读会撞上
 "读写交错"，线上三天出现过 8 次 500。这里用 ``xfail(strict=False)`` 钉住它：
 

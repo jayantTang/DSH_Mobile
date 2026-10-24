@@ -1359,7 +1359,7 @@ class Store:
 
         为什么要有这个数：中转在每次连接器连上时会把该 agent 名下所有"永远回不来"
         的设备逐条重放给连接器（`hub.py:_tell_agent_about_the_gone`），2012 条曾把
-        连接器的处理链堵住（maintainers/ANALYSIS-20261012-connector-flap.md）。
+        连接器的处理链堵住（maintainers/20261012-连接器断续分析.md）。
         所以"现在攒了多少"必须一眼看得到：运维从 `/stats` 读它，阈值告警也从同
         一个判据去比。
 

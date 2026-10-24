@@ -160,7 +160,7 @@ class DeviceLimitReached(Exception):
 #:
 #: 阈值管的是"重连时会被重放的帧数"：`_tell_agent_about_the_gone` 会把该 agent
 #: 名下每一条死记录重放成一帧 `deviceDetach`，2012 条曾把连接器的处理链堵住
-#: （maintainers/ANALYSIS-20261012-connector-flap.md）。这是个卫生问题，不是安全
+#: （maintainers/20261012-连接器断续分析.md）。这是个卫生问题，不是安全
 #: 问题，所以只告警、不自动删——真删由 `purge-revoked-devices.py` 或
 #: `deploy/dsh-relay-purge.timer` 做（见 README「Dead device records」）。
 #: 默认 200 沿用这条告警原本写死的那个数：正常用量下死记录是几十条量级，

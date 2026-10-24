@@ -12,7 +12,7 @@ WorkingDirectory=/opt/dsh-relay
 
 # 死设备记录会在**每次连接器连上时**被逐条重放给连接器（hub.py 的
 # `_tell_agent_about_the_gone`），2012 条曾把连接器的处理链堵住
-# （maintainers/ANALYSIS-20261012-connector-flap.md）。这个单元把库里已撤销 /
+# （maintainers/20261012-连接器断续分析.md）。这个单元把库里已撤销 /
 # 已过期的行真删掉——在用的设备一行都不碰（判据写在脚本里，这里不重复）。
 #
 # --all-agents：库里每个 agent 都清，不只是某个人的机器。
