@@ -284,9 +284,15 @@ public enum RelativeTime {
         // built here rather than shared: `RelativeDateTimeFormatter` is not
         // `Sendable`, and a shared instance would need synchronization for a
         // path this cold.
+        //
+        // The locale is **not** set: pinning `zh_Hans_CN` here made an English
+        // phone read "3周前" for anything older than a week. `SettingsModel`
+        // already records that same lesson ("the row read on an English phone
+        // used to say「3分钟前」"); `Locale.current` is what the four short
+        // branches above get through `String(localized:)`, so this branch now
+        // agrees with them instead of contradicting them.
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .short
-        formatter.locale = Locale(identifier: "zh_Hans_CN")
         return formatter.localizedString(for: date, relativeTo: Date())
     }
 }
