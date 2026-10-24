@@ -39,7 +39,7 @@ const COLORS = { line: '#2563eb', open: '#f59e0b', replied: '#10b981',
   peak: '#dc2626', grid: '#eef2f7',
   // 活跃账号图的堆叠两段：回访（浅蓝面积）与当日新增（橙带），与预览稿一致。
   returning: '#0ea5e9', fresh: '#f59e0b' }
-/// 72 小时热度图的七档色阶（0 / 1–2 / 3–4 / 5–6 / 7–8 / 9–11 / 12+）。
+/// 活跃分布矩阵的七档色阶（0 / 1–2 / 3–4 / 5–6 / 7–8 / 9–11 / 12+）。
 /// 分档仍是**绝对活跃账号数**（不按当前峰值做相对色阶）：相对色阶下平淡的一天也会画成
 /// 满屏深色，看不出"今天其实比昨天闲"。
 ///
@@ -177,7 +177,7 @@ figure.chart .note { color: #94a3b8; font-size: 11px; text-align: right; }
 figure.chart svg { display: block; width: 100%; max-width: 540px; height: auto; margin: 2px auto 0; }
 svg text { font-family: "PingFang SC", Arial, sans-serif; font-size: 9.5px; fill: #94a3b8; }
 svg text.peakLabel { fill: ${COLORS.peak}; font-weight: 600; }
-/* 72 小时热度图的图例：色块 + 账号数区间，与 SVG 同一套五档。 */
+/* 活跃分布矩阵的图例：色块 + 账号数区间，与 SVG 同一套七档。 */
 .heat-legend { display: flex; align-items: center; flex-wrap: wrap; gap: 2px 4px;
   margin: 2px auto 6px; max-width: 540px; color: #94a3b8; font-size: 9.5px; }
 .heat-legend span { margin-right: 1px; }
@@ -419,7 +419,7 @@ function compositionChart({ title, note, points, format }) {
 
 /** 24 小时 × N 天的热度图：格子越深，那一小时在线的账号越多。
 
-为什么用热度图而不是折线：72 小时如果画成一条 72 点的折线，横向会被压扁，凌晨的
+为什么用矩阵而不是折线：按小时如果要画成一条 336 点的折线，横向会被压扁，凌晨的
 低谷与工作时间的双峰全糊在一起；按「日 × 小时」摆成三行，作息形状一眼可读。
 
 `buckets` = [{hourStartAt, accounts, agents}]（服务端从 systemd 日志重建）。
@@ -603,11 +603,11 @@ export function normalize(data) {
       windowDays: 0, revoked: 0, newPerDay: [], list: [] }),
     usage: withDefaults(source.usage, { perDay: [], topAccounts: [], totals: {},
       averagePerDay: 0, peakDay: null, activeDays: 0, activeAccounts: 0, activeAccounts7d: 0 }),
-    // 版本分布（服务端 `versions`）与过去 72 小时的活性（`hourlyActivity`）。
+    // 版本分布（服务端 `versions`）与 14 天 × 24 小时的活性矩阵（`hourlyActivity`）。
     // 两个字段都是 2026-10-17 新增：老服务端没有它们，页面照常渲染，只是少这两块。
     versions: Array.isArray(source.versions) ? source.versions : [],
     versionsWindowHours: num(source.versionsWindowHours) || 48,
-    hourlyActivity: withDefaults(source.hourlyActivity, { windowHours: 72, buckets: null }),
+    hourlyActivity: withDefaults(source.hourlyActivity, { windowDays: 14, windowHours: 336, buckets: null }),
     retention: {
       scope: text(source.retention?.scope, 'external'),
       users: withDefaults(source.retention?.users, { dau: 0, wau: 0, mau: 0,
@@ -1068,8 +1068,8 @@ function rangeSection(report, days, completed = false) {
     format: formatBytes,
     markers: releaseMarkers,
   }) + hourlyHeatmap({
-    title: `过去 ${num(report.hourlyActivity.windowHours) || 72} 小时活跃分布`,
-    note: '按小时 · 连接口径（日志） · 越深越多',
+    title: `过去 ${formatInt(num(report.hourlyActivity.windowDays) || 14)} 天 · 24 小时活跃分布`,
+    note: '每行一天 · 连接口径（日志） · 越深越多',
     buckets: report.hourlyActivity.buckets,
   })
 
@@ -1145,11 +1145,11 @@ export function renderReport(data, { now = Date.now(), history = null } = {}) {
     rangeSection(report, days, completed),
   ].join('\n')
   // 口径说明只留会让人误读数字的几条：活跃账号/活跃设备的区别、流量与调试设备的边界、
-  // 72 小时图与版本分布的窗口。逐项细账不写在页面底部。
+  // 14 天矩阵与版本分布的窗口。逐项细账不写在页面底部。
   const foot = `口径：活跃账号 = 当天有设备用量行的账号（同一账号多台设备只算一个，网页端也计入设备）；`
     + `活跃设备 = 当天的设备行数（重装/换版本会多一行，故可能大于活跃账号）。`
     + ` 出口流量只计中转出口字节（不含 OTA 下载与 SSH）；调试设备（DSH- 前缀与测试台机型）不计。`
-    + ` 72 小时分布是连接口径（从日志重建，含只连着、没有流量的设备；取不到日志时该图跳过）；`
+    + ` 14 天分布是连接口径（从日志重建，含只连着、没有流量的设备；取不到日志时该图跳过）；`
     + `版本分布与活跃账号同口径，窗口 48 小时（按用量行的 lastSeenAt 卡）。`
     + ` GitHub 的 star / fork / 关注者取自公开 API（未认证），是**生成时刻**的值（接口没有历史快照），`
     + `本机缓存 6 小时；取不到时这一行省略。`

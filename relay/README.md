@@ -304,10 +304,13 @@ $A admin.py --db $DB ops-report --days 30 --as-of yesterday                   # 
 除原有板块外，`ops-report` 还带两份新数据：`versions`（最近 48 小时**有用量行**的设备按
 `appVersion` 分组的设备数 / 账号数 / 最近在线；窗口按用量行的 `lastSeenAt` 卡，不用
 `devices.lastSeenAt`，长度见 `REPORT_VERSION_HOURS`）与
-`hourlyActivity`（过去 72 小时逐小时的活跃账号数，只算**有设备在连**的账号——电脑的连接器
-常年挂着不算）。后者由 `journalctl -u dsh-relay` 里的 device `attached` / `detached` 事件
-重建，因为中转自己只按天记账；读不到日志时 `buckets` 为 `null`，日报会跳过那张图，不拿 0
-冒充。换单元名用 `--journal-unit`。
+`hourlyActivity`（14 天 × 24 小时的活跃账号数，只算**有设备在连**的账号——电脑的连接器
+常年挂着不算；窗口从 14 天前那天的 00:00 到锚点，矩阵才是整齐的 24 列）。后者由
+`journalctl` 里的 device `attached` / `detached` 事件重建，因为中转自己只按天记账；
+2026-10-24 生产从 Python 切到 Go 之后，两个单元（`dsh-relay`、`dsh-relay-go`）的日志都要
+读——切换前的历史在前者、切换后的在后者，两种行格式（文本 / JSON）都认。读不到日志时
+`buckets` 为 `null`，日报会跳过那张图，不拿 0 冒充。换单元名用 `--journal-unit`
+（逗号分隔）。
 
 `invites` 板块的三本账要分开看：`remaining` 是"未使用的全部"，把过期没用的也算在内；
 `usable`（未用且未过期）、`expiringSoon`（7 天内到期）、`expiredUnused`（已过期未用）

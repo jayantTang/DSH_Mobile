@@ -35,17 +35,106 @@ test('连续过程段折成一条摘要：用户消息、页内最后回答、�
   assert.equal(out[2].event.seq, events[2].seq)
 })
 
-test('页内最后一条助手回答永远不折（可能是最终回答或这一屏唯一正文）', () => {
+test('页尾连续回答段整段保留（相邻两条带正文的助手消息都算回答）', () => {
   reset()
   const { records: out, folds } = foldProcessRuns(records([
     event('user/message', { content: [{ type: 'text', text: '问' }] }),
     event('assistant/message', { content: [{ type: 'text', text: '中间' }] }),
     event('assistant/message', { content: [{ type: 'text', text: '最后' }] }),
   ]))
-  assert.equal(folds.length, 1)
-  assert.deepEqual(types(out), ['user/message', FOLD_RECORD_TYPE, 'assistant/message'])
-  const kept = out[2].event
-  assert.equal(kept.data.content[0].text, '最后')
+  assert.equal(folds.length, 0)
+  assert.deepEqual(types(out), ['user/message', 'assistant/message', 'assistant/message'])
+  assert.equal(out[1].event.data.content[0].text, '中间')
+  assert.equal(out[2].event.data.content[0].text, '最后')
+})
+
+test('一页两个已完成轮次：两轮的最终回答都保留，中间过程仍折', () => {
+  reset()
+  const events = [
+    event('turn/start', { turn: 1 }),
+    event('user/message', { content: [{ type: 'text', text: '第一问' }] }),
+    event('tool/call', { callId: 'c1', name: 'bash' }),
+    event('assistant/message', { content: [{ type: 'text', text: '第一答' }] }),
+    event('turn/end', { turn: 1, reason: { kind: 'completed' } }),
+    event('turn/start', { turn: 2 }),
+    event('user/message', { content: [{ type: 'text', text: '第二问' }] }),
+    event('tool/call', { callId: 'c2', name: 'bash' }),
+    event('assistant/message', { content: [{ type: 'text', text: '第二答' }] }),
+    event('turn/end', { turn: 2, reason: { kind: 'completed' } }),
+  ]
+  const { records: out, folds } = foldProcessRuns(records(events))
+  const answered = out
+    .filter((record) => record.event.type === 'assistant/message')
+    .map((record) => record.event.data.content[0].text)
+  assert.deepEqual(answered, ['第一答', '第二答'])
+  assert.deepEqual(out.filter((record) => record.event.type === FOLD_RECORD_TYPE).map((r) => r.event.seq),
+    [events[2].seq, events[7].seq])
+  assert.equal(folds.length, 2)
+})
+
+test('轮尾紧跟纯 reasoning 的助手消息：带正文的回答保留，reasoning 折掉', () => {
+  reset()
+  const events = [
+    event('turn/start', { turn: 3 }),
+    event('user/message', { content: [{ type: 'text', text: '问' }] }),
+    event('assistant/message', { content: [{ type: 'text', text: '答' }] }),
+    event('tool/call', { callId: 'c1', name: 'bash' }),
+    event('assistant/message', { turn: 3, content: [{ type: 'reasoning', text: '想' }] }),
+    event('turn/end', { turn: 3, reason: { kind: 'completed' } }),
+  ]
+  const { records: out } = foldProcessRuns(records(events))
+  assert.deepEqual(types(out),
+    ['turn/start', 'user/message', 'assistant/message', FOLD_RECORD_TYPE, 'turn/end'])
+  assert.equal(out[2].event.data.content[0].text, '答')
+  const summary = out[3].event.data
+  assert.equal(summary.reasoningCount, 1)
+  assert.equal(summary.messageCount, 1)
+  assert.equal(summary.startSeq, events[3].seq)
+  assert.equal(summary.endSeq, events[4].seq)
+})
+
+test('生产形态 data.message.content 判定正文：带 text 保护，纯 reasoning 不保护', () => {
+  reset()
+  const events = [
+    event('turn/start', { turn: 1 }),
+    event('user/message', { content: [{ type: 'text', text: '问' }] }),
+    event('assistant/message', { message: { content: [{ type: 'reasoning', text: '想' }] } }),
+    event('tool/call', { callId: 'c1', name: 'bash' }),
+    event('assistant/message', { message: { content: [{ type: 'text', text: '生产形态回答' }] } }),
+    event('turn/end', { turn: 1, reason: { kind: 'completed' } }),
+  ]
+  const { records: out } = foldProcessRuns(records(events))
+  assert.deepEqual(types(out),
+    ['turn/start', 'user/message', FOLD_RECORD_TYPE, 'assistant/message', 'turn/end'])
+  assert.equal(out[3].event.data.message.content[0].text, '生产形态回答')
+  assert.equal(out[2].event.data.endSeq, events[3].seq)
+})
+
+test('回答位于中途插话之前：回答保留，插话与轮次结束也保留', () => {
+  reset()
+  const events = [
+    event('turn/start', { turn: 5 }),
+    event('user/message', { content: [{ type: 'text', text: '第一问' }] }),
+    event('assistant/message', { content: [{ type: 'text', text: '答' }] }),
+    event('tool/call', { callId: 'c1', name: 'bash' }),
+    event('user/message', { content: [{ type: 'text', text: '补充一句' }] }),
+    event('turn/end', { turn: 5, reason: { kind: 'completed' } }),
+  ]
+  const { records: out } = foldProcessRuns(records(events))
+  assert.deepEqual(types(out),
+    ['turn/start', 'user/message', 'assistant/message', FOLD_RECORD_TYPE, 'user/message', 'turn/end'])
+  assert.equal(out[2].event.data.content[0].text, '答')
+})
+
+test('页尾轮次没有任何带正文的消息：不额外保留纯 reasoning', () => {
+  reset()
+  const { records: out } = foldProcessRuns(records([
+    event('user/message', { content: [{ type: 'text', text: '问' }] }),
+    event('tool/call', { callId: 'c1', name: 'bash' }),
+    event('assistant/message', { content: [{ type: 'reasoning', text: '想' }] }),
+  ]))
+  assert.deepEqual(types(out), ['user/message', FOLD_RECORD_TYPE])
+  assert.equal(out[1].event.data.reasoningCount, 1)
 })
 
 test('不渲染的事件整条丢掉（request/header、step、goal、title）', () => {

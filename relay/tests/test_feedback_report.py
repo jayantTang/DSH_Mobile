@@ -878,7 +878,7 @@ def test_hourly_activity_counts_accounts_with_a_device_connected():
     devices = {"dev_a": {"accountId": "acc_1", "agentId": "agt_a"},
                "dev_b": {"accountId": "acc_1", "agentId": "agt_a"}}
     agents = {"agt_a": {"accountId": "acc_1"}}
-    buckets = admin._hourly_activity(6, end, devices, agents, lines=lines)
+    buckets = admin._hourly_activity(end - 6 * 3_600_000, end, devices, agents, lines=lines)
     assert len(buckets) == 7, "6 小时窗口落成 7 个整点格（含两端）"
     by_hour = {bucket["hourStartAt"]: bucket for bucket in buckets}
     # 14 点只有 dev_a；15 点先 dev_a 后 dev_b，但同属 acc_1，账号数仍是 1。
@@ -894,8 +894,59 @@ def test_hourly_activity_falls_back_to_the_agent_account_for_purged_devices():
         "2026-10-17T15:10:00+0800 host python[1]: 2026-10-17 15:10:00,000 INFO relay relay: "
         "device dev_gone (iPhone) attached to agent agt_a",
     ]
-    buckets = admin._hourly_activity(2, end, {}, {"agt_a": {"accountId": "acc_9"}}, lines=lines)
+    buckets = admin._hourly_activity(end - 2 * 3_600_000, end, {}, {"agt_a": {"accountId": "acc_9"}}, lines=lines)
     assert buckets[-1]["accounts"] == 1 and buckets[-1]["devices"] == 1
+
+
+def test_hourly_activity_reads_the_go_relay_json_log():
+    """2026-10-24 起生产是 Go 服务：日志是 JSON，字段里才有 deviceId/agentId。
+
+    只认 Python 的文本格式会让切换之后的每一格都是空的，而日志里明明有数据。
+    """
+    tz = datetime.timezone(datetime.timedelta(hours=8))
+    end = int(datetime.datetime(2026, 10, 24, 16, 0, 0, tzinfo=tz).timestamp() * 1000)
+    at_14 = int(datetime.datetime(2026, 10, 24, 14, 0, 0, tzinfo=tz).timestamp() * 1000)
+    at_15 = at_14 + 3_600_000
+    lines = [
+        '{"time":"2026-10-24T14:10:00.123456789+08:00","level":"INFO",'
+        '"msg":"relay: device attached","deviceId":"dev_go1","agentId":"agt_go"}',
+        '{"time":"2026-10-24T15:40:00.5+08:00","level":"INFO",'
+        '"msg":"relay: device detached","deviceId":"dev_go1","agentId":"agt_go",'
+        '"reason":"socket closed"}',
+    ]
+    devices = {"dev_go1": {"accountId": "acc_go", "agentId": "agt_go"}}
+    agents = {"agt_go": {"accountId": "acc_go"}}
+    buckets = admin._hourly_activity(end - 6 * 3_600_000, end, devices, agents, lines=lines)
+    by_hour = {bucket["hourStartAt"]: bucket for bucket in buckets}
+    assert by_hour[at_14] == {"hourStartAt": at_14, "accounts": 1, "devices": 1}
+    assert by_hour[at_15]["accounts"] == 1, "15:40 才断开，15 点这一格还在线"
+
+
+def test_journal_units_accepts_a_comma_separated_list():
+    """切换期两个单元都在写：默认两个都读，`--journal-unit` 仍可显式指定。"""
+    assert admin._journal_units("dsh-relay, dsh-relay-go") == ("dsh-relay", "dsh-relay-go")
+    assert admin._journal_units("") == admin.DEFAULT_JOURNAL_UNITS
+
+
+def test_read_journal_merges_both_units_in_time_order(monkeypatch):
+    """两个单元各自返回一段，合并后按时刻排序——顺序错了 attach/detach 会配错对。"""
+    class Done:
+        def __init__(self, out):
+            self.returncode = 0
+            self.stdout = out
+
+    def fake_run(argv, **kwargs):
+        unit = argv[argv.index("-u") + 1]
+        if unit == "dsh-relay":
+            return Done("2026-10-23T10:00:00+0800 host p[1]: device dev_a (iPhone) attached to agent agt_a\n")
+        return Done('{"time":"2026-10-24T10:00:00.1+08:00","msg":"relay: device detached",'
+                    '"deviceId":"dev_a","agentId":"agt_a"}\n')
+
+    monkeypatch.setattr(admin.subprocess, "run", fake_run)
+    lines = admin._read_journal(("dsh-relay", "dsh-relay-go"), 0, now_ms())
+    assert [admin._parse_journal_time(line) for line in lines] == sorted(
+        admin._parse_journal_time(line) for line in lines)
+    assert len(lines) == 2
 
 
 def test_hourly_activity_skips_debug_devices():
@@ -908,7 +959,7 @@ def test_hourly_activity_skips_debug_devices():
     ]
     devices = {"dev_dbg": {"accountId": "acc_owner", "agentId": "agt_owner",
                            "name": "DSH-Test", "model": "iPhone 15"}}
-    buckets = admin._hourly_activity(2, end, devices,
+    buckets = admin._hourly_activity(end - 2 * 3_600_000, end, devices,
                                      {"agt_owner": {"accountId": "acc_owner"}}, lines=lines)
     assert all(bucket["accounts"] == 0 and bucket["devices"] == 0 for bucket in buckets)
 
@@ -916,7 +967,7 @@ def test_hourly_activity_skips_debug_devices():
 def test_hourly_activity_returns_none_when_the_journal_is_unreadable(monkeypatch):
     """读不到日志就是 `None`：渲染层据此写「跳过」，不拿空表冒充 0。"""
     monkeypatch.setattr(admin, "_read_journal", lambda *a, **k: None)
-    assert admin._hourly_activity(72, now_ms(), {}, {}) is None
+    assert admin._hourly_activity(now_ms() - 14 * 86_400_000, now_ms(), {}, {}) is None
 
 
 def test_ops_report_carries_the_version_table_and_the_hourly_window(tmp_path, capsys, monkeypatch):
@@ -928,7 +979,8 @@ def test_ops_report_carries_the_version_table_and_the_hourly_window(tmp_path, ca
     assert code == 0
     assert "versions" in report and isinstance(report["versions"], list)
     hourly = report["hourlyActivity"]
-    assert hourly["windowHours"] == 72
+    assert hourly["windowDays"] == 14
+    assert hourly["windowHours"] == 14 * 24
     assert hourly["buckets"] is None
 
 

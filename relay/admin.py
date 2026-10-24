@@ -24,7 +24,7 @@ import os
 import re
 import subprocess
 import sys
-from typing import Any
+from typing import Any, Iterable
 from urllib.parse import quote
 
 from hub import dead_device_warn_threshold_from_env
@@ -259,8 +259,10 @@ def build_parser() -> argparse.ArgumentParser:
     ops_report.add_argument("--days", type=int, default=30)
     ops_report.add_argument("--as-of", dest="as_of", default="now",
                             help="now (default) | yesterday | YYYY-MM-DD；后两者按那一整天算")
-    ops_report.add_argument("--journal-unit", dest="journal_unit", default=DEFAULT_JOURNAL_UNIT,
-                            help="systemd 单元名：过去 72 小时分布图从它的日志重建（默认 dsh-relay）")
+    ops_report.add_argument("--journal-unit", dest="journal_unit",
+                            default=",".join(DEFAULT_JOURNAL_UNITS),
+                            help="systemd 单元名，逗号分隔：14 天活跃分布图从这些日志重建"
+                                 "（默认 dsh-relay,dsh-relay-go，切换期两个都在写）")
     return parser
 
 
@@ -720,15 +722,19 @@ def _recent_days(days: int, *, end: int | None = None) -> list[int]:
     return sorted({local_day(at - offset * 86_400) for offset in range(max(1, int(days)))})
 
 
-#: 日报「过去 72 小时」分布图的窗口长度。
-REPORT_ACTIVITY_HOURS = 72
+#: 日报活跃分布图的窗口：14 天 × 24 小时（owner 2026-10-24 定；原来是过去 72 小时）。
+#: 窗口按本地日起算——第 14 天 00:00 到锚点，矩阵才正好 24 列 × 14 行；
+#: 从锚点往回数 336 小时会跨出第 15 个日期，多出一条半截行。
+REPORT_ACTIVITY_DAYS = 14
 
 #: 版本分布的窗口：只看最近 48 小时有设备连接的用户（owner 2026-10-17 定）。
 #: 全量设备里有一半是几周没上线的历史行，混进来以后「还有多少人在旧版」显得很严重。
 REPORT_VERSION_HOURS = 48
 
-#: systemd 单元名：只有它才写得出「谁在哪一小时连着」。可用 `--journal-unit` 覆盖。
-DEFAULT_JOURNAL_UNIT = "dsh-relay"
+#: 中转日志的 systemd 单元名。2026-10-24 生产从前端 Python（`dsh-relay`）切到 Go
+#: （`dsh-relay-go`）：14 天窗口正好跨过切换点，两份都要读，否则切换前的历史与切换后
+#: 的今天各缺一半。逗号分隔、按顺序合并后按时间排序。
+DEFAULT_JOURNAL_UNITS = ("dsh-relay", "dsh-relay-go")
 
 #: 日志里的设备连接事件。认四种：
 #: - `attached to agent …`：连上；
@@ -790,27 +796,52 @@ def _version_report(store: Store, *, since_ms: int, until_ms: int,
         key=lambda item: (-item["devices"], item["appVersion"] or ""))
 
 
-def _read_journal(unit: str, since_ms: int, until_ms: int) -> list[str] | None:
-    """取中转日志。取不到（没装 systemd、无 journal 读权限、单元名不对）时返回 `None`——
-    日报宁可少一张图，也不能因为一个可选板块整份生成失败。
+def _read_journal(units: Iterable[str], since_ms: int, until_ms: int) -> list[str] | None:
+    """取中转日志：每个单元各读一次，合并后按时刻排序。
+
+    取不到（没装 systemd、无 journal 读权限、单元名都不对）时返回 `None`——
+    日报宁可少一张图，也不能因为一个可选板块整份生成失败。单个单元读不到只跳过它：
+    2026-10-24 切换期间两个单元都在写，缺一个不代表没有数据。
     """
     since = datetime.datetime.fromtimestamp(since_ms / 1000).strftime("%Y-%m-%d %H:%M:%S")
     until = datetime.datetime.fromtimestamp(until_ms / 1000).strftime("%Y-%m-%d %H:%M:%S")
-    try:
-        completed = subprocess.run(  # noqa: S603 - 固定的只读运维命令，参数不是用户输入
-            ["journalctl", "-u", unit, "--since", since, "--until", until,
-             "--no-pager", "-o", "short-iso"],
-            capture_output=True, text=True, timeout=30, check=False)
-    except (OSError, subprocess.SubprocessError):
+    lines: list[str] = []
+    readable = False
+    for unit in units:
+        try:
+            completed = subprocess.run(  # noqa: S603 - 固定的只读运维命令，参数不是用户输入
+                ["journalctl", "-u", unit, "--since", since, "--until", until,
+                 "--no-pager", "-o", "short-iso"],
+                capture_output=True, text=True, timeout=30, check=False)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if completed.returncode != 0:
+            continue
+        readable = True
+        lines.extend(completed.stdout.splitlines())
+    if not readable:
         return None
-    if completed.returncode != 0:
-        return None
-    return completed.stdout.splitlines()
+    return sorted(lines, key=lambda line: _parse_journal_time(line) or 0)
+
+
+_JSON_TIME = re.compile(r'"time":"([^"]+)"')
+_JSON_FRACTION = re.compile(r"(\.\d{6})\d+")
 
 
 def _parse_journal_time(line: str) -> int | None:
-    """`short-iso` 行的前缀是 `2026-10-17T15:44:16+0800`，转成毫秒时间戳。"""
-    stamp = line.split(" ", 1)[0]
+    """一行日志的时刻（毫秒）。
+
+    Python 服务的 `short-iso` 行首是 `2026-10-17T15:44:16+0800`；Go 服务（2026-10-24
+    起）输出 JSON，时刻在 `"time":"2026-10-24T14:30:26.865392225+08:00"` 里，纳秒要
+    先截成微秒——`fromisoformat` 只认到 6 位小数。
+    """
+    if line.startswith("{"):
+        match = _JSON_TIME.search(line)
+        if match is None:
+            return None
+        stamp = _JSON_FRACTION.sub(r"\1", match.group(1))
+    else:
+        stamp = line.split(" ", 1)[0]
     try:
         parsed = datetime.datetime.fromisoformat(stamp)
     except ValueError:
@@ -818,17 +849,51 @@ def _parse_journal_time(line: str) -> int | None:
     return int(parsed.timestamp() * 1000)
 
 
-def _hourly_activity(hours: int, end_ms: int, devices: dict[str, dict[str, Any]],
+def _journal_units(value: str) -> tuple[str, ...]:
+    """`--journal-unit` 的取值 → 单元名列表（逗号分隔；空值退回默认两个）。"""
+    units = tuple(part.strip() for part in str(value or "").split(",") if part.strip())
+    return units or DEFAULT_JOURNAL_UNITS
+
+
+def _device_event(line: str) -> tuple[str, str, str | None] | None:
+    """一行日志如果是「设备连上 / 断开」，返回 `(deviceId, kind, agentId)`。
+
+    两种格式都要认：Python 服务是文本（`device dev_x (iPhone) attached to agent agt_y`，
+    2026-10-24 之前），Go 服务是 JSON（`"msg":"relay: device attached","deviceId":…`，
+    2026-10-24 起）。不认 JSON 的话，切换之后的矩阵会一直是空的，而日志里明明有数据。
+    """
+    if line.startswith("{"):
+        try:
+            obj = json.loads(line)
+        except ValueError:
+            return None
+        message = str(obj.get("msg") or "")
+        device = str(obj.get("deviceId") or "")
+        if not device.startswith("dev_"):
+            return None
+        for kind in ("closed a socket that had already been replaced", "attached again",
+                     "attached", "detached"):
+            if kind in message:
+                return device, kind, str(obj.get("agentId") or "") or None
+        return None
+    match = _DEVICE_EVENT.search(line)
+    if match is None:
+        return None
+    agent = _AGENT_IN_LINE.search(line)
+    return match.group(1), match.group(2), (agent.group(1) if agent else None)
+
+
+def _hourly_activity(start_ms: int, end_ms: int, devices: dict[str, dict[str, Any]],
                      agents: dict[str, dict[str, Any]],
                      *, lines: list[str] | None = None,
-                     unit: str = DEFAULT_JOURNAL_UNIT) -> list[dict[str, Any]] | None:
-    """过去 `hours` 小时里，每个本地小时有多少个活跃用户、多少台设备在连。
+                     units: Iterable[str] = DEFAULT_JOURNAL_UNITS) -> list[dict[str, Any]] | None:
+    """`start_ms`–`end_ms` 之间，每个本地小时有多少个活跃用户、多少台设备在连。
 
     口径（owner 2026-10-17 定）：**只算有设备连接的用户**，电脑的连接器一直挂着不算。
     这与头牌「活跃用户」一致——电脑开着但没人用 App，不该在图上占一格。
 
     数据从 systemd 日志里的 `device … attached / detached` 重建：中转自己只把用量按
-    **天**记账，没有小时粒度，而日报要的是 72 小时的形状。日志是唯一的现成来源；
+    **天**记账，没有小时粒度，而日报要的是按小时排开的形状。日志是唯一的现成来源；
     取不到就返回 `None`，由渲染层写「没有日志数据」，不编数字。
 
     返回按小时升序：`accounts` 是那一小时内有设备在线的**账号数**（同账号多台设备只算
@@ -836,8 +901,8 @@ def _hourly_activity(hours: int, end_ms: int, devices: dict[str, dict[str, Any]]
     """
     hour_ms = 3_600_000
     end = int(end_ms)
-    start = end - hours * hour_ms
-    raw = lines if lines is not None else _read_journal(unit, start, end)
+    start = int(start_ms)
+    raw = lines if lines is not None else _read_journal(units, start, end)
     if raw is None:
         return None
 
@@ -846,18 +911,16 @@ def _hourly_activity(hours: int, end_ms: int, devices: dict[str, dict[str, Any]]
     open_at: dict[str, tuple[int, str | None]] = {}
     spans: list[tuple[int, int, str, str | None]] = []
     for line in raw:
-        event = _DEVICE_EVENT.search(line)
+        event = _device_event(line)
         if event is None:
             continue
-        device_id, kind = event.group(1), event.group(2)
+        device_id, kind, agent = event
         if kind == "closed a socket that had already been replaced":
             continue
         at = _parse_journal_time(line)
         if at is None:
             continue
         at = min(max(at, start), end)
-        agent_id = _AGENT_IN_LINE.search(line)
-        agent = agent_id.group(1) if agent_id else None
         if kind.startswith("attached"):
             if device_id in open_at:
                 opened, previous_agent = open_at.pop(device_id)
@@ -1448,7 +1511,7 @@ def _invite_report(store: Store, stamp: int, enrollments: list[dict[str, Any]],
 
 
 def _ops_report(store: Store, days: int, *, as_of: int | None = None,
-                journal_unit: str = DEFAULT_JOURNAL_UNIT) -> dict[str, Any]:
+                journal_unit: str = ",".join(DEFAULT_JOURNAL_UNITS)) -> dict[str, Any]:
     """日报的板块：**今日** + 反馈 / 设备 / 用量 / 留存 / 邀请码（最近 `--days` 天）。
 
     `--days` 是窗口（本地日，含 `as_of` 那天）：反馈只数窗口内**新建**的线程，用量与每日新增
@@ -1543,13 +1606,16 @@ def _ops_report(store: Store, days: int, *, as_of: int | None = None,
             devices={row["deviceId"]: row for row in devices}, debug_ids=debug_ids,
             known_ids=known_ids, external=external),
         "versionsWindowHours": REPORT_VERSION_HOURS,
-        # 过去 72 小时的活跃形状：从 systemd 日志重建，只算**有设备在连**的账号。
+        # 14 天 × 24 小时的活跃形状：从 systemd 日志重建，只算**有设备在连**的账号。
         # 取不到日志时 `buckets` 为 None，渲染层写「没有日志数据」，不拿别的数据凑。
-        "hourlyActivity": {"windowHours": REPORT_ACTIVITY_HOURS,
+        "hourlyActivity": {"windowDays": REPORT_ACTIVITY_DAYS,
+                           "windowHours": REPORT_ACTIVITY_DAYS * 24,
                            "buckets": _hourly_activity(
-                               REPORT_ACTIVITY_HOURS, stamp,
+                               _day_start_ms(_day_shift(local_day(stamp / 1000),
+                                                        -(REPORT_ACTIVITY_DAYS - 1))),
+                               stamp,
                                {row["deviceId"]: row for row in devices},
-                               agent_versions, unit=journal_unit)},
+                               agent_versions, units=_journal_units(journal_unit))},
         "today": _today_report(store, stamp=stamp, threads=threads, real_devices=real,
                                debug_ids=debug_ids, names=names, known_ids=known_ids,
                                external=external),

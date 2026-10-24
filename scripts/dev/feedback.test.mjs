@@ -349,7 +349,7 @@ test('buildInvocation 的远端命令按 POSIX 引号化', () => {
 
 test('日报分「今日」与「最近 30 天」两段，正文被转义', () => {
   const html = renderReport(fixture())
-  // 两段：概览 + 趋势与留存。趋势段固定两张图；概览里的激活码趋势与 72 小时热力图
+  // 两段：概览 + 趋势与留存。趋势段固定三张图；概览里的激活码趋势与 14 天活跃矩阵
   // 取决于有没有数据，按图名断言，不钉死 SVG 个数。
   assert.ok(html.includes('<span class="tag ">今日</span>概览'), '今日板块')
   assert.ok(html.includes('<span class="tag range">最近 30 天</span>趋势与留存'), '30 天板块')
@@ -1293,32 +1293,41 @@ test('激活码板块：老服务端没有 usable/unused 时退回 remaining，�
   assert.match(html, /MacBook/, '老服务端的 enrollments 照样列出来')
 })
 
-test('过去 72 小时热度图：整点格齐全，缺的一小时画空格不插值', () => {
+test('14 天矩阵：整点格齐全，缺的一小时画空格不插值', () => {
   const hour = 3_600_000
   const end = Math.floor(GENERATED_AT / hour) * hour
-  const buckets = [...Array(72).keys()].map((i) => ({
-    hourStartAt: end - (71 - i) * hour,
+  // 服务端按本地日对齐窗口：第 14 天 00:00 到锚点，矩阵正好 24 列 × 14 行。
+  const midnight = new Date(end)
+  midnight.setHours(0, 0, 0, 0)
+  const start = midnight.getTime() - 13 * 86_400_000
+  const hours = Math.floor((end - start) / hour) + 1
+  const buckets = [...Array(hours).keys()].map((i) => ({
+    hourStartAt: start + i * hour,
     accounts: i % 9 === 0 ? 6 : (i % 4 === 0 ? 2 : 0),
-    agents: 3,
+    devices: 3,
   })).filter((bucket) => bucket.accounts > 0)
-  const html = renderReport({ ...fixture(), hourlyActivity: { windowHours: 72, buckets } })
-  assert.match(html, /过去 72 小时活跃分布/)
+  const html = renderReport({ ...fixture(),
+    hourlyActivity: { windowDays: 14, windowHours: 14 * 24, buckets } })
+  assert.match(html, /过去 14 天 · 24 小时活跃分布/)
   // 每个有数据的格子带一个 `<title>` 悬停说明，外加文档 head 里那一只。
   assert.equal((html.match(/<title>/g) ?? []).length, buckets.length + 1)
   assert.match(html, /峰值 6 个账号/)
   assert.match(html, /0时/)
   assert.match(html, /23时/)
+  // 24 列 × 14 行：空格也要画，所以格子数正好 336。
+  assert.equal((html.match(/<rect/g) ?? []).length, 24 * 14)
 })
 
-test('过去 72 小时热度图：读不到日志时写「跳过」，不画空表冒充 0', () => {
-  const html = renderReport({ ...fixture(), hourlyActivity: { windowHours: 72, buckets: null } })
+test('14 天矩阵：读不到日志时写「跳过」，不画空表冒充 0', () => {
+  const html = renderReport({ ...fixture(),
+    hourlyActivity: { windowDays: 14, windowHours: 336, buckets: null } })
   assert.match(html, /服务端读不到中转日志/)
 })
 
 test('老服务端没有 versions / hourlyActivity：两块的字段不缺，页面照常出', () => {
   const html = renderReport(fixture())
   assert.match(html, /版本分布（近 48 小时活跃）/)
-  assert.match(html, /过去 72 小时活跃分布/)
+  assert.match(html, /过去 14 天 · 24 小时活跃分布/)
 })
 
 test('老服务端没有 perDay.newAccounts：退回单条折线，不自己补算新增', () => {
