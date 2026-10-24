@@ -25,8 +25,1324 @@
   ],
   "versionsWindowHours": 48,
   "hourlyActivity": {
-    "windowHours": 72,
+    "windowDays": 14,
+    "windowHours": 336,
     "buckets": [
+      {
+        "hourStartAt": 1791734400000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791738000000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791741600000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791745200000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791748800000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791752400000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791756000000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791759600000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791763200000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791766800000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791770400000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791774000000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791777600000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791781200000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791784800000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791788400000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791792000000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791795600000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791799200000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791802800000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791806400000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791810000000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791813600000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791817200000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791820800000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791824400000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791828000000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791831600000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791835200000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791838800000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791842400000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791846000000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791849600000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791853200000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791856800000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791860400000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791864000000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791867600000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791871200000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791874800000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791878400000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791882000000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791885600000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791889200000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791892800000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791896400000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791900000000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791903600000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791907200000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791910800000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791914400000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791918000000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791921600000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791925200000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791928800000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791932400000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791936000000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791939600000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791943200000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791946800000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791950400000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791954000000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791957600000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791961200000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791964800000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791968400000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791972000000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791975600000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791979200000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791982800000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791986400000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791990000000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791993600000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1791997200000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792000800000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792004400000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792008000000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792011600000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792015200000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792018800000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792022400000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792026000000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792029600000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792033200000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792036800000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792040400000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792044000000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792047600000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792051200000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792054800000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792058400000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792062000000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792065600000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792069200000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792072800000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792076400000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792080000000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792083600000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792087200000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792090800000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792094400000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792098000000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792101600000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792105200000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792108800000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792112400000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792116000000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792119600000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792123200000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792126800000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792130400000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792134000000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792137600000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792141200000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792144800000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792148400000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792152000000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792155600000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792159200000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792162800000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792166400000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792170000000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792173600000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792177200000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792180800000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792184400000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792188000000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792191600000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792195200000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792198800000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792202400000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792206000000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792209600000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792213200000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792216800000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792220400000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792224000000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792227600000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792231200000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792234800000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792238400000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792242000000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792245600000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792249200000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792252800000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792256400000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792260000000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792263600000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792267200000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792270800000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792274400000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792278000000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792281600000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792285200000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792288800000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792292400000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792296000000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792299600000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792303200000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792306800000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792310400000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792314000000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792317600000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792321200000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792324800000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792328400000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792332000000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792335600000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792339200000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792342800000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792346400000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792350000000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792353600000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792357200000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792360800000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792364400000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792368000000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792371600000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792375200000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792378800000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792382400000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792386000000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792389600000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792393200000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792396800000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792400400000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792404000000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792407600000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792411200000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792414800000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792418400000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792422000000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792425600000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792429200000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792432800000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792436400000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792440000000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792443600000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792447200000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792450800000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792454400000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792458000000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792461600000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792465200000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792468800000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792472400000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792476000000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792479600000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792483200000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792486800000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792490400000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792494000000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792497600000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792501200000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792504800000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792508400000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792512000000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792515600000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792519200000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792522800000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792526400000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792530000000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792533600000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792537200000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792540800000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792544400000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792548000000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792551600000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792555200000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792558800000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792562400000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792566000000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792569600000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792573200000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792576800000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792580400000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792584000000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792587600000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792591200000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792594800000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792598400000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792602000000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792605600000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792609200000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792612800000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792616400000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792620000000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792623600000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792627200000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792630800000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792634400000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792638000000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792641600000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792645200000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792648800000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792652400000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792656000000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792659600000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792663200000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792666800000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792670400000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792674000000,
+        "accounts": 0,
+        "devices": 0
+      },
+      {
+        "hourStartAt": 1792677600000,
+        "accounts": 0,
+        "devices": 0
+      },
       {
         "hourStartAt": 1792681200000,
         "accounts": 0,

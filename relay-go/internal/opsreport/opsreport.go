@@ -28,14 +28,18 @@ const (
 	reportTopAccounts = 20
 	// reportTodayLimit 是「今日」板块每类明细的上限。
 	reportTodayLimit = 20
-	// reportActivityHours 是「过去 72 小时」分布图的窗口。
-	reportActivityHours = 72
+	// reportActivityDays 是活跃分布矩阵的窗口：14 天 × 24 小时（owner 2026-10-24 定，
+	// 原来是过去 72 小时）。窗口按本地日起算，行列才是整齐的 24×14。
+	reportActivityDays = 14
+	// reportActivityHours 是把上面的天数折算成小时，写进 JSON 的 windowHours。
+	reportActivityHours = reportActivityDays * 24
 	// reportVersionHours 是版本分布的窗口（只看最近 48 小时连过的用户）。
 	reportVersionHours = 48
 	// retentionHistoryDays 是"账号第一次活跃"的查询上界。
 	retentionHistoryDays = 400
-	// DefaultJournalUnit 是 systemd 单元名。
-	DefaultJournalUnit = "dsh-relay"
+	// DefaultJournalUnits 是 systemd 单元名（逗号分隔）：2026-10-24 生产从前端 Python
+	// （dsh-relay）切到 Go（dsh-relay-go），14 天窗口跨切换点，两份日志都要读。
+	DefaultJournalUnits = "dsh-relay,dsh-relay-go"
 )
 
 // Source 是报告构建的取数面：只包含本包实际调用的 10 个仓储方法。
@@ -65,9 +69,9 @@ type Options struct {
 	AsOfStamp int64
 	// GeneratedAt 是"生成时刻"（毫秒），只用于输出，不参与过滤。
 	GeneratedAt int64
-	// JournalUnit 是 systemd 单元名。调用方给什么就传什么：显式空串与命令行
-	// 一致（journalctl -u "" 取不到日志），不在包内偷偷回退成默认值。
-	JournalUnit string
+	// JournalUnits 是 systemd 单元名列表。调用方给什么就传什么：空列表与命令行一致
+	// （取不到日志），不在包内偷偷回退成默认值。
+	JournalUnits []string
 	// Journal 取某段时间的系统日志；nil 或 ok=false 时 hourlyActivity.buckets
 	// 输出 null（不编数字）。生产由 admincli 注入 journalctl 调用。
 	Journal func(unit string, sinceMS, untilMS int64) ([]string, bool)
@@ -80,7 +84,7 @@ func Report(ctx context.Context, src Source, opts Options) (any, error) {
 		days = 1
 	}
 	report, err := build(ctx, src, days, opts.AsOfStamp, opts.GeneratedAt,
-		opts.JournalUnit, opts.Journal)
+		opts.JournalUnits, opts.Journal)
 	if err != nil {
 		return nil, err
 	}

@@ -1,6 +1,7 @@
 package opsreport
 
 import (
+	"encoding/json"
 	"regexp"
 	"sort"
 	"strings"
@@ -16,22 +17,45 @@ var (
 	agentInLinePattern = regexp.MustCompile(`agent (agt_[A-Za-z0-9]+)`)
 )
 
-// hourlyActivityBuckets 从 systemd 日志重建过去 N 小时的"有设备在连"的账号与设备数。
+// hourlyActivityBuckets 从 systemd 日志重建 [startMS, endMS] 的"有设备在连"的账号与设备数。
+//
+// 多个单元（前端 Python 与 Go）的日志合并后按时刻排序：2026-10-24 生产切成 Go，
+// 窗口跨切换点时两份都要读，否则切换前的历史与切换后的今天各缺一半。
 //
 // 取不到日志时返回 nil（JSON 里是 null）：日报宁可少一张图，也不编数字。
-func hourlyActivityBuckets(hours int, endMS int64, devices []store.Device,
-	agents map[string]store.Agent, unit string,
+func hourlyActivityBuckets(startMS, endMS int64, devices []store.Device,
+	agents map[string]store.Agent, units []string,
 	journal func(string, int64, int64) ([]string, bool)) []hourlyBucket {
 	hourMS := int64(3_600_000)
 	end := endMS
-	start := end - int64(hours)*hourMS
+	start := startMS
 	if journal == nil {
 		return nil
 	}
-	lines, ok := journal(unit, start, end)
-	if !ok {
+	var lines []string
+	readable := false
+	for _, unit := range units {
+		if unit == "" {
+			continue
+		}
+		found, ok := journal(unit, start, end)
+		if !ok {
+			continue
+		}
+		readable = true
+		lines = append(lines, found...)
+	}
+	if !readable {
 		return nil
 	}
+	sort.SliceStable(lines, func(left, right int) bool {
+		leftAt, leftOK := parseJournalTime(lines[left])
+		rightAt, rightOK := parseJournalTime(lines[right])
+		if !leftOK || !rightOK {
+			return false
+		}
+		return leftAt < rightAt
+	})
 	deviceByID := make(map[string]store.Device, len(devices))
 	for _, device := range devices {
 		deviceByID[device.DeviceID] = device
@@ -48,11 +72,10 @@ func hourlyActivityBuckets(hours int, endMS int64, devices []store.Device,
 	}
 	spans := make([]span, 0, 64)
 	for _, line := range lines {
-		match := deviceEventPattern.FindStringSubmatch(line)
-		if match == nil {
+		deviceID, kind, agentID, matched := parseDeviceEvent(line)
+		if !matched {
 			continue
 		}
-		deviceID, kind := match[1], match[2]
 		if kind == "closed a socket that had already been replaced" {
 			continue
 		}
@@ -65,10 +88,6 @@ func hourlyActivityBuckets(hours int, endMS int64, devices []store.Device,
 		}
 		if at > end {
 			at = end
-		}
-		agentID := ""
-		if found := agentInLinePattern.FindStringSubmatch(line); found != nil {
-			agentID = found[1]
 		}
 		if strings.HasPrefix(kind, "attached") {
 			if previous, stillOpen := openAt[deviceID]; stillOpen {
@@ -153,8 +172,59 @@ func hourlyActivityBuckets(hours int, endMS int64, devices []store.Device,
 	return out
 }
 
-// parseJournalTime 解析 short-iso 行首的 `2026-10-17T15:44:16+0800`。
+// parseDeviceEvent 解析一行「设备连上 / 断开」，返回 deviceId、事件类与 agentId。
+//
+// 两种格式都认：Python 服务是文本（`device dev_x (iPhone) attached to agent agt_y`），
+// Go 服务（2026-10-24 起）是 JSON（`"msg":"relay: device attached","deviceId":…`）。
+// 只认文本的话，切换之后的每一格都是空的，而日志里明明有数据。
+func parseDeviceEvent(line string) (deviceID, kind, agentID string, ok bool) {
+	if strings.HasPrefix(strings.TrimSpace(line), "{") {
+		var payload struct {
+			Msg      string `json:"msg"`
+			DeviceID string `json:"deviceId"`
+			AgentID  string `json:"agentId"`
+		}
+		if err := json.Unmarshal([]byte(line), &payload); err != nil {
+			return "", "", "", false
+		}
+		if !strings.HasPrefix(payload.DeviceID, "dev_") {
+			return "", "", "", false
+		}
+		for _, candidate := range []string{
+			"closed a socket that had already been replaced", "attached again", "attached", "detached",
+		} {
+			if strings.Contains(payload.Msg, candidate) {
+				return payload.DeviceID, candidate, payload.AgentID, true
+			}
+		}
+		return "", "", "", false
+	}
+	match := deviceEventPattern.FindStringSubmatch(line)
+	if match == nil {
+		return "", "", "", false
+	}
+	if found := agentInLinePattern.FindStringSubmatch(line); found != nil {
+		agentID = found[1]
+	}
+	return match[1], match[2], agentID, true
+}
+
+// parseJournalTime 解析一行日志的时刻：short-iso 行首的 `2026-10-17T15:44:16+0800`，
+// 或 Go 服务 JSON 里的 `"time":"2026-10-24T14:30:26.865392225+08:00"`。
 func parseJournalTime(line string) (int64, bool) {
+	if strings.HasPrefix(strings.TrimSpace(line), "{") {
+		var payload struct {
+			Time string `json:"time"`
+		}
+		if err := json.Unmarshal([]byte(line), &payload); err != nil || payload.Time == "" {
+			return 0, false
+		}
+		parsed, err := time.Parse(time.RFC3339Nano, payload.Time)
+		if err != nil {
+			return 0, false
+		}
+		return parsed.UnixMilli(), true
+	}
 	stamp := strings.SplitN(strings.TrimSpace(line), " ", 2)[0]
 	layouts := []string{
 		"2006-01-02T15:04:05-0700",

@@ -3,13 +3,13 @@ module github.com/jayantTang/DSH_Mobile/relay-go
 go 1.27.1
 
 require (
+	github.com/coder/websocket v1.8.14
 	github.com/mattn/go-sqlite3 v1.14.52
 	golang.org/x/crypto v0.42.0
 	modernc.org/sqlite v1.61.0
 )
 
 require (
-	github.com/coder/websocket v1.8.14 // indirect
 	github.com/dustin/go-humanize v1.1.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect

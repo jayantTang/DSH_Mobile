@@ -11,7 +11,7 @@ import (
 // 过滤口径与本函数同名逻辑一一对应（锚点前后的裁切、调试设备剔除、孤立用量
 // 剔除）；这里只做装配，各板块的聚合在 versions/activity/today/usage/retention。
 func build(ctx context.Context, src Source, days int, stamp, generated int64,
-	journalUnit string, journal func(string, int64, int64) ([]string, bool)) (opsReport, error) {
+	journalUnits []string, journal func(string, int64, int64) ([]string, bool)) (opsReport, error) {
 	threadsSince := stamp - int64(days)*86_400_000
 	listed, err := FeedbackRows(ctx, src, nil, &threadsSince, reportThreadLimit)
 	if err != nil {
@@ -193,9 +193,11 @@ func build(ctx context.Context, src Source, days int, stamp, generated int64,
 		OK: true, GeneratedAt: generated, AsOf: stamp, Days: days,
 		Versions: versions, VersionsWindowHours: reportVersionHours,
 		HourlyActivity: hourlyActivity{
+			WindowDays:  reportActivityDays,
 			WindowHours: reportActivityHours,
 			Buckets: hourlyActivityBuckets(
-				reportActivityHours, stamp, devices, agentVersions, journalUnit, journal),
+				dayStartMS(dayShift(localDayOf(stamp), -(reportActivityDays-1))), stamp,
+				devices, agentVersions, journalUnits, journal),
 		},
 		Today:    today,
 		Feedback: feedbackSection,

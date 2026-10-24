@@ -33,6 +33,7 @@ type versionRow struct {
 }
 
 type hourlyActivity struct {
+	WindowDays  int            `json:"windowDays"`
 	WindowHours int            `json:"windowHours"`
 	Buckets     []hourlyBucket `json:"buckets"`
 }

@@ -181,7 +181,7 @@ func journalLines(string, int64, int64) ([]string, bool) {
 func richOptions() Options {
 	return Options{
 		Days: 30, AsOfStamp: at(20261026, 0, 0) - 1,
-		GeneratedAt: at(20261025, 23, 0), JournalUnit: "dsh-relay",
+		GeneratedAt: at(20261025, 23, 0), JournalUnits: []string{"dsh-relay"},
 		Journal: journalLines,
 	}
 }
@@ -257,7 +257,7 @@ func TestOpsReportWithoutJournalKeepsBucketsNull(t *testing.T) {
 // TestOpsReportEmptySource 是空库边界：不 panic、结构齐全、数组是 [] 不是 null。
 func TestOpsReportEmptySource(t *testing.T) {
 	options := Options{AsOfStamp: at(20261022, 12, 0), GeneratedAt: at(20261022, 12, 0),
-		JournalUnit: "dsh-relay"}
+		JournalUnits: []string{"dsh-relay"}}
 	report, err := Report(context.Background(), &fakeSource{usage: map[int64][]store.UsageRow{}},
 		options)
 	if err != nil {
@@ -297,7 +297,7 @@ func TestOpsReportCrossesMonthBoundary(t *testing.T) {
 				LastSeenAt: at(20261002, 9, 0)}},
 		}}
 	options := Options{Days: 10, AsOfStamp: at(20261003, 12, 0),
-		GeneratedAt: at(20261003, 12, 0), JournalUnit: "dsh-relay"}
+		GeneratedAt: at(20261003, 12, 0), JournalUnits: []string{"dsh-relay"}}
 	report, err := Report(context.Background(), source, options)
 	if err != nil {
 		t.Fatalf("Report: %v", err)

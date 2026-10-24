@@ -609,8 +609,11 @@ func TestOpsReportHasEverySectionAndExcludesDebugDevices(t *testing.T) {
 	}
 	// 没有 systemd 日志时 buckets 必须是 null（不编数字）。
 	hourly := report["hourlyActivity"].(map[string]any)
-	if hourly["windowHours"] != float64(72) {
+	if hourly["windowDays"] != float64(14) || hourly["windowHours"] != float64(336) {
 		t.Fatalf("hourlyActivity = %v", hourly)
+	}
+	if hourly["buckets"] != nil {
+		t.Fatalf("没有日志时 buckets 应为 null：%v", hourly)
 	}
 }
 

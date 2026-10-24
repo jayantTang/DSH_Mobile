@@ -21,8 +21,8 @@ func runOpsReport(ctx context.Context, st *store.Store, args []string,
 	fs := newFlagSet(cmdOpsReport, stderr)
 	days := fs.Int("days", 30, "窗口天数（本地日，含锚点那一天）")
 	asOf := fs.String("as-of", "now", "now | yesterday | YYYY-MM-DD")
-	journalUnit := fs.String("journal-unit", opsreport.DefaultJournalUnit,
-		"从哪个 systemd 单元的日志重建 72 小时分布")
+	journalUnits := fs.String("journal-unit", opsreport.DefaultJournalUnits,
+		"从哪些 systemd 单元的日志重建 14 天分布（逗号分隔，默认 dsh-relay,dsh-relay-go）")
 	if err := fs.Parse(args); err != nil {
 		return newUsageError("%v", err)
 	}
@@ -33,12 +33,23 @@ func runOpsReport(ctx context.Context, st *store.Store, args []string,
 	}
 	report, err := opsreport.Report(ctx, st, opsreport.Options{
 		Days: *days, AsOfStamp: stamp, GeneratedAt: generated,
-		JournalUnit: *journalUnit, Journal: readJournal,
+		JournalUnits: splitUnits(*journalUnits), Journal: readJournal,
 	})
 	if err != nil {
 		return err
 	}
 	return emit(stdout, report)
+}
+
+// splitUnits 把逗号分隔的单元名拆成列表（忽略空白项）。
+func splitUnits(value string) []string {
+	var units []string
+	for _, part := range strings.Split(value, ",") {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			units = append(units, trimmed)
+		}
+	}
+	return units
 }
 
 // readJournal 取中转日志；取不到（没装 systemd、无权限、单元名不对）时 ok=false。
