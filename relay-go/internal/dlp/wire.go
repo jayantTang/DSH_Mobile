@@ -52,18 +52,25 @@ func Scan(raw []byte) (Wire, *SurrogateDamage, error) {
 	if len(raw) > MaxFrameBytes {
 		return Wire{}, nil, &FrameError{Reason: fmt.Sprintf("frame exceeds %d bytes", MaxFrameBytes)}
 	}
+	// 与 Python 的 prepare_outbound 同策略：落单代理项在**转发前**换成 U+FFFD。
+	// Go 的 encoding/json 只会在全量 Parse 时修复；快路径若不修，原样转发
+	// `\ud83d` 这类非法转义，iOS 解码失败后会丢 socket 重连。
+	damage := RepairSurrogates(raw)
 	// json.Valid 是完整的结构校验（一次扫描、零分配）。有了它，下面的字段扫描
 	// 才能提前退出：合法性已经由这里判定过，不需要再看后半段。
 	if json.Valid(raw) {
 		if kind, ok := scanFastPath(raw); ok {
 			wire := Wire{raw: raw, kind: kind}
-			return wire, ScanSurrogates(raw), nil
+			return wire, damage, nil
 		}
 	}
 	// 退回全量解析：这里同时负责"不是 JSON / 不是对象 / 缺 t"三种错误文案。
-	frame, damage, err := Parse(raw)
+	frame, parsedDamage, err := Parse(raw)
 	if err != nil {
 		return Wire{}, nil, err
+	}
+	if damage == nil {
+		damage = parsedDamage
 	}
 	return Wire{raw: raw, frame: frame}, damage, nil
 }

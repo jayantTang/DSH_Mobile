@@ -136,6 +136,47 @@ func ScanSurrogates(raw []byte) *SurrogateDamage {
 	}
 }
 
+// RepairSurrogates 把一帧里落单的 `\uD800`–`\uDFFF` 转义就地换成 `\ufffd`，
+// 并返回修复前的损伤描述（没有损伤时返回 nil）。
+//
+// 这是 Python `prepare_outbound` 的 Go 对应物：Go 的 encoding/json 只在全量
+// Parse 时修复，而 Scan 的快路径原样转发原始字节；不在这里修，`\ud83d` 会
+// 直接到达手机，iOS 解码失败后会丢 socket 重连。
+//
+// 替换串 `\ufffd` 与原转义同为 6 字节，因此可以原地改写、保持读缓冲所有权，
+// 不会打乱帧边界。合法代理对保持原样（JSON 解码后仍是同一个字符）。
+func RepairSurrogates(raw []byte) *SurrogateDamage {
+	damage := ScanSurrogates(raw)
+	if damage == nil {
+		return nil
+	}
+	repairLoneSurrogates(raw)
+	return damage
+}
+
+func repairLoneSurrogates(raw []byte) {
+	replacement := []byte(`\ufffd`)
+	for index := 0; index+5 < len(raw); index++ {
+		if raw[index] != '\\' || isEscapedBackslash(raw, index) || raw[index+1] != 'u' {
+			continue
+		}
+		unit, ok := hexUnit(raw[index+2 : index+6])
+		if !ok {
+			continue
+		}
+		switch {
+		case unit >= 0xD800 && unit <= 0xDBFF:
+			if next, paired := lowEscapeAt(raw, index+6); paired && next >= 0xDC00 && next <= 0xDFFF {
+				index += 11 // 跳过合法配对
+				continue
+			}
+			copy(raw[index:index+6], replacement)
+		case unit >= 0xDC00 && unit <= 0xDFFF:
+			copy(raw[index:index+6], replacement)
+		}
+	}
+}
+
 // isEscapedBackslash 判断 raw[index] 这个反斜杠是否被前一个反斜杠转义。
 func isEscapedBackslash(raw []byte, index int) bool {
 	run := 0
