@@ -7,12 +7,11 @@ import (
 	"unicode/utf8"
 )
 
-// TestEncodingJSONRepairsLoneSurrogates 钉住**实测**出来的 Go 行为。
+// TestEncodingJSONRepairsLoneSurrogates 钉住 **Parse 路径** 的 encoding/json 行为。
 //
-// 这不是"顺手测一下标准库"，而是 M2 的一个设计依据：Python 版必须在发送前显式把
-// 落单代理项换成 U+FFFD（否则 `text.encode("utf-8")` 抛异常、整条链路死掉）；Go 的
-// encoding/json 在解码阶段就替换了，所以 Go 版**不需要**修复步骤。这条用例一旦变红，
-// 说明行为变了，必须重新评估出站路径。
+// 这不是出站快路径的修复证明：Scan 为性能直接转发原始字节，快路径的修复由
+// TestScanRepairsLoneSurrogateBeforeForwarding / TestRepairSurrogatesHandlesLowAndMixed
+// 覆盖。这个用例只说明全量解析路径会替换落单代理项；两条路径必须给出相同结果。
 func TestEncodingJSONRepairsLoneSurrogates(t *testing.T) {
 	cases := []struct {
 		name     string

@@ -97,10 +97,11 @@ func (o *outbound) release() {
 	}
 }
 
-// 超时与心跳的默认值（DESIGN §5.3：服务端每 15 秒 ping 一次）。
+// 超时与心跳的默认值（DESIGN §5.3：服务端每 30 秒 ping 一次，与 Python
+// aiohttp 的 heartbeat=30.0 对齐；15 秒会在移动端退后台/弱网时造成更多误判）。
 const (
-	DefaultHeartbeat        = 15 * time.Second
-	DefaultHeartbeatTimeout = 10 * time.Second
+	DefaultHeartbeat        = 30 * time.Second
+	DefaultHeartbeatTimeout = 30 * time.Second
 	DefaultWriteTimeout     = 10 * time.Second
 	// DefaultControlQueueDepth 是中转控制帧优先队列的深度。
 	//

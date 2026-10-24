@@ -14,22 +14,16 @@ import (
 // `text.encode("utf-8")` 抛 UnicodeEncodeError，整条 agent 链路被带崩，手机卡在
 // "连接中"。Python 版因此在发送前显式把落单代理项换成 U+FFFD。
 //
-// **Go 不需要显式修复，这一点是实测出来的**（本机 go1.27.1，见 dlp_test.go 的
-// TestEncodingJSONRepairsLoneSurrogates）：
+// Go 的 encoding/json 只在**全量 Parse** 时把落单代理项换成 U+FFFD；Scan 的性能
+// 快路径为避免解析与重编码，直接转发原始字节，因此必须在快路径前显式调用
+// RepairSurrogates。否则 `\ud83d` 会原样到达手机，iOS 解码失败后丢 socket 重连。
 //
-//	输入                       Unmarshal 结果       再编码
-//	{"a":"\ud83d"}             "�" (U+FFFD)         合法 UTF-8
-//	{"a":"\udc00"}             "�" (U+FFFD)         合法 UTF-8
-//	{"a":"\ud83d\ude00"}       "😀" (U+1F600)       合法 UTF-8
+// 修复用 6 字节的 `\ufffd` 就地替换 6 字节的落单转义：帧长度、缓冲所有权与帧边界
+// 都不变，解码结果与 Python 的 prepare_outbound 相同；合法配对保持原样。
 //
-// 原因：Go 的 string 本身不能保存代理项码点（`string(rune(0xD83D))` 直接得到 U+FFFD），
-// 所以 encoding/json 在解码阶段就替换掉了；重编码出来的字节**与 Python 修复后的结果
-// 相同**。因此转发出站路径不需要第二遍修复，也就不会因为一个坏字符丢掉链路。
-//
-// 但"静默修好了"会丢掉定位上游根因的唯一线索（Python 版会记 `_note_surrogate`）。
-// 所以这里在解析时扫一遍**原始字节**里的落单 `\uD800`-`\uDFFF` 转义，把它们交给
-// hub 记一条告警。扫描有廉价前置判断：帧里连 `\ud`/`\uD` 都没有时直接返回 nil，
-// 正常帧只多两次 bytes.Contains。
+// 修复仍然保留诊断：ScanSurrogates 先扫一遍**原始字节**，把损伤位置交给 hub 记
+// 告警（Python 版会记 `_note_surrogate`）。扫描有廉价前置判断：帧里连 `\ud`/`\uD`
+// 都没有时直接返回 nil，正常帧只多两次 bytes.Contains。
 
 // SurrogateDamage 描述一处（或几处）落单代理项的形态与位置，**只用于排障**。
 //

@@ -1,17 +1,13 @@
-# relay-go — DSH 中转的 Go 实现（M3b2）
+# relay-go — DSH 中转的 Go 实现（生产）
 
-DSH Link Protocol v1 中转的全 Go 重写。M0 交付骨架（配置、SQLite 存储层、schema 与
-版本迁移、`/healthz`、驱动基准）；M1 补齐 HTTP 面：配对、设备、账户状态、自助登记、
-`/stats`、错误信封、CORS、限流与 `admin` 管理子命令；M2 补齐 WebSocket：两条
-`/link/*` 端点、帧转发、心跳、背压、设备上限、每日配额与账户状态实时通知；M2.5 做
-转发层的内存与 CPU 调优（pprof 诊断面、零解析转发、按字节限额的队列）；M3a 补齐
-文件通道（`/files/up`、`/files/down`，经连接器 `fs*` 帧桥接）、`/internal/*` 两个
-服务间端点、`usageDaily` 周期冲盘与撤销对账；M3b1 补齐反馈通道四个追加式端点
-（`/feedback/{submit,inbox,append,read}`）、线程/留言/通知仓储与 `admin` 的五个
-`feedback-*` 子命令；M3b2 补齐 APNs 推送（`POST /devices/push`、`notify` → 提醒、
-失效令牌清理）、监控告警（异常分类、去重、限量、flap、坏字符、告警队列）与 `admin`
-其余子命令（设备/用量/日报/邀请码/推送测试/告警投递）。对外契约以 Python 版
-`relay/` 为准。
+DSH Link Protocol v1 中转的 Go 单二进制实现，自 2026-10-24 03:21 CST 起承担生产流量
+（`relayVersion=go-0.1.2`）。对外协议、端点、错误码、关闭码与 SQLite schema 与 Python 版
+一致；切换、回滚与安装见 [`deploy/README.md`](deploy/README.md)。Python 实现保留在
+`../relay/`，仅作回滚目标与黑盒契约基线。
+
+三类入口共用一个二进制：`serve`、`admin`、`alert-dispatch` / `purge`。功能面覆盖 HTTP
+（配对、设备、账户状态、自助登记、`/stats`、限流）、两条 WebSocket `/link/*`（帧转发、
+心跳、背压、设备上限、每日配额）、文件通道、反馈通道、APNs 推送、监控告警与运维 timer。
 
 ## 构建与测试
 
@@ -155,7 +151,7 @@ pprof 在 M2.5 加入（DESIGN §8 要求）。
 | 鉴权 | 电脑：`Authorization: Bearer <agentSecret>`；设备：Bearer **或** `Sec-WebSocket-Protocol: dsh.device.<deviceToken>`（头优先，服务端回显被接受的子协议） |
 | 寻址 | 设备 → 电脑的每一帧盖上 `deviceId`；电脑 → 设备的帧按 `deviceId` 路由，到达手机前摘掉该键 |
 | 队列 | 每连接一个有界队列（设备 512 帧、电脑 4096 帧），并叠加 `--queue-bytes` 的字节上限（默认 4 MiB）；`res`/`item` 是流式帧，队列满（帧数或字节）时丢弃并计数；其余按控制帧处理，塞不进去就断开慢连接（4008）。比字节上限还大的单帧永远放行，避免大图被自己的体积挡住 |
-| 心跳 | 服务端每 15 秒 ping，10 秒内没有 pong 即关闭 |
+| 心跳 | 服务端每 30 秒 ping，30 秒内没有 pong 即关闭（与 Python aiohttp 的 `heartbeat=30.0` 对齐） |
 | 限速 | `--device-rate-kbps` 换成每设备令牌桶，在写循环里把字节摊开（不丢帧），累计等待秒数进 `/stats` |
 | 日额度 | `--device-daily-mb` 按设备、按本地日累计；账本按 deviceId 记在 hub 上，重连不清零；超限先发 `error quota/device-daily`（带 `details.limitBytes`），再以 4011 关闭 |
 | 设备上限 | `--max-devices-per-agent`：先升级 socket，再发 `error limit/devices`（fatal），最后以 4012 关闭；同一台设备重连不占新名额 |
@@ -171,7 +167,7 @@ pprof 在 M2.5 加入（DESIGN §8 要求）。
 控制帧、ping 的 `ts`、连接器的 `args`/`info` 这类需要语义的路径才 `Decode()`。
 一帧 48 字节的 `req`/`res` 因此是**零分配**转发（M2 是每帧 1.8–2.3 KiB、34–44 次分配）；
 对照基准见 `internal/dlp/wire_bench_test.go`，数字与 profile 证据在
-`maintainers/REPORT-20261023-go-relay-m2.5.md`。
+`maintainers/archive/go-relay/REPORT-20261023-go-relay-m2.5.md`。
 
 ## 文件通道（M3a）
 
@@ -250,7 +246,7 @@ pprof 在 M2.5 加入（DESIGN §8 要求）。
   握手当成连接失败，走它自己的指数退避；先升级再以 4001 关闭会让它把退避归零，
   回到每秒重连（2026-10-23 两次回滚的形态）。
 - **僵死判据**：连接从「挂上」与「最后入站」里较晚的时刻起算，超过 `ActiveIdle`
-  （45 秒，覆盖中转 15 秒/连接器 20 秒两套心跳）没有任何入站帧才算僵死，允许被新
+  （45 秒，覆盖中转 30 秒/连接器 20 秒两套心跳）没有任何入站帧才算僵死，允许被新
   连接顶替。刚连上还没发过帧的连接**不算**僵死。
 - **未上报版本的连接器**：连上超过 `HelloTimeout`（10 秒）仍没有
   `connectorVersion/hostVersion`，或一次版本都没报就断开，标记 `unverified`；之后
@@ -484,10 +480,12 @@ internal/admincli/  管理子命令（account-create / agent-register / code-min
 5. 账户状态批量写入是单事务：某一条校验失败时整批不生效。Python 版逐条提交，
    会留下半批（这是 DESIGN §6 要求的修复，不是回归）。
 6. 所有 5xx 都是 JSON 错误信封；Python 版未捕获异常会回 aiohttp 默认文本页。
-7. 落单 UTF-16 代理项（`"\ud83d"`）由 Go 的 `encoding/json` 在**解析阶段**换成
-   U+FFFD，因此不需要 Python 的发送前修复；中转仍会记一条告警（含位置与上下文）
-   用于定位上游。非法 UTF-8 字节显式判 `protocol/bad-frame`——Go 标准库默认会静默
-   替换成 U+FFFD，这里补齐了 Python 的行为（见 `internal/dlp/surrogate.go`）。
+7. 落单 UTF-16 代理项（`"\ud83d"`）：Go 在 `Scan` 快路径上也会先调用
+   `RepairSurrogates`，把 6 字节的落单转义就地替换为 `\ufffd`，与 Python 的
+   `prepare_outbound` 同策略；合法配对与转义字面量不动。中转仍会记一条告警
+   （含位置与上下文）用于定位上游。非法 UTF-8 字节显式判 `protocol/bad-frame`
+   ——Go 标准库默认会静默替换成 U+FFFD，这里补齐了 Python 的行为
+   （见 `internal/dlp/surrogate.go`）。
 8. 大帧不再按 512 KiB 切成多条 WebSocket 消息。Python 这样做是为了让限速更平滑，
    代价是客户端必须重组；Go 版一条消息一帧，服务端在写之前整体计费并等待。
 9. WS 握手被拒（401/403）回 JSON 错误信封，Python 回纯文本；状态码不变。
@@ -519,11 +517,10 @@ internal/admincli/  管理子命令（account-create / agent-register / code-min
 21. presence 拒绝日志从 DEBUG 提到 INFO/WARN（带等待结果、`unverified`、新旧连接
     代号），风暴期间每个被拒握手一行；这是为可诊断性有意接受的日志量。
 
-## M4 之前仍未覆盖
+## 尚未覆盖
 
-- 真实 APNs 联调：没有调用 Apple（按任务约束），`push-test` 与投递只用注入桩验证。
-- 真实 systemd 日志的 72 小时分布图：本机没有 `dsh-relay` 单元，只验证了"取不到 → null"。
-- `/files/*` 只有黑盒与 Go 单测；真实连接器（plugins/mobile-link）联调记录见
-  `maintainers/REPORT-20261023-go-relay-m3a.md`。
-- `/stats` 的 HTML 运维页（只回 JSON）。
-- 文件通道桥的字节限额（M4）。
+- APNs 只验证到 sandbox：生产 unit 已加载 `apns.env` 并真发成功，production 环境未验。
+- systemd 日志的 72 小时分布图未做；取不到该数据时 `/healthz` 如实回 `null`。
+- `/files/*` 已与真实连接器联调，大文件与断点续传仍缺长跑证据。
+- 1000 设备档 RSS 约 182 MB，高于 Python 版的 132 MB（每连接预分配队列槽）；
+  当前线上规模余量充足。
