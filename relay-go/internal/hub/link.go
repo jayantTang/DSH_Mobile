@@ -98,10 +98,15 @@ func (o *outbound) release() {
 }
 
 // 超时与心跳的默认值（DESIGN §5.3：服务端每 30 秒 ping 一次，与 Python
-// aiohttp 的 heartbeat=30.0 对齐；15 秒会在移动端退后台/弱网时造成更多误判）。
+// aiohttp 的 heartbeat=30.0 对齐）。
+//
+// 截止时间取 60 秒，不是 30 秒：连接器每 20 秒发一次 DLP ping，与 Python
+// 的 45 秒整体容忍（30 秒空闲 + 15 秒 pong 窗口）相比，60 秒给出 3 个心跳
+// 周期的余量，覆盖移动网络下实测 27–32 秒的入站抖动；连接器自身的
+// pongTimeoutMs 也是 60 秒，两侧同口径。死链最迟 90 秒回收。
 const (
 	DefaultHeartbeat        = 30 * time.Second
-	DefaultHeartbeatTimeout = 30 * time.Second
+	DefaultHeartbeatTimeout = 60 * time.Second
 	DefaultWriteTimeout     = 10 * time.Second
 	// DefaultControlQueueDepth 是中转控制帧优先队列的深度。
 	//
