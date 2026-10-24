@@ -11,7 +11,7 @@
 //   - 调用前先查 session/list，**running=true 的会话一律拒绝归档**（正在跑的轮次不许动）。
 //   - 归档是单向的（host 忽略 archived:false；没有取消归档的接口），所以这里默认逐个确认结果。
 //
-// 认证方式与 scripts/dev/ask-scratch-question.mjs 相同：endpoint.json 换 cookie，POST /api/<method>。
+// 认证方式：读 endpoint.json 换 cookie，再 POST /api/<method>。
 import { readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
