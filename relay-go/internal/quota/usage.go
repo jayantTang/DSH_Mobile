@@ -229,7 +229,7 @@ func (u *Usage) copyLocked(drain bool) []store.UsageEntry {
 			Day: entry.day, DeviceID: entry.deviceID, AgentID: entry.agentID,
 			AccountID: entry.accountID, EgressBytes: entry.egressBytes,
 			Connections: entry.connections, At: entry.at,
-			LastBuild: optionalString(entry.lastBuild),
+			LastBuild: OptionalString(entry.lastBuild),
 		})
 		if drain {
 			delete(u.entries, key)
@@ -274,7 +274,7 @@ func (u *Usage) MergeToday(day int64, base store.TodayUsage) store.TodayUsage {
 		row.EgressBytes += entry.egressBytes
 		row.Connections += entry.connections
 		if entry.lastBuild != "" {
-			row.LastBuild = optionalString(entry.lastBuild)
+			row.LastBuild = OptionalString(entry.lastBuild)
 		}
 	}
 	u.mu.Unlock()
@@ -369,8 +369,10 @@ func (u *Usage) Start(ctx context.Context, interval time.Duration, flushBytes in
 	}
 }
 
-// optionalString 把空串转成 nil（"上报方没给这一项"，不拿旧值去补）。
-func optionalString(value string) *string {
+// OptionalString 把空串转成 nil（"上报方没给这一项"，不拿旧值去补）。
+//
+// 导出是因为依赖方向只允许留这一份：hub 也用它（hub → quota，反过来会成环）。
+func OptionalString(value string) *string {
 	if value == "" {
 		return nil
 	}

@@ -38,6 +38,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -141,6 +142,9 @@ type Sender struct {
 	client     Client
 	ownsClient bool
 	now        func() time.Time
+	// log 是注入的日志器（默认 slog.Default()）：推送日志与全站同一口径、
+	// 同一去向，不走包级 slog 的另一条通道。
+	log *slog.Logger
 
 	mu         sync.Mutex
 	jwt        string
@@ -154,10 +158,14 @@ type Sender struct {
 // 缺任何一项或开关没打开都返回禁用实例：打一行日志，然后每次 Send 都回答
 // skipped=disabled。这就是全部安全故事——配了一半的中转照常转发。
 //
-// getenv 为 nil 时读 os.Getenv；client 为 nil 时首次发送才创建标准库 HTTP/2 客户端。
-func FromEnv(getenv func(string) string, client Client) *Sender {
+// getenv 为 nil 时读 os.Getenv；client 为 nil 时首次发送才创建标准库 HTTP/2
+// 客户端；logger 为 nil 时用 slog.Default()。
+func FromEnv(getenv func(string) string, client Client, logger *slog.Logger) *Sender {
 	if getenv == nil {
 		getenv = os.Getenv
+	}
+	if logger == nil {
+		logger = slog.Default()
 	}
 	enabled := truthy(getenv("DLP_APNS_ENABLED"))
 	keyPath := text(getenv("DLP_APNS_KEY_PATH"))
@@ -174,8 +182,8 @@ func FromEnv(getenv func(string) string, client Client) *Sender {
 	minGap := durationFromEnv(getenv("DLP_APNS_MIN_INTERVAL_S"), 60*time.Second)
 
 	if !enabled {
-		slog.Info("relay: APNs 未启用（DLP_APNS_ENABLED 未设或为 0），推送会被跳过")
-		return disabledSender(defaultEnv, minGap)
+		logger.Info("relay: APNs 未启用（DLP_APNS_ENABLED 未设或为 0），推送会被跳过")
+		return disabledSender(defaultEnv, minGap, logger)
 	}
 	missing := make([]string, 0, 4)
 	for name, value := range map[string]string{
@@ -187,41 +195,52 @@ func FromEnv(getenv func(string) string, client Client) *Sender {
 		}
 	}
 	if len(missing) > 0 {
-		sortStrings(missing)
-		slog.Warn("relay: APNs 已启用但配置不全，推送不可用——转发不受影响",
+		sort.Strings(missing)
+		logger.Warn("relay: APNs 已启用但配置不全，推送不可用——转发不受影响",
 			"missing", strings.Join(missing, ", "))
-		return disabledSender(defaultEnv, minGap)
+		return disabledSender(defaultEnv, minGap, logger)
 	}
 	if _, err := os.Stat(keyPath); err != nil {
 		// 只打路径，不打内容：这是唯一能把"密钥放错目录"和"环境变量没生效"
 		// 区分开的一行（unit 有 ProtectHome=yes，密钥不能放 /root·/home）。
-		slog.Warn("relay: APNs 密钥文件不存在，推送不可用（转发不受影响）", "path", keyPath)
-		return disabledSender(defaultEnv, minGap)
+		logger.Warn("relay: APNs 密钥文件不存在，推送不可用（转发不受影响）", "path", keyPath)
+		return disabledSender(defaultEnv, minGap, logger)
 	}
 
 	sender := &Sender{
 		keyPath: keyPath, keyID: keyID, teamID: teamID, topic: topic,
 		defaultEnv: defaultEnv, minGap: minGap, enabled: true,
 		client: client, ownsClient: false, now: time.Now,
-		lastSent: map[string]time.Time{},
+		lastSent: map[string]time.Time{}, log: logger,
 	}
-	slog.Info("relay: APNs 已配置", "key", prefix(keyID, 6), "topic", topic,
+	logger.Info("relay: APNs 已配置", "key", prefix(keyID, 6), "topic", topic,
 		"defaultEnv", defaultEnv)
 	return sender
 }
 
 // Disabled 返回一个永远不发送的实例（与 Python 的 PushSender.disabled 等价）。
-func Disabled() *Sender { return disabledSender("sandbox", 60*time.Second) }
+func Disabled() *Sender { return disabledSender("sandbox", 60*time.Second, nil) }
 
-func disabledSender(defaultEnv string, minGap time.Duration) *Sender {
+func disabledSender(defaultEnv string, minGap time.Duration, logger *slog.Logger) *Sender {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &Sender{
 		defaultEnv: defaultEnv, minGap: minGap, enabled: false,
-		now: time.Now, lastSent: map[string]time.Time{},
+		now: time.Now, lastSent: map[string]time.Time{}, log: logger,
 	}
 }
 
 // Enabled 报告这台部署是否真的会发送。
 func (s *Sender) Enabled() bool { return s != nil && s.enabled }
+
+// logger 是投递路径上的日志出口；测试里直接构造的实例（没走 FromEnv）回退默认。
+func (s *Sender) logger() *slog.Logger {
+	if s.log == nil {
+		return slog.Default()
+	}
+	return s.log
+}
 
 // SetNow 注入时钟（测试用；生产不调用）。
 func (s *Sender) SetNow(now func() time.Time) {
@@ -423,7 +442,7 @@ func (s *Sender) Send(ctx context.Context, request Request) Result {
 	}
 	if _, ok := Hosts[resolved]; !ok {
 		// 环境叫不出来的令牌不可发送：猜一个会得到 BadDeviceToken，看起来就像"推送坏了"。
-		slog.Warn("relay: device reports an unknown apnsEnv; not pushing",
+		s.logger().Warn("relay: device reports an unknown apnsEnv; not pushing",
 			"deviceId", request.DeviceID)
 		return Result{Skipped: stringPointer("unknown-env")}
 	}
@@ -441,7 +460,7 @@ func (s *Sender) Send(ctx context.Context, request Request) Result {
 	if result.Status != nil && *result.Status == http.StatusForbidden && !request.IgnoreThrottle {
 		// 过期或轮换过的 provider 令牌是**重试一次**能修好的唯一失败。
 		// 只重试一次：被撤销的密钥否则会无限循环。
-		slog.Info("relay: APNs rejected the provider token; re-signing once",
+		s.logger().Info("relay: APNs rejected the provider token; re-signing once",
 			"reason", stringValue(result.Reason))
 		if _, err := s.token(true); err != nil {
 			result.Reason = stringPointer("signing: " + err.Error())
@@ -472,7 +491,7 @@ func (s *Sender) Send(ctx context.Context, request Request) Result {
 func (s *Sender) post(ctx context.Context, url string, body []byte, kind, sid string) Result {
 	token, err := s.token(false)
 	if err != nil {
-		slog.Warn("relay: could not sign the APNs token", "error", err)
+		s.logger().Warn("relay: could not sign the APNs token", "error", err)
 		return Result{Reason: stringPointer("signing: " + err.Error())}
 	}
 	expiration := s.now().Unix() + ExpirationSeconds[kind]
@@ -494,7 +513,7 @@ func (s *Sender) post(ctx context.Context, url string, body []byte, kind, sid st
 	response, err := client.Do(request)
 	if err != nil {
 		// 尽力而为：记一行日志，绝不把转发带下去。
-		slog.Warn("relay: APNs request failed", "error", err)
+		s.logger().Warn("relay: APNs request failed", "error", err)
 		return Result{Reason: stringPointer(fmt.Sprintf("transport: %T", err))}
 	}
 	defer response.Body.Close()
@@ -508,7 +527,7 @@ func (s *Sender) post(ctx context.Context, url string, body []byte, kind, sid st
 		return Result{OK: true, Status: intPointer(status), APNSID: apnsID}
 	}
 	reason := reasonOf(string(raw))
-	slog.Warn("relay: APNs rejected the push", "status", status,
+	s.logger().Warn("relay: APNs rejected the push", "status", status,
 		"reason", stringValue(reason))
 	return Result{Status: intPointer(status), Reason: reason, APNSID: apnsID}
 }
@@ -642,13 +661,4 @@ func stringValue(value *string) string {
 		return ""
 	}
 	return *value
-}
-
-// sortStrings 是给缺失变量名排序的小工具（避免为一个日志把 sort 拖进每个分支）。
-func sortStrings(values []string) {
-	for i := 1; i < len(values); i++ {
-		for j := i; j > 0 && values[j] < values[j-1]; j-- {
-			values[j], values[j-1] = values[j-1], values[j]
-		}
-	}
 }

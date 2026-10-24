@@ -7,6 +7,7 @@ import (
 
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/dlp"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/push"
+	"github.com/jayantTang/DSH_Mobile/relay-go/internal/quota"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/store"
 )
 
@@ -208,7 +209,7 @@ func (h *Hub) noteAgentVersions(link *AgentLink, frame dlp.Frame) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := h.store.SetAgentVersions(ctx, link.AgentID,
-		optionalString(connector), optionalString(host), 0); err != nil {
+		quota.OptionalString(connector), quota.OptionalString(host), 0); err != nil {
 		h.log.Warn("relay: could not record the agent versions",
 			"agentId", link.AgentID, "error", err)
 		return

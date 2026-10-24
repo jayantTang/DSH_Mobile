@@ -147,6 +147,9 @@ func (r *fakeReporter) NoteAgentDisconnect(agentID, name string) {
 // NoteControlDrop 是 IncidentReporter 的第二条方法；推送用例不关心控制帧丢弃。
 func (r *fakeReporter) NoteControlDrop(link, frameType string) {}
 
+// NoteStreamDrop 是 IncidentReporter 的第三条方法；推送用例不关心流式帧丢弃。
+func (r *fakeReporter) NoteStreamDrop(link string, dropped int64) {}
+
 func (r *fakeReporter) count() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()

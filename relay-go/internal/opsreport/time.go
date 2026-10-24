@@ -3,13 +3,16 @@ package opsreport
 import (
 	"sort"
 	"time"
+
+	"github.com/jayantTang/DSH_Mobile/relay-go/internal/store"
 )
 
 // ── 本地日/时间 ────────────────────────────────────────────────────────────
 
+// localDayOf 是毫秒时间戳的本地日序号；编码口径（本地时区、YYYYMMDD 整数）
+// 只有一份，在 store（LocalDayAt），这里只做单位换算。
 func localDayOf(ms int64) int64 {
-	local := time.UnixMilli(ms).In(time.Local)
-	return int64(local.Year())*10000 + int64(local.Month())*100 + int64(local.Day())
+	return store.LocalDayAt(time.UnixMilli(ms))
 }
 
 func dayStartMS(day int64) int64 {

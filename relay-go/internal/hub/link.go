@@ -121,6 +121,9 @@ const (
 	DefaultControlWait = 5 * time.Second
 	// maxCloseReason 是 WebSocket 关闭原因的上限（协议规定 123 字节，留 3 字节余量）。
 	maxCloseReason = 120
+	// streamDropAlertThreshold 是流式帧丢弃的告警窗口：一条连接累计丢满这个数
+	// 才报一次（onStreamDrop），避免每帧一条日志把告警通道淹没。
+	streamDropAlertThreshold = 100
 )
 
 // heartbeatKind 决定一条连接的活性证据从哪里来。
@@ -173,6 +176,11 @@ type Link struct {
 	// 进程级总数在 hub.controlDrops，两者同源：都来自 noteControlDrop。
 	controlDrops atomic.Int64
 
+	// streamDrops 是流式帧丢弃的告警窗口计数：累计到 streamDropAlertThreshold
+	// 就经 onStreamDrop 报一次并重新开窗（dropped 是总量，只进计数器与 /stats，
+	// 静默丢满一窗在运维上不可见——2026-10-23 故障的盲区）。
+	streamDrops atomic.Int64
+
 	// closeCode/closeReason 是这条连接被要求以什么方式关闭（第一个请求说了算），
 	// 断开日志要回答"4001 还是 1001"。
 	closeCode   atomic.Int32
@@ -189,6 +197,9 @@ type Link struct {
 	// onControlDrop 在可丢控制帧被丢弃时调用（hub 用它累计 /stats 的 controlDrops
 	// 与 monitor 的 backpressure:control 告警）。nil = 只丢不记（单测直接建 Link）。
 	onControlDrop func(link *Link, frameType string)
+	// onStreamDrop 在一条连接的流式帧丢弃满一个告警窗口时调用（hub 记 WARN 并经
+	// monitor 记 backpressure:stream）。nil = 只丢不记。
+	onStreamDrop func(link *Link, dropped int64)
 
 	// 心跳状态。三者都是原子值：写循环写 pingOutstandingAt，读循环写 lastPongAt /
 	// lastInboundAt，watchdog 只读。
@@ -248,6 +259,7 @@ func newLink(sink Sink, label string, depth int, byteLimit int64, log *slog.Logg
 		writeTimeout:     options.writeTimeout,
 		controlWait:      options.controlWait,
 		onControlDrop:    options.onControlDrop,
+		onStreamDrop:     options.onStreamDrop,
 	}
 }
 
@@ -260,6 +272,8 @@ type linkOptions struct {
 	controlWait time.Duration
 	// onControlDrop 是可丢控制帧被丢弃时的记账回调（hub 注入）。
 	onControlDrop func(link *Link, frameType string)
+	// onStreamDrop 是流式帧丢弃满一个告警窗口时的回调（hub 注入）。
+	onStreamDrop func(link *Link, dropped int64)
 }
 
 func (o linkOptions) withDefaults() linkOptions {
@@ -335,23 +349,35 @@ func (l *Link) enqueue(payload []byte, class Class, owned *dlp.Buffer,
 	}
 	size := int64(len(payload))
 	if class == ClassStream && size <= l.byteLimit {
-		if used := l.queuedBytes.Load(); used > 0 && used+size > l.byteLimit {
-			l.dropped.Add(1)
-			return FrameDropped
+		// 字节上限是硬界：先 CAS 预留再入队。读-判-加分两步会让并发入队瞬时越过
+		// byteLimit（两个 goroutine 同时读到没超，各自 Add 之后总量超标）。
+		for {
+			used := l.queuedBytes.Load()
+			if used > 0 && used+size > l.byteLimit {
+				l.dropped.Add(1)
+				l.noteStreamDrop()
+				return FrameDropped
+			}
+			if l.queuedBytes.CompareAndSwap(used, used+size) {
+				break
+			}
 		}
+	} else {
+		l.queuedBytes.Add(size)
 	}
-	l.queuedBytes.Add(size)
 	item := &outbound{payload: payload, owned: owned, credit: credit, creditBytes: creditBytes,
 		counted: true}
 	select {
 	case l.out <- item:
 		return Enqueued
 	default:
+		// 入队失败：归还刚才记下的字节；payload 的所有者（owned）与额度仍归调用方，
+		// 两者都由它归还。
 		l.queuedBytes.Add(-size)
-		// 入队失败：payload 的所有者（owned）与额度仍归调用方，两者都由它归还。
 	}
 	if class == ClassStream {
 		l.dropped.Add(1)
+		l.noteStreamDrop()
 		return FrameDropped
 	}
 	return Overloaded
@@ -438,6 +464,21 @@ func (l *Link) noteControlDrop(frameType string) {
 	l.controlDrops.Add(1)
 	if l.onControlDrop != nil {
 		l.onControlDrop(l, frameType)
+	}
+}
+
+// noteStreamDrop 记一次流式帧丢弃；累计满一个告警窗口（streamDropAlertThreshold）
+// 才回调一次并重新开窗，回调由 hub 注入（单测里可以为 nil）。
+//
+// 计数窗口只用来压告警频率，不是 /stats 的口径：总量永远是 l.dropped。
+// 并发下两个 goroutine 可能同时越过阈值，CAS 保证只有抢到归零的那个负责上报。
+func (l *Link) noteStreamDrop() {
+	window := l.streamDrops.Add(1)
+	if window < streamDropAlertThreshold {
+		return
+	}
+	if l.streamDrops.CompareAndSwap(window, 0) && l.onStreamDrop != nil {
+		l.onStreamDrop(l, window)
 	}
 }
 

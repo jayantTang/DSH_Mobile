@@ -259,6 +259,31 @@ func TestControlDropsAreDeduplicatedPerLinkAndFrame(t *testing.T) {
 	}
 }
 
+// TestStreamDropAlertsCarryNoFrameContent：backpressure:stream 按链路归类别，
+// 详情只有链路标识与窗口计数——流式帧里装的是会话数据，一个字段都不许带。
+func TestStreamDropAlertsCarryNoFrameContent(t *testing.T) {
+	clock := newClock()
+	dir := t.TempDir()
+	m := newMonitor(t, dir, clock, monitor.Options{
+		RenotifyAfter: 3600 * time.Second, MaxAlertsPerHour: 100, MaxAlertsPerDay: 100,
+	})
+	m.NoteStreamDrop("device dev_1", 100)
+	m.NoteStreamDrop("device dev_1", 100)
+	m.NoteStreamDrop("agent agt_1", 100)
+	records := readRecords(t, dir)
+	if len(records) != 2 {
+		t.Fatalf("期望两条（同链路去重、不同链路各自一条），实际 %d 条", len(records))
+	}
+	first := records[0]
+	if first.Kind != "backpressure:stream" || first.Key != "backpressure:stream:device dev_1" {
+		t.Fatalf("记录 = %+v", first)
+	}
+	if len(first.Details) != 2 || first.Details["link"] != "device dev_1" ||
+		fmt.Sprint(first.Details["droppedInWindow"]) != "100" {
+		t.Fatalf("details 只允许 link 与 droppedInWindow：%v", first.Details)
+	}
+}
+
 func TestSurrogateSamplesAreCappedPerDay(t *testing.T) {
 	clock := newClock()
 	dir := t.TempDir()
@@ -422,6 +447,36 @@ func TestTheMiddlewareRecordsA5xxButIgnoresNormalHTTPErrors(t *testing.T) {
 	if records[0].Details["path"] != "/broken" ||
 		fmt.Sprint(records[0].Details["status"]) != "500" {
 		t.Fatalf("details = %v", records[0].Details)
+	}
+}
+
+// TestTheMiddlewareRecordsTheRouteTemplate 钉住 B4：告警归类的 path 是 mux 的
+// 路由模板，不是真实请求路径——参数值不进告警通道，同类端点的 5xx 才能聚合。
+func TestTheMiddlewareRecordsTheRouteTemplate(t *testing.T) {
+	dir := t.TempDir()
+	clock := newClock()
+	m := newMonitor(t, dir, clock, monitor.Options{})
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /things/{id}/explode", func(http.ResponseWriter, *http.Request) {
+		panic("参数化路由里的异常")
+	})
+	handler := monitor.Middleware(m, testLogger())(mux)
+
+	request := httptest.NewRequest(http.MethodGet, "/things/dev_secret123/explode", nil)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusInternalServerError {
+		t.Fatalf("状态码 = %d", recorder.Code)
+	}
+	records := readRecords(t, dir)
+	if len(records) != 1 {
+		t.Fatalf("记录 = %+v", records)
+	}
+	if records[0].Details["path"] != "/things/{id}/explode" {
+		t.Fatalf("path = %v，期望路由模板（不含真实参数值）", records[0].Details["path"])
+	}
+	if strings.Contains(fmt.Sprint(records[0].Details), "dev_secret123") {
+		t.Fatalf("参数值泄进了告警：%v", records[0].Details)
 	}
 }
 

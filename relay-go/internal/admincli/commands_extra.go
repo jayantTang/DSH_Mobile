@@ -20,7 +20,7 @@ const (
 	// DefaultDeadDeviceWarnThreshold 是 hub 与 admin 共用的告警阈值（Python
 	// hub.DEFAULT_DEAD_DEVICE_WARN_THRESHOLD）。
 	DefaultDeadDeviceWarnThreshold = 200
-	deviceHygieneHint              = "purge-revoked-devices.py --db <db> --all-agents --apply " +
+	deviceHygieneHint              = "dsh-relay purge --db <db> --all-agents --apply " +
 		"（去掉 --apply 只是预演）"
 )
 
@@ -432,7 +432,7 @@ type pushTester interface {
 
 // newPushSender 是构造入口，单测替换它来验证输出契约（不碰真实 APNs）。
 var newPushSender = func(getenv func(string) string) pushTester {
-	return push.FromEnv(getenv, nil)
+	return push.FromEnv(getenv, nil, nil)
 }
 
 // pushTestReport 是 push-test 打印给运维的报告；这是该命令的全部价值。

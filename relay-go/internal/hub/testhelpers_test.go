@@ -155,6 +155,19 @@ func waitFor(t *testing.T, what string, condition func() bool) {
 	t.Fatalf("等待超时：%s", what)
 }
 
+// expectQuiet 是否定观察窗口的轮询形态：2 秒内持续检查不变量，被破坏立即失败
+// （对齐 relay/tests/test_hub_routing.py 的轮询写法，不用 sleep 盲等一个固定时长）。
+func expectQuiet(t *testing.T, what string, holds func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if !holds() {
+			t.Fatalf("观察窗口内不变量被破坏：%s", what)
+		}
+		time.Sleep(15 * time.Millisecond)
+	}
+}
+
 // waitFrame 等到第一条满足条件的帧。
 func waitFrame(t *testing.T, sink *fakeSink, what string, match func(dlp.Frame) bool) dlp.Frame {
 	t.Helper()

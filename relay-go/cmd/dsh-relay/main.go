@@ -135,7 +135,7 @@ func runServe(args []string, getenv func(string) string, stderr io.Writer) int {
 	//   - DLP_ALERT_DIR 为空 = 监控关闭（所有方法都是空操作）；
 	//   - APNs 配置缺失或 DLP_APNS_ENABLED=0 = 推送关闭（转发行为逐字不变）。
 	incidents := monitor.FromEnv(getenv, logger)
-	sender := push.FromEnv(getenv, nil)
+	sender := push.FromEnv(getenv, nil, logger)
 	defer func() { _ = sender.Close() }()
 
 	// hub 是活连接、队列与心跳的所有者；日额度与用量在 internal/quota。HTTP 与

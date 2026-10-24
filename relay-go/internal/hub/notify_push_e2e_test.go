@@ -108,7 +108,7 @@ func newStubAPNSSender(t *testing.T, stub push.Client) *push.Sender {
 		"DLP_APNS_TOPIC":       "com.example.app",
 		"DLP_APNS_ENV_DEFAULT": "sandbox",
 	}
-	sender := push.FromEnv(func(name string) string { return env[name] }, stub)
+	sender := push.FromEnv(func(name string) string { return env[name] }, stub, nil)
 	if !sender.Enabled() {
 		t.Fatal("完整配置 + 已注入桩的 Sender 应当启用")
 	}
@@ -219,11 +219,8 @@ func TestTheOnlineNotifyPathPushesOnlyOfflineDevicesWithAContentFreePayload(t *t
 		}
 	}
 
-	// 在线设备与别的账户都不该被推：给它们一个否定观察窗口。
-	time.Sleep(200 * time.Millisecond)
-	if got := len(stub.requestsCopy()); got != 1 {
-		t.Fatalf("只应推离线的那一台，实际请求 %d 条", got)
-	}
+	// 在线设备与别的账户都不该被推：否定观察窗口改成轮询，多一条请求立即失败。
+	expectQuiet(t, "只应推离线的那一台", func() bool { return len(stub.requestsCopy()) == 1 })
 }
 
 // TestOnlyTheOfflineDevicesOfTheNotifyingAccountArePushed 用 fakePusher 钉住选择
@@ -277,10 +274,7 @@ func TestOnlyTheOfflineDevicesOfTheNotifyingAccountArePushed(t *testing.T) {
 	if call.kind != "turnEnd" || call.sid != "s-select" || call.eid != nil {
 		t.Fatalf("调用参数 = %+v", call)
 	}
-	time.Sleep(120 * time.Millisecond)
-	if got := sender.callCount(); got != 1 {
-		t.Fatalf("一条 notify 只该触发一次扇出，实际 %d 次", got)
-	}
+	expectQuiet(t, "一条 notify 只该触发一次扇出", func() bool { return sender.callCount() == 1 })
 }
 
 // ── 死令牌清理 ──────────────────────────────────────────────────────────────
@@ -349,10 +343,7 @@ func TestADeadTokenOnlyClearsTheDeviceThatReportedIt(t *testing.T) {
 	if len(second.targets) != 1 || second.targets[0].DeviceID != alive.DeviceID {
 		t.Fatalf("清理后的 targets = %+v，期望只剩 %s", second.targets, alive.DeviceID)
 	}
-	time.Sleep(120 * time.Millisecond)
-	if got := sender.callCount(); got != 2 {
-		t.Fatalf("不该再推别的账户，实际扇出 %d 次", got)
-	}
+	expectQuiet(t, "不该再推别的账户", func() bool { return sender.callCount() == 2 })
 }
 
 // TestAnUnregisteredTokenFromAPNsOnlyClearsItsOwnRegistration 把真实 push.Sender 的
@@ -385,8 +376,9 @@ func TestAnUnregisteredTokenFromAPNsOnlyClearsItsOwnRegistration(t *testing.T) {
 		row, found, err := f.store.DeviceByID(context.Background(), dead.DeviceID)
 		return err == nil && found && row.APNSToken == nil && row.APNSEnv == nil
 	})
-	// 另一台设备的登记必须原样保留。
-	time.Sleep(120 * time.Millisecond)
+	// 另一台设备的登记必须原样保留，死令牌也不许被重试：窗口内多一条请求立即失败。
+	expectQuiet(t, "死令牌只被尝试一次、没有额外扇出",
+		func() bool { return len(stub.requestsCopy()) == 2 })
 	aliveRow, _, err := f.store.DeviceByID(context.Background(), alive.DeviceID)
 	if err != nil {
 		t.Fatalf("DeviceByID(alive): %v", err)

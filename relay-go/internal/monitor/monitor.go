@@ -27,18 +27,14 @@
 package monitor
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
 	"math"
 	"net/http"
 	"os"
 	"path/filepath"
-	"reflect"
-	"runtime"
 	"runtime/debug"
 	"sort"
 	"strconv"
@@ -288,7 +284,7 @@ func (m *Monitor) NoteException(err error, path, source string) {
 // noteException 是带显式栈的实现（测试与内部调用用）。
 func (m *Monitor) noteException(err error, path, source string, stack []uintptr) {
 	defer m.guard("note an exception")
-	place, frames := classify(stack)
+	place, frames := classify(stack, false)
 	typeName := shortType(err)
 	summary := truncateRunes(fmt.Sprintf("%s: %v", typeName, err), 300)
 	summary = strings.ReplaceAll(summary, "\n", " ")
@@ -318,7 +314,7 @@ func (m *Monitor) NotePanic(recovered any, method, path, requestID string,
 		return
 	}
 	defer m.guard("note a panic")
-	place, frames := classifyPanic(stack)
+	place, frames := classify(stack, true)
 	typeName := shortType(recovered)
 	summary := truncateRunes(fmt.Sprintf("%s: %v", typeName, recovered), 300)
 	summary = strings.ReplaceAll(summary, "\n", " ")
@@ -436,6 +432,25 @@ func (m *Monitor) NoteControlDrop(link, frameType string) {
 		summary: fmt.Sprintf("%s 的 %s 控制帧在优先队列满时被丢弃（可丢类别，连接继续）",
 			link, frameType),
 		details: map[string]any{"link": link, "frame": frameType},
+	})
+}
+
+// NoteStreamDrop 记录一条连接的流式帧丢弃满了一个告警窗口（hub 按
+// streamDropAlertThreshold 聚合后调它，不是每帧一次）。
+//
+// 类别按链路归：同一条连接只在首次（或 24 小时后）打扰一次，之后只累计。
+// 详情只带链路与窗口计数，不带任何帧内容——流式帧里装的是会话数据。
+func (m *Monitor) NoteStreamDrop(link string, dropped int64) {
+	if !m.Enabled() {
+		return
+	}
+	defer m.guard("note a stream drop")
+	m.record("backpressure:stream:"+link, recordInput{
+		kind:  "backpressure:stream",
+		title: "流式帧因持续背压被批量丢弃",
+		summary: fmt.Sprintf("%s 的流式帧在队列满时被丢弃，一个窗口内累计 %d 帧（连接继续）",
+			link, dropped),
+		details: map[string]any{"link": link, "droppedInWindow": dropped},
 	})
 }
 
@@ -688,91 +703,6 @@ func localDay(at time.Time) int64 {
 	return int64(local.Year())*10000 + int64(local.Month())*100 + int64(local.Day())
 }
 
-// ── 分类 ───────────────────────────────────────────────────────────────────
-
-// classify 返回最内层位置与最近四帧的可读栈。
-func classify(stack []uintptr) (string, string) {
-	frames := runtime.CallersFrames(stack)
-	place := "?"
-	framesText := make([]string, 0, 4)
-	for {
-		frame, more := frames.Next()
-		if !ignoredFrame(frame.Function) {
-			if place == "?" {
-				place = fmt.Sprintf("%s:%d", filepath.Base(frame.File), frame.Line)
-			}
-			if len(framesText) < 4 {
-				framesText = append(framesText, fmt.Sprintf("%s:%d %s",
-					filepath.Base(frame.File), frame.Line, shortFunction(frame.Function)))
-			}
-		}
-		if !more {
-			break
-		}
-	}
-	return place, strings.Join(framesText, " ← ")
-}
-
-// classifyPanic 跳过 runtime.gopanic 等帧，找到真正的 panic 位置。
-func classifyPanic(stack []uintptr) (string, string) {
-	frames := runtime.CallersFrames(stack)
-	place := "?"
-	framesText := make([]string, 0, 4)
-	for {
-		frame, more := frames.Next()
-		if !ignoredFrame(frame.Function) && !isRuntimeFrame(frame.Function) {
-			if place == "?" {
-				place = fmt.Sprintf("%s:%d", filepath.Base(frame.File), frame.Line)
-			}
-			if len(framesText) < 4 {
-				framesText = append(framesText, fmt.Sprintf("%s:%d %s",
-					filepath.Base(frame.File), frame.Line, shortFunction(frame.Function)))
-			}
-		}
-		if !more {
-			break
-		}
-	}
-	return place, strings.Join(framesText, " ← ")
-}
-
-func ignoredFrame(function string) bool {
-	return strings.HasPrefix(function, "runtime.") ||
-		strings.Contains(function, "/internal/monitor.")
-}
-
-func isRuntimeFrame(function string) bool { return strings.HasPrefix(function, "runtime.") }
-
-// shortFunction 砍掉包路径，只留 package.Func（日志可读性）。
-func shortFunction(function string) string {
-	if index := strings.LastIndex(function, "/"); index >= 0 {
-		return function[index+1:]
-	}
-	return function
-}
-
-func categoryKey(typeName, place string) string {
-	return "exc:" + typeName + "@" + place
-}
-
-// shortType 是错误/panic 值的类型短名（去掉包路径）。
-func shortType(value any) string {
-	if value == nil {
-		return "error"
-	}
-	name := reflect.TypeOf(value).String()
-	if index := strings.LastIndex(name, "/"); index >= 0 {
-		name = name[index+1:]
-	}
-	return name
-}
-
-func captureStack(skip int) []uintptr {
-	pcs := make([]uintptr, 64)
-	count := runtime.Callers(skip, pcs)
-	return pcs[:count]
-}
-
 // ── HTTP 中间件 ────────────────────────────────────────────────────────────
 
 // Middleware 把 panic 与 5xx 送进监控，并保持原有的 500 JSON 信封。
@@ -793,7 +723,7 @@ func Middleware(m *Monitor, logger *slog.Logger) func(http.Handler) http.Handler
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			requestID := reqctx.ID(r.Context())
 			recorder := &statusRecorder{ResponseWriter: w, monitor: m,
-				method: r.Method, path: r.URL.Path, requestID: requestID}
+				request: r, requestID: requestID}
 			defer func() {
 				recovered := recover()
 				if recovered == nil {
@@ -809,7 +739,10 @@ func Middleware(m *Monitor, logger *slog.Logger) func(http.Handler) http.Handler
 					"method", r.Method, "path", r.URL.Path, "requestId", requestID,
 					"panic", recovered, "stack", stackText)
 				if m.Enabled() {
-					m.NotePanic(recovered, r.Method, r.URL.Path, requestID,
+					// 告警按路由模板归类（README 的承诺：路由只记模板）；本中间件
+					// 包在 mux 外层，Pattern 要等分发之后才写进请求，所以在 panic
+					// 发生的这一刻惰性取。
+					m.NotePanic(recovered, r.Method, reqctx.RouteTemplate(r), requestID,
 						captureStack(3), stackText)
 				}
 				recorder.silent = true
@@ -828,8 +761,7 @@ func Middleware(m *Monitor, logger *slog.Logger) func(http.Handler) http.Handler
 type statusRecorder struct {
 	http.ResponseWriter
 	monitor     *Monitor
-	method      string
-	path        string
+	request     *http.Request
 	requestID   string
 	status      int
 	wroteHeader bool
@@ -844,7 +776,10 @@ func (r *statusRecorder) WriteHeader(status int) {
 	r.wroteHeader = true
 	r.status = status
 	if !r.silent && status >= 500 && r.monitor.Enabled() {
-		r.monitor.NoteHTTPStatus(r.method, r.path, r.requestID, status)
+		// 与 NotePanic 同一口径：告警的 path 是路由模板，不是原始路径
+		// （模板在 mux 分发后才就位，所以在写状态码这一刻取）。
+		r.monitor.NoteHTTPStatus(r.request.Method, reqctx.RouteTemplate(r.request),
+			r.requestID, status)
 	}
 	r.ResponseWriter.WriteHeader(status)
 }
@@ -858,109 +793,6 @@ func (r *statusRecorder) Write(payload []byte) (int, error) {
 
 // Unwrap 让 http.ResponseController 与 coder/websocket 找到底层 writer。
 func (r *statusRecorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }
-
-// ── 告警队列（投递侧取走 / 失败放回）──────────────────────────────────────
-
-// ReadQueue 读一份队列文件，返回合法记录与坏行数。
-//
-// 坏行跳过而不是让整批失败：一条写坏的记录不该把其余告警一起卡住。
-func ReadQueue(path string) ([]Record, int, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, 0, err
-	}
-	defer file.Close()
-	return readRecords(file)
-}
-
-func readRecords(reader io.Reader) ([]Record, int, error) {
-	records := make([]Record, 0, 16)
-	bad := 0
-	buffered := bufio.NewReader(reader)
-	for {
-		line, err := buffered.ReadString('\n')
-		trimmed := strings.TrimSpace(line)
-		if trimmed != "" {
-			var record Record
-			if decodeErr := json.Unmarshal([]byte(trimmed), &record); decodeErr != nil {
-				bad++
-			} else {
-				records = append(records, record)
-			}
-		}
-		if err != nil {
-			if err == io.EOF {
-				return records, bad, nil
-			}
-			return records, bad, err
-		}
-	}
-}
-
-// TakeQueue 是投递侧的原子取走：把 alerts.jsonl 重命名成 alerts.taken.jsonl，
-// 再读它。队列不存在时返回空（不是错误）。
-//
-// 取走之后再拼正文、再投递：投递成功由调用方 DiscardTaken，失败由 RestoreQueue
-// 原样追加回队列。任何一步都不会丢告警。
-func TakeQueue(alertDir string) ([]Record, int, error) {
-	queuePath := filepath.Join(alertDir, QueueName)
-	takenPath := filepath.Join(alertDir, TakenName)
-	if err := os.Rename(queuePath, takenPath); err != nil {
-		if os.IsNotExist(err) {
-			return nil, 0, nil
-		}
-		return nil, 0, fmt.Errorf("取走告警队列: %w", err)
-	}
-	records, bad, err := ReadQueue(takenPath)
-	if err != nil {
-		// 读不出来也要把文件放回去，下一次还能重试。
-		restoreErr := RestoreQueue(alertDir)
-		if restoreErr != nil {
-			return nil, bad, fmt.Errorf("读告警队列: %w（放回也失败: %v）", err, restoreErr)
-		}
-		return nil, bad, fmt.Errorf("读告警队列: %w", err)
-	}
-	if len(records) == 0 {
-		_ = DiscardTaken(alertDir)
-	}
-	return records, bad, nil
-}
-
-// RestoreQueue 把取走的文件原样追加回队列，然后删掉 taken。
-//
-// 追加失败时**保留** taken：宁可留一个待人工处理的文件，也不丢记录。
-func RestoreQueue(alertDir string) error {
-	queuePath := filepath.Join(alertDir, QueueName)
-	takenPath := filepath.Join(alertDir, TakenName)
-	payload, err := os.ReadFile(takenPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return fmt.Errorf("读回待放回的告警: %w", err)
-	}
-	target, err := os.OpenFile(queuePath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
-	if err != nil {
-		return fmt.Errorf("打开告警队列: %w", err)
-	}
-	if _, err := target.Write(payload); err != nil {
-		_ = target.Close()
-		return fmt.Errorf("放回告警: %w", err)
-	}
-	if err := target.Close(); err != nil {
-		return fmt.Errorf("放回告警: %w", err)
-	}
-	return DiscardTaken(alertDir)
-}
-
-// DiscardTaken 删掉取走文件（投递成功之后）。
-func DiscardTaken(alertDir string) error {
-	err := os.Remove(filepath.Join(alertDir, TakenName))
-	if err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	return nil
-}
 
 // ── 小工具 ─────────────────────────────────────────────────────────────────
 

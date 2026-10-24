@@ -33,6 +33,19 @@ func (h *Hub) noteControlDrop(link *Link, frameType string) {
 	}
 }
 
+// noteStreamDrop 是一条连接的流式帧丢弃满一个告警窗口时的唯一告警点
+// （WARN 日志与 monitor 都从这里取数；窗口计数在 Link 里）。
+func (h *Hub) noteStreamDrop(link *Link, dropped int64) {
+	h.log.Warn("relay: stream frames are being dropped under sustained backpressure",
+		"link", link.Label(), "droppedInWindow", dropped,
+		"totalDropped", link.DroppedFrames(),
+		"queueDepth", link.QueueDepth(), "queuedBytes", link.QueuedBytes(),
+		"remote_ip", link.Remote(), "lastInboundAge", link.LastInboundAge().String())
+	if h.monitor != nil {
+		h.monitor.NoteStreamDrop(link.Label(), dropped)
+	}
+}
+
 // ── agent 生命周期 ───────────────────────────────────────────────────────────
 
 // AgentLink 是一个 agentId 对应的连接器 WebSocket。

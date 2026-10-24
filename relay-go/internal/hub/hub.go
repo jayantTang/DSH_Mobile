@@ -24,11 +24,14 @@ type PushSender interface {
 		eid *string, ignoreThrottle bool) []push.Result
 }
 
-// IncidentReporter 是"一条 agent 链路断了"与"控制帧被丢了"的接收方
+// IncidentReporter 是"一条 agent 链路断了"与"帧被丢了"的接收方
 // （*monitor.Monitor 实现）。
 type IncidentReporter interface {
 	NoteAgentDisconnect(agentID, name string)
 	NoteControlDrop(link, frameType string)
+	// NoteStreamDrop 记录一条连接的流式帧丢弃满了一个告警窗口
+	// （dropped 是这个窗口里丢的帧数；链路标识里有 agentId/deviceId）。
+	NoteStreamDrop(link string, dropped int64)
 }
 
 // Options 是装配一个 Hub 需要的全部输入。
@@ -145,6 +148,8 @@ func New(options Options) *Hub {
 	}
 	// 控制帧丢弃的记账回调要在 hub 建好之后挂：它需要 hub 的计数器与监控器。
 	hub.linkOptions.onControlDrop = hub.noteControlDrop
+	// 流式帧丢弃的告警同理（阈值窗口在 Link 里，这里只负责留证据）。
+	hub.linkOptions.onStreamDrop = hub.noteStreamDrop
 	hub.registry = newRegistry()
 	hub.quota = quota.NewLedger(sink, limits.DeviceDailyBytes, today, log)
 	hub.usage = quota.NewUsage(sink, today, log)
@@ -225,11 +230,15 @@ func (h *Hub) DeviceBudgetExceeded(agentID, deviceID string) bool {
 
 // Shutdown 通知所有连接并等待写循环退出（有上限）。
 //
-// 顺序：先停接受（由调用方关监听）→ 通知全部连接 → 等队列排空/关闭握手 → 退出。
+// 顺序：先停接受（由调用方关监听）→ 通知全部连接 → 等队列排空/关闭握手 →
+// 把内存账本的尾巴冲盘 → 退出。冲盘放在两个返回点（等完、ctx 提前结束）之前
+// 统一做一次：ctx 被取消时连接等不到头，账不能跟着丢（Python hub.py 的关停
+// 同样显式 flush）。
 func (h *Hub) Shutdown(ctx context.Context) {
 	if !h.closed.CompareAndSwap(false, true) {
 		return
 	}
+	defer h.flushUsageOnShutdown()
 	// 先让等待中的文件请求以 host/offline 结束：连接即将断开，回帧不会再来。
 	h.failAllBridges("the relay is shutting down")
 	links := make([]*Link, 0, 64)
@@ -248,5 +257,21 @@ func (h *Hub) Shutdown(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		}
+	}
+}
+
+// flushUsageOnShutdown 是关停收尾的最后一次冲盘。
+//
+// 用独立的时限，不复用传入的 ctx：Shutdown 的调用方可能已经把 ctx 取消
+// （那正是走到这里的原因），账本的尾巴仍要落库。失败只记 WARN 不阻塞关停：
+// 写不进去的这批留在内存账本的语义不存在了，进程退出即丢失，至少要留下证据。
+func (h *Hub) flushUsageOnShutdown() {
+	if !h.usage.Pending() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), usageWriteTimeout)
+	defer cancel()
+	if err := h.FlushUsage(ctx); err != nil {
+		h.log.Warn("relay: final usage flush failed during shutdown", "error", err)
 	}
 }

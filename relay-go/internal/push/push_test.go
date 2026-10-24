@@ -235,7 +235,7 @@ func TestNoContentFieldCanAppearInAnyKind(t *testing.T) {
 
 func TestADisabledSenderNeverTouchesHTTP(t *testing.T) {
 	client := &stubClient{}
-	sender := FromEnv(envGetter(nil), client)
+	sender := FromEnv(envGetter(nil), client, nil)
 	if sender.Enabled() {
 		t.Fatal("空环境应当得到禁用实例")
 	}
@@ -254,7 +254,7 @@ func TestPartialConfigurationDisablesPushInsteadOfPanicking(t *testing.T) {
 	client := &stubClient{}
 	sender := FromEnv(envGetter(map[string]string{
 		"DLP_APNS_ENABLED": "1", "DLP_APNS_KEY_ID": "K",
-	}), client)
+	}), client, nil)
 	if sender.Enabled() {
 		t.Fatal("配置不全必须是禁用实例")
 	}
@@ -270,7 +270,7 @@ func TestAMissingKeyFileDisablesPush(t *testing.T) {
 	sender := FromEnv(envGetter(map[string]string{
 		"DLP_APNS_ENABLED": "1", "DLP_APNS_KEY_PATH": "/nonexistent/AuthKey_XX.p8",
 		"DLP_APNS_KEY_ID": "K", "DLP_APNS_TEAM_ID": "T", "DLP_APNS_TOPIC": "com.x",
-	}), &stubClient{})
+	}), &stubClient{}, nil)
 	if sender.Enabled() {
 		t.Fatal("密钥文件不存在必须禁用")
 	}
@@ -283,7 +283,7 @@ func TestFullyConfiguredEnvIsEnabledAndReadsEverySetting(t *testing.T) {
 		"DLP_APNS_KEY_ID": "TESTKEY12", "DLP_APNS_TEAM_ID": "TEAM123456",
 		"DLP_APNS_TOPIC": "com.jayanttang.dsh", "DLP_APNS_ENV_DEFAULT": "production",
 		"DLP_APNS_MIN_INTERVAL_S": "5",
-	}), &stubClient{})
+	}), &stubClient{}, nil)
 	if !sender.Enabled() {
 		t.Fatal("完整配置必须启用")
 	}
@@ -298,7 +298,7 @@ func TestFullyConfiguredEnvIsEnabledAndReadsEverySetting(t *testing.T) {
 func TestTheSwitchIsOffUnlessItSaysOtherwise(t *testing.T) {
 	for _, value := range []string{"0", "", "no", "false", "off"} {
 		env := map[string]string{"DLP_APNS_ENABLED": value}
-		if FromEnv(envGetter(env), &stubClient{}).Enabled() {
+		if FromEnv(envGetter(env), &stubClient{}, nil).Enabled() {
 			t.Fatalf("DLP_APNS_ENABLED=%q 应当是关闭", value)
 		}
 	}
@@ -308,7 +308,7 @@ func TestTheSwitchIsOffUnlessItSaysOtherwise(t *testing.T) {
 			"DLP_APNS_ENABLED": value, "DLP_APNS_KEY_PATH": keyPath,
 			"DLP_APNS_KEY_ID": "K", "DLP_APNS_TEAM_ID": "T", "DLP_APNS_TOPIC": "com.x",
 		}
-		if !FromEnv(envGetter(env), &stubClient{}).Enabled() {
+		if !FromEnv(envGetter(env), &stubClient{}, nil).Enabled() {
 			t.Fatalf("DLP_APNS_ENABLED=%q 应当启用", value)
 		}
 	}

@@ -276,3 +276,27 @@ func TestReconcileLoopKeepsTicking(t *testing.T) {
 	})
 	fx.hub.DetachAgent(agent)
 }
+
+// TestShutdownFlushesThePendingUsage 钉住 B2：关停收尾必须把内存账本的尾巴
+// 冲进库，即使传入的 ctx 已经取消（那正是提前走到收尾的原因）。
+func TestShutdownFlushesThePendingUsage(t *testing.T) {
+	fx := newFixture(t, Options{Logger: discardLogger()})
+	link := &DeviceLink{DeviceID: "dev_shutdown", AgentID: "agt_1", AccountID: "acc_1"}
+	fx.hub.usage.NoteConnection(link.ref())
+	fx.hub.usage.NoteEgress(link.ref(), 256)
+	if !fx.hub.usage.Pending() {
+		t.Fatal("前置：账本里应当有待冲盘的一批")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // 已取消的 ctx：冲盘用独立时限，不许复用它
+	fx.hub.Shutdown(ctx)
+
+	if fx.hub.usage.Pending() {
+		t.Fatal("Shutdown 之后账本应当清空")
+	}
+	stored, err := fx.store.UsageBytesOn(context.Background(), store.LocalDay(), link.DeviceID)
+	if err != nil || stored != 256 {
+		t.Fatalf("库里的出口字节 = %d err=%v，期望 256", stored, err)
+	}
+}

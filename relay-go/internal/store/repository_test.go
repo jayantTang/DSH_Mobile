@@ -209,14 +209,14 @@ func TestPairCodeScryptMatchesPython(t *testing.T) {
 	}
 	// 认领时大小写与分隔符都被归一化，Python 生成的哈希必须能验过。
 	for _, input := range []string{"ABCD-EFGH", "abcd efgh", "  Abcd-Efgh  ", "ABCDEFGH"} {
-		if !VerifyPairCode(input, pythonHash) {
-			t.Fatalf("VerifyPairCode(%q) = false", input)
+		if !verifyPairCode(input, pythonHash) {
+			t.Fatalf("verifyPairCode(%q) = false", input)
 		}
 	}
-	if VerifyPairCode("ABCD-EFGI", pythonHash) {
+	if verifyPairCode("ABCD-EFGI", pythonHash) {
 		t.Fatal("错误的码通过了校验")
 	}
-	if VerifyPairCode("ABCD-EFGH", "scrypt$zz$00") {
+	if verifyPairCode("ABCD-EFGH", "scrypt$zz$00") {
 		t.Fatal("坏哈希通过了校验")
 	}
 }

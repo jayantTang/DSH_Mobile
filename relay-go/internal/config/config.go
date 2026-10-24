@@ -212,95 +212,105 @@ func (c *Config) register(fs *flag.FlagSet) {
 
 // applyEnv 按 Python 版的取值规则叠加环境变量。
 //
-// 除 dead-device-warn-threshold 外，数值环境变量非法即报错（Python 版在 argparse
-// 构造阶段 int()/float() 抛 ValueError，同样是启动失败）。该例外按
-// hub.dead_device_warn_threshold_from_env：坏值回退默认、负数夹到 0。
+// 表格驱动：每项声明变量名与写入器，空值一律按"未设置"处理。除
+// dead-device-warn-threshold 与 revoke-reconcile 外，数值环境变量非法即报错
+// （Python 版在 argparse 构造阶段 int()/float() 抛 ValueError，同样是启动失败）；
+// 两个例外按 hub.dead_device_warn_threshold_from_env 与
+// hub._reconcile_interval_from_env：坏值回退默认，不拦启动。
 func (c *Config) applyEnv(getenv func(string) string) error {
-	if v := getenv(EnvHost); v != "" {
-		c.Host = v
+	bindings := []envBinding{
+		{EnvHost, stringValue(&c.Host)},
+		{EnvPort, intValue[int](&c.Port)},
+		// 空字符串按"未设置"处理：Python 版只有未设置才取默认值，但把空路径交给
+		// sqlite3 会得到一个临时库，反而更糟，这里明确当成未设置。
+		{EnvDB, stringValue(&c.DBPath)},
+		{EnvBridgeBytes, intValue[int64](&c.BridgeBytes)},
+		{EnvMaxDevicesPerAgent, intValue[int](&c.MaxDevicesPerAgent)},
+		{EnvMaxPairedDevices, intValue[int](&c.MaxPairedDevices)},
+		{EnvDeviceRateKbps, floatValue(&c.DeviceRateKbps)},
+		{EnvDeviceDailyMB, floatValue(&c.DeviceDailyMB)},
+		c.deadDeviceWarnThresholdBinding(),
+		{EnvBasePath, stringValue(&c.BasePath)},
+		{EnvLogLevel, stringValue(&c.LogLevel)},
+		{EnvAccessLog, stringValue(&c.AccessLog)},
+		{EnvPprofAddr, stringValue(&c.PprofAddr)},
+		{EnvGCPercent, intValue[int](&c.GCPercent)},
+		c.revokeReconcileBinding(),
 	}
-	if v := getenv(EnvPort); v != "" {
-		port, err := strconv.Atoi(strings.TrimSpace(v))
-		if err != nil {
-			return fmt.Errorf("%s=%q: %w", EnvPort, v, err)
+	for _, binding := range bindings {
+		raw := getenv(binding.name)
+		if raw == "" {
+			continue
 		}
-		c.Port = port
-	}
-	// 空字符串按"未设置"处理：Python 版只有未设置才取默认值，但把空路径交给
-	// sqlite3 会得到一个临时库，反而更糟，这里明确当成未设置。
-	if v := getenv(EnvDB); v != "" {
-		c.DBPath = v
-	}
-	if v := getenv(EnvBridgeBytes); v != "" {
-		n, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
-		if err != nil {
-			return fmt.Errorf("%s=%q: %w", EnvBridgeBytes, v, err)
-		}
-		c.BridgeBytes = n
-	}
-	if v := getenv(EnvMaxDevicesPerAgent); v != "" {
-		n, err := strconv.Atoi(strings.TrimSpace(v))
-		if err != nil {
-			return fmt.Errorf("%s=%q: %w", EnvMaxDevicesPerAgent, v, err)
-		}
-		c.MaxDevicesPerAgent = n
-	}
-	if v := getenv(EnvMaxPairedDevices); v != "" {
-		n, err := strconv.Atoi(strings.TrimSpace(v))
-		if err != nil {
-			return fmt.Errorf("%s=%q: %w", EnvMaxPairedDevices, v, err)
-		}
-		c.MaxPairedDevices = n
-	}
-	if v := getenv(EnvDeviceRateKbps); v != "" {
-		f, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
-		if err != nil {
-			return fmt.Errorf("%s=%q: %w", EnvDeviceRateKbps, v, err)
-		}
-		c.DeviceRateKbps = f
-	}
-	if v := getenv(EnvDeviceDailyMB); v != "" {
-		f, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
-		if err != nil {
-			return fmt.Errorf("%s=%q: %w", EnvDeviceDailyMB, v, err)
-		}
-		c.DeviceDailyMB = f
-	}
-	if v := getenv(EnvDeadDeviceWarnThreshold); v != "" {
-		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
-			if n < 0 {
-				n = 0
-			}
-			c.DeadDeviceWarnThreshold = n
-		}
-	}
-	if v := getenv(EnvBasePath); v != "" {
-		c.BasePath = v
-	}
-	if v := getenv(EnvLogLevel); v != "" {
-		c.LogLevel = v
-	}
-	if v := getenv(EnvAccessLog); v != "" {
-		c.AccessLog = v
-	}
-	if v := getenv(EnvPprofAddr); v != "" {
-		c.PprofAddr = v
-	}
-	if v := getenv(EnvGCPercent); v != "" {
-		n, err := strconv.Atoi(strings.TrimSpace(v))
-		if err != nil {
-			return fmt.Errorf("%s=%q: %w", EnvGCPercent, v, err)
-		}
-		c.GCPercent = n
-	}
-	// 坏值回退默认（Python hub._reconcile_interval_from_env 就是这么做的）：
-	// 对账是兜底功能，不该因为一个写错的环境变量让中转起不来。
-	if v := getenv(EnvRevokeReconcileSeconds); v != "" {
-		if seconds, err := strconv.ParseFloat(strings.TrimSpace(v), 64); err == nil {
-			c.RevokeReconcileSeconds = seconds
+		if err := binding.apply(raw); err != nil {
+			return fmt.Errorf("%s=%q: %w", binding.name, raw, err)
 		}
 	}
 	return nil
+}
+
+// envBinding 是表格里的一行：变量名 + 写入器。
+type envBinding struct {
+	name  string
+	apply func(raw string) error
+}
+
+// stringValue 生成字符串变量的写入器（原样写入，空值由 applyEnv 统一跳过）。
+func stringValue(target *string) func(string) error {
+	return func(raw string) error {
+		*target = raw
+		return nil
+	}
+}
+
+// intValue 生成整数变量的写入器；解析失败时报错（哪个变量、什么值由调用方补）。
+func intValue[N int | int64](target *N) func(string) error {
+	return func(raw string) error {
+		parsed, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
+		if err != nil {
+			return err
+		}
+		*target = N(parsed)
+		return nil
+	}
+}
+
+// floatValue 生成浮点变量的写入器；解析失败时报错。
+func floatValue(target *float64) func(string) error {
+	return func(raw string) error {
+		parsed, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
+		if err != nil {
+			return err
+		}
+		*target = parsed
+		return nil
+	}
+}
+
+// deadDeviceWarnThresholdBinding 是告警阈值的宽限写入器：坏值回退默认、
+// 负数夹到 0（Python hub.dead_device_warn_threshold_from_env）。
+func (c *Config) deadDeviceWarnThresholdBinding() envBinding {
+	return envBinding{EnvDeadDeviceWarnThreshold, func(raw string) error {
+		if parsed, err := strconv.Atoi(strings.TrimSpace(raw)); err == nil {
+			if parsed < 0 {
+				parsed = 0
+			}
+			c.DeadDeviceWarnThreshold = parsed
+		}
+		return nil
+	}}
+}
+
+// revokeReconcileBinding 是对账周期的宽限写入器：坏值回退默认（Python
+// hub._reconcile_interval_from_env）——对账是兜底功能，不该因为一个写错的
+// 环境变量让中转起不来。
+func (c *Config) revokeReconcileBinding() envBinding {
+	return envBinding{EnvRevokeReconcileSeconds, func(raw string) error {
+		if seconds, err := strconv.ParseFloat(strings.TrimSpace(raw), 64); err == nil {
+			c.RevokeReconcileSeconds = seconds
+		}
+		return nil
+	}}
 }
 
 // Validate 只做启动前必须拦下的检查，取值范围与 Python 版一致的地方不额外加限制。

@@ -10,6 +10,8 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"golang.org/x/crypto/scrypt"
 )
 
 // 与 Python 版 store.py 逐字对齐的常量和生成规则。
@@ -53,9 +55,11 @@ func NowMS() int64 { return time.Now().UnixMilli() }
 // LocalDay 是服务器本地日的序号，形如 20260921（Python 的 store.local_day）。
 //
 // 记账与日额度判定都用本地日，两处只走这一个函数。
-func LocalDay() int64 { return localDayAt(time.Now()) }
+func LocalDay() int64 { return LocalDayAt(time.Now()) }
 
-func localDayAt(at time.Time) int64 {
+// LocalDayAt 是某个时刻的本地日序号。导出给 opsreport：日历序号的编码口径
+// （本地时区、YYYYMMDD 整数）只有这一份，报表的 localDayOf 委托到这里。
+func LocalDayAt(at time.Time) int64 {
 	local := at.In(time.Local)
 	return int64(local.Year())*10000 + int64(local.Month())*100 + int64(local.Day())
 }
@@ -69,7 +73,7 @@ func DayFloor(days int) int64 {
 		days = 1
 	}
 	now := time.Now().In(time.Local)
-	return localDayAt(now.AddDate(0, 0, -(days - 1)))
+	return LocalDayAt(now.AddDate(0, 0, -(days - 1)))
 }
 
 // SHA256Hex 是 token / 邀请码的存储哈希（Python 的 store.sha256_hex）。
@@ -174,6 +178,13 @@ func randIndex(n int) int {
 	}
 }
 
+// scryptKey 按 Python 版 store.py 的参数派生配对码哈希。
+//
+// n=1<<14, r=8, p=1, dklen=32；参数写死在一处，测试用已知盐与 Python 交叉验证。
+func scryptKey(password, salt []byte) ([]byte, error) {
+	return scrypt.Key(password, salt, scryptN, scryptR, scryptP, scryptKeyLen)
+}
+
 // hashPairCode 生成 scrypt 哈希，格式与 Python 版一致：scrypt$<hex salt>$<hex digest>。
 func hashPairCode(code string) string {
 	salt := make([]byte, scryptSaltLen)
@@ -217,9 +228,6 @@ func HashPairCodeForTest(code string, salt []byte) string {
 	}
 	return hashPairCodeWithSalt(code, salt)
 }
-
-// VerifyPairCode 导出给测试与将来的运维校验使用。
-func VerifyPairCode(code, stored string) bool { return verifyPairCode(code, stored) }
 
 // NewInviteCode 导出给 admin CLI 与测试（Python 的 new_invite_code）。
 func NewInviteCode() string { return newInviteCode() }
