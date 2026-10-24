@@ -53,7 +53,7 @@
     "gen:connector-baseline": "node scripts/dev/gen-connector-baseline.mjs",
     "sync:send-image-script": "node scripts/dev/sync-send-image-script.mjs",
     "restart": "node scripts/dev/dsh-restart.mjs",
-    "test:scripts": "node --test scripts/dev/dsh-restart.test.mjs scripts/dev/check-contracts.test.mjs scripts/dev/check-traps.test.mjs scripts/dev/check-layers.test.mjs scripts/dev/check-plugin-hotplug.test.mjs scripts/dev/plugin-hmr.test.mjs scripts/dev/profile-parity.test.mjs scripts/dev/profile-parity-apply.test.mjs scripts/dev/relay-devices.test.mjs scripts/dev/check-lanes.test.mjs scripts/dev/feedback.test.mjs scripts/dev/collect-diagnostics.test.mjs scripts/dev/check-diagnostics.test.mjs scripts/dev/ios-logs.test.mjs scripts/release/ota-version.test.mjs test/tools/relaypair.test.mjs skills/send-image/send-image.test.mjs",
+    "test:scripts": "node --test scripts/dev/dsh-restart.test.mjs scripts/dev/check-contracts.test.mjs scripts/dev/check-traps.test.mjs scripts/dev/check-layers.test.mjs scripts/dev/check-plugin-hotplug.test.mjs scripts/dev/plugin-hmr.test.mjs scripts/dev/profile-parity.test.mjs scripts/dev/profile-parity-apply.test.mjs scripts/dev/relay-devices.test.mjs scripts/dev/check-lanes.test.mjs scripts/dev/feedback.test.mjs scripts/dev/collect-diagnostics.test.mjs scripts/dev/check-diagnostics.test.mjs scripts/dev/diagnostics-findings.test.mjs scripts/dev/ios-logs.test.mjs scripts/release/ota-version.test.mjs test/tools/relaypair.test.mjs skills/send-image/send-image.test.mjs",
     "diag:collect": "node scripts/dev/collect-diagnostics.mjs",
     "check:diagnostics": "node scripts/dev/check-diagnostics.mjs",
     "check:structure": "node scripts/dev/check-structure.mjs",
