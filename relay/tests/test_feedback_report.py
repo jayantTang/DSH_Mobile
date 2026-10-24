@@ -907,9 +907,12 @@ def test_hourly_activity_reads_the_go_relay_json_log():
     end = int(datetime.datetime(2026, 10, 24, 16, 0, 0, tzinfo=tz).timestamp() * 1000)
     at_14 = int(datetime.datetime(2026, 10, 24, 14, 0, 0, tzinfo=tz).timestamp() * 1000)
     at_15 = at_14 + 3_600_000
+    # journalctl 的行首带 `2026-10-24T14:10:00+0800 host unit[pid]:`；JSON 正文在后面。
     lines = [
+        '2026-10-24T14:10:00+0800 host dsh-relay[1]: '
         '{"time":"2026-10-24T14:10:00.123456789+08:00","level":"INFO",'
         '"msg":"relay: device attached","deviceId":"dev_go1","agentId":"agt_go"}',
+        '2026-10-24T15:40:00+0800 host dsh-relay[1]: '
         '{"time":"2026-10-24T15:40:00.5+08:00","level":"INFO",'
         '"msg":"relay: device detached","deviceId":"dev_go1","agentId":"agt_go",'
         '"reason":"socket closed"}',
@@ -939,7 +942,8 @@ def test_read_journal_merges_both_units_in_time_order(monkeypatch):
         unit = argv[argv.index("-u") + 1]
         if unit == "dsh-relay":
             return Done("2026-10-23T10:00:00+0800 host p[1]: device dev_a (iPhone) attached to agent agt_a\n")
-        return Done('{"time":"2026-10-24T10:00:00.1+08:00","msg":"relay: device detached",'
+        return Done('2026-10-24T10:00:00+0800 host dsh-relay[1]: '
+                    '{"time":"2026-10-24T10:00:00.1+08:00","msg":"relay: device detached",'
                     '"deviceId":"dev_a","agentId":"agt_a"}\n')
 
     monkeypatch.setattr(admin.subprocess, "run", fake_run)

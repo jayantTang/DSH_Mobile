@@ -835,11 +835,9 @@ def _parse_journal_time(line: str) -> int | None:
     起）输出 JSON，时刻在 `"time":"2026-10-24T14:30:26.865392225+08:00"` 里，纳秒要
     先截成微秒——`fromisoformat` 只认到 6 位小数。
     """
-    if line.startswith("{"):
-        match = _JSON_TIME.search(line)
-        if match is None:
-            return None
-        stamp = _JSON_FRACTION.sub(r"\1", match.group(1))
+    payload = _json_payload(line)
+    if payload is not None and payload.get("time"):
+        stamp = _JSON_FRACTION.sub(r"\1", str(payload["time"]))
     else:
         stamp = line.split(" ", 1)[0]
     try:
@@ -855,6 +853,24 @@ def _journal_units(value: str) -> tuple[str, ...]:
     return units or DEFAULT_JOURNAL_UNITS
 
 
+#: journalctl 的每行前面都有 `2026-10-24T14:39:47+0800 host unit[pid]:`，Go 的 JSON 正文
+#: 在冒号之后——不能按 `line.startswith("{")` 判格式（2026-10-24 实测：那样一条都认不出，
+#: 切换之后的矩阵只剩 Python 时代没闭合的旧 span）。
+_JSON_BODY = re.compile(r'\{"(?:level|time|msg)"')
+
+
+def _json_payload(line: str) -> dict[str, Any] | None:
+    """取出日志行里的 JSON 正文（Go 服务）；不是 JSON 行返回 None。"""
+    match = _JSON_BODY.search(line)
+    if match is None:
+        return None
+    try:
+        payload = json.loads(line[match.start():])
+    except ValueError:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
 def _device_event(line: str) -> tuple[str, str, str | None] | None:
     """一行日志如果是「设备连上 / 断开」，返回 `(deviceId, kind, agentId)`。
 
@@ -862,19 +878,16 @@ def _device_event(line: str) -> tuple[str, str, str | None] | None:
     2026-10-24 之前），Go 服务是 JSON（`"msg":"relay: device attached","deviceId":…`，
     2026-10-24 起）。不认 JSON 的话，切换之后的矩阵会一直是空的，而日志里明明有数据。
     """
-    if line.startswith("{"):
-        try:
-            obj = json.loads(line)
-        except ValueError:
-            return None
-        message = str(obj.get("msg") or "")
-        device = str(obj.get("deviceId") or "")
+    payload = _json_payload(line)
+    if payload is not None:
+        message = str(payload.get("msg") or "")
+        device = str(payload.get("deviceId") or "")
         if not device.startswith("dev_"):
             return None
         for kind in ("closed a socket that had already been replaced", "attached again",
                      "attached", "detached"):
             if kind in message:
-                return device, kind, str(obj.get("agentId") or "") or None
+                return device, kind, str(payload.get("agentId") or "") or None
         return None
     match = _DEVICE_EVENT.search(line)
     if match is None:

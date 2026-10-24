@@ -417,10 +417,26 @@ function compositionChart({ title, note, points, format }) {
   return figure(title, note, svg + legend)
 }
 
-/** 24 小时 × N 天的热度图：格子越深，那一小时在线的账号越多。
+const WEEKDAY_NAMES = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
+
+/// `YYYY-MM-DD` → 本地日期（`new Date('2026-10-24')` 按 UTC 解析，跨时区会差一天）。
+const dayDate = (day) => {
+  const [year, month, date] = String(day).split('-').map(Number)
+  return new Date(year, month - 1, date)
+}
+
+const weekdayName = (day) => WEEKDAY_NAMES[dayDate(day).getDay()]
+
+const isWeekendDay = (day) => {
+  const weekday = dayDate(day).getDay()
+  return weekday === 0 || weekday === 6
+}
+
+/** 24 小时 × 14 天的矩阵：格子越深，那一小时在线的账号越多。
 
 为什么用矩阵而不是折线：按小时如果要画成一条 336 点的折线，横向会被压扁，凌晨的
-低谷与工作时间的双峰全糊在一起；按「日 × 小时」摆成三行，作息形状一眼可读。
+低谷与工作时间的双峰全糊在一起；按「日 × 小时」摆成 14 行，作息形状与周节律一眼可读
+（行首写星期，周末行加左侧灰条）。
 
 `buckets` = [{hourStartAt, accounts, agents}]（服务端从 systemd 日志重建）。
 缺的那一小时画成浅灰空格，不插值——没数据与 0 个账号是两件事。
@@ -451,9 +467,16 @@ function hourlyHeatmap({ title, note, buckets }) {
   const width = 540
   const cell = 17
   const gap = 2.5
-  const left = 34
+  const left = 64
   const top = 6
   const labelY = top + days.length * (cell + gap) + 9
+  // 周末行加左侧灰条与浅底：一眼看出「周日比周三闲」是周节律还是异常。
+  const weekendBands = days.map((day, row) => {
+    if (!isWeekendDay(day)) return ''
+    const y = top + row * (cell + gap)
+    return `<rect x="${left - 5}" y="${y}" width="3" height="${cell}" rx="1.5" fill="#cbd5e1"/>`
+      + `<rect x="${left}" y="${y}" width="${(24 * (cell + gap) - gap).toFixed(1)}" height="${cell}" fill="#f8fafc"/>`
+  }).join('')
   const cells = days.map((day, row) => [...Array(24).keys()].map((hour) => {
     const bucket = grid.get(`${day}#${hour}`)
     const x = left + hour * (cell + gap)
@@ -465,11 +488,11 @@ function hourlyHeatmap({ title, note, buckets }) {
     // 满屏深蓝，看不出"今天其实比昨天闲"。分档边界与图例一致（见 figure 下的 legend）。
     const fill = HEAT_STEPS[heatStep(bucket.accounts)]
     return `<rect x="${x}" y="${y}" width="${cell}" height="${cell}" rx="3" fill="${fill}">`
-      + `<title>${escapeHtml(`${day.slice(5)} ${String(hour).padStart(2, '0')}:00 · ${bucket.accounts} 个活跃账号 · ${bucket.devices} 台设备在线`)}</title></rect>`
+      + `<title>${escapeHtml(`${weekdayName(day)} ${day.slice(5)} ${String(hour).padStart(2, '0')}:00 · ${bucket.accounts} 个活跃账号 · ${bucket.devices} 台设备在线`)}</title></rect>`
   }).join('')).join('')
-  const rowLabels = days.map((day, row) => `<text x="${left - 6}" `
+  const rowLabels = days.map((day, row) => `<text x="${left - 8}" `
     + `y="${(top + row * (cell + gap) + cell / 2 + 3.2).toFixed(1)}" text-anchor="end">`
-    + `${escapeHtml(day.slice(5))}</text>`).join('')
+    + `${escapeHtml(`${weekdayName(day)} ${day.slice(5)}`)}</text>`).join('')
   const hourLabels = [0, 6, 12, 18, 23].map((hour) => {
     const x = left + hour * (cell + gap) + cell / 2
     const anchor = hour === 0 ? 'start' : hour === 23 ? 'end' : 'middle'
@@ -481,7 +504,7 @@ function hourlyHeatmap({ title, note, buckets }) {
   const peakLabel = `<text x="${left}" y="${labelY + 13}" class="peakLabel" `
     + `text-anchor="start">峰值 ${formatInt(peak.accounts)} 个账号在线 · ${escapeHtml(peakWhen)}</text>`
   const svg = `<svg viewBox="0 0 ${width} ${labelY + 20}" role="img" aria-label="${escapeHtml(title)}">`
-    + rowLabels + cells + hourLabels + peakLabel + '</svg>'
+    + weekendBands + rowLabels + cells + hourLabels + peakLabel + '</svg>'
   const legend = '<div class="heat-legend"><span>在线账号</span>'
     + HEAT_STEPS.map((color, index) => `<i style="background:${color}"></i>`
       + `<em>${HEAT_LEGEND[index]}</em>`).join('')
@@ -1069,7 +1092,7 @@ function rangeSection(report, days, completed = false) {
     markers: releaseMarkers,
   }) + hourlyHeatmap({
     title: `过去 ${formatInt(num(report.hourlyActivity.windowDays) || 14)} 天 · 24 小时活跃分布`,
-    note: '每行一天 · 连接口径（日志） · 越深越多',
+    note: '每行一天 · 左侧灰条为周末 · 连接口径（日志） · 越深越多',
     buckets: report.hourlyActivity.buckets,
   })
 

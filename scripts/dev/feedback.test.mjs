@@ -1314,8 +1314,13 @@ test('14 天矩阵：整点格齐全，缺的一小时画空格不插值', () =>
   assert.match(html, /峰值 6 个账号/)
   assert.match(html, /0时/)
   assert.match(html, /23时/)
-  // 24 列 × 14 行：空格也要画，所以格子数正好 336。
-  assert.equal((html.match(/<rect/g) ?? []).length, 24 * 14)
+  // 24 列 × 14 行：空格也要画，所以格子数正好 336（周末行的灰条与浅底不算格子）。
+  assert.equal((html.match(/<rect[^>]*rx="3"/g) ?? []).length, 24 * 14)
+  // 行首写星期；周末行带灰条，工作日没有。
+  assert.match(html, /周一 10-12/)
+  assert.match(html, /周日 10-11/)
+  assert.match(html, /fill="#cbd5e1"/)
+  assert.equal((html.match(/fill="#cbd5e1"/g) ?? []).length, 4, '14 天里 4 个周末日')
 })
 
 test('14 天矩阵：读不到日志时写「跳过」，不画空表冒充 0', () => {
