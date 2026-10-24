@@ -2,7 +2,7 @@
 #
 # 本机沙箱不允许写 ~/go，Go 的模块缓存与构建缓存固定在本目录下；所有 go 命令
 # 都经 make 执行，保证环境变量一致。GOSUMDB=off 只用于本机开发，发布构建按 CI
-# 口径恢复校验（见 maintainers/DESIGN-20261023-go-relay-rewrite.md）。
+# 口径恢复校验（见 maintainers/design/DESIGN-20261023-go-relay-rewrite.md）。
 export GOMODCACHE := $(CURDIR)/.gocache/mod
 export GOCACHE    := $(CURDIR)/.gocache/build
 export GOPROXY    := https://goproxy.cn,direct

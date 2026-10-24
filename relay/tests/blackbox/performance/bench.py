@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """中转性能基线（L2，手动执行，不被 pytest 收集）。
 
-口径见 ``maintainers/DESIGN-20261023-go-migration-testbed.md`` §3 L2：同一台机器、
+口径见 ``maintainers/design/DESIGN-20261023-go-migration-testbed.md`` §3 L2：同一台机器、
 同一份客户端、同一套场景，Python 版与将来的 Go 版各跑一次，用同一份 JSON 对比。
 本文件是**基线采集脚本**，不是验收用例；不进默认套件，文件名也不以 ``test_`` 开头。
 
@@ -979,7 +979,7 @@ def _stable_enough(ws_report: dict[str, Any]) -> tuple[bool, str]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="中转性能基线（手动执行；口径见 maintainers/DESIGN-20261023）")
+        description="中转性能基线（手动执行；口径见 maintainers/design/DESIGN-20261023-go-migration-testbed.md）")
     parser.add_argument("--out", type=pathlib.Path,
                         help="把完整结果写成 JSON；不给就只打到 stdout")
     parser.add_argument("--with-300", action="store_true",

@@ -480,7 +480,7 @@ curl -s -H 'Accept: text/html' localhost:8787/stats | head  # 页面（浏览器
 ## 12. 交付时的验证记录（2026-10-23，历史）
 
 本节记录 2026-10-23 首次切换前的本机验证。生产切换、1000 设备长稳、2 小时 soak 与
-7 小时观察的结果见 `maintainers/REPORT-20261024-go-relay-launch.md`。
+7 小时观察的结果见 `maintainers/records/REPORT-20261024-go-relay-launch.md`。
 
 2026-10-23，本机（macOS，Go 1.27.1）执行：
 

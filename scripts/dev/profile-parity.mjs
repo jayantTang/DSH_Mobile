@@ -12,7 +12,7 @@
  *   1. 只在 web 档案注册的模型提供方（company-gateway）在桌面版里报
  *      "no adapter registered for provider"，手机发消息当场失败；
  *   2. 只在 web 档案挂的 browse 目录后端没跟到桌面版，手机「新建会话」的目录浏览整块失效
- *      （004；根因见 maintainers/VERIFY-004-desktop-host-parity.md）。
+ *      （004；根因见 maintainers/verification/VERIFY-004-desktop-host-parity.md）。
  *
  * 检查三类：
  *   1. dependencies（装了哪些插件）

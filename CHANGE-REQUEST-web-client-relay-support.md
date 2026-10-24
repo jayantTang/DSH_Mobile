@@ -600,7 +600,7 @@ npm run check:lanes -- --changed relay/api.py relay/relay.py         # 按矩阵
   （`content-range: bytes 1024-5242879/5242880`，正文 SHA-256 等于 `body[1024:]`）、
   `If-Range` 过期 `200` 整份（不拼接）。负对照（去掉那一行的副本）复现了线上那条
   `blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present`。
-  浏览器版本、原始输出与判据见 `maintainers/2026-10-17-fr009-browser-evidence.md`。
+  浏览器版本、原始输出与判据已在当时取证，记录随 2026-10-24 清理移除。
 - 文档：`docs/RELAY-NOTES.md` 第 16 条（流式响应要自带 CORS 头，中间件事后补无效）、
   `docs/RELAY-PROTOCOL.md` 端点表后一段、`CHANGELOG.md`。
 

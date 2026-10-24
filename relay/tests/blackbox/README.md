@@ -5,7 +5,7 @@
 同一份用例先用现在的 Python 实现跑通、作为基线，Go 版必须逐条通过。
 
 设计与分层（L0 契约 / L1 场景 / L2 性能 / L3 可靠性）见
-`maintainers/DESIGN-20261023-go-migration-testbed.md`。目前包含第一批（HTTP、WS、
+`maintainers/design/DESIGN-20261023-go-migration-testbed.md`。目前包含第一批（HTTP、WS、
 配对与账户状态）、第二批（反馈、文件、登记、限流、配额、`/internal/*`、设备子协议）
 与第三批的可靠性用例；性能基线是手动脚本，不进默认套件。
 
@@ -125,8 +125,8 @@ Go 版若自带管理命令，把 `ADMIN_CMD` 指过去即可，用例不动。�
 RSS 与 CPU 由 `/usr/bin/time -l` 包裹被测进程取得（本机 `ps`/`psutil` 不可用），
 读的是 `maximum resident set size`（字节）与 user+sys 秒。
 
-默认全程约 80 秒，加 `--with-300` 约 155 秒。2026-10-23 的实测数字与口径见
-`maintainers/BASELINE-20261023-python-relay.md`。
+默认全程约 80 秒，加 `--with-300` 约 155 秒。2026-10-23 的实测数字与口径记录已随
+2026-10-24 清理移除；重跑命令同上。
 
 ## 可靠性（第三批）
 
