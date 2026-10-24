@@ -1080,7 +1080,7 @@ def _is_orphan_usage(row: dict[str, Any], *, known_ids: set[str],
                      external: set[str]) -> bool:
     """这条用量行的设备行已经没了、账号又是内部的——报表里当调试设备剔除。
 
-    为什么会有这种行：`maintainers/purge-revoked-devices.py` 会删掉已撤销/已过期的
+    为什么会有这种行：`relay/purge-revoked-devices.py` 会删掉已撤销/已过期的
     设备行（不删的话连接器每次重连都要被灌几千帧"回不来的设备"，见
     maintainers/ANALYSIS-20261012-connector-flap.md），但按约定保留 `usageDaily`
     ——账目不能丢。代价就是历史用量里留下找不到设备主体的行：2026-10-13 实测

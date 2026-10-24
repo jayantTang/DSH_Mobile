@@ -492,7 +492,7 @@ def test_ops_report_counts_active_users_per_account(tmp_path, capsys):
 def test_ops_report_drops_internal_orphan_usage_rows(tmp_path, capsys):
     """设备行已被清理工具删掉的**内部账号**用量行不进报表；外部账号的孤儿行保留。
 
-    背景（2026-10-13 实测）：`maintainers/purge-revoked-devices.py` 会删已撤销/过期的
+    背景（2026-10-13 实测）：`relay/purge-revoked-devices.py` 会删已撤销/过期的
     设备行、按约定保留 `usageDaily`，于是历史用量里留下找不到设备主体的行——近 30 天
     636 台、29.5 GB，全是 owner 自用账号（历次用例的模拟器），把「活跃手机」抬到
     真实值的两倍以上（10-12 那天 88 台 vs 真实 19 台）。账本不动，视图要干净。
