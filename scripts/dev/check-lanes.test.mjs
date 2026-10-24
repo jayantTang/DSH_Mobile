@@ -60,7 +60,7 @@ test('矩阵守卫：重复格判红', () => {
 
 test('矩阵守卫：取值越界与理由过短判红', () => {
   const matrix = matrixWith((m) => {
-    const entry = m.matrix.find((item) => item.subject === 'relay' && item.lane === 'l2')
+    const entry = m.matrix.find((item) => item.subject === 'relay-go' && item.lane === 'l2')
     entry.value = 'maybe'
     entry.reason = '短'
   })
@@ -169,12 +169,12 @@ test('拦截：矩阵坏掉按工具错误退出 2', () => {
   const matrixPath = join(dir, 'lanes.json')
   try {
     const broken = matrixWith((m) => {
-      m.matrix = m.matrix.filter((entry) => !(entry.subject === 'relay' && entry.lane === 'l3'))
+      m.matrix = m.matrix.filter((entry) => !(entry.subject === 'relay-go' && entry.lane === 'l3'))
     })
     writeFileSync(matrixPath, JSON.stringify(broken, null, 2))
     const result = gate({ changed: [CONNECTOR_FILE], matrixPath })
     assert.equal(result.exitCode, 2)
-    assert.ok(result.toolError.some((issue) => issue.includes('relay×l3')))
+    assert.ok(result.toolError.some((issue) => issue.includes('relay-go×l3')))
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

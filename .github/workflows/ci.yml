@@ -138,36 +138,34 @@ jobs:
           DSH_HOME: ${{ runner.temp }}/dsh-home
         run: mkdir -p "$DSH_HOME" && npm test
 
-  relay:
+  relay-go:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          # 版本跟 relay-go/go.mod 的 `go` 指令一致。
+          go-version: '1.27.x'
+          cache: false
+      - name: 单元测试（独立临时库，不碰真实数据）
+        working-directory: relay-go
+        run: go test ./...
+      # 黑盒契约套件对纯 Go 二进制跑（与本地 `make test-blackbox` 同一套用例）。
+      - name: 构建（纯 Go，静态）
+        working-directory: relay-go
+        run: CGO_ENABLED=0 go build -trimpath -o bin/dsh-relay ./cmd/dsh-relay
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      # 端到端那半（test_caddy_runtime.py）要一个真的网关：文本级断言曾经全绿，
-      # 而生产上 /dsh-link/stats 正在 200 返回整页——只有真请求能抓住指令排序。
-      - name: 装 caddy（端到端那半要一个真的网关）
-        run: |
-          set -e
-          curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' \
-            | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-          curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' \
-            | sudo tee /etc/apt/sources.list.d/caddy-stable.list >/dev/null
-          sudo apt-get update && sudo apt-get install -y caddy
-      # 这一步不能省：装不上时 skipif 会把 5 个用例变成 skipped，CI 反而"更绿"。
-      - name: 确认 caddy 真的装上了（否则会静默退化成 skip）
-        run: command -v caddy && caddy version
-      # 装的是 requirements-dev.txt——`aiohttp_client` 这个 fixture 来自 pytest-aiohttp，
-      # 曾经只装在作者本机的 venv 里，clone 下来跑必然一片 setup error。
-      - run: pip install -r relay/requirements-dev.txt
-      - run: mkdir -p "$DSH_HOME" && python -m pytest -q
-        working-directory: relay
+      - name: 装黑盒套件依赖
+        run: pip install -r relay-go/requirements-dev.txt
+      - name: 黑盒契约套件
+        working-directory: relay-go
         env:
-          DSH_HOME: ${{ runner.temp }}/dsh-home
-          # 硬性要求 caddy 在场：没有它就收集报错，而不是静默 skip。
-          DSH_REQUIRE_CADDY: '1'
+          RELAY_CMD: ${{ github.workspace }}/relay-go/bin/dsh-relay serve
+          ADMIN_CMD: ${{ github.workspace }}/relay-go/bin/dsh-relay admin
+        run: python -m pytest tests/blackbox -q
 
   mail:
     runs-on: ubuntu-latest

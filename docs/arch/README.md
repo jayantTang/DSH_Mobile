@@ -79,7 +79,7 @@ npm run arch:deep -- --force   # 忽略缓存全量重跑
 | 带 | 子块 | 配色 |
 |---|---|---|
 | iOS 侧（iPhone App） | App 壳与装配（App target 剩余：App/Support/Debug）；**Domain 层**（`Modules/Features/*/Domain` 与 `*API`，禁 UI）；**Feature UI 层**（`*UI`）；Core / Design / Foundation / 测试支撑；协议与数据层（DSHKit）；中转客户端（RelayKit） | 蓝 / 橙 / 青 |
-| 中转（公网主机） | `relay/` | 紫 |
+| 中转（公网主机） | `relay-go/` | 紫 |
 | 电脑侧 DSH（连接器与插件） | `plugins/`、`skills/`、`sidecars/`；`plugin/mobile-link` 是**连接器** | 绿 |
 | 仓库工程（不进产品链路） | `scripts/`、`test/tools` | 灰 |
 

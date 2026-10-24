@@ -63,7 +63,7 @@ function enrollments() {
   const host = env.DSH_OTA_HOST
   if (!host) throw new Error('.env.local 里没有 DSH_OTA_HOST')
   const remote = env.DSH_ENROLLS_CMD
-    || '/opt/dsh-relay/.venv/bin/python /opt/dsh-relay/admin.py '
+    || '/opt/dsh-relay-go/bin/dsh-relay admin '
        + '--db /var/lib/dsh-relay/state.db enrollments'
   const raw = execFileSync('ssh', ['-q', '-o', 'BatchMode=yes', `root@${host}`, remote],
                            { encoding: 'utf8' })
@@ -75,7 +75,7 @@ function checkCodes(codes) {
   const host = env.DSH_OTA_HOST
   if (!host) throw new Error('.env.local 里没有 DSH_OTA_HOST')
   const remote = env.DSH_INVITE_CHECK_CMD
-    || '/opt/dsh-relay/.venv/bin/python /opt/dsh-relay/admin.py '
+    || '/opt/dsh-relay-go/bin/dsh-relay admin '
        + '--db /var/lib/dsh-relay/state.db invite-check --stdin'
   const raw = execFileSync('ssh', ['-q', '-o', 'BatchMode=yes', `root@${host}`, remote],
                            { encoding: 'utf8', input: codes.join('\n') + '\n' })

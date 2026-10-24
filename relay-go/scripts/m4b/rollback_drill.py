@@ -12,7 +12,7 @@
 全程临时库、随机端口；不碰生产 `~/.dsh` 与真实部署。
 
 用法：
-  relay/.venv/bin/python relay-go/scripts/m4b/rollback_drill.py
+  .venv/bin/python relay-go/scripts/m4b/rollback_drill.py
 """
 
 from __future__ import annotations
@@ -264,7 +264,7 @@ def _tail(path: pathlib.Path, lines: int) -> list[str]:
 
 def main() -> int:
     if not RELAY.exists() or not PYTHON.exists():
-        print("缺少 relay-go/bin/dsh-relay 或 relay/.venv；先 make build / 建 venv", file=sys.stderr)
+        print("缺少 relay-go/bin/dsh-relay 或 .venv；先 make build / 建 venv", file=sys.stderr)
         return 2
     started = time.monotonic()
     workdir = pathlib.Path(tempfile.mkdtemp(prefix="m4b-rollback-"))

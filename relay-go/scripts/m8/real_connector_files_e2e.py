@@ -24,7 +24,7 @@
   * 结束 SIGTERM 连接器与 relay，删临时目录，并验证两个端口已释放。
 
 用法：
-  relay/.venv/bin/python relay-go/scripts/m8/real_connector_files_e2e.py \\
+  .venv/bin/python relay-go/scripts/m8/real_connector_files_e2e.py \\
       [--evidence maintainers/m8-files-e2e-<ts>] [--keep] [--sizes 1048576,10485760]
 """
 

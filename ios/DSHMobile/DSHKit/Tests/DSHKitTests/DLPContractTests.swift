@@ -3,12 +3,11 @@ import XCTest
 
 @testable import DSHKit
 
-/// The DLP wire vectors, shared by all three ends.
+/// The DLP wire vectors, shared by the connector and iOS.
 ///
 /// `test/contract/dlp-vectors.json` is the single source of truth: iOS (this
-/// file), the connector (`plugins/mobile-link/test/dlp-contract.test.js`) and
-/// the relay (`relay/tests/test_dlp_contract.py`) all read the *same* file. The
-/// contract itself is `docs/relay-contract.json`.
+/// file) and the connector (`plugins/mobile-link/test/dlp-contract.test.js`)
+/// read the *same* file. The contract itself is `docs/relay-contract.json`.
 ///
 /// **This test depends on the repository layout**: it walks six levels up from
 /// `#filePath` to reach the repo root. Copying `ios/DSHMobile/DSHKit` out on its
@@ -35,7 +34,6 @@ final class DLPContractTests: XCTestCase {
         let direction: String
         let hasId: Bool
         let js: String
-        let py: String
         let swift: String
         let why: String
     }

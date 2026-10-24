@@ -36,7 +36,7 @@ read -r -d '' RADAR_ROW <<EOF || true
 EOF
 
 read -r -d '' AWESOME_ROW <<EOF || true
-- [jayantTang/DSH_Mobile]($REPO_URL) — 原生 iOS 客户端 + 电脑侧连接器 + 公网中转：手机不用公网 IP、4G/5G 就能连上电脑上的 DSH，同一批会话与同一条消息流。Native SwiftUI client, a DSH connector plugin, and a self-hosted relay (Python/aiohttp).
+- [jayantTang/DSH_Mobile]($REPO_URL) — 原生 iOS 客户端 + 电脑侧连接器 + 公网中转：手机不用公网 IP、4G/5G 就能连上电脑上的 DSH，同一批会话与同一条消息流。Native SwiftUI client, a DSH connector plugin, and a self-hosted relay (Go).
 EOF
 
 read -r -d '' PLUGINS_ROW <<EOF || true
@@ -50,7 +50,7 @@ PR_BODY=$(cat <<EOF
 
 和已有移动端方案的区别在**连接方式**：不需要公网 IP，手机在 4G/5G 上直接连自己电脑的
 DSH；不依赖 Tailscale 之类的组网，也不用在手机上跑一个 DSH 本体。中转只做鉴权与转发，
-不解析会话内容，可以自建（\`relay/deploy/deploy.sh\` 幂等安装）。
+不解析会话内容，可以自建（安装步骤见 `relay-go/deploy/README.md`）。
 
 - 仓库：$REPO_URL
 - 协议：\`docs/RELAY-PROTOCOL.md\`（自研 DLP v1）、\`docs/DSH-PROTOCOL.md\`

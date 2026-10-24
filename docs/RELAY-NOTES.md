@@ -168,21 +168,20 @@ token.
 
 ## 14. Caddy mounting detail (deployment, not protocol)
 
-`deploy/Caddyfile.snippet` is a *fragment*, not a site block: it is spliced
+`relay-go/deploy/Caddyfile.snippet` is a *fragment*, not a site block: it is spliced
 inside the existing `relay.example.com, example.com` site block,
 immediately before the first `handle` / `handle_path` / `route` / `reverse_proxy`
 directive. That position is not cosmetic — Caddy's `handle` family is
 mutually exclusive and order-sensitive, so a fragment placed after the site's
-catch-all `handle { … }` would never be reached. `deploy/caddy_splice.py` finds
+catch-all `handle { … }` would never be reached. `relay-go/deploy/caddy_splice.py` finds
 the site block by address, counts braces while ignoring quoted text, comments and
 `{placeholders}`, inserts between the marker comments, and can remove the block
-again byte-for-byte. `tests/test_caddy_splice.py` asserts the compiled route
-order with the real `caddy adapt` when a `caddy` binary is available.
+again byte-for-byte. Validate the result with `caddy validate` before reloading.
 
 ## 15. Small hardening beyond the spec
 
 * 32 MiB is enforced three times: WebSocket `max_msg_size`, `client_max_size`,
-  and an explicit length check in `dlp.parse_frame`.
+  and an explicit length check in `relay-go/internal/dlp`.
 * `/pair/claim` is rate-limited per client IP (10 failures / 5 minutes) and
   scrypt verification is capped at 2 concurrent executions.
 * `/healthz` keeps `ok`/`version` and adds a `capabilities` array
@@ -222,11 +221,10 @@ Every native client is unaffected (no CORS), so only a browser can observe it �
 `blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present` *after* the
 bytes have arrived.
 
-Both implementations therefore set the CORS headers inside the streaming handler itself
-(`files_down` in the Python implementation, `internal/files` in the Go one); the middleware
-covers `OPTIONS` only.
+The relay therefore sets the CORS headers inside the streaming handler itself
+(`internal/files`); the middleware covers `OPTIONS` only.
 
-`files_down()` therefore writes `CORS_STREAM_HEADERS` (`access-control-allow-origin: *`
+The download handler writes `CORS_STREAM_HEADERS` (`access-control-allow-origin: *`
 plus `access-control-expose-headers: content-range, etag`) **before** `prepare()`.
 `content-range` and `etag` are not CORS-safelisted, so without the expose list a browser
 could read the body but not the resume offset or the version — the download would still be

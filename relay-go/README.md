@@ -1,9 +1,7 @@
 # relay-go — DSH 中转的 Go 实现（生产）
 
 DSH Link Protocol v1 中转的 Go 单二进制实现，自 2026-10-24 03:21 CST 起承担生产流量
-（`relayVersion=go-0.1.2`）。对外协议、端点、错误码、关闭码与 SQLite schema 与 Python 版
-一致；切换、回滚与安装见 [`deploy/README.md`](deploy/README.md)。Python 实现保留在
-`../relay/`，仅作回滚目标与黑盒契约基线。
+（`relayVersion=go-0.1.2`）。安装、升级与回滚见 [`deploy/README.md`](deploy/README.md)。
 
 三类入口共用一个二进制：`serve`、`admin`、`alert-dispatch` / `purge`。功能面覆盖 HTTP
 （配对、设备、账户状态、自助登记、`/stats`、限流）、两条 WebSocket `/link/*`（帧转发、
@@ -17,7 +15,7 @@ make build            # bin/dsh-relay（CGO_ENABLED=1，SQLite 用 mattn/go-sqli
 make test             # 单元测试
 make build-purego     # 无 cgo 回退：bin/dsh-relay-purego（modernc.org/sqlite）
 make test-purego      # 纯 Go 构建下再跑一遍测试
-make test-blackbox    # relay/tests/blackbox 契约套件对 bin/dsh-relay 跑一遍
+make test-blackbox    # tests/blackbox 契约套件对 bin/dsh-relay 跑一遍
 make soak-smoke       # 20 秒 soak 冒烟（scripts/m4b/soak.py，不进默认测试）
 ```
 
@@ -31,7 +29,7 @@ make soak-smoke       # 20 秒 soak 冒烟（scripts/m4b/soak.py，不进默认�
 ./bin/dsh-relay serve --host 127.0.0.1 --port 8787 --db /var/lib/dsh-relay/state.db
 curl -s http://127.0.0.1:8787/healthz
 
-# 管理面是同一二进制的 admin 子命令（JSON 输出对齐 relay/admin.py）
+# 管理面是同一二进制的 admin 子命令（JSON 输出固定，供脚本消费）
 ./bin/dsh-relay admin --db state.db account-create --name "Example"
 ./bin/dsh-relay admin --db state.db agent-register --account acc_x --name "MacBook Pro"
 ./bin/dsh-relay admin --db state.db invite-mint --note "for Sam"
@@ -53,7 +51,7 @@ curl -s http://127.0.0.1:8787/healthz
   --backup-dir backups --keep 14                              # 真删（先备份再删）
 ```
 
-健康检查响应与 Python 版逐字段一致：
+健康检查响应：
 
 ```json
 {"ok":true,"version":1,"relayVersion":"0.0.0","capabilities":["device-subprotocol-auth","persistent-pair-code","account-state","account-state-push","file-transfer"]}
@@ -68,7 +66,7 @@ SIGINT / SIGTERM 后停止接收请求、5 秒内收尾并关闭数据库；日�
 
 ### 参数与环境变量
 
-参数名、环境变量名与默认值逐项对齐 `relay/relay.py` 的 `build_parser`：
+参数名、环境变量名与默认值：
 
 | 参数 | 环境变量 | 默认值 |
 |---|---|---|
@@ -96,7 +94,7 @@ SIGINT / SIGTERM 后停止接收请求、5 秒内收尾并关闭数据库；日�
 
 ### 文件上行桥的字节额度（`--bridge-bytes`，默认 16 MiB）
 
-Python 版没有对应开关。上行分片是不可丢的 `ClassControl` 帧，因此绕过了每连接的
+上行分片是不可丢的 `ClassControl` 帧，因此绕过了每连接的
 `--queue-bytes` 上限；慢连接器读时，4096 深度的队列最坏能堆到 4096 × 1.33 MB。
 额度把"能堆多少"从队列深度改成字节数（按 base64 之后的真实排队字节计），必须为正数；
 放宽就传一个大数。
@@ -153,7 +151,7 @@ pprof 在 M2.5 加入（DESIGN §8 要求）。
 | 鉴权 | 电脑：`Authorization: Bearer <agentSecret>`；设备：Bearer **或** `Sec-WebSocket-Protocol: dsh.device.<deviceToken>`（头优先，服务端回显被接受的子协议） |
 | 寻址 | 设备 → 电脑的每一帧盖上 `deviceId`；电脑 → 设备的帧按 `deviceId` 路由，到达手机前摘掉该键 |
 | 队列 | 每连接一个有界队列（设备 512 帧、电脑 4096 帧），并叠加 `--queue-bytes` 的字节上限（默认 4 MiB）；`res`/`item` 是流式帧，队列满（帧数或字节）时丢弃并计数；其余按控制帧处理，塞不进去就断开慢连接（4008）。比字节上限还大的单帧永远放行，避免大图被自己的体积挡住 |
-| 心跳 | 服务端每 30 秒 ping，60 秒内没有 pong（或任何入站帧）即关闭：3 个连接器 20 秒心跳周期的余量，与连接器 `pongTimeoutMs=60s` 同口径；Python aiohttp 的实际容忍为 45 秒（30 秒空闲 + 15 秒 pong 窗口） |
+| 心跳 | 服务端每 30 秒 ping，60 秒内没有 pong（或任何入站帧）即关闭：3 个连接器 20 秒心跳周期的余量，与连接器 `pongTimeoutMs=60s` 同口径 |
 | 限速 | `--device-rate-kbps` 换成每设备令牌桶，在写循环里把字节摊开（不丢帧），累计等待秒数进 `/stats` |
 | 日额度 | `--device-daily-mb` 按设备、按本地日累计；账本按 deviceId 记在 hub 上，重连不清零；超限先发 `error quota/device-daily`（带 `details.limitBytes`），再以 4011 关闭 |
 | 设备上限 | `--max-devices-per-agent`：先升级 socket，再发 `error limit/devices`（fatal），最后以 4012 关闭；同一台设备重连不占新名额 |
@@ -184,14 +182,14 @@ pprof 在 M2.5 加入（DESIGN §8 要求）。
 | 无连接器 | 立刻 503 `host/offline`（不排队、不落盘） |
 | 连接器拒绝 | `fsErr` 的 `code`/`message` 原样带回，HTTP 409 |
 | 分片 | 1 MB 原始字节；上行请求体边读边发，内存里最多一个分片 |
-| 上行大小限制 | **不受** HTTP 客户端 32 MB 上限约束（与 Python 实测行为一致；Go 的 HTTP 服务本来也不预读 body） |
+| 上行大小限制 | **不受** HTTP 客户端 32 MB 上限约束（Go 的 HTTP 服务不预读 body） |
 | Range | 只认 `Range: bytes=N-`；同时给了 `offset` 以 Range 为准；`offset >= total` 回 416 |
 | 响应头 | `Content-Length`（可续传的总长或额度截短后的长度）、`Content-Range`（206）、`ETag: "dsh-<version>-<size>"`、`Accept-Ranges: bytes`、`Cache-Control: no-store`、`X-DSH-Offset`（206） |
 | If-Range | 与当前 ETag 不一致且带 offset 时**重开一次 fetch 从 0 读**，旧 run 发 `fsGetCancel`（只改状态行会让正文缺开头） |
 | 中断/续传 | 中途 `fsErr` 停写正文（客户端看到短包）；下一次请求用 Range 从已收字节继续 |
 | 客户端取消 | 请求 context 结束或正文写失败都会 `abandon` 桥并发 `fsGetCancel`，不让连接器为空读者读完整份文件 |
 | 计费 | 下载每一片都过该设备的令牌桶与 `usageDaily` 日额度（与 WebSocket 路径同一份账本），并计入 `/stats` 的出口字节；`Content-Length` 按剩余额度截短 |
-| 并发 | 一条 HTTP 下载与 WebSocket 写循环会同时用同一个令牌桶，`tokenBucket` 因此加了互斥锁（Python 单事件循环不需要） |
+| 并发 | 一条 HTTP 下载与 WebSocket 写循环会同时用同一个令牌桶，`tokenBucket` 因此加了互斥锁 |
 
 ## 服务间端点（M3a）
 
@@ -220,7 +218,7 @@ pprof 在 M2.5 加入（DESIGN §8 要求）。
 | 限流 | submit/append 来源 30 次、设备 60 次；inbox/read 120 次；窗口 10 分钟；命中 429 `feedback/rate-limited` 且**不写库** |
 | 留言形状 | `{messageId, author, body, format, createdAt}`；`attachments` 按现有契约忽略 |
 | 未读 | 线程的 `unread` 只数 owner 留言且只算 `userReadAt` 之后的；通知已读按**账号**共享 |
-| 管理面 | `feedback-list` / `feedback-show`（看即已读）/ `feedback-reply` / `feedback-notify` / `feedback-delete`，JSON 字段与 `admin.py` 对齐 |
+| 管理面 | `feedback-list` / `feedback-show`（看即已读）/ `feedback-reply` / `feedback-notify` / `feedback-delete`，JSON 字段固定 |
 
 ## APNs 推送（M3b2）
 
@@ -259,7 +257,7 @@ pprof 在 M2.5 加入（DESIGN §8 要求）。
   （协议语义不变）；循环的消除靠“不关仍在工作的连接”与“握手前拒绝”，不靠换关闭码。
 - `/stats` 新增 `superseded` / `reconnectStorm` / `unverifiedAgents`，以及细分
   `unverifiedTotal` / `refusedDuplicate` / `refusedUnverified`；旧字段不变。
-  `Accept: text/html` 时返回与 Python 运维页同口径的页面（连接数、限额、死设备记录、
+  `Accept: text/html` 时返回运维页（连接数、限额、死设备记录、
   每设备流量、今日用量），其余客户端继续拿 JSON。
 
 ## 可观测性（M7.5）
@@ -366,15 +364,15 @@ SQL 名称。`/debug/conns` 与 `/stats` 同样只描述连接与计数。
 
 ## 运维 timer（M7）
 
-`deploy/` 交付四个 unit，**默认不启用**（启用/回退顺序见 `deploy/README.md` §10.1）：
+`deploy/` 交付四个 unit，**默认不启用**（安装与启用顺序见 `deploy/README.md` §6）：
 
-| unit | 动作 | Python 对应物 |
-|---|---|---|
-| `dsh-relay-go-alerts.{service,timer}` | `dsh-relay alert-dispatch`（每 2 分钟） | `dsh-relay-alerts.*` → `alert-dispatch.py` |
-| `dsh-relay-go-purge.{service,timer}` | `dsh-relay purge --all-agents --apply --keep 14`（每天 04:30） | `dsh-relay-purge.*` → `purge-revoked-devices.py` |
+| unit | 动作 |
+|---|---|
+| `dsh-relay-go-alerts.{service,timer}` | `dsh-relay alert-dispatch`（每 2 分钟） |
+| `dsh-relay-go-purge.{service,timer}` | `dsh-relay purge --all-agents --apply --keep 14`（每天 04:30） |
 
 `dsh-relay purge` 是设备死记录的清理（只删已撤销/已过期，先做整库备份并核对行数），
-与 `dsh-relay admin purge`（删过期配对码，对应 `admin.py purge`）不是同一件事。
+与 `dsh-relay admin purge`（删过期配对码）不是同一件事。
 不带 `--apply` 只预演；没有待删行时不写备份。
 
 ## 监控告警（M3b2）
@@ -382,7 +380,7 @@ SQL 名称。`/debug/conns` 与 `/stats` 同样只描述连接与计数。
 代码在 `internal/monitor/`；开关是 `DLP_ALERT_DIR`（空 = 完全关闭）。
 
 - **异常分类**按"类型 + 最内层位置"归并；HTTP 中间件同时处理 panic（500 JSON）与 5xx。
-  Go 的 error 不携带 Python 的 traceback，非 panic 的异常取"观察到该错误的调用点"；
+  非 panic 的异常取"观察到该错误的调用点"；
   panic 取 recover 栈里的真实位置。
 - 新类别立刻入队；同类别后续只累计，默认 24 小时后再报；每小时 6 条、每天 40 条上限，
   被压掉的条数记在下一封的 `suppressedSinceLastAlert`。
@@ -393,7 +391,7 @@ SQL 名称。`/debug/conns` 与 `/stats` 同样只描述连接与计数。
 
 ## 告警投递（M3b2）
 
-`dsh-relay admin alert-dispatch` 复刻 `relay/alert-dispatch.py`：`--alert-dir`、
+`dsh-relay admin alert-dispatch` 与 `dsh-relay alert-dispatch` 同一份实现：`--alert-dir`、
 `--account`（或 `DLP_ALERT_ACCOUNT`）、`--mail-db/--mail-admin/--mail-python`、
 `--format text|html`、`--dry-run`。退出码 0 = 空队列或投递成功，2 = 用法/配置错误，
 3 = 投递失败（记录已放回）。
@@ -440,22 +438,19 @@ internal/wsapi/     /link/agent 与 /link/device 的握手、鉴权与读循环
 internal/authn/     Bearer 与设备子协议凭据解析（HTTP 与 WS 共用一份）
 internal/apierr/    错误信封（HTTP 与 WS 握手共用一份）
 internal/admincli/  管理子命令（account-create / agent-register / code-mint /
-                    invite-mint / device-list），JSON 输出对齐 admin.py
+                    invite-mint / device-list），JSON 输出固定
 ```
 
 ## 存储层
 
-- `store.Schema` 与 Python 版 `relay/store.py` 的 `SCHEMA` 逐表、逐列一致；
-  `store.SchemaVersion` = 8，迁移步骤 1–8 与 `_MIGRATIONS` 一一对应。
-- 打开时设置 `journal_mode=WAL`、`busy_timeout=15000`（与 Python 的
-  `sqlite3.connect(timeout=15)` 一致）、`foreign_keys=ON`。
+- `store.Schema` 是唯一的建表定义，`store.SchemaVersion` = 8，迁移步骤 1–8 与
+  `_MIGRATIONS` 一一对应。
+- 打开时设置 `journal_mode=WAL`、`busy_timeout=15000`、`foreign_keys=ON`。
 - 并发模型：写走一条专用连接并在 `BEGIN IMMEDIATE` 事务里串行化；读走 4 条连接的池。
   账户状态批量写入是单事务（DESIGN §6：64 条要么全生效、要么全不生效）。
-- 令牌只存 SHA-256；配对码用 scrypt（n=1<<14, r=8, p=1, dklen=32），参数与 Python 版一致。
+- 令牌只存 SHA-256；配对码用 scrypt（n=1<<14, r=8, p=1, dklen=32）。
 - 建表与迁移在同一个 `BEGIN IMMEDIATE` 事务里执行，版本写进 `PRAGMA user_version`；
   版本比代码新时保持原样（回滚到旧版不降级）。
-- Go 建的库可被 Python 版直接打开：表名集合、每表列名与列序、索引集合、`user_version`
-  已逐项对比一致（见 `maintainers/20261023-SQLite驱动基准.md`）。
 
 ## 驱动选择
 
@@ -463,64 +458,10 @@ internal/admincli/  管理子命令（account-create / agent-register / code-min
 （`internal/store/driver_cgo.go` / `driver_nocgo.go`，schema 与 SQL 完全相同）。
 选择依据与实测数字见 `maintainers/20261023-SQLite驱动基准.md`。
 
-## 与 Python 版的已知差异
-
-1. `--db` 默认值是工作目录下的 `.local/state.db`。Python 版落在源码目录下；生产部署
-   systemd 显式传 `--db`，不受影响。
-2. `DLP_DB=""` 视为未设置；Python 版会把空路径交给 sqlite3，得到一个临时库。
-3. `/stats` 在 `Accept: text/html` 时渲染运维页（与 Python 同口径，数字格式可能
-   略有差异，例如 102400 与 102400.0）；`load`/`traffic`/`snapshot` 已由 hub 实时
-   填充，`traffic.devices[]` 与 `snapshot.*` 多一个 `droppedFrames`。另新增连接
-   生命周期字段（见“连接生命周期”一节），旧字段不变。
-4. 文件通道的四处实现差异：① 冲盘用 `Drain`（原子的 Snapshot+清空）而不是
-   `Snapshot` 后再清，避免两份状态；② 下载即使设备没有 WebSocket 也按 deviceId
-   记日额度（Python 只在 `link` 存在时计费）；③ 被新连接顶替的旧连接器上的文件桥
-   会立刻以 `host/offline` 收尾（Python 只在真断线路径收尾，旧路径下上传会一直等）；
-   ④ 令牌桶加了互斥锁（两条写路径共用）。
-5. 账户状态批量写入是单事务：某一条校验失败时整批不生效。Python 版逐条提交，
-   会留下半批（这是 DESIGN §6 要求的修复，不是回归）。
-6. 所有 5xx 都是 JSON 错误信封；Python 版未捕获异常会回 aiohttp 默认文本页。
-7. 落单 UTF-16 代理项（`"\ud83d"`）：Go 在 `Scan` 快路径上也会先调用
-   `RepairSurrogates`，把 6 字节的落单转义就地替换为 `\ufffd`，与 Python 的
-   `prepare_outbound` 同策略；合法配对与转义字面量不动。中转仍会记一条告警
-   （含位置与上下文）用于定位上游。非法 UTF-8 字节显式判 `protocol/bad-frame`
-   ——Go 标准库默认会静默替换成 U+FFFD，这里补齐了 Python 的行为
-   （见 `internal/dlp/surrogate.go`）。
-8. 大帧不再按 512 KiB 切成多条 WebSocket 消息。Python 这样做是为了让限速更平滑，
-   代价是客户端必须重组；Go 版一条消息一帧，服务端在写之前整体计费并等待。
-9. WS 握手被拒（401/403）回 JSON 错误信封，Python 回纯文本；状态码不变。
-10. 电脑链路饱和时设备收到 4010（`agent unavailable`）。Python 在设备自身队列满时
-    给 4008；Go 版没有中间队列，直接入电脑队列，因此如实报"电脑不可用"。
-11. 控制帧入队失败一律断开慢连接（4008）。Python 对部分控制帧（如 hostStatus 广播）
-    是忽略入队结果，Go 版按 DESIGN §5.1 不允许控制帧静默丢失。
-12. 反馈的 16 KB 上限在 Go 侧是"最多读 16 KB + 1 字节"就回 413，Python 是先读完
-    再判；状态码与错误码相同，差别只在超限请求的剩余字节是否被读掉。
-13. `feedback-notify` 写进 `notices.createdBy` 的值仍是 `admin.py`：这一列是审计
-    标记，与既有记录保持同一口径，不按可执行文件名改写。
-14. 监控把 5xx 也当作事故（Python 只记未处理异常）。5xx 的类别是"状态码 + 方法 +
-    路径"，同一端点只在首次或 24 小时后再报。
-15. Go 的 error 不携带 traceback：非 panic 异常按"观察到该错误的调用点"归并；panic
-    用 recover 栈里的真实位置。Python 用的是异常抛出位置的 traceback。
-16. 留存的分队列边界用 `dayShift` 做日历加减；Python 在 `first_seen <= today - gap`
-    这一处用整数相减，跨月会把边界算错（本仓库按语义修正，输出仅在跨月日期不同）。
-17. `alert-dispatch` 放回队列时，如果追加失败会**保留** `alerts.taken.jsonl`
-    （Python 的 finally 会删掉它，可能丢记录）；成功路径与正文逐字一致。
-18. 同一 agent 的旧连接仍活跃时，Go 版**拒绝**新握手（429，连接器自己退避），
-    Python 版立即接受新连接并以 4001 顶掉旧的。这是 M7 有意引入的行为差异：
-    后者会把异常连接器放大成秒级重连循环。
-19. 新增 `dsh-relay alert-dispatch` / `dsh-relay purge` 两个顶层运维子命令与四个
-    timer unit；`purge` 的手工输出是 JSON（Python 脚本是文本），安全约定一致。
-20. 可观测性是 Go 版独有的扩展（M7.5）：`X-Request-Id`（响应头 + 5xx 信封顶层
-    `requestId`）、`--access-log=off|errors|all`、`/debug/conns`、DB 慢查询/忙等
-    日志、文件传输 begin/end 日志。协议行为与既有 JSON 字段不变；4xx 响应不带
-    `requestId`。
-21. presence 拒绝日志从 DEBUG 提到 INFO/WARN（带等待结果、`unverified`、新旧连接
-    代号），风暴期间每个被拒握手一行；这是为可诊断性有意接受的日志量。
-
 ## 尚未覆盖
 
 - APNs 只验证到 sandbox：生产 unit 已加载 `apns.env` 并真发成功，production 环境未验。
 - systemd 日志的 72 小时分布图未做；取不到该数据时 `/healthz` 如实回 `null`。
 - `/files/*` 已与真实连接器联调，大文件与断点续传仍缺长跑证据。
-- 1000 设备档 RSS 约 182 MB，高于 Python 版的 132 MB（每连接预分配队列槽）；
+- 1000 设备档 RSS 约 182 MB（每连接预分配队列槽）；
   当前线上规模余量充足。

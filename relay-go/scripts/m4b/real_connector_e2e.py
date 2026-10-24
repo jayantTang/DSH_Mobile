@@ -11,7 +11,7 @@
   * 结束时 SIGTERM 连接器与 relay，删临时目录，校验真实 agent.json 未变化。
 
 用法：
-  relay/.venv/bin/python relay-go/scripts/m4b/real_connector_e2e.py
+  .venv/bin/python relay-go/scripts/m4b/real_connector_e2e.py
 """
 
 from __future__ import annotations

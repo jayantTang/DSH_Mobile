@@ -8,8 +8,8 @@
    这是"中转部署/重启不影响信件匿名路径"的机制保证。
 3. `_caller` 对解析器的意外异常也降级为匿名（任何实现都不能把提交变成 500）。
 
-中转那一半的契约（loopback 守卫、404 语义）钉在 relay/tests/test_internal_token_resolve.py，
-两边合起来才是完整的 I-1；真实两服务的端到端在 L3 演练（M5）。
+中转那一半的契约（loopback 守卫、404 语义）钉在 `relay-go` 的 `internal/httpapi` 用例里，
+两边合起来才是完整的 I-1。
 """
 
 from __future__ import annotations

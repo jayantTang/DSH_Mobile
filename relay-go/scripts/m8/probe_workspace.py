@@ -8,7 +8,7 @@
 全程只读，不写 `~/.dsh`（连接器的 DSH_HOME 指向临时目录）。
 
 用法：
-  relay/.venv/bin/python relay-go/scripts/m8/probe_workspace.py
+  .venv/bin/python relay-go/scripts/m8/probe_workspace.py
 """
 
 from __future__ import annotations

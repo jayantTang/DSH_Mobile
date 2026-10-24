@@ -1,6 +1,6 @@
 // Package admincli 实现 dsh-relay 的 admin 子命令。
 //
-// 子命令与 JSON 输出逐项对齐 Python 版 relay/admin.py，黑盒测试的 ADMIN_CMD 可以
+// 子命令与 JSON 输出固定，黑盒测试的 ADMIN_CMD 可以
 // 直接指向 `dsh-relay admin`。调用形态固定为：
 //
 //	dsh-relay admin --db <path> <子命令> [参数]
@@ -22,7 +22,7 @@ import (
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/store"
 )
 
-// DefaultRelay 是中转的公网地址（与 admin.py 的 DEFAULT_RELAY 一致）。
+// DefaultRelay 是中转的公网地址。
 //
 // 中转发布在已有站点的一个路径前缀下：不新增 DNS 记录，也不要新证书。
 const DefaultRelay = "wss://relay.example.com/dsh-link"
@@ -250,7 +250,7 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  feedback-delete --thread <threadId> [--yes]")
 }
 
-// emit 输出一份带缩进的 JSON（与 admin.py 的 indent=2 一致）。
+// emit 输出一份带缩进的 JSON（缩进 2 空格）。
 //
 // 不转义 HTML 字符：Python 默认也不转义，两版输出可直接用 diff 对比。
 func emit(w io.Writer, value any) error {
@@ -285,7 +285,7 @@ func resolveAgent(ctx context.Context, st *store.Store, raw string) (store.Agent
 	return store.Agent{}, fmt.Errorf("no agent matches %q", raw)
 }
 
-// writeAgentConfig 写连接器身份文件（mode 0600），与 admin.py 的 _write_config 一致。
+// writeAgentConfig 写连接器身份文件（mode 0600）。
 func writeAgentConfig(path, relay string, agent store.Agent, secret string) error {
 	payload := struct {
 		RelayURL    string `json:"relayUrl"`

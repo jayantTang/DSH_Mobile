@@ -105,10 +105,10 @@ test('a debug hook moved outside #if DEBUG is reported', () => {
 })
 
 test('a test file that stops reading the shared vectors is reported', () => {
-  withBrokenFile('relay/tests/test_dlp_contract.py', (source) => (
-    source.replace('"test" / "contract" / "dlp-vectors.json"', '"test" / "contract" / "own-copy.json"')
+  withBrokenFile('ios/DSHMobile/DSHKit/Tests/DSHKitTests/DLPContractTests.swift', (source) => (
+    source.replace('"test/contract/dlp-vectors.json"', '"test/contract/own-copy.json"')
   ), (result) => {
     assert.equal(result.code, 1, '某一端改回自己的常量后本应失败')
-    assert.match(result.output, /test_dlp_contract\.py: 没有引用共享向量/)
+    assert.match(result.output, /DLPContractTests\.swift: 没有引用共享向量/)
   })
 })

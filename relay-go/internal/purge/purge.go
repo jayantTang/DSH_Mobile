@@ -1,4 +1,4 @@
-// Package purge 是设备死记录的清理工具（Python relay/purge-revoked-devices.py 的
+// Package purge 是设备死记录的清理工具（原 Python 实现的
 // Go 版本），供 `dsh-relay purge` 与 dsh-relay-go-purge.timer 调用。
 //
 // 为什么需要它：中转在每次连接器连上时会把该 agent 名下「永远回不来的设备」逐条

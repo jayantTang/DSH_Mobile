@@ -15,7 +15,7 @@ import (
 
 // 反馈通道的 owner 侧命令（014）：读清单、看一条线程、回信、群发通知、删线程。
 //
-// JSON 输出字段与 relay/admin.py 逐项对齐：黑盒用例按字段名断言，运维脚本也按它们
+// JSON 输出字段固定：黑盒用例按字段名断言，运维脚本也按它们
 // 取值。SQL 与业务规则都在 store 里，这里只做参数解析、校验顺序与输出。
 
 // defaultReplySignature 是 `feedback-reply --template` 的默认署名。
@@ -50,7 +50,7 @@ type feedbackShowOutput struct {
 	Unread        int                     `json:"unread"`
 }
 
-// 下面这些输出结构体的键序与 admin.py 的 dict 一致：运维会拿两版命令做 diff，
+// 下面这些输出结构体的键序固定：运维会拿两版命令做 diff，
 // 键序不同会让 diff 变得难读（语义上 JSON 对象无序，这里只是把噪声去掉）。
 
 type feedbackMissingOutput struct {

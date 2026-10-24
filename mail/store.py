@@ -1,13 +1,13 @@
 """mail 服务的存储：信件 4 张表与全部读写方法。
 
-从 relay/store.py 抽出（DESIGN-20261015 M2，双轨期复制不删除）。与中转的差异：
+信件服务的存储层（DESIGN-20261015 从旧中转拆出）。与中转库的差异：
 
 - 只有 feedbackThreads / feedbackMessages / notices / noticeDeliveries 四张表，
   没有账号/设备/配对/用量——那些归中转，mail 只按值引用 accountId/deviceId
   （不透明字符串，等值比较，无外键、不复制）。
 - 没有版本化迁移：这是新服务的新库；生产数据由 M3 的迁移脚本从中转
   state.db 按列拷入，列序与本文件的建表语句逐列一致（有测试钉住）。
-- 方法体与 relay/store.py 的同名方法保持逐字一致（只改 docstring 里的指代），
+- 方法体沿用拆分时那份实现（只改 docstring 里的指代），
   让两边的行为可以用同一批移植用例钉住。
 """
 
@@ -25,13 +25,13 @@ from typing import Any, Iterable
 MAX_SUBJECT_CHARS = 80
 FEEDBACK_FORMATS = ("text", "html")
 
-#: 测试台来源的机型（团队收件箱的过滤口径，与 relay/admin.py 同一份名单）：
+#: 测试台来源的机型（团队收件箱的过滤口径，与中转管理命令同一份名单）：
 #: 这些来源的提交是验收单，不是用户来信，不进团队收件箱。
 TEST_DEVICE_MODELS = {"arm64", "x86_64", "deploy-check", "Node", "simulator", "test-harness"}
 DEFAULT_FEEDBACK_FORMAT = "text"
 
 SCHEMA = """
--- 列序与 relay/store.py 的同名表一致：迁移脚本按列名拷贝，且「迁移库 vs 新建库
+-- 列序与迁移源（旧中转库）的同名表一致：迁移脚本按列名拷贝，且「迁移库 vs 新建库
 -- 列序一致」有测试钉住（沿用 relay 侧 subject/format 必须留在表末的理由）。
 CREATE TABLE IF NOT EXISTS feedbackThreads (
   threadId       TEXT PRIMARY KEY,

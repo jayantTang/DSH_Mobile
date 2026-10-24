@@ -7,7 +7,7 @@ import (
 	"log/slog"
 )
 
-// Schema 是建库 DDL，与 Python 版 relay/store.py 的 SCHEMA 常量逐表、逐列一致。
+// Schema 是建库 DDL（唯一来源）。
 //
 // 与 Python 版的唯一差别：这里**不含**文件开头的 PRAGMA。`journal_mode` 是库文件级
 // 属性、`foreign_keys`/`busy_timeout` 是每连接属性，交给 store.go 在打开连接时设置

@@ -1,6 +1,6 @@
 """Splice the mail service's route fragment into an existing Caddy site block.
 
-Copied from relay/deploy/caddy_splice.py with mail-specific markers (DESIGN-20261015 M3):
+Copied from relay-go/deploy/caddy_splice.py with mail-specific markers (DESIGN-20261015 M3):
 two independent marked blocks must coexist in one Caddyfile, so each service
 owns its own splicer and markers.
 

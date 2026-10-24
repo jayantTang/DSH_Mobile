@@ -18,7 +18,7 @@ import aiohttp
 
 LOGGER = logging.getLogger("mail.internal")
 
-#: 默认打中转的 loopback 直连地址（生产：127.0.0.1:8787，与 dsh-relay.service 一致）。
+#: 默认打中转的 loopback 直连地址（生产：127.0.0.1:8787，与 dsh-relay-go.service 一致）。
 DEFAULT_RELAY_INTERNAL_URL = "http://127.0.0.1:8787"
 
 

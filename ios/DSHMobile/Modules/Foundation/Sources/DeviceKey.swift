@@ -38,7 +38,7 @@ public enum DeviceKey {
         return fresh
     }
 
-    /// 形状是否被中转接受（与 `relay/api.py` 的校验同一口径）。
+    /// 形状是否被中转接受（与 `relay-go/internal/store` 的 `ValidateDeviceKey` 同一口径）。
     public static func isValid(_ value: String) -> Bool {
         guard (8...128).contains(value.count) else { return false }
         return value.allSatisfy { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" }

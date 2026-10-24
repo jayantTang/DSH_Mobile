@@ -56,7 +56,6 @@ const DOCS = [
   'plugins/mobile-link/README.md',
   'plugins/send-image/README.md',
   'plugins/doubao-image/README.md',
-  'relay/README.md',
   'test/README.md',
   'test/RULES.md',
   'test/REPORT-CONTRACT.md',

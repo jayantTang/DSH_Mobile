@@ -186,9 +186,10 @@ WS 升级阶段失败直接回 HTTP `401` / `403`（不进入 WS 状态机）。
 `error` 对象统一为 `{"code":string,"message":string,"details":object}`，与 DSH 的失败形状一致。
 
 **机器可读的唯一事实来源是 [`relay-contract.json`](relay-contract.json)**：上面两张帧类型表、
-`id` 帧集合、默认错误码、关闭码与 `hostStatus.info` 的字段清单都在那里，三端各有测试读它
-（连接器 `plugins/mobile-link/test/dlp-contract.test.js`、relay `relay/tests/test_dlp_contract.py`、
-iOS `DSHKit/Tests/DSHKitTests/DLPContractTests.swift`）。它同时**记录已知漂移**（心跳三套、
+`id` 帧集合、默认错误码、关闭码与 `hostStatus.info` 的字段清单都在那里，两端各有测试读它
+（连接器 `plugins/mobile-link/test/dlp-contract.test.js`、iOS
+`DSHKit/Tests/DSHKitTests/DLPContractTests.swift`）；中转侧的帧实现由
+`relay-go/internal/dlp` 的用例覆盖。它同时**记录已知漂移**（心跳三套、
 校验不对称、错误码两套、`hostStatus.info` 字段不一致、只有 iOS 做分片重组）——那些是记账，
 不是认可。改动帧协议时改那份文件，不要改本文的表格了事。
 
@@ -339,7 +340,7 @@ relay 的两个开放端点（`/pair/claim`、`/agents/enroll`）都按**客户�
 
 > **只有来源是回环地址时，才采信 `X-Forwarded-For`；否则一律用 TCP 对端地址。**
 
-具体地（实现见 `relay/api.py` 的 `is_loopback` 与 `client_identifier`，**只有这一处**）：
+具体地（实现见 `relay-go/internal/httpapi/auth.go` 的 `isLoopback` 与 `ClientIdentifier`，**只有这一处**）：
 
 | 对端（`request.remote`） | `X-Forwarded-For` | 用作限流键的地址 |
 |---|---|---|
@@ -351,13 +352,13 @@ relay 的两个开放端点（`/pair/claim`、`/agents/enroll`）都按**客户�
 `X-Forwarded-For: <别人的地址>` 就能把失败次数记到别人头上——既躲开自己的额度，又能把别人
 锁在门外。反过来（少采信一次）最坏只是分桶变粗，不会变成绕过，所以宁可保守。
 
-**部署方的义务**：网关**必须**把真实来源写进 `X-Forwarded-For`（`deploy/Caddyfile.snippet`
+**部署方的义务**：网关**必须**把真实来源写进 `X-Forwarded-For`（`relay-go/deploy/Caddyfile.snippet`
 已经加了 `header_up X-Forwarded-For {remote_host}`）。Caddy 用 `header_up` 把这个头
 **替换**成真实对端地址（实测 v2.11.4；**不是**追加）——所以客户端自带的值得不到利用。
 缺了它也不会造成绕过——relay 会退回用对端地址，也就是**所有调用方共用一个限流桶**：
 一个人打满，别人一起被限。**若换成会追加的网关**，就必须把取值改成取**最后一个**
-（或改用 `X-Real-IP`），否则可被伪造；当前实现取最左（`relay/api.py` 的
-`client_identifier`）只对替换语义安全。
+（或改用 `X-Real-IP`），否则可被伪造；当前实现取最左（`relay-go/internal/httpapi/auth.go` 的
+`ClientIdentifier`）只对替换语义安全。
 
 两个端点的桶：
 
@@ -395,7 +396,7 @@ relay 的两个开放端点（`/pair/claim`、`/agents/enroll`）都按**客户�
 
 1. relay 侧：handler 拒绝一切非回环来源（`is_loopback`），返回 **404**——不是 403，403 等于
    告诉探测者「这里确实有个东西」；
-2. 网关侧：`deploy/Caddyfile.snippet` 对 `/dsh-link/stats` 与 `/stats` 有**显式拒绝**，
+2. 网关侧：`relay-go/deploy/Caddyfile.snippet` 对 `/dsh-link/stats` 与 `/stats` 有**显式拒绝**，
    请求根本到不了 relay。
 
 两半缺一不可：只有第 2 条时，一旦站点多了一条通往 relay 的路由、或 relay 换到非回环监听，
@@ -409,8 +410,8 @@ stats 页——这正是 2026-09-28 批 1 测试抓到的 CI-01。改成 `handle
 精确度排序，`/dsh-link/stats` 比 `/dsh-link/*` 更精确，所以先于代理被求值。
 
 这条**只有真实请求能验**：`caddy adapt` 产物看着正常、片段文本看着也对，运行时照样漏。
-回归测试在 `relay/tests/test_caddy_runtime.py`（真实 caddy + 真实 relay 进程 + 真实 HTTP 请求），
-不要把它退化成对片段文本的正则断言。
+每次改片段后都要在主机上用真请求核对（`curl -s -o /dev/null -w '%{http_code}' \
+http://<本机>/dsh-link/stats` 应为 404，`/stats` 从主机环回仍为 200），不要用文本断言代替。
 
 运维正常读它的方式是在主机上（或经 SSH）`curl -s localhost:8787/stats`；带
 `Accept: text/html` 时同一份数据渲染成自刷新页面。

@@ -1178,53 +1178,7 @@ test('--all 不带 --yes：仍是预演，不展开、不下发', () => {
 })
 
 
-// ── 过渡期回退：服务器还没部署 mail 时，信件命令与日报走中转旧路径 ─────────────
-
-test('过渡期：mail 未部署时信件命令回退中转，提示一次', () => {
-  const calls = []
-  const runner = (argv) => {
-    calls.push(argv)
-    const remote = String(argv.at(-1))
-    if (/opt\/dsh-mail/.test(remote)) {
-      const error = new Error('ssh failed')
-      error.stderr = '/opt/dsh-mail/admin.py: No such file or directory'
-      throw error
-    }
-    if (/feedback-list/.test(remote)) return '[{"threadId":"th_a"}]'
-    return '{"ok":true}'
-  }
-  const { code, out, err } = run(['list', '--status', 'open'], { runner })
-  assert.equal(code, 0)
-  assert.equal(calls.length, 2, '先试 mail，失败后走中转')
-  assert.match(String(calls[0].at(-1)), /opt\/dsh-mail/)
-  assert.match(String(calls[1].at(-1)), /opt\/dsh-relay/)
-  assert.match(out, /th_a/)
-  assert.match(err, /（回退）服务器上还没有 mail 服务/)
-})
-
-test('过渡期：mail 未部署时日报照常出（反馈板块用中转的旧计算）', () => {
-  const outDir = mkdtempSync(join(tmpdir(), 'feedback-fallback-'))
-  const calls = []
-  const runner = (argv) => {
-    calls.push(argv)
-    const remote = String(argv.at(-1))
-    if (/feedback-stats/.test(remote)) {
-      const error = new Error('ssh failed')
-      error.stderr = '/opt/dsh-mail/admin.py: No such file or directory'
-      throw error
-    }
-    if (/feedback-notify/.test(remote)) return '{"ok":true,"noticeId":"nt_f"}'
-    return JSON.stringify(fixture())
-  }
-  const { code, err } = run(['report', '--out', outDir, '--send', '--account', OWNER],
-    { runner, approvalLog: approvalLogFile() })
-  assert.equal(code, 0, '定时日报在切换前不许挂')
-  assert.match(err, /（回退）服务器上还没有 mail 服务/)
-  const html = readFileSync(join(outDir, '2026-10-12.html'), 'utf8')
-  assert.ok(html.includes('待回复 2 条'), '反馈板块用的还是中转那份数据')
-})
-
-test('过渡期回退只认目标缺失：线程不存在等真错误不回退', () => {
+test('信件命令的失败原样透传，不重试也不换目标', () => {
   const calls = []
   const runner = (argv) => {
     calls.push(argv)
@@ -1237,7 +1191,7 @@ test('过渡期回退只认目标缺失：线程不存在等真错误不回退',
     return '{"ok":true}'
   }
   const { code } = run(['show', '--thread', 'th_nope'], { runner })
-  assert.equal(code, 1, '真错误原样透传，不许拿中转再试一遍把错误搅浑')
+  assert.equal(code, 1, '真错误原样透传，不许换目标再试一遍把错误搅浑')
   assert.equal(calls.length, 1, '没有第二次调用')
 })
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Idempotent install/refresh for the DSH mail service (DESIGN-20261015 M3).
-# Copied from relay/deploy/deploy.sh and adapted: same structure, mail's own
+# 结构沿用中转的部署脚本: same structure, mail's own
 # user / dirs / unit / Caddy markers. The two deploy scripts are deliberately
 # NOT parameterized into one — the split exists so each service can be
 # deployed without touching the other.

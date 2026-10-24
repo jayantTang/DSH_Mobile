@@ -80,7 +80,7 @@ dsh plugin --profile web add ./plugins/mobile-link
    dsh-mobile-link enroll --invite <邀请码> --relay wss://<你的站点>/dsh-link
    ```
 
-   …or register it on the relay host with `relay/admin.py agent-register
+   …or register it on the relay host with `dsh-relay admin agent-register
    --write-config ~/.dsh/mobile-link/agent.json`.
 
 2. Mint a pairing code, and show it as a QR the phone camera can read:

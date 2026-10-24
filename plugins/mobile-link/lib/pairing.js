@@ -17,7 +17,7 @@ import { pairCodeEndpoint, pairCodeRegenerateEndpoint, qrPayload } from './dlp.j
  */
 export async function mintPairCode({ identity, ttlMs = null, fetchImpl = fetch }) {
   // 032：**持久码那条路不能把 `ttlMs` 放进请求体**。中转的判据是 `"ttlMs" not in body`
-  // （`relay/api.py` 的 `pair_code`）：带一个 `ttlMs: null` 会被读成"限时、但没给时长"，
+  // （`relay-go/internal/httpapi` 的 pair-code 处理）：带一个 `ttlMs: null` 会被读成"限时、但没给时长"，
   // 于是落到中转的默认 10 分钟——面板显示倒计时，码十分钟后就废（用户看到的就是这个）。
   const payload = ttlMs == null
     ? { agentId: identity.agentId }

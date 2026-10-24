@@ -43,8 +43,8 @@ sudo systemctl enable --now dsh-relay-go
   invite-mint --note "first computer" --relay wss://your.host/dsh-link
 ```
 
-The Caddy route comes from [`relay/deploy/Caddyfile.snippet`](../relay/deploy/Caddyfile.snippet),
-inserted with [`relay/deploy/caddy_splice.py`](../relay/deploy/caddy_splice.py).
+The Caddy route comes from [`relay-go/deploy/Caddyfile.snippet`](../relay-go/deploy/Caddyfile.snippet),
+inserted with [`relay-go/deploy/caddy_splice.py`](../relay-go/deploy/caddy_splice.py).
 
 Then enrol the connector against your own relay address instead of the shared one. Details, including
 the systemd sandbox and the operating limits, are in [`relay-go/README.md`](../relay-go/README.md).

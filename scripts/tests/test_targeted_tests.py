@@ -14,18 +14,20 @@ assert SPEC.loader is not None
 SPEC.loader.exec_module(targeted)
 
 
-def test_relay_module_maps_to_keyword_selection():
-    plans = targeted.plan_for("relay/hub.py")
+def test_relay_go_file_maps_to_its_package():
+    plans = targeted.plan_for("relay-go/internal/hub/link.go")
     assert len(plans) == 1
     argv = plans[0].argv
-    assert "pytest" in " ".join(argv)
-    assert argv[-2:] == ["-k", "hub"]
+    assert argv[0] == "make"
+    assert "test-pkg" in argv
+    assert argv[-1] == "PKG=internal/hub"
 
 
-def test_relay_test_file_runs_itself():
-    plans = targeted.plan_for("relay/tests/test_hub.py")
+def test_relay_go_module_files_run_the_whole_suite():
+    plans = targeted.plan_for("relay-go/go.mod")
     assert len(plans) == 1
-    assert plans[0].argv[-1].endswith("relay/tests/test_hub.py")
+    assert plans[0].argv[0] == "make"
+    assert plans[0].argv[-1] == "test"
 
 
 def test_node_module_maps_to_same_name_test():

@@ -2,11 +2,11 @@
  * First-run enrollment: turn an invite code into a durable agent identity.
  *
  * Until now an identity could only be provisioned by whoever owns the relay
- * (`relay/admin.py agent-register --write-config`). That does not distribute:
+ * (`dsh-relay admin agent-register --write-config`). That does not distribute:
  * somebody else installs DSH plus this connector on their own computer and has
  * to be handed a credential by the operator, out of band.
  *
- * So the relay grew `POST /agents/enroll` (relay/api.py), which redeems a
+ * So the relay grew `POST /agents/enroll` (relay-go/internal/httpapi), which redeems a
  * one-time invite code for a fresh `agentId` / `agentSecret`. This module is the
  * connector half: one call, then the identity is written to the same
  * `~/.dsh/mobile-link/agent.json` (mode 0600) that `agent-register` writes, so

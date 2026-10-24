@@ -3,7 +3,7 @@
 // 三类入口共用一个二进制：
 //   - `dsh-relay [serve] <参数>`：起 HTTP 服务。**不带子命令时默认 serve**，
 //     所以黑盒测试的 RELAY_CMD 可以直接指向这个二进制；
-//   - `dsh-relay admin --db <path> <子命令>`：管理面，JSON 输出对齐 admin.py；
+//   - `dsh-relay admin --db <path> <子命令>`：管理面，JSON 输出固定；
 //   - `dsh-relay alert-dispatch` / `dsh-relay purge`：运维 timer 用的两个动作，
 //     分别投递告警队列与清理设备死记录（见 relay-go/deploy 的两个 timer）。
 package main

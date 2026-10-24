@@ -9,7 +9,7 @@
 3. 迁表脚本：按列拷贝、幂等（OR REPLACE）、dry-run 零写入、源库只读
    （mode=ro 连接，写直接被 SQLite 拒绝）。
 
-真实 Caddy 的求值次序（更具体路径优先）由 M5 的 L3 演练用真二进制钉。
+真实 Caddy 的求值次序（更具体路径优先）在部署后用真请求核对，本文件只钉片段与插入行为。
 """
 
 from __future__ import annotations

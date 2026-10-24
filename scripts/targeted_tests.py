@@ -21,6 +21,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 BUDGET_SECONDS = float(os.environ.get("LOCAL_GUARD_TEST_BUDGET", "30"))
+Python_PYTEST = "pytest"
 IOS_NOTE = "iOS 改动需要 xcodebuild（>30s），本地提交防线跳过；发布前按 scripts/verify/lanes.json 取证据"
 
 
@@ -42,7 +43,7 @@ def changed_files(mode: str) -> list[str]:
 
 
 def python_venv() -> str:
-    venv = ROOT / "relay" / ".venv" / "bin" / "python"
+    venv = ROOT / ".venv" / "bin" / "python"
     return str(venv) if venv.exists() else sys.executable
 
 
@@ -61,15 +62,15 @@ def plan_for(path: str) -> list[Command]:
     file = ROOT / path
     plans: list[Command] = []
 
-    if path.startswith("relay/") and path.endswith(".py"):
-        if "/tests/" in path:
-            plans.append(pytest_command(path, ROOT / "relay", file, None))
-            return plans
-        test_dir = ROOT / "relay" / "tests"
-        exact = test_dir / f"test_{file.stem}.py"
-        plans.append(
-            pytest_command(path, test_dir, exact if exact.exists() else None, None if exact.exists() else file.stem)
-        )
+    if path.startswith("relay-go/") and path.endswith(".go"):
+        # 只跑改动所在的包；Go 命令经 make 走固定的缓存与代理设置（见 relay-go/Makefile）。
+        target = Path(path).parent.as_posix().removeprefix("relay-go/")
+        plans.append(Command(path, ["make", "-C", str(ROOT / "relay-go"), "test-pkg", f"PKG={target}"],
+                             ROOT / "relay-go"))
+        return plans
+
+    if path in {"relay-go/go.mod", "relay-go/go.sum"}:
+        plans.append(Command(path, ["make", "-C", str(ROOT / "relay-go"), "test"], ROOT / "relay-go"))
         return plans
 
     if (path.startswith("mail/") and path.endswith(".py")):
@@ -180,6 +181,11 @@ def main(argv: list[str] | None = None) -> int:
         except OSError as exc:
             print(f"[error] {command.label}: {exc}")
             failures += 1
+            continue
+        if proc.returncode == 5 and Python_PYTEST in command.argv:
+            # pytest 的 5 = 没收集到用例（文件名不带 test_、或 -k 没命中）。
+            # 靶向选择本来就允许"这个文件没有对应用例"，不算失败。
+            print(f"[skip] {command.label}: 没有匹配的用例（pytest 退出码 5）")
             continue
         if proc.returncode != 0:
             print(f"[fail] {command.label}: 退出码 {proc.returncode}")

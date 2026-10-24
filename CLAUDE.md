@@ -27,7 +27,8 @@
    `xcodebuild test` 全量）。
 2. 修改后 **5 秒内**必须先生成 `git diff`（或 `git diff --cached`），据此算出受影响文件与用例。
 3. 只对受影响文件运行靶向用例，限时 **30 秒**：
-   - Python：`relay/.venv/bin/python -m pytest -q relay/tests/test_<模块>.py`
+   - Python：`.venv/bin/python -m pytest -q mail/tests/test_<模块>.py`
+   - Go：`make -C relay-go test-pkg PKG=internal/<包>`
    - Node：`node --test plugins/<包>/test/<用例>.test.js`
    - 统一入口：`python3 scripts/targeted_tests.py --staged`
 4. 超时即视为失败，不得改用"多跑一会儿""重试几次"掩盖。
@@ -46,7 +47,7 @@
 1. 禁止只断言 Mock 被调用；必须校验真实返回值、产物或状态迁移。
 2. 禁止 `assert True`、空断言、`sleep` 等待、吞异常（`except: pass`）。
 3. 用例名与断言要能表达需求口径，不得复制实现细节。
-4. TDD 适用范围：`relay/`、`mail/`、DSHKit 纯函数与连接器协议层走 RED-GREEN-REFACTOR；
+4. TDD 适用范围：`relay-go/`、`mail/`、DSHKit 纯函数与连接器协议层走 RED-GREEN-REFACTOR；
    iOS 视图与仿真器交互不用 TDD，改用截图与测试报告；无测试底座的旧模块先补最小失败用例再改。
 
 ## 四、运行环境

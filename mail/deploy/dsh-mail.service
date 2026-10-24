@@ -38,7 +38,7 @@ Restart=on-failure
 RestartSec=2
 TimeoutStopSec=15
 
-# ── sandboxing (mirrors dsh-relay.service; this service needs even less) ────
+# ── sandboxing (mirrors dsh-relay-go.service; this service needs even less) ────
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes

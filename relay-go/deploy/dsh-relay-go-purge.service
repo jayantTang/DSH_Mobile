@@ -9,10 +9,10 @@ After=dsh-relay-go.service
 # 这个单元把库里已撤销 / 已过期的行真删掉——在用的设备一行都不碰（判据只有一份，
 # 在 internal/store/purge.go）。
 #
-# 与 Python 版 dsh-relay-purge.service 的差别只有可执行文件与
+# 与告警 timer 同一套安装方式；差别只有可执行文件与
 # WorkingDirectory（Go 不需要 .pyc，故没有 PYTHONDONTWRITEBYTECODE）：
 # `dsh-relay purge` 是 purge-revoked-devices.py 的 Go 版本。注意它**不是**
-# `dsh-relay admin purge`（那个删的是过期配对码，对应 admin.py purge）。
+# `dsh-relay admin purge`（那个删的是过期配对码）。
 #
 # --all-agents：库里每个 agent 都清，不只是某个人的机器。
 # --backup-dir：relay 服务写不了 /root（unit 里有 ProtectHome=yes），而这个单元
@@ -30,7 +30,7 @@ ExecStart=/opt/dsh-relay-go/bin/dsh-relay purge \
     --backup-dir /var/lib/dsh-relay/backups --keep 14
 
 # ── sandboxing ──────────────────────────────────────────────────────────────
-# 与 Python 版 dsh-relay-purge.service 同一套；唯一的差别是这里**不需要任何网络**
+# 沙箱与告警 timer 同一套；唯一的差别是这里**不需要任何网络**
 # ——清理只读写本机 SQLite 文件，所以地址族收到 AF_UNIX。
 NoNewPrivileges=yes
 ProtectSystem=strict

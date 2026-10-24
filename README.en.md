@@ -37,7 +37,7 @@ approval or a choice.
 
 - Conversations travel phone → relay → your computer, over TLS.
 - The relay does not persist message content. It keeps device rows, invite state, and per-day byte
-  counters (see [`relay/README.md`](relay/README.md)).
+  counters (see [`relay-go/README.md`](relay-go/README.md)).
 - The phone keeps a local cache in `Caches` (session list metadata, the tail of sessions you have
   opened, downloaded pictures). It is not backed up, expires after 30 days, and can be cleared in
   **Settings → Cache**. Conversation *content* is stored in the clear on the device — clear it if

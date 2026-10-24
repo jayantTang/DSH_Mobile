@@ -263,7 +263,7 @@ async function prepare() {
     contactEmail: FEEDBACK_EMAIL,
     demoAccountRequired: false,
     notes: '连接需要一个中转邀请码，我们在 GitHub issue 里公开提供；'
-      + '也可以用仓库里的 relay/deploy/deploy.sh 自建中转。'
+      + '也可以用仓库里的 relay-go/deploy/README.md 自建中转。'
       + 'App 无内购、无需登录第三方服务。',
   }
   if (detail) {

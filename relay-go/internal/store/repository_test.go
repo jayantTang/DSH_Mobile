@@ -197,7 +197,7 @@ func TestPairCodeRejectionReasons(t *testing.T) {
 // TestPairCodeScryptMatchesPython 用 Python hashlib.scrypt 生成的哈希做交叉验证。
 //
 // 夹具：code=ABCD-EFGH，salt=00112233445566778899aabbccddeeff，
-// n=1<<14, r=8, p=1, dklen=32（与 relay/store.py 的 _SCRYPT_* 相同）。
+// n=1<<14, r=8, p=1, dklen=32。
 func TestPairCodeScryptMatchesPython(t *testing.T) {
 	const pythonHash = "scrypt$00112233445566778899aabbccddeeff$" +
 		"096af9c6d40061747d5e0574af62abb1ce8ecdd105c2bfb7d93ddb0462e60e7c"

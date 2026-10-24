@@ -10,21 +10,21 @@ User=dsh-relay
 Group=dsh-relay
 WorkingDirectory=/opt/dsh-relay-go
 
-# 与 dsh-relay.service 同一套监听口径：只绑环回，Caddy 终止 TLS 后把
+# 监听口径：只绑环回，Caddy 终止 TLS 后把
 # /dsh-link/* 反代到这里（handle_path 会剥掉前缀；Go 版带前缀与去前缀两种
 # 形式都服务，所以前端怎么转发都能用）。
 #
 # host/port/db/base-path 只在 ExecStart 出现一次。Go 版的命令行参数优先于
-# DLP_* 环境变量；与 Python unit 那样两处都写，会让"改了环境变量却不生效"
+# DLP_* 环境变量；两处都写会让"改了环境变量却不生效"
 # 变成一个难查的故障。其余环境变量（配额、告警、APNs）逐项保留，Go 的
 # internal/config 与 internal/monitor 读取同名变量。
 ExecStart=/opt/dsh-relay-go/bin/dsh-relay serve --host 127.0.0.1 --port 8787 --db /var/lib/dsh-relay/state.db --base-path /dsh-link
 
-# 日志级别与 Python unit 一致。Go 版不写 .pyc，因此没有 PYTHONDONTWRITEBYTECODE。
+# 日志级别默认 INFO。Go 版不写 .pyc，因此没有 PYTHONDONTWRITEBYTECODE。
 Environment=DLP_LOG_LEVEL=INFO
 
 # ── 共享带宽的三道闸 ────────────────────────────────────────────────────────
-# 取值口径与 dsh-relay.service 完全相同，改一处必须同步另一处：
+# 取值口径集中在这里；改限额只改这一份：
 #   DLP_MAX_DEVICES_PER_AGENT  一台电脑配几台手机（重连不重复计数）
 #   DLP_DEVICE_RATE_KBPS       单设备出口限速（200 Mbps 管子 ÷ 2 台大文件设备）
 #   DLP_DEVICE_DAILY_MB        单设备每日出口额度（5 GiB，防把中转当图床）
@@ -43,12 +43,12 @@ Environment=DLP_ALERT_MAX_PER_HOUR=6
 Environment=DLP_ALERT_MAX_PER_DAY=40
 Environment=DLP_ALERT_FLAP_WINDOW_S=300
 Environment=DLP_ALERT_FLAP_THRESHOLD=5
-# Go 版把"上游落单代理项按天抽样"的上限也做成了变量；默认 20 与 Python 版一致。
+# "上游落单代理项按天抽样"的上限也做成了变量；默认 20。
 Environment=DLP_ALERT_SURROGATE_SAMPLES=20
 
 # ── APNs 推送 ───────────────────────────────────────────────────────────────
 # 默认关。未设或为 0 时转发行为与没有推送时逐字一致。
-# 真值放 /etc/dsh-relay/apns.env（deploy.sh 只在文件不存在时写模板，绝不覆盖）；
+# 真值放 /etc/dsh-relay/apns.env（安装时只在文件不存在时写模板，绝不覆盖）；
 # 文件里的赋值排在 Environment=DLP_APNS_ENABLED=0 之后，因此可以覆盖它。
 # `-` 前缀＝文件不存在不算失败（没配推送的部署照常启动）。
 # 密钥文件必须在 /etc/dsh-relay/apns/，不能放 /root 或 /home：下面有 ProtectHome=yes。
@@ -63,7 +63,7 @@ RestartSec=2
 TimeoutStopSec=15
 
 # ── sandboxing ──────────────────────────────────────────────────────────────
-# 与 dsh-relay.service 逐项一致。Go 运行时不需要可写可执行内存页（没有 JIT），
+# 沙箱遵循同一套最小权限。Go 运行时不需要可写可执行内存页（没有 JIT），
 # MemoryDenyWriteExecute 与纯 Go / cgo 两种构建都兼容。
 NoNewPrivileges=yes
 ProtectSystem=strict

@@ -4,9 +4,8 @@
 //	GET /files/down?scopeId=&path=&offset=&bid=  手机从家里的电脑拉文件
 //
 // 中转**不存字节**：上行按 1 MB 切片经连接器的 WebSocket 转发，下行把连接器送来
-// 的每一片直接写进 HTTP 正文。分片大小、ack 期限、Range/ETag 的口径逐项对齐
-// relay/api.py 的 files_up / files_down，行为参考见 relay/tests/test_files_up.py
-// 与 test_files_down.py。
+// 的每一片直接写进 HTTP 正文。分片大小、ack 期限、Range/ETag 的口径固定，
+// 行为用例见 `tests/blackbox/test_contract_files.py`。
 //
 // 桥的状态机与登记表在 internal/bridge；这个包只拥有 HTTP 面：参数校验、分片、
 // Range 解析、响应头与正文写作。

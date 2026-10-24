@@ -1,10 +1,10 @@
 """mail 测试夹具。
 
-**单独跑**：`cd mail && ../../relay/.venv/bin/python -m pytest -q`（或 mail 自己的
-venv）。与 relay/tests 一样按服务目录独立运行——两边的模块名（store/admin/http）
+**单独跑**：`cd mail && ../../.venv/bin/python -m pytest -q`（或 mail 自己的
+venv）。按服务目录独立运行——这里的模块名（store/admin/http）
 同名，混在同一个 pytest 进程里会互相遮蔽。
 
-与 relay/tests/conftest.py 的差异（拆分后的世界）：
+与中转测试夹具的差异（拆分后的世界）：
 
 - 没有 `provisioned` 的配对链路：mail 没有账号/设备表，归属由
   `app["resolve_device"]` 给出。测试注入一个**注册表式假解析器**：
@@ -47,7 +47,7 @@ def store(tmp_path) -> AsyncIterator[Store]:
 
 @pytest.fixture
 def provisioned() -> dict:
-    """与 relay/tests/conftest.py 的同名夹具同形（agent 字段被 mail 侧忽略）。"""
+    """与中转测试夹具同形（agent 字段被 mail 侧忽略）。"""
     return {"account": {"accountId": ACCOUNT_ID}, "agent": {"agentId": "agt_test"}}
 
 

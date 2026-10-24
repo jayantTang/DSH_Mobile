@@ -1,5 +1,5 @@
 // Package monitor 是"异常"与"反复断开"的收集器：按类别去重、限量，写进告警队列
-// 等投递（Python 版 relay/monitor.py 与 alert-dispatch.py 的对应物）。
+// 等投递（原 Python 实现里 monitor 与 alert-dispatch 的合并）。
 //
 // 为什么要有这个包（2026-10-17 事故）：
 //

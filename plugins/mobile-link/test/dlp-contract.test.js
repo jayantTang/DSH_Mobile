@@ -1,10 +1,9 @@
 /**
- * The DLP wire vectors, shared by all three ends.
+ * The DLP wire vectors, shared by the connector and iOS.
  *
  * `test/contract/dlp-vectors.json` is the single source of truth: the connector
- * (this file), the relay (`relay/tests/test_dlp.py`) and iOS
- * (`DSHKit/Tests/DSHKitTests/DLPContractTests.swift`) all read the *same* file.
- * The contract itself is `docs/relay-contract.json`.
+ * (this file) and iOS (`DSHKit/Tests/DSHKitTests/DLPContractTests.swift`) read
+ * the *same* file. The contract itself is `docs/relay-contract.json`.
  *
  * These assertions pin today's behaviour, drift included: a row whose `why`
  * names a `knownDrift` entry is recording a real disagreement, not blessing it.

@@ -18,7 +18,7 @@
 │   ├── mobile-link/               电脑端连接器（DLP v1 实现）
 │   └── send-image/                send_image 工具插件
 ├── skills/send-image/             skill 源码
-├── relay/                         公网中转服务（Python）
+├── relay-go/                      公网中转服务（Go）
 ├── scripts/                       安装 / 部署 / 测试脚本
 └── docs/                          架构、协议、用例、本文件
 ```

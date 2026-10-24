@@ -14,7 +14,7 @@ import (
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/store"
 )
 
-// 与 admin.py 的默认值一致。
+// 默认值固定。
 const (
 	defaultUsageDays = 7
 	// DefaultDeadDeviceWarnThreshold 是 hub 与 admin 共用的告警阈值（Python

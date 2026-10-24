@@ -3,5 +3,5 @@ pytest>=8
 pytest-asyncio>=0.23
 # `aiohttp_client` / `aiohttp_server` 来自这个插件，不在 aiohttp 里：少装它，所有
 # 基于夹具的用例都在 setup 阶段报错（fixture 'aiohttp_client' not found），而作者本机
-# 的 venv 恰好装过。CI 装的就是本文件，所以这条漏不得（与 relay/requirements-dev.txt 同款）。
+# 的 venv 恰好装过。CI 装的就是本文件，所以这条漏不得（与中转的黑盒套件同一个依赖面）。
 pytest-aiohttp>=1.0

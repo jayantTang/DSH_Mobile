@@ -277,7 +277,7 @@ async function fill() {
   if (demo.missing.length) {
     throw new Error(
       `审核备注缺少演示环境：请在 .env.local 里设 ${demo.missing.join(' / ')}` +
-      '（邀请码用 relay/admin.py invite-mint 铸一个，一次性的，别写进仓库）'
+      '（邀请码用 dsh-relay admin invite-mint 铸一个，一次性的，别写进仓库）'
     )
   }
 

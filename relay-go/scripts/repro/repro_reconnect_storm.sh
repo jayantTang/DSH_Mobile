@@ -35,7 +35,7 @@ fi
 
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 RELAY_GO="$ROOT/relay-go"
-PYTHON="${REPRO_PYTHON:-$ROOT/relay/.venv/bin/python}"
+PYTHON="${REPRO_PYTHON:-$ROOT/.venv/bin/python}"
 BIN="${BIN_OVERRIDE:-$RELAY_GO/bin/dsh-relay}"
 WORK="$(mktemp -d /tmp/repro-m7-storm.XXXXXX)"
 PORT="${REPRO_PORT:-18887}"
@@ -54,7 +54,7 @@ cleanup() {
 trap cleanup EXIT
 
 if [ ! -x "$PYTHON" ]; then
-  echo "找不到 Python 虚拟环境：${PYTHON}（需要 relay/.venv）" >&2
+  echo "找不到 Python 虚拟环境：${PYTHON}（需要仓库根的 .venv）" >&2
   exit 2
 fi
 if [ -z "$BIN_OVERRIDE" ]; then

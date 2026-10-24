@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// /stats 的 HTML 运维页：与 Python relay/api.py 的 `_stats_page` 同口径
+// /stats 的 HTML 运维页：与 JSON 输出同口径
 // （连接数、限额、死设备记录、每设备本次出口与被限速时长），并补上 JSON 里本来
 // 就有的「今日用量」段——运维打开同一台机器的一条 curl 就能看到全部的账。
 //

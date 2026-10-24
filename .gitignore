@@ -25,7 +25,7 @@ ios/DSHMobile/Signing.local.plist
 ios/DSHMobile/Config.local.xcconfig
 
 # Python
-relay/.venv/
+.venv/
 __pycache__/
 *.pyc
 .pytest_cache/
@@ -111,3 +111,4 @@ docs/graph/
 # Go 构建缓存与产物（本机，不入库）
 relay-go/.gocache/
 relay-go/bin/
+/relay-go/dsh-relay

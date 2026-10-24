@@ -86,18 +86,3 @@ As described in `relay.md` §10: unsolicited `event` frames until the
 device opens `$events`, then `item` frames on that stream id, with the cached
 `ready` item replayed as the first item so the device always learns its
 `clientId`.
-
-## 8. Unverifiable in this environment
-
-* No real iOS client exists yet, so the device side of the protocol is exercised
-  by the Python fake in `../relay/tests/integration_e2e.py` and by the Node unit
-  tests — not by the shipping app.
-* The public WSS path (`wss://relay.example.com/dsh-link/link/agent`) has not
-  been exercised end to end: nothing is deployed yet. Everything was tested over
-  plain `ws://` on loopback **including the `/dsh-link` path prefix**, which is
-  the same code path minus TLS. The TLS/WebSocket termination itself is Caddy's,
-  and the spliced configuration validates with a real `caddy` binary
-  (`relay/tests/test_caddy_splice.py`).
-* The systemd unit and `deploy.sh` were syntax-checked and their Caddy splice was
-  exercised against a scratch Caddyfile, but nothing was installed on
-  `relay.example.com` (deployment is a separate, user-approved step).

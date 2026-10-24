@@ -1,10 +1,10 @@
-"""mail 的公网接口：信件四条路由（从 relay/feedback.py 移植，DESIGN-20261015 M2）。
+"""mail 的公网接口：信件四条路由（从旧中转的 feedback 模块移植，DESIGN-20261015 M2）。
 
 与中转版的差异只有一处：`_caller` 不再读本库的设备表（mail 没有身份数据），
 而是经 `app["resolve_device"]`（生产实现是 :mod:`internal` 的中转内部接口客户端）
 把设备令牌换成归属；解析不到就是匿名，与中转版"坏令牌当匿名"的语义逐字一致。
 
-路由、契约、限流、校验与 relay/feedback.py 保持逐字一致——App 侧零改动是这次
+路由、契约、限流、校验与旧实现保持逐字一致——App 侧零改动是这次
 拆分的验收标准之一，移植时不动行为。
 """
 
@@ -60,7 +60,7 @@ CORS_HEADERS = {
 _FORWARDED_FOR = "X-Forwarded-For"
 
 
-# ── 从 relay/api.py 复制的鉴权/限流工具（mail 不 import 中转的模块） ────────────
+# ── 从旧中转复制的鉴权/限流工具（mail 不 import 中转的模块） ────────────
 
 def is_loopback(value: str | None) -> bool:
     text = (value or "").strip()
@@ -100,7 +100,7 @@ async def read_json(request: web.Request) -> dict[str, Any] | None:
 def client_identifier(request: web.Request) -> str:
     """限流桶的键：前置反代（Caddy）替换式转发 `X-Forwarded-For`，取最左一条。
 
-    与 relay/api.py 的同名函数同语义（mail 也部署在同一台 Caddy 后面）：
+    与中转的同名函数同语义（mail 也部署在同一台 Caddy 后面）：
     对端是 loopback 且头里有地址 → 最左那条；否则只信 socket 对端。
     """
     peer = (request.remote or "").strip()

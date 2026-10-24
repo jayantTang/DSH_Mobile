@@ -14,8 +14,10 @@ export CGO_ENABLED := 1
 
 BIN   := bin
 RELAY := $(BIN)/dsh-relay
+# 黑盒套件与演练脚本用仓库根目录的共享 Python 环境（依赖见 requirements-dev.txt）。
+PYTHON ?= ../.venv/bin/python
 
-.PHONY: all build build-purego test test-purego test-blackbox soak-smoke vet fmt fmt-check size run clean
+.PHONY: all build build-purego test test-pkg test-purego test-blackbox soak-smoke vet fmt fmt-check size run clean
 
 all: build
 
@@ -26,6 +28,10 @@ build:
 test:
 	go test ./...
 
+# 单包靶向测试（本地提交防线用）：make test-pkg PKG=internal/hub
+test-pkg:
+	go test ./$(PKG)
+
 # 纯 Go 构建（无 cgo 机器 / 静态部署 / 交叉编译）。默认构建不走这条。
 build-purego:
 	mkdir -p $(BIN)
@@ -34,15 +40,15 @@ build-purego:
 test-purego:
 	CGO_ENABLED=0 go test ./...
 
-# 黑盒契约套件对本二进制跑（relay/tests/blackbox 只认 RELAY_CMD / ADMIN_CMD
-# 两个环境变量，见该目录 conftest.py）。
+# 黑盒契约套件对本二进制跑（tests/blackbox 只认 RELAY_CMD / ADMIN_CMD
+# 两个环境变量，见该目录 conftest.py）。Python 依赖见 requirements-dev.txt。
 test-blackbox: build
-	RELAY_CMD="$(CURDIR)/$(RELAY)" ADMIN_CMD="$(CURDIR)/$(RELAY) admin" \
-		../relay/.venv/bin/python -m pytest ../relay/tests/blackbox -q
+	RELAY_CMD="$(CURDIR)/$(RELAY) serve" ADMIN_CMD="$(CURDIR)/$(RELAY) admin" \
+		$(PYTHON) -m pytest tests/blackbox -q
 
 # soak 冒烟档（20 秒注入，验证脚本与二进制本身能跑通；不进默认 test）。
 soak-smoke: build
-	../relay/.venv/bin/python scripts/m4b/soak.py \
+	$(PYTHON) scripts/m4b/soak.py \
 		--seconds 20 --sample 5 --devices 20 --agents 4
 
 vet:

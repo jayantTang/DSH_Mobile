@@ -8,7 +8,7 @@
 - 点名 `--account` 不做存在性校验（没有可查的表）；投给不存在的账号只是
   一行永远没人取的投递，owner 工具在更上层对中转校验名单。
 
-退出码与 relay/admin.py 对齐：0 成功 / 1 业务失败 / 2 用法或存储错误。
+退出码与中转的管理命令对齐：0 成功 / 1 业务失败 / 2 用法或存储错误。
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ from store import DEFAULT_FEEDBACK_FORMAT, Store, StoreError
 #: `feedback-reply --template` 的默认署名（契约：署名默认 `DSH Mobile 团队`）。
 DEFAULT_SIGNATURE = "DSH Mobile 团队"
 
-#: 与 relay/admin.py 同一份口径（feedback-stats 的剔除规则）：
+#: 与中转管理命令同一份口径（feedback-stats 的剔除规则）：
 #: 测试台来源的机型认不出来源，只能按机型判；`DSH-` 前缀的调试设备 id 由
 #: owner 工具从中转的 device-list 取来传进来（--debug-device）。
 TEST_DEVICE_MODELS = {"arm64", "x86_64", "deploy-check", "Node", "simulator", "test-harness"}
@@ -82,7 +82,7 @@ def _show_thread(store: Store, thread_id: str) -> dict[str, Any] | None:
 
 def _feedback_rows(store: Store, *, status: str | None, since_ms: int | None,
                    limit: int) -> list[dict[str, Any]]:
-    """owner 清单的每一行（与 relay/admin.py 的同名函数同形——日报与工具解同一份 JSON）。"""
+    """owner 清单的每一行（与中转管理命令的同名输出同形——日报与工具解同一份 JSON）。"""
     unread = store.owner_unread_counts()
     rows = store.list_feedback_threads(status=status, since_ms=since_ms, limit=limit)
     digest = store.feedback_digest([row["threadId"] for row in rows])
@@ -123,7 +123,7 @@ def _reply_template(signature: str) -> str:
     )
 
 
-# ── feedback-stats：给日报的反馈板块（与 relay/admin.py 同形，M4 在本机合并） ─────
+# ── feedback-stats：给日报的反馈板块（与中转同形，M4 在本机合并） ─────
 
 def _day_start_ms(day: int) -> int:
     text = str(day)
@@ -132,7 +132,7 @@ def _day_start_ms(day: int) -> int:
 
 
 def _resolve_as_of(value: str | None, *, now: int | None = None) -> int | None:
-    """`--as-of` → 锚点毫秒（None = 此刻）。规则与 relay/admin.py 逐字一致。"""
+    """`--as-of` → 锚点毫秒（None = 此刻）。规则与中转管理命令逐字一致。"""
     text = str(value if value is not None else "now").strip()
     if text in ("", "now"):
         return None
@@ -149,7 +149,7 @@ def _resolve_as_of(value: str | None, *, now: int | None = None) -> int | None:
 def _is_test_thread(row: dict[str, Any], debug_ids: set[str]) -> bool:
     """测试提交：调试设备提的，或来自模拟器/测试台（机型认得出来）。
 
-    与 relay/admin.py 的同名函数同规则；`debug_ids` 不在 mail 里查（没有设备表），
+    与中转管理命令的同名函数同规则；`debug_ids` 不在 mail 里查（没有设备表），
     由 owner 工具从中转取 `DSH-` 前缀的设备 id 传进来。
     """
     device = row.get("deviceId") or (row.get("source") or {}).get("deviceId")
@@ -269,7 +269,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return _dispatch(store, args)
     except StoreError as error:
-        # 与 relay/admin.py 同一条约定：StoreError 是业务失败，退 1；
+        # 与中转管理命令同一条约定：StoreError 是业务失败，退 1；
         # argparse 的用法错误自己会 SystemExit(2)。
         sys.stderr.write(f"admin.py: {error}\n")
         return 1

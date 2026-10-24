@@ -11,8 +11,7 @@ import (
 	"testing"
 )
 
-// wantCapabilities 是 Python 版 api.healthz 的能力清单，逐字抄自
-// relay/api.py:311。改这里就说明中转的能力契约变了。
+// wantCapabilities 是 `/healthz` 的能力清单。改这里就说明中转的能力契约变了。
 var wantCapabilities = []string{
 	"device-subprotocol-auth", "persistent-pair-code",
 	"account-state", "account-state-push", "file-transfer",

@@ -164,7 +164,7 @@ extension CrashReportTests {
         XCTAssertNotEqual(DeviceKey.generate(), key, "每次都要不一样")
     }
 
-    /// 中转那侧的形状规则（`relay/api.py` 的校验）逐条对齐。
+    /// 中转那侧的形状规则（`relay-go/internal/store` 的 `ValidateDeviceKey`）逐条对齐。
     func test_the_device_key_shape_matches_the_relay_rules() {
         XCTAssertFalse(DeviceKey.isValid("short"), "太短")
         XCTAssertFalse(DeviceKey.isValid(String(repeating: "a", count: 129)), "太长")

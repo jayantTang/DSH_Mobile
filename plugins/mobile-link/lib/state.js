@@ -3,8 +3,8 @@
  *
  * The file holds the long-lived `agentId` / `agentSecret` for this computer.
  * There are two ways it gets there, and they are deliberately indistinguishable
- * afterwards: the relay operator provisions it by hand (relay/admin.py
- * `agent-register --write-config`), or the person running the computer redeems
+ * afterwards: the relay operator provisions it by hand (`dsh-relay admin
+ * agent-register --write-config`), or the person running the computer redeems
  * an invite code themselves (`dsh-mobile-link enroll`, see enroll.js).
  * Environment variables and the plugin config block override the file, which is
  * how the integration test injects a throwaway identity.
@@ -109,7 +109,7 @@ export async function resolveIdentity({ stateFile, agentId, agentSecret, relayUr
       `mobile-link: this computer is not registered yet. Run "dsh-mobile-link enroll`
       + ` --invite <code> --relay <relay-url>" with the invite code you were given, or set`
       + ` ${INVITE_ENV} and restart DSH. (Provisioning by hand is still possible:`
-      + ` "python3 relay/admin.py agent-register --account <acc> --name <name>`
+      + ` "dsh-relay admin agent-register --account <acc> --name <name>`
       + ` --write-config ${path}".)`,
       { stateFile: path },
     )

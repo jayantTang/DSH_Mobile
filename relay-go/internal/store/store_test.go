@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// wantTables 是 Python 版 relay/store.py 建出的全部业务表（M0 对齐口径）。
+// wantTables 是 schema 建出的全部业务表。
 var wantTables = []string{
 	"accountState", "accounts", "agents", "devices", "feedbackMessages",
 	"feedbackThreads", "invites", "noticeDeliveries", "notices", "pairCodes",

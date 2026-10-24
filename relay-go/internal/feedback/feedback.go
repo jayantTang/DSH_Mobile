@@ -10,7 +10,7 @@
 // 用户提交不了意见。四个接口都是这条口径。
 //
 // 限流：submit/append 按来源与设备各一桶，inbox/read 用更宽的读桶；命中限流
-// **不写库**。正文、字段与请求体的上限逐项对齐 relay/feedback.py 与
+// **不写库**。正文、字段与请求体的上限沿用旧实现与
 // specs/014-feedback-channel/contracts/feedback-http.md。
 //
 // SQL 全在 internal/store 里；这个包只管 HTTP、校验、限流与授权。

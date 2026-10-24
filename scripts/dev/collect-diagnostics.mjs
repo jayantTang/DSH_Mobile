@@ -517,7 +517,7 @@ export function journalSince(label) {
 
 /** 走 ssh 取中转日志（`-o json`：带 epoch 微秒，不必猜时区）。 */
 export function readRelayLog({ host, since, agentIds = [], deviceIds = [] } = {}) {
-  const command = `journalctl -u dsh-relay --since '${journalSince(since)}' --no-pager -o json`
+  const command = `journalctl -u dsh-relay-go --since '${journalSince(since)}' --no-pager -o json`
   const text = execFileSync('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', `root@${host}`, command],
     { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, timeout: 60_000 })
   return { text, ...parseRelayLines(text, { agentIds, deviceIds }) }
@@ -530,7 +530,7 @@ export function readRelayLog({ host, since, agentIds = [], deviceIds = [] } = {}
  */
 export function readRelayDeviceIds({ host, agentId, db = process.env.DSH_RELAY_DB || '/var/lib/dsh-relay/state.db' } = {}) {
   const text = execFileSync('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', `root@${host}`,
-    `/opt/dsh-relay/.venv/bin/python /opt/dsh-relay/admin.py --db ${db} device-list`],
+    `/opt/dsh-relay-go/bin/dsh-relay admin --db ${db} device-list`],
   { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, timeout: 30_000 })
   const rows = JSON.parse(text)
   return rows.filter((row) => !agentId || row.agentId === agentId).map((row) => row.deviceId)

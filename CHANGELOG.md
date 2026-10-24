@@ -4,6 +4,12 @@
 [语义化版本](https://semver.org/lang/zh-CN/)。三处部署（App / 连接器 / 中转）的组合见
 [`docs/VERSIONING.md`](docs/VERSIONING.md)。
 
+## 中转 — 2026-10-24（Python 实现退役，仓库只留 Go）
+
+`relay/` 全量删除（历史可从 git 恢复）。黑盒契约套件移到 `relay-go/tests/blackbox`，
+Caddy 片段与插入工具移到 `relay-go/deploy/`；部署、升级与回滚只按 Go 版本执行。
+共享 Python 环境移到仓库根 `.venv`（`python3 -m venv .venv` 重建）。
+
 ## send-image 0.2.2 — 2026-10-17（按钮外观交给宿主）
 
 工具卡里的按钮改用宿主的 `Button` 渲染，兜底样式不再覆盖宿主主题；只改外观，接口不变。

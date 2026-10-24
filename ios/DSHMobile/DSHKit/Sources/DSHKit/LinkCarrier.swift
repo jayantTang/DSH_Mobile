@@ -21,10 +21,10 @@ enum DLPFrames {
     static let idFrames: Set<String> = [request, open, cancel, "res", "item", "end", "streamError", eventResult]
 }
 
-/// DLP 协议版本（`relay/dlp.py:PROTOCOL_VERSION`）。
+/// DLP 协议版本（`relay-go/internal/dlp` 的版本常量）。
 let dlpProtocolVersion = 1
 
-/// 单帧字节上限，与 DSH 的图片附件上限对齐（`relay/dlp.py:MAX_FRAME_BYTES`）。
+/// 单帧字节上限，与 DSH 的图片附件上限对齐（`relay-go/internal/dlp` 的 `MaxFrameBytes`）。
 let dlpMaxFrameBytes = 32 * 1024 * 1024
 
 /// How to reach a DSH host through a relay.

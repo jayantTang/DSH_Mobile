@@ -24,7 +24,7 @@ def rows_of(diff_text: str):
 def test_patch_if_else_chain_blocks():
     diff = "\n".join(
         [
-            "+++ b/relay/api.py",
+            "+++ b/mail/api.py",
             "@@ -1,3 +10,6 @@",
             "+    if mode == 'fast':",
             "+        return run_fast()",
@@ -54,7 +54,7 @@ def test_patch_if_else_marker_blocks_single_branch():
 def test_two_branches_are_allowed():
     diff = "\n".join(
         [
-            "+++ b/relay/api.py",
+            "+++ b/mail/api.py",
             "@@ -1,2 +1,3 @@",
             "+    if mode == 'fast':",
             "+    elif mode == 'slow':",
@@ -66,7 +66,7 @@ def test_two_branches_are_allowed():
 def test_swallowed_exception_blocks():
     diff = "\n".join(
         [
-            "+++ b/relay/hub.py",
+            "+++ b/mail/internal.py",
             "@@ -5,2 +5,4 @@",
             "+    try:",
             "+        send()",
@@ -95,7 +95,7 @@ def test_ineffective_mock_blocks():
 def test_effective_mock_with_real_assertion_passes():
     diff = "\n".join(
         [
-            "+++ b/relay/tests/test_hub.py",
+            "+++ b/mail/tests/test_feedback_store.py",
             "@@ -1,1 +1,3 @@",
             "+    hub.send(frame)",
             "+    assert sender.called",
@@ -116,8 +116,8 @@ def test_parse_llm_json_extracts_object():
 def test_cli_blocks_on_patch_style(tmp_path):
     diff = "\n".join(
         [
-            "diff --git a/relay/api.py b/relay/api.py",
-            "+++ b/relay/api.py",
+            "diff --git a/mail/api.py b/mail/api.py",
+            "+++ b/mail/api.py",
             "@@ -1,1 +20,4 @@",
             "+    if env == 'dev':",
             "+        return dev()",

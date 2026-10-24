@@ -1,7 +1,7 @@
 # Agent Team · 多 Agent 开发管线
 
 > **这不是 DSH Mobile 产品的一部分。** 它是作者本机自用的多 Agent 开发管线工具，
-> 与 iOS App、连接器、中转无关；产品侧（`ios/`、`plugins/`、`relay/`、`docs/`、`package.json`）
+> 与 iOS App、连接器、中转无关；产品侧（`ios/`、`plugins/`、`relay-go/`、`docs/`、`package.json`）
 > 不依赖它。克隆这个仓库的人可以完全忽略这个目录。
 
 一套**程序化编排**的软件开发管线：三个固定角色，独立会话、文件交接、异厂验证。

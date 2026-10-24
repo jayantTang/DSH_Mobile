@@ -19,7 +19,7 @@ import { join } from 'node:path'
 import { realDshHome, whichBinary } from './l1-runtime.mjs'
 import {
   desktopInstance, freshInstall, iosLinkCarrierLifecycle, linkDiagnostics, mailTests,
-  pluginInstallHot, relayGoTests, relayTests, smoke,
+  pluginInstallHot, relayGoTests, smoke,
 } from './l1-scenarios.mjs'
 
 export const lane = {
@@ -30,10 +30,6 @@ export const lane = {
   doctor: doctorL1,
   scenarios: {
     smoke: { title: '隔离宿主能起来、连接器加载并发现宿主', run: smoke },
-    'relay-tests': {
-      title: '中转单测（含真 Caddy 的端到端那半）在本机跑一遍，且不动真实数据',
-      run: relayTests,
-    },
     'relay-go-tests': {
       title: 'Go 中转单测（make test）在本机跑一遍，且不动真实数据',
       run: relayGoTests,

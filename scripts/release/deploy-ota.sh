@@ -14,8 +14,8 @@
 #                   会连 `bundleIds` 都查不了，而签名这张描述文件本来能用到 2027 年，
 #                   这条退路让"只是改了几行文案也要发一版"不至于被卡住。
 #
-# 回滚：服务器上删除 /opt/dsh-relay/public/ios/ 即可，Caddy 路由仍在受管
-#       块里，`relay/deploy/deploy.sh --uninstall` 会一并移除。
+# 回滚：服务器上删除 /opt/dsh-relay/public/ios/ 即可；Caddy 的受管块用
+#       `relay-go/deploy/caddy_splice.py remove` 撤销。
 # ============================================================
 set -euo pipefail
 

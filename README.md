@@ -64,12 +64,12 @@
 ### B. 自建中转
 
 自建使用仓库内的 Go 实现（`relay-go/`）。按 [`relay-go/deploy/README.md`](relay-go/deploy/README.md)
-§3–§4 在服务器上构建二进制、写入 `build.json` 并安装 `dsh-relay-go.service`；Caddy 路由沿用
-[`relay/deploy/Caddyfile.snippet`](relay/deploy/Caddyfile.snippet)，由
-[`relay/deploy/caddy_splice.py`](relay/deploy/caddy_splice.py) 插入既有站点块。
+§2–§3 在服务器上构建二进制、写入 `build.json` 并安装 `dsh-relay-go.service`；Caddy 路由用
+[`relay-go/deploy/Caddyfile.snippet`](relay-go/deploy/Caddyfile.snippet)，由
+[`relay-go/deploy/caddy_splice.py`](relay-go/deploy/caddy_splice.py) 插入既有站点块（§4）。
 
 ```bash
-# 首次部署（机器上没有 Python 版中转）
+# 首次部署
 sudo systemctl enable --now dsh-relay-go
 
 # 建账号 → 铸邀请码

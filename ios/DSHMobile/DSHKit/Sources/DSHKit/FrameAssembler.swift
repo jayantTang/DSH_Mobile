@@ -3,7 +3,7 @@ import Foundation
 /// Rebuilds one frame that the relay wrote as several WebSocket messages.
 ///
 /// The relay splits a device-bound frame larger than 512 KB into several
-/// WebSocket *messages* once the device is over its rate (`relay/hub.py::_send`),
+/// WebSocket *messages* once the device is over its rate (`relay-go/internal/hub` 的发送路径),
 /// on the stated assumption that "the channel is a stream, so the client
 /// reassembles the frame". WebSocket messages are not a stream: each arrives as
 /// its own `receive()`, so a parser that treats every message as a frame throws
@@ -68,7 +68,7 @@ struct FrameAssembler {
     /// Whether these bytes are one whole frame.
     ///
     /// A frame is a JSON object with a non-empty string `t` — the same shape the
-    /// relay itself insists on (`relay/dlp.py::parse_frame`). The cheap last-byte
+    /// relay itself insists on (`relay-go/internal/dlp`). The cheap last-byte
     /// test in front of the parse is what keeps this affordable on a multi-
     /// megabyte frame: every fragment but the last ends mid-JSON, so the parser
     /// runs once instead of once per fragment.

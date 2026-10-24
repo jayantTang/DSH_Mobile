@@ -9,7 +9,7 @@ import (
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/store"
 )
 
-// 与 admin.py 的 argparse 默认值一致。
+// 默认值固定。
 const (
 	defaultCodeTTLSeconds   = int64(store.DefaultPairTTLMS / 1000)
 	defaultInviteTTLSeconds = int64(store.DefaultInviteTTLMS / 1000)
@@ -191,7 +191,7 @@ func runInviteMint(ctx context.Context, st *store.Store, args []string,
 
 // deviceListEntry 是 device-list 的一行：设备全列 + 那台电脑的版本三段 + 推送登记。
 //
-// 字段名与 admin.py 输出逐项一致；deviceTokenHash 与 apnsToken 打码（终端记录不该
+// 字段名固定；deviceTokenHash 与 apnsToken 打码（终端记录不该
 // 留下可用凭据）。
 type deviceListEntry struct {
 	DeviceID         string             `json:"deviceId"`

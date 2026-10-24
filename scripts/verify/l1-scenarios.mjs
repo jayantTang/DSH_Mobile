@@ -16,61 +16,6 @@ import {
 } from './l1-runtime.mjs'
 
 /**
- * 场景：中转的单测（含 `test_caddy_runtime.py` 那半）在本机跑一遍。
- *
- * 为什么它在 L1：relay 的权威口径就是 `pytest`（见 `scripts/verify/lanes.json` 的理由列），
- * 这些用例全部用 `tmp_path` 建库、不碰真实 `state.db`；本场景要额外证明的只有
- * "跑它们没动真实数据"这一条。Caddy 不在时应由用例自己报错——静默 skip 会被单列出来看。
- */
-export async function relayTests({ outDir, log = () => {} }) {
-  const before = snapshotRealData()
-  const observations = []
-  const commands = []
-  const venvPython = join(REPO_ROOT, 'relay', '.venv', 'bin', 'python')
-  const python = existsSync(venvPython) ? venvPython : 'python3'
-  const argv = [python, '-m', 'pytest', '-q']
-  let status = 'fail'
-  let note
-
-  try {
-    const result = spawnSync(python, ['-m', 'pytest', '-q'], {
-      cwd: join(REPO_ROOT, 'relay'), encoding: 'utf8', timeout: 900_000, maxBuffer: 32 * 1024 * 1024,
-    })
-    const logPath = join(outDir, 'relay-pytest.log')
-    writeFileSync(logPath, `$ cd relay && ${argv.join(' ')}\n${result.stdout ?? ''}${result.stderr ?? ''}`)
-    commands.push({ argv, exitCode: result.status ?? -1, stdoutPath: logPath,
-      note: '中转单测（含真 Caddy 的端到端那半）' })
-    const summary = (result.stdout ?? '').trim().split('\n').filter(Boolean).at(-1) ?? '(没有输出)'
-    observations.push({ step: 'pytest', fact: `${summary}（exit ${result.status}）`, evidence: 'relay-pytest.log' })
-    const skipped = Number(/(\d+) skipped/.exec(result.stdout ?? '')?.[1] ?? 0)
-    if (skipped > 0) {
-      observations.push({ step: 'skip', fact: `有 ${skipped} 条 skip：逐条确认不是"Caddy 缺失导致的静默退化"` })
-    }
-    if (result.status === 0) status = 'pass'
-    else note = `pytest 退出码 ${result.status}：${summary}`
-  } catch (error) {
-    note = error.message
-    observations.push({ step: 'error', fact: error.message })
-  }
-
-  const after = snapshotRealData()
-  const untouched = before.digest === after.digest
-  observations.push({ step: 'isolation', fact: untouched ? '真实 agent.json 未变' : '真实 agent.json 变了' })
-  log(`L1: relay 单测 ${status}`)
-  return {
-    status,
-    note,
-    observations,
-    commands,
-    isolation: {
-      dshHome: '(pytest 只用 tmp_path，不碰任何真实档案)',
-      realHomeUntouched: untouched,
-      proof: `跑前 ${before.digest} / 跑后 ${after.digest}（sha256 + mtime）`,
-    },
-  }
-}
-
-/**
  * 场景：Go 中转的单测在本机跑一遍。
  *
  * 为什么它在 L1：`relay-go` 的权威口径是 `make test`（用例自带 `t.TempDir()` 临时库），
@@ -132,7 +77,7 @@ export async function mailTests({ outDir, log = () => {} }) {
   const before = snapshotRealData()
   const observations = []
   const commands = []
-  const venvPython = join(REPO_ROOT, 'relay', '.venv', 'bin', 'python')
+  const venvPython = join(REPO_ROOT, '.venv', 'bin', 'python')
   const python = existsSync(venvPython) ? venvPython : 'python3'
   const argv = [python, '-m', 'pytest', '-q', '-rs']
   let status = 'fail'

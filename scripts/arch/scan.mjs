@@ -46,7 +46,6 @@ const BANDS = [
       { id: 'ios-protocol', label: '协议与数据层（DSHKit）', match: (id) => id === 'ios/kit/DSHKit' },
     ],
   },
-  { id: 'relay', label: '中转（公网主机）', match: (id) => id === 'relay', sections: [] },
   {
     id: 'dsh',
     label: '电脑侧 DSH',
@@ -106,8 +105,6 @@ function defineGroups() {
   for (const name of dirsIn(join(ROOT, 'plugins'))) add(`plugin/${name}`, 'js', join(ROOT, 'plugins', name))
   for (const name of dirsIn(join(ROOT, 'scripts'))) add(`scripts/${name}`, 'js', join(ROOT, 'scripts', name))
 
-  const relay = join(ROOT, 'relay')
-  if (existsSync(relay)) groups.push({ id: 'relay', layer: 'py', dir: 'relay', abs: relay, note: '中转服务（不含 tests）' })
   for (const name of dirsIn(join(ROOT, 'sidecars'))) add(`sidecar/${name}`, 'py', join(ROOT, 'sidecars', name))
   for (const name of dirsIn(join(ROOT, 'skills'))) add(`skill/${name}`, 'py', join(ROOT, 'skills', name))
   add('test/tools', 'py', join(ROOT, 'test/tools'))
@@ -174,14 +171,10 @@ class EdgeBag {
   }
 }
 
-/** 每个分组的规模与 import 清单。relay 的测试与部署脚本不算架构单元。 */
+/** 每个分组的规模与 import 清单。 */
 function collectNodes(groups, nodes) {
   for (const group of groups) {
-    const files = walk(group.abs).filter((abs) => {
-      if (group.id !== 'relay') return true
-      const relPath = rel(abs)
-      return !relPath.includes('/tests/') && !relPath.startsWith('relay/deploy/')
-    })
+    const files = walk(group.abs)
     let lines = 0
     const swiftImports = new Set()
     const pyModules = new Set()

@@ -107,7 +107,7 @@ test('resolveIdentity explains how to provision a missing identity', async () =>
   const path = await tempPath()
   await assert.rejects(
     () => resolveIdentity({ stateFile: path }),
-    /not registered yet.*dsh-mobile-link enroll.*admin\.py agent-register/s,
+    /not registered yet.*dsh-mobile-link enroll.*dsh-relay admin agent-register/s,
   )
 })
 test('a read-only state file is reported but not fatal', async () => {
@@ -152,7 +152,7 @@ test('mintPairCode posts to the prefixed relay and builds the dsh:// payload', a
 
 test('mintPairCode asks for a persistent code without putting ttlMs on the wire', async () => {
   // 032：持久码那条路必须**不带** ttlMs——中转按 `"ttlMs" not in body` 判持久
-  // （relay/api.py 的 pair_code）。带一个 `ttlMs: null` 会被读成"限时、但没给时长"，
+  // （relay-go/internal/httpapi 的 pair-code 处理）。带一个 `ttlMs: null` 会被读成"限时、但没给时长"，
   // 于是落到中转默认的 10 分钟：面板显示出倒计时，码十分钟后就废
   // （owner 2026-10-17 报的就是这个）。
   const calls = []

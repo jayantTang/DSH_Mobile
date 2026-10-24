@@ -60,22 +60,20 @@ import { renderReport, updateHistory } from './feedback-report.mjs'
 const HERE = dirname(fileURLToPath(import.meta.url))
 const ROOT = join(HERE, '..', '..')
 
-/// 服务器侧固定路径（与 relay/deploy 的部署位置一致）。
+/// 服务器侧固定路径（与 relay-go/deploy 的部署位置一致）。
 const REMOTE = {
-  python: '/opt/dsh-relay/.venv/bin/python',
-  admin: '/opt/dsh-relay/admin.py',
+  argv: ['/opt/dsh-relay-go/bin/dsh-relay', 'admin'],
   db: '/var/lib/dsh-relay/state.db',
 }
 /// 信件服务的固定路径（DESIGN-20261015 M4：信件类命令改打这里；与中转同一台主机）。
 const MAIL_REMOTE = {
-  python: '/opt/dsh-mail/.venv/bin/python',
-  admin: '/opt/dsh-mail/admin.py',
+  argv: ['/opt/dsh-mail/.venv/bin/python', '/opt/dsh-mail/admin.py'],
   db: '/var/lib/dsh-mail/mail.db',
 }
-const LOCAL_ADMIN = join(ROOT, 'relay', 'admin.py')
+const LOCAL_RELAY_BIN = join(ROOT, 'relay-go', 'bin', 'dsh-relay')
 const LOCAL_MAIL_ADMIN = join(ROOT, 'mail', 'admin.py')
-const LOCAL_PYTHON = join(ROOT, 'relay', '.venv', 'bin', 'python')
-const LOCAL_DB = join(ROOT, 'relay', '.local', 'state.db')
+const LOCAL_PYTHON = join(ROOT, '.venv', 'bin', 'python')
+const LOCAL_DB = join(ROOT, 'relay-go', '.local', 'state.db')
 const LOCAL_MAIL_DB = join(ROOT, 'mail', '.local', 'mail.db')
 const DEFAULT_OUT = join(ROOT, 'maintainers', 'reports')
 
@@ -124,7 +122,7 @@ const USAGE = `用法：
   feedback.mjs report [--install-agent | --uninstall-agent]
   feedback.mjs report [--date D | --full-day] --send [--account ACC]... [--subject S] [--days 30] [--out DIR]
   feedback.mjs report-data [--days 30]
-  （加 --local 跑本机 relay/.local/state.db；写操作默认预演）
+  （加 --local 跑本机 relay-go/.local/state.db；写操作默认预演）
   （--date 指定报告覆盖哪一天：today = 今天 00:00 到此刻（默认口径），yesterday 或
     YYYY-MM-DD = 那一整天；日期一律由服务器按它自己的本地日算，不看本机时钟。
     --full-day 是 --date yesterday 的简写（00:00 的定时日报用），两个同时给是用法错误）
@@ -135,7 +133,7 @@ const USAGE = `用法：
     否则拒发（退出码 2）；只发给 owner 自己的（日报、自测）不需要。预演不判）
   （发给别人的信发送成功后，脚本自动向 owner 账号投一条「发件存档」通知：信件全文 +
     发送对象 + 发送人。只发给 owner 自己的不存档；存档失败只警告需手动补档、不重发原件）
-  （双目标：信件类命令打 /opt/dsh-mail，用量与报告数据打 /opt/dsh-relay 并与 mail 的
+  （双目标：信件类命令打 /opt/dsh-mail，用量与报告数据打 /opt/dsh-relay-go 并与 mail 的
     feedback-stats 在本机合并；notify --all 先从中转展开成点名账号再投）`
 
 /// 用法错误（退出码 2）与业务失败（1）分开。
@@ -346,16 +344,16 @@ export function adminArgs({ sub, opts }, db) {
 export function buildInvocation({ sub, opts }, { env = {}, exists = existsSync } = {},
   service = (MAIL_SUBS.has(sub) || sub === 'feedback-stats') ? 'mail' : 'relay') {
   const target = service === 'mail'
-    ? (opts.local ? { python: exists(LOCAL_PYTHON) ? LOCAL_PYTHON : 'python3',
-      admin: LOCAL_MAIL_ADMIN, db: LOCAL_MAIL_DB } : MAIL_REMOTE)
-    : (opts.local ? { python: exists(LOCAL_PYTHON) ? LOCAL_PYTHON : 'python3',
-      admin: LOCAL_ADMIN, db: LOCAL_DB } : REMOTE)
+    ? (opts.local ? { argv: [exists(LOCAL_PYTHON) ? LOCAL_PYTHON : 'python3', LOCAL_MAIL_ADMIN],
+      db: LOCAL_MAIL_DB } : MAIL_REMOTE)
+    : (opts.local ? { argv: [exists(LOCAL_RELAY_BIN) ? LOCAL_RELAY_BIN : 'dsh-relay', 'admin'],
+      db: LOCAL_DB } : REMOTE)
   const args = adminArgs({ sub, opts }, target.db)
   if (opts.local) {
-    return { kind: 'local', argv: [target.python, target.admin, ...args] }
+    return { kind: 'local', argv: [...target.argv, ...args] }
   }
   const { target: sshTarget, port } = resolveSshTarget(env.DSH_OTA_HOST)
-  const remote = [target.python, target.admin, ...args].map(shellQuote).join(' ')
+  const remote = [...target.argv, ...args].map(shellQuote).join(' ')
   const ssh = ['-q', '-o', 'BatchMode=yes', ...(port ? ['-p', port] : []), sshTarget, remote]
   return { kind: 'ssh', argv: ['ssh', ...ssh], remote }
 }
@@ -665,7 +663,7 @@ export function relayDevicesInvocation(parsed, { env, exists }) {
 }
 
 /// 中转的调试设备 id（`DSH-` 前缀或测试台机型）——feedback-stats 剔测试提交用。
-/// 规则与 relay/admin.py 的 `_is_debug_device` 同一条。
+/// 规则与中转管理命令的调试设备判定同一条。
 export function debugDeviceIds(rows) {
   return (Array.isArray(rows) ? rows : [])
     .filter((row) => String(row?.name ?? '').startsWith('DSH-')
@@ -688,25 +686,9 @@ export function mergeReportData(relayReport, mailStats) {
   return merged
 }
 
-/// 服务器上还没部署 mail（`/opt/dsh-mail` 不存在）时的判定：只认"目标缺失"，
-/// 别的失败（线程不存在、审批、网络）不许触发回退——那会把真错误搅浑。
-export function mailTargetMissing(error) {
-  const text = failureText(error)
-  return text.includes('dsh-mail') && /No such file or directory|not found/i.test(text)
-}
-
-/// 跑一条**信件类**命令：先打 mail；服务器还没部署 mail 时回退中转旧路径
-/// （生产切换前的过渡期；切换后这条回退自然死掉——目标存在了就不进来）。
-/// 双轨期两端行为逐字一致（M2 的移植验收），回退不改变语义。
-export function runLetterCommand({ sub, opts }, { env, exists, run, io }) {
-  const mail = buildInvocation({ sub, opts }, { env, exists }, 'mail')
-  try {
-    return run(mail.argv)
-  } catch (error) {
-    if (!mailTargetMissing(error)) throw error
-    io.err('（回退）服务器上还没有 mail 服务，信件命令暂走中转旧路径；生产切换后此提示消失')
-    return run(buildInvocation({ sub, opts }, { env, exists }, 'relay').argv)
-  }
+/// 跑一条**信件类**命令：只打 mail 服务。
+export function runLetterCommand({ sub, opts }, { env, exists, run }) {
+  return run(buildInvocation({ sub, opts }, { env, exists }, 'mail').argv)
 }
 
 /// HTML 报告先落服务器上的临时路径：三万字节当 ssh 参数元素传会撞命令行长度与引号。
@@ -832,14 +814,7 @@ function fetchReportData(parsed, { env, exists, run, io, github, testflight }) {
     sub: 'feedback-stats',
     opts: { local: opts.local, days: opts.days, asOf: opts.asOf, debugDevices },
   }, { env, exists }, 'mail')
-  let mailStats
-  try {
-    mailStats = JSON.parse(run(stats.argv))
-  } catch (error) {
-    if (!mailTargetMissing(error)) throw error
-    io.err('（回退）服务器上还没有 mail 服务，日报的反馈板块暂用中转的旧计算；生产切换后此提示消失')
-    mailStats = { ok: false }
-  }
+  const mailStats = JSON.parse(run(stats.argv))
   const merged = mergeReportData(relayReport, mailStats)
   const counts = github === null ? null : (github ?? readGitHubStats())
   if (counts) merged.github = counts

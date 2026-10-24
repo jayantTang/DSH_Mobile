@@ -232,8 +232,8 @@ sudo systemctl enable --now dsh-relay-go
 
 拿到码之后**回到 A 的第 2 步**继续（装连接器 → enroll → 重启 → 扫码）。
 
-Caddy 路由不新增 DNS 与证书：用 `python3 relay/deploy/caddy_splice.py insert /etc/caddy/Caddyfile
-relay/deploy/Caddyfile.snippet <你的站点>` 把带标记的片段插进既有站点块，写入前先 `caddy validate`，
+Caddy 路由不新增 DNS 与证书：用 `python3 relay-go/deploy/caddy_splice.py insert /etc/caddy/Caddyfile
+relay-go/deploy/Caddyfile.snippet <你的站点>` 把带标记的片段插进既有站点块，写入前先 `caddy validate`，
 失败即回滚；`remove` 按标记原样移除。
 
 运维侧的实时负载、每设备流量与生效中的限额：

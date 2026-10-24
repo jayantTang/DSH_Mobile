@@ -43,7 +43,7 @@ def normalize_base_path(raw: str | None) -> str:
 
 
 #: 部署构建号 `yyyyMMdd.HHmm`（北京时间），由 `deploy/deploy.sh` 写进同一目录的
-#: `build.json`。与中转的 `relay/version.py` 同一口径：没有注册表就用构建号，
+#: `build.json`。与中转的版本口径相同：没有注册表就用构建号，
 #: 一眼能看出发布先后；读不到就报 `0.0.0`（= 这不是一次部署）。
 _BUILD_FILE = Path(__file__).with_name("build.json")
 UNVERSIONED = "0.0.0"

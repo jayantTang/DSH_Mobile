@@ -18,7 +18,7 @@
 覆盖帧分类与关闭码的单元级行为。
 
 用法：
-  relay/.venv/bin/python relay-go/scripts/m4b/backpressure_e2e.py
+  .venv/bin/python relay-go/scripts/m4b/backpressure_e2e.py
 """
 
 from __future__ import annotations

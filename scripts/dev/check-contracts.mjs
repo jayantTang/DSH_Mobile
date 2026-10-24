@@ -39,17 +39,17 @@ const readJson = (relative) => JSON.parse(read(relative))
 const problems = []
 const fail = (message) => problems.push(message)
 
-// ── ① DLP 帧契约：三端读同一份向量 ──────────────────────────────────────────
+// ── ① DLP 帧契约：两端读同一份向量 ──────────────────────────────────────────
 
 /**
- * 每端引用向量文件时用的相对路径写法（三端目录深度不同，所以各写各的）。
+ * 每端引用向量文件时用的相对路径写法（两端目录深度不同，所以各写各的）。
  *
  * 注意：**契约检查不看代码逻辑，只看接线**。真正的断言在各自的测试文件里，
  * 这里的价值是「谁把某端改回自己的硬编码常量，这里会红」。
  */
 const VECTOR_CONSUMERS = [
   { file: 'plugins/mobile-link/test/dlp-contract.test.js', needle: "'test/contract/dlp-vectors.json'" },
-  { file: 'relay/tests/test_dlp_contract.py', needle: '"test" / "contract" / "dlp-vectors.json"' },  { file: 'ios/DSHMobile/DSHKit/Tests/DSHKitTests/DLPContractTests.swift', needle: '"test/contract/dlp-vectors.json"' },
+  { file: 'ios/DSHMobile/DSHKit/Tests/DSHKitTests/DLPContractTests.swift', needle: '"test/contract/dlp-vectors.json"' },
 ]
 
 const vectorPath = 'test/contract/dlp-vectors.json'

@@ -5,7 +5,7 @@
 // 也不缓存任何跨次请求的状态。
 //
 // 输出兼容是硬约束：JSON 字段名、键序、缩进（2 空格）与 SetEscapeHTML(false)
-// 与 relay/admin.py 的 `ops-report` 逐字节一致；scripts/dev/feedback.mjs 直接消费
+// 形状固定；scripts/dev/feedback.mjs 直接消费
 // 这份 JSON，改名即破坏日报。
 package opsreport
 

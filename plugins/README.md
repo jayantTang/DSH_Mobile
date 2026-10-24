@@ -57,7 +57,7 @@ curl -s http://127.0.0.1:54499/mobile-link/status -H "cookie: <your dsh-auth coo
 1. **Provision the PC identity** (once). On the relay host:
 
    ```bash
-   /opt/dsh-relay/.venv/bin/python /opt/dsh-relay/admin.py --db /var/lib/dsh-relay/state.db \
+   /opt/dsh-relay-go/bin/dsh-relay admin --db /var/lib/dsh-relay/state.db \
        agent-register --account acc_xxx --name "MacBook Pro" \
        --relay wss://relay.example.com/dsh-link \
        --write-config ~/.dsh/mobile-link/agent.json
@@ -82,7 +82,7 @@ curl -s http://127.0.0.1:54499/mobile-link/status -H "cookie: <your dsh-auth coo
         -H 'content-type: application/json' -H "cookie: <dsh-auth cookie>" -d '{}'
    ```
 
-   or from the relay host: `admin.py … code-mint --agent agt_…`.
+   or from the relay host: `dsh-relay admin … code-mint --agent agt_…`.
 
    The response carries `code` (`XXXX-XXXX`), `expiresAt` and a
    `dsh://pair?relay=<relay-url>&code=<code>` payload to render as a QR code.
@@ -178,7 +178,7 @@ node --test test/*.test.js        # 62 tests: codec, URL joining, stream mapping
                                   # cordis runtime
 ```
 
-The full middle-tier proof lives in `../../relay/tests/integration_e2e.py`.
+The full middle-tier proof lives in `../../relay-go/tests/blackbox`.
 
 ## How it behaves
 
@@ -204,7 +204,7 @@ The full middle-tier proof lives in `../../relay/tests/integration_e2e.py`.
 
 | Symptom | Fix |
 |---|---|
-| `mobile-link: no agent identity` | run `admin.py agent-register --write-config ~/.dsh/mobile-link/agent.json`, or set the env vars |
+| `mobile-link: no agent identity` | run `dsh-relay admin agent-register --write-config ~/.dsh/mobile-link/agent.json`, or set the env vars |
 | status shows `state: "backoff"` and `lastError: "unknown or disabled agent token"` | the secret was rotated; re-run `agent-register --write-config` |
 | status shows `dsh.error: "no DSH launch token found"` | DSH has not written `endpoint.json` yet, or you set `dshUrl` without a `?token=` |
 | `401` from DSH keeps repeating | restart DSH so a fresh `endpoint.json` exists; the agent re-reads it on every reconnect |

@@ -34,7 +34,7 @@
     {
       "id": "relay",
       "label": "中转按设备转发字节",
-      "file": "relay/hub.py",
+      "file": "relay-go/internal/hub/hub.go",
       "symbol": "RelayHub",
       "kind": "net"
     }

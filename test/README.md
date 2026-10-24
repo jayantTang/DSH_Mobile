@@ -76,10 +76,10 @@ test/.venv/bin/python test/tools/test_report.py    # 每条规则一个反例，
 | `test:app-unit` | 手机 iOS | `ios/DSHMobile/DSHMobileTests` | 测试宿主检测、钥匙串往返、平台相邻代码可测性 |
 | `plugins/mobile-link` `npm test` | 连接器 | `plugins/mobile-link/test` | 端点发现、配对、文件传输、journal、安装路径解析 |
 | `plugins/send-image`、`plugins/doubao-image` `npm test` | 图片插件（手机 iOS 与 DSH 本体之间的图片投递） | `plugins/send-image/test`、`plugins/doubao-image/test` | 图片生成、编码与投递 |
-| `relay` `pytest`（非 e2e） | 中转服务 | `relay/tests/test_*.py` | 中转协议、账户与配额、管理 CLI |
-| `relay` 信件与推送相关测试 | 邮件服务（中转侧信件线程、通知投递、APNs 注册与推送） | `relay/tests/test_feedback_*.py`、`test_push.py`、`test_notify_push.py`、`test_admin_push.py`、`test_app_push_registration.py` | 信件读写、未读、报告、通知投递、推送登记 |
+| `relay-go` `go test ./...` | 中转服务 | `relay-go/internal/**` | 中转协议、账户与配额、文件通道、推送、管理 CLI |
+| `relay-go` 黑盒契约（`make test-blackbox`） | 中转服务 | `relay-go/tests/blackbox` | HTTP/WS 契约、配对、反馈、限流、配额、可靠性 |
+| `mail` `pytest` | 邮件服务（信件线程、通知投递） | `mail/tests`、`mail/api.py`、`mail/store.py` | 信件读写、未读、团队收件箱、通知投递、部署物 |
 | 手机侧收件箱测试 | 邮件服务 × 手机 iOS | `ios/DSHMobile/Modules/Features/Feedback/Tests/DomainTests`、`ios/DSHMobile/DSHKit/Tests/DSHKitTests/RelayFeedbackTests.swift` | 信件解析、未读与已读、回信组合 |
-| `relay` `*_e2e.py` | 中转服务（渠道 L2） | `relay/tests/e2e_support.py`、`test_account_state_push_e2e.py` | 启动真实 Caddy 与 HTTP 服务的端到端 |
 | `scripts/**/*.test.mjs` | 非产品组件：仓库工具链 | `scripts/dev/*.test.mjs`、`scripts/release/*.test.mjs` | 重启、档案对等、插件热更、调试设备清扫 |
 | `test/cases/**` | 手机 iOS × 中转服务 × 连接器 × DSH 本体（端到端） | `test/cases/`、`test/tools/` | 真机形态界面、手势、真实链路；同时充当 `ios-app × l1` 的逐屏核对证据 |
 | `npm run lane:l1 -- run --scenario …` 的宿主场景 | DSH 本体（命令行 web 版宿主）× 连接器（插件挂载） | `plugins/mobile-link/lib/dsh-client.js`、`scripts/install/install-plugin.sh` | 起停、插件挂载、路由可达 |

@@ -1,0 +1,110 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# DSH Link Protocol (DLP) relay route fragment.
+#
+# This is NOT a site block. relay-go/deploy/caddy_splice.py inserts it *inside*
+# the existing site block that serves the configured site address (default
+# relay.example.com), immediately before the first handle / handle_path /
+# route / reverse_proxy directive — so /dsh-link/* is matched before any
+# catch-all handle block, and nothing that is already there changes.
+#
+#   python3 relay-go/deploy/caddy_splice.py insert \
+#     /etc/caddy/Caddyfile relay-go/deploy/Caddyfile.snippet relay.example.com
+#   sudo caddy validate --config /etc/caddy/Caddyfile && sudo systemctl reload caddy
+#
+# Revert with `caddy_splice.py remove`, or by deleting the two marker lines.
+#
+# Why it is written this way:
+#   * handle_path strips the /dsh-link prefix before proxying, so the relay
+#     itself keeps serving root-relative routes (/link/device, /healthz, ...).
+#     The relay also accepts the un-stripped form, so a plain `handle` or
+#     `reverse_proxy` in front of it works too.
+#   * Caddy performs the WebSocket upgrade automatically.
+#   * read_timeout/write_timeout are pinned to 0 (no timeout) so an idle
+#     /link/agent or /link/device socket is never cut; the relay also sends a
+#     DLP ping every 20s.
+#   * flush_interval -1 streams every logical-stream frame immediately instead
+#     of buffering it, which the phone would otherwise see as a stalled stream.
+#   * No `encode`: buffering/compressing an upgraded connection buys nothing
+#     here and is a risk not worth taking.
+#   * header_up X-Real-IP and X-Forwarded-For: the relay's per-client rate
+#     limiting needs to know who the caller really is, and behind this block
+#     every caller arrives from 127.0.0.1. `header_up` **replaces** these
+#     headers (v2.11.4) rather than appending, so nothing a caller sent
+#     survives. The relay *only* believes them when the peer is loopback, so
+#     removing them degrades rate limiting to "one bucket for the whole
+#     internet" — it does not open a bypass.
+# ─────────────────────────────────────────────────────────────────────────────
+redir /dsh-link /dsh-link/ 308
+
+# Over-the-air iOS installs: the exported .ipa, its manifest, and a tiny install
+# page. Serving them from the already-certified site means the phone can install
+# an update from anywhere without a cable or a Mac on the same network, and the
+# files stay inside this reversible block.
+redir /ios /ios/ 308
+
+# `handle`, not `handle_path`: the prefix is NOT stripped, so /ios/x.ipa maps
+# onto <root>/ios/x.ipa and the whole install bundle stays in its own folder.
+handle /ios/* {
+	root * /opt/dsh-relay/public
+	header Cache-Control "no-store"
+	# Caddy has no MIME entry for these two, and without a Content-Type the OTA
+	# manifest is whatever the client decides to make of it. `caddy validate`
+	# refuses a bad matcher, so a typo here cannot take the site down.
+	@plist path *.plist
+	header @plist Content-Type "application/x-plist"
+	@ipa path *.ipa
+	header @ipa Content-Type "application/octet-stream"
+	file_server
+}
+
+# /stats is the relay's operator page: it names every device on the relay and
+# how many bytes each one has moved. It is *not* part of the protocol and no
+# client calls it, so the public path is refused here, before it can reach the
+# relay at all.
+#
+# This is one half of a two-half guarantee, and deliberately so: the relay's own
+# handler also refuses any peer that is not loopback (relay-go/internal/httpapi/stats.go). This
+# block alone would stop covering the endpoint the moment the site gains another
+# route to the relay, or the relay moves off loopback; that check alone would
+# stop covering it the moment the front end forwards everything. Keep both.
+#
+# 404, not 403: someone probing for endpoints should not learn that this one
+# exists. Reach the real page from a shell on the host — `curl -s
+# localhost:8787/stats`, or over SSH — which is how it is meant to be read.
+@relay_stats path /dsh-link/stats /stats
+
+# `handle`, NOT a bare `respond @relay_stats`. Caddy sorts directives, and a
+# bare `respond` is evaluated *after* `handle_path /dsh-link/*` no matter where
+# it is written — so the public path used to be proxied straight to the relay,
+# which sees a loopback peer and answers 200 with the full page. Both halves of
+# the guarantee failed together, silently.
+#
+# Between `handle` blocks the winner is the most specific path, and
+# /dsh-link/stats is more specific than /dsh-link/*, so this one is evaluated
+# first. Verify on the host with a real request after every Caddy change.
+handle @relay_stats {
+	@public_stats path /dsh-link/stats /stats
+	respond @public_stats "Not Found" 404
+}
+
+handle_path /dsh-link/* {
+	reverse_proxy 127.0.0.1:8787 {
+		transport http {
+			dial_timeout 5s
+			read_timeout 0
+			write_timeout 0
+			keepalive 60s
+			keepalive_idle_conns 4
+		}
+		flush_interval -1
+		# X-Forwarded-For is what the relay derives the rate-limit bucket from
+		# (relay-go/internal/httpapi 的 ClientIdentifier). `header_up` **replaces** the header
+		# with the real peer — measured on v2.11.4, it does *not* append — so the
+		# value the relay reads is ours and the client-supplied one is gone.
+		# The relay additionally ignores the header entirely unless the peer is
+		# loopback. Replace this with a gateway that *appends* and the relay
+		# would have to read the **last** entry (or X-Real-IP) instead.
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-For {remote_host}
+	}
+}

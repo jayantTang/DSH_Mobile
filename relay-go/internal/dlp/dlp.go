@@ -2,7 +2,7 @@
 //
 // 中转是**透明转发器**：它不解释 DSH 语义，只需要知道一帧往哪个方向走、属于哪台
 // 设备。其余内容原样穿过，包括这个版本不认识的帧类型（`t` 按设计向前兼容）。
-// 口径逐项对齐 relay/dlp.py。
+// 帧上限与校验口径固定。
 //
 // 线上形状（docs/RELAY-PROTOCOL.md §3）：
 //
@@ -25,7 +25,7 @@ import (
 	"unicode/utf8"
 )
 
-// ProtocolVersion 是 DLP 协议版本（relay/dlp.py 的 PROTOCOL_VERSION）。
+// ProtocolVersion 是 DLP 协议版本。
 const ProtocolVersion = 1
 
 // MaxFrameBytes 是单帧硬上限，与 DSH 的图片附件上限一致（dlp.MAX_FRAME_BYTES）。

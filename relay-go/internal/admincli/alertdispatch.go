@@ -1,4 +1,4 @@
-// alert-dispatch：把中转写下的告警队列投进我们的信箱（Python relay/alert-dispatch.py）。
+// alert-dispatch：把中转写下的告警队列投进我们的信箱（原 Python 实现的对应物）。
 //
 // 为什么投递独立成一个动作（而不是在 relay 里发）：
 //
@@ -263,7 +263,7 @@ func orderedAlertDetailKeys(details map[string]any) []string {
 	return append(keys, extra...)
 }
 
-// deliverAlert 调信箱的 admin.py 投一条通知；返回非 nil 表示投递失败。
+// deliverAlert 调信箱的管理命令投一条通知；返回非 nil 表示投递失败。
 func deliverAlert(options alertDispatchOptions, subject, body, account string,
 	stdout, stderr io.Writer) error {
 	handle, err := os.CreateTemp("", "dsh-alert-*.md")

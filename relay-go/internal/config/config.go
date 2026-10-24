@@ -1,6 +1,6 @@
 // Package config 收拢 dsh-relay 的启动参数。
 //
-// 口径按 Python 版 relay/relay.py 的 build_parser 逐项对齐：参数名、环境变量名、
+// 参数口径集中在这里：参数名、环境变量名、
 // 默认值与换算关系只在这里定义一份。优先级：命令行 flag > 环境变量 > 常量默认值。
 package config
 

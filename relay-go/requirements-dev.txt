@@ -1,0 +1,8 @@
+# 黑盒契约套件（tests/blackbox）与 m4b/m8 演练脚本的 Python 依赖。
+#
+# 这些脚本只通过 `RELAY_CMD` / `ADMIN_CMD` 与被测二进制交互，不 import Go 实现，
+# 所以依赖面很小：HTTP/WS 客户端、pytest 及其 aiohttp 夹具。
+aiohttp>=3.9
+pytest>=8
+pytest-asyncio>=0.23
+pytest-aiohttp>=1.0

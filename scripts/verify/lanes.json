@@ -105,13 +105,6 @@
       ]
     },
     {
-      "id": "relay",
-      "title": "中转 relay",
-      "globs": [
-        "relay/**"
-      ]
-    },
-    {
       "id": "relay-go",
       "title": "中转 relay-go（Go 实现）",
       "globs": [
@@ -249,24 +242,6 @@
       "reason": "干净 guest 里要装 Xcode，成本高；这级不提供本机拿不到的信息（除非验\"从零启用\"）"
     },
     {
-      "subject": "relay",
-      "lane": "l1",
-      "value": "required",
-      "reason": "pytest 在本机就是权威口径，含真 Caddy 的端到端那半"
-    },
-    {
-      "subject": "relay",
-      "lane": "l2",
-      "value": "required",
-      "reason": "CI 已在干净 Linux 上跑同一套，含装真 Caddy 的硬要求"
-    },
-    {
-      "subject": "relay",
-      "lane": "l3",
-      "value": "usable",
-      "reason": "部署验证可以在 guest 里做，但日常靠 L1 与 L2 足够"
-    },
-    {
       "subject": "relay-go",
       "lane": "l1",
       "value": "required",
@@ -276,7 +251,7 @@
       "subject": "relay-go",
       "lane": "l2",
       "value": "usable",
-      "reason": "容器里能跑同一套 go test，但 CI 目前只跑 Python 版 pytest；这级暂不作为必跑"
+      "reason": "容器里能跑同一套 go test 与黑盒契约；本机不提供 Docker，这级不作为必跑"
     },
     {
       "subject": "relay-go",

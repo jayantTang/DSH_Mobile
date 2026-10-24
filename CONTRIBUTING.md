@@ -6,7 +6,8 @@ We take patches, issues and case reports. The short version:
 
 1. Open an issue first for anything larger than a typo — it saves a rewrite.
 2. Run the checks before pushing: `npm test`, `npm run check:docs`, `npm run check:secrets`,
-   plus `swift test` under `ios/DSHMobile/DSHKit` and `pytest` under `relay/`.
+   plus `swift test` under `ios/DSHMobile/DSHKit`, `pytest` under `mail/`, and `make test`
+   under `relay-go/`.
 3. Behaviour changes come with a case (see `test/README.md`) and a report; UI changes come with a
    simulator screenshot.
 4. Commit messages are written in Chinese in this repository — that is a convention, not a rule
@@ -16,7 +17,7 @@ The Chinese section below has the same rules in more detail.
 
 ---
 本仓库包含四部分：iOS App（SwiftUI）、协议层 Swift Package、电脑侧连接器（DSH 插件，Node ESM）
-与公网中转（Python）。改动任一处的流程一致：本地测试 → 文档同步 → 提交。
+与公网中转（Go）。改动任一处的流程一致：本地测试 → 文档同步 → 提交。
 
 ## 环境
 
@@ -25,7 +26,7 @@ The Chinese section below has the same rules in more detail.
 | `ios/DSHMobile/DSHKit` | macOS + Swift 工具链（`swift test` 可直接跑，无 UI 依赖） |
 | `ios/DSHMobile/DSHMobile` | macOS + Xcode 16 以上 + 一个 iOS 17 以上的仿真器 |
 | `plugins/*` | Node.js ≥ 22 |
-| `relay/` | Python 3.12 |
+| `relay-go/` | Go 1.27（`make test`）；黑盒套件另需 Python 3.12 与 `.venv` |
 
 ## 测试
 
@@ -34,7 +35,8 @@ cd ios/DSHMobile/DSHKit && swift test        # 协议层
 cd plugins/mobile-link  && npm test          # 连接器
 cd plugins/send-image   && npm test
 cd plugins/doubao-image && npm test
-cd relay && .venv/bin/python -m pytest -q    # 中转
+cd relay-go && make test                     # 中转
+cd mail && ../.venv/bin/python -m pytest -q   # 信件服务
 npm run check:secrets                        # 跟踪文件里没有本机真值
 npm run check:docs                           # 文档结构、口吻与链接
 ```

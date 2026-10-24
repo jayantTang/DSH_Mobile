@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """M4b 任务 3：短时 soak（100 设备 × 10 fps × 10 分钟）。
 
-口径与 `relay/tests/blackbox/performance/bench.py` 的 steady 注入一致：
+口径与 `relay-go/tests/blackbox/performance/bench.py` 的 steady 注入一致：
   * 20 台电脑（agent）× 每台 5 台设备 = 100 台设备（每账户默认最多 8 台配对设备，
     不为此改限额）；
   * 每台设备每 100 ms 发一帧 `req`（方法 `bench/echo`），对应的 agent 原 id 回 `res`；
@@ -14,7 +14,7 @@
   * 客户端：发出/回显/丢失、错误、延迟分位数。
 
 用法：
-  relay/.venv/bin/python relay-go/scripts/m4b/soak.py --seconds 600 --sample 15
+  .venv/bin/python relay-go/scripts/m4b/soak.py --seconds 600 --sample 15
   # 冒烟：--seconds 20 --sample 5 --devices 20 --agents 4
 """
 

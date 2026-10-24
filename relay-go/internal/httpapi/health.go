@@ -20,7 +20,7 @@ import (
 // Unversioned 是没有部署构建号时的 relayVersion（Python version.UNVERSIONED）。
 const Unversioned = "0.0.0"
 
-// ProtocolVersion 是 DLP 协议版本，回答"能不能对话"（relay/dlp.py 的 PROTOCOL_VERSION）。
+// ProtocolVersion 是 DLP 协议版本，回答"能不能对话"（`internal/dlp` 的 `ProtocolVersion`）。
 const ProtocolVersion = 1
 
 // Capabilities 是 /healthz 的能力清单，逐项对齐 Python 版 api.healthz：
@@ -33,7 +33,7 @@ var Capabilities = []string{
 	"file-transfer",
 }
 
-// BuildInfo 是部署指纹，对应 relay/build.json 里的 commit / deployedAt。
+// BuildInfo 是部署指纹，对应 `bin/build.json` 里的 commit / deployedAt。
 type BuildInfo struct {
 	Commit     string `json:"commit,omitempty"`
 	DeployedAt string `json:"deployedAt,omitempty"`
