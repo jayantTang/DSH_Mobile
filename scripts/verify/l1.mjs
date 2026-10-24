@@ -19,7 +19,7 @@ import { join } from 'node:path'
 import { realDshHome, whichBinary } from './l1-runtime.mjs'
 import {
   desktopInstance, freshInstall, iosLinkCarrierLifecycle, linkDiagnostics, mailTests,
-  pluginInstallHot, relayTests, smoke,
+  pluginInstallHot, relayGoTests, relayTests, smoke,
 } from './l1-scenarios.mjs'
 
 export const lane = {
@@ -33,6 +33,10 @@ export const lane = {
     'relay-tests': {
       title: '中转单测（含真 Caddy 的端到端那半）在本机跑一遍，且不动真实数据',
       run: relayTests,
+    },
+    'relay-go-tests': {
+      title: 'Go 中转单测（make test）在本机跑一遍，且不动真实数据',
+      run: relayGoTests,
     },
     'mail-tests': {
       title: '信件服务单测（含真 Caddy 的切换演练）在本机跑一遍，且不动真实数据',

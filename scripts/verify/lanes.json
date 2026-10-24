@@ -112,6 +112,13 @@
       ]
     },
     {
+      "id": "relay-go",
+      "title": "中转 relay-go（Go 实现）",
+      "globs": [
+        "relay-go/**"
+      ]
+    },
+    {
       "id": "mail",
       "title": "信件服务 mail",
       "globs": [
@@ -258,6 +265,24 @@
       "lane": "l3",
       "value": "usable",
       "reason": "部署验证可以在 guest 里做，但日常靠 L1 与 L2 足够"
+    },
+    {
+      "subject": "relay-go",
+      "lane": "l1",
+      "value": "required",
+      "reason": "go test ./... 在本机就是权威口径；用例自带 t.TempDir() 临时库，不碰真实数据"
+    },
+    {
+      "subject": "relay-go",
+      "lane": "l2",
+      "value": "usable",
+      "reason": "容器里能跑同一套 go test，但 CI 目前只跑 Python 版 pytest；这级暂不作为必跑"
+    },
+    {
+      "subject": "relay-go",
+      "lane": "l3",
+      "value": "usable",
+      "reason": "部署后的端到端验证可以在 guest 里做，日常靠 L1 足够"
     },
     {
       "subject": "mail",

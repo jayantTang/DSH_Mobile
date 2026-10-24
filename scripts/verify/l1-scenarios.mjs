@@ -71,6 +71,55 @@ export async function relayTests({ outDir, log = () => {} }) {
 }
 
 /**
+ * 场景：Go 中转的单测在本机跑一遍。
+ *
+ * 为什么它在 L1：`relay-go` 的权威口径是 `make test`（用例自带 `t.TempDir()` 临时库），
+ * 本场景额外要证明的只有"跑它们没动真实数据"这一条。构建环境（CGO、缓存目录）由
+ * `relay-go/Makefile` 固定，这里不另设变量，避免与 `relay-go/README.md` 的口径分叉。
+ */
+export async function relayGoTests({ outDir, log = () => {} }) {
+  const before = snapshotRealData()
+  const observations = []
+  const commands = []
+  const argv = ['make', 'test']
+  let status = 'fail'
+  let note
+
+  try {
+    const result = spawnSync('make', ['test'], {
+      cwd: join(REPO_ROOT, 'relay-go'), encoding: 'utf8', timeout: 900_000, maxBuffer: 64 * 1024 * 1024,
+    })
+    const logPath = join(outDir, 'relay-go-test.log')
+    writeFileSync(logPath, `$ cd relay-go && make test\n${result.stdout ?? ''}${result.stderr ?? ''}`)
+    commands.push({ argv, exitCode: result.status ?? -1, stdoutPath: logPath, note: 'Go 中转单测' })
+    const summary = (result.stdout ?? '').trim().split('\n')
+      .filter((line) => /^(ok|FAIL|---)/.test(line)).slice(-6).join(' / ') || '(没有输出)'
+    observations.push({ step: 'go test', fact: `${summary}（exit ${result.status}）`, evidence: 'relay-go-test.log' })
+    if (result.status === 0) status = 'pass'
+    else note = `make test 退出码 ${result.status}：${summary}`
+  } catch (error) {
+    note = error.message
+    observations.push({ step: 'error', fact: error.message })
+  }
+
+  const after = snapshotRealData()
+  const untouched = before.digest === after.digest
+  observations.push({ step: 'isolation', fact: untouched ? '真实 agent.json 未变' : '真实 agent.json 变了' })
+  log(`L1: relay-go 单测 ${status}`)
+  return {
+    status,
+    note,
+    observations,
+    commands,
+    isolation: {
+      dshHome: '(go test 只用 t.TempDir()，不碰任何真实档案)',
+      realHomeUntouched: untouched,
+      proof: `跑前 ${before.digest} / 跑后 ${after.digest}（sha256 + mtime）`,
+    },
+  }
+}
+
+/**
  * 场景：信件服务（mail）的单测在本机跑一遍。
  *
  * 为什么它在 L1：与中转同一条理由（见 lanes.json 的理由列）——mail 的权威口径就是
