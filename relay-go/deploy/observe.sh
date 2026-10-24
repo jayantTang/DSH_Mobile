@@ -2,7 +2,7 @@
 # 采样 Go 中转的观察指标，追加到 /var/log/dsh-relay-go-observe.jsonl。
 #
 # 只读：不改服务、不写数据库；每 15 分钟由 dsh-relay-go-observe.timer 触发。
-# 字段见 maintainers/OBSERVE-20261023-control-frame.md §2。
+# 字段见下方注释与 relay-go/README.md 的「可观测性」一节。
 set -euo pipefail
 
 OUT="${DSH_RELAY_OBSERVE_OUT:-/var/log/dsh-relay-go-observe.jsonl}"

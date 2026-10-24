@@ -166,8 +166,7 @@ pprof 在 M2.5 加入（DESIGN §8 要求）。
 `dlp.Scan` 只在原始字节上取顶层字段，`deviceId` 的注入/摘除是就地改写（`internal/dlp.Wire`）。
 控制帧、ping 的 `ts`、连接器的 `args`/`info` 这类需要语义的路径才 `Decode()`。
 一帧 48 字节的 `req`/`res` 因此是**零分配**转发（M2 是每帧 1.8–2.3 KiB、34–44 次分配）；
-对照基准见 `internal/dlp/wire_bench_test.go`，数字与 profile 证据在
-`maintainers/archive/go-relay/REPORT-20261023-go-relay-m2.5.md`。
+对照基准见 `internal/dlp/wire_bench_test.go`。
 
 ## 文件通道（M3a）
 
