@@ -11,6 +11,7 @@ import (
 )
 
 var (
+	journalJSONPattern = regexp.MustCompile(`\{"(?:level|time|msg)"`)
 	deviceEventPattern = regexp.MustCompile(
 		`device (dev_[A-Za-z0-9]+) .*?(attached to agent|attached again|detached|` +
 			`closed a socket that had already been replaced)`)
@@ -172,19 +173,32 @@ func hourlyActivityBuckets(startMS, endMS int64, devices []store.Device,
 	return out
 }
 
+// journalJSONBody 取出一行日志里的 JSON 正文。
+//
+// journalctl 每行前面都有 `2026-10-24T14:39:47+0800 host unit[pid]:`，Go 的 JSON 在冒号
+// 之后——不能按行首是不是 `{` 判格式（2026-10-24 实测：那样一条都认不出，矩阵只剩 Python
+// 阶段没闭合的旧 span，看起来「今天整天只有 3 个账号」）。
+func journalJSONBody(line string) (string, bool) {
+	match := journalJSONPattern.FindStringIndex(line)
+	if match == nil {
+		return "", false
+	}
+	return line[match[0]:], true
+}
+
 // parseDeviceEvent 解析一行「设备连上 / 断开」，返回 deviceId、事件类与 agentId。
 //
 // 两种格式都认：Python 服务是文本（`device dev_x (iPhone) attached to agent agt_y`），
 // Go 服务（2026-10-24 起）是 JSON（`"msg":"relay: device attached","deviceId":…`）。
 // 只认文本的话，切换之后的每一格都是空的，而日志里明明有数据。
 func parseDeviceEvent(line string) (deviceID, kind, agentID string, ok bool) {
-	if strings.HasPrefix(strings.TrimSpace(line), "{") {
+	if body, found := journalJSONBody(line); found {
 		var payload struct {
 			Msg      string `json:"msg"`
 			DeviceID string `json:"deviceId"`
 			AgentID  string `json:"agentId"`
 		}
-		if err := json.Unmarshal([]byte(line), &payload); err != nil {
+		if err := json.Unmarshal([]byte(body), &payload); err != nil {
 			return "", "", "", false
 		}
 		if !strings.HasPrefix(payload.DeviceID, "dev_") {
@@ -212,11 +226,11 @@ func parseDeviceEvent(line string) (deviceID, kind, agentID string, ok bool) {
 // parseJournalTime 解析一行日志的时刻：short-iso 行首的 `2026-10-17T15:44:16+0800`，
 // 或 Go 服务 JSON 里的 `"time":"2026-10-24T14:30:26.865392225+08:00"`。
 func parseJournalTime(line string) (int64, bool) {
-	if strings.HasPrefix(strings.TrimSpace(line), "{") {
+	if body, found := journalJSONBody(line); found {
 		var payload struct {
 			Time string `json:"time"`
 		}
-		if err := json.Unmarshal([]byte(line), &payload); err != nil || payload.Time == "" {
+		if err := json.Unmarshal([]byte(body), &payload); err != nil || payload.Time == "" {
 			return 0, false
 		}
 		parsed, err := time.Parse(time.RFC3339Nano, payload.Time)

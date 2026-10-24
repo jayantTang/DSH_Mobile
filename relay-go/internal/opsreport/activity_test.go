@@ -8,9 +8,10 @@ import (
 
 // jsonJournal 是 Go 服务实际写出的那一种行：字段里才有 deviceId/agentId。
 func jsonJournal(string, int64, int64) ([]string, bool) {
+	// journalctl -o short-iso 的行首带时间戳与单元名，JSON 正文在冒号之后。
 	return []string{
-		`{"time":"2026-10-24T14:10:00.123456789+08:00","level":"INFO","msg":"relay: device attached","deviceId":"dev_go1","agentId":"agt_go"}`,
-		`{"time":"2026-10-24T15:40:00.5+08:00","level":"INFO","msg":"relay: device detached","deviceId":"dev_go1","agentId":"agt_go","reason":"socket closed"}`,
+		`2026-10-24T14:10:00+0800 host dsh-relay[1]: {"time":"2026-10-24T14:10:00.123456789+08:00","level":"INFO","msg":"relay: device attached","deviceId":"dev_go1","agentId":"agt_go"}`,
+		`2026-10-24T15:40:00+0800 host dsh-relay[1]: {"time":"2026-10-24T15:40:00.5+08:00","level":"INFO","msg":"relay: device detached","deviceId":"dev_go1","agentId":"agt_go","reason":"socket closed"}`,
 	}, true
 }
 
@@ -56,7 +57,7 @@ func TestHourlyActivityMergesBothUnits(t *testing.T) {
 			}, true
 		}
 		return []string{
-			`{"time":"2026-10-24T14:05:00.9+08:00","msg":"relay: device attached","deviceId":"dev_go","agentId":"agt_go"}`,
+			`2026-10-24T14:05:00+0800 host dsh-relay[1]: {"time":"2026-10-24T14:05:00.9+08:00","msg":"relay: device attached","deviceId":"dev_go","agentId":"agt_go"}`,
 		}, true
 	}
 	buckets := hourlyActivityBuckets(start, end, devices, agents,
