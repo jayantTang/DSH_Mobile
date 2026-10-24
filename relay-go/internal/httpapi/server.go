@@ -228,9 +228,11 @@ func corsMiddleware(next http.Handler) http.Handler {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
-		next.ServeHTTP(w, r)
 		// 预检放行不等于正文可读：跨域响应同样必须有 ACAO。
+		// 必须在 next 之前设置：net/http 在 WriteHeader 时快照响应头，
+		// 之后再 Set 的头不会发到真实连接上（单测的 ResponseRecorder 漏检过）。
 		w.Header().Set("access-control-allow-origin", "*")
+		next.ServeHTTP(w, r)
 	})
 }
 

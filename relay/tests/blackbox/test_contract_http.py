@@ -52,6 +52,20 @@ async def test_an_unknown_path_answers_404(client: support.Client) -> None:
     assert response.status == 404
 
 
+async def test_a_plain_get_with_origin_carries_the_acao_header(
+        client: support.Client) -> None:
+    """带 Origin 的普通 GET（非预检）必须在真实响应头里带 ACAO。
+
+    这是经真实 HTTP 往返的断言：net/http 在 WriteHeader 时快照响应头，
+    中间件若在 handler 返回之后才补头，进程内测试发现不了，真实连接上丢头。
+    """
+    response = await client.get("/healthz", headers={"Origin": "https://example.com"})
+    assert response.status == 200, response.text
+    acao = {key.lower(): value for key, value in response.headers.items()} \
+        .get("access-control-allow-origin")
+    assert acao == "*", f"普通响应缺 access-control-allow-origin: *（实得 {acao!r}）"
+
+
 # ── 鉴权 ────────────────────────────────────────────────────────────────────
 
 
