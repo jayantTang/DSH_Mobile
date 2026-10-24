@@ -36,6 +36,20 @@ const ALLOWED_CODES = new Set([
   'ABCD-EFGH-JKMN-PQRS', // 连接器 enroll 测试的夹具
   'JKMN-PQRS-TUVW-XYZ2', // 连接器插件测试的夹具
   '2345-6789-ABCD-EFGH', // 文档里演示"连字符随便写"的夹具
+  'TEST-INVT-CODE-0001', // relay-go store 测试：显式指定邀请码，验证"码可指定"
+  'TEST-INVT-CODE-0002', // 同上，验证 TTL=0 的零值路径
+  'HASH-INVT-CODE-0001', // relay-go store 测试：验证库里只存哈希
+])
+
+/**
+ * 测试夹具里的固定 ID。它们与真值同形状（`agt_`/`dev_`/`dt_` + 16 字符以上），
+ * 但都是顺序串或英文短语，只出现在 `*_test.go` 与黑盒用例里。登记在这里是为了
+ * 让"形状命中"仍会被人看到，而不是把规则放宽到认不出真值。
+ */
+const ALLOWED_FIXTURE_IDS = new Set([
+  'agt_0123456789abcdef', // relay-go bridge/registry 测试的固定 agent
+  'dev_0123456789abcdef', // relay-go files 测试的固定 device
+  'dt_not-a-real-token', // 中转用例里"必然无效"的设备令牌
 ])
 
 /** 同一组四位全是同一个字符：只可能是人写出来的假码。 */
@@ -168,6 +182,7 @@ for (const file of trackedFiles()) {
       add(file, line, '邀请码/配对码形状', text.trim())
     }
     for (const match of text.matchAll(/\b(?:agt|acc|dev|dt)_[A-Za-z0-9_-]{16,}\b/g)) {
+      if (ALLOWED_FIXTURE_IDS.has(match[0])) continue
       add(file, line, `凭据形状（${match[0].split('_')[0]}_…）`, text.trim())
     }
     if (/\bas_[A-Za-z0-9_-]{16,}\b/.test(text)) add(file, line, '凭据形状（as_…）', text.trim())

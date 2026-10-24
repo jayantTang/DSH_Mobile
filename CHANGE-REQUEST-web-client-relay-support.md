@@ -629,7 +629,8 @@ npm run check:lanes -- --changed relay/api.py relay/relay.py         # 按矩阵
 - 渠道：L1/L2 的 `relay-tests` 场景均 pass（`.lanes/runs/l1/20261017T052455Z-relay-tests`、
   `.lanes/runs/l2/20261017T052456Z-relay-tests`，各 644 passed / 1 skipped，L2 是 Python 3.12
   + 真 Caddy 的与 CI 同源命令）。
-- **已部署**（2026-10-17）：`https://www.storyworld.site/dsh-link`，构建号 `20261017.1330`。
+- **已部署**（2026-10-17）：`https://relay.example.com/dsh-link`（真值见本机 `.env.local` 的
+  `DSH_SITE`），构建号 `20261017.1330`。
   部署后公开面已验：`/healthz` 的 `capabilities` 含 `file-transfer`；`OPTIONS /files/up` 仍
   放行 `PUT` 并 expose `content-range, etag`；连接器重启后自动重连、设备被重新采纳。
   `L3: 未跑 — 没有干净 guest；生产中转的三步正文取证由 Web 端在真实地址完成`（本仓库不在生产

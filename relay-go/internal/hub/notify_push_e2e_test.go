@@ -171,7 +171,7 @@ func TestTheOnlineNotifyPathPushesOnlyOfflineDevicesWithAContentFreePayload(t *t
 	f.hub.RouteFromAgent(agentLink, notifyWire(t, dlp.Frame{
 		"kind": "attention", "sid": "s-attn", "eid": "e-77",
 		"title": "会话标题", "body": "正文不该出现", "text": "秘密",
-		"path": "/Users/nobody/secret", "host": "some-mac",
+		"path": "/Users/example/secret", "host": "some-mac",
 	}))
 
 	requests := stub.waitForRequests(t, 1)
@@ -211,7 +211,7 @@ func TestTheOnlineNotifyPathPushesOnlyOfflineDevicesWithAContentFreePayload(t *t
 	}
 	// 正文类字段即使出现在 notify 帧里，也不许被带进 payload。
 	for _, forbidden := range []string{
-		"会话标题", "正文不该出现", "秘密", "/Users/nobody/secret",
+		"会话标题", "正文不该出现", "秘密", "/Users/example/secret",
 		"some-mac", "loc-args", `"body"`, `"title"`, `"text"`, `"path"`,
 	} {
 		if strings.Contains(string(request.body), forbidden) {
