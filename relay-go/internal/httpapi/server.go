@@ -236,19 +236,5 @@ func corsMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// deviceFromBearer 用 Bearer 设备令牌认人；ok=false 时调用方回 401。
-//
-// 认出来之后把 deviceId/agentId 记进请求作用域：访问日志的两个身份字段由此而来，
-// 没有第二条"日志自己解析令牌"的路径。
-func (s *server) deviceFromBearer(r *http.Request) (store.Device, bool, error) {
-	token := bearerToken(r)
-	if token == "" {
-		return store.Device{}, false, nil
-	}
-	device, found, err := s.store.DeviceByToken(r.Context(), token)
-	if err == nil && found {
-		reqctx.NoteDevice(r.Context(), device.DeviceID)
-		reqctx.NoteAgent(r.Context(), device.AgentID)
-	}
-	return device, found, err
-}
+// deviceFromBearer 已下沉到 internal/authn.DeviceFromBearer（HTTP 与文件通道
+// 共用同一份"Bearer 认人 + 记录身份"实现）。

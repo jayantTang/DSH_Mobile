@@ -13,6 +13,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/jayantTang/DSH_Mobile/relay-go/internal/apierr"
 )
 
 // Unversioned 是没有部署构建号时的 relayVersion（Python version.UNVERSIONED）。
@@ -73,7 +75,7 @@ func (h Health) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		// 结构体不可能序列化失败；真发生了也必须给 JSON 信封，不能回退纯文本。
-		writeErrorFor(w, r, http.StatusInternalServerError, "internal/error",
+		apierr.WriteFor(w, r, http.StatusInternalServerError, "internal/error",
 			"healthz: encode response", nil)
 		return
 	}

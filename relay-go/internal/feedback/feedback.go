@@ -219,7 +219,7 @@ func (h *Handlers) HandleSubmit(w http.ResponseWriter, r *http.Request) {
 
 	device, err := h.caller(r)
 	if err != nil {
-		h.storeFailure(w, r, "feedback/store-error", "the relay could not store the feedback", err)
+		apierr.WriteStoreError(w, r, h.log, store.IsBusy, err, "feedback/store-error", "the relay could not store the feedback")
 		return
 	}
 	if !h.charge(r, true, device) {
@@ -243,8 +243,7 @@ func (h *Handlers) HandleSubmit(w http.ResponseWriter, r *http.Request) {
 				"clientRef has already been used")
 			return
 		}
-		h.storeFailure(w, r, "feedback/store-error",
-			"the relay could not store the feedback", err)
+		apierr.WriteStoreError(w, r, h.log, store.IsBusy, err, "feedback/store-error", "the relay could not store the feedback")
 		return
 	}
 	httpjson.WriteJSON(w, http.StatusOK, submitResponse{
@@ -273,7 +272,7 @@ func (h *Handlers) HandleInbox(w http.ResponseWriter, r *http.Request) {
 	}
 	device, err := h.caller(r)
 	if err != nil {
-		h.storeFailure(w, r, "feedback/store-error", "the relay could not read the feedback", err)
+		apierr.WriteStoreError(w, r, h.log, store.IsBusy, err, "feedback/store-error", "the relay could not read the feedback")
 		return
 	}
 	if !h.charge(r, false, device) {
@@ -283,7 +282,7 @@ func (h *Handlers) HandleInbox(w http.ResponseWriter, r *http.Request) {
 
 	payload, err := h.collect(r.Context(), pairs, device, limit, withNotices(body))
 	if err != nil {
-		h.storeFailure(w, r, "feedback/store-error", "the relay could not read the feedback", err)
+		apierr.WriteStoreError(w, r, h.log, store.IsBusy, err, "feedback/store-error", "the relay could not read the feedback")
 		return
 	}
 	httpjson.WriteJSON(w, http.StatusOK, payload)
@@ -323,7 +322,7 @@ func (h *Handlers) HandleAppend(w http.ResponseWriter, r *http.Request) {
 	}
 	device, err := h.caller(r)
 	if err != nil {
-		h.storeFailure(w, r, "feedback/store-error", "the relay could not store the message", err)
+		apierr.WriteStoreError(w, r, h.log, store.IsBusy, err, "feedback/store-error", "the relay could not store the message")
 		return
 	}
 	if !h.charge(r, true, device) {
@@ -334,7 +333,7 @@ func (h *Handlers) HandleAppend(w http.ResponseWriter, r *http.Request) {
 	thread, err := h.store.FeedbackThread(r.Context(), threadID,
 		ptrString(store.SHA256Hex(ticketKey)), 0)
 	if err != nil {
-		h.storeFailure(w, r, "feedback/store-error", "the relay could not store the message", err)
+		apierr.WriteStoreError(w, r, h.log, store.IsBusy, err, "feedback/store-error", "the relay could not store the message")
 		return
 	}
 	if thread == nil {
@@ -347,7 +346,7 @@ func (h *Handlers) HandleAppend(w http.ResponseWriter, r *http.Request) {
 		BindAccountID: deviceValue(device, func(d store.Device) *string { return &d.AccountID }),
 	})
 	if err != nil {
-		h.storeFailure(w, r, "feedback/store-error", "the relay could not store the message", err)
+		apierr.WriteStoreError(w, r, h.log, store.IsBusy, err, "feedback/store-error", "the relay could not store the message")
 		return
 	}
 	if message == nil { // 与上面同一条 404：不泄露线程是否存在
@@ -385,7 +384,7 @@ func (h *Handlers) HandleRead(w http.ResponseWriter, r *http.Request) {
 	}
 	device, err := h.caller(r)
 	if err != nil {
-		h.storeFailure(w, r, "feedback/store-error", "the relay could not mark the feedback", err)
+		apierr.WriteStoreError(w, r, h.log, store.IsBusy, err, "feedback/store-error", "the relay could not mark the feedback")
 		return
 	}
 	if !h.charge(r, false, device) {
@@ -395,7 +394,7 @@ func (h *Handlers) HandleRead(w http.ResponseWriter, r *http.Request) {
 
 	allowed, err := h.authorizedThreads(r.Context(), pairs, device)
 	if err != nil {
-		h.storeFailure(w, r, "feedback/store-error", "the relay could not mark the feedback", err)
+		apierr.WriteStoreError(w, r, h.log, store.IsBusy, err, "feedback/store-error", "the relay could not mark the feedback")
 		return
 	}
 	for _, threadID := range threadIDs {
@@ -403,21 +402,19 @@ func (h *Handlers) HandleRead(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if _, err := h.store.MarkThreadRead(r.Context(), threadID, nil); err != nil {
-			h.storeFailure(w, r, "feedback/store-error",
-				"the relay could not mark the feedback", err)
+			apierr.WriteStoreError(w, r, h.log, store.IsBusy, err, "feedback/store-error", "the relay could not mark the feedback")
 			return
 		}
 	}
 	if device != nil && len(noticeIDs) > 0 {
 		if _, err := h.store.MarkNoticesRead(r.Context(), device.AccountID, noticeIDs, 0); err != nil {
-			h.storeFailure(w, r, "feedback/store-error",
-				"the relay could not mark the feedback", err)
+			apierr.WriteStoreError(w, r, h.log, store.IsBusy, err, "feedback/store-error", "the relay could not mark the feedback")
 			return
 		}
 	}
 	payload, err := h.collect(r.Context(), pairs, device, 0, true)
 	if err != nil {
-		h.storeFailure(w, r, "feedback/store-error", "the relay could not mark the feedback", err)
+		apierr.WriteStoreError(w, r, h.log, store.IsBusy, err, "feedback/store-error", "the relay could not mark the feedback")
 		return
 	}
 	httpjson.WriteJSON(w, http.StatusOK, readResponse{OK: true, UnreadCount: payload.UnreadCount})
@@ -822,15 +819,6 @@ func writeProblem(w http.ResponseWriter, status int, code, message string) {
 	apierr.Write(w, status, code, message, nil)
 }
 
-// writeProblemFor 与 writeProblem 相同；5xx 额外带上这次请求的 requestId。
-func writeProblemFor(w http.ResponseWriter, r *http.Request, status int, code, message string) {
-	if status >= 500 {
-		apierr.WriteWithRequestID(w, status, code, message, nil, reqctx.ID(r.Context()))
-		return
-	}
-	apierr.Write(w, status, code, message, nil)
-}
-
 // writeRateLimited 是四个端点共用的 429。
 func writeRateLimited(w http.ResponseWriter) {
 	writeProblem(w, http.StatusTooManyRequests, "feedback/rate-limited",
@@ -840,23 +828,6 @@ func writeRateLimited(w http.ResponseWriter) {
 // writeNotFound 是"线程不存在"与"凭据不匹配"共用的响应：逐字节相同。
 func writeNotFound(w http.ResponseWriter) {
 	writeProblem(w, http.StatusNotFound, "feedback/not-found", "thread not found")
-}
-
-// storeFailure 把仓储错误兜底成 5xx JSON：busy → 503 + Retry-After，其余 500。
-func (h *Handlers) storeFailure(w http.ResponseWriter, r *http.Request, code, message string,
-	err error) {
-	if store.IsBusy(err) {
-		w.Header().Set("Retry-After", "1")
-		h.log.Warn("relay: feedback request failed",
-			"requestId", reqctx.ID(r.Context()), "route", r.Pattern,
-			"status", http.StatusServiceUnavailable, "error", err)
-		writeProblemFor(w, r, http.StatusServiceUnavailable, "db/busy",
-			"the relay database is busy; retry shortly")
-		return
-	}
-	h.log.Error("relay: feedback request failed",
-		"requestId", reqctx.ID(r.Context()), "route", r.Pattern, "error", err)
-	writeProblemFor(w, r, http.StatusInternalServerError, code, message)
 }
 
 // ── 小工具 ──────────────────────────────────────────────────────────────────

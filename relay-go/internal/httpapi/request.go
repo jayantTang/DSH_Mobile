@@ -97,7 +97,7 @@ func (s *server) noteAccess(r *http.Request, observed *observingWriter, elapsed 
 	args := []any{
 		"requestId", reqctx.ID(r.Context()),
 		"method", r.Method,
-		"route", routeTemplate(r),
+		"route", reqctx.RouteTemplate(r),
 		"status", status,
 		"duration_ms", math.Round(elapsed.Seconds()*1000*1000) / 1000,
 		"remote_ip", ClientIdentifier(r),
@@ -110,22 +110,6 @@ func (s *server) noteAccess(r *http.Request, observed *observingWriter, elapsed 
 		args = append(args, "deviceId", deviceID)
 	}
 	s.log().Log(r.Context(), level, message, args...)
-}
-
-// routeTemplate 返回注册时的方法+路径模板里的路径部分（如 `/files/down`）。
-//
-// Go 1.22 起 ServeMux 把自己匹配到的模板写进 http.Request.Pattern：它不含 query，
-// 也不含真实分段值，正是"可按路由聚合、又不泄露参数"的形态。没匹配到路由
-// （404）时没有模板，用 `<unmatched>` 表示，仍然不记录原始路径。
-func routeTemplate(r *http.Request) string {
-	pattern := strings.TrimSpace(r.Pattern)
-	if pattern == "" {
-		return "<unmatched>"
-	}
-	if _, path, found := strings.Cut(pattern, " "); found {
-		return strings.TrimSpace(path)
-	}
-	return pattern
 }
 
 // isUpgradeRequest 判断这次请求是不是 WebSocket 升级（用于还原 101 状态）。

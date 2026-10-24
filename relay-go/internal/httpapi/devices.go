@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/jayantTang/DSH_Mobile/relay-go/internal/apierr"
+	"github.com/jayantTang/DSH_Mobile/relay-go/internal/authn"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/dlp"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/store"
 )
@@ -63,9 +65,10 @@ type devicesListResponse struct {
 //
 // 用设备令牌鉴权而不是运维凭据：手机要能看和管理自己的配对，但看不到别人的。
 func (s *server) handleDevicesList(w http.ResponseWriter, r *http.Request) {
-	device, ok, err := s.deviceFromBearer(r)
+	device, ok, err := authn.DeviceFromBearer(r.Context(), s.store, r)
 	if err != nil {
-		s.writeStoreError(w, r, err)
+		apierr.WriteStoreError(w, r, s.log(), store.IsBusy, err,
+			"internal/error", "the relay could not complete this request")
 		return
 	}
 	if !ok {
@@ -76,12 +79,14 @@ func (s *server) handleDevicesList(w http.ResponseWriter, r *http.Request) {
 
 	devices, err := s.store.ListDevices(r.Context(), device.AgentID, false)
 	if err != nil {
-		s.writeStoreError(w, r, err)
+		apierr.WriteStoreError(w, r, s.log(), store.IsBusy, err,
+			"internal/error", "the relay could not complete this request")
 		return
 	}
 	paired, err := s.store.CountPairedDevices(r.Context(), device.AccountID)
 	if err != nil {
-		s.writeStoreError(w, r, err)
+		apierr.WriteStoreError(w, r, s.log(), store.IsBusy, err,
+			"internal/error", "the relay could not complete this request")
 		return
 	}
 
@@ -113,9 +118,10 @@ type devicesRevokeResponse struct {
 // 为它保留 $events 值班流。所以落库之后立刻断开在线的那条，并让连接器收到
 // `deviceDetach(reason="revoked")`——那是它放下这台设备的唯一信号。
 func (s *server) handleDevicesRevoke(w http.ResponseWriter, r *http.Request) {
-	device, ok, err := s.deviceFromBearer(r)
+	device, ok, err := authn.DeviceFromBearer(r.Context(), s.store, r)
 	if err != nil {
-		s.writeStoreError(w, r, err)
+		apierr.WriteStoreError(w, r, s.log(), store.IsBusy, err,
+			"internal/error", "the relay could not complete this request")
 		return
 	}
 	if !ok {
@@ -133,7 +139,8 @@ func (s *server) handleDevicesRevoke(w http.ResponseWriter, r *http.Request) {
 
 	row, found, err := s.store.DeviceByID(r.Context(), target)
 	if err != nil {
-		s.writeStoreError(w, r, err)
+		apierr.WriteStoreError(w, r, s.log(), store.IsBusy, err,
+			"internal/error", "the relay could not complete this request")
 		return
 	}
 	if !found {
@@ -152,7 +159,8 @@ func (s *server) handleDevicesRevoke(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "request/unknown-device", "no such device", nil)
 			return
 		}
-		s.writeStoreError(w, r, err)
+		apierr.WriteStoreError(w, r, s.log(), store.IsBusy, err,
+			"internal/error", "the relay could not complete this request")
 		return
 	}
 	// 断开是异步的（关闭握手由连接的写循环执行），HTTP 响应不等它。
@@ -172,9 +180,10 @@ type devicesPushResponse struct {
 // 设置里任一开关移动时调用它；用户关掉通知权限时带空令牌调用——"我说不"必须
 // 真的能停止推送，所以清除要和登记一样容易。
 func (s *server) handleDevicesPush(w http.ResponseWriter, r *http.Request) {
-	device, ok, err := s.deviceFromBearer(r)
+	device, ok, err := authn.DeviceFromBearer(r.Context(), s.store, r)
 	if err != nil {
-		s.writeStoreError(w, r, err)
+		apierr.WriteStoreError(w, r, s.log(), store.IsBusy, err,
+			"internal/error", "the relay could not complete this request")
 		return
 	}
 	if !ok {
@@ -221,7 +230,8 @@ func (s *server) handleDevicesPush(w http.ResponseWriter, r *http.Request) {
 
 	if err := s.store.SetPush(r.Context(), device.DeviceID, &token, env,
 		jsonFlag(body["turnEnd"], true), jsonFlag(body["attention"], true)); err != nil {
-		s.writeStoreError(w, r, err)
+		apierr.WriteStoreError(w, r, s.log(), store.IsBusy, err,
+			"internal/error", "the relay could not complete this request")
 		return
 	}
 	writeJSON(w, http.StatusOK, devicesPushResponse{OK: true})

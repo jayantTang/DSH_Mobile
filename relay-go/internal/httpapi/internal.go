@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"net/http"
 	"time"
+
+	"github.com/jayantTang/DSH_Mobile/relay-go/internal/apierr"
+	"github.com/jayantTang/DSH_Mobile/relay-go/internal/store"
 )
 
 // `/internal/*` 是**服务间**端点：信件服务（mail）在同一个机房/同一台机器上调用，
@@ -61,7 +64,8 @@ func (s *server) handleInternalTokenResolve(w http.ResponseWriter, r *http.Reque
 	// 纯空白不是"缺字段"：它被当成一个令牌去查，结果与任何未知令牌相同（404）。
 	device, found, err := s.store.DeviceByToken(r.Context(), token)
 	if err != nil {
-		s.writeStoreError(w, r, err)
+		apierr.WriteStoreError(w, r, s.log(), store.IsBusy, err,
+			"internal/error", "the relay could not complete this request")
 		return
 	}
 	if !found {

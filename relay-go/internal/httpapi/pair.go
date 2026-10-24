@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/jayantTang/DSH_Mobile/relay-go/internal/apierr"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/store"
 )
 
@@ -132,7 +133,8 @@ func (s *server) handlePairClaim(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "pair/invalid-code", err.Error(), nil)
 			return
 		default:
-			s.writeStoreError(w, r, err)
+			apierr.WriteStoreError(w, r, s.log(), store.IsBusy, err,
+				"internal/error", "the relay could not complete this request")
 			return
 		}
 	}
@@ -165,7 +167,8 @@ func (s *server) handlePairRefresh(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusUnauthorized, "auth/invalid-token", err.Error(), nil)
 			return
 		}
-		s.writeStoreError(w, r, err)
+		apierr.WriteStoreError(w, r, s.log(), store.IsBusy, err,
+			"internal/error", "the relay could not complete this request")
 		return
 	}
 	writeJSON(w, http.StatusOK, pairRefreshResponse{
@@ -193,7 +196,8 @@ func (s *server) handlePairCode(w http.ResponseWriter, r *http.Request) {
 	ttlMS := s.pairTTLFromBody(body, false)
 	minted, err := s.store.MintPairCode(r.Context(), agent.AgentID, ttlMS)
 	if err != nil {
-		s.writeStoreError(w, r, err)
+		apierr.WriteStoreError(w, r, s.log(), store.IsBusy, err,
+			"internal/error", "the relay could not complete this request")
 		return
 	}
 	writeJSON(w, http.StatusOK, s.pairCodePayload(r.Context(), minted, nil, agent.AccountID))
@@ -216,7 +220,8 @@ func (s *server) handlePairCodeRegenerate(w http.ResponseWriter, r *http.Request
 	ttlMS := s.pairTTLFromBody(body, true)
 	minted, revoked, err := s.store.RegeneratePairCode(r.Context(), agent.AgentID, ttlMS)
 	if err != nil {
-		s.writeStoreError(w, r, err)
+		apierr.WriteStoreError(w, r, s.log(), store.IsBusy, err,
+			"internal/error", "the relay could not complete this request")
 		return
 	}
 	s.log().Info("relay: regenerated pairing code", "agentId", agent.AgentID, "revoked", revoked)
@@ -233,7 +238,8 @@ func (s *server) agentFromBearer(w http.ResponseWriter, r *http.Request) (store.
 	}
 	agent, ok, err := s.store.AgentBySecret(r.Context(), token)
 	if err != nil {
-		s.writeStoreError(w, r, err)
+		apierr.WriteStoreError(w, r, s.log(), store.IsBusy, err,
+			"internal/error", "the relay could not complete this request")
 		return store.Agent{}, false
 	}
 	if !ok {

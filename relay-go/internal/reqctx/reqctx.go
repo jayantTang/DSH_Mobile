@@ -93,6 +93,26 @@ func From(ctx context.Context) *Scope {
 // ID 是 From(ctx).ID() 的短写。
 func ID(ctx context.Context) string { return From(ctx).ID() }
 
+// RouteTemplate 返回这次请求匹配到的路由模板的路径部分（如 `/files/down`）。
+//
+// Go 1.22 起 ServeMux 把自己匹配到的模板写进 http.Request.Pattern：它不含 query，
+// 也不含真实分段值，正是"可按路由聚合、又不泄露参数"的形态。没匹配到路由
+// （404）时没有模板，用 `<unmatched>` 表示，仍然不记录原始路径。
+//
+// 访问日志、错误日志与告警（httpapi 与 monitor）必须共用这一份口径：同一个
+// 端点在三处的归类键才拼得起来。注意 mux 分发之前 Pattern 为空，调用点要在
+// 路由之后（handler 内、或外层中间件的 defer 里）。
+func RouteTemplate(r *http.Request) string {
+	pattern := strings.TrimSpace(r.Pattern)
+	if pattern == "" {
+		return "<unmatched>"
+	}
+	if _, path, found := strings.Cut(pattern, " "); found {
+		return strings.TrimSpace(path)
+	}
+	return pattern
+}
+
 // NoteAgent / NoteDevice 是认证路径上唯一的身份写入点（没有作用域时是空操作）。
 func NoteAgent(ctx context.Context, id string)  { From(ctx).SetAgent(id) }
 func NoteDevice(ctx context.Context, id string) { From(ctx).SetDevice(id) }

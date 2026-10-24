@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/jayantTang/DSH_Mobile/relay-go/internal/apierr"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/store"
 )
 
@@ -67,11 +68,12 @@ func (s *server) handleAgentsEnroll(w http.ResponseWriter, r *http.Request) {
 		case errors.As(err, &storeErr):
 			// 邀请码看着没问题、但建身份失败：事务已回滚，码仍可兑换。
 			s.log().Warn("relay: invite redemption failed", "error", err)
-			writeErrorFor(w, r, http.StatusInternalServerError, "enroll/store-error",
+			apierr.WriteFor(w, r, http.StatusInternalServerError, "enroll/store-error",
 				"the relay could not complete the enrollment", nil)
 			return
 		default:
-			s.writeStoreError(w, r, err)
+			apierr.WriteStoreError(w, r, s.log(), store.IsBusy, err,
+				"internal/error", "the relay could not complete this request")
 			return
 		}
 	}

@@ -32,7 +32,6 @@ import (
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/bridge"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/dlp"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/hub"
-	"github.com/jayantTang/DSH_Mobile/relay-go/internal/reqctx"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/store"
 )
 
@@ -52,11 +51,9 @@ const (
 	DefaultIdleTimeout = 120 * time.Second
 )
 
-// 下载响应的 CORS 头必须在 WriteHeader **之前**设置。
-//
-// httpapi 的 CORS 中间件是 handler 返回之后才补头的，而流式响应在 handler 内部
-// 就已经把状态行与响应头发了出去：中间件那时再改 headers 不报错也不生效。预检放行
-// 不等于正文可读——缺了 ACAO，浏览器会把已经收到的字节判为不可读。
+// 下载响应的 CORS 头必须在 WriteHeader **之前**设置，所以由本包在 handler 内
+// 显式写出，不依赖外层中间件的挂载顺序。预检放行不等于正文可读：缺了 ACAO，
+// 浏览器会把已经收到的字节判为不可读。
 var streamCORSHeaders = map[string]string{
 	"access-control-allow-origin":   "*",
 	"access-control-expose-headers": "content-range, etag",
@@ -220,9 +217,18 @@ type uploadResponse struct {
 // 两个必须答得快的分支：电脑不在线 → 立刻 503（不排队、不落盘）；连接器不认这族
 // 帧 → 5 秒 ack 期限后 501，而不是让手机一直等。
 func (h *Handlers) HandleUpload(w http.ResponseWriter, r *http.Request) {
-	device, ok, err := h.deviceFromBearer(r)
+	var device store.Device
+	var ok bool
+	var err error
+	if h.store != nil {
+		device, ok, err = authn.DeviceFromBearer(r.Context(), h.store, r)
+	}
 	if err != nil {
-		h.writeStoreError(w, r, err)
+		written := apierr.WriteStoreError(w, r, h.log, store.IsBusy, err,
+			"internal/error", "the relay could not complete this request")
+		if tracked, isTransfer := w.(*transferWriter); isTransfer {
+			tracked.errorCode = written
+		}
 		return
 	}
 	if !ok {
@@ -252,8 +258,11 @@ func (h *Handlers) HandleUpload(w http.ResponseWriter, r *http.Request) {
 
 	agent := h.hub.Agent(device.AgentID)
 	if agent == nil || agent.Closed() {
-		writeErrorFor(w, r, http.StatusServiceUnavailable, "host/offline",
-			"the PC connector is not connected")
+		written := apierr.WriteFor(w, r, http.StatusServiceUnavailable, "host/offline",
+			"the PC connector is not connected", nil)
+		if tracked, isTransfer := w.(*transferWriter); isTransfer {
+			tracked.errorCode = written
+		}
 		return
 	}
 
@@ -310,8 +319,11 @@ func (h *Handlers) HandleUpload(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			// 连接器被顶替/断开：这条上传不可能完成，给它一个明确的答复。
-			writeErrorFor(w, r, http.StatusServiceUnavailable, "host/offline",
-				"the PC connector went away while the upload was in flight")
+			written := apierr.WriteFor(w, r, http.StatusServiceUnavailable, "host/offline",
+				"the PC connector went away while the upload was in flight", nil)
+			if tracked, isTransfer := w.(*transferWriter); isTransfer {
+				tracked.errorCode = written
+			}
 			return
 		}
 		piece := make([]byte, int(size))
@@ -337,8 +349,11 @@ func (h *Handlers) HandleUpload(w http.ResponseWriter, r *http.Request) {
 		creditForFrame := credit
 		credit = 0
 		if !h.hub.SendBridgeChunk(agent, frame, creditForFrame) {
-			writeErrorFor(w, r, http.StatusServiceUnavailable, "host/offline",
-				"the PC connector went away while the upload was in flight")
+			written := apierr.WriteFor(w, r, http.StatusServiceUnavailable, "host/offline",
+				"the PC connector went away while the upload was in flight", nil)
+			if tracked, isTransfer := w.(*transferWriter); isTransfer {
+				tracked.errorCode = written
+			}
 			return
 		}
 		seq++
@@ -383,9 +398,18 @@ func (h *Handlers) HandleUpload(w http.ResponseWriter, r *http.Request) {
 // 的出口流量，所以每一片都过同一套限速桶与日额度账本（internal/quota 的 Bucket 与
 // Ledger，经 DeviceLink 与 Hub 门面使用），HTTP 下载不能成为绕开它们的第二条通路。
 func (h *Handlers) HandleDownload(w http.ResponseWriter, r *http.Request) {
-	device, ok, err := h.deviceFromBearer(r)
+	var device store.Device
+	var ok bool
+	var err error
+	if h.store != nil {
+		device, ok, err = authn.DeviceFromBearer(r.Context(), h.store, r)
+	}
 	if err != nil {
-		h.writeStoreError(w, r, err)
+		written := apierr.WriteStoreError(w, r, h.log, store.IsBusy, err,
+			"internal/error", "the relay could not complete this request")
+		if tracked, isTransfer := w.(*transferWriter); isTransfer {
+			tracked.errorCode = written
+		}
 		return
 	}
 	if !ok {
@@ -415,8 +439,11 @@ func (h *Handlers) HandleDownload(w http.ResponseWriter, r *http.Request) {
 
 	agent := h.hub.Agent(device.AgentID)
 	if agent == nil || agent.Closed() {
-		writeErrorFor(w, r, http.StatusServiceUnavailable, "host/offline",
-			"the PC connector is not connected")
+		written := apierr.WriteFor(w, r, http.StatusServiceUnavailable, "host/offline",
+			"the PC connector is not connected", nil)
+		if tracked, isTransfer := w.(*transferWriter); isTransfer {
+			tracked.errorCode = written
+		}
 		return
 	}
 
@@ -656,7 +683,11 @@ func (h *Handlers) writeNoStart(w http.ResponseWriter, r *http.Request) {
 	if r.Context().Err() != nil {
 		return // 手机已经不在了，写什么都没有意义
 	}
-	writeErrorFor(w, r, http.StatusServiceUnavailable, "host/offline", "连接器没有开始传输")
+	written := apierr.WriteFor(w, r, http.StatusServiceUnavailable, "host/offline",
+		"连接器没有开始传输", nil)
+	if tracked, isTransfer := w.(*transferWriter); isTransfer {
+		tracked.errorCode = written
+	}
 }
 
 // ── 参数解析 ────────────────────────────────────────────────────────────────
@@ -790,62 +821,13 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 	_, _ = w.Write(body)
 }
 
-// writeError 写一次错误信封（形状与全站一致）。
+// writeError 写一次错误信封（形状由 internal/apierr 统一定义）。
 //
 // 如果 w 是本包的传输记录器，顺手把错误码记进去：传输结束日志要回答"以什么码
 // 结束"，而错误码只有写响应的这一刻知道。
 func writeError(w http.ResponseWriter, status int, code, message string) {
-	if tracked, ok := w.(*transferWriter); ok {
-		tracked.errorCode = code
+	written := apierr.Write(w, status, code, message, nil)
+	if tracked, isTransfer := w.(*transferWriter); isTransfer {
+		tracked.errorCode = written
 	}
-	apierr.Write(w, status, code, message, nil)
-}
-
-// writeErrorFor 写一次错误信封；5xx 带上这次请求的 requestId（与 httpapi 同口径）。
-func writeErrorFor(w http.ResponseWriter, r *http.Request, status int, code, message string) {
-	if tracked, ok := w.(*transferWriter); ok {
-		tracked.errorCode = code
-	}
-	if status >= 500 {
-		apierr.WriteWithRequestID(w, status, code, message, nil, reqctx.ID(r.Context()))
-		return
-	}
-	apierr.Write(w, status, code, message, nil)
-}
-
-// deviceFromBearer 用 Bearer 设备令牌认人；ok=false 时调用方回 401。
-//
-// 认出来之后把身份记进请求作用域（访问日志的 agentId/deviceId 由此而来）。
-func (h *Handlers) deviceFromBearer(r *http.Request) (store.Device, bool, error) {
-	token := authn.BearerToken(r)
-	if token == "" {
-		return store.Device{}, false, nil
-	}
-	if h.store == nil {
-		return store.Device{}, false, nil
-	}
-	device, found, err := h.store.DeviceByToken(r.Context(), token)
-	if err == nil && found {
-		reqctx.NoteDevice(r.Context(), device.DeviceID)
-		reqctx.NoteAgent(r.Context(), device.AgentID)
-	}
-	return device, found, err
-}
-
-// writeStoreError 把仓储错误兜底成 5xx JSON 信封（busy → 503 + Retry-After）。
-func (h *Handlers) writeStoreError(w http.ResponseWriter, r *http.Request, err error) {
-	if store.IsBusy(err) {
-		w.Header().Set("Retry-After", "1")
-		h.log.Warn("relay: file request failed",
-			"requestId", reqctx.ID(r.Context()), "method", r.Method,
-			"route", r.Pattern, "status", http.StatusServiceUnavailable, "error", err)
-		writeErrorFor(w, r, http.StatusServiceUnavailable, "db/busy",
-			"the relay database is busy; retry shortly")
-		return
-	}
-	h.log.Error("relay: file request failed",
-		"requestId", reqctx.ID(r.Context()), "method", r.Method,
-		"route", r.Pattern, "error", err)
-	writeErrorFor(w, r, http.StatusInternalServerError, "internal/error",
-		"the relay could not complete this request")
 }

@@ -6,6 +6,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/jayantTang/DSH_Mobile/relay-go/internal/apierr"
+	"github.com/jayantTang/DSH_Mobile/relay-go/internal/authn"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/store"
 )
 
@@ -37,9 +39,10 @@ type accountStatePutResponse struct {
 //
 // 账号从设备令牌反查，请求里不接受 accountId——否则就是越权读别人。
 func (s *server) handleAccountStateGet(w http.ResponseWriter, r *http.Request) {
-	device, ok, err := s.deviceFromBearer(r)
+	device, ok, err := authn.DeviceFromBearer(r.Context(), s.store, r)
 	if err != nil {
-		s.writeStoreError(w, r, err)
+		apierr.WriteStoreError(w, r, s.log(), store.IsBusy, err,
+			"internal/error", "the relay could not complete this request")
 		return
 	}
 	if !ok {
@@ -60,7 +63,8 @@ func (s *server) handleAccountStateGet(w http.ResponseWriter, r *http.Request) {
 
 	state, err := s.store.AccountState(r.Context(), device.AccountID, keys)
 	if err != nil {
-		s.writeStoreError(w, r, err)
+		apierr.WriteStoreError(w, r, s.log(), store.IsBusy, err,
+			"internal/error", "the relay could not complete this request")
 		return
 	}
 	writeJSON(w, http.StatusOK, accountStateGetResponse{
@@ -75,9 +79,10 @@ func (s *server) handleAccountStateGet(w http.ResponseWriter, r *http.Request) {
 // 要么全不生效。
 func (s *server) handleAccountStatePut(w http.ResponseWriter, r *http.Request) {
 	// 先认人，再挑 body 的毛病：未认证的调用者不该从错误信息里读出参数校验细节。
-	device, ok, err := s.deviceFromBearer(r)
+	device, ok, err := authn.DeviceFromBearer(r.Context(), s.store, r)
 	if err != nil {
-		s.writeStoreError(w, r, err)
+		apierr.WriteStoreError(w, r, s.log(), store.IsBusy, err,
+			"internal/error", "the relay could not complete this request")
 		return
 	}
 	if !ok {
@@ -140,7 +145,8 @@ func (s *server) handleAccountStatePut(w http.ResponseWriter, r *http.Request) {
 	deviceID := device.DeviceID
 	result, err := s.store.PutAccountStateBatch(r.Context(), device.AccountID, writes, &deviceID)
 	if err != nil {
-		s.writeStoreError(w, r, err)
+		apierr.WriteStoreError(w, r, s.log(), store.IsBusy, err,
+			"internal/error", "the relay could not complete this request")
 		return
 	}
 

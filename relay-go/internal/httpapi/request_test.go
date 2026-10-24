@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jayantTang/DSH_Mobile/relay-go/internal/apierr"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/monitor"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/reqctx"
 )
@@ -229,10 +230,10 @@ func TestAccessLogAllRecordsEveryRequestAndStripsQuery(t *testing.T) {
 func TestFiveHundredCarriesRequestIDButFourHundredDoesNot(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /boom", func(w http.ResponseWriter, r *http.Request) {
-		writeErrorFor(w, r, http.StatusInternalServerError, "internal/error", "boom", nil)
+		apierr.WriteFor(w, r, http.StatusInternalServerError, "internal/error", "boom", nil)
 	})
 	mux.HandleFunc("GET /bad", func(w http.ResponseWriter, r *http.Request) {
-		writeErrorFor(w, r, http.StatusBadRequest, "pair/bad-request", "bad", nil)
+		apierr.WriteFor(w, r, http.StatusBadRequest, "pair/bad-request", "bad", nil)
 	})
 	handler, _ := newAccessChain(t, AccessLogErrors, time.Hour, mux)
 

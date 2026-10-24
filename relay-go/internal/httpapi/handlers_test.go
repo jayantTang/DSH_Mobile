@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jayantTang/DSH_Mobile/relay-go/internal/apierr"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/feedback"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/files"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/hub"
@@ -942,7 +943,9 @@ func TestBusyStoreErrorMapsTo503(t *testing.T) {
 	s := &server{}
 	req := httptest.NewRequest(http.MethodGet, "/account/state", nil)
 	rec := httptest.NewRecorder()
-	s.writeStoreError(rec, req, errors.New("database is locked (5) (SQLITE_BUSY)"))
+	apierr.WriteStoreError(rec, req, s.log(), store.IsBusy,
+		errors.New("database is locked (5) (SQLITE_BUSY)"),
+		"internal/error", "the relay could not complete this request")
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("busy 状态码 = %d", rec.Code)
 	}
