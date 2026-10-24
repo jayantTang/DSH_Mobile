@@ -626,9 +626,11 @@ npm run check:lanes -- --changed relay/api.py relay/relay.py         # 按矩阵
 - 回滚：FR-009 是一个常量 + 一行 `headers.update`，FR-010 是一个字符串，可各自独立 revert；
   既有 `Authorization` 头通道（iOS / 连接器）不受影响。删掉那一行后跑全量：
   643 passed / 1 failed（唯一失败即 FR-009 的新用例）/ 1 skipped，回滚边界实测过。
-- 渠道：L1/L2 的 `relay-tests` 场景均 pass（`.lanes/runs/l1/20261017T052455Z-relay-tests`、
-  `.lanes/runs/l2/20261017T052456Z-relay-tests`，各 644 passed / 1 skipped，L2 是 Python 3.12
-  + 真 Caddy 的与 CI 同源命令）。
+- 渠道：L1/L2 的 `relay-tests` 场景均 pass（L1 证据
+  `.lanes/runs/l1/20261017T052455Z-relay-tests`；L2 证据已于 2026-10-24 清理，
+  重跑方式见本机内部记录 `maintainers/2026-10-24-evidence-prune.md`（不随仓库发布）。
+  两轮各 644 passed / 1 skipped，
+  L2 是 Python 3.12 + 真 Caddy 的与 CI 同源命令）。
 - **已部署**（2026-10-17）：`https://relay.example.com/dsh-link`（真值见本机 `.env.local` 的
   `DSH_SITE`），构建号 `20261017.1330`。
   部署后公开面已验：`/healthz` 的 `capabilities` 含 `file-transfer`；`OPTIONS /files/up` 仍
