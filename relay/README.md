@@ -1,6 +1,11 @@
-# DLP relay — DSH Link Protocol v1
+# DLP relay — DSH Link Protocol v1（Python 实现，回滚目标）
 
-> 面向：部署与运维方 · 状态：stable · 最近核对：2026-09-20
+> 面向：部署与运维方 · 状态：legacy（2026-10-24 起生产由 `relay-go/` 承担） · 最近核对：2026-09-20
+
+生产中转自 2026-10-24 03:21 CST 起是 Go 实现（`relay-go/`，`relayVersion=go-0.1.2`）；本目录
+保留为回滚目标与黑盒契约基线，不再承载线上流量。现行运维命令见
+[`../relay-go/README.md`](../relay-go/README.md)，切换与回滚见
+[`../relay-go/deploy/README.md`](../relay-go/deploy/README.md)。
 
 A small Python 3.12 + aiohttp relay that lets an iOS client reach a DSH instance behind NAT. Both
 the connector (`../plugins/mobile-link/`) and the phone dial out to it; it authenticates both sides

@@ -1,6 +1,6 @@
 # Relay NOTES — deviations and fills for DLP v1
 
-> 面向：实现者与部署方 · 状态：stable · 最近核对：2026-09-20
+> 面向：实现者与部署方 · 状态：stable · 最近核对：2026-10-24
 
 [`RELAY-PROTOCOL.md`](RELAY-PROTOCOL.md) is normative. Each entry below records either a point the
 spec left open where a concrete choice was required, or a point where following it literally would
@@ -190,7 +190,7 @@ order with the real `caddy adapt` when a `caddy` binary is available.
   and clients gate browser-only features on the capability flag instead of
   probing version numbers.
 
-## 6. Browser clients may authenticate `/link/device` via subprotocol
+## 15b. Browser clients may authenticate `/link/device` via subprotocol
 
 * Rationale: browsers cannot set custom headers on a WebSocket handshake, so a
   web client sends its device token as `Sec-WebSocket-Protocol:
@@ -221,6 +221,10 @@ The consequence is one-sided and easy to miss: `OPTIONS` carries the full CORS h
 Every native client is unaffected (no CORS), so only a browser can observe it — as
 `blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present` *after* the
 bytes have arrived.
+
+Both implementations therefore set the CORS headers inside the streaming handler itself
+(`files_down` in the Python implementation, `internal/files` in the Go one); the middleware
+covers `OPTIONS` only.
 
 `files_down()` therefore writes `CORS_STREAM_HEADERS` (`access-control-allow-origin: *`
 plus `access-control-expose-headers: content-range, etag`) **before** `prepare()`.

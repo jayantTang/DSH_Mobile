@@ -29,20 +29,25 @@ they differ only in who runs the relay.
 
 ## B · Run your own relay (20 minutes)
 
-The repository ships the relay, its systemd unit and a Caddy route snippet.
+The relay is the Go implementation in `relay-go/`. Build and install it as described in
+[`relay-go/deploy/README.md`](../relay-go/deploy/README.md) §3–§4, then:
 
 ```bash
 # on your server (root, with Caddy already installed)
-git clone https://github.com/jayantTang/DSH_Mobile.git && cd DSH_Mobile
-DSH_RELAY_SITE=your.host DSH_RELAY_BASE_PATH=/dsh-link relay/deploy/deploy.sh
+sudo systemctl enable --now dsh-relay-go
 
 # create an account and mint yourself an invite code
-/opt/dsh-relay/.venv/bin/python /opt/dsh-relay/admin.py \
-  --db /var/lib/dsh-relay/state.db invite-mint --note "first computer"
+/opt/dsh-relay-go/bin/dsh-relay admin --db /var/lib/dsh-relay/state.db \
+  account-create --name "<you>"
+/opt/dsh-relay-go/bin/dsh-relay admin --db /var/lib/dsh-relay/state.db \
+  invite-mint --note "first computer" --relay wss://your.host/dsh-link
 ```
 
+The Caddy route comes from [`relay/deploy/Caddyfile.snippet`](../relay/deploy/Caddyfile.snippet),
+inserted with [`relay/deploy/caddy_splice.py`](../relay/deploy/caddy_splice.py).
+
 Then enrol the connector against your own relay address instead of the shared one. Details, including
-the Caddy snippet and the systemd sandbox, are in [`relay/README.md`](../relay/README.md).
+the systemd sandbox and the operating limits, are in [`relay-go/README.md`](../relay-go/README.md).
 
 ## What you can do once paired
 

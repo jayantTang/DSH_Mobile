@@ -28,7 +28,7 @@
 |---|---|---|
 | iOS App | 1.0 | TestFlight 公开测试（[加入](https://testflight.apple.com/join/tHKQsbCk)）；需先安装 TestFlight，构建 90 天后过期 |
 | 连接器 `dsh-plugin-mobile-link` | 0.6.0 | npm |
-| 中转（DLP v1） | 本仓库 `relay/` | 自行部署 |
+| 中转（DLP v1） | 本仓库 `relay-go/`（Go，`go-0.1.2`） | 自行部署 |
 
 三者的版本组合与发布策略见 [`docs/VERSIONING.md`](docs/VERSIONING.md)。
 表中版本以 **npm 上已发布的为准**（`npm view dsh-plugin-mobile-link version`），不是仓库里 `package.json` 的值。
@@ -63,17 +63,25 @@
 
 ### B. 自建中转
 
+自建使用仓库内的 Go 实现（`relay-go/`）。按 [`relay-go/deploy/README.md`](relay-go/deploy/README.md)
+§3–§4 在服务器上构建二进制、写入 `build.json` 并安装 `dsh-relay-go.service`；Caddy 路由沿用
+[`relay/deploy/Caddyfile.snippet`](relay/deploy/Caddyfile.snippet)，由
+[`relay/deploy/caddy_splice.py`](relay/deploy/caddy_splice.py) 插入既有站点块。
+
 ```bash
-cd relay
-export DSH_RELAY_SITE=<站点>                 # 仓库中只有占位符，真值属于部署方
-sudo -E ./deploy/deploy.sh                   # 幂等：建用户、装 systemd 单元、挂 Caddy 路由
-python3 admin.py --db state.db account-create --name "<名称>"
-python3 admin.py --db state.db invite-mint --note "<备注>" --count 1 \
-    --relay wss://<站点>/dsh-link            # 铸出的邀请码回到 A 的第 3 步使用
+# 首次部署（机器上没有 Python 版中转）
+sudo systemctl enable --now dsh-relay-go
+
+# 建账号 → 铸邀请码
+/opt/dsh-relay-go/bin/dsh-relay admin --db /var/lib/dsh-relay/state.db \
+    account-create --name "<名称>"
+/opt/dsh-relay-go/bin/dsh-relay admin --db /var/lib/dsh-relay/state.db \
+    invite-mint --note "<备注>" --count 1 --relay wss://<站点>/dsh-link
 ```
 
-实时负载与每设备流量：`curl -s http://127.0.0.1:8787/stats`（仅监听回环）。限额与运维细节见
-[`relay/README.md`](relay/README.md)。
+铸出的邀请码回到 A 的第 3 步使用。实时负载与每设备流量：
+`curl -s http://127.0.0.1:8787/stats`（仅监听回环）。限额与运维细节见
+[`relay-go/README.md`](relay-go/README.md) 与 [`relay-go/deploy/README.md`](relay-go/deploy/README.md)。
 
 ## 组件与数据流
 
@@ -117,7 +125,8 @@ python3 admin.py --db state.db invite-mint --note "<备注>" --count 1 \
 ```bash
 cd ios/DSHMobile/DSHKit && swift test        # 协议层
 cd plugins/mobile-link  && npm test          # 连接器
-cd relay && .venv/bin/python -m pytest -q    # 中转
+cd relay-go && make test                     # 中转（Go，生产实现）
+cd relay && .venv/bin/python -m pytest -q    # 中转回滚实现与黑盒契约基线
 npm run check:secrets                        # 本机真值没有进跟踪文件
 npm run check:docs                           # 文档规范（结构、口吻、链接）
 

@@ -1,13 +1,14 @@
-# relay-go 部署与切换（M5）
+# relay-go 部署与切换
 
 本目录是 Go 版中转的部署面：systemd unit、Python ↔ Go 切换脚本与本说明。
-协议、构建方式、环境变量、各里程碑的实测数字见 `relay-go/README.md`；迁移与回滚
-的总体要求见内部设计记录（`maintainers/`，不随仓库发布）§10。
+协议、构建方式、环境变量见 `relay-go/README.md`；迁移与回滚的总体要求见内部设计记录
+（`maintainers/`，不随仓库发布）§10。
 
-生产环境是 Alibaba Cloud Linux 3：Python 版在 `/opt/dsh-relay`，unit 是
-`dsh-relay.service`，数据库 `/var/lib/dsh-relay/state.db`，Caddy 把
-`https://<站点>/dsh-link/*` 反代到 `127.0.0.1:8787`。本目录的脚本**不改 Caddy、
-不改 `relay/*.py`**；它只负责在两个 unit 之间切换，安装步骤见 §4。
+生产环境是 Alibaba Cloud Linux 3：Go 版在 `/opt/dsh-relay-go`，unit 是
+`dsh-relay-go.service`，数据库 `/var/lib/dsh-relay/state.db`，Caddy 把
+`https://<站点>/dsh-link/*` 反代到 `127.0.0.1:8787`。2026-10-24 03:21 CST 起 Go 版承担
+生产流量，Python 版（`/opt/dsh-relay`，`dsh-relay.service`）已停用并保留为回滚目标。
+本目录的脚本**不改 Caddy、不改 `relay/*.py`**；它只负责在两个 unit 之间切换，安装步骤见 §4。
 
 ## 1. 两个 unit 的关系
 
@@ -26,9 +27,9 @@
 目标；启动成功后把目标设为开机自启、把另一个设为不自启，因此重启机器不会出现两个
 实现同时抢 8787 的情况。
 
-在 24 小时观察期内，`/opt/dsh-relay` 必须保留：它是回滚目标。M7 起另有两套
-Go 的运维 timer（`dsh-relay-go-alerts.*` / `dsh-relay-go-purge.*`），**默认不启用**，
-与 Python 的 `dsh-relay-alerts.*` / `dsh-relay-purge.*` 并存；切换步骤见 §10.1。
+`/opt/dsh-relay` 现在是回滚目标，退役前必须保留。Go 的两套运维 timer
+（`dsh-relay-go-alerts.*` / `dsh-relay-go-purge.*`）自 2026-10-24 起已接替 Python 的
+`dsh-relay-alerts.*` / `dsh-relay-purge.*`；同一时刻只允许启用一套，顺序见 §10.1。
 
 ## 2. 文件与目录
 
@@ -232,10 +233,12 @@ sudo journalctl -u dsh-relay-go -n 50 --no-pager
 应在真实设备重连后恢复。公网面从工作站验证一次
 `https://<站点>/dsh-link/healthz`，并让一台真实设备完成一次重连与消息往返。
 
-## 7. 24 小时观察与回滚阈值
+## 7. 观察与回滚阈值
 
-观察期按 M4b 的稳态数字定基线：100 设备 × 10 fps 时 RSS 约 55 MiB、goroutine 252、
-p99 0.555 ms、丢帧 0；1000 设备档 RSS 182 MiB、丢帧 0。生产设备数通常低于 100。
+24 小时观察期已于 2026-10-24 10:39 CST 结束（实际运行 7 小时 18 分），生产稳定，
+`NRestarts=0`、`controlDrops=0`、切换后 Caddy 无 5xx。阈值表保留为后续排障口径：
+100 设备 × 10 fps 时 RSS 约 55 MiB、goroutine 252、p99 0.555 ms、丢帧 0；1000 设备档
+RSS 182 MiB、丢帧 0。生产设备数通常低于 100。
 **硬阈值**任意一条命中即回滚；**软阈值**同一小时内出现两条也回滚，单条先排查。
 
 | 观测项 | 采集方式 | 正常 | 硬阈值（回滚） | 软阈值 |
@@ -394,25 +397,21 @@ diff -u /tmp/py-usage.pretty /tmp/go-usage.pretty || true
 1. **单端口，无按 agent 灰度**：切换会断开所有在线 WebSocket；只能靠低峰窗口、
    备份与回滚速度控制影响。客户端会自动重连，但正在传输的文件会中断，需要重试。
    备份包含一次 `integrity_check`，库很大时会拉长窗口；切换前用 `du -h` 估时。
-2. **2 小时 soak 未跑**：M4b 跑的是 180 s 与 600 s；小时级缓慢泄漏没有被排除。
-   24 小时观察里的 RSS/FD 趋势是这一项的实际替代证据。
-3. **APNs 真实联调未做**：M3b2 只用注入桩验证，未调用 Apple。unit 默认
-   `DLP_APNS_ENABLED=0`；打开前先看 `relay-go/README.md` 的推送章节与 24 小时
-   日志里的 `push failed`。
-4. **Go 运维 timer 已交付但默认未启用**：`dsh-relay-go-alerts.*` 调
-   `dsh-relay alert-dispatch`，`dsh-relay-go-purge.*` 调 `dsh-relay purge`；两套 unit
-   与 Python 的 `dsh-relay-alerts.*` / `dsh-relay-purge.*` 独立命名，切换顺序见
-   §10.1。在启用前 Python timer 仍负责告警投递与清理，不要两套同时开——同一队列被
-   投递两次。
+2. ~~2 小时 soak 未跑~~：2026-10-24 已跑满 2 小时 × 10 个真实连接器，`connected=10/10`、
+   `lost=0`、`controlDrops=0`。
+3. **APNs 只验证到 sandbox**：生产 unit 已加载 `apns.env` 并真发成功（`admin push-test`，
+   `env=sandbox`）；production 环境未验。unit 默认 `DLP_APNS_ENABLED=0`。
+4. **Go 运维 timer 已接替 Python**：`dsh-relay-go-alerts.*` 调
+   `dsh-relay alert-dispatch`，`dsh-relay-go-purge.*` 调 `dsh-relay purge`；Python 的
+   `dsh-relay-alerts.*` / `dsh-relay-purge.*` 已 disabled，不要两套同时开——同一队列被
+   投递两次。顺序见 §10.1。
 5. **`/stats` 的 HTML 页是本机运维面**：`Accept: text/html` 时渲染与 Python 同口径的
    页面（连接数、限额、设备流量、今日用量）；Caddy 对公网 `/dsh-link/stats` 仍然回
    404，页面只从主机环回读。
-6. **cgo 产物未在 Linux 上实际运行**：M5 只验证纯 Go 静态 ELF。若改用 cgo，先在
+6. **cgo 产物未在目标机实际运行**：生产部署的是纯 Go 静态二进制；若改用 cgo，先在
    目标机做一次 `dsh-relay --help`、临时库启动与 `/healthz` 检查，再替换生产二进制。
-7. **Linux 产物未在目标机实跑**：M5 只做 ELF/元数据核验，以及在 macOS 上用同一份
-   源码的 darwin 产物冒烟 `/healthz`、`/dsh-link/healthz`、`/stats`。首次
-   `switch.sh --to-go` 就是它第一次在 Alibaba Cloud Linux 3 上启动；健康检查失败会
-   在 30 秒内回滚，但仍应在低峰窗口首次切换。
+7. ~~Linux 产物未在目标机实跑~~：2026-10-24 已在 Alibaba Cloud Linux 3 上切换并运行，
+   1000 设备长稳与 2 小时 soak 均在生产同款二进制上通过。
 8. **systemd 沙箱沿用 Python unit**：`SystemCallFilter=@system-service`、
    `MemoryDenyWriteExecute` 等逐项照搬。Go 运行时若被 seccomp 拒绝，日志里会是
    `operation not permitted`，切换会按失败回滚；届时按实际 syscall 调整白名单，
@@ -478,7 +477,10 @@ curl -s -H 'Accept: text/html' localhost:8787/stats | head  # 页面（浏览器
 | `/stats` 打开仍是 JSON | 请求头有没有 `Accept: text/html` | 浏览器默认带；`curl` 需要显式 `-H` |
 | `database is locked` 增多 | `journalctl`、`/stats`、`quick_check` | 按 §7 的硬阈值回滚；不要用重启掩盖 |
 
-## 12. 本次交付的验证记录
+## 12. 交付时的验证记录（2026-10-23，历史）
+
+本节记录 2026-10-23 首次切换前的本机验证。生产切换、1000 设备长稳、2 小时 soak 与
+7 小时观察的结果见 `maintainers/REPORT-20261024-go-relay-launch.md`。
 
 2026-10-23，本机（macOS，Go 1.27.1）执行：
 

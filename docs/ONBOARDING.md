@@ -214,22 +214,27 @@ curl -s "http://127.0.0.1:<dsh 端口>/mobile-link/status"   # 浏览器打开�
 
 ## B · 自己开中转（20 分钟）
 
+自建使用仓库内的 Go 实现（`relay-go/`）。
+
 ```bash
-# 在服务器上（需要 root 与已装好的 Caddy）
-ssh <你的服务器>
-cd relay && export DSH_RELAY_SITE=<你的站点>
-sudo -E ./deploy/deploy.sh                 # 幂等：建用户、装 systemd 单元、插 Caddy 路由
+# 在服务器上（需要 root、Go 1.27 与已装好的 Caddy）
+cd relay-go
+make build-purego                           # 纯 Go 静态二进制；交叉构建见 deploy/README.md §3
+# 按 deploy/README.md §4 安装二进制、build.json 与 dsh-relay-go.service
+sudo systemctl enable --now dsh-relay-go
 
 # 建账号 → 给自己铸一个邀请码
-python3 admin.py --db state.db account-create --name "<你>"
-python3 admin.py --db state.db invite-mint --note "给自己" --count 1 \
-    --relay wss://<你的站点>/dsh-link
+/opt/dsh-relay-go/bin/dsh-relay admin --db /var/lib/dsh-relay/state.db \
+    account-create --name "<你>"
+/opt/dsh-relay-go/bin/dsh-relay admin --db /var/lib/dsh-relay/state.db \
+    invite-mint --note "给自己" --count 1 --relay wss://<你的站点>/dsh-link
 ```
 
 拿到码之后**回到 A 的第 2 步**继续（装连接器 → enroll → 重启 → 扫码）。
 
-`deploy.sh` 不新增 DNS 与证书：它把一段带标记的路由片段插进既有站点块，写入前先
-`caddy validate`，失败即回滚；`--uninstall` 按标记原样移除。
+Caddy 路由不新增 DNS 与证书：用 `python3 relay/deploy/caddy_splice.py insert /etc/caddy/Caddyfile
+relay/deploy/Caddyfile.snippet <你的站点>` 把带标记的片段插进既有站点块，写入前先 `caddy validate`，
+失败即回滚；`remove` 按标记原样移除。
 
 运维侧的实时负载、每设备流量与生效中的限额：
 
@@ -239,7 +244,7 @@ curl -s http://127.0.0.1:8787/stats | python3 -m json.tool | head -40
 
 自建时建议开限额（固定带宽共享时防止一个人拖慢所有人）：
 `DLP_DEVICE_RATE_KBPS` / `DLP_DEVICE_DAILY_MB` / `DLP_MAX_DEVICES_PER_AGENT`，
-取值口径写在 `relay/deploy/dsh-relay.service` 的注释里。
+取值口径写在 `relay-go/deploy/dsh-relay-go.service` 的注释里。
 
 ---
 

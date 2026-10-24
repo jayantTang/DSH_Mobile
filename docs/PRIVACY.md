@@ -38,8 +38,8 @@ DSH Mobile 是**你电脑上 DeepSeek Harness 的客户端**。这一页说清�
 中转地址由使用者自己填。你可以：
 
 - 用别人（包括本项目作者）提供的中转，配合对方发的邀请码；
-- 或者自己开一台：仓库里的 `relay/deploy/deploy.sh` 是幂等的安装脚本，
-  装完那台中转完全由你控制。
+- 或者自己开一台：仓库里的 `relay-go/` 是 Go 单二进制实现，按
+  [`relay-go/deploy/README.md`](../relay-go/deploy/README.md) 安装；装完那台中转完全由你控制。
 
 ## 反馈与通知
 
@@ -70,7 +70,7 @@ DSH Mobile 是**你电脑上 DeepSeek Harness 的客户端**。这一页说清�
 
 - 手机上：设置 → 已配对的设备 → 撤销；或直接删除 App，令牌随之消失。
 - 电脑上：删除 `~/.dsh/mobile-link/agent.json` 即注销本机在中转上的身份。
-- 中转上：请中转的运维方（自建的话就是你自己）用 `admin.py device-revoke` /
+- 中转上：请中转的运维方（自建的话就是你自己）用 `dsh-relay admin device-revoke` /
   `agent-disable` 撤销。
 - 中转上的反馈与回信：同样由运维方删除对应记录。手机上设置里的「清除本地缓存」会清掉反馈记录的
   本地镜像（下次打开重新拉取），钥匙串里的取件凭据保留——**App 内没有单独删除这份凭据的入口**，

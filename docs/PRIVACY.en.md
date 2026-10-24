@@ -58,8 +58,9 @@ notices*).
 ## Running it yourself
 
 You can use someone else's relay together with an invite code from them, or run your own:
-`relay/deploy/deploy.sh` is an idempotent installer, and the relay is a small Python service behind
-Caddy. Self-hosting removes the third party entirely.
+`relay-go/` is a single Go binary installed as described in
+[`relay-go/deploy/README.md`](../relay-go/deploy/README.md), behind Caddy. Self-hosting removes the
+third party entirely.
 
 ## Deleting data
 
@@ -69,8 +70,8 @@ Caddy. Self-hosting removes the third party entirely.
   feedback records and keeps the key. There is no separate in-app way to delete that key — it goes
   away when the device is erased.
 - **On the computer:** delete `~/.dsh/mobile-link/agent.json` to unregister this computer.
-- **On the relay:** the operator (yourself, if self-hosted) uses `admin.py device-revoke` /
-  `account-delete` / `purge`, and deletes feedback threads on request.
+- **On the relay:** the operator (yourself, if self-hosted) uses `dsh-relay admin device-revoke` /
+  `agent-disable`, and deletes feedback threads on request.
 
 ## Contact
 
