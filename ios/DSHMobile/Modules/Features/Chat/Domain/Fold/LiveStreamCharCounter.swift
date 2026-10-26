@@ -15,6 +15,9 @@ public struct LiveStreamCharCounter: Equatable, Sendable {
             self.attemptId = attemptId
             chars = 0
         case .chunk(let attemptId, _, _, _, let chunk):
+            // 宿主可能不先发 start，或 start 的 attemptId 与 chunk 不同步；
+            // 首个 chunk 直接认领，后续以它为准，不能因此把字数永远算成 0。
+            if self.attemptId == nil { self.attemptId = attemptId }
             guard attemptId == self.attemptId else { return }
             switch chunk {
             case .textDelta(let text), .reasoningDelta(let text):

@@ -16,6 +16,13 @@ final class LiveStreamCharCounterTests: XCTestCase {
         XCTAssertEqual(counter.chars, 0)
     }
 
+    func test_counts_chunks_when_no_start_arrived() {
+        var counter = LiveStreamCharCounter()
+        counter.apply(.chunk(attemptId: "a1", revision: 1, index: 0, time: nil,
+                             chunk: .reasoningDelta("思考内容")))
+        XCTAssertEqual(counter.chars, 4)
+    }
+
     func test_ignores_chunks_from_another_attempt() {
         var counter = LiveStreamCharCounter()
         counter.apply(.start(attemptId: "a1", revision: 1, turn: 1, step: 1, startedAfterSeq: 1))
