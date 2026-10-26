@@ -1,4 +1,5 @@
 import { HOST_CALL_TIMEOUT_MS, withTimeout, messageOf } from './history/shared.js'
+import { sliceRangeSafe, truncateSafe } from './unicode.js'
 import {
   DEFAULT_LIMIT, DEFAULT_MAX_BYTES, WINDOW_CHUNK,
   bytesOfRecords, displayRoleOf, roleOf, toRecord, trimRecordForWire, trimRecordsForWire,
@@ -147,12 +148,12 @@ function makeSnippet(text, query, radius = 36) {
   const haystack = String(text ?? '')
   const at = haystack.toLowerCase().indexOf(query.toLowerCase())
   if (at < 0) {
-    const head = haystack.slice(0, radius * 2).replace(/\s+/g, ' ').trim()
+    const head = truncateSafe(haystack, radius * 2).replace(/\s+/g, ' ').trim()
     return { snippet: head, highlightStart: 0, highlightLength: 0 }
   }
   const start = Math.max(0, at - radius)
   const end = Math.min(haystack.length, at + query.length + radius)
-  const snippet = haystack.slice(start, end).replace(/\s+/g, ' ').trim()
+  const snippet = sliceRangeSafe(haystack, start, end).replace(/\s+/g, ' ').trim()
   // Re-find the match inside the flattened snippet so the offsets line up with
   // what is actually displayed.
   const flatAt = snippet.toLowerCase().indexOf(query.toLowerCase())
@@ -405,7 +406,7 @@ export function createHistoryService({
           if (!browsing && !text.toLowerCase().includes(needle)) continue
           hits.push({ seq: doc.seq, role: display, ...(query.length > 0
             ? makeSnippet(text, query)
-            : { snippet: String(text).slice(0, 72).replace(/\s+/g, ' ').trim(),
+            : { snippet: truncateSafe(String(text), 72).replace(/\s+/g, ' ').trim(),
                 highlightStart: 0, highlightLength: 0 }) })
           if (hits.length >= limit) {
             // 装满了：这一条已经收进本页，下一页从它的**前一条**继续——不能从整块之前

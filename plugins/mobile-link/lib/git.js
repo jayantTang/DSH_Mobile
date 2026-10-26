@@ -19,6 +19,7 @@
 import { execFile } from 'node:child_process'
 import { statSync } from 'node:fs'
 import { isAbsolute, resolve } from 'node:path'
+import { truncateSafe } from './unicode.js'
 
 /** Reserved method names this module answers; never forwarded to the Host. */
 export const GIT_STATUS = '_link/gitStatus'
@@ -44,10 +45,24 @@ export const LIMITS = {
   readTimeoutMs: 15_000,
 }
 
-/** The environment every git call runs in. */
-function gitEnv() {
+/** The environment every git call runs in.
+ *
+ * 导出给单测的 fixture 使用：测试自己也要起 git，两边必须是同一份环境口径，
+ * 否则 hook 里跑测试时 fixture 会写进外层仓库。
+ */
+export function gitEnv() {
+  const env = { ...process.env }
+  // "看哪个仓库"只由 `-C <dir>` 决定。调用方环境里可能带着仓库定位变量（从
+  // .githooks 里启动 DSH、或在 git rebase 里启动时都会这样），它们会盖掉 `-C`，
+  // 让手机看到另一个仓库、甚至报 "nothing to commit"。这里清掉，归属唯一。
+  for (const key of [
+    'GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_PREFIX', 'GIT_NAMESPACE',
+    'GIT_COMMON_DIR', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES',
+  ]) {
+    delete env[key]
+  }
   return {
-    ...process.env,
+    ...env,
     // Never wait for a credential prompt or open an editor: a phone review
     // must not be able to wedge a process on the computer.
     GIT_TERMINAL_PROMPT: '0',
@@ -400,7 +415,7 @@ export class GitBridge {
       staged,
       untracked,
       binary,
-      text: binary ? '' : text.slice(0, LIMITS.diffBytes),
+      text: binary ? '' : truncateSafe(text, LIMITS.diffBytes),
       truncated: !binary && buffer.length > LIMITS.diffBytes,
     }
   }
@@ -450,7 +465,7 @@ export class GitBridge {
         sha,
         path,
         binary,
-        text: binary ? '' : text.slice(0, LIMITS.diffBytes),
+        text: binary ? '' : truncateSafe(text, LIMITS.diffBytes),
         truncated: !binary && buffer.length > LIMITS.diffBytes,
       }
     }

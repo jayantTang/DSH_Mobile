@@ -6,6 +6,8 @@
  * Wire contract: docs/RELAY-PROTOCOL.md §3.
  */
 
+import { repairLoneSurrogatesWithCount } from './unicode.js'
+
 /** Frame ceiling aligned with DSH's image-attachment limit (spec §5). */
 export const MAX_FRAME_BYTES = 32 * 1024 * 1024
 
@@ -40,8 +42,23 @@ export const RELAY_TO_AGENT_CONTROL = new Set(['fsGetCancel'])
 
 const ID_FRAMES = new Set(['req', 'open', 'cancel', 'res', 'item', 'end', 'streamError', 'eventResult'])
 
+/**
+ * 出站帧的唯一序列化出口。
+ *
+ * 为什么要过一遍代理项修复：宿主会给我们**截断过**的预览（`turnOutline` 的
+ * prompt/response 截到 50/120 个码元），截断点落在 emoji 中间时字符串里就有
+ * 落单代理项，`JSON.stringify` 会忠实写成 `"\ud83d…"`。中转能把它修回 U+FFFD，
+ * 但解码方（iOS `JSONDecoder`）遇到这种转义会整条拒绝，所以生产端先把帧修好。
+ */
 export function encodeFrame(frame) {
-  return JSON.stringify(frame)
+  return encodeFrameChecked(frame).text
+}
+
+/** `encodeFrame` 的带诊断版本：`repaired` 是这条帧里修掉的落单代理项条数。 */
+export function encodeFrameChecked(frame) {
+  const raw = JSON.stringify(frame)
+  const { text, repaired } = repairLoneSurrogatesWithCount(raw)
+  return { text, repaired }
 }
 
 /**

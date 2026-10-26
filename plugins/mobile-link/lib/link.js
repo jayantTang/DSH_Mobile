@@ -7,7 +7,7 @@
 import { EventEmitter } from 'node:events'
 
 import { DshClient } from './dsh-client.js'
-import { agentEndpoint, decodeFrame, encodeFrame, nextBackoff, normalizeRelayUrl, pongFor } from './dlp.js'
+import { agentEndpoint, decodeFrame, encodeFrameChecked, nextBackoff, normalizeRelayUrl, pongFor } from './dlp.js'
 
 /**
  * 进程级登记表：**同一个进程里只允许有一条到中转的 agent 连接**。
@@ -595,8 +595,30 @@ export class MobileLinkAgent extends EventEmitter {
 
   // ── relay I/O ───────────────────────────────────────────────────────────
 
+  /**
+   * 序列化一条出站帧，并把"修掉了落单代理项"记下来。
+   *
+   * 上游（宿主预览）切坏了 emoji 时，出口把它修成 U+FFFD 再发：帧合法，解码方
+   * 不会整条失败；同时留一条本机流水，出问题的源头仍然查得到。日志限流一分钟一次，
+   * 累计值不丢。
+   */
+  #encodeForWire(frame) {
+    const { text, repaired } = encodeFrameChecked(frame)
+    if (repaired <= 0) return text
+    this.surrogateRepairs = (this.surrogateRepairs ?? 0) + repaired
+    this.journal.record('frame.surrogate_repaired', { repaired, total: this.surrogateRepairs })
+    const now = this.now()
+    if (now - (this._lastSurrogateWarnAt ?? -Infinity) >= 60_000) {
+      this._lastSurrogateWarnAt = now
+      this.logger.warn?.(
+        `mobile-link: repaired ${repaired} unpaired surrogate(s) in an outbound frame ` +
+        `(a host preview was cut inside an emoji); ${this.surrogateRepairs} so far`)
+    }
+    return text
+  }
+
   #rawSend(frame) {
-    return this.#sendText(encodeFrame(frame))
+    return this.#sendText(this.#encodeForWire(frame))
   }
 
   /** 唯一的发送出口：socket 不在就丢掉，发送异常只记 debug、绝不抛。 */
@@ -616,7 +638,7 @@ export class MobileLinkAgent extends EventEmitter {
     // `deviceId` 为空＝这是一条**不带寻址**的帧（`fsPutAck`/`fsPutDone`/`fsErr` 那一族）：
     // relay 靠 `bid` 把回复对回发起的那个 HTTP 请求，多一个 deviceId 反而会让它对不上。
     if (deviceId === undefined || deviceId === null) return this.#rawSend(frame)
-    const text = encodeFrame({ ...frame, deviceId })
+    const text = this.#encodeForWire({ ...frame, deviceId })
     // 记字节给路由层的"慢请求/汇总"用（它按 deviceId 归）：只有这里知道真正上线了多少字节。
     this.router.noteSent?.(deviceId, Buffer.byteLength(text))
     return this.#sendText(text)

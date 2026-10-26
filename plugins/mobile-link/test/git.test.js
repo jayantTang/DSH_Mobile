@@ -5,7 +5,7 @@ import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync, appendFile
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
-  GitBridge, GitError, GIT_STATUS, GIT_DIFF, GIT_LOG, GIT_SHOW, GIT_FILE, isGitMethod,
+  GitBridge, GitError, GIT_STATUS, GIT_DIFF, GIT_LOG, GIT_SHOW, GIT_FILE, isGitMethod, gitEnv,
   parseStatus, parseLog, parseNumstat,
 } from '../lib/git.js'
 
@@ -13,7 +13,7 @@ import {
 function git(cwd, argv) {
   return execFileSync('git', ['-C', cwd, '-c', 'core.quotepath=false', ...argv], {
     encoding: 'utf8',
-    env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0', LC_ALL: 'C' },
+    env: gitEnv(),
   })
 }
 
@@ -278,4 +278,15 @@ test('parsers survive NUL records, unicode paths and renames in numstat', () => 
   assert.equal(numstat[1].binary, true)
   assert.equal(numstat[2].path, 'dir/new/file.js')
   assert.equal(numstat[2].originalPath, 'dir/old/file.js')
+})
+
+test('gitEnv 丢掉调用方的仓库定位变量，仓库只由 -C 决定', () => {
+  const saved = process.env.GIT_DIR
+  process.env.GIT_DIR = '/tmp/not-the-fixture-repository'
+  try {
+    assert.equal(gitEnv().GIT_DIR, undefined)
+  } finally {
+    if (saved === undefined) delete process.env.GIT_DIR
+    else process.env.GIT_DIR = saved
+  }
 })

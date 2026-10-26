@@ -187,8 +187,15 @@ def main(argv: list[str] | None = None) -> int:
             failures += 1
             continue
         print(f"[run ] {command.label}: {' '.join(command.argv)}（预算 {remaining:.0f}s）")
+        # hook 里跑时 git 会把 GIT_DIR / GIT_INDEX_FILE 之类塞进环境；用例自己起的
+        # git（fixture、临时仓库）继承它们就会写进外层仓库，靶向用例必挂。子进程按
+        # 干净环境启动，仓库定位只由用例自己的 -C 决定。
+        child_env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
         try:
-            proc = subprocess.run(command.argv, cwd=command.cwd, timeout=remaining)
+            proc = subprocess.run(
+                command.argv, cwd=command.cwd, timeout=remaining,
+                capture_output=True, text=True, env=child_env,
+            )
         except subprocess.TimeoutExpired:
             print(f"[timeout] {command.label}: 超过预算，判定失败")
             failures += 1
@@ -204,6 +211,10 @@ def main(argv: list[str] | None = None) -> int:
             continue
         if proc.returncode != 0:
             print(f"[fail] {command.label}: 退出码 {proc.returncode}")
+            for stream in (proc.stdout, proc.stderr):
+                tail = (stream or "").strip()
+                if tail:
+                    print(tail[-4000:])
             failures += 1
         else:
             print(f"[ok  ] {command.label}")

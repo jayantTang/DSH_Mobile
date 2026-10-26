@@ -28,6 +28,7 @@
 
 import { FOLD_RECORD_TYPE, isHumanMessage } from './fold.js'
 import { bytesOf, trimRecordForWire } from './records.js'
+import { truncateSafe } from '../unicode.js'
 
 /// `_link/hello` 声明的新能力位。老客户端不认识它，继续用 `fold: true`。
 export const SUMMARY_FOLD_CAPABILITY = 'history-fold-summary-v2'
@@ -188,10 +189,13 @@ function hasAttachmentBlock(blocks) {
 
 /// 参数预览：折叠空白（步骤行只有一行）后截到 `SUMMARY_PREVIEW_CHARS` 个字符。
 /// 完整 args 不下发——它是体积大户，也是"展开零请求"唯一可以省掉的一项。
+///
+/// 截断点落在 emoji 中间时丢掉那个高代理项（少 1 个码元），不把半个 emoji 发出去：
+/// 落单代理项会让 iOS 侧整条 JSON 解码失败。
 export function previewOf(args) {
   if (typeof args !== 'string') return ''
   const flat = args.replace(/\s+/g, ' ').trim()
-  return flat.length > SUMMARY_PREVIEW_CHARS ? flat.slice(0, SUMMARY_PREVIEW_CHARS) : flat
+  return truncateSafe(flat, SUMMARY_PREVIEW_CHARS)
 }
 
 /// 工具结果里的**正文**（与搜索的 `docText` 同一组键）。只用来量字节数，不下发。
