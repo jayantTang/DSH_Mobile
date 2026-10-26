@@ -970,10 +970,11 @@ public struct ChatView: View {
                 ChatProbe.shared.probeNote?("older.sentinel", ["near": "1", "why": "appear",
                                                      "items": String(model.timeline.items.count)], false)
                 if isFollowing, !userScrolled {
-                    // 读者没往上翻过、却已经在内容顶部：那是"打开会话没钉到底"，先钉回去。
+                    // 读者没往上翻过、却已经在内容顶部：可能是"打开会话没钉到底"，先钉回去。
                     ChatProbe.shared.probeNote?("older.repin", ["distance": "-1"], false)
                     repinAfterContentChange(proxy)
-                    return
+                    // 但不能就此 return：哨兵可见 = 已经在顶部，短首屏/历史未取完时
+                    // 必须继续补更早；否则 near=1 却永远不触发加载。
                 }
                 pumpOlder(proxy)
             }
