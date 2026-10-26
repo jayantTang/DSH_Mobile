@@ -102,6 +102,11 @@ type Hub struct {
 	// 全局证据：连接一断，逐链路的计数就没了，恰好会在最需要它的时候归零。
 	controlDrops atomic.Int64
 
+	// opDeduped / opUncounted 是操作统计的卫生指标：前者说明重发被折叠，
+	// 后者说明客户端没带稳定幂等键。两者都不进入 usageDaily。
+	opDeduped   atomic.Uint64
+	opUncounted atomic.Uint64
+
 	// 周期任务的参数（见 StartBackground）。
 	usageFlushInterval      time.Duration
 	usageFlushBytes         int64

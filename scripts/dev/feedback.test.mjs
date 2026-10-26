@@ -36,12 +36,13 @@ function fixture() {
     days: 30,
     today: {
       day: 20261012, dayStartAt: GENERATED_AT - 9 * 3600_000,
-      usage: { egressBytes: 2 * 1024 * 1024, connections: 9, devices: 2, accounts: 2,
+      usage: { egressBytes: 2 * 1024 * 1024, connections: 9, prompts: 18, answers: 4,
+        messageAccounts: 2, devices: 2, accounts: 2,
         firstSeenAt: GENERATED_AT - 5 * 3600_000, lastSeenAt: GENERATED_AT,
         builds: [{ build: '1.0 20261012.1056', devices: 2, accounts: 2 },
           { build: '1.0 20260924.1925', devices: 1, accounts: 1 }] },
       topAccounts: [{ accountId: 'acc_a', name: 'jayant', egressBytes: 2 * 1024 * 1024,
-        connections: 9, devices: 2 }],
+        connections: 9, prompts: 18, answers: 4, devices: 2 }],
       devices: { new: 1, active: 2, revoked: 0, live: 3,
         list: [{ deviceId: 'dvc_a', name: 'iPhone 17 Pro', model: 'iPhone 17 Pro',
           appVersion: '1.2.3', accountId: 'acc_a', accountName: 'jayant',
@@ -75,14 +76,18 @@ function fixture() {
     },
     usage: {
       perDay: [{ day: '2026-10-11', egressBytes: 1024 * 1024, connections: 3, devices: 1,
-        accounts: 1, newAccounts: 1, returningAccounts: 0 },
+        accounts: 1, prompts: 10, answers: 2, messageAccounts: 1,
+        newAccounts: 1, returningAccounts: 0 },
       { day: '2026-10-12', egressBytes: 2 * 1024 * 1024, connections: 9, devices: 2,
-        accounts: 2, newAccounts: 1, returningAccounts: 1 }],
+        accounts: 2, prompts: 8, answers: 2, messageAccounts: 2,
+        newAccounts: 1, returningAccounts: 1 }],
       topAccounts: [{ accountId: 'acc_a', name: 'jayant', egressBytes: 3 * 1024 * 1024,
-        connections: 12, lastSeenAt: GENERATED_AT, lastBuild: '1.0 20261012.1056' }],
-      totals: { egressBytes: 3 * 1024 * 1024, connections: 12 },
+        connections: 12, prompts: 18, answers: 4, lastSeenAt: GENERATED_AT,
+        lastBuild: '1.0 20261012.1056' }],
+      totals: { egressBytes: 3 * 1024 * 1024, connections: 12, prompts: 18, answers: 4 },
       averagePerDay: 1024 * 1024, peakDay: { day: '2026-10-12', egressBytes: 2 * 1024 * 1024 },
       activeDays: 2, activeAccounts: 2, activeAccounts7d: 2,
+      messageActiveAccounts: 2, messageActiveAccounts7d: 2, messagesPerAccount: 9,
     },
     retention: {
       scope: 'external',
@@ -366,6 +371,11 @@ test('日报分「今日」与「最近 30 天」两段，正文被转义', () =
   assert.ok(!html.includes('今日活跃设备'), '头牌不再写活跃设备')
   assert.ok(html.includes('今日出口流量') && html.includes('较昨日 ↑ 100.0%'))
   assert.ok(html.includes('3.0 MB'), '出口字节应换算成 MB')
+  // 消息与作答：卡、人均与趋势图都要出现；口径来自 prompts/answers，不靠前端重算。
+  assert.ok(html.includes('今日消息') && html.includes('今日消息活跃账号'))
+  assert.ok(html.includes('人均 9.0 条'), '18 条 / 2 个消息活跃账号')
+  assert.ok(html.includes('每日消息'), '趋势段要有每日消息图')
+  assert.ok(html.includes('>消息<') && html.includes('>作答<'), '近 7 天表要有消息与作答列')
   // 近 7 天表：活跃账号与新增设备各一列。
   assert.ok(html.includes('活跃账号') && html.includes('新增设备'))
   // 留存：外部账号口径、D1/D7 与「登记后 7 天内连上」都要在页面上。

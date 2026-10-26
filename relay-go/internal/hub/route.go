@@ -66,6 +66,9 @@ func (h *Hub) RouteFromDevice(link *DeviceLink, wire dlp.Wire) {
 		h.noteClientBuild(link, wire)
 	}
 
+	// 操作统计只观察，不参与路由：分类与指纹在帧缓冲归还前算完。
+	operation := classifyDeviceOperation(wire)
+
 	agent := link.agent.Load()
 	if agent == nil || agent.Closed() {
 		h.SendControl(link, dlp.ErrorFrame("host/offline",
@@ -99,6 +102,14 @@ func (h *Hub) RouteFromDevice(link *DeviceLink, wire dlp.Wire) {
 	case Enqueued:
 		if payloadOwner != nil && payloadOwner == owned {
 			owned = nil // 所有权已交给写循环
+		}
+		if operation.relevant {
+			switch {
+			case !operation.keyed:
+				h.opUncounted.Add(1)
+			case !h.usage.NoteOpOnce(link.ref(), operation.op, operation.fingerprint):
+				h.opDeduped.Add(1)
+			}
 		}
 	case FrameDropped:
 		h.log.Warn("relay: dropped a stream frame for a saturated agent link",

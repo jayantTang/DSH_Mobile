@@ -137,6 +137,10 @@ func TestOpenCreatesSchema(t *testing.T) {
 	if !hasColumn(t, s.db.DB, "pairCodes", "useCount") {
 		t.Fatal("pairCodes 缺 useCount")
 	}
+	if !hasColumn(t, s.db.DB, "usageDaily", "prompts") ||
+		!hasColumn(t, s.db.DB, "usageDaily", "answers") {
+		t.Fatal("usageDaily 缺操作计数列")
+	}
 }
 
 func TestOpenCreatesParentDirectories(t *testing.T) {
@@ -286,6 +290,9 @@ func TestMigratesOlderDatabase(t *testing.T) {
 		"INSERT INTO devices (deviceId, deviceTokenHash, agentId, accountId, name, createdAt, expiresAt)" +
 			" VALUES ('dev_old', 'hash_old', 'agt_old', 'acc_old', '旧手机', 1700000000001, 1800000000000)",
 		"INSERT INTO noticeDeliveries VALUES ('notice_1', 'dev_old', 1700000000002, NULL)",
+		"INSERT INTO usageDaily (day, deviceId, agentId, accountId, egressBytes, connections," +
+			" firstSeenAt, lastSeenAt, lastBuild)" +
+			" VALUES (20261026, 'dev_old', 'agt_old', 'acc_old', 100, 1, 1, 2, NULL)",
 		"PRAGMA user_version = 1",
 	}
 	for _, stmt := range oldDDL {
@@ -316,10 +323,25 @@ func TestMigratesOlderDatabase(t *testing.T) {
 		{"pairCodes", "revokedAt"}, {"pairCodes", "useCount"},
 		{"feedbackThreads", "subject"}, {"feedbackMessages", "format"},
 		{"notices", "format"}, {"agents", "connectorVersion"}, {"agents", "versionsAt"},
+		{"usageDaily", "prompts"}, {"usageDaily", "answers"},
 	} {
 		if !hasColumn(t, s.db.DB, col.table, col.column) {
 			t.Errorf("迁移后 %s 仍缺 %s", col.table, col.column)
 		}
+	}
+
+	// migrate 9：老用量行保留，新列默认 0；升级后可以立即写入计数。
+	var prompts, answers int64
+	if err := s.db.QueryRow("SELECT prompts, answers FROM usageDaily"+
+		" WHERE day=20261026 AND deviceId='dev_old'").Scan(&prompts, &answers); err != nil {
+		t.Fatalf("读老用量行的计数列: %v", err)
+	}
+	if prompts != 0 || answers != 0 {
+		t.Fatalf("老用量行默认计数 = %d/%d，期望 0/0", prompts, answers)
+	}
+	if _, err := s.db.Exec("UPDATE usageDaily SET prompts=3, answers=1" +
+		" WHERE day=20261026 AND deviceId='dev_old'"); err != nil {
+		t.Fatalf("升级后写计数: %v", err)
 	}
 
 	// migrate 5：noticeDeliveries 从 deviceId 换成 accountId，旧投递按 devices.accountId 归属。

@@ -614,7 +614,8 @@ export function normalize(data) {
     today: {
       day: num(today.day),
       dayStartAt: num(today.dayStartAt),
-      usage: withDefaults(today.usage, { egressBytes: 0, connections: 0, devices: 0, accounts: 0,
+      usage: withDefaults(today.usage, { egressBytes: 0, connections: 0, prompts: 0, answers: 0,
+        messageAccounts: 0, devices: 0, accounts: 0,
         firstSeenAt: null, lastSeenAt: null, builds: [] }),
       topAccounts: Array.isArray(today.topAccounts) ? today.topAccounts : [],
       devices: withDefaults(today.devices, { list: [], new: 0, active: 0, revoked: 0, live: 0 }),
@@ -624,8 +625,10 @@ export function normalize(data) {
     feedback: withDefaults(source.feedback, { new: 0, open: 0, replied: 0, medianFirstReplyHours: null, threads: [] }),
     devices: withDefaults(source.devices, { paired: 0, active7d: 0, activeWindow: 0, newInWindow: 0,
       windowDays: 0, revoked: 0, newPerDay: [], list: [] }),
-    usage: withDefaults(source.usage, { perDay: [], topAccounts: [], totals: {},
-      averagePerDay: 0, peakDay: null, activeDays: 0, activeAccounts: 0, activeAccounts7d: 0 }),
+    usage: withDefaults(source.usage, { perDay: [], topAccounts: [],
+      totals: { egressBytes: 0, connections: 0, prompts: 0, answers: 0 },
+      averagePerDay: 0, peakDay: null, activeDays: 0, activeAccounts: 0, activeAccounts7d: 0,
+      messageActiveAccounts: 0, messageActiveAccounts7d: 0, messagesPerAccount: 0 }),
     // 版本分布（服务端 `versions`）与 14 天 × 24 小时的活性矩阵（`hourlyActivity`）。
     // 两个字段都是 2026-10-17 新增：老服务端没有它们，页面照常渲染，只是少这两块。
     versions: Array.isArray(source.versions) ? source.versions : [],
@@ -931,6 +934,10 @@ function todaySection(report, generatedAt, days, completed = false) {
   const connections = report.today.day ? num(usage.connections) : num(todayEntry?.connections)
   const activeUsers = report.today.day ? num(usage.accounts) : num(todayEntry?.accounts)
   const activePhones = report.today.day ? num(usage.devices) : num(todayEntry?.devices)
+  const prompts = report.today.day ? num(usage.prompts) : num(todayEntry?.prompts)
+  const answers = report.today.day ? num(usage.answers) : num(todayEntry?.answers)
+  const messageAccounts = report.today.day ? num(usage.messageAccounts) : num(todayEntry?.messageAccounts)
+  const messagesPerAccount = messageAccounts > 0 ? prompts / messageAccounts : null
   const yesterday = series.length >= 2 ? series[series.length - 2] : null
   const baseline = series.slice(-8, -1)
   const devices = report.today.devices
@@ -978,8 +985,12 @@ function todaySection(report, generatedAt, days, completed = false) {
     [`${word}出口流量`, formatBytes(egress), egressDelta],
     [`${word}连接`, formatInt(connections), ''],
     [`${word}新增设备`, formatInt(devices.new), ''],
+    [`${word}消息`, formatInt(prompts), `${word}作答 ${formatInt(answers)} 次`],
+    [`${word}消息活跃账号`, formatInt(messageAccounts),
+      messagesPerAccount === null ? '暂无消息' : `人均 ${messagesPerAccount.toFixed(1)} 条`],
     ['近 7 天活跃账号', formatInt(report.usage.activeAccounts7d),
-      `近 ${formatInt(days)} 天 ${formatInt(report.usage.activeAccounts)} 个`],
+      `近 ${formatInt(days)} 天 ${formatInt(report.usage.activeAccounts)} 个 · `
+      + `消息活跃 ${formatInt(report.usage.messageActiveAccounts7d)} 个`],
   ])
 
   return section(word, '概览', completed
@@ -1060,6 +1071,7 @@ function rangeSection(report, days, completed = false) {
     ? `峰值 ${fullDay(peak.day)} ${formatBytes(peak.egressBytes)}` : `最近 ${days} 天`
   const userPoints = (usage.perDay ?? []).map((row) => ({ label: row.day, value: row.accounts,
     fresh: row.newAccounts }))
+  const messagePoints = (usage.perDay ?? []).map((row) => ({ label: row.day, value: row.prompts }))
   const egressPoints = (usage.perDay ?? []).map((row) => ({ label: row.day, value: row.egressBytes }))
   // 发版标注：在流量图上给每个 TestFlight 发版日画一条竖线——「10-13 发版后流量翻倍」
   // 这类因果不用翻日历对。没有发版记录就没有标注；日期口径见 releaseMarkerDays。
@@ -1083,7 +1095,13 @@ function rangeSection(report, days, completed = false) {
     points: userPoints,
     format: (value) => String(Math.round(value)),
   })
-  const charts = activeChart + lineChart({
+  const messageChart = lineChart({
+    title: '每日消息',
+    note: `近 7 天消息活跃 ${formatInt(usage.messageActiveAccounts7d)} 个账号`,
+    points: messagePoints,
+    format: (value) => formatInt(value),
+  })
+  const charts = activeChart + messageChart + lineChart({
     title: '每日出口流量',
     // 竖虚线的含义写在这里：图上不再逐条标「发版」，密集发版时文字会互相压住。
     note: releaseMarkers.length ? `${peakNote} · 竖虚线为 TestFlight 发版日` : peakNote,
@@ -1100,6 +1118,8 @@ function rangeSection(report, days, completed = false) {
   const recent = table([
     { label: '日期', text: (row) => fullDay(row.day) },
     { label: '活跃账号', text: (row) => formatInt(row.accounts), num: true },
+    { label: '消息', text: (row) => formatInt(row.prompts), num: true },
+    { label: '作答', text: (row) => formatInt(row.answers), num: true },
     { label: '出口', text: (row) => formatBytes(row.egressBytes), num: true },
     { label: '连接', text: (row) => formatInt(row.connections), num: true },
     { label: '新增设备', text: (row) => formatInt(newByDay.get(dayText(row.day)) ?? 0), num: true },
@@ -1113,6 +1133,8 @@ function rangeSection(report, days, completed = false) {
   const accounts = table([
     { label: '账号', text: (row) => rankLabel(row), wide: true },
     { label: '出口', text: (row) => formatBytes(row.egressBytes), num: true },
+    { label: '消息', text: (row) => formatInt(row.prompts), num: true },
+    { label: '作答', text: (row) => formatInt(row.answers), num: true },
     { label: '连接', text: (row) => formatInt(row.connections), num: true },
     { label: '设备', text: (row) => formatInt(row.devices), num: true },
     { label: '最近在线', text: (row) => (row.lastSeenAt ? shortTime(row.lastSeenAt) : '—'), num: true },
@@ -1173,7 +1195,9 @@ export function renderReport(data, { now = Date.now(), history = null } = {}) {
     + `活跃设备 = 当天的设备行数（重装/换版本会多一行，故可能大于活跃账号）。`
     + ` 出口流量只计中转出口字节（不含 OTA 下载与 SSH）；调试设备（DSH- 前缀与测试台机型）不计。`
     + ` 14 天分布是连接口径（从日志重建，含只连着、没有流量的设备；取不到日志时该图跳过）；`
-    + `版本分布与活跃账号同口径，窗口 48 小时（按用量行的 lastSeenAt 卡）。`
+    + ` 消息 = 设备经中转发出的 session/prompt（按 requestId 去重），作答 = eventResult`
+    + `（按 eventId 去重），重发不重复计数；消息活跃账号 = 当天 prompts>0 的账号，与连接活跃账号不是同一口径。`
+    + ` 版本分布与活跃账号同口径，窗口 48 小时（按用量行的 lastSeenAt 卡）。`
     + ` GitHub 的 star / fork / 关注者取自公开 API（未认证），是**生成时刻**的值（接口没有历史快照），`
     + `本机缓存 6 小时；取不到时这一行省略。`
     + ` 其余板块按覆盖日结算：覆盖日之后才配对的设备、才铸或用掉的邀请码、才激活的账号都不进这份报告。`
@@ -1233,6 +1257,9 @@ export function updateHistory(data, prevHistory = null) {
     devicesActive: num(report.today.usage.devices),
     egressBytes: num(report.today.usage.egressBytes),
     connections: num(report.today.usage.connections),
+    prompts: num(report.today.usage.prompts),
+    answers: num(report.today.usage.answers),
+    messageAccounts: num(report.today.usage.messageAccounts),
     newDevices: num(report.today.devices.new),
     feedbackOpen: num(report.feedback.open),
     dau: num(report.retention.users.dau),

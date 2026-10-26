@@ -52,8 +52,14 @@ type Usage struct {
 	day     int64
 	entries map[usageKey]*usageEntry
 	// bytesSinceFlush 是距上次冲盘的出口字节数（Python 的
-	// `_usage_bytes_since_flush`）：只有字节会触发提前冲盘。
+	// `_usage_bytes_since_flush`）；操作计数另有 opsSinceFlush，两个阈值都会
+	// 触发提前冲盘。
 	bytesSinceFlush int64
+	// opsSinceFlush 是距上次冲盘的操作计数；低流量设备也要在关停/跨日前
+	// 有一个可落盘的时机，不能只靠出口字节。
+	opsSinceFlush int64
+	// seen 是跨连接、跨天保留的最近操作指纹；它不随 entries 冲盘清空。
+	seen seenStore
 }
 
 // usageKey 是账本的主键：本地日 + 设备。
@@ -70,6 +76,8 @@ type usageEntry struct {
 	accountID   string
 	egressBytes int64
 	connections int64
+	prompts     int64
+	answers     int64
 	at          int64
 	lastBuild   string
 }
@@ -114,16 +122,29 @@ func (u *Usage) BytesSinceFlush() int64 {
 	return u.bytesSinceFlush
 }
 
-// Pending 表示账本里有没有需要落盘的内容（字节、连接数、构建号任一）。
+// Pending 表示账本里有没有需要落盘的内容（字节、连接数、计数、构建号任一）。
 func (u *Usage) Pending() bool {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	for _, entry := range u.entries {
-		if entry.egressBytes != 0 || entry.connections != 0 || entry.lastBuild != "" {
+		if !entry.empty() {
 			return true
 		}
 	}
 	return false
+}
+
+// empty 是"这一行有没有内容"的唯一判断：Pending 与 copyLocked 共用，避免两处漂移。
+func (e *usageEntry) empty() bool {
+	return e.egressBytes == 0 && e.connections == 0 &&
+		e.prompts == 0 && e.answers == 0 && e.lastBuild == ""
+}
+
+// OpsSinceFlush 是距上次冲盘的操作计数。
+func (u *Usage) OpsSinceFlush() int64 {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return u.opsSinceFlush
 }
 
 // NoteConnection 记一次连接（/stats 的 today.connections）。
@@ -162,6 +183,45 @@ func (u *Usage) NoteBuild(ref DeviceRef, build string) {
 	entry.at = store.NowMS()
 }
 
+// DefaultOpFlushCount 是操作计数的提前冲盘阈值。
+//
+// 低流量设备可能很久攒不到 1 MiB 出口字节；计数若只靠断开/跨日冲盘，
+// 进程异常退出会丢掉整天的操作数。32 是一个很小的批量，写入仍是单事务。
+const DefaultOpFlushCount = 32
+
+// NoteOpOnce 记录一次设备操作；同一设备、同一操作、同一指纹只计一次。
+//
+// 指纹由 hub 从协议帧的幂等键算出（prompt 的 requestId、作答的 eventId），
+// 去重表按设备、按操作隔离，跨连接与跨天保留。计数只在帧成功入队后调用，
+// 所以电脑离线或队列溢出不会被记成一次用户操作。
+func (u *Usage) NoteOpOnce(ref DeviceRef, op Op, fingerprint uint64) bool {
+	if op != OpPrompt && op != OpAnswer {
+		return false
+	}
+	if !u.seen.add(ref.DeviceID, op, fingerprint) {
+		return false
+	}
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	entry := u.entryLocked(ref)
+	switch op {
+	case OpPrompt:
+		entry.prompts++
+	case OpAnswer:
+		entry.answers++
+	}
+	entry.at = store.NowMS()
+	u.opsSinceFlush++
+	return true
+}
+
+// ForgetDevice 丢掉一台设备的去重指纹（设备撤销/清理时调用）。
+//
+// 已经落盘的用量行不受影响；这里只释放进程内的最近键表。
+func (u *Usage) ForgetDevice(deviceID string) {
+	u.seen.forget(deviceID)
+}
+
 // Snapshot 返回账本当前内容（**不删除**）：只含真的有内容的行，按日、设备排序。
 //
 // 它同时是 /stats 的合并来源与单测的断言对象；真正冲盘用 Drain（原子取走并清空，
@@ -183,6 +243,7 @@ func (u *Usage) Drain() []store.UsageEntry {
 	defer u.mu.Unlock()
 	entries := u.copyLocked(true)
 	u.bytesSinceFlush = 0
+	u.opsSinceFlush = 0
 	sortUsageEntries(entries)
 	return entries
 }
@@ -190,7 +251,7 @@ func (u *Usage) Drain() []store.UsageEntry {
 // Restore 在冲盘失败后把这一批放回账本。
 //
 // 期间新到的字节可能已经为同一台设备建了新行，所以这里是**合并**而不是覆盖：
-// 两边的字节与连接数相加，构建号取后者非空的，时间取较晚的。
+// 两边的字节、连接数与操作计数相加，构建号取后者非空的，时间取较晚的。
 func (u *Usage) Restore(entries []store.UsageEntry) {
 	if len(entries) == 0 {
 		return
@@ -208,6 +269,8 @@ func (u *Usage) Restore(entries []store.UsageEntry) {
 		entry.accountID = restored.AccountID
 		entry.egressBytes += restored.EgressBytes
 		entry.connections += restored.Connections
+		entry.prompts += restored.Prompts
+		entry.answers += restored.Answers
 		if restored.LastBuild != nil {
 			entry.lastBuild = *restored.LastBuild
 		}
@@ -215,6 +278,7 @@ func (u *Usage) Restore(entries []store.UsageEntry) {
 			entry.at = restored.At
 		}
 		u.bytesSinceFlush += restored.EgressBytes
+		u.opsSinceFlush += restored.Prompts + restored.Answers
 	}
 }
 
@@ -222,14 +286,14 @@ func (u *Usage) Restore(entries []store.UsageEntry) {
 func (u *Usage) copyLocked(drain bool) []store.UsageEntry {
 	out := make([]store.UsageEntry, 0, len(u.entries))
 	for key, entry := range u.entries {
-		if entry.egressBytes == 0 && entry.connections == 0 && entry.lastBuild == "" {
+		if entry.empty() {
 			continue
 		}
 		out = append(out, store.UsageEntry{
 			Day: entry.day, DeviceID: entry.deviceID, AgentID: entry.agentID,
 			AccountID: entry.accountID, EgressBytes: entry.egressBytes,
-			Connections: entry.connections, At: entry.at,
-			LastBuild: OptionalString(entry.lastBuild),
+			Connections: entry.connections, Prompts: entry.prompts, Answers: entry.answers,
+			At: entry.at, LastBuild: OptionalString(entry.lastBuild),
 		})
 		if drain {
 			delete(u.entries, key)
@@ -273,6 +337,8 @@ func (u *Usage) MergeToday(day int64, base store.TodayUsage) store.TodayUsage {
 		}
 		row.EgressBytes += entry.egressBytes
 		row.Connections += entry.connections
+		row.Prompts += entry.prompts
+		row.Answers += entry.answers
 		if entry.lastBuild != "" {
 			row.LastBuild = OptionalString(entry.lastBuild)
 		}
@@ -280,11 +346,13 @@ func (u *Usage) MergeToday(day int64, base store.TodayUsage) store.TodayUsage {
 	u.mu.Unlock()
 
 	rows := make([]store.TodayDevice, 0, len(devices))
-	var total int64
+	var total, totalPrompts, totalAnswers int64
 	accounts := map[string]*store.TodayAccount{}
 	for _, row := range devices {
 		rows = append(rows, *row)
 		total += row.EgressBytes
+		totalPrompts += row.Prompts
+		totalAnswers += row.Answers
 		bucket := accounts[row.AccountID]
 		if bucket == nil {
 			bucket = &store.TodayAccount{AccountID: row.AccountID}
@@ -301,7 +369,8 @@ func (u *Usage) MergeToday(day int64, base store.TodayUsage) store.TodayUsage {
 	sort.SliceStable(accountRows, func(i, j int) bool {
 		return accountRows[i].EgressBytes > accountRows[j].EgressBytes
 	})
-	return store.TodayUsage{Day: day, TotalEgressBytes: total, Devices: rows, Accounts: accountRows}
+	return store.TodayUsage{Day: day, TotalEgressBytes: total, TotalPrompts: totalPrompts,
+		TotalAnswers: totalAnswers, Devices: rows, Accounts: accountRows}
 }
 
 // Today 是 /stats 的 today 段：库里已经冲下去的 + 内存里还没冲的。
@@ -358,12 +427,13 @@ func (u *Usage) Start(ctx context.Context, interval time.Duration, flushBytes in
 			return
 		case <-ticker.C:
 		}
+		u.seen.prune(store.NowMS(), seenMaxAgeMS)
 		today := u.today()
 		if u.CurrentDay() != today {
 			_ = u.Flush(ctx)
 			continue
 		}
-		if u.BytesSinceFlush() >= flushBytes {
+		if u.BytesSinceFlush() >= flushBytes || u.OpsSinceFlush() >= DefaultOpFlushCount {
 			_ = u.Flush(ctx)
 		}
 	}

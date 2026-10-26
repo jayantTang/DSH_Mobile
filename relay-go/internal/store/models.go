@@ -128,6 +128,8 @@ type UsageRow struct {
 	AccountID   string  `json:"accountId"`
 	EgressBytes int64   `json:"egressBytes"`
 	Connections int64   `json:"connections"`
+	Prompts     int64   `json:"prompts"`
+	Answers     int64   `json:"answers"`
 	FirstSeenAt int64   `json:"firstSeenAt"`
 	LastSeenAt  int64   `json:"lastSeenAt"`
 	LastBuild   *string `json:"lastBuild"`
@@ -144,6 +146,8 @@ type UsageTotal struct {
 	Name        *string `json:"name"`
 	EgressBytes int64   `json:"egressBytes"`
 	Connections int64   `json:"connections"`
+	Prompts     int64   `json:"prompts"`
+	Answers     int64   `json:"answers"`
 	LastSeenAt  int64   `json:"lastSeenAt"`
 	LastBuild   *string `json:"lastBuild"`
 	Devices     int     `json:"devices"`
@@ -157,6 +161,8 @@ type UsageEntry struct {
 	AccountID   string
 	EgressBytes int64
 	Connections int64
+	Prompts     int64
+	Answers     int64
 	At          int64
 	LastBuild   *string
 }
@@ -168,6 +174,8 @@ type TodayDevice struct {
 	AccountID   string  `json:"accountId"`
 	EgressBytes int64   `json:"egressBytes"`
 	Connections int64   `json:"connections"`
+	Prompts     int64   `json:"prompts"`
+	Answers     int64   `json:"answers"`
 	LastBuild   *string `json:"lastBuild"`
 }
 
@@ -182,6 +190,8 @@ type TodayAccount struct {
 type TodayUsage struct {
 	Day              int64          `json:"day"`
 	TotalEgressBytes int64          `json:"totalEgressBytes"`
+	TotalPrompts     int64          `json:"totalPrompts"`
+	TotalAnswers     int64          `json:"totalAnswers"`
 	Devices          []TodayDevice  `json:"devices"`
 	Accounts         []TodayAccount `json:"accounts"`
 }

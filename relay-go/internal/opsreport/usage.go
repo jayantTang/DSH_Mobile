@@ -9,20 +9,23 @@ import (
 // usageScan 按天读一遍 usageDaily，同时给出 series / ranked / activeByDay。
 func usageScan(ctx context.Context, src Source, days int, end int64,
 	debugIDs map[string]struct{}, names map[string]*string, knownIDs,
-	external map[string]struct{}) ([]usageDay, []accountUsageRow, map[int64]map[string]struct{}, error) {
+	external map[string]struct{}) ([]usageDay, []accountUsageRow,
+	map[int64]map[string]struct{}, map[int64]map[string]struct{}, error) {
 	recent := recentDays(days, end)
 	perDay := make(map[int64]*usageDay, len(recent))
 	activeByDay := make(map[int64]map[string]struct{}, len(recent))
+	messageActiveByDay := make(map[int64]map[string]struct{}, len(recent))
 	for _, day := range recent {
 		perDay[day] = &usageDay{Day: day}
 		activeByDay[day] = map[string]struct{}{}
+		messageActiveByDay[day] = map[string]struct{}{}
 	}
 	merged := map[string]*accountUsageRow{}
 	seenDevices := map[string]map[string]struct{}{}
 	for _, day := range recent {
 		rows, err := src.UsageRows(ctx, day)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, nil, err
 		}
 		for _, row := range rows {
 			if _, debug := debugIDs[row.DeviceID]; debug {
@@ -34,9 +37,14 @@ func usageScan(ctx context.Context, src Source, days int, end int64,
 			entry := perDay[day]
 			entry.EgressBytes += row.EgressBytes
 			entry.Connections += row.Connections
+			entry.Prompts += row.Prompts
+			entry.Answers += row.Answers
 			entry.Devices++
 			if row.AccountID != "" {
 				activeByDay[day][row.AccountID] = struct{}{}
+				if row.Prompts > 0 {
+					messageActiveByDay[day][row.AccountID] = struct{}{}
+				}
 			}
 			account := merged[row.AccountID]
 			if account == nil {
@@ -46,6 +54,8 @@ func usageScan(ctx context.Context, src Source, days int, end int64,
 			}
 			account.EgressBytes += row.EgressBytes
 			account.Connections += row.Connections
+			account.Prompts += row.Prompts
+			account.Answers += row.Answers
 			if seenDevices[row.AccountID] == nil {
 				seenDevices[row.AccountID] = map[string]struct{}{}
 			}
@@ -64,6 +74,7 @@ func usageScan(ctx context.Context, src Source, days int, end int64,
 	for _, day := range recent {
 		entry := perDay[day]
 		entry.Accounts = len(activeByDay[day])
+		entry.MessageAccounts = len(messageActiveByDay[day])
 		series = append(series, *entry)
 	}
 	ranked := make([]accountUsageRow, 0, len(merged))
@@ -78,19 +89,30 @@ func usageScan(ctx context.Context, src Source, days int, end int64,
 	for day, set := range activeByDay {
 		activeSets[day] = set
 	}
-	return series, ranked, activeSets, nil
+	messageSets := make(map[int64]map[string]struct{}, len(messageActiveByDay))
+	for day, set := range messageActiveByDay {
+		messageSets[day] = set
+	}
+	return series, ranked, activeSets, messageSets, nil
 }
 
 // buildUsageReport 是用量板块的 JSON。
 func buildUsageReport(series []usageDay, ranked []accountUsageRow,
-	activeByDay map[int64]map[string]struct{}, firstSeen map[string]int64) usageReport {
+	activeByDay map[int64]map[string]struct{}, messageActiveByDay map[int64]map[string]struct{},
+	firstSeen map[string]int64) usageReport {
 	var peak *dayBytes
-	var total int64
+	var total, totalPrompts, totalAnswers int64
 	activeAll := map[string]struct{}{}
+	messageAll := map[string]struct{}{}
 	for _, entry := range series {
 		total += entry.EgressBytes
+		totalPrompts += entry.Prompts
+		totalAnswers += entry.Answers
 		for account := range activeByDay[entry.Day] {
 			activeAll[account] = struct{}{}
+		}
+		for account := range messageActiveByDay[entry.Day] {
+			messageAll[account] = struct{}{}
 		}
 		if peak == nil || entry.EgressBytes > peak.EgressBytes {
 			value := dayBytes{Day: entry.Day, EgressBytes: entry.EgressBytes}
@@ -105,9 +127,13 @@ func buildUsageReport(series []usageDay, ranked []accountUsageRow,
 		last7 = last7[len(last7)-7:]
 	}
 	active7d := map[string]struct{}{}
+	message7d := map[string]struct{}{}
 	for _, day := range last7 {
 		for account := range activeByDay[day] {
 			active7d[account] = struct{}{}
+		}
+		for account := range messageActiveByDay[day] {
+			message7d[account] = struct{}{}
 		}
 	}
 	for index := range series {
@@ -137,11 +163,18 @@ func buildUsageReport(series []usageDay, ranked []accountUsageRow,
 	for _, entry := range series {
 		connections += entry.Connections
 	}
+	messagesPerAccount := 0.0
+	if len(messageAll) > 0 {
+		messagesPerAccount = float64(totalPrompts) / float64(len(messageAll))
+	}
 	return usageReport{
 		PerDay: series, TopAccounts: takeAccounts(ranked, reportTopAccounts),
-		Totals:        usageTotals{EgressBytes: total, Connections: connections},
+		Totals: usageTotals{EgressBytes: total, Connections: connections,
+			Prompts: totalPrompts, Answers: totalAnswers},
 		AveragePerDay: average, PeakDay: peak, ActiveDays: activeDays,
 		ActiveAccounts: len(activeAll), ActiveAccounts7d: len(active7d),
+		MessageActiveAccounts: len(messageAll), MessageActiveAccounts7d: len(message7d),
+		MessagesPerAccount: messagesPerAccount,
 	}
 }
 

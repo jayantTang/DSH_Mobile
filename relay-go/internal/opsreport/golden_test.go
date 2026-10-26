@@ -85,12 +85,14 @@ func richSource() *fakeSource {
 		usage[day] = append(usage[day], store.UsageRow{
 			Day: day, DeviceID: "dev_one", AgentID: "agt_mac", AccountID: "acc_alpha",
 			EgressBytes: int64(1000 * (index + 1)), Connections: int64(index + 2),
+			Prompts: int64(index + 1), Answers: int64(index % 2),
 			FirstSeenAt: atMS, LastSeenAt: atMS, LastBuild: str("20261023.1200"),
 		})
 		if day >= 20261020 {
 			usage[day] = append(usage[day], store.UsageRow{
 				Day: day, DeviceID: "dev_two", AgentID: "agt_mac", AccountID: "acc_alpha",
 				EgressBytes: int64(300 * (index + 1)), Connections: int64(index + 1),
+				Prompts: 2, Answers: 1,
 				FirstSeenAt: atMS, LastSeenAt: atMS, LastBuild: str("20261020.0900"),
 			})
 		}
@@ -99,7 +101,7 @@ func richSource() *fakeSource {
 		atMS := at(day, 8, 30)
 		usage[day] = append(usage[day], store.UsageRow{
 			Day: day, DeviceID: "dev_beta", AgentID: "agt_beta", AccountID: "acc_beta",
-			EgressBytes: 700, Connections: 1,
+			EgressBytes: 700, Connections: 1, Prompts: 1, Answers: 1,
 			FirstSeenAt: atMS, LastSeenAt: atMS, LastBuild: str("20261006.0100"),
 		})
 	}
@@ -222,6 +224,42 @@ func TestOpsReportGolden(t *testing.T) {
 	if !bytes.Equal(got, want) {
 		t.Fatalf("ops-report 输出与 golden 不一致\n--- got ---\n%s\n--- want ---\n%s",
 			truncate(got), truncate(want))
+	}
+}
+
+// TestOpsReportExposesMessageMetrics 钉住消息口径：总量、按天、今日与消息活跃账号
+// 都来自 usageDaily 的 prompts/answers，而不是再算一遍连接。
+func TestOpsReportExposesMessageMetrics(t *testing.T) {
+	report, err := Report(context.Background(), richSource(), richOptions())
+	if err != nil {
+		t.Fatalf("Report: %v", err)
+	}
+	output, ok := report.(opsReport)
+	if !ok {
+		t.Fatalf("Report 返回 %T", report)
+	}
+	if output.Usage.Totals.Prompts != 82 || output.Usage.Totals.Answers != 15 {
+		t.Fatalf("totals = %+v，期望 prompts=82 answers=15", output.Usage.Totals)
+	}
+	if output.Usage.MessageActiveAccounts != 2 || output.Usage.MessageActiveAccounts7d != 2 {
+		t.Fatalf("message accounts = %d/%d，期望 2/2",
+			output.Usage.MessageActiveAccounts, output.Usage.MessageActiveAccounts7d)
+	}
+	if output.Usage.MessagesPerAccount != 41 {
+		t.Fatalf("messagesPerAccount = %v，期望 41", output.Usage.MessagesPerAccount)
+	}
+	if output.Today.Usage.Prompts != 14 || output.Today.Usage.Answers != 2 ||
+		output.Today.Usage.MessageAccounts != 2 {
+		t.Fatalf("today usage = %+v，期望 prompts=14 answers=2 messageAccounts=2",
+			output.Today.Usage)
+	}
+	last := output.Usage.PerDay[len(output.Usage.PerDay)-1]
+	if last.Day != 20261025 || last.Prompts != 14 || last.MessageAccounts != 2 {
+		t.Fatalf("last perDay = %+v", last)
+	}
+	top := output.Usage.TopAccounts[0]
+	if top.Prompts != 78 || top.Answers != 11 {
+		t.Fatalf("top account counts = %+v，期望 prompts=78 answers=11", top)
 	}
 }
 

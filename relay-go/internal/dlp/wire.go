@@ -172,6 +172,72 @@ func (w Wire) FieldText(key string) string {
 	return textOf(value.content())
 }
 
+// FieldEquals 比较顶层字符串字段与期望值；缺失或不是字符串时为 false。
+//
+// 它走 Field 的原始字节，不构造字符串，热路径零分配。
+func (w Wire) FieldEquals(key, value string) bool {
+	return sameBytes(w.Field(key), value)
+}
+
+// FieldPath 读取嵌套对象里的字符串字段（例如 args.request.requestId）。
+//
+// 只接受“每一层都是对象、最后一项是字符串”的形状；任一层缺失、类型不对或
+// 最后的值带转义时返回 nil。返回的是原始字节切片，不复制、不分配；调用方必须
+// 在帧缓冲归还前使用它（统计在入队前算指纹，满足这个前提）。
+//
+// 带转义的字符串不返回原文，是因为同一 ID 的转义写法与普通写法字节不同，
+// 直接比较会把重试当成两个键；调用方拿到 nil 时按“未计数”处理，不做猜测。
+func (w Wire) FieldPath(path ...string) []byte {
+	if len(path) == 0 {
+		return nil
+	}
+	if w.frame != nil {
+		var current any = map[string]any(w.frame)
+		for index, key := range path {
+			object, ok := current.(map[string]any)
+			if !ok {
+				return nil
+			}
+			value, found := object[key]
+			if !found {
+				return nil
+			}
+			if index == len(path)-1 {
+				text, ok := value.(string)
+				if !ok {
+					return nil
+				}
+				return []byte(text)
+			}
+			current = value
+		}
+		return nil
+	}
+
+	raw := w.raw
+	for index, key := range path {
+		target, found, ok := findMember(raw, key)
+		if !ok || !found {
+			return nil
+		}
+		if index == len(path)-1 {
+			if target.kind != jsonString {
+				return nil
+			}
+			content := target.content()
+			if bytes.IndexByte(content, '\\') >= 0 {
+				return nil
+			}
+			return content
+		}
+		if len(target.value) == 0 || target.value[0] != '{' {
+			return nil
+		}
+		raw = target.value
+	}
+	return nil
+}
+
 // Has 判断顶层是否存在该键（值类型不限）。
 func (w Wire) Has(key string) bool {
 	if w.frame != nil {

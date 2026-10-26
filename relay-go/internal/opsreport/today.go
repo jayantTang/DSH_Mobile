@@ -25,7 +25,8 @@ func buildTodayReport(ctx context.Context, src Source, stamp int64,
 		devices  int
 		accounts map[string]struct{}
 	}{}
-	var egress, connections int64
+	var egress, connections, prompts, answers int64
+	messageAccounts := map[string]struct{}{}
 	var firstSeen, lastSeen *int64
 	rows, err := src.UsageRows(ctx, day)
 	if err != nil {
@@ -43,6 +44,11 @@ func buildTodayReport(ctx context.Context, src Source, stamp int64,
 		count := row.Connections
 		egress += size
 		connections += count
+		prompts += row.Prompts
+		answers += row.Answers
+		if row.Prompts > 0 && row.AccountID != "" {
+			messageAccounts[row.AccountID] = struct{}{}
+		}
 		from := row.FirstSeenAt
 		to := row.LastSeenAt
 		if firstSeen == nil || from < *firstSeen {
@@ -73,12 +79,15 @@ func buildTodayReport(ctx context.Context, src Source, stamp int64,
 		}
 		account.EgressBytes += size
 		account.Connections += count
+		account.Prompts += row.Prompts
+		account.Answers += row.Answers
 		account.Devices++
 		deviceName := device.Name
 		entry := todayDeviceRow{
 			DeviceID: row.DeviceID, Name: &deviceName, Model: device.Model,
 			AppVersion: device.AppVersion, AccountID: row.AccountID,
 			AccountName: names[row.AccountID], EgressBytes: size, Connections: count,
+			Prompts: row.Prompts, Answers: row.Answers,
 			LastBuild: row.LastBuild, Revoked: device.RevokedAt != nil,
 		}
 		fromValue, toValue := from, to
@@ -179,9 +188,10 @@ func buildTodayReport(ctx context.Context, src Source, stamp int64,
 	return todayReport{
 		Day: day, DayStartAt: start,
 		Usage: todayUsage{
-			EgressBytes: egress, Connections: connections, Devices: len(byDevice),
-			Accounts: accountsCount, FirstSeenAt: firstSeen, LastSeenAt: lastSeen,
-			Builds: buildRows,
+			EgressBytes: egress, Connections: connections,
+			Prompts: prompts, Answers: answers, MessageAccounts: len(messageAccounts),
+			Devices: len(byDevice), Accounts: accountsCount,
+			FirstSeenAt: firstSeen, LastSeenAt: lastSeen, Builds: buildRows,
 		},
 		TopAccounts: takeTodayAccounts(ranked, reportTodayLimit),
 		Devices: todayDevices{

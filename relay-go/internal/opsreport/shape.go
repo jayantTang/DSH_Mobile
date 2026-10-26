@@ -59,6 +59,8 @@ type accountUsageRow struct {
 	Name        *string `json:"name"`
 	EgressBytes int64   `json:"egressBytes"`
 	Connections int64   `json:"connections"`
+	Prompts     int64   `json:"prompts"`
+	Answers     int64   `json:"answers"`
 	LastSeenAt  *int64  `json:"lastSeenAt"`
 	LastBuild   *string `json:"lastBuild"`
 	Devices     int     `json:"devices"`
@@ -71,13 +73,16 @@ type buildRow struct {
 }
 
 type todayUsage struct {
-	EgressBytes int64      `json:"egressBytes"`
-	Connections int64      `json:"connections"`
-	Devices     int        `json:"devices"`
-	Accounts    int        `json:"accounts"`
-	FirstSeenAt *int64     `json:"firstSeenAt"`
-	LastSeenAt  *int64     `json:"lastSeenAt"`
-	Builds      []buildRow `json:"builds"`
+	EgressBytes     int64      `json:"egressBytes"`
+	Connections     int64      `json:"connections"`
+	Prompts         int64      `json:"prompts"`
+	Answers         int64      `json:"answers"`
+	MessageAccounts int        `json:"messageAccounts"`
+	Devices         int        `json:"devices"`
+	Accounts        int        `json:"accounts"`
+	FirstSeenAt     *int64     `json:"firstSeenAt"`
+	LastSeenAt      *int64     `json:"lastSeenAt"`
+	Builds          []buildRow `json:"builds"`
 }
 
 type todayDeviceRow struct {
@@ -89,6 +94,8 @@ type todayDeviceRow struct {
 	AccountName *string `json:"accountName"`
 	EgressBytes int64   `json:"egressBytes"`
 	Connections int64   `json:"connections"`
+	Prompts     int64   `json:"prompts"`
+	Answers     int64   `json:"answers"`
 	FirstSeenAt *int64  `json:"firstSeenAt"`
 	LastSeenAt  *int64  `json:"lastSeenAt"`
 	LastBuild   *string `json:"lastBuild"`
@@ -136,6 +143,8 @@ type todayAccountRow struct {
 	Name        *string `json:"name"`
 	EgressBytes int64   `json:"egressBytes"`
 	Connections int64   `json:"connections"`
+	Prompts     int64   `json:"prompts"`
+	Answers     int64   `json:"answers"`
 	Devices     int     `json:"devices"`
 }
 
@@ -193,6 +202,9 @@ type usageDay struct {
 	Day               int64 `json:"day"`
 	EgressBytes       int64 `json:"egressBytes"`
 	Connections       int64 `json:"connections"`
+	Prompts           int64 `json:"prompts"`
+	Answers           int64 `json:"answers"`
+	MessageAccounts   int   `json:"messageAccounts"`
 	Devices           int   `json:"devices"`
 	Accounts          int   `json:"accounts"`
 	NewAccounts       int   `json:"newAccounts"`
@@ -202,17 +214,22 @@ type usageDay struct {
 type usageTotals struct {
 	EgressBytes int64 `json:"egressBytes"`
 	Connections int64 `json:"connections"`
+	Prompts     int64 `json:"prompts"`
+	Answers     int64 `json:"answers"`
 }
 
 type usageReport struct {
-	PerDay           []usageDay        `json:"perDay"`
-	TopAccounts      []accountUsageRow `json:"topAccounts"`
-	Totals           usageTotals       `json:"totals"`
-	AveragePerDay    int64             `json:"averagePerDay"`
-	PeakDay          *dayBytes         `json:"peakDay"`
-	ActiveDays       int               `json:"activeDays"`
-	ActiveAccounts   int               `json:"activeAccounts"`
-	ActiveAccounts7d int               `json:"activeAccounts7d"`
+	PerDay                  []usageDay        `json:"perDay"`
+	TopAccounts             []accountUsageRow `json:"topAccounts"`
+	Totals                  usageTotals       `json:"totals"`
+	AveragePerDay           int64             `json:"averagePerDay"`
+	PeakDay                 *dayBytes         `json:"peakDay"`
+	ActiveDays              int               `json:"activeDays"`
+	ActiveAccounts          int               `json:"activeAccounts"`
+	ActiveAccounts7d        int               `json:"activeAccounts7d"`
+	MessageActiveAccounts   int               `json:"messageActiveAccounts"`
+	MessageActiveAccounts7d int               `json:"messageActiveAccounts7d"`
+	MessagesPerAccount      float64           `json:"messagesPerAccount"`
 }
 
 type retentionUsers struct {

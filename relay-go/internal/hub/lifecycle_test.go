@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/dlp"
+	"github.com/jayantTang/DSH_Mobile/relay-go/internal/quota"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/store"
 )
 
@@ -188,6 +189,31 @@ func TestUsageFlushLoopWritesAtTheByteThreshold(t *testing.T) {
 	if entries := writer.entriesFor(link.DeviceID); len(entries) != 1 {
 		t.Fatalf("同一批被写了 %d 次", len(entries))
 	}
+}
+
+// TestUsageFlushLoopWritesAtOperationThreshold：低流量设备也要在计数攒到阈值时
+// 落盘，不能只等 1 MiB 出口字节。
+func TestUsageFlushLoopWritesAtOperationThreshold(t *testing.T) {
+	writer := &fakeUsageWriter{}
+	fx := newFixture(t, Options{
+		UsageSink:          writer,
+		UsageFlushInterval: 5 * time.Millisecond,
+		UsageFlushBytes:    1 << 30,
+		Logger:             discardLogger(),
+	})
+	link := &DeviceLink{DeviceID: "dev_ops_loop", AgentID: "agt_1", AccountID: "acc_1"}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	fx.hub.StartBackground(ctx)
+
+	for index := 0; index < quota.DefaultOpFlushCount; index++ {
+		fx.hub.usage.NoteOpOnce(link.ref(), quota.OpPrompt, uint64(index+1))
+	}
+	waitFor(t, "计数阈值冲盘", func() bool {
+		entries := writer.entriesFor(link.DeviceID)
+		return len(entries) == 1 && entries[0].Prompts == quota.DefaultOpFlushCount
+	})
 }
 
 func TestUsageFlushLoopFlushesThePreviousDayOnRollover(t *testing.T) {

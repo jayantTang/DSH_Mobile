@@ -334,11 +334,11 @@ func TestUsageAggregatesByAccountAndDevice(t *testing.T) {
 	if _, err := st.AddUsage(ctx, []store.UsageEntry{{
 		Day: store.LocalDay(), DeviceID: seed.device.DeviceID, AgentID: seed.agent.AgentID,
 		AccountID: seed.account.AccountID, EgressBytes: 1000, Connections: 2,
-		At: now, LastBuild: &build,
+		Prompts: 2, Answers: 1, At: now, LastBuild: &build,
 	}, {
 		Day: store.LocalDay(), DeviceID: "dev_second", AgentID: seed.agent.AgentID,
 		AccountID: seed.account.AccountID, EgressBytes: 500, Connections: 1,
-		At: now, LastBuild: &build,
+		Prompts: 3, Answers: 4, At: now, LastBuild: &build,
 	}}); err != nil {
 		t.Fatalf("AddUsage: %v", err)
 	}
@@ -357,6 +357,7 @@ func TestUsageAggregatesByAccountAndDevice(t *testing.T) {
 		t.Fatalf("账号行 = %v", row)
 	}
 	if row["egressBytes"] != float64(1500) || row["connections"] != float64(3) ||
+		row["prompts"] != float64(5) || row["answers"] != float64(5) ||
 		row["devices"] != float64(2) {
 		t.Fatalf("汇总数字 = %v", row)
 	}
@@ -374,6 +375,9 @@ func TestUsageAggregatesByAccountAndDevice(t *testing.T) {
 	}
 	if deviceRows[0]["deviceId"] != seed.device.DeviceID {
 		t.Fatalf("第一行应是出口更大的设备：%v", deviceRows[0])
+	}
+	if deviceRows[0]["prompts"] != float64(2) || deviceRows[0]["answers"] != float64(1) {
+		t.Fatalf("设备行计数 = %v", deviceRows[0])
 	}
 	if _, present := deviceRows[0]["accountId"]; present {
 		t.Fatalf("按设备汇总不该出现 accountId：%v", deviceRows[0])

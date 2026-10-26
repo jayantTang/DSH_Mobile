@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -688,7 +689,7 @@ func TestStatsLoopbackOnly(t *testing.T) {
 	}
 	body := decodeJSON(t, rec)
 	for _, key := range []string{"ok", "version", "now", "limits", "load", "traffic",
-		"controlDrops", "snapshot", "deviceRecords", "today",
+		"controlDrops", "snapshot", "deviceRecords", "today", "opStats",
 		// 连接生命周期字段（M7 新增；旧字段一个没动）。
 		"superseded", "reconnectStorm", "unverifiedAgents",
 		"unverifiedTotal", "refusedDuplicate", "refusedUnverified"} {
@@ -725,8 +726,13 @@ func TestStatsLoopbackOnly(t *testing.T) {
 		t.Fatalf("load = %v", load)
 	}
 	today := body["today"].(map[string]any)
-	if today["day"] != float64(store.LocalDay()) || today["totalEgressBytes"] != float64(0) {
+	if today["day"] != float64(store.LocalDay()) || today["totalEgressBytes"] != float64(0) ||
+		today["totalPrompts"] != float64(0) || today["totalAnswers"] != float64(0) {
 		t.Fatalf("today = %v", today)
+	}
+	opStats := body["opStats"].(map[string]any)
+	if opStats["deduped"] != float64(0) || opStats["uncounted"] != float64(0) {
+		t.Fatalf("opStats = %v", opStats)
 	}
 	if records, ok := body["deviceRecords"].(map[string]any); !ok || records["total"] != float64(0) {
 		t.Fatalf("deviceRecords = %v", body["deviceRecords"])
@@ -738,6 +744,35 @@ func TestStatsLoopbackOnly(t *testing.T) {
 	nonLoopback := httptest.NewRecorder()
 	api.handler.ServeHTTP(nonLoopback, req)
 	assertEnvelope(t, nonLoopback, http.StatusNotFound, "not-found")
+}
+
+// TestStatsIncludesOperationCounts 钉住 today 行与合计都带操作计数。
+func TestStatsIncludesOperationCounts(t *testing.T) {
+	api := newTestAPI(t)
+	if _, err := api.store.AddUsage(context.Background(), []store.UsageEntry{{
+		Day: store.LocalDay(), DeviceID: "dev_ops", AgentID: "agt_ops",
+		AccountID: "acc_ops", EgressBytes: 10, Connections: 1,
+		Prompts: 3, Answers: 2, At: store.NowMS(),
+	}}); err != nil {
+		t.Fatalf("AddUsage: %v", err)
+	}
+
+	rec := api.do(http.MethodGet, "/stats", nil, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/stats = %d: %s", rec.Code, rec.Body.String())
+	}
+	today := decodeJSON(t, rec)["today"].(map[string]any)
+	if today["totalPrompts"] != float64(3) || today["totalAnswers"] != float64(2) {
+		t.Fatalf("today totals = %v", today)
+	}
+	devices := today["devices"].([]any)
+	if len(devices) != 1 {
+		t.Fatalf("today devices = %v", devices)
+	}
+	device := devices[0].(map[string]any)
+	if device["prompts"] != float64(3) || device["answers"] != float64(2) {
+		t.Fatalf("today device = %v", device)
+	}
 }
 
 // TestStatsReturnsHTMLWhenAsked 钉住内容协商：Accept: text/html 拿运维页，

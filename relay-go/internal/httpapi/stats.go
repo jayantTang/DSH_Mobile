@@ -30,6 +30,9 @@ type statsResponse struct {
 	Snapshot      hub.Snapshot     `json:"snapshot"`
 	DeviceRecords store.Hygiene    `json:"deviceRecords"`
 	Today         store.TodayUsage `json:"today"`
+	// OpStats 是操作计数的卫生指标：deduped 说明重发被折叠，uncounted 说明
+	// 帧缺少稳定幂等键。它们不进入 usageDaily，只用于判断统计是否可信。
+	OpStats hub.OperationStats `json:"opStats"`
 	// 连接生命周期计数（内嵌 = JSON 平铺）：superseded / reconnectStorm /
 	// unverifiedAgents / unverifiedTotal / refusedDuplicate / refusedUnverified。
 	// 新增字段，旧读法不受影响。
@@ -76,6 +79,7 @@ func (s *server) handleStats(w http.ResponseWriter, r *http.Request) {
 		Snapshot:      s.hub.Snapshot(),
 		DeviceRecords: hygiene,
 		Today:         today,
+		OpStats:       s.hub.OperationStats(),
 		Stats:         s.hub.PresenceStats(),
 	}
 	if wantsStatsPage(r) {

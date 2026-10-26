@@ -7,7 +7,7 @@ import (
 	"sort"
 )
 
-// AddUsage 把一批按天按设备的出口字节累加进 usageDaily（UPSERT，一次事务）。
+// AddUsage 把一批按天按设备的用量与操作计数累加进 usageDaily（UPSERT，一次事务）。
 //
 // 累加而不是覆盖：冲盘是周期性的，一行一天会被写很多次（Python add_usage）。
 func (s *Store) AddUsage(ctx context.Context, entries []UsageEntry) (int, error) {
@@ -18,19 +18,21 @@ func (s *Store) AddUsage(ctx context.Context, entries []UsageEntry) (int, error)
 		for _, entry := range entries {
 			if _, err := q.ExecContext(ctx, `
 				INSERT INTO usageDaily(day, deviceId, agentId, accountId, egressBytes,
-				                       connections, firstSeenAt, lastSeenAt, lastBuild)
-				VALUES(?,?,?,?,?,?,?,?,?)
+				                       connections, prompts, answers, firstSeenAt, lastSeenAt, lastBuild)
+				VALUES(?,?,?,?,?,?,?,?,?,?,?)
 				ON CONFLICT(day, deviceId) DO UPDATE SET
 				  egressBytes = egressBytes + excluded.egressBytes,
 				  connections = connections + excluded.connections,
+				  prompts     = prompts + excluded.prompts,
+				  answers     = answers + excluded.answers,
 				  firstSeenAt = MIN(firstSeenAt, excluded.firstSeenAt),
 				  lastSeenAt  = MAX(lastSeenAt, excluded.lastSeenAt),
 				  lastBuild   = COALESCE(excluded.lastBuild, lastBuild),
 				  agentId     = excluded.agentId,
 				  accountId   = excluded.accountId`,
 				entry.Day, entry.DeviceID, entry.AgentID, entry.AccountID,
-				entry.EgressBytes, entry.Connections, entry.At, entry.At,
-				nullStringValue(entry.LastBuild)); err != nil {
+				entry.EgressBytes, entry.Connections, entry.Prompts, entry.Answers,
+				entry.At, entry.At, nullStringValue(entry.LastBuild)); err != nil {
 				return fmt.Errorf("store: 记用量: %w", err)
 			}
 		}
@@ -45,8 +47,8 @@ func (s *Store) AddUsage(ctx context.Context, entries []UsageEntry) (int, error)
 // UsageRows 是一天里每台设备一行，按出口字节降序（Python usage_rows）。
 func (s *Store) UsageRows(ctx context.Context, day int64) ([]UsageRow, error) {
 	rows, err := s.db.QueryContext(ctx,
-		"SELECT day, deviceId, agentId, accountId, egressBytes, connections, firstSeenAt,"+
-			" lastSeenAt, lastBuild FROM usageDaily WHERE day=? ORDER BY egressBytes DESC",
+		"SELECT day, deviceId, agentId, accountId, egressBytes, connections, prompts, answers,"+
+			" firstSeenAt, lastSeenAt, lastBuild FROM usageDaily WHERE day=? ORDER BY egressBytes DESC",
 		day)
 	if err != nil {
 		return nil, fmt.Errorf("store: 读当日用量: %w", err)
@@ -60,8 +62,8 @@ func (s *Store) UsageRows(ctx context.Context, day int64) ([]UsageRow, error) {
 			lastBuild sql.NullString
 		)
 		if err := rows.Scan(&row.Day, &row.DeviceID, &row.AgentID, &row.AccountID,
-			&row.EgressBytes, &row.Connections, &row.FirstSeenAt, &row.LastSeenAt,
-			&lastBuild); err != nil {
+			&row.EgressBytes, &row.Connections, &row.Prompts, &row.Answers,
+			&row.FirstSeenAt, &row.LastSeenAt, &lastBuild); err != nil {
 			return nil, fmt.Errorf("store: 读当日用量行: %w", err)
 		}
 		row.LastBuild = nullString(lastBuild)
@@ -104,6 +106,7 @@ func (s *Store) UsageTotals(ctx context.Context, days int, by string) ([]UsageTo
 	rows, err := s.db.QueryContext(ctx,
 		"SELECT u.day AS day, u."+key+" AS "+key+", "+nameQuery+" AS name,"+
 			" SUM(u.egressBytes) AS egressBytes, SUM(u.connections) AS connections,"+
+			" SUM(u.prompts) AS prompts, SUM(u.answers) AS answers,"+
 			" MAX(u.lastSeenAt) AS lastSeenAt, MAX(u.lastBuild) AS lastBuild,"+
 			" COUNT(DISTINCT u.deviceId) AS devices"+
 			" FROM usageDaily u WHERE u.day >= ? GROUP BY u.day, u."+key+
@@ -123,7 +126,8 @@ func (s *Store) UsageTotals(ctx context.Context, days int, by string) ([]UsageTo
 			lastBuild sql.NullString
 		)
 		if err := rows.Scan(&row.Day, &keyValue, &name, &row.EgressBytes,
-			&row.Connections, &row.LastSeenAt, &lastBuild, &row.Devices); err != nil {
+			&row.Connections, &row.Prompts, &row.Answers,
+			&row.LastSeenAt, &lastBuild, &row.Devices); err != nil {
 			return nil, fmt.Errorf("store: 读用量汇总行: %w", err)
 		}
 		if key == "accountId" {
@@ -156,12 +160,15 @@ func (s *Store) TodayUsage(ctx context.Context, day int64) (TodayUsage, error) {
 
 	devices := make([]TodayDevice, 0, len(rows))
 	accounts := map[string]*TodayAccount{}
-	var total int64
+	var total, totalPrompts, totalAnswers int64
 	for _, row := range rows {
 		total += row.EgressBytes
+		totalPrompts += row.Prompts
+		totalAnswers += row.Answers
 		devices = append(devices, TodayDevice{
 			DeviceID: row.DeviceID, AgentID: row.AgentID, AccountID: row.AccountID,
 			EgressBytes: row.EgressBytes, Connections: row.Connections,
+			Prompts: row.Prompts, Answers: row.Answers,
 			LastBuild: row.LastBuild,
 		})
 		bucket, ok := accounts[row.AccountID]
@@ -185,6 +192,6 @@ func (s *Store) TodayUsage(ctx context.Context, day int64) (TodayUsage, error) {
 		return accountRows[i].EgressBytes > accountRows[j].EgressBytes
 	})
 
-	return TodayUsage{Day: day, TotalEgressBytes: total, Devices: devices,
-		Accounts: accountRows}, nil
+	return TodayUsage{Day: day, TotalEgressBytes: total, TotalPrompts: totalPrompts,
+		TotalAnswers: totalAnswers, Devices: devices, Accounts: accountRows}, nil
 }

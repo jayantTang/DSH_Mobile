@@ -130,6 +130,8 @@ func (h *Hub) ReconcileRevokedDevices(ctx context.Context) ([]string, error) {
 		h.log.Info("relay: device was revoked in the database but still connected; "+
 			"detaching (reason=revoked)", "deviceId", deviceID)
 		h.detachDevice(device, "revoked", dlp.CloseGoingAway)
+		// 撤销是永久状态：去重指纹不必再留（detach 已经先冲过账）。
+		h.usage.ForgetDevice(deviceID)
 		detached = append(detached, deviceID)
 	}
 	sort.Strings(detached)

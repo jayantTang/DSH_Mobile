@@ -160,8 +160,8 @@ func build(ctx context.Context, src Source, days int, stamp, generated int64,
 	for _, device := range devices {
 		knownIDs[device.DeviceID] = struct{}{}
 	}
-	series, ranked, activeByDay, err := usageScan(ctx, src, days, stamp, debugIDs, names,
-		knownIDs, external)
+	series, ranked, activeByDay, messageActiveByDay, err := usageScan(ctx, src, days, stamp,
+		debugIDs, names, knownIDs, external)
 	if err != nil {
 		return opsReport{}, err
 	}
@@ -187,7 +187,7 @@ func build(ctx context.Context, src Source, days int, stamp, generated int64,
 	if err != nil {
 		return opsReport{}, err
 	}
-	usageSection := buildUsageReport(series, ranked, activeByDay, firstSeen)
+	usageSection := buildUsageReport(series, ranked, activeByDay, messageActiveByDay, firstSeen)
 
 	report := opsReport{
 		OK: true, GeneratedAt: generated, AsOf: stamp, Days: days,

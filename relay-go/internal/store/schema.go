@@ -89,7 +89,8 @@ CREATE TABLE IF NOT EXISTS accountState (
   PRIMARY KEY (accountId, key)
 );
 
--- 按天按设备的出口用量记账。day 是服务器本地日（YYYYMMDD）。
+-- 按天按设备的出口用量与操作计数。day 是服务器本地日（YYYYMMDD）。
+-- prompts / answers 必须是表末最后几列：老库靠 migrateTo9 的 ALTER TABLE 追加。
 CREATE TABLE IF NOT EXISTS usageDaily (
   day         INTEGER NOT NULL,
   deviceId    TEXT NOT NULL,
@@ -100,6 +101,8 @@ CREATE TABLE IF NOT EXISTS usageDaily (
   firstSeenAt INTEGER NOT NULL,
   lastSeenAt  INTEGER NOT NULL,
   lastBuild   TEXT,
+  prompts     INTEGER NOT NULL DEFAULT 0,
+  answers     INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (day, deviceId)
 );
 CREATE INDEX IF NOT EXISTS usageDailyAccount ON usageDaily (day, accountId);
@@ -173,7 +176,7 @@ CREATE TABLE IF NOT EXISTS noticeDeliveries (
 // 为什么需要：Schema 全是 CREATE TABLE IF NOT EXISTS，加表没问题，加列会静默漏掉——
 // 升级部署继续用旧库时，新列不存在，直到第一次写入才在"健康"的中转上炸掉。
 // 升版本号并在 migrations 里加一步，才会变成启动时迁移。
-const SchemaVersion = 8
+const SchemaVersion = 9
 
 // migration 是 schema 的一步迁移。每步必须幂等：部分提交后重启会重跑。
 type migration struct {
@@ -198,6 +201,7 @@ var migrations = []migration{
 	{6, migrateTo6},
 	{7, migrateTo7},
 	{8, migrateTo8},
+	{9, migrateTo9},
 }
 
 // migrateTo1 基线：早于版本号的库只盖戳，不改结构。
@@ -373,6 +377,20 @@ func migrateTo8(ctx context.Context, q queryer) error {
 		{"connectorVersion", "TEXT"},
 		{"hostVersion", "TEXT"},
 		{"versionsAt", "INTEGER"},
+	})
+}
+
+// migrateTo9 设备操作计数：usageDaily 加 prompts / answers 两列。
+//
+// 只加列、不改旧行；老版本二进制读到多出的列会忽略，回滚不需要降级 schema。
+func migrateTo9(ctx context.Context, q queryer) error {
+	present, err := columns(ctx, q, "usageDaily")
+	if err != nil {
+		return err
+	}
+	return addColumns(ctx, q, "usageDaily", present, [][2]string{
+		{"prompts", "INTEGER NOT NULL DEFAULT 0"},
+		{"answers", "INTEGER NOT NULL DEFAULT 0"},
 	})
 }
 
