@@ -58,6 +58,19 @@ final class TimelineTests: XCTestCase {
 
     // MARK: - Tests
 
+    func test_the_open_turn_start_comes_from_the_host_event_time() throws {
+        var timeline = ChatTimeline()
+        let start = try event(#"{"type":"turn/start","seq":1,"time":1789276358000,"data":{"turn":3}}"#)
+        _ = timeline.reset(with: [SessionRecord(event: start)])
+        XCTAssertTrue(timeline.isTurnOpen)
+        XCTAssertEqual(timeline.openTurnStartedAt,
+                       Date(timeIntervalSince1970: 1_789_276_358),
+                       "计时起点用宿主的 turn/start 时间，不用手机观察到的时间")
+        let end = try event(#"{"type":"turn/end","seq":2,"time":1789276368000,"data":{"turn":3,"reason":"completed"}}"#)
+        _ = timeline.reset(with: [SessionRecord(event: start), SessionRecord(event: end)])
+        XCTAssertNil(timeline.openTurnStartedAt)
+    }
+
     func testUserAndAssistantMessagesProjectIntoRows() throws {
         var timeline = ChatTimeline()
         XCTAssertEqual(timeline.apply(try userMessage(seq: 1, text: "你好")), .appended)

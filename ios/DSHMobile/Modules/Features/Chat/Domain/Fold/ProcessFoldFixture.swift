@@ -121,7 +121,9 @@ enum ProcessFoldFixture {
     /// `+link/fold` v2 记录，视图据此写「正在运行命令 · <命令>」。
     private static func runningEvents() -> [[String: JSONValue]] {
         var builder = Builder(start: 1_760_000_000_000)
-        let base = builder.start
+        // 运行变体的 turn/start 用一个固定的“近期”时间：跨重启重开时计时应继续走，
+        // 而不是每次从 0 起算；固定值才能让重开前后可比。
+        let base = 1_792_980_000_000.0
 
 
         builder.append("turn/start", ["turn": .int(1)], at: base)

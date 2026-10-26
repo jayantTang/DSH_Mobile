@@ -183,6 +183,13 @@ public struct ChatTimeline: Sendable {
     /// When each open turn began, so its duration can be reported when it ends.
     private var turnStartedAt: [Int: Date] = [:]
 
+    /// 正在跑的那一轮的开始时刻（宿主 `turn/start` 的时间）。运行行的计时起点用它，
+    /// 不拿“手机观察到的时间”代替；切后台/重开也还是同一个值。
+    public var openTurnStartedAt: Date? {
+        guard isTurnOpen else { return nil }
+        return turnStartedAt[currentTurn]
+    }
+
     /// The most recent completed turn, for the transient "done" indicator.
     public private(set) var lastCompletion: Completion?
 

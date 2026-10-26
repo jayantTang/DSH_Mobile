@@ -502,6 +502,8 @@ public final class ChatModel {
             var fixture = ChatTimeline()
             _ = fixture.reset(with: ProcessFoldFixture.records)
             visible = VisibleSession(summary: summary, timeline: fixture)
+            // 夹具里的运行轮也要有计时起点（与真实 open 同一条规则：用 turn/start 的时间）。
+            runningSince = fixture.openTurnStartedAt
             foldState = TranscriptFoldState()
             prefetchStatus.removeAll()
             cachedSearchItems = nil
@@ -657,9 +659,11 @@ public final class ChatModel {
             await self?.loadSummaryScreen()
         }
         await restoreSearchHistory()
-        // 打开一个正在跑的会话：窗口里通常已有 turn/start，时钟从这一刻起算
-        //（宿主的开始时间不可得，这里只是下限；不会倒退成 0 秒）。
-        runningSince = timeline.isTurnOpen ? Date() : nil
+        // 打开一个正在跑的会话：优先用 `turn/start` 自带的时间做起点，切后台/重开不重置；
+        // 窗口里确实没有这一轮的起点时（裁到轮次中间）才退回“现在”，作为下限。
+        runningSince = timeline.isTurnOpen
+            ? (timeline.openTurnStartedAt ?? Date())
+            : nil
         pendingOpen = nil
         await loadCatalog(link: link)
         subscribeToPrompts()
@@ -1385,10 +1389,11 @@ public final class ChatModel {
             // 只有 20 条（本地很新时故意少要），直接替换等于把已落盘的历史截掉
             // ——用户看到的就是"切后台回来少了一部分记录"。
             mergeTail(snapshot.records)
-            // 快照里已经有一轮在跑：运行行要有时用起点，否则整行只剩「深度求索中」。
-            // 宿主的开始时间不可得（与 open 同口径），这里以下限起算。
+            // 快照里已经有一轮在跑：起点取快照里那条 `turn/start` 的时间；
+            // 拿不到就保持 nil（只写「深度求索中」），不从“现在”起算。
             if runningSince == nil, Self.snapshotEndsInOpenTurn(snapshot.records) {
-                runningSince = Date()
+                runningSince = snapshot.records.reversed()
+                    .first { $0.event.type == "turn/start" }?.event.date ?? Date()
             }
             persistIfDue(force: true)
 
@@ -1469,7 +1474,8 @@ public final class ChatModel {
         case "turn/start":
             isAwaitingTurnStart = false
             hostReportsRunning = true
-            runningSince = Date()
+            // 宿主事件自带时间；与时间线里的值同源，重连重放也不会把起点推后。
+            runningSince = timeline.openTurnStartedAt ?? event.date ?? Date()
             awaitingTimeout?.cancel()
             awaitingTimeout = nil
 
