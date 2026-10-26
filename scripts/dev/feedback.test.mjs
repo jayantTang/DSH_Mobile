@@ -377,7 +377,7 @@ test('日报分「今日」与「最近 30 天」两段，正文被转义', () =
   assert.ok(html.includes('今日消息') && html.includes('今日消息活跃账号'))
   assert.ok(html.includes('人均 9.0 条'), '18 条 / 2 个消息活跃账号')
   assert.ok(html.includes('每日消息'), '趋势段要有每日消息图')
-  assert.ok(html.includes('活跃账户人均') && html.includes('当天消息总数（左轴）'), '消息图要有总数与人均')
+  assert.ok(html.includes('活跃账号人均') && html.includes('当天消息总数（左轴）'), '消息图要有总数与人均')
   assert.ok(html.includes('超 7 天回访') && html.includes('7 天内回访'), '活跃图要拆出三层')
   // 近 7 天表的列名：单位进表头、名字取短，7 列才放得进一行（值只有数字）。
   for (const label of ['>日期<', '>账号<', '>消息<', '>作答<', '>出口<', '>连接<', '>新增<']) {

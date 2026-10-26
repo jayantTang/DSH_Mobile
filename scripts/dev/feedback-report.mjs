@@ -388,7 +388,7 @@ function lineChart({ title, note, points, format, markers = [] }) {
   return figure(title, note, svg)
 }
 
-/** 按天消息数：柱状总数（左轴）+ 当天活跃账户人均（右轴）。
+/** 按天消息数：柱状总数（左轴）+ 当天活跃账号人均（右轴）。
 
 为什么用右轴：总数是量、人均是强度，两个量级差一个数量级；同轴会把人均压成
 一条贴底的线。柱子用日报现有的浅蓝，人均用橙色细线，避免和峰值红抢色。 */
@@ -436,7 +436,7 @@ function countChart({ title, note, points }) {
   const svg = `<svg viewBox="0 0 ${w} ${h}" role="img" aria-label="${escapeHtml(title)}">${body}</svg>`
   const legend = '<div class="trend-legend">'
     + '<span><i style="background:#bfdbfe"></i>当天消息总数（左轴）</span>'
-    + `<span><i style="background:${COLORS.fresh}"></i>活跃账户人均（右轴）</span>`
+    + `<span><i style="background:${COLORS.fresh}"></i>活跃账号人均（右轴）</span>`
     + '</div>'
   return figure(title, note, svg + legend)
 }
@@ -1023,7 +1023,9 @@ function todaySection(report, generatedAt, days, completed = false) {
   const prompts = report.today.day ? num(usage.prompts) : num(todayEntry?.prompts)
   const answers = report.today.day ? num(usage.answers) : num(todayEntry?.answers)
   const messageAccounts = report.today.day ? num(usage.messageAccounts) : num(todayEntry?.messageAccounts)
-  const messagesPerAccount = messageAccounts > 0 ? prompts / messageAccounts : null
+  // 人均只有一个分母：当天**活跃账号**（有设备连接的账号），与「每日消息」图的右轴一致。
+  // 之前卡片用「消息活跃账号」做分母，同一份报告里出现 11.1 与 4.5 两个人均。
+  const messagesPerAccount = activeUsers > 0 ? prompts / activeUsers : null
   const yesterday = series.length >= 2 ? series[series.length - 2] : null
   const baseline = series.slice(-8, -1)
   const devices = report.today.devices
@@ -1071,9 +1073,11 @@ function todaySection(report, generatedAt, days, completed = false) {
     [`${word}出口流量`, formatBytes(egress), egressDelta],
     [`${word}连接`, formatInt(connections), ''],
     [`${word}新增设备`, formatInt(devices.new), ''],
-    [`${word}消息`, formatInt(prompts), `${word}作答 ${formatInt(answers)} 次`],
+    [`${word}消息`, formatInt(prompts),
+      messagesPerAccount === null ? `${word}作答 ${formatInt(answers)} 次`
+        : `人均 ${messagesPerAccount.toFixed(1)} 条 · 作答 ${formatInt(answers)} 次`],
     [`${word}消息活跃账号`, formatInt(messageAccounts),
-      messagesPerAccount === null ? '暂无消息' : `人均 ${messagesPerAccount.toFixed(1)} 条`],
+      activeUsers > 0 ? `占活跃账号 ${Math.round((messageAccounts / activeUsers) * 100)}%` : '暂无消息'],
     ['近 7 天活跃账号', formatInt(report.usage.activeAccounts7d),
       `近 ${formatInt(days)} 天 ${formatInt(report.usage.activeAccounts)} 个`],
   ])
@@ -1189,7 +1193,7 @@ function rangeSection(report, days, completed = false) {
   })
   const messageChart = countChart({
     title: '每日消息',
-    note: `左轴总数 · 右轴当天活跃账户人均 · 近 7 天消息活跃 ${formatInt(usage.messageActiveAccounts7d)} 个`,
+    note: `左轴总数 · 右轴当天活跃账号人均 · 近 7 天消息活跃 ${formatInt(usage.messageActiveAccounts7d)} 个`,
     points: countPoints,
   })
   const charts = activeChart + messageChart + lineChart({
@@ -1288,7 +1292,7 @@ export function renderReport(data, { now = Date.now(), history = null } = {}) {
     + `活跃设备 = 当天的设备行数（重装/换版本会多一行，故可能大于活跃账号）。`
     + ` 出口流量只计中转出口字节（不含 OTA 下载与 SSH）；调试设备（DSH- 前缀与测试台机型）不计。`
     + ` 14 天分布是连接口径（从日志重建，含只连着、没有流量的设备；取不到日志时该图跳过）；`
-    + ` 消息 = 设备经中转发出的 session/prompt（按 requestId 去重），作答 = eventResult`
+    + ` 消息 = 设备经中转发出的 session/prompt（按 requestId 去重），人均 = 当天消息总数 ÷ 当天活跃账号，作答 = eventResult`
     + `（按 eventId 去重），重发不重复计数；消息活跃账号 = 当天 prompts>0 的账号，`
     + `三层按首次使用设备日划分：当天为新增，7 天内为回访，超过 7 天为超 7 天回访；`
     + `它是消息口径，与连接活跃账号不是同一口径。`
