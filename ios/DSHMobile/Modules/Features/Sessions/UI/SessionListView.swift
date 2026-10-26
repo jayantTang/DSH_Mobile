@@ -460,6 +460,7 @@ public struct SessionListView: View {
                            isJustCreated: session.sessionId == model.lastCreatedSessionId,
                            isUnsynced: model.pendingState(for: session.sessionId) == .unsynced,
                            localTitle: model.pendingTitle(for: session.sessionId),
+                           activityOverride: activity.snapshot(sessionId: session.sessionId),
                            activityRevision: activity.revision)
             }
             .buttonStyle(.plain)
@@ -512,6 +513,7 @@ public struct SessionListView: View {
             SessionRow(session: session, rowState: model.state(of: session),
                        home: store.hostHome, isChild: true,
                        isJustCreated: session.sessionId == model.lastCreatedSessionId,
+                       activityOverride: activity.snapshot(sessionId: session.sessionId),
                        activityRevision: activity.revision)
         }
         .buttonStyle(.plain)
