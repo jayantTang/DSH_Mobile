@@ -37,32 +37,16 @@ const FEEDBACK_EMAIL = process.env.ASC_FEEDBACK_EMAIL || 'forwoshitjy@live.com'
 /// 的触点（他们更新时必然经过这一屏）。所以除了本版改了什么，末尾要留一句反馈邀请——
 /// 两位试用者都静默过，而我们在 GitHub 上说不上话（他们没有公开联系方式）。
 const WHATS_TO_TEST = {
-  'zh-Hans': `这一版修了几件你可能会碰到的事：
-· 手机没连着时提出的问题，回到手机会补上（以前会永久丢）
-· 重新打开 App 先显示上次的会话与内容，再增量更新（不再空白等网络）
-· 切后台、换会话之后，转写不再少一段记录
-· 界面支持英文（跟随系统语言）
+  'zh-Hans': `这一版更新：
+· 运行中的过程收为一行，点开查看步骤；已完成轮次保持折叠
+· 会话页与聊天页显示后台任务、子智能体的数量与状态，结束后自动隐藏
 
-遇到问题请告诉我们：在 TestFlight 里截图即可直接发反馈，或在 App 的会话列表右上角点反馈按钮。
-不说我们就不知道 —— 一句话就够。
-
-In this build: missed questions now arrive when the phone reconnects; the app opens with the last
-session list and content; transcripts no longer lose a chunk after backgrounding; the UI speaks
-English too. If something breaks, send feedback from TestFlight or tap the feedback button in the
-app — one sentence is enough.`,
+建议先升级电脑端连接器至 0.7.0，再更新 App。遇到问题请在 TestFlight 截图反馈。`,
   'en-US': `In this build:
-· Questions asked while your phone was away now arrive when it reconnects (they used to be lost)
-· The app opens with the last session list and its content, then updates incrementally — no more
-  blank wait for the network
-· Transcripts no longer lose a chunk after backgrounding or switching sessions
-· The interface speaks English (it follows the system language)
+· A running process folds into one line; tap to view steps. Completed turns stay folded.
+· Session and chat screens show background jobs and subagents, hiding them when finished.
 
-If something breaks, tell us: take a screenshot in TestFlight and send it as feedback, or tap the
-feedback button at the top of the session list in the app. One sentence is enough — we cannot fix
-what we never hear about.
-
-这一版修了"错过的提问会丢""重开是空的""切后台少一段记录"，并支持英文界面；
-有问题在 TestFlight 里截图反馈，或点 App 里会话列表右上角的反馈入口。`,
+Upgrade the desktop connector to 0.7.0 before updating the app. Send feedback with a TestFlight screenshot if anything breaks.`,
 }
 /// 审核联系电话。Apple 要求填，且只在审核需要时使用；可以从环境变量覆盖。
 const CONTACT_PHONE_NOTE = 'ASC_CONTACT_PHONE 可覆盖（默认是个占位号，第一次提交后建议改成真号）'
