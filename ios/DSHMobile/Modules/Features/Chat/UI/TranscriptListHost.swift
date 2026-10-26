@@ -348,10 +348,7 @@ final class TranscriptListHost: UIView, UICollectionViewDelegate {
     /// 探针里也是 `before == after`）。
     func setOffsetToBottom() {
         collectionView.layoutIfNeeded()
-        let bottom = max(-collectionView.adjustedContentInset.top,
-                         collectionView.contentSize.height + collectionView.adjustedContentInset.bottom
-                            - collectionView.bounds.height)
-        collectionView.setContentOffset(CGPoint(x: 0, y: bottom), animated: false)
+        collectionView.setContentOffset(CGPoint(x: 0, y: bottomTarget()), animated: false)
     }
     /// "跟尾"意图：打开会话/点回到底部后**持续满足**，直到读者自己拖动。
     /// 一次性的 `scrollToItem` 会被在飞的批量更新吞掉——真机反馈过"点了仍无效"。
@@ -916,10 +913,36 @@ final class TranscriptListHost: UIView, UICollectionViewDelegate {
     }
 
     /// 可滚动区域的目标底部 offset。
+    ///
+    /// 底部只由**最后一行真实布局位置**决定，不用估算的 `contentSize`：
+    /// 自撑列表的 contentSize 在行未量完时偏小，按它钉底会停在内容中间。
     private func bottomTarget() -> CGFloat {
-        max(-collectionView.adjustedContentInset.top,
-            collectionView.contentSize.height + collectionView.adjustedContentInset.bottom
-                - collectionView.bounds.height)
+        viewportGeometry.maxOffset
+    }
+
+    /// 可见窗口 + 真实内容底 + inset 的纯模型（`ChatViewportGeometry`）。
+    private var viewportGeometry: ChatViewportGeometry {
+        ChatViewportGeometry(
+            viewportHeight: collectionView.bounds.height,
+            contentBottom: contentBottom(),
+            topInset: collectionView.adjustedContentInset.top,
+            bottomInset: collectionView.adjustedContentInset.bottom)
+    }
+
+    /// 最后一行的 maxY；没有行时退回 contentSize。
+    private func contentBottom() -> CGFloat {
+        let sections = collectionView.numberOfSections
+        guard sections > 0 else { return collectionView.contentSize.height }
+        let lastSection = sections - 1
+        let items = collectionView.numberOfItems(inSection: lastSection)
+        guard items > 0 else { return collectionView.contentSize.height }
+        let last = IndexPath(item: items - 1, section: lastSection)
+        // 不在这里 layoutIfNeeded：本方法也会被 scrollViewDidScroll 调用，
+        // 强制布局会重入滚动回调。设置 offset 的入口已经先 layout 过一次。
+        guard let attrs = collectionView.layoutAttributesForItem(at: last) else {
+            return collectionView.contentSize.height
+        }
+        return attrs.frame.maxY
     }
 
     /// 内容高度长高后补钉：只在有意图且读者没有在拖/减速时做。
@@ -944,8 +967,7 @@ final class TranscriptListHost: UIView, UICollectionViewDelegate {
 
     /// 视口距底部的距离（点）。
     func bottomDistance() -> CGFloat {
-        let content = collectionView.contentSize.height + collectionView.adjustedContentInset.bottom
-        return content - collectionView.bounds.height - collectionView.contentOffset.y
+        viewportGeometry.distanceFromBottom(offset: collectionView.contentOffset.y)
     }
 
     func cancelBottomIntent() { wantsBottom = false }

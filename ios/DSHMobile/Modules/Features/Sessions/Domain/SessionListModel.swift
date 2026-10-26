@@ -259,6 +259,9 @@ public final class SessionListModel {
     private(set) weak var store: (any LinkService)?
     /// 列表自己的 `session/control` 订阅：投影（标题/token/上下文/子智能体计时）实时更新。
     private var projectionTask: Task<Void, Never>?
+    /// `$events` 订阅归模型，不归视图：列表离屏时仍要收到 status(false)，
+    /// 回到列表时不能靠“开关一次会话”补状态。
+    private var eventsTask: Task<Void, Never>?
     /// 工作区/归档实时流：baseline 直接应用，change 去抖后重拉一次列表。
     private var workspaceTask: Task<Void, Never>?
     private var workspaceRefreshTask: Task<Void, Never>?
@@ -383,6 +386,39 @@ public final class SessionListModel {
         if let viewLog { self.viewLog = viewLog }
         startProjections()
         startWorkspaceStream()
+        startEvents()
+    }
+
+    private func startEvents() {
+        eventsTask?.cancel()
+        guard let hub else { return }
+        eventsTask = Task { @MainActor [weak self] in
+            for await event in hub.events() {
+                guard !Task.isCancelled else { return }
+                guard let self else { return }
+                switch event {
+                case .ready:
+                    await self.refresh()
+                case .emit(let name, let args):
+                    switch name {
+                    case "api-session/status":
+                        guard let sessionId = args.first?.stringValue,
+                              let running = args.dropFirst().first?.boolValue else { continue }
+                        self.applyHostStatus(sessionId: sessionId, running: running)
+                    case "api-session/activity":
+                        guard let sessionId = args.first?.stringValue,
+                              let updatedAt = args.dropFirst().first?.doubleValue else { continue }
+                        self.applyHostActivity(sessionId: sessionId, updatedAt: updatedAt)
+                    case "api-session/added", "api-session/removed", "api-session/error":
+                        await self.refresh()
+                    default:
+                        continue
+                    }
+                default:
+                    continue
+                }
+            }
+        }
     }
 
     private func startWorkspaceStream() {
