@@ -1121,11 +1121,20 @@ public struct ChatView: View {
         if let streaming = model.timeline.streaming {
             return streaming.text.count + streaming.reasoning.count
         }
-        guard let last = model.timeline.items.last(where: { $0.isStreaming }) else { return 0 }
-        switch last.kind {
-        case .assistantText(let text), .reasoning(let text): return text.count
-        default: return 0
+        // 管道模式下流式内容可能已是普通行（不再带 isStreaming）：取本轮最后一段
+        // 正文/思考的字数，仍然小于等于当前生成量。
+        var inCurrentTurn = false
+        for item in model.timeline.items.reversed() {
+            if case .turnDivider = item.kind { inCurrentTurn = true; break }
+            switch item.kind {
+            case .assistantText(let text), .reasoning(let text):
+                if !text.isEmpty { return text.count }
+            default:
+                continue
+            }
         }
+        _ = inCurrentTurn
+        return 0
     }
 
     /// 一行消息。抽出来是为了让"懒加载/非懒加载"两种排布共用同一份定义。
@@ -1866,6 +1875,7 @@ public struct ChatView: View {
 
 #endif
 
+#if os(iOS)
 private struct OlderDebugHUD: View {
     let distance: CGFloat?
     let near: Bool
@@ -1900,3 +1910,4 @@ private struct OlderDebugHUD: View {
         return String(format: "%.1fs", now.timeIntervalSince(date))
     }
 }
+#endif

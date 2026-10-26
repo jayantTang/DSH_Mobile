@@ -151,13 +151,36 @@ public enum ProcessFoldText {
         return String(format: String(localized: "深度求索中，用时 %@ ···"), durationText(elapsed))
     }
 
-    /// 运行中分组行右侧的计数文案：`12 步 · 328 字` / `12 步`。
-    /// 动作短语在左，数量弱化在右；命令运行中不显示字数（没有正文在增长）。
-    public static func runningStatsText(steps: Int, chars: Int, hasActivity: Bool) -> String {
+    /// 运行中分组行右侧的统计：`12 步 · 思考 328 字` / `12 步 · 命令`。
+    /// 动作短语在左，类型/数量弱化右对齐；思考字数随流式正文增长。
+    public static func runningStatsText(steps: Int, chars: Int,
+                                        activity: TimelineProcessActivity?) -> String {
         var parts: [String] = []
         if steps > 0 { parts.append(String(localized: "\(steps) 步")) }
-        if !hasActivity, chars > 0 { parts.append(String(localized: "\(chars) 字")) }
+        if let activity {
+            parts.append(activityShortLabel(activity))
+        } else if chars > 0 {
+            parts.append(String(localized: "思考 \(chars) 字"))
+        } else {
+            parts.append(String(localized: "思考"))
+        }
         return parts.joined(separator: " · ")
+    }
+
+    public static func activityShortLabel(_ activity: TimelineProcessActivity) -> String {
+        switch activity {
+        case .read: return String(localized: "读取")
+        case .write: return String(localized: "写入")
+        case .edit: return String(localized: "编辑")
+        case .search: return String(localized: "搜索")
+        case .commands: return String(localized: "命令")
+        case .code: return String(localized: "代码")
+        case .web: return String(localized: "网页")
+        case .subagents: return String(localized: "子代理")
+        case .questions: return String(localized: "提问")
+        case .plan: return String(localized: "计划")
+        case .tools: return String(localized: "工具")
+        }
     }
 
     // MARK: - 图标

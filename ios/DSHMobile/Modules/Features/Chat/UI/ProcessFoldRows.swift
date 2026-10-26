@@ -140,16 +140,19 @@ struct ProcessGroupRow: View {
                     let stats = ProcessFoldText.runningStatsText(
                         steps: header.toolCount + header.reasoningCount,
                         chars: runningChars,
-                        hasActivity: activity != nil)
+                        activity: activity)
                     if !stats.isEmpty {
+                        Spacer(minLength: 6)
                         Text(stats)
                             .font(DSHTheme.Typography.micro)
                             .foregroundStyle(DSHTheme.labelDimmed)
                             .lineLimit(1)
-                            .padding(.leading, 6)
+                            .fixedSize(horizontal: true, vertical: false)
+                            .multilineTextAlignment(.trailing)
                     }
+                } else {
+                    Spacer(minLength: 0)
                 }
-                Spacer(minLength: 0)
             }
             .foregroundStyle(DSHTheme.processLabel)
             .frame(height: Self.height)
