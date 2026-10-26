@@ -1099,7 +1099,8 @@ public struct ChatView: View {
         return rowView
             // 搜索跳过来的那一行：淡底 + 左侧色条，一眼能认出"就是这条"。
             .background(alignment: .leading) {
-                if highlightedItemId == item.id || highlightedItemId == item.parentID {
+                if let highlightedItemId,
+                   highlightedItemId == item.id || highlightedItemId == item.parentID {
                     RoundedRectangle(cornerRadius: 10)
                         .fill(DSHTheme.brand.opacity(0.10))
                         .overlay(alignment: .leading) {
