@@ -179,3 +179,7 @@ final class ProcessFoldTextTests: XCTestCase {
         XCTAssertFalse(icons.contains(""))
     }
 }
+
+    func test_the_running_clock_refreshes_every_second() {
+        XCTAssertEqual(ProcessFoldText.runningRefresh, 1, "运行行计时按 1 秒刷新，与桌面一致")
+    }

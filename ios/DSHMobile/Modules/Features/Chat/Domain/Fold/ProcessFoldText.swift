@@ -141,6 +141,10 @@ public enum ProcessFoldText {
 
     // MARK: - 深度求索行
 
+    /// 运行行计时刷新间隔（秒）。与桌面一致，1 秒一次；只重算这一行的文本，
+    /// 不改模型、不重建列表。放在领域层是为了单测能钉住这个值。
+    public static let runningRefresh: TimeInterval = 1
+
     /// 底部运行行：`深度求索中，用时 12秒 ···`。
     public static func deepDivingText(elapsed: TimeInterval?) -> String {
         guard let elapsed, elapsed > 0 else { return String(localized: "深度求索中") }

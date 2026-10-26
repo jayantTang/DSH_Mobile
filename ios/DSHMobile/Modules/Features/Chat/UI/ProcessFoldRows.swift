@@ -154,13 +154,13 @@ struct ProcessGroupRow: View {
 
 /// 底部运行行：上方 0.5pt 线、上距 12pt、鲸尾 14pt + 12/22 的 `#345EBA` 文字。
 ///
-/// 计时每 10 秒刷新一次（桌面 1 秒一次，手机按设计降到 10 秒），不播报；
+/// 计时每 1 秒刷新一次（与桌面一致），只重算这一行的文本子树，不播报；
 /// 轮次一结束这一行随 `runningDetail` 一起消失，原地换成轮次行的「已完成，用时」。
 struct RunningLine: View {
     /// 本轮开始的时刻；nil 时只写「深度求索中」。
     let since: Date?
 
-    static let refresh: TimeInterval = 10
+    static let refresh: TimeInterval = ProcessFoldText.runningRefresh
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
