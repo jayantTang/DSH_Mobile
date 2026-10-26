@@ -52,6 +52,8 @@ struct TranscriptListRepresentable: UIViewRepresentable {
     let onReclaim: ([String]) -> Void
     /// 这些 seq 需要内容（调用方从本地库读回来后调用 `coordinator.rehydrate(items:)`）。
     let onNeedRehydrate: ([Int]) -> Void
+    /// 精确到底（≤1pt）：按钮显隐只认这个，避免差 30 点也把按钮收掉。
+    let onAtBottomExact: (Bool) -> Void
     /// 读者是否贴在最新那一头（唯一可靠的"跟随"依据）。
     let onBottomChanged: (Bool) -> Void
     /// 009 跟底两态的几何输入（tasks T017）：距底距离 + 向上拖动中。
@@ -82,6 +84,7 @@ struct TranscriptListRepresentable: UIViewRepresentable {
         #endif
         host.onScroll = onScroll
         host.onBottomChanged = onBottomChanged
+        host.onAtBottomExact = onAtBottomExact
         host.onFollowGeometry = onFollowGeometry
         host.onNearTop = { [weak coordinator = context.coordinator] in
             coordinator?.requestOlder()
@@ -360,6 +363,12 @@ final class TranscriptListHost: UIView, UICollectionViewDelegate {
     /// 自撑高度列表的 `contentSize` 是估算值：行实测长高时不产生数据变更，
     /// 没人再钉一次，视口就停在"旧的底"（中间）。这里监听内容高度自己补。
     private var contentSizeObservation: NSKeyValueObservation?
+    /// 键盘/安全区/视口高度变化：`contentSize` 不变但可滚动底部变了，
+    /// 也必须重钉；否则点回底后会停在键盘动画前的位置（差几十点）。
+    private var contentInsetObservation: NSKeyValueObservation?
+    private var boundsObservation: NSKeyValueObservation?
+    /// 按钮显隐用的精确"到底"回调（容差 1pt，区别于跟尾判定的 40pt）。
+    var onAtBottomExact: ((Bool) -> Void)?
     /// 贴底容差（点）：在这个范围内就算"在最新那一头"。
     static let bottomSlack: CGFloat = 40
 
@@ -430,9 +439,15 @@ final class TranscriptListHost: UIView, UICollectionViewDelegate {
         // 内容高度变化（自撑行的实测高度、水合、图片/代码块）时补一次钉底；
         // 只在"有意图、且读者不在拖"时做，避免把上滑的读者拽回底部。
         contentSizeObservation = collectionView.observe(\.contentSize, options: [.new]) { [weak self] _, _ in
-            // 合并：一次布局周期最多补钉一次，且内容高度没变就不重复钉。
+            // 合并：一次布局周期最多补钉一次，且目标底没变就不重复钉。
             // 之前每个 contentSize 事件都排一个 async pin，键盘/轮次结束时
             // 会形成 setOffset → layout → contentSize → pin 的主线程风暴。
+            self?.scheduleCoalescedPin()
+        }
+        contentInsetObservation = collectionView.observe(\.contentInset, options: [.new]) { [weak self] _, _ in
+            self?.scheduleCoalescedPin()
+        }
+        boundsObservation = collectionView.observe(\.bounds, options: [.new]) { [weak self] _, _ in
             self?.scheduleCoalescedPin()
         }
         addSubview(collectionView)
@@ -889,19 +904,28 @@ final class TranscriptListHost: UIView, UICollectionViewDelegate {
         isPinning = true
         setOffsetToBottom()
         isPinning = false
-        let atBottom = bottomDistance() <= Self.bottomSlack
+        let distance = bottomDistance()
+        let atBottom = distance <= Self.bottomSlack
         lastReportedAtBottom = atBottom
-        lastPinnedContentSize = collectionView.contentSize
+        lastPinnedTarget = bottomTarget()
+        onAtBottomExact?(distance <= 1)
         if atBottom {
             onBottomChanged?(true)
             onFollowGeometry?(0, false)
         }
     }
 
+    /// 可滚动区域的目标底部 offset。
+    private func bottomTarget() -> CGFloat {
+        max(-collectionView.adjustedContentInset.top,
+            collectionView.contentSize.height + collectionView.adjustedContentInset.bottom
+                - collectionView.bounds.height)
+    }
+
     /// 内容高度长高后补钉：只在有意图且读者没有在拖/减速时做。
     /// 内容高度变化的补钉请求：同一轮 runloop 只保留一个，且内容高度没变化就跳过。
     private var pinScheduled = false
-    private var lastPinnedContentSize: CGSize = .zero
+    private var lastPinnedTarget: CGFloat?
 
     private func scheduleCoalescedPin() {
         guard wantsBottom || lastReportedAtBottom else { return }
@@ -912,9 +936,8 @@ final class TranscriptListHost: UIView, UICollectionViewDelegate {
             self.pinScheduled = false
             guard self.wantsBottom || self.lastReportedAtBottom else { return }
             guard !self.collectionView.isDragging, !self.collectionView.isDecelerating else { return }
-            let size = self.collectionView.contentSize
-            guard size != self.lastPinnedContentSize else { return }
-            guard self.bottomDistance() > 1 else { return }
+            let target = self.bottomTarget()
+            guard target != self.lastPinnedTarget || self.bottomDistance() > 1 else { return }
             self.pinNow()
         }
     }
@@ -1186,6 +1209,7 @@ extension TranscriptListHost {
         let programmatic = isPinning || (wantsBottom && !scrollView.isTracking)
         if !programmatic {
             onBottomChanged?(atBottom)
+            onAtBottomExact?(bottomDistance() <= 1)
             reportFollowGeometry(scrollView)
         }
         // **可见余量预取**：离顶端还有一屏半就开始要，而不是等贴到顶（真机反馈"预取太慢"）。

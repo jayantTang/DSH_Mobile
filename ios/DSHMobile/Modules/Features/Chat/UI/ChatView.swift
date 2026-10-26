@@ -780,8 +780,9 @@ public struct ChatView: View {
                         listHostRef?.scheduleReclaimCheck()
                     }
                 },
+                onAtBottomExact: { hostAtBottom = $0 },
                 onBottomChanged: { atBottom in  // 几何驱动
-                    hostAtBottom = atBottom
+
                     if model.processToggleFollowHold { return }
                     // 009 管道 + uikit 宿主：跟随判定由跟底两态接管（48pt + 向上拖动
                     // 抑制，见 onFollowGeometry），这条旧回调只在其它路径生效。
