@@ -50,6 +50,28 @@ final class TranscriptProcessFoldTests: XCTestCase {
         XCTAssertEqual(answer, "answer 1")
     }
 
+    func test_answer_before_a_question_stays_visible_while_the_turn_is_open() throws {
+        // 选择题会中断一轮、没有 turn/end；桌面上中断前的正式回答不折。
+        let timeline = try ProcessFoldFixtures.timeline([
+            ProcessFoldFixtures.turnStart(seq: 1, turn: 1),
+            ProcessFoldFixtures.user(seq: 2, text: "帮我选"),
+            ProcessFoldFixtures.assistant(seq: 3, text: "我的建议是 A"),
+            ProcessFoldFixtures.toolCall(seq: 4, callId: "q1", name: "ask_user"),
+        ])
+        let plan = TranscriptProcessFold.plan(items: timeline.items, isTurnOpen: true,
+                                              currentTurn: 1)
+        let turn = try XCTUnwrap(plan.turns.first)
+        let answerIDs = turn.answerIndexes.map { timeline.items[$0].id }
+        XCTAssertTrue(timeline.items.contains { item in
+            guard case .assistantText(let text) = item.kind else { return false }
+            return text == "我的建议是 A" && answerIDs.contains(item.id)
+        }, "提问前的正式回答不能折进过程：\(answerIDs)")
+        XCTAssertFalse(turn.processIndexes.contains { index in
+            if case .assistantText = timeline.items[index].kind { return true }
+            return false
+        })
+    }
+
     func test_a_send_image_tool_stays_visible_when_the_turn_is_collapsed() throws {
         let timeline = try ProcessFoldFixtures.timeline([
             ProcessFoldFixtures.turnStart(seq: 1, turn: 1),

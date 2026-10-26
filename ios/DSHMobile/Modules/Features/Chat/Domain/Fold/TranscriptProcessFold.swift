@@ -59,6 +59,26 @@ public enum TranscriptProcessFold {
     /// 不做布局、不读状态，单测直接据此钉边界：缺段（gap）、中途输入、失败
     /// 都不是"不可折"的理由——缺段以轮内一行保留，中途输入是分组边界，
     /// 失败与正常完成同一套折叠（M5）。运行中的轮次没有轮次行。
+    /// 这一轮里有没有“向用户提问/请求审批”的过程行。
+    private static func segmentHasQuestion(range: Range<Int>, items: [TimelineItem],
+                                          summaries: [FoldSummaryV2]) -> Bool {
+        for index in range {
+            switch items[index].kind {
+            case .toolCall(let invocation):
+                if TimelineProcessActivity.classify(invocation.name) == .questions { return true }
+            case .processStep(let step):
+                if step.activity == .questions { return true }
+            default:
+                continue
+            }
+        }
+        return summaries.contains { summary in
+            summary.groups.contains { group in
+                group.steps.contains { $0.activity == .questions }
+            }
+        }
+    }
+
     public static func isFoldable(hasDivider: Bool, isRunning: Bool, hasProcessRows: Bool) -> Bool {
         hasDivider && !isRunning && hasProcessRows
     }
@@ -369,6 +389,26 @@ public enum TranscriptProcessFold {
                     while index < answerEnd, isAnswerRow(items[index]) {
                         answerIndexes.insert(index)
                         index += 1
+                    }
+                }
+            }
+
+            // 提问/审批会中断一轮但没有 `turn/end`：桌面仍把中断前的最后一段
+            // 正式回答与 agent 图片留在外面，不折进过程。这里用同一判据补上。
+            if answerIndexes.isEmpty, !segment.hasDivider,
+               Self.segmentHasQuestion(range: leadingEnd..<answerEnd, items: items,
+                                       summaries: summariesForTurn) {
+                var last: Int?
+                for index in stride(from: answerEnd - 1, through: leadingEnd, by: -1)
+                where isAnswerRow(items[index]) {
+                    last = index
+                    break
+                }
+                if let start = last {
+                    var index = start
+                    while index >= leadingEnd, isAnswerRow(items[index]) {
+                        answerIndexes.insert(index)
+                        index -= 1
                     }
                 }
             }

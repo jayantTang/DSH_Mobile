@@ -1096,9 +1096,35 @@ public struct ChatView: View {
         return header.scope == .group ? DSHTheme.Spacing.hairline : 16
     }
 
+    /// 收起态运行行的一行文案：步数 + 当前类型/预览 + 流式字数。
+    private func runningLineDescriptor(for item: TimelineItem) -> RunningLineDescriptor? {
+        guard case .runningLine = item.kind else { return nil }
+        let detail = TranscriptProcessFold.runningDetail(
+            in: model.timeline.items,
+            isTurnOpen: model.timeline.isTurnOpen,
+            summaries: model.timeline.foldSummaries)
+        let steps = model.timeline.foldSummaries.reduce(0) { total, summary in
+            total + summary.groups.reduce(0) { $0 + $1.steps.count }
+        }
+        var chars = 0
+        if let streaming = model.timeline.streaming {
+            chars = streaming.text.count + streaming.reasoning.count
+        } else if let last = model.timeline.items.last(where: { $0.isStreaming }) {
+            switch last.kind {
+            case .assistantText(let text): chars = text.count
+            case .reasoning(let text): chars = text.count
+            default: break
+            }
+        }
+        return RunningLineDescriptor(stepCount: steps,
+                                      activity: detail?.activity,
+                                      detail: detail?.detail ?? "",
+                                      generatedChars: chars)
+    }
+
     /// 一行消息。抽出来是为了让"懒加载/非懒加载"两种排布共用同一份定义。
     private func row(_ item: TimelineItem) -> some View {
-        var rowView = TimelineRowView(item: item)
+        var rowView: TimelineRowView = TimelineRowView(item: item, running: runningLineDescriptor(for: item))
         // 缺口行「加载失败，点击重试」（T016）：重试由管道的状态机接管。
         rowView.onGapRetry = { start, end in
             Task { await model.retryGap(start: start, end: end) }

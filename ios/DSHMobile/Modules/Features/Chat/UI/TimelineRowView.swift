@@ -57,6 +57,8 @@ struct TimelineRowView: View {
     var onOpenSession: ((String) -> Void)?
     /// 018：这一行属于哪个会话（子智能体停止要用父会话 id）。
     var parentSessionId: String?
+    /// 运行行的单行文案（步数/类型/字数），由 ChatView 从模型计算后传入。
+    var running: RunningLineDescriptor?
     /// 033：过程节点的展开/收起回调。nil 时节点不可操作（预览等场景）。
     var onToggleProcess: (() -> Void)?
     /// 概要 v2：步骤卡是否展开（模型持有），以及点开/重试。
@@ -129,7 +131,7 @@ struct TimelineRowView: View {
             }
 
         case .runningLine(let line):
-            RunningLine(since: line.since)
+            RunningLine(since: line.since, descriptor: running)
 
         case .processStep(let step):
             ProcessStepRow(
@@ -378,6 +380,8 @@ struct ToolCallRow: View {
     var activity: ActivityModel?
     /// 018：子会话的父会话 id（停止要它）。
     var parentSessionId: String?
+    /// 运行行的单行文案（步数/类型/字数），由 ChatView 从模型计算后传入。
+    var running: RunningLineDescriptor?
     /// 018：打开子会话。
     var onOpenSession: ((String) -> Void)?
     /// `nil` follows the default for this result; a tap pins it either way.
