@@ -1262,6 +1262,20 @@ test('激活码板块：老服务端没有 usable/unused 时退回 remaining，�
   assert.match(html, /MacBook/, '老服务端的 enrollments 照样列出来')
 })
 
+test('表格按百分比定宽：正文不会被内容撑宽', () => {
+  const data = fixture()
+  data.versions = [{ appVersion: '1.0 20261012.1056', devices: 2, accounts: 2,
+    lastSeenAt: GENERATED_AT }]
+  data.usage.perDay = [{ day: 20261011, egressBytes: 1024, connections: 3, devices: 1,
+    accounts: 1, prompts: 1, answers: 1 }]
+  const html = renderReport(data)
+  const tables = (html.match(/<table>/g) ?? []).length
+  const colgroups = (html.match(/<table><colgroup>/g) ?? []).length
+  assert.ok(tables >= 2, '页面至少有版本分布与近 7 天两张表')
+  assert.equal(colgroups, tables, '每张表都带 colgroup，列宽由布局决定而不是内容')
+  assert.ok(html.includes('table-layout: fixed'), '表格用定宽布局')
+})
+
 test('14 天矩阵：整点格齐全，缺的一小时画空格不插值', () => {
   const hour = 3_600_000
   const end = Math.floor(GENERATED_AT / hour) * hour
