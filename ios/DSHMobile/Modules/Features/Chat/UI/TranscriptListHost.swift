@@ -625,6 +625,10 @@ final class TranscriptListHost: UIView, UICollectionViewDelegate {
             previous: lastReconcile.map { TranscriptRowDiff.Row(id: $0.id, signature: $0.signature) },
             current: incoming.map { TranscriptRowDiff.Row(id: $0.id, signature: $0.signature) })
         lastReconcile = incoming
+        // 更新前读者是不是贴着底：贴着底时这次更新的语义是"跟随"，
+        // 不能按锚点保位（那会把视口留在旧的底，新内容落到屏幕外，看起来就是跳到中间）。
+        let wasAtBottom = wantsBottom || lastReportedAtBottom
+            || bottomDistance() <= Self.bottomSlack
         let anchorId = firstFullyVisibleRowId() ?? rows.first?.id
         let anchorSeq = rows.first(where: { $0.id == anchorId })?.seq
         let before = visualY(of: anchorId)
@@ -644,28 +648,38 @@ final class TranscriptListHost: UIView, UICollectionViewDelegate {
         }
         applySnapshot(reloading: changedIds)
         collectionView.layoutIfNeeded()
-        let after = visualY(of: effectiveAnchorId)
-        var delta = TranscriptScrollAdjustment.delta(
-            anchorBefore: before.map { Double($0) },
-            anchorAfter: after.map { Double($0) })
-        if delta != 0 {
-            collectionView.contentOffset.y += delta
-            collectionView.layoutIfNeeded()
-        }
-        var residual = (visualY(of: effectiveAnchorId) ?? before ?? 0) - (before ?? 0)
-        if abs(residual) > Self.tolerance {
-            collectionView.contentOffset.y += residual
-            collectionView.layoutIfNeeded()
-            delta += residual
+        var delta: CGFloat = 0
+        var residual: CGFloat = 0
+        if wasAtBottom {
+            // 跟随：更新后直接贴底，跳过锚点保位。
+            pinNow()
+        } else {
+            let after = visualY(of: effectiveAnchorId)
+            delta = TranscriptScrollAdjustment.delta(
+                anchorBefore: before.map { Double($0) },
+                anchorAfter: after.map { Double($0) })
+            if delta != 0 {
+                collectionView.contentOffset.y += delta
+                collectionView.layoutIfNeeded()
+            }
             residual = (visualY(of: effectiveAnchorId) ?? before ?? 0) - (before ?? 0)
+            if abs(residual) > Self.tolerance {
+                collectionView.contentOffset.y += residual
+                collectionView.layoutIfNeeded()
+                delta += residual
+                residual = (visualY(of: effectiveAnchorId) ?? before ?? 0) - (before ?? 0)
+            }
         }
         diagnostic("list.reconcile", [
             "rows": String(rows.count),
             "deltaPt": String(format: "%.0f", delta),
+            "wasBottom": wasAtBottom ? "1" : "0",
             "ms": String(format: "%.0f", (CFAbsoluteTimeGetCurrent() - started) * 1000),
             "reason": reason,
         ])
-        settle(anchorId: effectiveAnchorId ?? "-", moved: residual)
+        if !wasAtBottom {
+            settle(anchorId: effectiveAnchorId ?? "-", moved: residual)
+        }
         satisfyBottomIntent()
         if distanceToTop() < prefetchMargin() { onNearTop?() }
     }
@@ -856,7 +870,10 @@ final class TranscriptListHost: UIView, UICollectionViewDelegate {
 
     /// 内容高度长高后补钉：只在有意图且读者没有在拖/减速时做。
     private func pinAfterContentGrowth() {
-        guard wantsBottom, !collectionView.isDragging, !collectionView.isDecelerating else { return }
+        // 读者手动拉到底（没有按钮意图）也算"在底部"：自撑行长高后同样要补钉，
+        // 否则内容变高、偏移不动，视口就停在中间。
+        guard wantsBottom || lastReportedAtBottom else { return }
+        guard !collectionView.isDragging, !collectionView.isDecelerating else { return }
         guard bottomDistance() > 1 else { return }
         pinNow()
     }
