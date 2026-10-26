@@ -8,9 +8,9 @@ import (
 
 // usageScan 按天读一遍 usageDaily，同时给出 series / ranked / activeByDay。
 //
-// 消息活跃账号按“首次使用设备”分三档：首次用量记录在当天算新增；首次用量记录
-// 在最近 7 天内算回访；首次用量记录在 7 天以前、且今天仍发消息算超 7 天回访。
-// 三档互斥，加起来等于当天 messageAccounts。firstSeen 来自 400 天历史，不是本次窗口。
+// 活跃账号按“首次使用设备”分三档：首次用量记录在当天算新增；首次用量记录
+// 在最近 7 天内算回访；首次用量记录在 7 天以前、且今天仍有活跃算超 7 天回访。
+// 三档互斥，加起来等于当天 accounts。firstSeen 来自 400 天历史，不是本次窗口。
 func usageScan(ctx context.Context, src Source, days int, end int64,
 	debugIDs map[string]struct{}, names map[string]*string, knownIDs,
 	external map[string]struct{}, firstSeen map[string]int64) ([]usageDay, []accountUsageRow,
@@ -76,17 +76,17 @@ func usageScan(ctx context.Context, src Source, days int, end int64,
 	}
 	for _, day := range recent {
 		entry := perDay[day]
-		for account := range messageActiveByDay[day] {
+		for account := range activeByDay[day] {
 			first, known := firstSeen[account]
 			switch {
 			case !known:
-				entry.MessageReturningOldAccounts++
+				entry.ReturningOldAccounts++
 			case first == day:
-				entry.MessageNewAccounts++
+				// NewAccounts 由 buildUsageReport 按同一个 firstSeen 计算。
 			case dayGap(day, first) <= 7:
-				entry.MessageReturning7Accounts++
+				entry.Returning7Accounts++
 			default:
-				entry.MessageReturningOldAccounts++
+				entry.ReturningOldAccounts++
 			}
 		}
 	}

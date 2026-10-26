@@ -1137,9 +1137,9 @@ function rangeSection(report, days, completed = false) {
 
   const peakNote = peak && num(peak.egressBytes) > 0
     ? `峰值 ${fullDay(peak.day)} ${formatBytes(peak.egressBytes)}` : `最近 ${days} 天`
-  const userPoints = (usage.perDay ?? []).map((row) => ({ label: row.day, value: row.messageAccounts,
-    fresh: row.messageNewAccounts,
-    recent: row.messageReturning7Accounts, old: row.messageReturningOldAccounts }))
+  const userPoints = (usage.perDay ?? []).map((row) => ({ label: row.day, value: row.accounts,
+    fresh: row.newAccounts,
+    recent: row.returning7Accounts, old: row.returningOldAccounts }))
   const countPoints = (usage.perDay ?? []).map((row) => ({
     label: row.day, total: num(row.prompts),
     avg: num(row.accounts) > 0 ? num(row.prompts) / num(row.accounts) : 0,
@@ -1152,20 +1152,20 @@ function rangeSection(report, days, completed = false) {
     .map((point, index) => ({ index, day: dayText(point.label) }))
     .filter((marker) => marker.day && releaseDays.has(marker.day))
     .map((marker) => ({ index: marker.index, label: '发版' }))
-  // 活跃账号图：服务端给了消息活跃三档（`perDay[].messageNewAccounts` 等）就叠三层；
+  // 活跃账号图：服务端给了首次使用三档（`perDay[].returning7Accounts` 等）就叠三层；
   // 老服务端没有这些字段时退回单条折线——本机不补算"首次使用设备日"，口径只有一个所有者。
   const hasSplit = userPoints.length > 0
     && userPoints.every((point) => point.fresh !== undefined && point.fresh !== null)
   const activeNote = hasSplit
-    ? `近 7 天消息活跃 ${formatInt(usage.messageActiveAccounts7d)} 个 · 按首次使用设备分三层`
-    : `近 7 天消息活跃 ${formatInt(usage.messageActiveAccounts7d)} 个`
+    ? `近 7 天 ${formatInt(usage.activeAccounts7d)} 个 · 按首次使用设备分三层`
+    : `近 7 天 ${formatInt(usage.activeAccounts7d)} 个`
   const activeChart = hasSplit ? compositionChart({
-    title: '每日消息活跃账号',
+    title: '每日活跃账号',
     note: activeNote,
     points: userPoints,
     format: (value) => String(Math.round(value)),
   }) : lineChart({
-    title: '每日消息活跃账号',
+    title: '每日活跃账号',
     note: activeNote,
     points: userPoints,
     format: (value) => String(Math.round(value)),
