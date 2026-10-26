@@ -90,6 +90,19 @@ final class HostEventHubTests: XCTestCase {
         XCTAssertTrue(hub.pendingPrompts(for: "session-1").isEmpty)
     }
 
+    func test_starting_preserves_subscribers_attached_before_start() async {
+        // 列表/活动模型在 hub.start 之前 attach；start 不能把观察者清掉。
+        var seen: [HostEvent] = []
+        let stream = hub.events()
+        let reader = Task { @MainActor in
+            for await event in stream { seen.append(event) }
+        }
+        hub.start(link: makeGateway())
+        await eventually("first frame after start") { !seen.isEmpty }
+        reader.cancel()
+        XCTAssertFalse(seen.isEmpty)
+    }
+
     func test_starting_without_a_link_leaves_the_hub_idle() async {
         hub.start(link: nil)
 

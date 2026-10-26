@@ -71,7 +71,9 @@ public final class HostEventHub {
             self.link = linkProvider?() ?? link ?? self.link
             return
         }
-        stop()
+        // 不能在这里 stop()：start 是“开始喂事件”，不是“重建订阅”。
+        // stop() 会 finish 掉所有观察者，而模型（列表/活动）在 start 之前
+        // 就 attach 了；清掉后 list 永远收不到 status(false)（2026-10-26 根因）。
         self.link = link
         task = Task { [weak self] in
             // The handle is what `start` checks, so a loop that ends — because
