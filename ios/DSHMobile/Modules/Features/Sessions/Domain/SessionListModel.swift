@@ -195,6 +195,27 @@ public final class SessionListModel {
         viewLog.prune(keeping: Set(allSessions.map(\.sessionId)))
     }
 
+    /// 宿主实时状态（`$events` 的 `api-session/status`）：会话行立即运行/空闲，
+    /// 不再等下一次 `session/list` 刷新（之前列表只在打开/下拉时更新，桌面已结束
+    /// 手机仍显示运行中）。
+    public func applyHostStatus(sessionId: String, running: Bool) {
+        guard let index = allSessions.firstIndex(where: { $0.sessionId == sessionId }),
+              allSessions[index].running != running else { return }
+        allSessions[index] = allSessions[index].with(running: running)
+        regroup()
+        // 活动名单（后台任务/子智能体）与行状态同一份事实，状态一变就同步。
+        (activityModel ?? ActivityModel.shared).applySessions(allSessions)
+    }
+
+    /// 宿主活动时间（`api-session/activity`）：更新排序与相对时间，不重拉整表。
+    public func applyHostActivity(sessionId: String, updatedAt: Double) {
+        guard let index = allSessions.firstIndex(where: { $0.sessionId == sessionId }),
+              allSessions[index].updatedAt < updatedAt else { return }
+        allSessions[index] = allSessions[index].with(updatedAt: updatedAt)
+        regroup()
+        (activityModel ?? ActivityModel.shared).applySessions(allSessions)
+    }
+
     /// Raised when a session goes from running to idle.
     ///
     /// The chat stream only reports turns for the session on screen, so the way

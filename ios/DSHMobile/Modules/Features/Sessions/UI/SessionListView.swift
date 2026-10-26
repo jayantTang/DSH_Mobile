@@ -118,6 +118,9 @@ public struct SessionListView: View {
         .task(id: hub.pending.map(\.sessionId)) {
             model.waitingSessionIds = Set(hub.pending.map(\.sessionId))
         }
+        // 宿主实时状态：`$events` 的 status/activity/added/removed 直接更新列表，
+        // 不靠进页面或下拉才刷新（2026-10-26：桌面已结束、手机列表仍显示运行中）。
+        .task { await observeHostLiveState() }
         .searchable(text: $model.searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "搜索会话")
         .refreshable { await model.refresh() }
         .alert("归档失败", isPresented: Binding(
@@ -364,6 +367,34 @@ public struct SessionListView: View {
     ///
     /// Archiving is the phone's answer to a list that only grows: old sessions
     /// stay in the host's history but stop competing with current work.
+    /// `$events` → 列表：运行态/活动时间即时更新，增删与错误才重拉整表。
+    private func observeHostLiveState() async {
+        for await event in hub.events() {
+            guard !Task.isCancelled else { return }
+            switch event {
+            case .ready:
+                await model.refresh()
+            case .emit(let name, let args):
+                switch name {
+                case "api-session/status":
+                    guard let sessionId = args.first?.stringValue,
+                          let running = args.dropFirst().first?.boolValue else { continue }
+                    model.applyHostStatus(sessionId: sessionId, running: running)
+                case "api-session/activity":
+                    guard let sessionId = args.first?.stringValue,
+                          let updatedAt = args.dropFirst().first?.doubleValue else { continue }
+                    model.applyHostActivity(sessionId: sessionId, updatedAt: updatedAt)
+                case "api-session/added", "api-session/removed", "api-session/error":
+                    await model.refresh()
+                default:
+                    continue
+                }
+            default:
+                continue
+            }
+        }
+    }
+
     private func archive(_ session: SessionSummary) {
         Task {
             let ok = await model.setArchived(true, sessionId: session.sessionId)

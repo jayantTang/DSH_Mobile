@@ -147,6 +147,16 @@ public struct SessionSummary: Sendable, Codable, Identifiable, Hashable {
 
     public var updatedAtDate: Date { Date(timeIntervalSince1970: updatedAt / 1000) }
 
+    /// 宿主实时事件（status/activity）驱动的局部更新；其余字段原样保留。
+    public func with(running: Bool? = nil, updatedAt: Double? = nil) -> SessionSummary {
+        SessionSummary(sessionId: sessionId,
+                       updatedAt: updatedAt ?? self.updatedAt,
+                       running: running ?? self.running,
+                       blank: blank, parentSessionId: parentSessionId,
+                       origin: origin, cwd: cwd, projections: projections,
+                       agentAvailable: agentAvailable)
+    }
+
     /// Display title, falling back to the working directory's last component.
     public var displayTitle: String {
         if let title = projections?.values?.title, !title.isEmpty { return title }
