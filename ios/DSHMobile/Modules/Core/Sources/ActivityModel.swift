@@ -73,6 +73,9 @@ public final class ActivityModel {
 
     /// 旧连接器已明确答过 `link/unsupported`：断线重连前不再问。
     private var rosterUnsupported = false
+    /// 子智能体计数来自 `session/list` 摘要；聊天页打开时列表不会刷新，
+    /// 所以活动层自己低频对账一次（20 秒），不依赖列表页生命周期。
+    private var lastSessionSync = Date.distantPast
 
     #if DEBUG
     private var fixture: ActivityFixture.Content?
