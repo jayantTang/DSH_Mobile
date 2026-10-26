@@ -760,7 +760,10 @@ public struct ChatView: View {
                     if !model.isOlderExhausted, model.olderFailure == nil {
                         olderRequestVisible = true
                     }
-                    Task { await model.loadOlder() }
+                    Task {
+                        await model.loadOlder()
+                        listHostRef?.finishOlderRequest()
+                    }
                 },
                 onScroll: { distance in
                     model.noteReaderTopRow(listHostRef?.topVisibleRowID)

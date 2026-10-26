@@ -89,6 +89,9 @@ struct TranscriptListRepresentable: UIViewRepresentable {
         host.onNearTop = { [weak coordinator = context.coordinator] in
             coordinator?.requestOlder()
         }
+        host.onOlderRequestFinished = { [weak coordinator = context.coordinator] in
+            coordinator?.finishOlderRequest()
+        }
         host.apply(.setRows(items, anchorId: items.last?.id))
         context.coordinator.known = Set(items.map(\.id))
         context.coordinator.host = host
@@ -178,6 +181,7 @@ struct TranscriptListRepresentable: UIViewRepresentable {
         var lastBottomSignal = 0
         weak var host: TranscriptListHost?
         var onNearTop: (() -> Void)?
+    /// 一次取页结束：释放协调器的闩锁（ChatView 在加载返回后调用）。
         var onDiagnostic: ((String, [String: String]) -> Void)?
         var onBudgetCheck: ((Int) -> [String])?
         var onDriveBegin: (() -> Void)?
@@ -205,6 +209,11 @@ struct TranscriptListRepresentable: UIViewRepresentable {
         private var lastKnownCount = 0
         private var lastRequestAt = Date.distantPast
         var lastJumped: String?
+
+        /// 一次取页结束（无论是否新增行）：立即放开闩锁，别让读者等 8 秒。
+        func finishOlderRequest() {
+            waitingForOlder = false
+        }
 
         func requestOlder() {
             // 闩锁要能被"超时"打开：取页失败或 `updateUIView` 没再进来时，`waitingForOlder`
@@ -323,6 +332,10 @@ final class TranscriptListHost: UIView, UICollectionViewDelegate {
     var onScroll: ((CGFloat) -> Void)?
     /// 读者滑到顶部附近——**只在"靠近"这一次里触发一次**，离开足够远才重新武装。
     var onNearTop: (() -> Void)?
+    /// 一次取页结束：释放协调器的闩锁（ChatView 在加载返回后调用）。
+    var onOlderRequestFinished: (() -> Void)?
+
+    func finishOlderRequest() { onOlderRequestFinished?() }
     /// 读者是否贴在最新那一头（由滚动几何算，不信拖动位移）。
     var onBottomChanged: ((Bool) -> Void)?
     /// 009 跟底两态（tasks T017）的几何输入：距底距离（点）+ 是否"用户手指向上拖动中"。
