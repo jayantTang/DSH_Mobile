@@ -64,6 +64,21 @@ final class ActivityModelTests: XCTestCase {
         XCTAssertEqual(model.counts(sessionId: "s1").jobs, 1)
     }
 
+    func test_a_settle_frame_clears_the_list_row_counts() async throws {
+        service.capabilities = [LinkHandshake.Capability.jobsRoster]
+        model = ActivityModel()
+        model.attach(service: service, hub: hub)
+        model.setConnected(true)
+        await carrier.waitForLiveStream("$events")
+        try await stubRoster(at: 1, [("s1", ["j1"], 0)])
+        await model.refresh()
+        await eventually("job shows") { self.model.counts(sessionId: "s1").jobs == 1 }
+
+        try pushJobsFrame(at: 2, sessionId: "s1", jobs: [], settled: 1)
+        await eventually("settle clears the cell") { self.model.counts(sessionId: "s1").jobs == 0 }
+        XCTAssertEqual(model.settledCount(sessionId: "s1"), 1)
+    }
+
     // MARK: - Fixtures
 
     /// 一行的宿主 `JobView`（只带本特性用到的字段）。
