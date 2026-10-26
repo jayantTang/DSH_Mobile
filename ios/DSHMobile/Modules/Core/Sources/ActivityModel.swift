@@ -422,6 +422,9 @@ public final class ActivityModel {
         guard let value = raw["value"],
               let frame = try? value.decoded(as: LinkJobsFrame.self)
         else { return }
+        #if DEBUG
+        DSHLog.push("activity: frame session=\(frame.sessionId) running=\(frame.running.count) settled=\(frame.settled) at=\(frame.at)")
+        #endif
         store.apply(.frame(frame))
     }
 
