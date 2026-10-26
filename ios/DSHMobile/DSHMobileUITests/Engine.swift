@@ -858,8 +858,24 @@ final class Engine: XCTestCase {
     /// iOS 16 起，另一个进程读 App 写进去的粘贴板会先弹一个 SpringBoard 确认框；
     /// 第一次读拿到的是空值，弹窗就在那一刻出现。所以：先直接读，读到就用；读不到
     /// 就找那个弹窗点掉、再读一次。两条路都不做坐标兜底。
-    private func clipboardText() -> String {
-        if let text = UIPasteboard.general.string, !text.isEmpty { return text }
+    private final class ClipboardBox: @unchecked Sendable { var text: String? }
+
+    /// 一次**限时**的粘贴板读取。读剪贴板要走一次跨进程 XPC；粘贴权限弹窗没被处理时
+    /// 这次调用会无限期挂着（2026-10-26：TC-MOB-126 在 `clipboard:` 那一步把整轮挂死
+    /// 716 秒）。所以放到后台线程读、主线程限时等，超时返回 nil。
+    private func boundedClipboardRead(deadline: TimeInterval = 10) -> String? {
+        let box = ClipboardBox()
+        let done = DispatchSemaphore(value: 0)
+        DispatchQueue.global(qos: .userInitiated).async {
+            box.text = UIPasteboard.general.string
+            done.signal()
+        }
+        guard done.wait(timeout: .now() + deadline) == .success else { return nil }
+        return box.text ?? ""
+    }
+
+    private func clipboardText() -> String? {
+        if let text = boundedClipboardRead(), !text.isEmpty { return text }
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
         for label in ["允许粘贴", "Allow Paste", "粘贴"] {
             let button = springboard.buttons[label]
@@ -869,7 +885,7 @@ final class Engine: XCTestCase {
             }
         }
         Thread.sleep(forTimeInterval: 0.4)
-        return UIPasteboard.general.string ?? ""
+        return boundedClipboardRead()
     }
 
     private func assertStep(_ step: Step) -> Outcome {
@@ -878,7 +894,11 @@ final class Engine: XCTestCase {
         // 剪贴板不是界面元素，读的是系统粘贴板：拷贝这条路的证据只能是"里面
         // 到底是什么"，而不是"按钮点过了"。选择器 `clipboard:期望内容` 是**全等**比对。
         if let wanted = target.dropPrefix("clipboard:") {
-            let actual = clipboardText()
+            guard let actual = clipboardText() else {
+                // 读不出来就按失败记，但不许把整轮挂在这里（见 boundedClipboardRead）。
+                return Outcome(ok: false,
+                               detail: "读剪贴板超时（10 秒上限），粘贴权限弹窗可能没被处理")
+            }
             if step.value == "absent" {
                 return actual.isEmpty
                     ? Outcome(ok: true, detail: "剪贴板是空的")
