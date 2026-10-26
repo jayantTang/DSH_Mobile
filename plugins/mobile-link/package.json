@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-mobile-link",
-  "version": "0.6.6",
+  "version": "0.7.0",
   "description": "Put your PC's DeepSeek Harness in your pocket: dials a relay over WSS so the native iOS client reaches this machine even without a public IP.",
   "keywords": [
     "dsh",

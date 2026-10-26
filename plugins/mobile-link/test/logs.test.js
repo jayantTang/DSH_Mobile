@@ -60,8 +60,8 @@ test('序号水位幂等：同一批重推不会写两遍', () => {
 
 test('full 重推绕过水位（冷启动回填与 export 用）', () => {
   const { spool, lines } = makeSpool()
-  spool.append('dev_1', [{ seq: 1, ms: Date.now(), text: 'a' }])
-  const again = spool.append('dev_1', [{ seq: 1, ms: Date.now(), text: 'a' }], { full: true })
+  spool.append('dev_1', [{ seq: 1, ms: Date.UTC(2026, 9, 18, 12), text: 'a' }])
+  const again = spool.append('dev_1', [{ seq: 1, ms: Date.UTC(2026, 9, 18, 12), text: 'a' }], { full: true })
   assert.equal(again.accepted, 1)
   assert.equal(lines('dev_1').length, 2)
 })
@@ -99,7 +99,7 @@ test('单设备超限按天淘汰最旧的，保留最新一天', () => {
 test('长正文截断、坏条目计入 dropped，而不是整批失败', () => {
   const { spool, lines } = makeSpool()
   const result = spool.append('dev_1', [
-    { seq: 1, ms: Date.now(), text: 'y'.repeat(MAX_TEXT_CHARS + 100) },
+    { seq: 1, ms: Date.UTC(2026, 9, 18, 12), text: 'y'.repeat(MAX_TEXT_CHARS + 100) },
     { seq: 2, ms: 'not-a-number', text: 'bad' },
   ])
   assert.equal(result.accepted, 1)
