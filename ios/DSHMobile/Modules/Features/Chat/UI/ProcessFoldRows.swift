@@ -97,6 +97,7 @@ struct ProcessGroupRow: View {
     var running: ProcessRunningDetail?
     /// 运行中分组右侧的流式字数（纯思考时显示；命令不显示）。
     var runningChars: Int = 0
+    var runningBytes: Int?
     var onToggle: (() -> Void)?
 
     static let height: CGFloat = 20
@@ -140,7 +141,8 @@ struct ProcessGroupRow: View {
                     let stats = ProcessFoldText.runningStatsText(
                         steps: header.toolCount + header.reasoningCount,
                         chars: runningChars,
-                        activity: activity)
+                        activity: activity,
+                        bytes: runningBytes)
                     if !stats.isEmpty {
                         Spacer(minLength: 6)
                         Text(stats)

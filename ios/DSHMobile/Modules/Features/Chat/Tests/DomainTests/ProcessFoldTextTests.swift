@@ -188,6 +188,8 @@ extension ProcessFoldTextTests {
     func test_running_stats_text_keeps_action_and_numbers_secondary() {
         XCTAssertEqual(ProcessFoldText.runningStatsText(steps: 12, chars: 328, activity: nil),
                        "12 步 · 思考 328 字")
+        XCTAssertEqual(ProcessFoldText.runningStatsText(steps: 12, chars: 0, activity: nil, bytes: 2100),
+                       "12 步 · 思考 2.1 KB")
         XCTAssertEqual(ProcessFoldText.runningStatsText(steps: 12, chars: 328, activity: .commands),
                        "12 步 · 命令")
         XCTAssertEqual(ProcessFoldText.runningStatsText(steps: 0, chars: 0, activity: nil),

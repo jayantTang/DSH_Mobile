@@ -154,11 +154,14 @@ public enum ProcessFoldText {
     /// 运行中分组行右侧的统计：`12 步 · 思考 328 字` / `12 步 · 命令`。
     /// 动作短语在左，类型/数量弱化右对齐；思考字数随流式正文增长。
     public static func runningStatsText(steps: Int, chars: Int,
-                                        activity: TimelineProcessActivity?) -> String {
+                                        activity: TimelineProcessActivity?,
+                                        bytes: Int? = nil) -> String {
         var parts: [String] = []
         if steps > 0 { parts.append(String(localized: "\(steps) 步")) }
         if let activity {
             parts.append(activityShortLabel(activity))
+        } else if let bytes {
+            parts.append(String(localized: "思考 \(byteCountText(bytes))"))
         } else if chars > 0 {
             parts.append(String(localized: "思考 \(chars) 字"))
         } else {

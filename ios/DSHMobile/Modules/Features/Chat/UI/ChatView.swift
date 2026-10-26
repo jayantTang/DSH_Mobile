@@ -1122,6 +1122,18 @@ public struct ChatView: View {
         return header.scope == .group ? DSHTheme.Spacing.hairline : 16
     }
 
+    /// 运行中思考步骤的实时大小（与展开后的思考卡“思考 · 2.1 KB”同源）。
+    private func runningBytesForGroup() -> Int? {
+        for item in model.timeline.items.reversed() {
+            if case .turnDivider = item.kind { break }
+            if case .processStep(let step) = item.kind, step.kind == .reasoning,
+               step.isRunning || step.bytes != nil {
+                return step.bytes
+            }
+        }
+        return nil
+    }
+
     /// 运行中分组的流式字数：只用于右侧统计，不参与折叠。
     private func runningCharsForGroup() -> Int {
         if model.liveStreamChars > 0 { return model.liveStreamChars }
