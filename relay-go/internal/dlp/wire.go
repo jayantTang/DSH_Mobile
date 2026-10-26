@@ -174,9 +174,15 @@ func (w Wire) FieldText(key string) string {
 
 // FieldEquals 比较顶层字符串字段与期望值；缺失或不是字符串时为 false。
 //
-// 它走 Field 的原始字节，不构造字符串，热路径零分配。
+// 无转义时走原始字节，热路径零分配；有转义时用 FieldText 解码后再比。iOS 的
+// JSONEncoder 会把 `session/prompt` 写成 `session\/prompt`，按原始字节比较会把
+// 真实设备的请求全部漏掉——这一条是真实线上路径，不是理论边角。
 func (w Wire) FieldEquals(key, value string) bool {
-	return sameBytes(w.Field(key), value)
+	raw := w.Field(key)
+	if bytes.IndexByte(raw, '\\') < 0 {
+		return sameBytes(raw, value)
+	}
+	return w.FieldText(key) == value
 }
 
 // FieldPath 读取嵌套对象里的字符串字段（例如 args.request.requestId）。

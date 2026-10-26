@@ -60,6 +60,21 @@ func TestFieldPathReadsNestedIDs(t *testing.T) {
 	}
 }
 
+// TestFieldEqualsHandlesSwiftSlashEscaping：Swift JSONEncoder 会把 `/` 写成 `\/`，
+// 真实设备的 method 是 `session\/prompt`；按原始字节比较会把整条路径漏掉。
+func TestFieldEqualsHandlesSwiftSlashEscaping(t *testing.T) {
+	wire, _, err := Scan([]byte(`{"t":"req","id":"u1","method":"session\/prompt"}`))
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	if !wire.FieldEquals("method", "session/prompt") {
+		t.Fatal("转义斜杠的 method 应等于 session/prompt")
+	}
+	if wire.FieldEquals("method", "session/list") {
+		t.Fatal("错误方法不应相等")
+	}
+}
+
 // TestFieldPathWorksWhenContentComesFirst 钉住嵌套扫描不依赖字段顺序：
 // requestId 放在大段正文之后也必须能取到，且不退回全量解析。
 func TestFieldPathWorksWhenContentComesFirst(t *testing.T) {

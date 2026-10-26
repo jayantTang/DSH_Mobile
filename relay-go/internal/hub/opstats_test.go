@@ -20,14 +20,14 @@ func TestClassifyDeviceOperation(t *testing.T) {
 	}{
 		{
 			name:     "prompt",
-			frame:    `{"t":"req","id":"u1","method":"session/prompt","args":{"request":{"requestId":"req-1"}}}`,
+			frame:    `{"t":"req","id":"u1","method":"session\/prompt","args":{"request":{"requestId":"req-1"}}}`,
 			op:       quota.OpPrompt,
 			relevant: true,
 			keyed:    true,
 		},
 		{
 			name:     "prompt missing requestId",
-			frame:    `{"t":"req","id":"u1","method":"session/prompt","args":{"request":{}}}`,
+			frame:    `{"t":"req","id":"u1","method":"session\/prompt","args":{"request":{}}}`,
 			op:       quota.OpPrompt,
 			relevant: true,
 		},
@@ -85,7 +85,7 @@ func TestFingerprintIsStableAndDiscriminating(t *testing.T) {
 
 // promptFrame 是一条最小合法 prompt 请求。
 func promptFrame(requestID string) string {
-	return `{"t":"req","id":"u1","method":"session/prompt","args":{"request":{"requestId":"` +
+	return `{"t":"req","id":"u1","method":"session\/prompt","args":{"request":{"requestId":"` +
 		requestID + `","sessionId":"s1"}}}`
 }
 
@@ -172,7 +172,7 @@ func TestPromptWithoutKeyIsUncounted(t *testing.T) {
 	waitFrame(t, deviceSink, "hostStatus", isKind("hostStatus"))
 
 	fixture.hub.RouteFromDevice(link, scanWire(t,
-		`{"t":"req","id":"u1","method":"session/prompt","args":{"request":{}}}`))
+		`{"t":"req","id":"u1","method":"session\/prompt","args":{"request":{}}}`))
 	waitFrame(t, agentSink, "无键 prompt", isKind("req"))
 
 	if entries := fixture.hub.usage.Snapshot(); len(entries) != 1 || entries[0].Prompts != 0 {
@@ -186,7 +186,8 @@ func TestPromptWithoutKeyIsUncounted(t *testing.T) {
 // BenchmarkClassifyPrompt 记录热路径成本：4 KiB 正文、字段顺序为当前的
 // t / id / method / args，分类只扫到 requestId。
 func BenchmarkClassifyPrompt(b *testing.B) {
-	raw := []byte(`{"t":"req","id":"u1","method":"session/prompt","args":{"request":{"requestId":"6F1D0C7A-2E4B-4D6A-9C1E-8A2B7C3D4E5F","content":[{"text":"` +
+	// 真实设备走 Swift JSONEncoder：method 里的斜杠是 `\/`，不是裸 `/`。
+	raw := []byte(`{"t":"req","id":"u1","method":"session\/prompt","args":{"request":{"requestId":"6F1D0C7A-2E4B-4D6A-9C1E-8A2B7C3D4E5F","content":[{"text":"` +
 		strings.Repeat("x", 4096) + `"}]}}}`)
 	wire, _, err := dlp.Scan(raw)
 	if err != nil {
