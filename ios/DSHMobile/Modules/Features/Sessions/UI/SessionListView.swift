@@ -459,7 +459,8 @@ public struct SessionListView: View {
                            home: store.hostHome,
                            isJustCreated: session.sessionId == model.lastCreatedSessionId,
                            isUnsynced: model.pendingState(for: session.sessionId) == .unsynced,
-                           localTitle: model.pendingTitle(for: session.sessionId))
+                           localTitle: model.pendingTitle(for: session.sessionId),
+                           activityRevision: activity.revision)
             }
             .buttonStyle(.plain)
             // 首个会话行真的画出来了 → 记一条 `app.first-render`（一次拨号一条）。
@@ -510,7 +511,8 @@ public struct SessionListView: View {
         NavigationLink(value: session.sessionId) {
             SessionRow(session: session, rowState: model.state(of: session),
                        home: store.hostHome, isChild: true,
-                       isJustCreated: session.sessionId == model.lastCreatedSessionId)
+                       isJustCreated: session.sessionId == model.lastCreatedSessionId,
+                       activityRevision: activity.revision)
         }
         .buttonStyle(.plain)
         // 子会话行也是"内容画出来"的一种（同一处语义的两条渲染路径，都要覆盖）。
@@ -692,12 +694,16 @@ public struct SessionRow: View {
     /// 018：活动快照（`ActivityStore.snapshot` 的产物）。能力位缺失时是 nil，
     /// 此时右侧计数与 `isBusy` 扩展的「运行中」都不出现。
     var activityOverride: SessionActivity?
+    /// 活动状态版本：父视图传入，保证任务/子智能体变化时行一定重算
+    ///（仅靠行内读 Observable，SwiftUI 可能因输入不变跳过子视图更新）。
+    var activityRevision: Int = 0
 
     /// 行自己读活动状态：把快照当参数传时，列表父视图不重算，行永远停在旧值
     ///（2026-10-26：面板已有后台任务、列表行没有）。读在行 body 里才会随
     /// `ActivityModel` 的 Observable 变化刷新。
     private var activity: SessionActivity? {
-        activityOverride ?? ActivityModel.shared.snapshot(sessionId: session.sessionId)
+        _ = activityRevision
+        return activityOverride ?? ActivityModel.shared.snapshot(sessionId: session.sessionId)
     }
 
     private var projections: SessionProjectionValues? { session.projections?.values }
