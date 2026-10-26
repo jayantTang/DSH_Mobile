@@ -3,6 +3,7 @@ import DSHFoundation
 import DSHKit
 import Foundation
 import Observation
+import OSLog
 
 /// 活动可见性的**适配层**（spec 018 Phase 6）。
 ///
@@ -22,6 +23,7 @@ public final class ActivityModel {
 
     // MARK: - State
 
+    private let logger = Logger(subsystem: "com.jayanttang.dsh", category: "activity")
     private var store = ActivityStore()
     /// 任何活动状态变化的单调计数：列表父视图读它来强制重算，
     /// 避免行内 snapshot 的变化要等到下一次列表刷新才上屏。
@@ -199,6 +201,8 @@ public final class ActivityModel {
         guard !rosterUnsupported else { return }
         do {
             let roster = try await client.activityRoster()
+            let live = roster.sessions.values.reduce(0) { $0 + $1.liveJobs.count }
+            logger.debug("roster sessions=\(roster.sessions.count, privacy: .public) jobs=\(live, privacy: .public)")
             if !store.isAvailable {
                 applyToStore(.capabilities(capabilities.union([LinkHandshake.Capability.jobsRoster])))
                 store.setCurrentSession(chatSessionId)
@@ -430,9 +434,7 @@ public final class ActivityModel {
         guard let value = raw["value"],
               let frame = try? value.decoded(as: LinkJobsFrame.self)
         else { return }
-        #if DEBUG
-        DSHLog.push("activity: frame session=\(frame.sessionId) running=\(frame.running.count) settled=\(frame.settled) at=\(frame.at)")
-        #endif
+        logger.debug("frame session=\(frame.sessionId, privacy: .public) running=\(frame.running.count, privacy: .public) settled=\(frame.settled, privacy: .public) at=\(frame.at, privacy: .public)")
         applyToStore(.frame(frame))
     }
 
