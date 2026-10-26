@@ -60,6 +60,8 @@ struct TimelineRowView: View {
     /// 运行中分组的流式字数（右侧统计用）。
     var runningChars: Int = 0
     var runningBytes: Int?
+    /// 实时指标（@Observable）：行直接观察，字数不必等列表重建。
+    var liveMetrics: LiveProcessMetrics?
     /// 033：过程节点的展开/收起回调。nil 时节点不可操作（预览等场景）。
     var onToggleProcess: (() -> Void)?
     /// 概要 v2：步骤卡是否展开（模型持有），以及点开/重试。
@@ -128,7 +130,8 @@ struct TimelineRowView: View {
             if header.scope == .group {
                 ProcessGroupRow(header: header, running: processRunning,
                                 runningChars: runningChars,
-                                runningBytes: runningBytes) { onToggleProcess?() }
+                                runningBytes: runningBytes,
+                                liveMetrics: liveMetrics) { onToggleProcess?() }
             } else {
                 ProcessTurnRow(header: header) { onToggleProcess?() }
             }

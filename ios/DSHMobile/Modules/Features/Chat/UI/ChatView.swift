@@ -1159,7 +1159,8 @@ public struct ChatView: View {
     private func row(_ item: TimelineItem) -> some View {
         var rowView = TimelineRowView(item: item,
                                       runningChars: runningCharsForGroup(),
-                                      runningBytes: runningBytesForGroup())
+                                      runningBytes: runningBytesForGroup(),
+                                      liveMetrics: model.liveMetrics)
         // 缺口行「加载失败，点击重试」（T016）：重试由管道的状态机接管。
         rowView.onGapRetry = { start, end in
             Task { await model.retryGap(start: start, end: end) }

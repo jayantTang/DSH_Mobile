@@ -98,12 +98,15 @@ struct ProcessGroupRow: View {
     /// 运行中分组右侧的流式字数（纯思考时显示；命令不显示）。
     var runningChars: Int = 0
     var runningBytes: Int?
+    var liveMetrics: LiveProcessMetrics?
     var onToggle: (() -> Void)?
 
     static let height: CGFloat = 20
 
     private var activity: TimelineProcessActivity? {
-        if header.isRunning { return running?.activity }
+        if header.isRunning {
+            return running?.activity ?? ProcessFoldText.topActivity(header.activityCounts)
+        }
         return ProcessFoldText.topActivity(header.activityCounts)
     }
 
@@ -140,7 +143,7 @@ struct ProcessGroupRow: View {
                 if header.isRunning {
                     let stats = ProcessFoldText.runningStatsText(
                         steps: header.toolCount + header.reasoningCount,
-                        chars: runningChars,
+                        chars: liveMetrics?.chars ?? runningChars,
                         activity: activity,
                         bytes: runningBytes)
                     if !stats.isEmpty {

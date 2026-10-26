@@ -62,7 +62,10 @@ public struct FoldSummaryV2: Sendable, Equatable {
 
         /// 这条步骤算哪一类活动。思考不是「已完成的活动」（桌面口径），没有类别。
         public var activity: TimelineProcessActivity? {
-            kind == .reasoning ? nil : TimelineProcessActivity.classify(name)
+            // 连接器把少数工具（如 job_output）也放进 reasoning 段，名字不是
+            // `thinking` 时仍按工具分类，不能一律当思考。
+            if kind == .reasoning, name == "thinking" || name.isEmpty { return nil }
+            return TimelineProcessActivity.classify(name)
         }
 
         public var isRunning: Bool { status == .running }
