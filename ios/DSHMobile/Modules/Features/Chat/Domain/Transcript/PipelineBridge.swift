@@ -22,6 +22,9 @@ public extension ChatModel {
     /// 打开会话时启动订阅（open() 在 `warmMessageLayer` 之后调用：地址簿已登记、
     /// 最新页已按 .jump 插队水合，首帧快照通常直接有数据）。
     public func startPipelineSubscription(for summary: SessionSummary) {
+        // stop() 会把 olderState 清成 idle；但这次可能是“读者已到顶、
+        // 请求先于管道接线”的加载中，必须把这条可见状态带过 start。
+        let keepOlderLoading = olderPendingBeforePipeline
         pipelineBridge?.stop()
         pipelineBridge = nil
         guard let layer = messageLayer, let scope = sessionScope else {
@@ -34,7 +37,10 @@ public extension ChatModel {
                                             generation: openGeneration)
         if olderPendingBeforePipeline {
             olderPendingBeforePipeline = false
-            Task { await self.loadOlder() }
+            setOlderState(.loading)
+            Task { await self.pipelineBridge?.loadOlder(force: true) }
+        } else if keepOlderLoading {
+            setOlderState(.loading)
         }
         // T022 重启恢复：上次没发出去的消息（磁盘 status='pending'）以「未发出」呈现，
         // 不自动重发——磁盘的 pending 分不清"真没发出去"和"宿主已收下、还在队列里"。
@@ -309,8 +315,9 @@ final class ChatPipelineBridge {
         // loadOlder（它自己要求不在飞）。
         if pendingOlderRequest, !records.isEmpty {
             pendingOlderRequest = false
-            model?.notePipelineOlder(state: .idle)
-            Task { @MainActor [weak self] in await self?.loadOlder() }
+            // 不要先清 idle 再起任务：那会在加载态中间闪一下 0，
+            // 读者看到的就是“没有加载提示”。保持 loading，强制进入取页。
+            Task { @MainActor [weak self] in await self?.loadOlder(force: true) }
         }
         // 打开会话后的预热：首帧数据到齐时，后台预取紧邻当前窗口下沿的一页。
         // 这是流水线的策略，不是视图缓存：用户第一次上拉请求的正是这个区间，

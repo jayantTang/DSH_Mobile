@@ -20,9 +20,9 @@ extension ChatPipelineBridge {
     /// - 本地窗口还没有数据（管道未就绪）：锚点退回管道区间集的最老，据此仍发一次
     ///   拉取（不能因为本地视图为空就不拉）；连区间集都没有就渲染「加载中」并挂
     ///   `pendingOlderRequest`，首个数据落地后由 `apply` 自动补一次。
-    public func loadOlder() async {
+    public func loadOlder(force: Bool = false) async {
         guard let model, let session else { return }
-        guard model.olderState != .loading else {
+        guard model.olderState != .loading || force else {
             DSHLog.event("page.older.skip", ["why": "loading"])
             return
         }

@@ -218,6 +218,9 @@ public final class ChatModel {
     /// 打开会话时管道还没接好，读者已经到了顶部：先显示加载，
     /// 管道一旦启动就补发这次请求（否则这次上拉会静默丢失）。
     public internal(set) var olderPendingBeforePipeline = false
+    /// 这个宿主本来就会接管道（有消息层且打开了会话）：此时 bridge 为空
+    /// 表示“正在打开”，不是“不支持更早历史”。
+    public var expectsPipeline: Bool { messageLayer != nil && sessionScope != nil }
     public var olderFailure: String? {
         if case .failed(let message) = olderState { return message }
         return nil

@@ -47,6 +47,25 @@ final class ChatModelSummaryScreenTests: XCTestCase {
         try await super.tearDown()
     }
 
+    /// 复现：打开会话时管道还没接线，读者已拉到顶；随后 startPipelineSubscription
+    /// 里旧桥的 stop() 把 loading 清成 idle，界面因此整个取页期间没有加载态。
+    func test_pending_older_loading_survives_pipeline_start() async throws {
+        try attachLayer(capabilities: [HistoryWindowWire.summaryFoldCapability])
+        let client = makeClient(capabilities: [HistoryWindowWire.summaryFoldCapability])
+        fake.clientOverride = client
+        carrier.unaryResponses["_link/sessionWindow"] = .success(Self.summaryPageJSON())
+        let summary = try ChatSeam.summary(id: "s-1", asOfSeq: Self.asOfSeq)
+        await model.open(summary)
+        _ = await eventually { self.model.summaryScreenState == .ready }
+
+        model.setOlderState(.loading)
+        model.olderPendingBeforePipeline = true
+        model.startPipelineSubscription(for: summary)
+
+        XCTAssertTrue(model.isLoadingOlder,
+                      "管道启动不能把已经显示中的“加载更早历史”清掉")
+    }
+
     // MARK: - 请求与能力
 
     func test_first_screen_uses_summary_mode_with_turn_count_and_byte_budget() async throws {
