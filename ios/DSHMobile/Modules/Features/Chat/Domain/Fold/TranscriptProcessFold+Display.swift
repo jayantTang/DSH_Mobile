@@ -236,7 +236,13 @@ extension TranscriptProcessFold {
     /// 这条原始行是不是被概要覆盖（只可能是工具调用/思考行）。
     private static func isSuppressedBySummary(_ item: TimelineItem, turn: Turn) -> Bool {
         switch item.kind {
-        case .toolCall, .reasoning:
+        case .toolCall(let invocation):
+            // 交付工具（send_image）的结果图不在概要里，不能按概要覆盖段藏掉。
+            if TranscriptProcessFold.isDeliveryToolName(invocation.name) { return false }
+            return turn.summaries.contains { summary in
+                summary.groups.contains { $0.startSeq <= item.seq && item.seq <= $0.endSeq }
+            }
+        case .reasoning:
             return turn.summaries.contains { summary in
                 summary.groups.contains { $0.startSeq <= item.seq && item.seq <= $0.endSeq }
             }
