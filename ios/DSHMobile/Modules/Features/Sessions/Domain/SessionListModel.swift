@@ -257,6 +257,9 @@ public final class SessionListModel {
     private var eventTask: Task<Void, Never>?
     private var refreshDebounce: Task<Void, Never>?
     private(set) weak var store: (any LinkService)?
+    /// 列表自己的 `session/control` 订阅：投影（标题/token/上下文/子智能体计时）实时更新。
+    private var projectionTask: Task<Void, Never>?
+    private var liveProjections: [String: SessionProjectionHints] = [:]
     private weak var hub: HostEventHub?
 
     // MARK: 冷启动 009 叠加（T010/T011；逻辑在 SessionListModel+ColdStart.swift）
@@ -375,6 +378,51 @@ public final class SessionListModel {
         self.hub = hub
         self.messageLayer = messageLayer
         if let viewLog { self.viewLog = viewLog }
+        startProjections()
+    }
+
+    private func startProjections() {
+        projectionTask?.cancel()
+        guard let client = store?.chatHost else { return }
+        projectionTask = Task { @MainActor [weak self] in
+            let frames = await client.sessionControlFrames()
+            do {
+                for try await frame in frames {
+                    guard !Task.isCancelled else { return }
+                    self?.applyControl(frame)
+                }
+            } catch {
+                // 旧连接器没有控制流：保持 session/list 的投影，不报错。
+            }
+        }
+    }
+
+    private func applyControl(_ frame: SessionControlFrame) {
+        switch frame {
+        case .baseline(_, _, let projections):
+            for (sessionId, values) in projections {
+                liveProjections[sessionId] = SessionProjectionHints(values: values)
+            }
+            for (sessionId, hints) in liveProjections { applyProjection(sessionId, hints: hints) }
+        case .projection(let sessionId, let key, let value):
+            guard key != "inbox" else { return }
+            let base = liveProjections[sessionId]?.values
+                ?? allSessions.first(where: { $0.sessionId == sessionId })?.projections?.values
+                ?? .empty
+            let merged = base.merging(key: key, value: value)
+            let hints = SessionProjectionHints(values: merged)
+            liveProjections[sessionId] = hints
+            applyProjection(sessionId, hints: hints)
+        default:
+            return
+        }
+    }
+
+    private func applyProjection(_ sessionId: String, hints: SessionProjectionHints) {
+        guard let index = allSessions.firstIndex(where: { $0.sessionId == sessionId }) else { return }
+        allSessions[index] = allSessions[index].with(projections: hints)
+        regroup()
+        (activityModel ?? ActivityModel.shared).applySessions(allSessions)
     }
 
     /// When each session was last opened on this phone.

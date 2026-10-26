@@ -117,7 +117,7 @@ public extension ChatModel {
     @MainActor
     func applyQueueFrame(_ frame: SessionControlFrame, sessionId: String) {
         switch frame {
-        case .baseline(let queues, let inboxes):
+        case .baseline(let queues, let inboxes, _):
             // 宿主实际下发的是 `inbox` 投影（`next-turn`）；`queues` 字段是旧形态。
             remoteQueue = queues[sessionId] ?? inboxes[sessionId] ?? []
         case .queue(let frameSession, let items):

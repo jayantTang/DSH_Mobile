@@ -41,7 +41,7 @@ final class SessionQueueTests: XCTestCase {
           "s-2":[{"id":"m-2","placement":"steering","message":{"content":[
             {"type":"text","text":"插一句"}]}}]}}}
         """))
-        guard case .baseline(let queues, _) = try XCTUnwrap(frame) else {
+        guard case .baseline(let queues, _, _) = try XCTUnwrap(frame) else {
             return XCTFail("expected a baseline")
         }
         XCTAssertEqual(queues["s-1"]?.count, 1)
@@ -73,7 +73,7 @@ final class SessionQueueTests: XCTestCase {
             {"id":"m-9","content":[{"type":"text","text":"基线队列"}],
              "source":{"kind":"user","rpcId":"r-9"}}]}}}}}}
         """))
-        guard case .baseline(_, let inboxes) = try XCTUnwrap(frame) else {
+        guard case .baseline(_, let inboxes, _) = try XCTUnwrap(frame) else {
             return XCTFail("expected a baseline")
         }
         XCTAssertEqual(inboxes["s-1"]?.first?.text, "基线队列")
@@ -85,6 +85,27 @@ final class SessionQueueTests: XCTestCase {
             return XCTFail("expected an ignored frame")
         }
         XCTAssertEqual(type, "jobs")
+    }
+
+    func test_projection_merge_only_changes_the_named_key() throws {
+        let merged = SessionProjectionValues.empty
+            .merging(key: "title", value: .string("新标题"))
+            .merging(key: "tokenUsage", value: try value(#"{"uncachedInputTokens":10,"outputTokens":5}"#))
+        XCTAssertEqual(merged.title, "新标题")
+        XCTAssertEqual(merged.tokenUsage?.totalTokens, 15)
+        XCTAssertNil(merged.contextPressure)
+    }
+
+    func test_a_baseline_decodes_projection_values() throws {
+        let frame = SessionControlFrame.decode(try value("""
+        {"type":"baseline","value":{"projections":{
+          "s-1":{"asOfSeq":7,"values":{"title":"标题","tokenUsage":{"uncachedInputTokens":3,"outputTokens":4}}}}}}
+        """))
+        guard case .baseline(_, _, let projections) = try XCTUnwrap(frame) else {
+            return XCTFail("expected a baseline")
+        }
+        XCTAssertEqual(projections["s-1"]?.title, "标题")
+        XCTAssertEqual(projections["s-1"]?.tokenUsage?.totalTokens, 7)
     }
 
     private func encoded(_ action: QueueAction) throws -> [String: JSONValue] {

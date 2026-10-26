@@ -69,7 +69,8 @@ public struct SessionQueuedItem: Sendable, Identifiable {
 public enum SessionControlFrame: Sendable {
     /// 每个会话的队列快照（一上来必有一帧）。
     case baseline(queues: [String: [SessionQueuedItem]],
-                  inboxes: [String: [SessionQueuedItem]])
+                  inboxes: [String: [SessionQueuedItem]],
+                  projections: [String: SessionProjectionValues])
     /// 某个会话的整份队列被替换。
     case queue(sessionId: String, items: [SessionQueuedItem])
     /// 会话投影更新；排队输入从 `inbox` 投影的 `next-turn` 读（宿主实际下发的是这条）。
@@ -88,12 +89,18 @@ public enum SessionControlFrame: Sendable {
             }
             let projections = value["value"]?["projections"]?.objectValue ?? [:]
             var inboxes: [String: [SessionQueuedItem]] = [:]
+            var values: [String: SessionProjectionValues] = [:]
             for (sessionId, projection) in projections {
                 if let inbox = projection["values"]?["inbox"] {
                     inboxes[sessionId] = inboxItems(inbox)
                 }
+                if let raw = projection["values"],
+                   let data = try? JSONEncoder().encode(raw),
+                   let decoded = try? JSONDecoder().decode(SessionProjectionValues.self, from: data) {
+                    values[sessionId] = decoded
+                }
             }
-            return .baseline(queues: parsed, inboxes: inboxes)
+            return .baseline(queues: parsed, inboxes: inboxes, projections: values)
         case "queue":
             guard let sessionId = value["sessionId"]?.stringValue else { return nil }
             return .queue(sessionId: sessionId, items: decodeItems(value["items"]))

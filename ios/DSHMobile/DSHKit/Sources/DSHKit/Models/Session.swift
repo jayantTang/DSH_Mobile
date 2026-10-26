@@ -147,6 +147,13 @@ public struct SessionSummary: Sendable, Codable, Identifiable, Hashable {
 
     public var updatedAtDate: Date { Date(timeIntervalSince1970: updatedAt / 1000) }
 
+    public func with(projections: SessionProjectionHints?) -> SessionSummary {
+        SessionSummary(sessionId: sessionId, updatedAt: updatedAt, running: running,
+                       blank: blank, parentSessionId: parentSessionId,
+                       origin: origin, cwd: cwd, projections: projections,
+                       agentAvailable: agentAvailable)
+    }
+
     /// 宿主实时事件（status/activity）驱动的局部更新；其余字段原样保留。
     public func with(running: Bool? = nil, updatedAt: Double? = nil) -> SessionSummary {
         SessionSummary(sessionId: sessionId,
@@ -222,6 +229,11 @@ public struct SessionSummary: Sendable, Codable, Identifiable, Hashable {
 public struct SessionProjectionHints: Sendable, Codable, Hashable {
     public let asOfSeq: Int
     public let values: SessionProjectionValues?
+
+    public init(asOfSeq: Int = 0, values: SessionProjectionValues?) {
+        self.asOfSeq = asOfSeq
+        self.values = values
+    }
 }
 
 /// The projection fold the host caches per session.
@@ -245,6 +257,63 @@ public struct SessionProjectionValues: Sendable, Codable, Hashable {
     /// 子会话本轮的计时：`active` 存在 = 正在跑；消失 = 本轮结束。
     public let subagentTiming: SubagentTimingProjection?
     public let inbox: JSONValue?
+
+    /// 全空的投影，用于合并第一条增量。
+    public static let empty = SessionProjectionValues(
+        title: nil, goal: nil, tokenUsage: nil, contextPressure: nil,
+        sessionStats: nil, agentPreset: nil, permissions: nil,
+        modelSelection: nil, sessionListMetadata: nil, todos: nil,
+        plan: nil, subagent: nil, subagentCatalog: nil, subagentTiming: nil,
+        inbox: nil)
+
+    /// 把 `session/control` 的一条 projection 合并进来；值解不出就保留旧值。
+    public func merging(key: String, value: JSONValue) -> SessionProjectionValues {
+        func decoded<T: Decodable>(_ type: T.Type) -> T? {
+            guard let data = try? JSONEncoder().encode(value) else { return nil }
+            return try? JSONDecoder().decode(T.self, from: data)
+        }
+        var nextTitle = title
+        var nextGoal = goal
+        var nextUsage = tokenUsage
+        var nextPressure = contextPressure
+        var nextStats = sessionStats
+        var nextPreset = agentPreset
+        var nextPermissions = permissions
+        var nextModel = modelSelection
+        var nextMetadata = sessionListMetadata
+        var nextTodos = todos
+        var nextPlan = plan
+        var nextSubagent = subagent
+        var nextCatalog = subagentCatalog
+        var nextTiming = subagentTiming
+        var nextInbox = inbox
+        switch key {
+        case "title": if let text = value.stringValue { nextTitle = text }
+        case "goal": nextGoal = decoded(GoalProjection.self)
+        case "tokenUsage": nextUsage = decoded(TokenUsageProjection.self)
+        case "contextPressure": nextPressure = decoded(ContextPressureProjection.self)
+        case "sessionStats": nextStats = decoded(SessionStatsProjection.self)
+        case "agentPreset": if let text = value.stringValue { nextPreset = text }
+        case "permissions": nextPermissions = decoded(PermissionsProjection.self)
+        case "modelSelection": nextModel = decoded(ModelSelectionProjection.self)
+        case "sessionListMetadata": nextMetadata = decoded(SessionListMetadata.self)
+        case "todos": nextTodos = value
+        case "plan": nextPlan = decoded(PlanProjection.self)
+        case "subagent": nextSubagent = decoded(SubagentProjection.self)
+        case "subagentCatalog": nextCatalog = value
+        case "subagentTiming": nextTiming = decoded(SubagentTimingProjection.self)
+        case "inbox": nextInbox = value
+        default: break
+        }
+        return SessionProjectionValues(
+            title: nextTitle, goal: nextGoal, tokenUsage: nextUsage,
+            contextPressure: nextPressure, sessionStats: nextStats,
+            agentPreset: nextPreset, permissions: nextPermissions,
+            modelSelection: nextModel, sessionListMetadata: nextMetadata,
+            todos: nextTodos, plan: nextPlan, subagent: nextSubagent,
+            subagentCatalog: nextCatalog, subagentTiming: nextTiming,
+            inbox: nextInbox)
+    }
 }
 
 /// 投影 `subagentTiming`（`host-job-surface.md` §7）。
