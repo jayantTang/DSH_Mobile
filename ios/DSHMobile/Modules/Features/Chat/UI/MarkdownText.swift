@@ -396,6 +396,14 @@ struct MarkdownBlock: Identifiable {
 /// `.fixedSize(vertical:)` makes each cell compute that height at its own width
 /// before the row exists. Keep both: the widths and the hand-stacked rows are
 /// what make the wrap deterministic.
+///
+/// The third failure of the same family was **where the row is painted**: the
+/// tint and the hairline used to be attached to each cell, so every cell drew
+/// its own bottom edge at its own height. A row whose columns wrapped into a
+/// different number of lines therefore showed the short column's rule cutting
+/// through the tall column's second line — the rows looked like they had
+/// different heights. Painting now belongs to the row (`row(_:widths:isHeader:)`)
+/// and cells are text only.
 private struct MarkdownTable: View {
     let headers: [String]
     let rows: [[String]]
@@ -462,16 +470,39 @@ private struct MarkdownTable: View {
         HStack(alignment: .top, spacing: 0) {
             ForEach(0..<columnCount, id: \.self) { index in
                 cell(cells.indices.contains(index) ? cells[index] : "",
-                     isHeader: isHeader, isFirstColumn: index == 0, width: widths[index])
+                     isHeader: isHeader, width: widths[index])
             }
+        }
+        // 行高与行内的一切绘制都归这一行所有（第三次修同一类问题）：
+        //
+        // 底色和底线原先画在每个单元格上，于是**每条线的高度等于该格自己的内容高度**。
+        // 两列字数不同、换行数不同，两条线就落在不同的 y 上——短的那列线压在长的那列
+        // 文字中间，看起来像"行高对不上"，表格也就没有网格感（截图里 `本地通知
+        // (UNUserNotificationCenter)` 那一行最明显）。网格是一个整体，不是每一格各画
+        // 各的：把底色与底线提到行这一层之后，行高只有 `HStack` 一个所有者，所有列
+        // 自然共用同一条底线。
+        .background(alignment: .leading) {
+            if isHeader {
+                DSHTheme.layer3
+            } else {
+                // First column keeps its tint as a band: it is the row's leading
+                // slice, so it spans the whole row height instead of one cell's.
+                DSHTheme.layer2.frame(width: widths[0])
+            }
+        }
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(DSHTheme.border1).frame(height: 1)
         }
     }
 
     @ViewBuilder
-    private func cell(_ text: String, isHeader: Bool, isFirstColumn: Bool, width: CGFloat) -> some View {
+    private func cell(_ text: String, isHeader: Bool, width: CGFloat) -> some View {
         // Inline markdown, not `Text(text)`: table cells in real transcripts
         // contain emphasis and inline code, and rendering the raw source leaked
         // literal `**` into the table.
+        //
+        // Cells carry no background and no border: both belong to the row (see
+        // `row`). A cell is only the text, sized to its column.
         InlineMarkdown(text: text)
             .font(isHeader ? DSHTheme.Typography.micro : DSHTheme.Typography.caption)
             .foregroundStyle(isHeader ? DSHTheme.labelSecondary : DSHTheme.labelPrimary)
@@ -484,10 +515,6 @@ private struct MarkdownTable: View {
             .padding(.horizontal, Self.columnPadding / 2)
             .frame(width: width, alignment: .leading)
             .padding(.vertical, 6)
-            .background(isHeader ? DSHTheme.layer3 : (isFirstColumn ? DSHTheme.layer2 : .clear))
-            .overlay(alignment: .bottom) {
-                Rectangle().fill(DSHTheme.border1).frame(height: 1)
-            }
     }
 }
 #endif

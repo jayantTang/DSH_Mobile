@@ -160,6 +160,7 @@ tr:last-child td { border-bottom: none; }
 th { background: #f8fafc; color: #64748b; font-size: 11px; font-weight: 600;
   white-space: nowrap; }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+td.nw, th.nw { white-space: nowrap; }
 td.name { max-width: 40vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 ul.rows { margin: 0; padding: 0; list-style: none; background: #fff; border-radius: 11px;
   overflow: hidden; }
@@ -213,6 +214,22 @@ ul.alerts .at { font-size: 12.5px; color: #334155; }
 .frow .fv { flex: 0 0 auto; min-width: 96px; display: flex; flex-direction: column;
   align-items: flex-end; gap: 1px; text-align: right; color: #334155;
   font-variant-numeric: tabular-nums; }
+/* 手机（≤480px）：标题与右侧说明各占一行，表格压到一屏内，不横向溢出。
+   说明挪到标题下方而不是挤在右边——挤着时标题会被压成「每日消 / 息」。 */
+@media (max-width: 480px) {
+  h2, h3, figure.chart figcaption { flex-wrap: wrap; row-gap: 3px; }
+  h2 > *, h3 > *, figure.chart figcaption > * { flex: 0 0 auto; }
+  h2 .h2note, h3 .h2note, figure.chart .note { flex: 1 1 auto; min-width: 0; }
+  table { font-size: 12px; }
+  th, td { padding: 6px 7px; }
+  th { white-space: normal; line-height: 1.25; }
+  td { overflow-wrap: anywhere; }
+  /* 账号列在手机上让出宽度给数字列：名字按 28vw 截断，尾部由省略号表示。 */
+  td.name { max-width: 30vw; }
+  td.num, th.num { padding-left: 4px; padding-right: 4px; }
+  .frow .fk { flex-basis: 82px; }
+  .frow .fv { min-width: 82px; }
+}
 @media (min-width: 600px) {
   .kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .hero .v { font-size: 34px; }
@@ -614,11 +631,11 @@ function deltaChip(label, value, base) {
 /** columns = [{label, text(row), raw?, num?}]；cell 默认转义，raw 用于本就是 HTML 的格子。 */
 function table(columns, rows, empty) {
   const head = columns.map((column) =>
-    `<th class="${column.num ? 'num' : ''}">${escapeHtml(column.label)}</th>`).join('')
+    `<th class="${column.num ? 'num' : ''}${column.nowrap ? ' nw' : ''}">${escapeHtml(column.label)}</th>`).join('')
   const cell = (column, row) => (column.raw ? column.text(row) : escapeHtml(column.text(row)))
   const body = rows.length
     ? rows.map((row) => `<tr>${columns.map((column) =>
-      `<td class="${column.num ? 'num' : ''}${column.wide ? ' name' : ''}">${cell(column, row)}</td>`).join('')}</tr>`).join('')
+      `<td class="${column.num ? 'num' : ''}${column.wide ? ' name' : ''}${column.nowrap ? ' nw' : ''}">${cell(column, row)}</td>`).join('')}</tr>`).join('')
     : `<tr><td colspan="${columns.length}" class="empty">${escapeHtml(empty)}</td></tr>`
   return `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`
 }
@@ -767,8 +784,8 @@ function attentionItems(report, { completed = false, generatedAt = 0, history = 
     const registered = phones.filter((row) => row.push?.registered).length
     const rate = registered / phones.length
     if (rate < THRESHOLDS.pushLow) {
-      push('warn', `近 7 天活跃的 ${formatInt(phones.length)} 台设备里 ${formatInt(phones.length - registered)} 台`
-        + `没注册推送（${Math.round((1 - rate) * 100)}%），「待你回应」提醒到不了这些设备`, 'push-low')
+      push('warn', `近 7 天活跃的 ${formatInt(phones.length)} 台设备中 ${formatInt(phones.length - registered)} 台`
+        + `未注册推送（${Math.round((1 - rate) * 100)}%），「待你回应」无法送达`, 'push-low')
     }
   }
   // 连续天数：history.alerts[key] = { lastStart, count }。与上一次覆盖日相邻则 +1，
@@ -877,7 +894,7 @@ function versionBlock(report, { limit = 6 } = {}) {
     { label: '活跃账号', text: (row) => formatInt(row.accounts), num: true },
     { label: '活跃设备', text: (row) => formatInt(row.devices), num: true },
     { label: '设备占比', text: (row) => (total ? `${((row.devices / total) * 100).toFixed(0)}%` : '—'), num: true },
-    { label: '最近在线', text: (row) => (row.lastSeenAt ? shortTime(row.lastSeenAt) : '—'), num: true },
+    { label: '最近在线', text: (row) => (row.lastSeenAt ? shortTime(row.lastSeenAt) : '—'), num: true, nowrap: true },
   ], shown, '窗口内没有活跃设备')
   return subheading(`版本分布（近 ${windowHours} 小时活跃）`, '与活跃账号同口径 · 设备按行') + body
 }
@@ -936,12 +953,11 @@ function inviteBlock(report, { generatedAt = 0, limit = 6 } = {}) {
     at: row.usedAt ? shortTime(row.usedAt) : '—',
     note: text(row.inviteNote, '—'),
   }))
-  const recentTable = table([
-    { label: '账号', text: (row) => row.account, wide: true },
-    { label: '主机', text: (row) => row.agent },
-    { label: '激活时间', text: (row) => row.at, num: true },
-    { label: '备注', text: (row) => row.note },
-  ], recent, '还没有激活记录')
+  // 四列表在手机上会把「公开试用 2026-10-17 知乎」折成四行；两行清单保持同样信息。
+  const recentTable = rowList(recent.map((row) => ({
+    title: escapeHtml(row.account === row.agent ? row.account : `${row.account} · ${row.agent}`),
+    meta: escapeHtml(`${row.at} 激活 · ${row.note}`),
+  })), '还没有激活记录')
   const chart = lineChart({
     title: '每日激活',
     note: `近 ${trendDays} 天`,
@@ -949,10 +965,10 @@ function inviteBlock(report, { generatedAt = 0, limit = 6 } = {}) {
     format: (value) => String(Math.round(value)),
   })
 
-  return subheading('激活码', '激活码的账 · 只看能用的余量；GitHub 计数取生成时刻')
+  return subheading('激活码', '可用余量')
     + `<div class="chips">${chips}</div>`
     + (githubChips(report.github).length
-      ? '<p class="meta">GitHub 的 star / fork / 关注者取生成时刻（接口无历史快照），与覆盖日无关</p>'
+      ? '<p class="meta">GitHub 计数取生成时刻，接口无历史快照，与覆盖日无关</p>'
       : '')
     + `<div class="gap8"></div>${chart}`
     + `<div class="gap8"></div>${recentTable}`
@@ -1057,8 +1073,7 @@ function todaySection(report, generatedAt, days, completed = false) {
     [`${word}消息活跃账号`, formatInt(messageAccounts),
       messagesPerAccount === null ? '暂无消息' : `人均 ${messagesPerAccount.toFixed(1)} 条`],
     ['近 7 天活跃账号', formatInt(report.usage.activeAccounts7d),
-      `近 ${formatInt(days)} 天 ${formatInt(report.usage.activeAccounts)} 个 · `
-      + `消息活跃 ${formatInt(report.usage.messageActiveAccounts7d)} 个`],
+      `近 ${formatInt(days)} 天 ${formatInt(report.usage.activeAccounts)} 个`],
   ])
 
   return section(word, '概览', completed
@@ -1184,16 +1199,16 @@ function rangeSection(report, days, completed = false) {
     markers: releaseMarkers,
   }) + hourlyHeatmap({
     title: `过去 ${formatInt(num(report.hourlyActivity.windowDays) || 14)} 天 · 24 小时活跃分布`,
-    note: '每行一天 · 左侧灰条为周末 · 连接口径（日志） · 越深越多',
+    note: '连接口径（日志）· 左侧灰条为周末',
     buckets: report.hourlyActivity.buckets,
   })
 
   const newByDay = new Map((devices.newPerDay ?? []).map((row) => [dayText(row.day), num(row.count)]))
+  // 手机上一行最多放得下 6 列：「消息 / 作答」并成一格（两个数字都留着），日期不折行。
   const recent = table([
-    { label: '日期', text: (row) => fullDay(row.day) },
+    { label: '日期', text: (row) => fullDay(row.day), nowrap: true },
     { label: '活跃账号', text: (row) => formatInt(row.accounts), num: true },
-    { label: '消息', text: (row) => formatInt(row.prompts), num: true },
-    { label: '作答', text: (row) => formatInt(row.answers), num: true },
+    { label: '消息/作答', text: (row) => `${formatInt(row.prompts)}/${formatInt(row.answers)}`, num: true },
     { label: '出口', text: (row) => formatBytes(row.egressBytes), num: true },
     { label: '连接', text: (row) => formatInt(row.connections), num: true },
     { label: '新增设备', text: (row) => formatInt(newByDay.get(dayText(row.day)) ?? 0), num: true },
@@ -1207,11 +1222,10 @@ function rangeSection(report, days, completed = false) {
   const accounts = table([
     { label: '账号', text: (row) => rankLabel(row), wide: true },
     { label: '出口', text: (row) => formatBytes(row.egressBytes), num: true },
-    { label: '消息', text: (row) => formatInt(row.prompts), num: true },
-    { label: '作答', text: (row) => formatInt(row.answers), num: true },
+    { label: '消息/作答', text: (row) => `${formatInt(row.prompts)}/${formatInt(row.answers)}`, num: true },
     { label: '连接', text: (row) => formatInt(row.connections), num: true },
     { label: '设备', text: (row) => formatInt(row.devices), num: true },
-    { label: '最近在线', text: (row) => (row.lastSeenAt ? shortTime(row.lastSeenAt) : '—'), num: true },
+    { label: '最近在线', text: (row) => (row.lastSeenAt ? shortTime(row.lastSeenAt) : '—'), num: true, nowrap: true },
   ], rankedAccounts, '窗口内没有用量记录')
 
   const listedDevices = (devices.list ?? []).slice(0, LIMIT.devices)
@@ -1231,7 +1245,7 @@ function rangeSection(report, days, completed = false) {
 
   const inner = subheading('趋势') + charts
     + subheading('近 7 天') + recent
-    + subheading('外部账号留存', '激活码登记的外部账号 · 活跃=当天有设备连接') + retentionBlock(report.retention)
+    + subheading('外部账号留存', '激活码登记的外部账号 · 活跃指当天有设备连接') + retentionBlock(report.retention)
     + subheading('账号排名') + accounts
     + subheading('设备', `${formatInt(devices.paired)} 台在册 · 最近在线前 ${Math.min(LIMIT.devices, (devices.list ?? []).length)} 台`) + rowList(deviceRows, '窗口内没有设备')
     // 反馈只给数字（owner 2026-10-19 定）：哪几条、谁提的都不进日报，要看去 App 的反馈页。
@@ -1274,7 +1288,7 @@ export function renderReport(data, { now = Date.now(), history = null } = {}) {
     + `三层按首次使用设备日划分：当天为新增，7 天内为回访，超过 7 天为超 7 天回访；`
     + `它是消息口径，与连接活跃账号不是同一口径。`
     + ` 版本分布与活跃账号同口径，窗口 48 小时（按用量行的 lastSeenAt 卡）。`
-    + ` GitHub 的 star / fork / 关注者取自公开 API（未认证），是**生成时刻**的值（接口没有历史快照），`
+    + ` GitHub 的 star / fork / 关注者取自公开 API（未认证），是生成时刻的值（接口没有历史快照），`
     + `本机缓存 6 小时；取不到时这一行省略。`
     + ` 其余板块按覆盖日结算：覆盖日之后才配对的设备、才铸或用掉的邀请码、才激活的账号都不进这份报告。`
   const stampNote = completed

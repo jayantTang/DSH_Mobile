@@ -379,11 +379,12 @@ test('日报分「今日」与「最近 30 天」两段，正文被转义', () =
   assert.ok(html.includes('每日消息'), '趋势段要有每日消息图')
   assert.ok(html.includes('活跃账户人均') && html.includes('当天消息总数（左轴）'), '消息图要有总数与人均')
   assert.ok(html.includes('超 7 天回访') && html.includes('7 天内回访'), '活跃图要拆出三层')
-  assert.ok(html.includes('>消息<') && html.includes('>作答<'), '近 7 天表要有消息与作答列')
+  // 手机上一行只放得下 6 列：消息与作答并成一格，两个数字都还在。
+  assert.ok(html.includes('>消息/作答<'), '近 7 天表把消息与作答并成一列')
   // 近 7 天表：活跃账号与新增设备各一列。
   assert.ok(html.includes('活跃账号') && html.includes('新增设备'))
   // 留存：外部账号口径、D1/D7 与「登记后 7 天内连上」都要在页面上。
-  assert.ok(html.includes('激活码登记的外部账号 · 活跃=当天有设备连接'))
+  assert.ok(html.includes('激活码登记的外部账号 · 活跃指当天有设备连接'))
   for (const label of ['登记后 7 天内连上', '次日留存', '7 日留存']) {
     assert.ok(html.includes(label), `留存缺 ${label}`)
   }
@@ -438,7 +439,7 @@ test('「关注」板块把待办提到整页最上面，阈值越线才报警',
   assert.match(html, /2 件待办/)
   // d7 = 40% 不越线、推送全注册、没有背离：这三件不该出现。
   assert.ok(!html.includes('7 日留存 40%（n=10）低于'), '没越线的指标不报警')
-  assert.ok(!html.includes('没注册推送'), '推送全注册不报警')
+  assert.ok(!html.includes('无法送达'), '推送全注册不报警')
   // 没事的时候给一句明确的"没事"，不是一片空白。
   const quiet = fixture()
   quiet.feedback.open = 0
@@ -467,7 +468,7 @@ test('推送注册率只算近 7 天活跃的手机（owner 2026-10-17 定）', 
     deviceId: `dvc_old_${i}`, name: 'iPhone', model: 'iPhone 17', appVersion: '1.2.3',
     createdAt: GENERATED_AT - 40 * 86_400_000, lastSeenAt: GENERATED_AT - 30 * 86_400_000,
     revoked: 0, push: { registered: false } }))
-  assert.ok(!renderReport(quiet).includes('没注册推送'), '废弃设备不进分母')
+  assert.ok(!renderReport(quiet).includes('无法送达'), '废弃设备不进分母')
 
   // 近 7 天活跃的 6 台里 4 台没注册：报警，文案写明分母是「近 7 天活跃」。
   const loud = fixture()
@@ -475,7 +476,7 @@ test('推送注册率只算近 7 天活跃的手机（owner 2026-10-17 定）', 
     deviceId: `dvc_${i}`, name: 'iPhone', model: 'iPhone 17', appVersion: '1.2.3',
     createdAt: GENERATED_AT, lastSeenAt: GENERATED_AT - i * 3_600_000,
     revoked: 0, push: { registered: i < 2 } }))
-  assert.match(renderReport(loud), /近 7 天活跃的 6 台设备里 4 台没注册推送（67%）/)
+  assert.match(renderReport(loud), /近 7 天活跃的 6 台设备中 4 台未注册推送（67%）/)
 })
 
 test('待回复反馈超过 24h SLA 时文案升级', () => {
