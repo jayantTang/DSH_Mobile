@@ -67,6 +67,7 @@ final class AppDiagnostics {
     func start() {
         guard !started else { return }
         started = true
+        HangDiagnostics.start()
         ring.loadFromDisk()
         // 模块层的结构化事件（折叠、取页）从这里进环：`DSHLog.event` 只判一次空，
         // TestFlight 里 sink 为 nil，事件零成本。

@@ -430,7 +430,10 @@ final class TranscriptListHost: UIView, UICollectionViewDelegate {
         // 内容高度变化（自撑行的实测高度、水合、图片/代码块）时补一次钉底；
         // 只在"有意图、且读者不在拖"时做，避免把上滑的读者拽回底部。
         contentSizeObservation = collectionView.observe(\.contentSize, options: [.new]) { [weak self] _, _ in
-            DispatchQueue.main.async { self?.pinAfterContentGrowth() }
+            // 合并：一次布局周期最多补钉一次，且内容高度没变就不重复钉。
+            // 之前每个 contentSize 事件都排一个 async pin，键盘/轮次结束时
+            // 会形成 setOffset → layout → contentSize → pin 的主线程风暴。
+            self?.scheduleCoalescedPin()
         }
         addSubview(collectionView)
         NSLayoutConstraint.activate([
@@ -888,6 +891,7 @@ final class TranscriptListHost: UIView, UICollectionViewDelegate {
         isPinning = false
         let atBottom = bottomDistance() <= Self.bottomSlack
         lastReportedAtBottom = atBottom
+        lastPinnedContentSize = collectionView.contentSize
         if atBottom {
             onBottomChanged?(true)
             onFollowGeometry?(0, false)
@@ -895,13 +899,24 @@ final class TranscriptListHost: UIView, UICollectionViewDelegate {
     }
 
     /// 内容高度长高后补钉：只在有意图且读者没有在拖/减速时做。
-    private func pinAfterContentGrowth() {
-        // 读者手动拉到底（没有按钮意图）也算"在底部"：自撑行长高后同样要补钉，
-        // 否则内容变高、偏移不动，视口就停在中间。
+    /// 内容高度变化的补钉请求：同一轮 runloop 只保留一个，且内容高度没变化就跳过。
+    private var pinScheduled = false
+    private var lastPinnedContentSize: CGSize = .zero
+
+    private func scheduleCoalescedPin() {
         guard wantsBottom || lastReportedAtBottom else { return }
-        guard !collectionView.isDragging, !collectionView.isDecelerating else { return }
-        guard bottomDistance() > 1 else { return }
-        pinNow()
+        guard !pinScheduled else { return }
+        pinScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.pinScheduled = false
+            guard self.wantsBottom || self.lastReportedAtBottom else { return }
+            guard !self.collectionView.isDragging, !self.collectionView.isDecelerating else { return }
+            let size = self.collectionView.contentSize
+            guard size != self.lastPinnedContentSize else { return }
+            guard self.bottomDistance() > 1 else { return }
+            self.pinNow()
+        }
     }
 
     /// 视口距底部的距离（点）。

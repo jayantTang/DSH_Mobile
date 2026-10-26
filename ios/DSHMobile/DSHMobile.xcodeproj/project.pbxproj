@@ -11,6 +11,7 @@
 		15D2AF1DCD818FBE336D63E5 /* DSHFilesUI in Frameworks */ = {isa = PBXBuildFile; productRef = A9DDDA67B2AA12154208575E /* DSHFilesUI */; };
 		1A13BA7FC42785A2C927EBA2 /* DSHSettingsUI in Frameworks */ = {isa = PBXBuildFile; productRef = 13BE688B63426B14637AB2F4 /* DSHSettingsUI */; };
 		1FB45AF0B665AB85E0613141 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 5B0F64970D85F0434D6EE44D /* Assets.xcassets */; };
+		2A20BC6C4477ACED4415713D /* HangDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28E7A501E33F5EB150E93E73 /* HangDiagnostics.swift */; };
 		36D223A28FCC59DCD68A4EE2 /* P13ResumeObserver.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5443B4AC48ED16A3F9AAFF1 /* P13ResumeObserver.swift */; };
 		39715EFAAF40756A280C5F38 /* DSHCore in Frameworks */ = {isa = PBXBuildFile; productRef = 03933CA0B7A1A552422A8CB4 /* DSHCore */; };
 		39D20051F7BFB821216011AA /* ViewportAutomation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65666857828618B5B0230B7B /* ViewportAutomation.swift */; };
@@ -78,6 +79,7 @@
 		1070BF66610D38AECBC868D4 /* Engine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Engine.swift; sourceTree = "<group>"; };
 		1A75622327FDA1549409A9E8 /* DSHMobileTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = DSHMobileTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		1F8851C894491769E7244907 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
+		28E7A501E33F5EB150E93E73 /* HangDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HangDiagnostics.swift; sourceTree = "<group>"; };
 		2CB7D506F1616F7800D23383 /* DSHMobile.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = DSHMobile.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		3AA46012EB13A751046C49B0 /* StaleFrameInjection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StaleFrameInjection.swift; sourceTree = "<group>"; };
 		3D2E6A407209D2028F58F6E9 /* AppDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDiagnostics.swift; sourceTree = "<group>"; };
@@ -221,6 +223,7 @@
 			isa = PBXGroup;
 			children = (
 				3D2E6A407209D2028F58F6E9 /* AppDiagnostics.swift */,
+				28E7A501E33F5EB150E93E73 /* HangDiagnostics.swift */,
 			);
 			path = Diagnostics;
 			sourceTree = "<group>";
@@ -410,6 +413,7 @@
 				099853A8558490874310E248 /* AppLifecyclePlan.swift in Sources */,
 				69048FC4D444EA89F3327385 /* AppStartupCoordinator.swift in Sources */,
 				7A5DBF56A82D9E6A1E08CA4E /* DSHMobileApp.swift in Sources */,
+				2A20BC6C4477ACED4415713D /* HangDiagnostics.swift in Sources */,
 				B0518AF2024B3ED7A8B6D69E /* MainView.swift in Sources */,
 				F4A6E969CBAE4CC8ABEE8C27 /* MessageLayerProbes.swift in Sources */,
 				E6B220D37AF428C377E17818 /* MetricKitCrashObserver.swift in Sources */,
