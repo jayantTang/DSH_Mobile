@@ -168,6 +168,10 @@ public extension ChatModel {
             return true
         }
         guard cursor > 1 else {
+            // `cursor == 1` 只说明管道窗口的第一条是 1 号事件，不等于宿主没有更早。
+            // 宿主仍报 hasOlder 时交给下面的 v1 锚点判断，避免在首屏窗口未稳时
+            // 把"还有更早"误判成已到最早，之后再也不发请求。
+            if hasOlder { return false }
             bridge.noteSummaryOlderExhausted()
             return true
         }

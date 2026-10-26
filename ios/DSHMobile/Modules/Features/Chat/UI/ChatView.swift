@@ -1420,6 +1420,15 @@ public struct ChatView: View {
                 await model.loadOlder()
                 guard model.timeline.items.count > count else {
                     prependAnchor = nil
+                    // 这一页没长出内容（首屏还没好/空页/瞬间结束）：如果人还停在
+                    // 顶部且宿主说还有更早，等一下再补一次，别把这次意图丢掉。
+                    if sentinelNearTop, !model.isLoadingOlder,
+                       !model.isOlderExhausted, model.hasOlder {
+                        try? await Task.sleep(for: .milliseconds(120))
+                        if sentinelNearTop, !model.isLoadingOlder {
+                            continue
+                        }
+                    }
                     return
                 }
                 // 等锚定收敛后再量 `kept`：固定睡 400ms 会在"一页 150 行"的降级通道上
