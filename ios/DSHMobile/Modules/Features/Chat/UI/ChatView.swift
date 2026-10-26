@@ -1154,7 +1154,9 @@ public struct ChatView: View {
 
     /// 一行消息。抽出来是为了让"懒加载/非懒加载"两种排布共用同一份定义。
     private func row(_ item: TimelineItem) -> some View {
-        var rowView = TimelineRowView(item: item)
+        var rowView = TimelineRowView(item: item,
+                                      runningChars: runningCharsForGroup(),
+                                      runningBytes: runningBytesForGroup())
         // 缺口行「加载失败，点击重试」（T016）：重试由管道的状态机接管。
         rowView.onGapRetry = { start, end in
             Task { await model.retryGap(start: start, end: end) }

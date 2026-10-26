@@ -160,10 +160,10 @@ public enum ProcessFoldText {
         if steps > 0 { parts.append(String(localized: "\(steps) 步")) }
         if let activity {
             parts.append(activityShortLabel(activity))
-        } else if let bytes {
-            parts.append(String(localized: "思考 \(byteCountText(bytes))"))
         } else if chars > 0 {
             parts.append(String(localized: "思考 \(chars) 字"))
+        } else if let bytes {
+            parts.append(String(localized: "思考 \(byteCountText(bytes))"))
         } else {
             parts.append(String(localized: "思考"))
         }
