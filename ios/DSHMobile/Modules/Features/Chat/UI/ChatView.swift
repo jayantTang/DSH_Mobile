@@ -1119,6 +1119,7 @@ public struct ChatView: View {
 
     /// 运行中分组的流式字数：只用于右侧统计，不参与折叠。
     private func runningCharsForGroup() -> Int {
+        if model.liveStreamChars > 0 { return model.liveStreamChars }
         if let streaming = model.timeline.streaming {
             return streaming.text.count + streaming.reasoning.count
         }

@@ -158,6 +158,9 @@ public final class ChatModel {
 
     /// Streaming chunks waiting to be folded into the transcript.
     private var pendingStreamFrames: [AssistantStreamFrame] = []
+    /// 当前流式尝试的实时字数（正文 + 思考），只给运行中折叠行显示；与折叠解耦。
+    public private(set) var liveStreamChars = 0
+    private var liveStreamCounter = LiveStreamCharCounter()
     private var streamFlushTask: Task<Void, Never>?
 
     /// How often coalesced stream frames are folded in.
@@ -1440,6 +1443,8 @@ public final class ChatModel {
             reactToTurnLifecycle(event)
 
         case .assistantStream(let streamFrame):
+            liveStreamCounter.apply(streamFrame)
+            liveStreamChars = liveStreamCounter.chars
             if let bridge = pipelineBridge {
                 // T020：管道模式下流式帧进 SessionPipeline 的 frameTick 合并
                 // （spec 剩余卡顿源①的口径在管道侧），App 侧 120ms 合流退役。
