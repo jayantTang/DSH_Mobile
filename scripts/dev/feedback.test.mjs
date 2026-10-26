@@ -77,10 +77,12 @@ function fixture() {
     usage: {
       perDay: [{ day: '2026-10-11', egressBytes: 1024 * 1024, connections: 3, devices: 1,
         accounts: 1, prompts: 10, answers: 2, messageAccounts: 1,
-        newAccounts: 1, returningAccounts: 0, returning7Accounts: 0, returningOldAccounts: 0 },
+        newAccounts: 1, returningAccounts: 0,
+        messageNewAccounts: 1, messageReturning7Accounts: 0, messageReturningOldAccounts: 0 },
       { day: '2026-10-12', egressBytes: 2 * 1024 * 1024, connections: 9, devices: 2,
         accounts: 2, prompts: 8, answers: 2, messageAccounts: 2,
-        newAccounts: 1, returningAccounts: 1, returning7Accounts: 1, returningOldAccounts: 0 }],
+        newAccounts: 1, returningAccounts: 1,
+        messageNewAccounts: 1, messageReturning7Accounts: 1, messageReturningOldAccounts: 0 }],
       topAccounts: [{ accountId: 'acc_a', name: 'jayant', egressBytes: 3 * 1024 * 1024,
         connections: 12, prompts: 18, answers: 4, lastSeenAt: GENERATED_AT,
         lastBuild: '1.0 20261012.1056' }],
@@ -359,7 +361,7 @@ test('日报分「今日」与「最近 30 天」两段，正文被转义', () =
   assert.ok(html.includes('<span class="tag ">今日</span>概览'), '今日板块')
   assert.ok(html.includes('<span class="tag range">最近 30 天</span>趋势与留存'), '30 天板块')
   assert.ok((html.match(/<svg /g) ?? []).length >= 2, '至少有两张趋势图')
-  assert.ok(html.includes('每日活跃账号') && html.includes('每日出口流量'))
+  assert.ok(html.includes('每日消息活跃账号') && html.includes('每日出口流量'))
   // 活跃账号图是「回访 + 当日新增」两段堆叠（owner 2026-10-19 定）：两段颜色与图例都要在。
   assert.ok(html.includes('trend-legend') && html.includes('回访') && html.includes('当日新增'),
     '图上要有两段图例')
@@ -1305,10 +1307,13 @@ test('老服务端没有 perDay.newAccounts：退回单条折线，不自己补�
   // 服务端与渲染层不是一个进程，发布有先后。旧服务端没这个字段时只画总量，
   // 不在本机按"首次活跃日"再算一遍——同一事实只能有一个所有者。
   const stale = fixture()
-  stale.usage.perDay = stale.usage.perDay.map(({ newAccounts, returningAccounts, ...row }) => row)
+  stale.usage.perDay = stale.usage.perDay.map(({
+    newAccounts, returningAccounts, messageNewAccounts,
+    messageReturning7Accounts, messageReturningOldAccounts, ...row
+  }) => row)
   const html = renderReport(stale)
-  assert.ok(html.includes('每日活跃账号'))
-  assert.ok(!html.includes('7 天内回访') && !html.includes('超 7 天回访'),
+  assert.ok(html.includes('每日消息活跃账号'))
+  assert.ok(!html.includes('7 天内回访</span>') && !html.includes('超 7 天回访</span>'),
     '没有拆分就不出三层图例')
   assert.ok(!html.includes('当日新增'))
 })

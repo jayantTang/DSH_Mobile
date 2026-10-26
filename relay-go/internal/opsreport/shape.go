@@ -199,18 +199,19 @@ type deviceReportRow struct {
 }
 
 type usageDay struct {
-	Day                  int64 `json:"day"`
-	EgressBytes          int64 `json:"egressBytes"`
-	Connections          int64 `json:"connections"`
-	Prompts              int64 `json:"prompts"`
-	Answers              int64 `json:"answers"`
-	MessageAccounts      int   `json:"messageAccounts"`
-	Devices              int   `json:"devices"`
-	Accounts             int   `json:"accounts"`
-	NewAccounts          int   `json:"newAccounts"`
-	ReturningAccounts    int   `json:"returningAccounts"`
-	Returning7Accounts   int   `json:"returning7Accounts"`
-	ReturningOldAccounts int   `json:"returningOldAccounts"`
+	Day                         int64 `json:"day"`
+	EgressBytes                 int64 `json:"egressBytes"`
+	Connections                 int64 `json:"connections"`
+	Prompts                     int64 `json:"prompts"`
+	Answers                     int64 `json:"answers"`
+	MessageAccounts             int   `json:"messageAccounts"`
+	Devices                     int   `json:"devices"`
+	Accounts                    int   `json:"accounts"`
+	NewAccounts                 int   `json:"newAccounts"`
+	ReturningAccounts           int   `json:"returningAccounts"`
+	MessageNewAccounts          int   `json:"messageNewAccounts"`
+	MessageReturning7Accounts   int   `json:"messageReturning7Accounts"`
+	MessageReturningOldAccounts int   `json:"messageReturningOldAccounts"`
 }
 
 type usageTotals struct {

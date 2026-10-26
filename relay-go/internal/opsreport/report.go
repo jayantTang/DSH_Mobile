@@ -164,12 +164,12 @@ func build(ctx context.Context, src Source, days int, stamp, generated int64,
 	for _, device := range devices {
 		owners[device.DeviceID] = device.AccountID
 	}
-	firstSeen, err := firstSeenDays(ctx, src, debugIDs, owners)
+	firstSeen, firstPrompt, err := firstSeenDays(ctx, src, debugIDs, owners)
 	if err != nil {
 		return opsReport{}, err
 	}
 	series, ranked, activeByDay, messageActiveByDay, err := usageScan(ctx, src, days, stamp,
-		debugIDs, names, knownIDs, external, firstSeen)
+		debugIDs, names, knownIDs, external, firstPrompt)
 	if err != nil {
 		return opsReport{}, err
 	}

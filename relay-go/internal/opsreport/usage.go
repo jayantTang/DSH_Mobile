@@ -8,27 +8,25 @@ import (
 
 // usageScan 按天读一遍 usageDaily，同时给出 series / ranked / activeByDay。
 //
-// 为了区分“7 天内回访”与“超 7 天回访”，实际读取窗口比输出窗口多 7 天：输出日 D 的
-// 回访分类需要 D-7..D-1 的活跃集合。多读的 7 天不进入 series / 排名 / 留存集合。
+// 消息活跃账号按“首次发出消息”分三档：当天首次发消息算新增；首次发消息在最近
+// 7 天内算回访；首次发消息在 7 天以前、且今天仍发消息算超 7 天回访。三档互斥，
+// 加起来等于当天 messageAccounts。firstPrompt 来自 400 天历史，不是本次窗口。
 func usageScan(ctx context.Context, src Source, days int, end int64,
 	debugIDs map[string]struct{}, names map[string]*string, knownIDs,
-	external map[string]struct{}, firstSeen map[string]int64) ([]usageDay, []accountUsageRow,
+	external map[string]struct{}, firstPrompt map[string]int64) ([]usageDay, []accountUsageRow,
 	map[int64]map[string]struct{}, map[int64]map[string]struct{}, error) {
-	seriesDays := recentDays(days, end)
-	scanDays := recentDays(days+7, end)
-	perDay := make(map[int64]*usageDay, len(seriesDays))
-	for _, day := range seriesDays {
+	recent := recentDays(days, end)
+	perDay := make(map[int64]*usageDay, len(recent))
+	activeByDay := make(map[int64]map[string]struct{}, len(recent))
+	messageActiveByDay := make(map[int64]map[string]struct{}, len(recent))
+	for _, day := range recent {
 		perDay[day] = &usageDay{Day: day}
-	}
-	allActiveByDay := make(map[int64]map[string]struct{}, len(scanDays))
-	allMessageActiveByDay := make(map[int64]map[string]struct{}, len(scanDays))
-	for _, day := range scanDays {
-		allActiveByDay[day] = map[string]struct{}{}
-		allMessageActiveByDay[day] = map[string]struct{}{}
+		activeByDay[day] = map[string]struct{}{}
+		messageActiveByDay[day] = map[string]struct{}{}
 	}
 	merged := map[string]*accountUsageRow{}
 	seenDevices := map[string]map[string]struct{}{}
-	for _, day := range scanDays {
+	for _, day := range recent {
 		rows, err := src.UsageRows(ctx, day)
 		if err != nil {
 			return nil, nil, nil, nil, err
@@ -40,21 +38,18 @@ func usageScan(ctx context.Context, src Source, days int, end int64,
 			if isOrphanUsage(row, knownIDs, external) {
 				continue
 			}
-			if row.AccountID != "" {
-				allActiveByDay[day][row.AccountID] = struct{}{}
-				if row.Prompts > 0 {
-					allMessageActiveByDay[day][row.AccountID] = struct{}{}
-				}
-			}
 			entry := perDay[day]
-			if entry == nil {
-				continue // 多读的 7 天只用于回访分类，不进入输出窗口
-			}
 			entry.EgressBytes += row.EgressBytes
 			entry.Connections += row.Connections
 			entry.Prompts += row.Prompts
 			entry.Answers += row.Answers
 			entry.Devices++
+			if row.AccountID != "" {
+				activeByDay[day][row.AccountID] = struct{}{}
+				if row.Prompts > 0 {
+					messageActiveByDay[day][row.AccountID] = struct{}{}
+				}
+			}
 			account := merged[row.AccountID]
 			if account == nil {
 				accountID := row.AccountID
@@ -79,39 +74,28 @@ func usageScan(ctx context.Context, src Source, days int, end int64,
 			}
 		}
 	}
-
-	// 按天推进 lastActive：D 当天新增的不算回访；上次活跃在 7 天内算“7 天内回访”，
-	// 其余（含 7 天以上、或窗口前才有记录）算“超 7 天回访”。
-	lastActive := map[string]int64{}
-	for _, day := range scanDays {
-		if entry := perDay[day]; entry != nil {
-			for account := range allActiveByDay[day] {
-				if first, ok := firstSeen[account]; ok && first == day {
-					continue // NewAccounts 由 buildUsageReport 按同一个 firstSeen 算
-				}
-				last, seen := lastActive[account]
-				if !seen || dayGap(day, last) > 7 {
-					entry.ReturningOldAccounts++
-				} else {
-					entry.Returning7Accounts++
-				}
+	for _, day := range recent {
+		entry := perDay[day]
+		for account := range messageActiveByDay[day] {
+			first, known := firstPrompt[account]
+			switch {
+			case !known:
+				entry.MessageReturningOldAccounts++
+			case first == day:
+				entry.MessageNewAccounts++
+			case dayGap(day, first) <= 7:
+				entry.MessageReturning7Accounts++
+			default:
+				entry.MessageReturningOldAccounts++
 			}
 		}
-		for account := range allActiveByDay[day] {
-			lastActive[account] = day
-		}
 	}
-
-	series := make([]usageDay, 0, len(seriesDays))
-	activeSets := make(map[int64]map[string]struct{}, len(seriesDays))
-	messageSets := make(map[int64]map[string]struct{}, len(seriesDays))
-	for _, day := range seriesDays {
+	series := make([]usageDay, 0, len(recent))
+	for _, day := range recent {
 		entry := perDay[day]
-		entry.Accounts = len(allActiveByDay[day])
-		entry.MessageAccounts = len(allMessageActiveByDay[day])
+		entry.Accounts = len(activeByDay[day])
+		entry.MessageAccounts = len(messageActiveByDay[day])
 		series = append(series, *entry)
-		activeSets[day] = allActiveByDay[day]
-		messageSets[day] = allMessageActiveByDay[day]
 	}
 	ranked := make([]accountUsageRow, 0, len(merged))
 	for accountID, account := range merged {
@@ -121,7 +105,7 @@ func usageScan(ctx context.Context, src Source, days int, end int64,
 	sort.SliceStable(ranked, func(left, right int) bool {
 		return ranked[left].EgressBytes > ranked[right].EgressBytes
 	})
-	return series, ranked, activeSets, messageSets, nil
+	return series, ranked, activeByDay, messageActiveByDay, nil
 }
 
 // buildUsageReport 是用量板块的 JSON。
@@ -206,14 +190,18 @@ func buildUsageReport(series []usageDay, ranked []accountUsageRow,
 	}
 }
 
-// firstSeenDays 是每个账号第一次有用量记录的本地日（留存队列的起点）。
+// firstSeenDays 是每个账号第一次有用量记录与第一次发出消息的本地日。
+//
+// 前者是连接活跃留存的起点；后者是消息活跃账号三档（当日新增 / 7 天内 /
+// 超 7 天）的唯一口径，不能用连接首次活跃代替“首次使用设备发出消息”。
 func firstSeenDays(ctx context.Context, src Source, debugIDs map[string]struct{},
-	owners map[string]string) (map[string]int64, error) {
+	owners map[string]string) (map[string]int64, map[string]int64, error) {
 	rows, err := src.UsageTotals(ctx, retentionHistoryDays, "device")
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	first := map[string]int64{}
+	firstPrompt := map[string]int64{}
 	for _, row := range rows {
 		if row.DeviceID == nil {
 			continue
@@ -228,6 +216,11 @@ func firstSeenDays(ctx context.Context, src Source, debugIDs map[string]struct{}
 		if current, ok := first[account]; !ok || row.Day < current {
 			first[account] = row.Day
 		}
+		if row.Prompts > 0 {
+			if current, ok := firstPrompt[account]; !ok || row.Day < current {
+				firstPrompt[account] = row.Day
+			}
+		}
 	}
-	return first, nil
+	return first, firstPrompt, nil
 }

@@ -1137,9 +1137,9 @@ function rangeSection(report, days, completed = false) {
 
   const peakNote = peak && num(peak.egressBytes) > 0
     ? `峰值 ${fullDay(peak.day)} ${formatBytes(peak.egressBytes)}` : `最近 ${days} 天`
-  const userPoints = (usage.perDay ?? []).map((row) => ({ label: row.day, value: row.accounts,
-    fresh: row.newAccounts,
-    recent: row.returning7Accounts, old: row.returningOldAccounts }))
+  const userPoints = (usage.perDay ?? []).map((row) => ({ label: row.day, value: row.messageAccounts,
+    fresh: row.messageNewAccounts,
+    recent: row.messageReturning7Accounts, old: row.messageReturningOldAccounts }))
   const countPoints = (usage.perDay ?? []).map((row) => ({
     label: row.day, total: num(row.prompts),
     avg: num(row.accounts) > 0 ? num(row.prompts) / num(row.accounts) : 0,
@@ -1152,20 +1152,20 @@ function rangeSection(report, days, completed = false) {
     .map((point, index) => ({ index, day: dayText(point.label) }))
     .filter((marker) => marker.day && releaseDays.has(marker.day))
     .map((marker) => ({ index: marker.index, label: '发版' }))
-  // 活跃账号图：服务端给了「新增 / 回访」拆分（`perDay[].newAccounts`）就叠成两段；
-  // 老服务端没有这个字段时退回单条折线——本机不补算"首次活跃日"，口径只能有一个所有者。
+  // 活跃账号图：服务端给了消息活跃三档（`perDay[].messageNewAccounts` 等）就叠三层；
+  // 老服务端没有这些字段时退回单条折线——本机不补算"首次发消息日"，口径只有一个所有者。
   const hasSplit = userPoints.length > 0
     && userPoints.every((point) => point.fresh !== undefined && point.fresh !== null)
   const activeNote = hasSplit
-    ? `近 7 天 ${formatInt(usage.activeAccounts7d)} 个 · 新增/7 天内/超 7 天`
-    : `近 7 天 ${formatInt(usage.activeAccounts7d)} 个`
+    ? `近 7 天消息活跃 ${formatInt(usage.messageActiveAccounts7d)} 个 · 按首次发消息分三层`
+    : `近 7 天消息活跃 ${formatInt(usage.messageActiveAccounts7d)} 个`
   const activeChart = hasSplit ? compositionChart({
-    title: '每日活跃账号',
+    title: '每日消息活跃账号',
     note: activeNote,
     points: userPoints,
     format: (value) => String(Math.round(value)),
   }) : lineChart({
-    title: '每日活跃账号',
+    title: '每日消息活跃账号',
     note: activeNote,
     points: userPoints,
     format: (value) => String(Math.round(value)),
@@ -1270,7 +1270,9 @@ export function renderReport(data, { now = Date.now(), history = null } = {}) {
     + ` 出口流量只计中转出口字节（不含 OTA 下载与 SSH）；调试设备（DSH- 前缀与测试台机型）不计。`
     + ` 14 天分布是连接口径（从日志重建，含只连着、没有流量的设备；取不到日志时该图跳过）；`
     + ` 消息 = 设备经中转发出的 session/prompt（按 requestId 去重），作答 = eventResult`
-    + `（按 eventId 去重），重发不重复计数；消息活跃账号 = 当天 prompts>0 的账号，与连接活跃账号不是同一口径。`
+    + `（按 eventId 去重），重发不重复计数；消息活跃账号 = 当天 prompts>0 的账号，`
+    + `三层按首次发消息日划分：当天为新增，7 天内为回访，超过 7 天为超 7 天回访；`
+    + `它是消息口径，与连接活跃账号不是同一口径。`
     + ` 版本分布与活跃账号同口径，窗口 48 小时（按用量行的 lastSeenAt 卡）。`
     + ` GitHub 的 star / fork / 关注者取自公开 API（未认证），是**生成时刻**的值（接口没有历史快照），`
     + `本机缓存 6 小时；取不到时这一行省略。`
