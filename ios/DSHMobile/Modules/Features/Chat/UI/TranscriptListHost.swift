@@ -1207,9 +1207,11 @@ extension TranscriptListHost {
         // 跟尾模式下、读者没有拖动时，程序化滚动/布局造成的中间位置不算"读者离开"：
         // 不向外报 reading，否则按钮会在打开/钉底过程中被错误点亮。
         let programmatic = isPinning || (wantsBottom && !scrollView.isTracking)
+        // 按钮显隐用精确距离，程序化滚动期间也要报：否则测试/触控板这类
+        // 不触发 dragging 的上滑会让按钮永远不出现。
+        onAtBottomExact?(bottomDistance() <= 1)
         if !programmatic {
             onBottomChanged?(atBottom)
-            onAtBottomExact?(bottomDistance() <= 1)
             reportFollowGeometry(scrollView)
         }
         // **可见余量预取**：离顶端还有一屏半就开始要，而不是等贴到顶（真机反馈"预取太慢"）。

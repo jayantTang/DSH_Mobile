@@ -780,7 +780,10 @@ public struct ChatView: View {
                         listHostRef?.scheduleReclaimCheck()
                     }
                 },
-                onAtBottomExact: { hostAtBottom = $0 },
+                onAtBottomExact: { atBottom in
+                    hostAtBottom = atBottom
+                    if !atBottom { userScrolled = true }
+                },
                 onBottomChanged: { atBottom in  // 几何驱动
 
                     if model.processToggleFollowHold { return }
