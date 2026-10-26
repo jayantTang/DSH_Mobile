@@ -137,7 +137,7 @@ public final class ChatModel {
     ///
     /// 宿主 `turn/start` 不带时间戳，窗口里也没有更早的可信时间，所以这个计时
     /// 由这里记：看到轮次开启记一次，结束清掉。只服务「深度求索中，用时 …」。
-    public private(set) var runningSince: Date?
+    public internal(set) var runningSince: Date?
 
     /// Whether a stop control should be offered at all.
     public var isBusy: Bool { activity != .idle }

@@ -53,6 +53,20 @@ final class FoldSummaryV2Tests: XCTestCase {
         return timeline
     }
 
+    func test_a_summary_decodes_the_turn_start_time() throws {
+        let json = """
+        {"v":2,"turn":2,"startSeq":10,"endSeq":12,"startedAt":1792980000000,
+         "durationMs":null,"endReason":null,"activities":{"commands":1},
+         "groups":[{"startSeq":10,"endSeq":12,"activities":{"commands":1},
+           "toolCount":1,"steps":[{"seq":10,"kind":"tools","name":"bash",
+             "preview":"sleep 60","status":"running"}]}]}
+        """
+        let data = try JSONDecoder().decode(JSONValue.self, from: Data(json.utf8))
+        let summary = try XCTUnwrap(FoldSummaryV2(data: data))
+        XCTAssertEqual(summary.startedAt, 1_792_980_000_000)
+        XCTAssertEqual(summary.durationMs, nil)
+    }
+
     // MARK: - 解码
 
     func test_a_v2_record_decodes_groups_steps_and_activity_counts() throws {

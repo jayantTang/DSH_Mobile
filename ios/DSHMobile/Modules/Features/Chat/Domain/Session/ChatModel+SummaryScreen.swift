@@ -319,6 +319,8 @@ public extension ChatModel {
                 clamped: page.clamped ?? false,
                 knownEmpty: page.knownEmpty ?? [],
                 revision: page.revision)
+            // 管道采纳后时间线可能还没重建；直接从这页概要里取运行轮的起点。
+            adoptRunningStart(from: page.records)
             return
         }
         timeline.merge(snapshot: page.records)
@@ -326,5 +328,23 @@ public extension ChatModel {
             enqueueAppend(scope: scope, sessionId: id, records: page.records)
         }
         scrollSignal += 1
+        adoptRunningStart(from: page.records)
+    }
+
+    /// 运行轮的计时起点：窗口里没有 `turn/start` 时，用概要记录里的 `startedAt`。
+    /// 只在“这一轮确实开着”时采纳，避免把已完成轮的时间贴到新一轮。
+    @MainActor
+    private func adoptRunningStart(from records: [SessionRecord]) {
+        guard timeline.isTurnOpen else { return }
+        if let start = timeline.openTurnStartedAt {
+            runningSince = start
+            return
+        }
+        // 只认“这一轮还没结束”的概要（运行中的段 endReason 为空）。
+        let summaries = records.compactMap { FoldSummaryV2.decode($0.event) }
+        guard let startedAt = summaries.last(where: {
+            $0.startedAt != nil && $0.endReason == nil
+        })?.startedAt else { return }
+        runningSince = Date(timeIntervalSince1970: startedAt / 1000)
     }
 }

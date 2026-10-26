@@ -96,18 +96,22 @@ public struct FoldSummaryV2: Sendable, Equatable {
     public let turn: Int
     public let startSeq: Int
     public let endSeq: Int
+    /// 这一轮**开始**的宿主时间（epoch ms）。运行中没有 `durationMs`，计时起点用它；
+    /// 窗口裁到轮次中间时本地没有 `turn/start`，这是唯一的真实起点。
+    public let startedAt: Double?
     public let durationMs: Double?
     public let endReason: String?
     /// 这一段的整体活动计数（只数工具步骤）。
     public let activities: [TimelineProcessActivity: Int]
     public let groups: [Group]
 
-    public init(turn: Int, startSeq: Int, endSeq: Int, durationMs: Double?,
-                endReason: String?, activities: [TimelineProcessActivity: Int],
-                groups: [Group]) {
+    public init(turn: Int, startSeq: Int, endSeq: Int, startedAt: Double? = nil,
+                durationMs: Double?, endReason: String?,
+                activities: [TimelineProcessActivity: Int], groups: [Group]) {
         self.turn = turn
         self.startSeq = startSeq
         self.endSeq = endSeq
+        self.startedAt = startedAt
         self.durationMs = durationMs
         self.endReason = endReason
         self.activities = activities
@@ -151,6 +155,7 @@ public struct FoldSummaryV2: Sendable, Equatable {
             turn: data["turn"]?.intValue ?? 0,
             startSeq: startSeq,
             endSeq: max(startSeq, endSeq),
+            startedAt: data["startedAt"]?.doubleValue,
             durationMs: data["durationMs"]?.doubleValue,
             endReason: data["endReason"]?.stringValue,
             activities: Self.activityCounts(data["activities"], fallbackSteps: groups.flatMap(\.steps)),

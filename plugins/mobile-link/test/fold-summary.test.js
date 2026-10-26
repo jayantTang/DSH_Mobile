@@ -112,6 +112,7 @@ test('概要 v2 的字段：轮次、时长、结束原因、活动计数与分�
   assert.equal(first.turn, 1)
   assert.equal(first.durationMs, 1500)
   assert.equal(first.endReason, 'completed')
+  assert.equal(first.startedAt, 1_700_000_000_000, '每段都带轮次开始时间，运行中也能算真实用时')
   // 每段一条：第一段是 seq3..5（思考 + bash + 结果），第二段是 seq8..10（思考 + grep + 结果）
   assert.equal(first.startSeq, 3)
   assert.equal(first.endSeq, 5)
@@ -308,6 +309,17 @@ test('图文混合回答：块顺序保持，工具块摘掉，data: URI 与超�
   const wire = JSON.stringify(records)
   assert.equal(wire.includes('data:image/png'), false, 'data: URI 是内联字节')
   assert.equal(wire.includes('q'.repeat(600)), false, '超长 url 当内联负载丢掉')
+})
+
+test('运行中的轮次也带 startedAt，durationMs 为空', () => {
+  reset()
+  const { summaries } = projectTurnUnit([
+    ev('turn/start', { turn: 2 }, 1_700_000_123_000),
+    ev('tool/call', { turn: 2, callId: 'c9', name: 'bash', arguments: '{"command":"sleep 60"}' }),
+  ])
+  assert.equal(summaries.length, 1)
+  assert.equal(summaries[0].startedAt, 1_700_000_123_000)
+  assert.equal(summaries[0].durationMs, null)
 })
 
 test('preview 折叠空白并截断到 80 字；args 不是字符串时给空串', () => {

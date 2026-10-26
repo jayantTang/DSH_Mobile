@@ -187,7 +187,13 @@ public struct ChatTimeline: Sendable {
     /// 不拿“手机观察到的时间”代替；切后台/重开也还是同一个值。
     public var openTurnStartedAt: Date? {
         guard isTurnOpen else { return nil }
-        return turnStartedAt[currentTurn]
+        if let start = turnStartedAt[currentTurn] { return start }
+        // 起点不在本地窗口：运行中的概要带着轮次的 startedAt（宿主时间），用它兜底。
+        // 同一轮可能被讲话切成多段，每段同值；取最后一条有值的即可。
+        let fromSummary = foldSummaries.last {
+            $0.turn == currentTurn && $0.startedAt != nil
+        }
+        return fromSummary?.startedAt.map { Date(timeIntervalSince1970: $0 / 1000) }
     }
 
     /// The most recent completed turn, for the transient "done" indicator.

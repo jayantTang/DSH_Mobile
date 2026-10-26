@@ -292,6 +292,9 @@ export function projectTurnUnit(events) {
     && Number.isFinite(startEvent.time) && Number.isFinite(endEvent.time)
     ? Math.max(0, endEvent.time - startEvent.time)
     : null
+  // 这一轮**开始**的宿主时间。运行中的轮次没有 durationMs，但客户端仍要显示
+  // 真实用时；窗口裁到轮次中间（turn/start 不在本地）时，这是唯一的起点来源。
+  const startedAt = Number.isFinite(startEvent?.time) ? startEvent.time : null
   const reason = endEvent?.data?.reason
   const endReason = typeof reason === 'string'
     ? reason
@@ -316,6 +319,7 @@ export function projectTurnUnit(events) {
       turn,
       startSeq: current.startSeq,
       endSeq: current.endSeq,
+      startedAt,
       durationMs,
       endReason,
       activities,
@@ -451,6 +455,7 @@ export function projectTurnUnit(events) {
 
   return {
     turn,
+    startedAt,
     durationMs,
     endReason,
     records: out,
