@@ -346,6 +346,12 @@ final class TranscriptListHost: UIView, UICollectionViewDelegate {
     /// "回到底部"的意图：一次点击之后**持续满足**，直到真的到了底部。
     /// 一次性的 `scrollToItem` 会被在飞的批量更新吞掉——真机反馈过"点了仍无效"。
     private var wantsBottom = false
+    /// 正在程序化钉底：这期间 `scrollViewDidScroll` 不报跟底几何，
+    /// 否则中间位置的滚动会把调用方的 `isFollowing` 翻成 reading、顺手清掉意图。
+    private var isPinning = false
+    /// 自撑高度列表的 `contentSize` 是估算值：行实测长高时不产生数据变更，
+    /// 没人再钉一次，视口就停在"旧的底"（中间）。这里监听内容高度自己补。
+    private var contentSizeObservation: NSKeyValueObservation?
     /// 贴底容差（点）：在这个范围内就算"在最新那一头"。
     static let bottomSlack: CGFloat = 40
 
@@ -413,6 +419,11 @@ final class TranscriptListHost: UIView, UICollectionViewDelegate {
         )
         rowLongPress.minimumPressDuration = 0.4
         collectionView.addGestureRecognizer(rowLongPress)
+        // 内容高度变化（自撑行的实测高度、水合、图片/代码块）时补一次钉底；
+        // 只在"有意图、且读者不在拖"时做，避免把上滑的读者拽回底部。
+        contentSizeObservation = collectionView.observe(\.contentSize, options: [.new]) { [weak self] _, _ in
+            DispatchQueue.main.async { self?.pinAfterContentGrowth() }
+        }
         addSubview(collectionView)
         NSLayoutConstraint.activate([
             collectionView.topAnchor.constraint(equalTo: topAnchor),
@@ -820,21 +831,34 @@ final class TranscriptListHost: UIView, UICollectionViewDelegate {
     /// 一次 `scrollToItem` 会被在飞的批量更新吞掉（真机反馈"点了仍无效"），所以：
     /// 记意图 + **按 0/120/300/600ms 重试**，每次重试前再确认一次"还没到底"。
     func satisfyBottomIntent() {
-        guard wantsBottom, let last = rows.last?.id else { return }
-        setOffsetToBottom()
+        guard wantsBottom, rows.last != nil else { return }
+        pinNow()
         Task { @MainActor [weak self] in
+            // 每一拍都重新钉一次，**不在 0ms 用「已经到底」提前返回**：
+            // 首帧的 contentSize 是估算值，按它算出来天然"到底"，一返回就再也没人修
+            // 后面实测长高的那几十~几百点，视口便停在中间（这就是历史"回底跳到中间"）。
             for delay in [0, 120, 300, 600, 1000] {
                 if delay > 0 { try? await Task.sleep(for: .milliseconds(delay)) }
                 guard let self, self.wantsBottom else { return }
-                if self.bottomDistance() <= Self.bottomSlack { return }
-                // 直接改 `contentOffset`，**不用** `scrollToItem`：`apply(snapshot)` 是异步的，
-                // 同一轮里 `scrollToItem` 打的是旧数据源的下标，UIKit 会直接忽略
-                // （真机反馈"点了仍无效"，探针里也看到 `before == after`）。
-                // 自撑高度的列表里内容高度是估算值，所以要按 0/120/300/600/1000ms 多修几次。
-                self.setOffsetToBottom()
+                self.pinNow()
             }
-            _ = last
         }
+    }
+
+    /// 程序化钉底一次。期间不对外报跟底几何，避免调用方把这次滚动当成读者离开。
+    private func pinNow() {
+        guard !isPinning else { return }
+        isPinning = true
+        setOffsetToBottom()
+        isPinning = false
+        lastReportedAtBottom = bottomDistance() <= Self.bottomSlack
+    }
+
+    /// 内容高度长高后补钉：只在有意图且读者没有在拖/减速时做。
+    private func pinAfterContentGrowth() {
+        guard wantsBottom, !collectionView.isDragging, !collectionView.isDecelerating else { return }
+        guard bottomDistance() > 1 else { return }
+        pinNow()
     }
 
     /// 视口距底部的距离（点）。
@@ -1091,8 +1115,10 @@ extension TranscriptListHost {
         // （真机反馈过"刷新时偶尔自己跳到底部"——用拖动位移判定跟随是不可靠的）。
         let atBottom = bottomDistance() <= Self.bottomSlack
         lastReportedAtBottom = atBottom
-        onBottomChanged?(atBottom)
-        reportFollowGeometry(scrollView)
+        if !isPinning {
+            onBottomChanged?(atBottom)
+            reportFollowGeometry(scrollView)
+        }
         // **可见余量预取**：离顶端还有一屏半就开始要，而不是等贴到顶（真机反馈"预取太慢"）。
         // 贴着顶时也允许继续要 —— 读者一直往上拉就一页页接着给。
         // 2026-10-18 实测：旧写法是边沿触发（贴顶触发一次、离开两倍边距才重新武装），
@@ -1118,6 +1144,8 @@ extension TranscriptListHost {
     func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
         dragStartOffsetY = scrollView.contentOffset.y
         isUserDraggingUp = false
+        // 读者自己接手：意图结束，之后的滚动不再往底部拽。
+        wantsBottom = false
     }
 
     func scrollViewWillEndDragging(_ scrollView: UIScrollView, withVelocity velocity: CGPoint,

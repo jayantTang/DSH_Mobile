@@ -481,17 +481,21 @@ public struct ChatView: View {
                 .transition(.opacity.combined(with: .scale(scale: 0.9)))
             } else if !isFollowing, !model.timeline.items.isEmpty {
                 Button {
-                    isFollowing = true
-                    userScrolled = false
-                    // 手动回底 = 回到跟底态（T017：胶囊之外的手动回底也清两态）。
-                    model.noteWantsBottom()
-                    listHostRef?.scrollToBottom()
-                    // 新宿主下 `ScrollViewProxy` 不在它的视图树里，走 proxy 等于没反应
-                    // （2026-10-08 真机反馈：点了不生效）。
-                    if ChatProbe.shared.listHost == "uikit" {
-                        listHostRef?.scrollToBottom()
-                    } else {
-                        scrollToBottom(proxy, animated: true)
+                    Task { @MainActor in
+                        // 本地尾部可能落后宿主：先补齐尾部再滚，否则"底"只是本地的底
+                        //（补齐后内容长高，视口停在中间）。与"↓ 新消息"胶囊同一条路径。
+                        if model.pipelineActive { await model.jumpToLatest() }
+                        isFollowing = true
+                        userScrolled = false
+                        // 手动回底 = 回到跟底态（T017：胶囊之外的手动回底也清两态）。
+                        model.noteWantsBottom()
+                        // 新宿主下 `ScrollViewProxy` 不在它的视图树里，走 proxy 等于没反应
+                        // （2026-10-08 真机反馈：点了不生效）。
+                        if ChatProbe.shared.listHost == "uikit" {
+                            listHostRef?.scrollToBottom()
+                        } else {
+                            scrollToBottom(proxy, animated: true)
+                        }
                     }
                 } label: {
                     HStack(spacing: DSHTheme.Spacing.hairline) {
