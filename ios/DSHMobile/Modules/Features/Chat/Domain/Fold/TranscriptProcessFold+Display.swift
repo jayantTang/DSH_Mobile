@@ -32,10 +32,6 @@ extension TranscriptProcessFold {
     /// 没有轮次行、过程区本来就铺开。
     public static func isTurnExpanded(_ turn: Turn, plan: Plan,
                                       state: TranscriptFoldState) -> Bool {
-        // 运行中的轮次默认收起（只有动态运行行）；读者点开才展开。
-        if turn.isRunning {
-            return state.manualTurn[turn.key] ?? false
-        }
         guard turn.canCollapse else { return true }
         if let manual = state.manualTurn[turn.key] { return manual }
         guard let top = state.readerTopRowID else { return false }
@@ -148,7 +144,7 @@ extension TranscriptProcessFold {
     /// 当前在跑的那条分组行带 `isRunning`（视图据此写「正在… · 命令」）。
     private static func displaySummary(_ turn: Turn, plan: Plan,
                                        state: TranscriptFoldState) -> [TimelineItem] {
-        let expanded = isTurnExpanded(turn, plan: plan, state: state)
+        let expanded = turn.isRunning || isTurnExpanded(turn, plan: plan, state: state)
         let header = turnHeader(turn, expanded: expanded)
 
         /// 一个待排序的显示事件。`order` 决定同 seq 的先后：轮次行 → 分组行 →
@@ -177,7 +173,7 @@ extension TranscriptProcessFold {
             if Self.isSuppressedBySummary(item, turn: turn) { continue }
             let visible: Bool
             switch item.kind {
-            case .userMessage, .gap, .runningLine:
+            case .userMessage, .gap:
                 visible = true
             case .toolCall(let invocation)
                 where TranscriptProcessFold.isDeliveryToolName(invocation.name):
@@ -262,29 +258,6 @@ extension TranscriptProcessFold {
     private static func displayRunning(_ turn: Turn, plan: Plan,
                                        state: TranscriptFoldState) -> [TimelineItem] {
         var out = Array(plan.rows[turn.range.lowerBound..<turn.leading.upperBound])
-        let expanded = isTurnExpanded(turn, plan: plan, state: state)
-        if !expanded {
-            // 收起态：只留读者内容与成品，过程由末尾动态运行行代表。
-            out = []
-            for index in turn.range {
-                let item = plan.rows[index]
-                if case .turnDivider = item.kind { continue }
-                if turn.answerIndexes.contains(index) {
-                    out.append(item)
-                    continue
-                }
-                switch item.kind {
-                case .userMessage, .gap:
-                    out.append(item)
-                case .toolCall(let invocation)
-                    where TranscriptProcessFold.isDeliveryToolName(invocation.name):
-                    out.append(item)
-                default:
-                    continue
-                }
-            }
-            return out
-        }
         let groupByMember = Dictionary(uniqueKeysWithValues:
             turn.groups.flatMap { group in group.indexes.map { ($0, group) } })
         let groupByStart = Dictionary(uniqueKeysWithValues:

@@ -157,43 +157,35 @@ struct ProcessGroupRow: View {
 /// 计时每 1 秒刷新一次（与桌面一致），只重算这一行的文本子树，不播报；
 /// 轮次一结束这一行随 `runningDetail` 一起消失，原地换成轮次行的「已完成，用时」。
 struct RunningLine: View {
-    /// 本轮开始的时刻；nil 时只写「思考中」。
+    /// 本轮开始的时刻；nil 时只写「深度求索中」。
     let since: Date?
-    var descriptor: RunningLineDescriptor?
-    var isExpanded: Bool = false
-    var onTap: (() -> Void)?
 
     static let refresh: TimeInterval = ProcessFoldText.runningRefresh
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: Self.refresh)) { context in
-            HStack(spacing: 6) {
-                Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(DSHTheme.labelDimmed)
-                Circle()
-                    .fill(DSHTheme.deepDiving.opacity(0.5))
-                    .frame(width: 7, height: 7)
-                Text(descriptor?.text ?? ProcessFoldText.deepDivingText(elapsed: nil))
-                    .font(DSHTheme.Typography.runningLine)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                Spacer(minLength: 6)
-                if let elapsed = elapsed(at: context.date) {
-                    Text(ProcessFoldText.durationText(elapsed))
-                        .font(DSHTheme.Typography.micro)
+        VStack(alignment: .leading, spacing: 0) {
+            Rectangle()
+                .fill(DSHTheme.border1)
+                .frame(height: 0.5)
+                .padding(.bottom, 10)
+            TimelineView(.periodic(from: .now, by: Self.refresh)) { context in
+                HStack(spacing: 6) {
+                    WhaleTailShape()
+                        .stroke(style: StrokeStyle(lineWidth: 0.9, lineCap: .round, lineJoin: .round))
+                        .frame(width: 14, height: 14)
+                    Text(ProcessFoldText.deepDivingText(elapsed: elapsed(at: context.date)))
+                        .font(DSHTheme.Typography.runningLine)
                         .monospacedDigit()
+                        .lineLimit(1)
                 }
             }
             .foregroundStyle(DSHTheme.deepDiving)
         }
-        .padding(.vertical, 4)
+        .padding(.top, DSHTheme.Spacing.standard)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .contentShape(Rectangle())
-        .onTapGesture { onTap?() }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Text(descriptor?.text ?? ProcessFoldText.deepDivingText(elapsed: nil)))
-        .accessibilityHint(Text(isExpanded ? "收起过程" : "展开过程"))
+        .accessibilityLabel(Text(ProcessFoldText.deepDivingText(elapsed: elapsed(at: Date()))))
+        .allowsHitTesting(false)
     }
 
     private func elapsed(at date: Date) -> TimeInterval? {

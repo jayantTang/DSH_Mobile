@@ -168,12 +168,9 @@ public struct TimelineRunningLine: Sendable, Equatable {
     public static let identity = "running-line"
     /// 本轮开始的时刻；nil 时只写「深度求索中」。
     public let since: Date?
-    /// 这一行所属轮次的折叠键：点行时用它展开/收起该轮过程。
-    public let turnKey: String?
 
-    public init(since: Date?, turnKey: String? = nil) {
+    public init(since: Date?) {
         self.since = since
-        self.turnKey = turnKey
     }
 
     public var id: String { Self.identity }

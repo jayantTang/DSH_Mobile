@@ -45,8 +45,7 @@ public extension ChatModel {
         // 末尾运行行：一轮还在跑时，两个列表宿主都要看到它。
         // 它必须在行模型里（uikit 宿主只渲染 `rowsFor`），身份稳定、不参与裁剪。
         if visible.timeline.isTurnOpen {
-            let runningKey = plan.turns.last(where: { $0.isRunning })?.key
-            rows.append(TimelineRunningLine(since: runningSince, turnKey: runningKey).item)
+            rows.append(TimelineRunningLine(since: runningSince).item)
         }
         // 单条步骤正文的三态贴在步骤行上；模型是唯一所有者，投影只做搬运。
         // 展开状态已经由 `TranscriptProcessFold.displayRows` 从同一份 foldState 贴上。
