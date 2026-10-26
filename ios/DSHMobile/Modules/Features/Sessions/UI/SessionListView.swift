@@ -442,7 +442,8 @@ public struct SessionListView: View {
                            isUnsynced: model.pendingState(for: session.sessionId) == .unsynced,
                            localTitle: model.pendingTitle(for: session.sessionId),
                            activityOverride: activity.snapshot(sessionId: session.sessionId),
-                           activityRevision: activity.revision)
+                           activityRevision: activity.revision,
+                           isFormal: model.isFormalSession(session.sessionId))
             }
             .buttonStyle(.plain)
             // 首个会话行真的画出来了 → 记一条 `app.first-render`（一次拨号一条）。
@@ -495,7 +496,8 @@ public struct SessionListView: View {
                        home: store.hostHome, isChild: true,
                        isJustCreated: session.sessionId == model.lastCreatedSessionId,
                        activityOverride: activity.snapshot(sessionId: session.sessionId),
-                       activityRevision: activity.revision)
+                       activityRevision: activity.revision,
+                       isFormal: model.isFormalSession(session.sessionId))
         }
         .buttonStyle(.plain)
         // 子会话行也是"内容画出来"的一种（同一处语义的两条渲染路径，都要覆盖）。
@@ -680,12 +682,15 @@ public struct SessionRow: View {
     /// 活动状态版本：父视图传入，保证任务/子智能体变化时行一定重算
     ///（仅靠行内读 Observable，SwiftUI 可能因输入不变跳过子视图更新）。
     var activityRevision: Int = 0
+    /// 非正式会话（子智能体/未分组/已归档）不显示运行/等待/任务计数。
+    var isFormal: Bool = true
 
     /// 行自己读活动状态：把快照当参数传时，列表父视图不重算，行永远停在旧值
     ///（2026-10-26：面板已有后台任务、列表行没有）。读在行 body 里才会随
     /// `ActivityModel` 的 Observable 变化刷新。
     private var activity: SessionActivity? {
         _ = activityRevision
+        guard isFormal else { return nil }
         return activityOverride ?? ActivityModel.shared.snapshot(sessionId: session.sessionId)
     }
 

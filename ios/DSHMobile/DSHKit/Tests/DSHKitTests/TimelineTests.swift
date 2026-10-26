@@ -87,6 +87,15 @@ final class TimelineTests: XCTestCase {
         XCTAssertEqual(reply, "你好！有什么可以帮你？")
     }
 
+    func test_message_rows_carry_the_host_time() throws {
+        var timeline = ChatTimeline()
+        _ = timeline.apply(try userMessage(seq: 1, text: "你好"))
+        _ = timeline.apply(try assistantMessage(seq: 2, turn: 1, step: 1,
+                                                blocks: #"{"type":"text","text":"你好！"}"#))
+        XCTAssertEqual(timeline.items[0].at, Date(timeIntervalSince1970: 1_789_276_358.732))
+        XCTAssertEqual(timeline.items[1].at, Date(timeIntervalSince1970: 1_789_276_359))
+    }
+
     func testReasoningAndProseBecomeSeparateRows() throws {
         var timeline = ChatTimeline()
         _ = timeline.apply(try assistantMessage(

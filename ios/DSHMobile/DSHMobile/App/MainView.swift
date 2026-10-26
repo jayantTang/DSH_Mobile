@@ -354,6 +354,7 @@ struct MainView: View {
         for id in ids where !announcedPending.contains(id) {
             announcedPending.insert(id)
             guard let item = hub.pending.first(where: { $0.id == id }) else { continue }
+            guard listModel.isFormalSession(item.sessionId) else { continue }
             // Already looking at it: a banner would only be in the way — unless
             // the app is in the background, where "looking at it" cannot be true.
             if scenePhase == .active, chatModel.session?.sessionId == item.sessionId { continue }

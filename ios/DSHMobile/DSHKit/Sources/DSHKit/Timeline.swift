@@ -87,6 +87,9 @@ public struct TimelineItem: Identifiable, Sendable {
     public var parentID: String? = nil
     /// 拆行时保留整条回答的全文，供复制与选区使用；普通行 nil。
     public var fullText: String? = nil
+    /// 这一行对应事件的宿主时间（`SessionEvent.time`）。用户输入与正式回答
+    /// 用它显示 `HH:mm`；缺口/过程/运行行没有。
+    public var at: Date? = nil
 
     /// 这一行是**还没进入会话历史**的上行消息。
     ///
@@ -100,7 +103,7 @@ public struct TimelineItem: Identifiable, Sendable {
         TimelineItem(id: id, kind: .assistantText(text: text), seq: seq,
                      isStreaming: false, sendFailed: sendFailed,
                      sendUnconfirmed: sendUnconfirmed,
-                     parentID: parentID, fullText: fullText)
+                     parentID: parentID, fullText: fullText, at: at)
     }
 
     public var isUnsavedInput: Bool {
@@ -471,7 +474,8 @@ public struct ChatTimeline: Sendable {
                     isAgentSent: Self.isAgentSent(rpcId: message.rpcId, images: images)
                 ),
                 seq: event.seq,
-                identity: identity
+                identity: identity,
+                at: event.date
             )
 
         case .assistantMessage(let message):
@@ -491,7 +495,8 @@ public struct ChatTimeline: Sendable {
                         kind: .assistantText(text: text),
                         seq: event.seq,
                         identity: "assistant-\(event.seq)-\(index)",
-                        streaming: provisional
+                        streaming: provisional,
+                        at: event.date
                     )
                 case .reasoning(let text):
                     guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
@@ -538,7 +543,8 @@ public struct ChatTimeline: Sendable {
                             isAgentSent: true
                         ),
                         seq: event.seq,
-                        identity: "assistant-image-\(event.seq)-\(index)"
+                        identity: "assistant-image-\(event.seq)-\(index)",
+                        at: event.date
                     )
                 default:
                     continue
@@ -685,7 +691,8 @@ public struct ChatTimeline: Sendable {
                     isAgentSent: Self.isAgentSent(rpcId: spliced.rpcId, images: images)
                 ),
                 seq: event.seq,
-                identity: identity
+                identity: identity,
+                at: event.date
             )
 
         case .titleChanged:
@@ -702,9 +709,10 @@ public struct ChatTimeline: Sendable {
     }
 
     private mutating func append(
-        kind: TimelineItem.Kind, seq: Int, identity: String, streaming: Bool = false
+        kind: TimelineItem.Kind, seq: Int, identity: String, streaming: Bool = false,
+        at: Date? = nil
     ) -> Change {
-        let item = TimelineItem(id: identity, kind: kind, seq: seq, isStreaming: streaming)
+        let item = TimelineItem(id: identity, kind: kind, seq: seq, isStreaming: streaming, at: at)
         // Ids are derived from the event identity so a re-delivered frame
         // updates the existing row instead of duplicating it.
         //

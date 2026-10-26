@@ -77,6 +77,7 @@ struct TimelineRowView: View {
                 isAgentSent: isAgentSent,
                 sendFailed: item.sendFailed,
                 sendUnconfirmed: item.sendUnconfirmed,
+                time: item.at,
                 onResend: item.sendFailed ? { onSendRetry?(item.id) } : nil,
                 onVerify: item.sendUnconfirmed ? { onSendVerify?(item.id) } : nil
             )
@@ -84,8 +85,16 @@ struct TimelineRowView: View {
         case .assistantText(let text):
             // 流式行（isStreaming）整块按纯文本渲染，结束后一次完整解析
             // （代码块补高亮并进 A 类缓存，key 带行身份，T020）。
-            MarkdownText(text: text, isStreaming: item.isStreaming, cacheKey: item.id)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            VStack(alignment: .leading, spacing: 2) {
+                MarkdownText(text: text, isStreaming: item.isStreaming, cacheKey: item.id)
+                if let at = item.at {
+                    Text(at, format: .dateTime.hour().minute())
+                        .font(.system(size: 11))
+                        .foregroundStyle(DSHTheme.labelDimmed)
+                        .accessibilityLabel(at.formatted(date: .omitted, time: .shortened))
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
 
         case .reasoning(let text):
             ReasoningRow(text: text)
@@ -221,6 +230,7 @@ private struct UserMessageRow: View {
     /// 已受理、确认帧却没来（宿主撤单、轮次以错误结束）。既不是"等待开始"，
     /// 也不是"没发出去"：点一次核对，服务端查重命中就转已发送，否则才允许重发。
     var sendUnconfirmed: Bool = false
+    var time: Date?
     var onResend: (() -> Void)?
     var onVerify: (() -> Void)?
 
@@ -299,6 +309,12 @@ private struct UserMessageRow: View {
                         .fill(isAgentSent ? DSHTheme.layer1 : DSHTheme.brandSubtle)
                 )
                 .opacity(isPending ? 0.66 : 1)
+                if let time {
+                    Text(time, format: .dateTime.hour().minute())
+                        .font(.system(size: 11))
+                        .foregroundStyle(DSHTheme.labelDimmed)
+                        .accessibilityLabel(time.formatted(date: .omitted, time: .shortened))
+                }
             }
             if isAgentSent { Spacer(minLength: 40) }
         }

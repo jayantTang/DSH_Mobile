@@ -505,9 +505,20 @@ public final class SessionListModel {
     /// screen that opens sessions — that write is what clears an unseen row.
     public var viewLog: SessionViewLog?
 
+    /// 正式会话：非子智能体、未归档、且属于某个工作区。
+    /// 子进程（后台任务）不是会话；未分组与已归档都按非正式处理。
+    public func isFormalSession(_ sessionId: String) -> Bool {
+        guard let session = allSessions.first(where: { $0.sessionId == sessionId }),
+              !session.isSubagent,
+              !archivedSessionIds.contains(sessionId)
+        else { return false }
+        return !loose.contains { $0.sessionId == sessionId }
+    }
+
     /// What the leading dot should say for this row.
     public func state(of session: SessionSummary) -> SessionRowState {
-        SessionRowState.of(
+        guard isFormalSession(session.sessionId) else { return .finishedSeen }
+        return SessionRowState.of(
             waiting: waitingSessionIds.contains(session.sessionId),
             running: session.running,
             blank: session.blank,
@@ -840,7 +851,7 @@ public final class SessionListModel {
         guard !previouslyRunning.isEmpty else { return }
 
         let finished = previouslyRunning.subtracting(running)
-        guard let id = finished.first,
+        guard let id = finished.first(where: { isFormalSession($0) }),
               let session = allSessions.first(where: { $0.sessionId == id })
         else { return }
 
