@@ -23,6 +23,9 @@ public final class ActivityModel {
     // MARK: - State
 
     private var store = ActivityStore()
+    /// 任何活动状态变化的单调计数：列表父视图读它来强制重算，
+    /// 避免行内 snapshot 的变化要等到下一次列表刷新才上屏。
+    public private(set) var revision = 0
     private weak var hub: HostEventHub?
     private weak var service: (any LinkService)?
     private var eventTask: Task<Void, Never>?
@@ -144,7 +147,7 @@ public final class ActivityModel {
 
     /// 连接态变化（视图在 `store.state.isConnected` 变化时调）。
     public func setConnected(_ connected: Bool) {
-        store.apply(.connection(connected))
+        applyToStore(.connection(connected))
         if connected {
             rosterUnsupported = false
             Task { await refresh() }
@@ -188,7 +191,7 @@ public final class ActivityModel {
         #endif
         guard let service, let client = service.activityHost else { return }
         let capabilities = service.capabilities
-        store.apply(.capabilities(capabilities))
+        applyToStore(.capabilities(capabilities))
         store.setCurrentSession(chatSessionId)
         // 能力位是提示，不是唯一闸门：握手偶尔拿不到 capabilities（实测 relay 建连
         // caps=0），但连接器其实能回答名单；先问一次，成功就以回应为准补上能力。
@@ -197,17 +200,17 @@ public final class ActivityModel {
         do {
             let roster = try await client.activityRoster()
             if !store.isAvailable {
-                store.apply(.capabilities(capabilities.union([LinkHandshake.Capability.jobsRoster])))
+                applyToStore(.capabilities(capabilities.union([LinkHandshake.Capability.jobsRoster])))
                 store.setCurrentSession(chatSessionId)
             }
-            store.apply(.roster(roster))
+            applyToStore(.roster(roster))
         } catch {
             // 旧连接器/无 jobs 服务：整块降级，界面与升级前一致。
             if let failure = error as? DSHRPCFailure,
                failure.code == "link/unsupported" || failure.code == "unsupported" {
                 rosterUnsupported = true
                 DSHLog.push("activity: connector answered \(failure.code); activity surfaces hidden")
-                store.apply(.capabilities(capabilities.subtracting([LinkHandshake.Capability.jobsRoster])))
+                applyToStore(.capabilities(capabilities.subtracting([LinkHandshake.Capability.jobsRoster])))
                 return
             }
             DSHLog.push("activity: roster failed \(error)")
@@ -226,12 +229,12 @@ public final class ActivityModel {
         var next: [String: SessionSummary] = [:]
         for session in sessions { next[session.sessionId] = session }
         summaries = next
-        store.apply(.sessions(sessions))
+        applyToStore(.sessions(sessions))
         for session in sessions where session.sessionId != chatSessionId {
-            store.apply(.turnOpen(session.sessionId, session.running))
+            applyToStore(.turnOpen(session.sessionId, session.running))
         }
         if let chatSessionId {
-            store.apply(.turnOpen(chatSessionId, chatTurnOpen))
+            applyToStore(.turnOpen(chatSessionId, chatTurnOpen))
         }
         store.setCurrentSession(chatSessionId)
     }
@@ -253,7 +256,7 @@ public final class ActivityModel {
         }
         #endif
         if let sessionId {
-            store.apply(.turnOpen(sessionId, isTurnOpen))
+            applyToStore(.turnOpen(sessionId, isTurnOpen))
         }
         store.setCurrentSession(sessionId)
     }
@@ -417,6 +420,11 @@ public final class ActivityModel {
 
     // MARK: - Internals
 
+    private func applyToStore(_ input: ActivityStore.Input) {
+        store.apply(input)
+        revision &+= 1
+    }
+
     private func handle(_ event: HostEvent) {
         guard case .unknown(let type, let raw) = event, type == LinkJobsFrame.frameType else { return }
         guard let value = raw["value"],
@@ -425,7 +433,7 @@ public final class ActivityModel {
         #if DEBUG
         DSHLog.push("activity: frame session=\(frame.sessionId) running=\(frame.running.count) settled=\(frame.settled) at=\(frame.at)")
         #endif
-        store.apply(.frame(frame))
+        applyToStore(.frame(frame))
     }
 
     private func applyOutput(_ frame: JobFollowFrame) {
@@ -465,7 +473,7 @@ public final class ActivityModel {
     private func killFixtureJob(sessionId: String, jobId: String) {
         let remaining = store.liveJobs(sessionId: sessionId).filter { $0.id != jobId }
         let settled = store.settledCount(sessionId: sessionId) + 1
-        store.apply(.frame(LinkJobsFrame(
+        applyToStore(.frame(LinkJobsFrame(
             at: Date().timeIntervalSince1970 * 1000,
             sessionId: sessionId,
             running: remaining,

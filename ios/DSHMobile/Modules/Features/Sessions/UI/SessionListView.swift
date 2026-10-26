@@ -121,6 +121,9 @@ public struct SessionListView: View {
         // 宿主实时状态：`$events` 的 status/activity/added/removed 直接更新列表，
         // 不靠进页面或下拉才刷新（2026-10-26：桌面已结束、手机列表仍显示运行中）。
         .task { await observeHostLiveState() }
+        // 活动状态（后台任务/子智能体/运行点）每次变化都重算列表；
+        // 行内 snapshot 仍各自读，但父视图不依赖它，单靠行内读不足以及时刷新。
+        .onChange(of: activity.revision) { _, _ in }
         .searchable(text: $model.searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "搜索会话")
         .refreshable { await model.refresh() }
         .alert("归档失败", isPresented: Binding(
