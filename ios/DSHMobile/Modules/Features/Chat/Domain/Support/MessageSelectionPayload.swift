@@ -13,8 +13,9 @@ public extension TimelineItem {
             return (isAgentSent ? "助手的消息" : "我的消息", text, false)
 
         case .assistantText(let text):
-            guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
-            return ("助手的回答", text, false)
+            let body = fullText ?? text
+            guard !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+            return ("助手的回答", body, false)
 
         case .toolCall(let invocation):
             let body = Self.plainText(of: invocation)

@@ -26,6 +26,8 @@ struct TranscriptListRepresentable: UIViewRepresentable {
     let makeRow: (TimelineItem) -> AnyView
     /// 钉到底部（打开会话与内容变化时）。
     let pinToBottom: Bool
+    /// 显式"回到底部"信号；每次递增触发一次宿主侧钉底（不依赖按钮闭包里的宿主引用）。
+    let bottomSignal: Int
     /// 探针出口。
     let onDiagnostic: (String, [String: String]) -> Void
     /// 诊断用：宿主是否还有更早的历史、是否正在取页。
@@ -103,6 +105,10 @@ struct TranscriptListRepresentable: UIViewRepresentable {
     }
 
     func updateUIView(_ host: TranscriptListHost, context: Context) {
+        if context.coordinator.lastBottomSignal != bottomSignal {
+            context.coordinator.lastBottomSignal = bottomSignal
+            host.scrollToBottom()
+        }
         let known = context.coordinator.known
         let incoming = items.filter { !known.contains($0.id) }
         let removed = known.subtracting(items.map(\.id))
@@ -164,6 +170,7 @@ struct TranscriptListRepresentable: UIViewRepresentable {
     @MainActor
     final class Coordinator {
         var known: Set<String> = []
+        var lastBottomSignal = 0
         weak var host: TranscriptListHost?
         var onNearTop: (() -> Void)?
         var onDiagnostic: ((String, [String: String]) -> Void)?
@@ -343,9 +350,10 @@ final class TranscriptListHost: UIView, UICollectionViewDelegate {
                             - collectionView.bounds.height)
         collectionView.setContentOffset(CGPoint(x: 0, y: bottom), animated: false)
     }
-    /// "回到底部"的意图：一次点击之后**持续满足**，直到真的到了底部。
+    /// "跟尾"意图：打开会话/点回到底部后**持续满足**，直到读者自己拖动。
     /// 一次性的 `scrollToItem` 会被在飞的批量更新吞掉——真机反馈过"点了仍无效"。
-    private var wantsBottom = false
+    /// 默认打开即跟尾（首帧纪律），读者一旦拖动就退出。
+    private var wantsBottom = true
     /// 正在程序化钉底：这期间 `scrollViewDidScroll` 不报跟底几何，
     /// 否则中间位置的滚动会把调用方的 `isFollowing` 翻成 reading、顺手清掉意图。
     private var isPinning = false
@@ -572,7 +580,10 @@ final class TranscriptListHost: UIView, UICollectionViewDelegate {
             applySnapshot()
             // 快照是异步落的：同一轮里滚会打到旧数据源的下标（见 `scrollTo(id:)` 的注释）。
             // 这里显式推迟一轮，`scrollTo` 里还有一道按实时条数的兜底校验。
-            if let anchorId {
+            if wantsBottom {
+                // 打开/回底后的整批替换：钉底，不按锚点滚到最后一行（那是一行居中，不是底）。
+                satisfyBottomIntent()
+            } else if let anchorId {
                 DispatchQueue.main.async { [weak self] in
                     self?.scrollTo(id: anchorId, animated: false)
                 }
@@ -856,7 +867,17 @@ final class TranscriptListHost: UIView, UICollectionViewDelegate {
                 guard let self, self.wantsBottom else { return }
                 self.pinNow()
             }
+            self?.reportPinnedBottomIfNeeded()
         }
+    }
+
+    /// 钉底结束后把"已经在底部"这个事实报回去：否则打开时那几次程序化滚动
+    /// 报的是 reading，`isFollowing` 停在 false，按钮一直挂着（点了又会再滚一次）。
+    private func reportPinnedBottomIfNeeded() {
+        guard bottomDistance() <= Self.bottomSlack else { return }
+        lastReportedAtBottom = true
+        onBottomChanged?(true)
+        onFollowGeometry?(0, false)
     }
 
     /// 程序化钉底一次。期间不对外报跟底几何，避免调用方把这次滚动当成读者离开。
@@ -865,7 +886,12 @@ final class TranscriptListHost: UIView, UICollectionViewDelegate {
         isPinning = true
         setOffsetToBottom()
         isPinning = false
-        lastReportedAtBottom = bottomDistance() <= Self.bottomSlack
+        let atBottom = bottomDistance() <= Self.bottomSlack
+        lastReportedAtBottom = atBottom
+        if atBottom {
+            onBottomChanged?(true)
+            onFollowGeometry?(0, false)
+        }
     }
 
     /// 内容高度长高后补钉：只在有意图且读者没有在拖/减速时做。
@@ -907,8 +933,16 @@ final class TranscriptListHost: UIView, UICollectionViewDelegate {
     ///
     /// 记成**意图**：`scrollToItem` 一次可能被在飞的批量更新吞掉，所以之后每次布局/更新
     /// 都会再满足一次，直到真的贴到底（或者读者自己滚走）。
+    /// 打开会话/切换窗口后的跟尾：立即钉一次，并让内容高度变化继续钉。
+    func beginFollowingTail() {
+        wantsBottom = true
+        lastReportedAtBottom = true
+        satisfyBottomIntent()
+    }
+
     func scrollToBottom() {
         wantsBottom = true
+        lastReportedAtBottom = true
         satisfyBottomIntent()
         guard rows.last != nil else { return }
         // 诊断：按钮点了到底有没有把视口带走（真机反馈过"点了不生效"）。
@@ -1132,7 +1166,10 @@ extension TranscriptListHost {
         // （真机反馈过"刷新时偶尔自己跳到底部"——用拖动位移判定跟随是不可靠的）。
         let atBottom = bottomDistance() <= Self.bottomSlack
         lastReportedAtBottom = atBottom
-        if !isPinning {
+        // 跟尾模式下、读者没有拖动时，程序化滚动/布局造成的中间位置不算"读者离开"：
+        // 不向外报 reading，否则按钮会在打开/钉底过程中被错误点亮。
+        let programmatic = isPinning || (wantsBottom && !scrollView.isTracking)
+        if !programmatic {
             onBottomChanged?(atBottom)
             reportFollowGeometry(scrollView)
         }

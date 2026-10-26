@@ -51,7 +51,35 @@ public struct ChatView: View {
     /// 唯一来源是 `ChatModel.rowsFor(screen:)`：归属判断在模型里做，渲染与量具读同一处，
     /// 所以"屏幕上画了什么"与"判定量到什么"永远是同一件事。行不属于这一屏时它返回空——
     /// 换会话的过渡帧不会把上一个会话的内容画出来。
-    private var rowsHandedToRenderer: [TimelineItem] { model.rowsFor(screen: sessionId) }
+    private var rowsHandedToRenderer: [TimelineItem] {
+        splitLongAssistantRows(model.rowsFor(screen: sessionId))
+    }
+
+    /// 超长 assistant 回答拆成多个显示行：单条 6,000pt 的行会超出宿主行级
+    /// 虚拟化能覆盖的范围（视口带无行覆盖 → 白屏/贴底失准）。拆分只发生在显示层，
+    /// 折叠、搜索与选择仍以原消息为准（`parentID` / `fullText`）。
+    private func splitLongAssistantRows(_ rows: [TimelineItem]) -> [TimelineItem] {
+        var out: [TimelineItem] = []
+        out.reserveCapacity(rows.count)
+        for item in rows {
+            guard case .assistantText(let text) = item.kind,
+                  !item.isStreaming, text.count > 1_200 else {
+                out.append(item)
+                continue
+            }
+            let parts = AssistantTextSplitter.split(text)
+            guard parts.count > 1 else {
+                out.append(item)
+                continue
+            }
+            for (index, part) in parts.enumerated() {
+                let id = index == 0 ? item.id : "\(item.id)#part\(index)"
+                out.append(item.asAssistantFragment(id: id, text: part,
+                                                    parentID: item.id, fullText: text))
+            }
+        }
+        return out
+    }
 
     #if DEBUG
     /// 量具的输入：这一屏是谁、交出去的行属于谁、交出去几条。
@@ -139,6 +167,11 @@ public struct ChatView: View {
     @State private var listHostRef: TranscriptListHost?
     /// 宿主正在执行"我们发起的滚动"（回到底部/打开钉底）时为真：这期间不要把它当成"读者滚走了"。
     @State private var listHostRefIsScrollingProgrammatically = false
+    /// 宿主几何给出的"此刻是否贴底"：按钮显隐只认这个事实，不认可能滞后的 `isFollowing`。
+    @State private var hostAtBottom = true
+    /// 回到底部的信号：DOM 里没有可依赖的滚动代理，走 representable 的更新周期
+    /// 交给宿主（比在按钮闭包里拿一个可能为 nil 的宿主引用可靠）。
+    @State private var bottomSignal = 0
     /// 刚刚跳过去、正在高亮的那一行。
     @State private var highlightedItemId: String?
     /// 高亮的清除任务（连续跳转时上一次要取消）。
@@ -481,23 +514,20 @@ public struct ChatView: View {
                 .padding(.trailing, DSHTheme.Spacing.loose)
                 .padding(.bottom, DSHTheme.Spacing.tight)
                 .transition(.opacity.combined(with: .scale(scale: 0.9)))
-            } else if !isFollowing, !model.timeline.items.isEmpty {
+            } else if !hostAtBottom, userScrolled, !model.timeline.items.isEmpty {
                 Button {
+                    // 先滚：读者点下去立刻有反馈；尾部补齐在后台做，回来再钉一次。
+                    // `userScrolled` 先留着：只有宿主真的报到底才清，没滚到位就还能再点。
+                    isFollowing = true
+                    model.noteWantsBottom()
+                    requestBottomScroll(proxy)
                     Task { @MainActor in
-                        // 本地尾部可能落后宿主：先补齐尾部再滚，否则"底"只是本地的底
-                        //（补齐后内容长高，视口停在中间）。与"↓ 新消息"胶囊同一条路径。
-                        if model.pipelineActive { await model.jumpToLatest() }
+                        // 只有还在跑的会话才需要补齐尾部；已完成的会话本地底部就是真底，
+                        // 再做一次 summary 刷新/补齐只会让点击变慢，还可能把视图拉回中间。
+                        guard model.pipelineActive, model.isRunning else { return }
+                        await model.jumpToLatest()
                         isFollowing = true
-                        userScrolled = false
-                        // 手动回底 = 回到跟底态（T017：胶囊之外的手动回底也清两态）。
-                        model.noteWantsBottom()
-                        // 新宿主下 `ScrollViewProxy` 不在它的视图树里，走 proxy 等于没反应
-                        // （2026-10-08 真机反馈：点了不生效）。
-                        if ChatProbe.shared.listHost == "uikit" {
-                            listHostRef?.scrollToBottom()
-                        } else {
-                            scrollToBottom(proxy, animated: true)
-                        }
+                        requestBottomScroll(proxy)
                     }
                 } label: {
                     HStack(spacing: DSHTheme.Spacing.hairline) {
@@ -597,7 +627,7 @@ public struct ChatView: View {
         .onAppear {
             isFollowing = true
             ChatProbe.shared.resume?()
-            scrollToBottom(proxy, animated: false)
+            requestBottomScroll(proxy, open: true)
         }
         .onChange(of: searchJumpHit) { _, hit in
             searchJumped(hit, proxy: proxy)
@@ -643,6 +673,7 @@ public struct ChatView: View {
         // 注意：**不要**把 `topDistance` 清掉。它是滚动几何的事实，不是会话状态；
         // 而"首次布局时内容还是空的、视口就停在顶部"这种情况，几何值此后**再也不变**，
         // 清了就永远补不回来（2026-09-24 实测：清了之后补页和钉底一起失灵）。
+        hostAtBottom = true
         if let sessionId { pinOnOpen(proxy, sessionId: sessionId) }
         evaluateTopDistance(proxy)
     }
@@ -681,6 +712,7 @@ public struct ChatView: View {
                 items: rowsHandedToRenderer,
                 makeRow: { AnyView(row($0)) },
                 pinToBottom: isFollowing,
+                bottomSignal: bottomSignal,
                 onDiagnostic: { name, fields in ChatProbe.shared.probeNote?(name, fields, true) },
                 canLoadOlder: { model.hasOlder },
                 isLoadingOlder: { model.isLoadingOlder },
@@ -749,6 +781,7 @@ public struct ChatView: View {
                     }
                 },
                 onBottomChanged: { atBottom in  // 几何驱动
+                    hostAtBottom = atBottom
                     if model.processToggleFollowHold { return }
                     // 009 管道 + uikit 宿主：跟随判定由跟底两态接管（48pt + 向上拖动
                     // 抑制，见 onFollowGeometry），这条旧回调只在其它路径生效。
@@ -763,7 +796,8 @@ public struct ChatView: View {
                     } else {
                         isFollowing = false
                         userScrolled = true
-                        listHostRef?.noteUserMovedAwayFromBottom()
+                        // 跟尾意图由宿主拥有：只有读者真正拖动（或程序化跳转）才清，
+                        // 几何回调不能清——程序化钉底过程中的中间位置会误报"离开"。
                     }
                 },
                 onFollowGeometry: { distance, draggingUp in
@@ -785,7 +819,7 @@ public struct ChatView: View {
                     } else if isFollowing {
                         isFollowing = false
                         userScrolled = true
-                        listHostRef?.noteUserMovedAwayFromBottom()
+                        // 同上：不清宿主的跟尾意图，交给拖动回调。
                     }
                 },
                 jumpToId: listJumpId,
@@ -1065,7 +1099,7 @@ public struct ChatView: View {
         return rowView
             // 搜索跳过来的那一行：淡底 + 左侧色条，一眼能认出"就是这条"。
             .background(alignment: .leading) {
-                if highlightedItemId == item.id {
+                if highlightedItemId == item.id || highlightedItemId == item.parentID {
                     RoundedRectangle(cornerRadius: 10)
                         .fill(DSHTheme.brand.opacity(0.10))
                         .overlay(alignment: .leading) {
@@ -1570,7 +1604,7 @@ public struct ChatView: View {
                 if delay > 0 { try? await Task.sleep(for: .milliseconds(delay)) }
                 if Task.isCancelled { return }
                 guard openedSessionId == opened, !userScrolled, ownsTranscript else { return }
-                proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)
+                requestBottomScroll(proxy, open: true)
             }
             // 打开阶段结束，跟随恢复常规（可动画）行为。
             isFollowing = true
@@ -1631,6 +1665,21 @@ public struct ChatView: View {
     /// append asks to follow. Scrolling — and especially animating a scroll —
     /// on every token saturates the main thread, and a blocked main thread
     /// renders nothing, which is what a blank transcript looks like.
+    /// 请求宿主滚到底：打开/回底共用一个入口，按宿主类型分派（不在各处重复分支）。
+    private func requestBottomScroll(_ proxy: ScrollViewProxy, open: Bool = false) {
+        if ChatProbe.shared.listHost == "uikit" {
+            if open {
+                listHostRef?.beginFollowingTail()
+            } else {
+                bottomSignal &+= 1
+            }
+        } else if open {
+            proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)
+        } else {
+            scrollToBottom(proxy, animated: true)
+        }
+    }
+
     private func scrollToBottom(_ proxy: ScrollViewProxy, animated: Bool = true, force: Bool = false) {
         model.releaseProcessToggleFollow()
         // 唯一的滚动出口，所以"不是我的会话就别滚"也只需要在这里把一道关。
