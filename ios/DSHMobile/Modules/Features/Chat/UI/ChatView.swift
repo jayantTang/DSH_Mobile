@@ -234,11 +234,9 @@ public struct ChatView: View {
         }
         .onChange(of: model.completionSignal) {
             guard let finished = model.completion else { return }
-            let normal = finished.reason == "completed" || finished.reason == "unknown"
-            var text = normal ? "本轮已完成" : TurnDividerRow.describe(finished.reason)
-            if let duration = finished.duration {
-                text += " · " + String(format: String(localized: "用时 %.1fs"), duration)
-            }
+            // 与转写里的轮次行同一句：不再另立一套「本轮已完成」的说法。
+            let text = ProcessFoldText.turnLabel(endReason: finished.reason,
+                                                 duration: finished.duration)
             withAnimation(.snappy(duration: 0.2)) { completionBanner = text }
             Task {
                 try? await Task.sleep(for: .seconds(3.5))
@@ -439,7 +437,12 @@ public struct ChatView: View {
             }
         )
         .overlay(alignment: .top) { olderLoadingPill }
-        .overlay(alignment: .top) { olderRetryBar }
+        .overlay(alignment: .top) {
+            VStack(spacing: DSHTheme.Spacing.hairline) {
+                summaryRetryBar
+                olderRetryBar
+            }
+        }
         .overlay(alignment: .bottomTrailing) {
             // 009「↓ 新消息」胶囊（T018）：reading 态且有新消息到达时出现，
             // 点击一律滚到最新（差值补齐与降级在模型侧，见 ChatModel+Follow）。
@@ -879,6 +882,39 @@ public struct ChatView: View {
             .onDisappear { sentinelNearTop = false }
     }
 
+    /// 首屏概要取数失败的页级重试条（能力 `history-fold-summary-v2`）。
+    ///
+    /// 概要模式按整轮取数：某一轮大到一页读不完时，连接器如实回 `link/too-large`，
+    /// 这里把它变成一句能行动的话。失败不静默、不阻断已有内容，也不影响单条卡片。
+    @ViewBuilder
+    private var summaryRetryBar: some View {
+        if model.summaryScreenState.isFailed {
+            let tooLarge: Bool = {
+                if case .failed(let tooLarge) = model.summaryScreenState { return tooLarge }
+                return false
+            }()
+            Button {
+                ChatProbe.shared.probeNote?("summary.retry.tap", [:], true)
+                Task { await model.retrySummaryScreen() }
+            } label: {
+                HStack(spacing: DSHTheme.Spacing.hairline) {
+                    Image(systemName: "arrow.clockwise")
+                    Text(tooLarge
+                         ? "概要加载失败：有一轮过大，点按重试"
+                         : "概要加载失败，点按重试")
+                }
+                .font(DSHTheme.Typography.micro)
+                .foregroundStyle(DSHTheme.labelPrimary)
+                .padding(.horizontal, DSHTheme.Spacing.tight)
+                .padding(.vertical, 6)
+                .background(DSHTheme.layer3, in: Capsule())
+                .overlay(Capsule().stroke(DSHTheme.border2, lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("chat.summary.retry")
+        }
+    }
+
     /// 取页失败时的重试条：浮在转写区顶部，不进内容（行高恒定，见 `olderSentinel`）。
     ///
     /// 为什么必须有：取页失败曾经是**完全静默**的——`hasOlder` 被写成 false，读者只看到
@@ -948,6 +984,15 @@ public struct ChatView: View {
         }
     }
 
+    /// 过程行的行底留白。
+    ///
+    /// 轮次行与回答之间按桌面留 16pt；分组行之间只留一条缝——每组都是 20pt 高的一行，
+    /// 用正文那 12pt 会把一组拆成一条条孤立的行。
+    static func rowBottomPadding(for item: TimelineItem) -> CGFloat {
+        guard case .processHeader(let header) = item.kind else { return DSHTheme.Spacing.standard }
+        return header.scope == .group ? DSHTheme.Spacing.hairline : 16
+    }
+
     /// 一行消息。抽出来是为了让"懒加载/非懒加载"两种排布共用同一份定义。
     private func row(_ item: TimelineItem) -> some View {
         var rowView = TimelineRowView(item: item)
@@ -963,10 +1008,30 @@ public struct ChatView: View {
         rowView.onSendVerify = { rowId in
             Task { await model.verifySend(rowId: rowId) }
         }
+        // 运行中的那条分组行写「正在<动作> · <当前命令/工具>」。
+        if case .processHeader(let header) = item.kind, header.scope == .group, header.isRunning {
+            rowView.processRunning = model.runningDetail
+        }
         // 018：subagent 卡绑定运行态与「打开子会话」；其它卡片读不到证据就不加行。
         rowView.activity = activity
         rowView.onOpenSession = onOpenSession
         rowView.parentSessionId = model.session?.sessionId
+        if case .processStep(let step) = item.kind {
+            rowView.processStepExpanded = model.isProcessStepExpanded(step.id)
+        }
+        rowView.onToggleProcessStep = { id in
+            // 展开步骤卡会按需取一条正文：与过程节点一样先退出跟随，
+            // 免得同一次更新里的"钉底"把卡片顶走。
+            isFollowing = false
+            userScrolled = true
+            model.holdProcessToggleFollow()
+            ChatProbe.shared.probeNote?("process.step.toggle", ["id": id], true)
+            model.toggleProcessStep(id)
+        }
+        rowView.onRetryProcessStep = { id in
+            ChatProbe.shared.probeNote?("process.step.retry", ["id": id], true)
+            model.retryProcessStepBody(id)
+        }
         rowView.onToggleProcess = {
             if case .processHeader(let header) = item.kind {
                 // 展开/收起是读者动作：先退出跟随，否则同一次更新里的"钉底"
@@ -1007,7 +1072,8 @@ public struct ChatView: View {
                         }
                 }
             }
-            .modifier(TranscriptRowChrome(inList: !ChatProbe.shared.lazyStack))
+            .modifier(TranscriptRowChrome(inList: !ChatProbe.shared.lazyStack,
+                                          bottomPadding: Self.rowBottomPadding(for: item)))
             .id(item.id)
             .probed("row:\(item.id)")
             // 长按 = 这一行的文字入口：全文/选择文本、拷贝整条。
@@ -1052,6 +1118,8 @@ public struct ChatView: View {
                 // 没有提示、也没有气泡时的占位：1pt、看不见，只为"这一行在"。
                 Color.clear.frame(height: 1)
             }
+            // 运行行不再画在这里：它是显示行（`rowsFor` 末尾的 `running-line`），
+            // uikit 与 stack 两个宿主都能渲染（TC-112 的根因就是它原来只住在这里）。
         }
         .modifier(TranscriptRowChrome(inList: !ChatProbe.shared.lazyStack))
         .probed("tail")

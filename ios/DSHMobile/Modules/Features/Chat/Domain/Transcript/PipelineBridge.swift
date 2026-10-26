@@ -55,8 +55,14 @@ public extension ChatModel {
 
     /// 关会话/换连接时停掉订阅（订阅的 onTermination 会自行从管道注销）。
     public func stopPipelineSubscription() {
+        let hadBridge = pipelineBridge != nil
         pipelineBridge?.stop()
         pipelineBridge = nil
+        // 管道的取页失败随管道一起失效：状态只在管道 active 时成立，
+        // 停掉之后非管道宿主不该继续画那条「读取更早的记录失败」胶囊。
+        if hadBridge, case .failed = olderState {
+            setOlderState(.idle)
+        }
     }
 
     /// 缺口行「加载失败，点击重试」（T016：清计数后重拉，3 次上限仍由管道把守）。
@@ -129,6 +135,9 @@ final class ChatPipelineBridge {
     private var didWarmOlder = false
 
     private func warmOlderWindowOnce() {
+        // v2 能力在时旧页由 `loadOlderSummaryPage` 按轮取；这里再做 v1 式的
+        // "预先备两页"等于把同一段多取一遍。
+        guard model?.store?.chatHost?.historySummaryFoldEnabled != true else { return }
         guard !didWarmOlder, let session, let oldest = records.keys.min(), oldest > 1 else { return }
         didWarmOlder = true
         // 预取只备视口上方两页（spec：视口前后各 2 页），且走统一的取页入口，
@@ -454,6 +463,21 @@ final class ChatPipelineBridge {
     public func absorb(records: [SessionRecord]) async {
         guard let session, !records.isEmpty else { return }
         await session.apply(events: records.map(\.event))
+    }
+
+    /// 采纳一页概要 v2（首屏概要取数）：记录稀疏但整段已读。
+    ///
+    /// 走管道自己的合并路径：热窗口 + 区间集 + 落库 + diff，随后 `refold` 把
+    /// 讲话/回答/概要折进时间线。调用方是 `ChatModel.loadSummaryScreen`。
+    public func adoptSummaryPage(records: [SessionRecord], covered: ClosedRange<Int>,
+                                 hasMore: Bool, clamped: Bool = false,
+                                 knownEmpty: [[Int]] = [], revision: String? = nil) async {
+        guard let session else { return }
+        // 空页也要进：`hasMore=false` / `clamped` 是「到最早」的唯一证据，
+        // 吞掉它们会把"被截断"一直当成"没到底"。
+        await session.adoptSummaryPage(records: records, covered: covered, hasMore: hasMore,
+                                       clamped: clamped, knownEmpty: knownEmpty,
+                                       revision: revision)
     }
 
     /// 管道窗口里**真的装着**这条 seq 吗——跳转要不要换窗口的判据。

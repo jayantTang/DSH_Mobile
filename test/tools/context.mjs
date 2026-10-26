@@ -359,7 +359,11 @@ export function bootSimulator(simId) {
     run('xcrun', ['simctl', 'status_bar', simId, 'override', '--time', '9:41',
                   '--batteryLevel', '100', '--cellularBars', '4', '--wifiBars', '3'], { quiet: true })
   } catch { /* older runtimes */ }
-  try { run('xcrun', ['simctl', 'ui', simId, 'appearance', 'light'], { quiet: true }) } catch { }
+  // 外观默认浅色（保证同一用例两次运行像素一致）；深色核对用 SIM_APPEARANCE=dark。
+  // 之前这里写死 light，带 `simctl ui … appearance dark` 设好再跑也会被这一行改回来，
+  // 深色用例拍出来全是浅色（2026-10-26 第一次深色核对踩到）。
+  const appearance = process.env.SIM_APPEARANCE === 'dark' ? 'dark' : 'light'
+  try { run('xcrun', ['simctl', 'ui', simId, 'appearance', appearance], { quiet: true }) } catch { }
   try {
     // A connected hardware keyboard swallows `typeText`.
     run('defaults', ['write', `com.apple.iphonesimulator.${simId}`,
@@ -378,8 +382,18 @@ export function installRunner(simId) {
 }
 
 export function runnerDocuments(simId) {
-  return join(run('xcrun', ['simctl', 'get_app_container', simId, RUNNER_BUNDLE_ID, 'data'],
-                  { quiet: true }).trim(), 'Documents')
+  // 主仿真器上 xcodebuild test 会按工程里的 id 装 runner；在**新**仿真器上
+  // `simctl install` 装出来的 bundle id 是 `.xctrunner`，两者不同。以前只认前者，
+  // 于是新机（390/430 宽核对）在 stagePlan 就报 "No such file or directory"。
+  // 两个 id 依次试，取到哪个用哪个。
+  for (const id of [RUNNER_BUNDLE_ID, '.xctrunner']) {
+    try {
+      const dir = run('xcrun', ['simctl', 'get_app_container', simId, id, 'data'],
+                      { quiet: true }).trim()
+      if (dir) return join(dir, 'Documents')
+    } catch { /* 试下一个 */ }
+  }
+  throw new Error(`在 ${simId} 上找不到 UI 测试 runner 的容器（试过 ${RUNNER_BUNDLE_ID} 与 .xctrunner）——先在该仿真器上跑一次 xcodebuild test`)
 }
 
 export function stagePlan(simId, plan) {

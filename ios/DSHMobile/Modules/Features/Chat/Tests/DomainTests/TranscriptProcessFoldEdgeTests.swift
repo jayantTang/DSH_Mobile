@@ -74,24 +74,17 @@ final class TranscriptProcessFoldEdgeTests: XCTestCase {
         XCTAssertTrue(texts.contains("and this"))
     }
 
-    func test_foldability_predicate_has_no_gap_or_interleaved_input_terms() {
-        // 判据只由这四项决定；gap、中途插话与预折摘要都不在签名里，
-        // 任何一项都不应把整轮重新变成不可折。
+    func test_foldability_predicate_has_no_gap_failure_or_interleaved_input_terms() {
+        // 判据只由这三项决定；gap、中途插话、失败与预折摘要都不在签名里——
+        // 失败与正常完成同一套折叠（M5），任何一项都不应把整轮重新变成不可折。
         XCTAssertTrue(TranscriptProcessFold.isFoldable(
-            hasDivider: true, isRunning: false, hasFailure: false,
-            hasProcessRows: true))
+            hasDivider: true, isRunning: false, hasProcessRows: true))
         XCTAssertFalse(TranscriptProcessFold.isFoldable(
-            hasDivider: false, isRunning: false, hasFailure: false,
-            hasProcessRows: true))
+            hasDivider: false, isRunning: false, hasProcessRows: true))
         XCTAssertFalse(TranscriptProcessFold.isFoldable(
-            hasDivider: true, isRunning: true, hasFailure: false,
-            hasProcessRows: true))
+            hasDivider: true, isRunning: true, hasProcessRows: true))
         XCTAssertFalse(TranscriptProcessFold.isFoldable(
-            hasDivider: true, isRunning: false, hasFailure: true,
-            hasProcessRows: true))
-        XCTAssertFalse(TranscriptProcessFold.isFoldable(
-            hasDivider: true, isRunning: false, hasFailure: false,
-            hasProcessRows: false))
+            hasDivider: true, isRunning: false, hasProcessRows: false))
     }
 
     func test_tail_without_a_divider_and_not_running_is_not_folded() throws {
@@ -130,7 +123,7 @@ final class TranscriptProcessFoldEdgeTests: XCTestCase {
         }.first?.toolCount, 120)
     }
 
-    func test_collapsed_group_does_not_hide_the_final_answer_or_divider() throws {
+    func test_group_state_never_hides_the_final_answer_or_the_turn_row() throws {
         let timeline = try ProcessFoldFixtures.timeline(
             ProcessFoldFixtures.completedTurn(turn: 1, startSeq: 1, tools: 4,
                                                reasoning: 2, intermediate: true))
@@ -138,10 +131,15 @@ final class TranscriptProcessFoldEdgeTests: XCTestCase {
         let turn = try XCTUnwrap(plan.turns.first)
         var state = TranscriptFoldState()
         state.manualTurn[turn.key] = true
-        for group in turn.groups { state.collapsedGroups.insert(group.key) }
+        // 组默认收起（expandedGroups 为空）；回答与轮次行都不受组状态影响。
         let rows = TranscriptProcessFold.displayRows(plan, state: state)
         XCTAssertTrue(rows.contains { if case .assistantText(let text) = $0.kind { return text.hasPrefix("answer") }; return false })
-        XCTAssertTrue(rows.contains { if case .turnDivider = $0.kind { return true }; return false })
+        XCTAssertTrue(rows.contains { if case .processHeader(let header) = $0.kind, header.scope == .turn { return true }; return false })
+        XCTAssertFalse(rows.contains { if case .turnDivider = $0.kind { return true }; return false })
+        // 组展开再收起都不改变回答与轮次行。
+        for group in turn.groups { state.expandedGroups.insert(group.key) }
+        let expanded = TranscriptProcessFold.displayRows(plan, state: state)
+        XCTAssertTrue(expanded.contains { if case .assistantText(let text) = $0.kind { return text.hasPrefix("answer") }; return false })
     }
 
     func test_reader_on_a_group_member_holds_the_turn_open() throws {

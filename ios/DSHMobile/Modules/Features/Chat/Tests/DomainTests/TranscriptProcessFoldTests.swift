@@ -30,7 +30,7 @@ final class TranscriptProcessFoldTests: XCTestCase {
 
     // MARK: - Folding
 
-    func test_a_completed_turn_folds_to_question_process_answer_and_divider() throws {
+    func test_a_completed_turn_folds_to_one_turn_row_and_keeps_the_answer() throws {
         let timeline = try completed(tools: 2)
         let plan = plan(timeline)
         let turn = try XCTUnwrap(plan.turns.first)
@@ -39,7 +39,8 @@ final class TranscriptProcessFoldTests: XCTestCase {
         XCTAssertEqual(turn.reasoningCount, 1)
 
         let rows = TranscriptProcessFold.displayRows(plan, state: TranscriptFoldState())
-        XCTAssertEqual(rows.count, 4)
+        // 一行轮次行取代原来的「折叠行 + 已完成分隔行」两行；回答始终可见。
+        XCTAssertEqual(rows.count, 3, "folded rows: \(rows.map(\.id))")
         guard case .userMessage = rows[0].kind else { return XCTFail("first row must be the question") }
         let header = try XCTUnwrap(self.header(rows[1]))
         XCTAssertEqual(header.scope, .turn)
@@ -47,20 +48,100 @@ final class TranscriptProcessFoldTests: XCTestCase {
         XCTAssertEqual(header.toolCount, 2)
         guard case .assistantText(let answer) = rows[2].kind else { return XCTFail("second visible row must be the answer") }
         XCTAssertEqual(answer, "answer 1")
-        guard case .turnDivider = rows[3].kind else { return XCTFail("last row must be the divider") }
     }
 
-    func test_expanding_restores_every_original_row_in_order() throws {
+    func test_the_turn_divider_is_never_projected() throws {
+        // 收起、展开、失败、中断四种情况都不再输出分隔行：轮次行底部的 0.5pt 线
+        // 承担边界职责，屏幕上不再有第二条「已完成」。
+        for reason in ["completed", "error", "aborted", "max-steps"] {
+            let timeline = try ProcessFoldFixtures.timeline([
+                ProcessFoldFixtures.turnStart(seq: 1, turn: 1),
+                ProcessFoldFixtures.user(seq: 2, text: "q"),
+                ProcessFoldFixtures.toolCall(seq: 3, callId: "c1", name: "bash"),
+                ProcessFoldFixtures.assistant(seq: 4, text: "a"),
+                ProcessFoldFixtures.turnEnd(seq: 5, reason: reason),
+            ])
+            let plan = plan(timeline)
+            let turn = try XCTUnwrap(plan.turns.first)
+            for expanded in [false, true] {
+                var state = TranscriptFoldState()
+                state.manualTurn[turn.key] = expanded
+                let rows = TranscriptProcessFold.displayRows(plan, state: state)
+                XCTAssertFalse(rows.contains { if case .turnDivider = $0.kind { return true }; return false },
+                               "divider leaked for \(reason) (expanded: \(expanded))")
+                XCTAssertTrue(rows.contains { if case .assistantText(let text) = $0.kind { return text == "a" }; return false },
+                              "answer was folded away for \(reason)")
+            }
+        }
+    }
+
+    func test_expanding_a_turn_shows_group_rows_and_expanding_a_group_restores_its_steps() throws {
         let timeline = try completed(tools: 3, intermediate: true)
         let plan = plan(timeline)
         let turn = try XCTUnwrap(plan.turns.first)
         var state = TranscriptFoldState()
         state.manualTurn[turn.key] = true
 
-        let rows = TranscriptProcessFold.displayRows(plan, state: state)
-        let withoutHeaders = rows.filter { self.header($0) == nil }
-        XCTAssertEqual(ids(withoutHeaders), ids(timeline.items))
-        XCTAssertTrue(rows.contains { if case .assistantText(let text) = $0.kind { return text == "still working 1" }; return false })
+        let groupsOnly = TranscriptProcessFold.displayRows(plan, state: state)
+        XCTAssertEqual(groupsOnly.compactMap { header($0)?.scope == .group ? true : nil }.count,
+                       turn.groups.count)
+        XCTAssertTrue(groupsOnly.contains { if case .assistantText(let text) = $0.kind { return text == "still working 1" }; return false })
+        // 组默认收起：展开轮次这时还看不到任何步骤卡。
+        XCTAssertFalse(groupsOnly.contains { item in
+            if case .toolCall = item.kind { return true }
+            return false
+        })
+
+        for group in turn.groups { state.expandedGroups.insert(group.key) }
+        let fullyOpen = TranscriptProcessFold.displayRows(plan, state: state)
+        let withoutProxies = fullyOpen.filter { self.header($0) == nil }
+        let originals = timeline.items.filter { if case .turnDivider = $0.kind { return false }; return true }
+        XCTAssertEqual(ids(withoutProxies), ids(originals),
+                       "every original row except the dropped divider must be back, in order")
+    }
+
+    func test_after_a_cancel_the_group_row_is_no_longer_marked_running() throws {
+        // 运行中 → 取消：同一个分组行的 isRunning 必须翻回 false，
+        // 行签名（`TimelineRowSignature`）据此重载，标题从「正在分析请求」回到静态短语。
+        var timeline = ChatTimeline()
+        let running: [[String: JSONValue]] = [
+            ProcessFoldFixtures.turnStart(seq: 1, turn: 1),
+            ProcessFoldFixtures.user(seq: 2, text: "q"),
+            ProcessFoldFixtures.toolCall(seq: 3, callId: "c1", name: "bash"),
+        ]
+        for event in running { _ = timeline.apply(try ProcessFoldFixtures.record(event).event) }
+        let runningPlan = TranscriptProcessFold.plan(items: timeline.items, isTurnOpen: true,
+                                                     currentTurn: 1)
+        let runningTurn = try XCTUnwrap(runningPlan.turns.first)
+        XCTAssertFalse(runningTurn.groups.isEmpty)
+        let runningHeaders = TranscriptProcessFold.displayRows(runningPlan, state: TranscriptFoldState())
+            .compactMap { item -> TimelineProcessHeader? in
+                if case .processHeader(let header) = item.kind { return header }
+                return nil
+            }
+        let runningHeader = try XCTUnwrap(runningHeaders.first { $0.scope == .group })
+        XCTAssertTrue(runningHeader.isRunning)
+        XCTAssertTrue(ProcessFoldText.runningGroupTitle(activity: .commands, detail: "x")
+            .hasPrefix("正在"))
+
+        _ = timeline.apply(try ProcessFoldFixtures.record(
+            ProcessFoldFixtures.turnEnd(seq: 4, turn: 1, reason: "interrupted")).event)
+        let endedPlan = TranscriptProcessFold.plan(items: timeline.items, isTurnOpen: false,
+                                                   currentTurn: 1)
+        let endedTurn = try XCTUnwrap(endedPlan.turns.first)
+        var state = TranscriptFoldState()
+        state.manualTurn[endedTurn.key] = true
+        let endedHeaders = TranscriptProcessFold.displayRows(endedPlan, state: state)
+            .compactMap { item -> TimelineProcessHeader? in
+                if case .processHeader(let header) = item.kind { return header }
+                return nil
+            }
+        let endedGroup = try XCTUnwrap(endedHeaders.first { $0.scope == .group })
+        XCTAssertFalse(endedGroup.isRunning, "取消后分组行不再运行")
+        XCTAssertEqual(ProcessFoldText.groupTitle(endedGroup.activityCounts), "执行了命令")
+        XCTAssertNotEqual(TimelineRowSignature.of(runningHeader.item),
+                          TimelineRowSignature.of(endedGroup.item),
+                          "签名必须变化，否则列表不会重载这一行")
     }
 
     func test_pure_qna_has_no_process_header() throws {
@@ -72,11 +153,16 @@ final class TranscriptProcessFoldTests: XCTestCase {
         ])
         let plan = plan(timeline)
         XCTAssertFalse(try XCTUnwrap(plan.turns.first).isFoldable)
-        XCTAssertEqual(ids(TranscriptProcessFold.displayRows(plan, state: TranscriptFoldState())),
-                       ids(timeline.items))
+        // 没有过程就不出轮次行；分隔行也一并消失，只剩讲话与回答。
+        let rows = TranscriptProcessFold.displayRows(plan, state: TranscriptFoldState())
+        XCTAssertFalse(rows.contains { header($0) != nil })
+        XCTAssertFalse(rows.contains { if case .turnDivider = $0.kind { return true }; return false })
+        let expected = timeline.items.filter { if case .turnDivider = $0.kind { return false }; return true }
+        XCTAssertEqual(ids(rows), ids(expected))
     }
 
-    func test_running_turn_stays_expanded() throws {
+    func test_running_turn_has_no_turn_row_and_one_collapsed_group_row() throws {
+        // 运行中没有轮次行：当前分组行就是过程区的入口（桌面 board3）。
         let timeline = try ProcessFoldFixtures.timeline([
             ProcessFoldFixtures.turnStart(seq: 1, turn: 1),
             ProcessFoldFixtures.user(seq: 2, text: "q"),
@@ -86,23 +172,66 @@ final class TranscriptProcessFoldTests: XCTestCase {
         let turn = try XCTUnwrap(plan.turns.first)
         XCTAssertTrue(turn.isRunning)
         XCTAssertFalse(turn.isFoldable)
-        XCTAssertEqual(ids(TranscriptProcessFold.displayRows(plan, state: TranscriptFoldState())),
-                       ids(timeline.items))
+        let rows = TranscriptProcessFold.displayRows(plan, state: TranscriptFoldState())
+        XCTAssertFalse(rows.contains { header($0)?.scope == .turn }, "a running turn has no turn row")
+        XCTAssertFalse(rows.contains { if case .turnDivider = $0.kind { return true }; return false })
+        let groupHeaders = rows.compactMap { item -> TimelineProcessHeader? in
+            if case .processHeader(let header) = item.kind, header.scope == .group { return header }
+            return nil
+        }
+        XCTAssertEqual(groupHeaders.count, 1, "the current group row is the only process row")
+        XCTAssertEqual(groupHeaders.first?.isRunning, true)
+        XCTAssertFalse(rows.contains { if case .toolCall = $0.kind { return true }; return false },
+                       "the running group is collapsed until the reader taps it")
     }
 
-    func test_error_turn_stays_expanded() throws {
-        for reason in ["error", "failed", "cancelled", "interrupted", "aborted"] {
+    func test_error_turn_folds_like_a_normal_completion() throws {
+        let timeline = try ProcessFoldFixtures.timeline([
+            ProcessFoldFixtures.turnStart(seq: 1, turn: 1),
+            ProcessFoldFixtures.user(seq: 2, text: "q"),
+            ProcessFoldFixtures.toolCall(seq: 3, callId: "c1", name: "bash"),
+            ProcessFoldFixtures.toolResult(seq: 4, callId: "c1", isError: true),
+            ProcessFoldFixtures.turnEnd(seq: 5, reason: "error"),
+        ])
+        let plan = plan(timeline)
+        let turn = try XCTUnwrap(plan.turns.first)
+        XCTAssertTrue(turn.isFoldable)
+        XCTAssertTrue(turn.isFailed)
+        XCTAssertTrue(turn.canCollapse)
+        let rows = TranscriptProcessFold.displayRows(plan, state: TranscriptFoldState())
+        let header = try XCTUnwrap(rows.compactMap(header).first)
+        XCTAssertEqual(header.scope, .turn)
+        XCTAssertFalse(header.isExpanded)
+        XCTAssertTrue(header.isFoldable, "error keeps the arrow and stays tappable")
+        XCTAssertTrue(ProcessFoldText.turnLabel(endReason: header.endReason, duration: header.duration) == "处理失败")
+    }
+
+    func test_interrupted_turn_stays_open_without_an_arrow() throws {
+        // 桌面实拍：`<button disabled aria-expanded="true">Stopped</button>` —— 常开、
+        // 无箭头、按钮不可点，内容（分组行、讲话、回答）直接铺开。
+        for reason in ["aborted", "interrupted", "cancelled"] {
             let timeline = try ProcessFoldFixtures.timeline([
                 ProcessFoldFixtures.turnStart(seq: 1, turn: 1),
                 ProcessFoldFixtures.user(seq: 2, text: "q"),
                 ProcessFoldFixtures.toolCall(seq: 3, callId: "c1", name: "bash"),
-                ProcessFoldFixtures.toolResult(seq: 4, callId: "c1", isError: true),
-                ProcessFoldFixtures.turnEnd(seq: 5, reason: reason),
+                ProcessFoldFixtures.assistant(seq: 4, text: "still working"),
+                ProcessFoldFixtures.toolCall(seq: 5, callId: "c2", name: "read"),
+                ProcessFoldFixtures.assistant(seq: 6, text: "answer"),
+                ProcessFoldFixtures.turnEnd(seq: 7, reason: reason),
             ])
+            var state = TranscriptFoldState()
+            state.manualTurn["turn-process:1"] = false
             let plan = plan(timeline)
-            XCTAssertFalse(try XCTUnwrap(plan.turns.first).isFoldable, reason)
-            XCTAssertEqual(ids(TranscriptProcessFold.displayRows(plan, state: TranscriptFoldState())),
-                           ids(timeline.items), reason)
+            let turn = try XCTUnwrap(plan.turns.first)
+            XCTAssertTrue(turn.isStopped, reason)
+            XCTAssertFalse(turn.canCollapse, reason)
+            let rows = TranscriptProcessFold.displayRows(plan, state: state)
+            let turnRow = try XCTUnwrap(rows.compactMap(header).first, reason)
+            XCTAssertEqual(turnRow.scope, .turn, reason)
+            XCTAssertTrue(turnRow.isExpanded, reason)
+            XCTAssertFalse(turnRow.isFoldable, "no arrow, button disabled (\(reason))")
+            XCTAssertEqual(rows.compactMap { header($0)?.scope == .group ? true : nil }.count, 2, reason)
+            XCTAssertTrue(rows.contains { if case .assistantText(let text) = $0.kind { return text == "still working" }; return false }, reason)
         }
     }
 
@@ -137,7 +266,8 @@ final class TranscriptProcessFoldTests: XCTestCase {
         XCTAssertTrue(ids(TranscriptProcessFold.displayRows(plan, state: TranscriptFoldState())).contains(gap.id))
     }
 
-    func test_error_notice_prevents_folding() throws {
+    func test_error_notice_does_not_prevent_folding() throws {
+        // 失败与正常完成同一套折叠（M5）：报错不再把整轮铺开。
         let timeline = try ProcessFoldFixtures.timeline([
             ProcessFoldFixtures.turnStart(seq: 1, turn: 1),
             ProcessFoldFixtures.user(seq: 2, text: "q"),
@@ -146,8 +276,11 @@ final class TranscriptProcessFoldTests: XCTestCase {
             ProcessFoldFixtures.assistant(seq: 5, text: "a"),
             ProcessFoldFixtures.turnEnd(seq: 6),
         ])
-        let plan = plan(timeline)
-        XCTAssertFalse(try XCTUnwrap(plan.turns.first).isFoldable)
+        let turn = try XCTUnwrap(plan(timeline).turns.first)
+        XCTAssertTrue(turn.isFoldable)
+        XCTAssertTrue(turn.hasFailure)
+        let rows = TranscriptProcessFold.displayRows(plan(timeline), state: TranscriptFoldState())
+        XCTAssertFalse(rows.contains { if case .notice = $0.kind { return true }; return false })
     }
 
     // MARK: - Groups
@@ -164,7 +297,8 @@ final class TranscriptProcessFoldTests: XCTestCase {
         XCTAssertTrue(rows.contains { if case .assistantText(let text) = $0.kind { return text == "still working 1" }; return false })
     }
 
-    func test_single_group_has_no_group_header() throws {
+    func test_a_single_group_still_gets_a_group_row() throws {
+        // 桌面单步轮次展开后也先看到一条分组行（M3）；组默认收起。
         let timeline = try completed(tools: 2)
         let plan = plan(timeline)
         let turn = try XCTUnwrap(plan.turns.first)
@@ -172,23 +306,24 @@ final class TranscriptProcessFoldTests: XCTestCase {
         var state = TranscriptFoldState()
         state.manualTurn[turn.key] = true
         let rows = TranscriptProcessFold.displayRows(plan, state: state)
-        XCTAssertFalse(rows.contains { header($0)?.scope == .group })
+        let groupHeader = try XCTUnwrap(rows.compactMap(header).first { $0.scope == .group })
+        XCTAssertFalse(groupHeader.isExpanded, "groups start collapsed")
+        XCTAssertEqual(groupHeader.toolCount, 2)
+        XCTAssertFalse(rows.contains { if case .toolCall = $0.kind { return true }; return false })
     }
 
-    func test_collapsing_one_group_only_hides_that_group() throws {
+    func test_expanding_one_group_only_reveals_that_group() throws {
         let timeline = try completed(tools: 4, intermediate: true)
         let plan = plan(timeline)
         let turn = try XCTUnwrap(plan.turns.first)
         var state = TranscriptFoldState()
         state.manualTurn[turn.key] = true
         let first = try XCTUnwrap(turn.groups.first)
-        state.collapsedGroups.insert(first.key)
+        state.expandedGroups.insert(first.key)
         let rows = TranscriptProcessFold.displayRows(plan, state: state)
-        for index in first.indexes {
-            XCTAssertFalse(rows.contains { $0.id == timeline.items[index].id })
-        }
+        XCTAssertTrue(rows.contains { $0.id == timeline.items[try! XCTUnwrap(first.indexes.first)].id })
         let second = try XCTUnwrap(turn.groups.last)
-        XCTAssertTrue(rows.contains { $0.id == timeline.items[try! XCTUnwrap(second.indexes.first)].id })
+        XCTAssertFalse(rows.contains { $0.id == timeline.items[try! XCTUnwrap(second.indexes.first)].id })
     }
 
     // MARK: - Defaults and reader context
@@ -260,10 +395,12 @@ final class TranscriptProcessFoldTests: XCTestCase {
         XCTAssertEqual(turn.turn, 4)
         let rows = TranscriptProcessFold.displayRows(plan, state: TranscriptFoldState())
         XCTAssertEqual(rows.compactMap(header).count, 1)
-        XCTAssertEqual(rows.last?.id, timeline.items.last?.id)
+        guard case .assistantText = rows.last?.kind else {
+            return XCTFail("the answer must be the last row once the divider is gone")
+        }
     }
 
-    func test_no_final_answer_still_folds_to_header_and_divider() throws {
+    func test_no_final_answer_still_folds_to_a_single_turn_row() throws {
         let timeline = try ProcessFoldFixtures.timeline([
             ProcessFoldFixtures.turnStart(seq: 1, turn: 1),
             ProcessFoldFixtures.user(seq: 2, text: "q"),
@@ -271,9 +408,9 @@ final class TranscriptProcessFoldTests: XCTestCase {
             ProcessFoldFixtures.turnEnd(seq: 4),
         ])
         let rows = TranscriptProcessFold.displayRows(plan(timeline), state: TranscriptFoldState())
-        XCTAssertEqual(rows.count, 3)
+        // 问题 + 轮次行：没有回答、也没有分隔行。
+        XCTAssertEqual(rows.count, 2, "rows: \(rows.map(\.id))")
         XCTAssertEqual(rows.compactMap(header).count, 1)
-        guard case .turnDivider = rows.last?.kind else { return XCTFail("divider must remain") }
     }
 
     func test_trailing_process_after_answer_is_hidden_when_folded_and_visible_when_expanded() throws {
@@ -295,6 +432,9 @@ final class TranscriptProcessFoldTests: XCTestCase {
         XCTAssertFalse(folded.contains(tool.id))
         var state = TranscriptFoldState()
         state.manualTurn[turn.key] = true
+        XCTAssertFalse(ids(TranscriptProcessFold.displayRows(plan, state: state)).contains(tool.id),
+                       "groups are collapsed until the reader opens them")
+        for group in turn.groups { state.expandedGroups.insert(group.key) }
         XCTAssertTrue(ids(TranscriptProcessFold.displayRows(plan, state: state)).contains(tool.id))
     }
 
@@ -328,9 +468,8 @@ final class TranscriptProcessFoldTests: XCTestCase {
         XCTAssertTrue(plan.processRowIDs.contains(tool.id))
     }
 
-    func test_running_turn_folds_completed_groups_and_keeps_the_active_one_open() throws {
-        // 进行中：第一段过程（bash）已被中间回答封口，应折叠成组节点；
-        // 第二段（read）仍在增长，保持展开。
+    func test_running_turn_shows_all_groups_collapsed_with_the_last_one_live() throws {
+        // 进行中：两条分组行都在，都是收起态；最后一条（仍在增长）标记为运行时行。
         let timeline = try ProcessFoldFixtures.timeline([
             ProcessFoldFixtures.turnStart(seq: 1, turn: 1),
             ProcessFoldFixtures.user(seq: 2, text: "q"),
@@ -346,24 +485,20 @@ final class TranscriptProcessFoldTests: XCTestCase {
         XCTAssertEqual(turn.groups.count, 2)
 
         let rows = TranscriptProcessFold.displayRows(plan, state: TranscriptFoldState())
-        // 第一段组节点在，但成员被收起；第二段成员直接可见。
         let groupHeaders = rows.compactMap { item -> TimelineProcessHeader? in
             if case .processHeader(let header) = item.kind, header.scope == .group { return header }
             return nil
         }
-        XCTAssertEqual(groupHeaders.count, 1, "only the closed group gets a header")
-        XCTAssertEqual(groupHeaders.first?.toolCount, 1)
-        XCTAssertFalse(groupHeaders.first?.isExpanded ?? true)
-        XCTAssertFalse(rows.contains { $0.id == timeline.items[1].id },
-                       "closed group's tool call is hidden")
+        XCTAssertEqual(groupHeaders.count, 2)
+        XCTAssertEqual(groupHeaders.filter(\.isRunning).count, 1, "only the growing group is live")
+        XCTAssertEqual(groupHeaders.last?.isRunning, true)
+        XCTAssertFalse(rows.contains { $0.id == timeline.items[1].id }, "collapsed group hides its steps")
         XCTAssertTrue(rows.contains { $0.id == timeline.items[2].id },
                       "intermediate assistant text stays visible")
-        XCTAssertTrue(rows.contains { $0.id == timeline.items[3].id },
-                      "active group's tool call stays visible")
+        XCTAssertFalse(rows.contains { $0.id == timeline.items[3].id })
     }
 
-    func test_running_turn_without_a_boundary_keeps_everything_visible() throws {
-        // 进行中、只有一段连续过程：没有可封口的组，全部展开。
+    func test_running_turn_with_a_single_group_still_shows_one_group_row() throws {
         let timeline = try ProcessFoldFixtures.timeline([
             ProcessFoldFixtures.turnStart(seq: 1, turn: 1),
             ProcessFoldFixtures.user(seq: 2, text: "q"),
@@ -376,30 +511,28 @@ final class TranscriptProcessFoldTests: XCTestCase {
         let turn = try XCTUnwrap(plan.turns.first)
         XCTAssertEqual(turn.groups.count, 1)
         let rows = TranscriptProcessFold.displayRows(plan, state: TranscriptFoldState())
-        XCTAssertFalse(rows.contains { header($0)?.scope == .group })
-        XCTAssertEqual(rows.count, timeline.items.count)
+        let groupHeader = try XCTUnwrap(rows.compactMap(header).first { $0.scope == .group })
+        XCTAssertTrue(groupHeader.isRunning)
+        XCTAssertFalse(rows.contains { if case .toolCall = $0.kind { return true }; return false })
     }
 
-    func test_running_turn_group_header_expands_on_tap() throws {
+    func test_running_turn_group_row_expands_on_tap() throws {
         let timeline = try ProcessFoldFixtures.timeline([
             ProcessFoldFixtures.turnStart(seq: 1, turn: 1),
             ProcessFoldFixtures.user(seq: 2, text: "q"),
             ProcessFoldFixtures.toolCall(seq: 3, callId: "c1", name: "bash"),
             ProcessFoldFixtures.toolResult(seq: 4, callId: "c1"),
-            ProcessFoldFixtures.assistant(seq: 5, text: "first part done"),
-            ProcessFoldFixtures.toolCall(seq: 6, callId: "c2", name: "read"),
-            ProcessFoldFixtures.toolResult(seq: 7, callId: "c2"),
         ])
         let plan = plan(timeline, isTurnOpen: true)
         let turn = try XCTUnwrap(plan.turns.first)
-        let closedGroup = try XCTUnwrap(turn.groups.first)
+        let group = try XCTUnwrap(turn.groups.first)
         var state = TranscriptFoldState()
-        let collapsed = TranscriptProcessFold.displayRows(plan, state: state)
-        XCTAssertFalse(collapsed.contains { $0.id == timeline.items[1].id })
+        XCTAssertFalse(TranscriptProcessFold.displayRows(plan, state: state)
+            .contains { $0.id == timeline.items[1].id })
 
-        state.expandedGroups.insert(closedGroup.key)
-        let expanded = TranscriptProcessFold.displayRows(plan, state: state)
-        XCTAssertTrue(expanded.contains { $0.id == timeline.items[1].id })
+        state.expandedGroups.insert(group.key)
+        XCTAssertTrue(TranscriptProcessFold.displayRows(plan, state: state)
+            .contains { $0.id == timeline.items[1].id })
     }
 
     func test_display_is_idempotent() throws {

@@ -29,11 +29,25 @@ public extension ChatModel {
         let plan = TranscriptProcessFold.plan(
             items: visible.timeline.items,
             isTurnOpen: visible.timeline.isTurnOpen,
-            currentTurn: visible.timeline.currentTurn)
+            currentTurn: visible.timeline.currentTurn,
+            summaries: visible.timeline.foldSummaries)
         // 折叠摘要：只在状态变化时发（`FoldTrace.note` 内部比较并节流）。
         // 这行是"某些已完成的历史对话没有折叠"唯一的现场证据来源。
         FoldTrace.note(plan: plan, session: sessionId)
         var rows = TranscriptProcessFold.displayRows(plan, state: foldState)
+        // 末尾运行行：一轮还在跑时，两个列表宿主都要看到它。
+        // 它必须在行模型里（uikit 宿主只渲染 `rowsFor`），身份稳定、不参与裁剪。
+        if visible.timeline.isTurnOpen {
+            rows.append(TimelineRunningLine(since: runningSince).item)
+        }
+        // 单条步骤正文的三态贴在步骤行上；模型是唯一所有者，投影只做搬运。
+        if !stepBodies.isEmpty {
+            for index in rows.indices {
+                guard case .processStep(let step) = rows[index].kind,
+                      let body = stepBodies[step.id] else { continue }
+                rows[index].kind = .processStep(step.with(body: body))
+            }
+        }
         // 展开摘要的取详情进度贴在表头上；模型是唯一所有者，投影只做搬运。
         if !prefetchStatus.isEmpty {
             for index in rows.indices {
@@ -56,9 +70,12 @@ public extension ChatModel {
         let plan = processPlan()
         guard let turn = plan.turnByKey[turnKey] else { return }
 
+        // v1 的"点开再补拉"只在没有 v2 能力时才是通路：v2 能力在时页面统一
+        // 走概要（不存在预折摘要行），这条分支不应再被走到。
+        let v2SummaryMode = store?.chatHost?.historySummaryFoldEnabled == true
         // 连接器折好下发的摘要：这一轮没有过程行可展开，点它等于「把详情取回来」。
         // 先记为展开，详情落地后整树重建，这一轮自然恢复成正常的可折叠轮次。
-        if let header = Self.prefetchedSummary(in: turn, plan: plan) {
+        if !v2SummaryMode, let header = Self.prefetchedSummary(in: turn, plan: plan) {
             let range = Self.prefetchedRange(in: turn, plan: plan) ?? header.startSeq...header.endSeq
             foldState.manualTurn[turnKey] = true
             Task { [weak self] in
@@ -67,11 +84,12 @@ public extension ChatModel {
             return
         }
 
-        guard turn.isFoldable else { return }
+        guard turn.canCollapse else { return }
         let expanded = TranscriptProcessFold.isTurnExpanded(turn, plan: plan, state: foldState)
         foldState.manualTurn[turnKey] = !expanded
-        if !expanded {
-            for group in turn.groups { foldState.collapsedGroups.remove(group.key) }
+        // 收起整轮时，组也一并回到收起（桌面 board2 ④）：下次展开仍是先看到分组。
+        if expanded {
+            for group in turn.groups { foldState.expandedGroups.remove(group.key) }
         }
     }
 
@@ -160,21 +178,11 @@ public extension ChatModel {
         }
     }
 
+    /// 分组只有一种状态需要记：读者亲手展开的组。缺省就是收起（桌面同款）。
     func toggleProcessGroup(groupKey: String) {
-        let plan = processPlan()
-        guard let group = plan.groupByKey[groupKey] else { return }
-        let turn = plan.turnByKey[group.turnKey]
-        // Completed turns show their groups expanded; in a running turn only
-        // the still-growing (not yet sealed) group is open by default.
-        let defaultOpen = turn.map { !$0.isRunning || !TranscriptProcessFold.isGroupClosed(group, in: $0) } ?? true
+        guard processPlan().groupByKey[groupKey] != nil else { return }
         if foldState.expandedGroups.contains(groupKey) {
             foldState.expandedGroups.remove(groupKey)
-            foldState.collapsedGroups.insert(groupKey)
-        } else if foldState.collapsedGroups.contains(groupKey) {
-            foldState.collapsedGroups.remove(groupKey)
-            foldState.expandedGroups.insert(groupKey)
-        } else if defaultOpen {
-            foldState.collapsedGroups.insert(groupKey)
         } else {
             foldState.expandedGroups.insert(groupKey)
         }
@@ -190,7 +198,7 @@ public extension ChatModel {
         }
         if plan.processRowIDs.contains(id) {
             foldState.manualTurn[target.turnKey] = true
-            if let group = target.groupKey { foldState.collapsedGroups.remove(group) }
+            if let group = target.groupKey { foldState.expandedGroups.insert(group) }
         }
         return id
     }
@@ -254,6 +262,12 @@ public extension ChatModel {
     func applyTrim(_ plan: TranscriptTrimPlan) -> Int {
         guard plan.rawCount > 0 else { return 0 }
         let dropped = dropOldestRows(plan.rawCount)
+        // 概要 v2 的元数据不占行：按**轮次对齐**的裁剪线一起丢。不能用"第一条
+        // 剩下的行"来判——一轮的过程可以整段都在概要里（窗口里没有行），那样会
+        // 把还留着的轮次的概要误删。`cutoffSeq` 就是留着的那个轮次的起点。
+        if let cutoff = plan.cutoffSeq {
+            timeline.pruneFoldSummaries(before: cutoff)
+        }
         pruneFoldState()
         return dropped
     }
@@ -263,23 +277,26 @@ public extension ChatModel {
         let plan = processPlan()
         let turnKeys = Set(plan.turns.map(\.key))
         let groupKeys = Set(plan.groups.map(\.key))
+        let stepKeys = Set(plan.groups.flatMap { $0.steps.map(\.id) })
         foldState.manualTurn = foldState.manualTurn.filter { turnKeys.contains($0.key) }
-        foldState.collapsedGroups.formIntersection(groupKeys)
         foldState.expandedGroups.formIntersection(groupKeys)
+        foldState.expandedSteps.formIntersection(stepKeys)
+        stepBodies = stepBodies.filter { stepKeys.contains($0.key) }
         if let top = foldState.readerTopRowID,
            !plan.rows.contains(where: { $0.id == top }) {
             foldState.readerTopRowID = nil
         }
     }
 
-    private func processPlan() -> TranscriptProcessFold.Plan {
+    func processPlan() -> TranscriptProcessFold.Plan {
         guard let visible else {
             return TranscriptProcessFold.plan(items: [], isTurnOpen: false)
         }
         return TranscriptProcessFold.plan(
             items: visible.timeline.items,
             isTurnOpen: visible.timeline.isTurnOpen,
-            currentTurn: visible.timeline.currentTurn)
+            currentTurn: visible.timeline.currentTurn,
+            summaries: visible.timeline.foldSummaries)
     }
 }
 

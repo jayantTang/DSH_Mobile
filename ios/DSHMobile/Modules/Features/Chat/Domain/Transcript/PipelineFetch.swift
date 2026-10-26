@@ -26,6 +26,9 @@ extension ChatPipelineBridge {
             DSHLog.event("page.older.skip", ["why": "loading"])
             return
         }
+        // 概要 v2（能力 `history-fold-summary-v2`）：旧页也按整轮取，
+        // 与首屏同一条 `adoptSummaryPage` 路径；没有能力时返回 false，走下面的 v1。
+        if await model.loadOlderSummaryPage() { return }
         guard let oldest = await olderAnchor(session) else {
             DSHLog.event("page.older.skip", ["why": "no-anchor"])
             armPendingOlder(model)
@@ -146,6 +149,17 @@ extension ChatPipelineBridge {
         refold(messagesChanged: true, gapsChanged: true)
     }
 
+    /// 概要旧页翻到底（空页或 hasMore=false）：与 v1 的「到最早」同一口径，
+    /// 顶部行写 `.exhausted`，不再反复发请求。
+    func noteSummaryOlderExhausted() {
+        guard let model else { return }
+        Task { [weak self] in
+            if let session = self?.session { await session.markEarliestReached() }
+            model.notePipelineOlder(state: .exhausted)
+            self?.refold(messagesChanged: true, gapsChanged: true)
+        }
+    }
+
     /// 失败后的一次自动补试（读者停在顶部时没有任何几何变化可触发重试）。
     private func scheduleAutoRetry() {
         guard !didAutoRetry else { return }
@@ -167,6 +181,8 @@ extension ChatPipelineBridge {
             // 行不消失）。与中间缺口同一个 retry 契约（SessionPipeline.retry）。
             model.setOlderState(.idle)
             didAutoRetry = false
+            // 概要 v2 的旧页失败后，重试也必须重发同一页（概要请求不是管道页）。
+            if await model.loadOlderSummaryPage() { return }
             // T037：顶部行的两个静默出口与 loadOlder 同口径（原来这里也是直接 return）。
             guard let oldest = await olderAnchor(session) else {
                 armPendingOlder(model)

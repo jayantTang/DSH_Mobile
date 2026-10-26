@@ -95,6 +95,9 @@ extension View {
 /// 所以全部去掉，行距与左右留白改由行自己给（与 `LazyVStack` 那两个 padding 对齐）。
 struct TranscriptRowChrome: ViewModifier {
     let inList: Bool
+    /// 行底留白。过程行（轮次行、分组行）自带更紧的间距：分组行按桌面是 20pt
+    /// 行高 + 一点点缝，用正文那 12pt 会把一组拆成一条条孤立的行。
+    var bottomPadding: CGFloat = DSHTheme.Spacing.standard
 
     func body(content: Content) -> some View {
         if inList {
@@ -103,7 +106,7 @@ struct TranscriptRowChrome: ViewModifier {
                 .listRowSeparator(.hidden)
                 .listRowBackground(Color.clear)
                 .padding(.horizontal, DSHTheme.Spacing.loose)
-                .padding(.bottom, DSHTheme.Spacing.standard)
+                .padding(.bottom, bottomPadding)
         } else {
             content
         }

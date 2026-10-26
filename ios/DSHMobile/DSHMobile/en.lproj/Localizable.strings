@@ -284,7 +284,6 @@
 "已取消" = "Cancelled";
 "被中断" = "Interrupted";
 "出错结束" = "Ended with an error";
-"达步数上限" = "Hit the step limit";
 "结束：%@" = "Ended: %@";
 "%lld 字" = "%lld chars";
 "参数" = "Arguments";
@@ -759,13 +758,9 @@ It is registered as a workspace first, so a new group appears in the desktop sid
 
 "已结束的子智能体" = "Finished subagents";
 
-"进行中" = "Running";
-
 "已停止" = "Stopped";
 
 "过程" = "Process";
-
-"过程组" = "Process group";
 
 "已展开" = "Expanded";
 
@@ -774,8 +769,6 @@ It is registered as a workspace first, so a new group appears in the desktop sid
 "展开过程" = "Expand process";
 
 "收起过程" = "Collapse process";
-
-"部分记录" = "Partial record";
 
 "读取" = "Read";
 
@@ -797,11 +790,55 @@ It is registered as a workspace first, so a new group appears in the desktop sid
 
 "计划" = "Plan";
 
-"%lld 次工具调用" = "%lld tool calls";
-
-"%lld 段思考" = "%lld thinking blocks";
-
-"用时 %@" = "Took %@";
 "读取超时，点按重试" = "Read timed out. Tap to retry.";
-"正在加载过程（已取 %lld 条）" = "Loading process… (%lld records fetched)";
 "加载失败，点按重试" = "Could not load the process. Tap to retry.";
+
+// 过程折叠（20261025 对齐桌面）
+"已完成，用时 %@" = "Completed in %@";
+"处理失败" = "Failed";
+"已完成分析" = "Analysis completed";
+"已" = "";
+"%@并%@" = "%@ and %@";
+"%@，%@，%@" = "%@, %@, %@";
+"%@，%@，%@等" = "%@, %@, %@, etc.";
+"%@ · %@" = "%@ · %@";
+"%lld秒" = "%llds";
+"%lld分%lld秒" = "%lldm %llds";
+"%lld小时%lld分%lld秒" = "%lldh %lldm %llds";
+"深度求索中" = "Deep diving";
+"深度求索中，用时 %@ ···" = "Deep diving for %@ ···";
+"正在分析请求" = "Analysing the request";
+"正在读取文件" = "Reading files";
+"正在写入文件" = "Writing files";
+"正在编辑文件" = "Editing files";
+"正在搜索代码" = "Searching the code";
+"正在运行命令" = "Running a command";
+"正在运行代码" = "Running code";
+"正在搜索网页" = "Searching the web";
+"正在协调子智能体" = "Coordinating subagents";
+"等待你的操作" = "Waiting for you";
+"正在更新计划" = "Updating the plan";
+"正在调用工具" = "Calling a tool";
+"已读取文件" = "Read files";
+"已写入文件" = "Wrote files";
+"修改了文件" = "Edited files";
+"已搜索代码" = "Searched the code";
+"执行了命令" = "Ran commands";
+"运行了代码" = "Ran code";
+"已搜索网页" = "Searched the web";
+"已协调子智能体" = "Coordinated subagents";
+"向用户提出了问题" = "Asked you a question";
+"更新了计划" = "Updated the plan";
+"已调用工具" = "Called a tool";
+
+/* 概要 v2：步骤卡（M6b） */
+"输出 %@ · 点开查看" = "Output %@ · Tap to view";
+"思考 · %@" = "Reasoning · %@";
+"输出加载失败 · 点按重试" = "Output failed to load · Tap to retry";
+"正在取正文…" = "Loading output…";
+"概要加载失败，点按重试" = "Summary failed to load · Tap to retry";
+"概要加载失败：有一轮过大，点按重试" = "Summary failed: a turn is too large · Tap to retry";
+
+/* 概要 v2：超限步骤 / 旧页概要失败（M6c） */
+"输出过大，无法在手机上展开" = "Output too large to open on this phone";
+"有一轮过大，点按重试" = "A turn is too large · Tap to retry";

@@ -24,6 +24,14 @@ BUDGET_SECONDS = float(os.environ.get("LOCAL_GUARD_TEST_BUDGET", "30"))
 Python_PYTEST = "pytest"
 IOS_NOTE = "iOS 改动需要 xcodebuild（>30s），本地提交防线跳过；发布前按 scripts/verify/lanes.json 取证据"
 
+# 源码文件名与用例文件名对不上的，显式登记（v2 概要有跨文件的窗口级用例）。
+PLUGIN_EXTRA_TESTS: dict[str, tuple[str, ...]] = {
+    "plugins/mobile-link/lib/history.js": ("history-fold-summary.test.js",),
+    "plugins/mobile-link/lib/hello.js": ("history-fold-summary.test.js",),
+    "plugins/mobile-link/lib/history/fold.js": ("history-fold.test.js", "history-fold-summary.test.js"),
+    "plugins/mobile-link/lib/history/session-snapshot.js": ("history-fold-summary.test.js", "history-snapshot.test.js"),
+}
+
 
 @dataclass
 class Command:
@@ -95,12 +103,19 @@ def plan_for(path: str) -> list[Command]:
         if "/test/" in path and path.endswith(".test.js"):
             plans.append(Command(path, ["node", "--test", str(file)], package))
         else:
+            candidates: list[Path] = []
             exact = test_dir / f"{file.stem}.test.js"
             if exact.exists():
-                plans.append(Command(path, ["node", "--test", str(exact)], package))
-            else:
-                # 没有同名用例就不猜：整包并发跑会互相污染（历史用例已出现过这种失败）。
-                print(f"[skip] {path}: 没有 test/{file.stem}.test.js，未选到靶向用例", file=sys.stderr)
+                candidates.append(exact)
+            for name in PLUGIN_EXTRA_TESTS.get(path, ()):
+                extra = test_dir / name
+                if extra.exists() and extra not in candidates:
+                    candidates.append(extra)
+            if not candidates:
+                # 没有同名/登记用例就不猜：整包并发跑会互相污染（历史用例已出现过这种失败）。
+                print(f"[skip] {path}: 没有同名或登记过的靶向用例", file=sys.stderr)
+            for target in candidates:
+                plans.append(Command(path, ["node", "--test", str(target)], package))
         return plans
 
     if path.startswith("scripts/"):

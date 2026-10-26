@@ -47,6 +47,21 @@ public final class ChatModel {
     /// 界面只渲染它，不自己计时也不自己重试。
     public internal(set) var prefetchStatus: [String: PrefetchStatus] = [:]
 
+    /// 首屏概要取数（能力 `history-fold-summary-v2`）的状态。
+    ///
+    /// 一次会话一屏一份：成功/失败/取消都落到这里，视图只渲染；
+    /// `link/too-large` 带 `tooLarge` 标记，页级重试条据此换文案。
+    public internal(set) var summaryScreenState: SummaryScreenState = .idle
+    /// 首屏概要请求与重试的在飞任务（换会话/关闭时取消）。
+    var summaryScreenTask: Task<Void, Never>?
+
+    /// 单条步骤正文的三态（按需取，key 是步骤行 id）。
+    ///
+    /// 只由 `loadProcessStepBody` 写、投影贴到步骤行上；缓存在磁盘 meta 里，
+    /// 二次打开先读缓存、不再请求。
+    public internal(set) var stepBodies: [String: ProcessStepBodyState] = [:]
+    var stepBodyTasks: [String: Task<Void, Never>] = [:]
+
     /// 现在开的是哪个会话（读 `visible`）。
     public var session: SessionSummary? { transcriptStore.session }
 
@@ -93,6 +108,36 @@ public final class ChatModel {
 
     /// True only while a turn is genuinely in flight.
     public var isRunning: Bool { activity == .running }
+
+    /// 运行中过程区的实时状态（分组行的「正在…」与底部深度求索行共用）。
+    /// 由时间线算出，不另存一份：工具一换，下一次渲染就是新的动作与命令。
+    public var runningDetail: ProcessRunningDetail? {
+        TranscriptProcessFold.runningDetail(
+            in: timeline.items,
+            isTurnOpen: timeline.isTurnOpen,
+            summaries: timeline.foldSummaries.filter { $0.turn == timeline.currentTurn })
+    }
+
+    /// 快照里最后一条轮次边界是不是 `turn/start`（这一轮还在跑）。
+    ///
+    /// 运行行需要计时起点；快照到达时 `runningSince` 可能还是 nil（open 在快照之前
+    /// 就跑了）。宿主的开始时间不可得，这里只判断"在跑"，起点由调用方取当下（下限）。
+    static func snapshotEndsInOpenTurn(_ records: [SessionRecord]) -> Bool {
+        for record in records.reversed() {
+            switch record.event.type {
+            case "turn/start": return true
+            case "turn/end": return false
+            default: continue
+            }
+        }
+        return false
+    }
+
+    /// 本轮开始计时的时刻。
+    ///
+    /// 宿主 `turn/start` 不带时间戳，窗口里也没有更早的可信时间，所以这个计时
+    /// 由这里记：看到轮次开启记一次，结束清掉。只服务「深度求索中，用时 …」。
+    public private(set) var runningSince: Date?
 
     /// Whether a stop control should be offered at all.
     public var isBusy: Bool { activity != .idle }
@@ -316,7 +361,7 @@ public final class ChatModel {
     private var writeChain: Task<Void, Never>?
 
     /// 最近的记录（尾部），落盘写的就是它。
-    private var recentRecords: [SessionRecord] = []
+    var recentRecords: [SessionRecord] = []
     private var lastDiskSave = Date.distantPast
     /// 距上次落盘又攒了多少条（够了就写，不等计时器）。
     private var unsavedRecords = 0
@@ -403,7 +448,7 @@ public final class ChatModel {
         if let bridge = pipelineBridge { return bridge.records.keys.min() }
         return timeline.items.first(where: { item in
             switch item.kind {
-            case .gap, .processHeader: return false
+            case .gap, .processHeader, .processStep, .runningLine: return false
             default: return true
             }
         })?.seq
@@ -494,6 +539,12 @@ public final class ChatModel {
         if visible?.summary.sessionId != key {
             foldState = TranscriptFoldState()
             prefetchStatus.removeAll()
+            summaryScreenState = .idle
+            summaryScreenTask?.cancel()
+            summaryScreenTask = nil
+            stepBodies.removeAll()
+            for task in stepBodyTasks.values { task.cancel() }
+            stepBodyTasks.removeAll()
         }
         setOlderState(.idle)
         // This session's own half-written message, not the last one's.
@@ -590,12 +641,25 @@ public final class ChatModel {
 
         syncPlanRef = syncPlan
         // T011：点开的会话以 .jump 插队水合最新页进 009 磁盘层（抢占在途预取）。
-        warmMessageLayer(for: summary)
+        // v2 能力在时首屏由概要页负责（`loadSummaryScreen`），这条 v1 的"最新页
+        // 水合"不再需要：再发一次只会把同一段按 v1 重取一遍。
+        if store?.chatHost?.historySummaryFoldEnabled != true {
+            warmMessageLayer(for: summary)
+        }
         // T013：渲染数据源切到 MessagePipeline 快照（管道缺位时桥为 nil，走原路径）。
         startPipelineSubscription(for: summary)
         startFollowing(link: link, summary: summary, maxMessages: syncPlan.maxMessages,
                        generation: openGeneration)
+        // 首屏概要（能力 `history-fold-summary-v2`）：缓存骨架已画出来之后才发，
+        // 只为"还没有概要的新轮次"发一次；失败落到页级重试条，不静默。
+        summaryScreenTask?.cancel()
+        summaryScreenTask = Task { [weak self] in
+            await self?.loadSummaryScreen()
+        }
         await restoreSearchHistory()
+        // 打开一个正在跑的会话：窗口里通常已有 turn/start，时钟从这一刻起算
+        //（宿主的开始时间不可得，这里只是下限；不会倒退成 0 秒）。
+        runningSince = timeline.isTurnOpen ? Date() : nil
         pendingOpen = nil
         await loadCatalog(link: link)
         subscribeToPrompts()
@@ -662,8 +726,15 @@ public final class ChatModel {
         streamFlushTask = nil
         pendingStreamFrames.removeAll(keepingCapacity: false)
         isAwaitingTurnStart = false
+        runningSince = nil
         foldState = TranscriptFoldState()
         prefetchStatus.removeAll()
+        summaryScreenTask?.cancel()
+        summaryScreenTask = nil
+        summaryScreenState = .idle
+        stepBodies.removeAll()
+        for task in stepBodyTasks.values { task.cancel() }
+        stepBodyTasks.removeAll()
         processToggleFollowHold = false
     }
 
@@ -929,12 +1000,22 @@ public final class ChatModel {
 
     /// 把命中所在的那一段从本地库读回时间线（0 网络），这样命中才有行可指。
     func loadContextForHits(_ hits: [HistorySearchHit]) async {
+        guard let lowest = hits.map(\.seq).min() else { return }
+        // 概要 v2：命中的是过程正文（工具结果 / 思考），它没有独立行。展开到
+        // 那一条步骤行并按需取回正文；否则搜索能搜到、跳转却永远落不到它。
+        // 这一步只碰时间线/模型与单条接口，不依赖本地库，所以排在下面那个
+        // guard（需要 `messageBacking`）之前。
+        _ = await revealSummaryStepHit(at: lowest)
         guard let sessionId = session?.sessionId, let scope = sessionScope,
-              let store = messageBacking,
-              let lowest = hits.map(\.seq).min() else { return }
-        // 命中落在连接器折好下发的过程段里：那一行还没取回来，先按摘要的 seq 段
-        // 展开（普通窗口、不带 fold）。不展开的话搜索能搜到、却跳不过去。
-        if let header = timeline.items.compactMap({ item -> TimelineProcessHeader? in
+              let store = messageBacking else { return }
+        // 命中落在连接器折好下发的过程段里（v1）：那一行还没取回来，先按摘要的
+        // seq 段展开（普通窗口、不带 fold）。
+        if store != nil, timeline.items.contains(where: { item in
+            if case .processHeader(let header) = item.kind, header.isPrefetched,
+               header.startSeq <= lowest, lowest <= header.endSeq { return true }
+            return false
+        }),
+           let header = timeline.items.compactMap({ item -> TimelineProcessHeader? in
             if case .processHeader(let header) = item.kind, header.isPrefetched,
                header.startSeq <= lowest, lowest <= header.endSeq { return header }
             return nil
@@ -964,7 +1045,32 @@ public final class ChatModel {
         ], true)
     }
 
-    /// 把搜索缓冲写盘（读者每次往下翻一页都会走一次）。
+    /// 概要 v2 的搜索命中：把那一轮、那一组与那一条步骤展开，并取回该条正文。
+    ///
+    /// 步骤行不是日志行：它只在"轮 → 组 → 步骤"都展开后才出现在显示行里，
+    /// 所以命中列表生成之前必须先展开（`loadContextForHits` 在 `attach` 之前调用）。
+    @MainActor
+    private func revealSummaryStepHit(at seq: Int) async -> Bool {
+        let plan = processPlan()
+        for turn in plan.turns {
+            for group in turn.groups {
+                guard let step = group.steps.first(where: {
+                    $0.resultSeq == seq || $0.seq == seq
+                }) else { continue }
+                foldState.manualTurn[turn.key] = true
+                foldState.expandedGroups.insert(group.key)
+                foldState.expandedSteps.insert(step.id)
+                await loadProcessStepBody(step)
+                ChatProbe.shared.probeNote?("search.stepHit", [
+                    "seq": String(seq), "step": step.id, "turn": turn.key,
+                ], true)
+                return true
+            }
+        }
+        return false
+    }
+
+    /// 把搜索缓冲写盘（读者往下翻一页都会走一次）。
     func persistSearchHistory() {
         guard let sessionId = session?.sessionId, let scope = sessionScope else { return }
         guard !searchRecords.isEmpty else { return }
@@ -1279,6 +1385,11 @@ public final class ChatModel {
             // 只有 20 条（本地很新时故意少要），直接替换等于把已落盘的历史截掉
             // ——用户看到的就是"切后台回来少了一部分记录"。
             mergeTail(snapshot.records)
+            // 快照里已经有一轮在跑：运行行要有时用起点，否则整行只剩「深度求索中」。
+            // 宿主的开始时间不可得（与 open 同口径），这里以下限起算。
+            if runningSince == nil, Self.snapshotEndsInOpenTurn(snapshot.records) {
+                runningSince = Date()
+            }
             persistIfDue(force: true)
 
         case .event(let event):
@@ -1358,12 +1469,14 @@ public final class ChatModel {
         case "turn/start":
             isAwaitingTurnStart = false
             hostReportsRunning = true
+            runningSince = Date()
             awaitingTimeout?.cancel()
             awaitingTimeout = nil
 
         case "turn/end":
             isAwaitingTurnStart = false
             hostReportsRunning = false
+            runningSince = nil
             awaitingTimeout?.cancel()
             awaitingTimeout = nil
             // 一轮结束是天然检查点：此刻把尾部写死，进程随后没了也不丢这一轮。

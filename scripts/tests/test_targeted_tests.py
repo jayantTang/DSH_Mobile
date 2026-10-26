@@ -30,11 +30,18 @@ def test_relay_go_module_files_run_the_whole_suite():
     assert plans[0].argv[-1] == "test"
 
 
-def test_node_module_maps_to_same_name_test():
+def test_node_module_maps_to_same_name_test_plus_registered_extra():
     plans = targeted.plan_for("plugins/mobile-link/lib/history.js")
-    assert len(plans) == 1
+    assert len(plans) == 2
     assert plans[0].argv[:2] == ["node", "--test"]
     assert plans[0].argv[-1].endswith("test/history.test.js")
+    assert plans[1].argv[-1].endswith("test/history-fold-summary.test.js")
+
+
+def test_node_module_without_same_name_uses_registered_extra():
+    plans = targeted.plan_for("plugins/mobile-link/lib/hello.js")
+    assert len(plans) == 1
+    assert plans[0].argv[-1].endswith("test/history-fold-summary.test.js")
 
 
 def test_node_module_without_test_is_skipped():

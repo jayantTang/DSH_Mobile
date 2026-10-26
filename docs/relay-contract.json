@@ -18,6 +18,7 @@
     "search-progress",
     "history-compression",
     "history-fold-summary",
+    "history-fold-summary-v2",
     "history-coverage",
     "jobs-roster",
     "dir-mtimes",
@@ -26,6 +27,37 @@
     "account-state",
     "account-state-push"
   ],
+  "historyWindowModes": {
+    "method": "_link/sessionWindow",
+    "note": "折叠模式与分页单位。三种模式共用 before/through 游标语义，但 **limit 的单位不同**：不传 fold 与 fold:true 时 limit 是记录条数（回包 records 条数）；fold:\"summary\"（能力 history-fold-summary-v2）时 limit 是**轮数**，主约束是 maxBytes（按投影后字节算）——一页装不下整轮就少给轮次，绝不切半轮。",
+    "modes": {
+      "none": {
+        "capability": null,
+        "records": "原始事件（只去掉 data.stream）",
+        "limit": "记录条数"
+      },
+      "v1": {
+        "capability": "history-fold-summary",
+        "records": "过程段换成一条 +link/fold（v1 摘要），其余原始事件照旧",
+        "limit": "记录条数"
+      },
+      "summary": {
+        "capability": "history-fold-summary-v2",
+        "records": "人类 user/message、assistant/message 的 text 与 image/file 块（attachment 只留元数据：id/url/mime/字节数/宽高/名字，绝不内联 base64）、agent 代发图片的 agent/inbox/spliced、turn/start、turn/end、压缩与错误通知；每个过程段一条 +link/fold（v:2，含 activities 与 groups[].steps[]）",
+        "limit": "轮数（不是记录条数）；maxBytes 才是主约束",
+        "paging": "按整轮切页：startSeq 落在 turn/start、endSeq 落在 turn/end（运行中的轮次给到最新事件），下一页用 before=startSeq；页首/页尾不出现半轮，也不出现孤立摘要",
+        "excludes": [
+          "tool/call",
+          "tool/result 正文",
+          "reasoning 正文",
+          "完整 args（只给 preview 前 80 字）",
+          "roles 过滤",
+          "coverage 区间"
+        ],
+        "errors": "fold:\"summary\" 与 roles/coverage 组合回 gateway/bad-request；单轮读不全（回读上限/时间预算）回 link/too-large（可重试）"
+      }
+    }
+  },
   "deviceToAgent": [
     "req",
     "open",

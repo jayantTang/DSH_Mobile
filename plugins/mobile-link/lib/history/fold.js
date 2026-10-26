@@ -39,7 +39,11 @@ const KEEP_SIDE_EVENTS = new Set([
   'compaction/start', 'compaction/end', 'compaction/summary', 'agent/error', 'error',
 ])
 
-function isHumanMessage(event) {
+/// 是不是**人打的字**（`user/message` 里插件 / 运行时注入的同类型消息不算）。
+///
+/// 导出给 `fold-summary.js` 用：v1 用它决定"人类消息切开过程段"，v2 用它决定
+/// "哪些 `user/message` 算讲话"。同一口径只留一份，两边各写一遍必然会漂。
+export function isHumanMessage(event) {
   if (event?.type !== 'user/message') return false
   const source = event?.data?.source
   if (source !== undefined && source !== null && typeof source === 'object') {

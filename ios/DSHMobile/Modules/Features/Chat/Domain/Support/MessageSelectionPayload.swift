@@ -21,7 +21,8 @@ public extension TimelineItem {
             guard !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
             return ("工具 · \(invocation.name)", body, true)
 
-        case .reasoning, .notice, .turnDivider, .unknown, .gap, .processHeader:
+        case .reasoning, .notice, .turnDivider, .unknown, .gap, .processHeader,
+             .processStep, .runningLine:
             return nil
         }
     }

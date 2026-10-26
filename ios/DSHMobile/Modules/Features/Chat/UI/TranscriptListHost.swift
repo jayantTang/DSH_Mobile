@@ -607,11 +607,12 @@ final class TranscriptListHost: UIView, UICollectionViewDelegate {
         let incoming = ordered.map { (id: $0.id, signature: Self.signature(of: $0)) }
         guard incoming.map(\.signature) != lastReconcile.map(\.signature)
                 || incoming.map(\.id) != lastReconcile.map(\.id) else { return }
-        var changedIds = Set<String>()
-        for (index, pair) in incoming.enumerated() {
-            guard index < lastReconcile.count, lastReconcile[index].id == pair.id else { continue }
-            if lastReconcile[index].signature != pair.signature { changedIds.insert(pair.id) }
-        }
+        // 差集**按 id 对齐**：任何一行上方插入/删除/重排都会让 index 对不上，
+        // 按 index 比较会漏掉真正的签名变化（TC-116：取消时上方插「已停止」，
+        // 分组行的运行态变化进不了 changedIds，cell 停在旧文案）。
+        let changedIds = TranscriptRowDiff.changedRowIDs(
+            previous: lastReconcile.map { TranscriptRowDiff.Row(id: $0.id, signature: $0.signature) },
+            current: incoming.map { TranscriptRowDiff.Row(id: $0.id, signature: $0.signature) })
         lastReconcile = incoming
         let anchorId = firstFullyVisibleRowId() ?? rows.first?.id
         let anchorSeq = rows.first(where: { $0.id == anchorId })?.seq
@@ -658,24 +659,10 @@ final class TranscriptListHost: UIView, UICollectionViewDelegate {
         if distanceToTop() < prefetchMargin() { onNearTop?() }
     }
 
-    /// 行内容签名：身份之外「内容有没有变」的判定（相同 id 的行被更新时要
-    /// reload cell，缺口行的三态也在签名里）。回收态保留原签名——内容没变。
+    /// 行内容签名：身份之外「内容有没有变」的判定。
+    /// 口径在 `TimelineRowSignature`（领域层，可用纯函数单测钉住每一类行）。
     private static func signature(of item: TimelineItem) -> String {
-        let base = "\(item.id)#\(TranscriptRowPayload(item: item).payloadBytes)"
-        switch item.kind {
-        case .gap(_, _, let status):
-            return "\(item.id)|gap:\(status)"
-        case .userMessage(_, _, let isSteering, let isPending, _):
-            // pending→sent 原地替换不改字节数，状态位必须进签名，否则徽标永远停在"等待开始"。
-            // 失败/未确认两个标记同理：都只翻状态位，不改载荷字节数。
-            return "\(base)|u:\(isSteering):\(isPending):\(item.sendFailed):\(item.sendUnconfirmed)"
-        case .toolCall(let invocation):
-            return "\(base)|t:\(invocation.isRunning):\(invocation.isError)"
-        case .processHeader(let header):
-            return "\(base)|ph:\(header.isExpanded):\(header.toolCount):\(header.reasoningCount):\(header.messageCount)"
-        default:
-            return base
-        }
+        TimelineRowSignature.of(item)
     }
 
     /// 唯一位移锚（spec 009）：视口顶部**首个完整可见行**的 id。

@@ -39,6 +39,8 @@ struct TimelineRowView: View {
         case .processHeader(let header):
             if header.scope == .group { return "row.process.group" }
             return header.turn > 0 ? "row.process.turn.\(header.turn)" : "row.process"
+        case .processStep: return "row.process.step"
+        case .runningLine: return "row.runningLine"
         }
     }
 
@@ -57,6 +59,12 @@ struct TimelineRowView: View {
     var parentSessionId: String?
     /// 033：过程节点的展开/收起回调。nil 时节点不可操作（预览等场景）。
     var onToggleProcess: (() -> Void)?
+    /// 概要 v2：步骤卡是否展开（模型持有），以及点开/重试。
+    var processStepExpanded = false
+    var onToggleProcessStep: ((String) -> Void)?
+    var onRetryProcessStep: ((String) -> Void)?
+    /// 运行中过程区的实时状态：只有当前那条分组行会用它写「正在… · 命令」。
+    var processRunning: ProcessRunningDetail?
 
     @ViewBuilder
     private var row: some View {
@@ -94,8 +102,10 @@ struct TimelineRowView: View {
         case .notice(let text, let isError):
             NoticeRow(text: text, isError: isError)
 
-        case .turnDivider(let turn, let reason, let duration):
-            TurnDividerRow(turn: turn, reason: reason, duration: duration)
+        case .turnDivider:
+            // 分隔行已并入轮次行（底边 0.5pt 线），折叠投影不再输出它。
+            // 这个分支为「原始行」路径（搜索、长按）留空，不再画第二条「已完成」。
+            EmptyView()
 
         case .unknown:
             EmptyView()
@@ -104,7 +114,22 @@ struct TimelineRowView: View {
             GapRowView(status: status) { onGapRetry?(start, end) }
 
         case .processHeader(let header):
-            ProcessHeaderRow(header: header) { onToggleProcess?() }
+            if header.scope == .group {
+                ProcessGroupRow(header: header, running: processRunning) { onToggleProcess?() }
+            } else {
+                ProcessTurnRow(header: header) { onToggleProcess?() }
+            }
+
+        case .runningLine(let line):
+            RunningLine(since: line.since)
+
+        case .processStep(let step):
+            ProcessStepRow(
+                step: step,
+                isExpanded: processStepExpanded,
+                onToggle: { onToggleProcessStep?(step.id) },
+                onRetry: { onRetryProcessStep?(step.id) }
+            )
         }
     }
 }
@@ -277,60 +302,6 @@ private struct UserMessageRow: View {
                 .opacity(isPending ? 0.66 : 1)
             }
             if isAgentSent { Spacer(minLength: 40) }
-        }
-    }
-}
-
-/// The end of one turn.
-///
-/// Always drawn, including for ordinary completions: without a visible end, a
-/// finished run and a stalled one look identical from the transcript.
-struct TurnDividerRow: View {
-    let turn: Int
-    let reason: String
-    let duration: TimeInterval?
-
-    private var isNormal: Bool {
-        reason == "completed" || reason == "unknown"
-    }
-
-    private var text: String {
-        var parts: [String] = []
-        parts.append(isNormal ? String(localized: "已完成") : Self.describe(reason))
-        if let duration {
-            parts.append(String(format: "%.1fs", duration))
-        }
-        return parts.joined(separator: " · ")
-    }
-
-    var body: some View {
-        HStack(spacing: DSHTheme.Spacing.hairline) {
-            Rectangle()
-                .fill(DSHTheme.border1)
-                .frame(height: 1)
-            HStack(spacing: 3) {
-                Image(systemName: isNormal ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                    .font(.system(size: 10))
-                Text(text)
-                    .font(DSHTheme.Typography.micro)
-                    .fixedSize()
-            }
-            .foregroundStyle(isNormal ? DSHTheme.success : DSHTheme.danger)
-            Rectangle()
-                .fill(DSHTheme.border1)
-                .frame(height: 1)
-        }
-        .padding(.vertical, 2)
-        .accessibilityLabel("第 \(turn) 轮\(text)")
-    }
-
-    static func describe(_ reason: String) -> String {
-        switch reason {
-        case "cancelled", "canceled": return "已取消"
-        case "interrupted": return "被中断"
-        case "error", "failed": return "出错结束"
-        case "max-steps": return "达步数上限"
-        default: return "结束：\(reason)"
         }
     }
 }

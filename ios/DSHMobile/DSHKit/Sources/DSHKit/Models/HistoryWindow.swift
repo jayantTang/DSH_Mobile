@@ -27,9 +27,12 @@ public struct HistoryWindowRequest: Sendable, Codable {
     /// the `before` cursor semantics are unchanged. Since T039 such a page also
     /// carries `scanBoundary` — the boundary a filtered pull advances by.
     public let roles: [String]?
-    /// 折叠感知下发（能力 `history-fold-summary`）：`true` 时连接器把本页内已完成
-    /// 的轮次折成一条 `+link/fold` 摘要记录。展开某轮时用 `false`（默认）取回原事件。
-    public let fold: Bool?
+    /// 折叠感知下发（能力 `history-fold-summary` / `history-fold-summary-v2`）。
+    ///
+    /// v1（`fold: true`）只把过程段换成一条摘要，原始事件基本照旧；
+    /// v2（`fold: "summary"`）整段过程都不下发，只给概要（讲话 + 回答 + 分组/步骤
+    /// 元数据），此时 `limit` 是**轮数**、`maxBytes` 是主约束。
+    public let fold: HistoryWindowFold?
     /// Optional response encoding, connector capability `history-compression`.
     /// Only `"deflate-raw"` is defined; omit it and the connector returns plain JSON,
     /// which is what every client before this capability does.
@@ -45,7 +48,8 @@ public struct HistoryWindowRequest: Sendable, Codable {
 
     public init(address: SessionAddress, before: Int, through: Int? = nil,
                 limit: Int? = nil, maxBytes: Int? = nil, roles: [String]? = nil,
-                encoding: String? = nil, fold: Bool? = nil, coverage: Bool? = nil) {
+                encoding: String? = nil, fold: HistoryWindowFold? = nil,
+                coverage: Bool? = nil) {
         self.address = address
         self.before = before
         self.through = through
@@ -59,6 +63,49 @@ public struct HistoryWindowRequest: Sendable, Codable {
 
     /// The one encoding this build asks for, when the connector advertises it.
     public static let deflateRaw = "deflate-raw"
+}
+
+/// `fold` 的三种取值：不折、v1 摘要、v2 概要。
+///
+/// 为什么不用 `Bool?`：v2 是**另一种取数模式**（过程正文不下发、`limit` 按轮数），
+/// 与"要不要摘要"不是同一个量。编码保持向后兼容：`.v1` 仍写 `true`、`.none` 写
+/// `false`、`.summary` 写字符串 `"summary"`（连接器 `fold: "summary"`），
+/// 这样老连接器、老测试与逐字节黄金夹具都不受影响。
+public enum HistoryWindowFold: Sendable, Equatable, Codable, ExpressibleByBooleanLiteral {
+    /// 明确不折（要原事件）。
+    case none
+    /// v1：过程段换成一条摘要（能力 `history-fold-summary`）。
+    case v1
+    /// v2：整轮只回讲话 + 概要 + 回答（能力 `history-fold-summary-v2`）。
+    case summary
+
+    public init(booleanLiteral value: Bool) {
+        self = value ? .v1 : .none
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if let flag = try? container.decode(Bool.self) {
+            self = flag ? .v1 : .none
+            return
+        }
+        let text = try container.decode(String.self)
+        switch text {
+        case "summary": self = .summary
+        default:
+            throw DecodingError.dataCorruptedError(
+                in: container, debugDescription: "unknown fold mode \(text)")
+        }
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case .none: try container.encode(false)
+        case .v1: try container.encode(true)
+        case .summary: try container.encode("summary")
+        }
+    }
 }
 
 /// What the connector hands back.

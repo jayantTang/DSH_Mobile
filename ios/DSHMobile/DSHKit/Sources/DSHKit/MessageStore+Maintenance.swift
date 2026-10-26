@@ -58,10 +58,14 @@ extension MessageStore {
                            arguments: [scope, sessionId])
             try db.execute(sql: "DELETE FROM session_state WHERE scope = ? AND session_id = ?",
                            arguments: [scope, sessionId])
-            // 会话级 kv（搜索缓冲覆盖范围、用户输入灌库账本）同会话一起清。
-            try db.execute(sql: "DELETE FROM meta WHERE key IN (?, ?)",
+            // 会话级 kv（搜索缓冲覆盖范围、用户输入灌库账本、单条步骤正文缓存）
+            // 同会话一起清。
+            try db.execute(sql: "DELETE FROM meta WHERE key IN (?, ?, ?)",
                            arguments: [Self.scoped("search.range.\(sessionId)", scope: scope),
-                                       Self.syncKey(scope: scope, sessionId: sessionId)])
+                                       Self.syncKey(scope: scope, sessionId: sessionId),
+                                       Self.scoped(
+                                        TranscriptLocalCacheKeys.stepBodies(sessionId: sessionId),
+                                        scope: scope)])
         }
     }
 

@@ -10,6 +10,8 @@ public protocol ChatHosting: Sendable {
     func historyWindow(_ request: HistoryWindowRequest) async throws -> HistoryWindowValue
     var historyWindowEncoding: String? { get }
     var historyFoldEnabled: Bool { get }
+    /// 概要 v2 能力（`history-fold-summary-v2`）：首屏按轮取讲话 + 概要 + 回答。
+    var historySummaryFoldEnabled: Bool { get }
     var historyCoverageEnabled: Bool { get }
     /// 连接器是否声明了 `history-window`；没有时取页必须走 `session/page`。
     var supportsExactHistoryWindow: Bool { get }
@@ -28,6 +30,16 @@ public protocol ChatHosting: Sendable {
 }
 
 public extension ChatHosting {
+    /// 老连接器（不认识 v2 能力）默认没有它：所有调用方照旧走 v1 / 原事件。
+    var historySummaryFoldEnabled: Bool { false }
+
+    /// 本连接该用哪种 `fold`：v2 > v1 > 不折。单一判定点，调用方不各写一遍。
+    var historyFoldMode: HistoryWindowFold? {
+        if historySummaryFoldEnabled { return .summary }
+        if historyFoldEnabled { return .v1 }
+        return nil
+    }
+
     func forkSession(sessionId: String) async throws -> JSONValue {
         try await forkSession(sessionId: sessionId, atSeq: nil)
     }

@@ -317,6 +317,12 @@
       "file": "ios/DSHMobile/Modules/Features/Sessions/Tests/DomainTests/SessionListCreateVisibilityTests.swift",
       "reason": "测试断言与夹具：中文既是断言消息，也是 noteSessionTitle 的输入标题；该文件不产出用户可见文案",
       "backlog": "i18n-test-expectations"
+    },
+    {
+      "rule": "hardcoded-string",
+      "file": "ios/DSHMobile/Modules/**/Tests/**",
+      "reason": "单元测试里的中文是断言期望值（与 ProcessFoldText 等纯函数产出的文案逐字比对），不是用户可见文案；与 DSHKit/Tests、DSHMobileUITests 同一口径",
+      "backlog": "i18n-backlog-module-tests"
     }
   ]
 }

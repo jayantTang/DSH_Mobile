@@ -35,6 +35,16 @@ final class MessageStoreTests: XCTestCase {
         ])
     }
 
+    func testClearingASessionAlsoDropsItsStepBodyCache() async throws {
+        let key = TranscriptLocalCacheKeys.stepBodies(sessionId: "s1")
+        try await store.setMeta(key, #"{"entries":[]}"#, scope: "mac")
+        let before = try await store.meta(key, scope: "mac")
+        XCTAssertEqual(before, #"{"entries":[]}"#)
+        try await store.clear(scope: "mac", sessionId: "s1")
+        let after = try await store.meta(key, scope: "mac")
+        XCTAssertNil(after, "删会话必须把单条正文缓存一起清掉")
+    }
+
     func testRoundTripByRange() async throws {
         try await upsert([record(1), record(2), record(3), record(4)])
         let records = try await store.records(scope: "mac", sessionId: "s1", in: 2...3)

@@ -25,6 +25,10 @@ public struct TranscriptRowPayload {
         case gap
         /// Process node: a display-only summary row; has no heavy payload.
         case processHeader
+        /// 概要 v2 的步骤元数据行：同样没有正文（正文按需单条取）。
+        case processStep
+        /// 末尾运行行：显示状态，没有载荷。
+        case runningLine
     }
 
     public let id: String
@@ -71,7 +75,7 @@ public struct TranscriptRowPayload {
         case .toolCall(let invocation):
             return invocation.arguments.utf8.count + invocation.resultText.utf8.count
         case .notice(let text, _): return text.utf8.count
-        case .processHeader: return 0
+        case .processHeader, .processStep, .runningLine: return 0
         default: return 0
         }
     }
@@ -79,7 +83,10 @@ public struct TranscriptRowPayload {
     /// 回收：留下 seq / 类型 / 高度，把内容换掉。
     public mutating func reclaim() {
         guard let item, !isReclaimed else { return }
-        if case .processHeader = item.kind { return }
+        switch item.kind {
+        case .processHeader, .processStep, .runningLine: return
+        default: break
+        }
         state = .reclaimed(seq: item.seq, kind: Self.kind(of: item), height: height ?? 0)
     }
 
@@ -98,6 +105,8 @@ public struct TranscriptRowPayload {
         case .notice: return .notice
         case .gap: return .gap
         case .processHeader: return .processHeader
+        case .processStep: return .processStep
+        case .runningLine: return .runningLine
         default: return .notice
         }
     }

@@ -1,0 +1,273 @@
+[
+  {
+    "seq": 0,
+    "type": "request/header",
+    "time": 1700000000000,
+    "data": {
+      "model": "kimi-k3",
+      "stream": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    }
+  },
+  {
+    "seq": 1,
+    "type": "turn/start",
+    "time": 1700000000001,
+    "data": {
+      "turn": 1
+    }
+  },
+  {
+    "seq": 2,
+    "type": "user/message",
+    "time": 1700000000002,
+    "data": {
+      "content": [
+        {
+          "type": "text",
+          "text": "第一问"
+        }
+      ],
+      "source": {
+        "kind": "user",
+        "rpcId": "r1"
+      }
+    }
+  },
+  {
+    "seq": 3,
+    "type": "step/start",
+    "time": 1700000000003,
+    "data": {
+      "turn": 1,
+      "step": 1
+    }
+  },
+  {
+    "seq": 4,
+    "type": "assistant/message",
+    "time": 1700000000004,
+    "data": {
+      "turn": 1,
+      "step": 1,
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "reasoning",
+            "text": "先看目录"
+          },
+          {
+            "type": "text",
+            "text": "我先看目录。"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "seq": 5,
+    "type": "tool/call",
+    "time": 1700000000005,
+    "data": {
+      "turn": 1,
+      "step": 1,
+      "callId": "c1",
+      "name": "bash",
+      "arguments": "{\"command\":\"ls -la\"}"
+    }
+  },
+  {
+    "seq": 6,
+    "type": "tool/result",
+    "time": 1700000000006,
+    "data": {
+      "turn": 1,
+      "step": 1,
+      "message": {
+        "role": "tool",
+        "toolCallId": "c1",
+        "content": [
+          {
+            "type": "text",
+            "text": "a.txt\nb.txt"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "seq": 7,
+    "type": "step/end",
+    "time": 1700000000007,
+    "data": {
+      "turn": 1,
+      "step": 1
+    }
+  },
+  {
+    "seq": 8,
+    "type": "assistant/message",
+    "time": 1700000000008,
+    "data": {
+      "turn": 1,
+      "step": 2,
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "目录里有两个文件。"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "seq": 9,
+    "type": "turn/end",
+    "time": 1700000000009,
+    "data": {
+      "turn": 1,
+      "reason": {
+        "kind": "completed"
+      }
+    }
+  },
+  {
+    "seq": 10,
+    "type": "turn/start",
+    "time": 1700000000010,
+    "data": {
+      "turn": 2
+    }
+  },
+  {
+    "seq": 11,
+    "type": "user/message",
+    "time": 1700000000011,
+    "data": {
+      "content": [
+        {
+          "type": "text",
+          "text": "第二问"
+        }
+      ],
+      "source": {
+        "kind": "user",
+        "rpcId": "r2"
+      }
+    }
+  },
+  {
+    "seq": 12,
+    "type": "compaction/summary",
+    "time": 1700000000012,
+    "data": {
+      "compactionId": "cp1",
+      "summary": [
+        {
+          "type": "text",
+          "text": "压缩后的摘要"
+        }
+      ]
+    }
+  },
+  {
+    "seq": 13,
+    "type": "tool/call",
+    "time": 1700000000013,
+    "data": {
+      "turn": 2,
+      "step": 1,
+      "callId": "c2",
+      "name": "grep",
+      "arguments": "{\"pattern\":\"TODO\"}"
+    }
+  },
+  {
+    "seq": 14,
+    "type": "tool/result",
+    "time": 1700000000014,
+    "data": {
+      "turn": 2,
+      "step": 1,
+      "message": {
+        "role": "tool",
+        "toolCallId": "c2",
+        "isError": true,
+        "content": [
+          {
+            "type": "text",
+            "text": "no matches"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "seq": 15,
+    "type": "assistant/message",
+    "time": 1700000000015,
+    "data": {
+      "turn": 2,
+      "step": 2,
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "第二答"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "seq": 16,
+    "type": "turn/end",
+    "time": 1700000000016,
+    "data": {
+      "turn": 2,
+      "reason": {
+        "kind": "completed"
+      }
+    }
+  },
+  {
+    "seq": 17,
+    "type": "turn/start",
+    "time": 1700000000017,
+    "data": {
+      "turn": 3
+    }
+  },
+  {
+    "seq": 18,
+    "type": "user/message",
+    "time": 1700000000018,
+    "data": {
+      "content": [
+        {
+          "type": "text",
+          "text": "第三问"
+        }
+      ],
+      "source": {
+        "kind": "user",
+        "rpcId": "r3"
+      }
+    }
+  },
+  {
+    "seq": 19,
+    "type": "tool/call",
+    "time": 1700000000019,
+    "data": {
+      "turn": 3,
+      "step": 1,
+      "callId": "c3",
+      "name": "bash",
+      "arguments": "{\"command\":\"npm test\"}"
+    }
+  }
+]

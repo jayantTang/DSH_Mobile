@@ -50,9 +50,10 @@ final class ChatModelProcessFoldTests: XCTestCase {
     func test_a_completed_turn_folds_on_the_model_surface_and_toggles_back() async throws {
         try await openWithOneCompletedTurn()
         let rows = await eventuallyRows { rows in
-            rows.count == 4 && rows.contains(where: { if case .processHeader = $0.kind { return true }; return false })
+            rows.count == 3 && rows.contains(where: { if case .processHeader = $0.kind { return true }; return false })
         }
-        XCTAssertEqual(rows.count, 4, "folded rows: \(rows.map(\.id))")
+        // 一行轮次行 + 问题 + 回答：分隔行已并入轮次行。
+        XCTAssertEqual(rows.count, 3, "folded rows: \(rows.map(\.id))")
         let header = try XCTUnwrap(rows.compactMap { item -> TimelineProcessHeader? in
             if case .processHeader(let value) = item.kind { return value }
             return nil
@@ -63,6 +64,18 @@ final class ChatModelProcessFoldTests: XCTestCase {
         XCTAssertFalse(rows.map(\.id).contains("tool-call-1"))
 
         model.toggleProcess(turnKey: header.id)
+        // 展开轮次先看到一条分组行；步骤卡要再展开那一组。
+        let grouped = await eventuallyRows { rows in
+            rows.contains { if case .processHeader(let h) = $0.kind, h.scope == .group { return true }; return false }
+        }
+        let group = try XCTUnwrap(grouped.compactMap { item -> TimelineProcessHeader? in
+            if case .processHeader(let value) = item.kind, value.scope == .group { return value }
+            return nil
+        }.first)
+        XCTAssertFalse(group.isExpanded)
+        XCTAssertFalse(grouped.map(\.id).contains("tool-call-1"))
+
+        model.toggleProcessGroup(groupKey: group.id)
         let expanded = await eventuallyRows { $0.map(\.id).contains("tool-call-1") }
         XCTAssertTrue(expanded.map(\.id).contains("tool-call-1"))
 
@@ -85,7 +98,7 @@ final class ChatModelProcessFoldTests: XCTestCase {
 
     func test_search_reveal_expands_the_turn_and_returns_the_row() async throws {
         try await openWithOneCompletedTurn()
-        _ = await eventuallyRows { rows in rows.count == 4 }
+        _ = await eventuallyRows { rows in rows.count == 3 }
         let revealed = model.revealProcess(containingRowID: "tool-call-1")
         XCTAssertEqual(revealed, "tool-call-1")
         let rows = await eventuallyRows { $0.map(\.id).contains("tool-call-1") }
@@ -93,9 +106,205 @@ final class ChatModelProcessFoldTests: XCTestCase {
         XCTAssertNil(model.revealProcess(containingRowID: "not-here"))
     }
 
+    // MARK: - 运行行（TC-112）
+
+    func test_the_running_line_is_a_row_handed_to_both_list_hosts_and_disappears_when_done() async throws {
+        carrier.registerLiveStream("session/follow")
+        let fake = FakeLinkService(profiles: [TestFixtures.relayProfile()],
+                                   state: .connected(hostHome: "/Users/tester"))
+        fake.activeProfile = try XCTUnwrap(fake.profiles.first)
+        fake.clientOverride = HostClientFactory.make(carrier: carrier)
+        model.attach(store: fake, hub: hub)
+        await model.open(try ChatSeam.summary(id: "s-1", asOfSeq: 3))
+        await carrier.waitForLiveStream("session/follow")
+
+        let running: [JSONValue] = [
+            ChatSeam.turnStart(seq: 1, turn: 1),
+            ChatSeam.userMessage(seq: 2, text: "q"),
+            toolCall(seq: 3, callId: "c1", name: "bash"),
+        ]
+        carrier.liveStreams["session/follow"]?.yield(ChatSeam.snapshot(cursor: 3, records: running))
+        let shown = await eventuallyRows { rows in
+            rows.contains { if case .runningLine = $0.kind { return true }; return false }
+        }
+        // 两个宿主（uikit 的 TranscriptListRepresentable / SwiftUI 的 stack）都只吃
+        // `rowsFor` 这一份行：运行行在它里面，两边就都有；不在就只能靠尾部视图，
+        // uikit 宿主一定看不到（TC-112 的根因）。
+        let line = try XCTUnwrap(rowsForRunningLine(shown))
+        XCTAssertEqual(line.id, "running-line", "稳定身份：一个会话只有一行运行状态")
+        XCTAssertNotNil(line.since, "快照里已经在跑的一轮也要有计时起点")
+        XCTAssertFalse(model.timeline.items.contains { item in
+            if case .runningLine = item.kind { return true }
+            return false
+        }, "运行行是显示行，不是日志行")
+        XCTAssertTrue(TranscriptSearch.hits(in: model.timeline.items, query: "深度求索").isEmpty,
+                      "运行行不参与搜索")
+
+        // 取消/结束：这一行消失（轮次行接管「已停止」）。
+        let done = running + [ChatSeam.turnEnd(seq: 4, turn: 1, reason: "interrupted")]
+        carrier.liveStreams["session/follow"]?.yield(ChatSeam.snapshot(cursor: 4, records: done))
+        let gone = await eventuallyRows { rows in
+            !rows.contains { if case .runningLine = $0.kind { return true }; return false }
+        }
+        XCTAssertNil(rowsForRunningLine(gone), "结束之后不能再有运行行：\(gone.map(\.id))")
+    }
+
+    private func rowsForRunningLine(_ rows: [TimelineItem]) -> TimelineRunningLine? {
+        rows.compactMap { item -> TimelineRunningLine? in
+            if case .runningLine(let line) = item.kind { return line }
+            return nil
+        }.first
+    }
+
+    // MARK: - 概要 v2（M6）
+
+    func test_a_v2_summary_window_folds_with_groups_and_step_rows_on_the_model_surface() async throws {
+        carrier.registerLiveStream("session/follow")
+        let fake = FakeLinkService(profiles: [TestFixtures.relayProfile()],
+                                   state: .connected(hostHome: "/Users/tester"))
+        let profile = try XCTUnwrap(fake.profiles.first)
+        fake.activeProfile = profile
+        fake.clientOverride = HostClientFactory.make(carrier: carrier)
+        model.attach(store: fake, hub: hub)
+        await model.open(try ChatSeam.summary(id: "s-1", asOfSeq: 6))
+        await carrier.waitForLiveStream("session/follow")
+        let records: [JSONValue] = [
+            ChatSeam.turnStart(seq: 1, turn: 1),
+            ChatSeam.userMessage(seq: 2, text: "q"),
+            foldSummary(seq: 3, turn: 1, start: 3, end: 4),
+            ChatSeam.assistantMessage(seq: 5, text: "a"),
+            ChatSeam.turnEnd(seq: 6, turn: 1, reason: "completed"),
+        ]
+        carrier.liveStreams["session/follow"]?.yield(ChatSeam.snapshot(cursor: 6, records: records))
+
+        // 收起态：只有问题、轮次行、回答。过程行根本不在窗口里。
+        let folded = await eventuallyRows { rows in
+            rows.count == 3 && rows.contains { item in
+                if case .processHeader(let h) = item.kind { return h.scope == .turn }
+                return false
+            }
+        }
+        XCTAssertEqual(folded.count, 3, "folded rows: \(folded.map(\.id))")
+        let turnHeader = try XCTUnwrap(folded.compactMap { item -> TimelineProcessHeader? in
+            if case .processHeader(let value) = item.kind, value.scope == .turn { return value }
+            return nil
+        }.first)
+        XCTAssertEqual(turnHeader.toolCount, 1, "计数来自概要，不是行数")
+        XCTAssertEqual(turnHeader.duration ?? 0, 139, accuracy: 0.001)
+        XCTAssertFalse(turnHeader.isPrefetched, "v2 概要不出现在行里")
+
+        // 展开轮次：一条分组行（来自 groups），步骤要再展开那一组。
+        model.toggleProcess(turnKey: turnHeader.id)
+        let grouped = await eventuallyRows { rows in
+            rows.contains { item in
+                if case .processHeader(let h) = item.kind { return h.scope == .group }
+                return false
+            }
+        }
+        let group = try XCTUnwrap(grouped.compactMap { item -> TimelineProcessHeader? in
+            if case .processHeader(let value) = item.kind, value.scope == .group { return value }
+            return nil
+        }.first)
+        XCTAssertFalse(group.isExpanded)
+        XCTAssertFalse(grouped.contains { item in
+            if case .processStep = item.kind { return true }
+            return false
+        })
+
+        // 展开分组：步骤元数据行出现，正文为空（只有名称/预览/状态/字节数）。
+        model.toggleProcessGroup(groupKey: group.id)
+        let opened = await eventuallyRows { rows in
+            rows.contains { item in
+                if case .processStep = item.kind { return true }
+                return false
+            }
+        }
+        let step = try XCTUnwrap(opened.compactMap { item -> TimelineProcessStep? in
+            if case .processStep(let value) = item.kind { return value }
+            return nil
+        }.first)
+        XCTAssertEqual(step.name, "bash")
+        XCTAssertEqual(step.preview, "swift build")
+        XCTAssertEqual(step.status, .ok)
+        XCTAssertEqual(step.bytes, 900)
+        XCTAssertEqual(step.resultSeq, 4)
+        XCTAssertEqual(TranscriptRowPayload(item: step.item).payloadBytes, 0)
+    }
+
+    func test_trimming_the_window_drops_the_v2_summaries_with_their_turns() async throws {
+        carrier.registerLiveStream("session/follow")
+        let fake = FakeLinkService(profiles: [TestFixtures.relayProfile()],
+                                   state: .connected(hostHome: "/Users/tester"))
+        let profile = try XCTUnwrap(fake.profiles.first)
+        fake.activeProfile = profile
+        fake.clientOverride = HostClientFactory.make(carrier: carrier)
+        model.attach(store: fake, hub: hub)
+        await model.open(try ChatSeam.summary(id: "s-1", asOfSeq: 12))
+        await carrier.waitForLiveStream("session/follow")
+        let filler = String(repeating: "x", count: 300)
+        let answer = String(repeating: "y", count: 900)
+        let records: [JSONValue] = [
+            ChatSeam.turnStart(seq: 1, turn: 1),
+            ChatSeam.userMessage(seq: 2, text: filler),
+            foldSummary(seq: 3, turn: 1, start: 3, end: 4),
+            ChatSeam.assistantMessage(seq: 5, text: answer),
+            ChatSeam.turnEnd(seq: 6, turn: 1, reason: "completed"),
+            ChatSeam.turnStart(seq: 7, turn: 2),
+            ChatSeam.userMessage(seq: 8, text: filler),
+            foldSummary(seq: 9, turn: 2, start: 9, end: 10),
+            ChatSeam.assistantMessage(seq: 11, text: answer),
+            ChatSeam.turnEnd(seq: 12, turn: 2, reason: "completed"),
+        ]
+        carrier.liveStreams["session/follow"]?.yield(ChatSeam.snapshot(cursor: 12, records: records))
+        _ = await eventuallyRows { $0.count >= 4 }
+        XCTAssertEqual(model.timeline.foldSummaries.map(\.turn), [1, 2])
+
+        let old = ChatProbe.shared.payloadBudgetKB
+        ChatProbe.shared.payloadBudgetKB = 1
+        defer { ChatProbe.shared.payloadBudgetKB = old }
+        let plan = model.trimPlanForBudget(keepLast: 0)
+        XCTAssertFalse(plan.isEmpty, "预算必须能裁掉第一轮")
+        XCTAssertGreaterThan(model.applyTrim(plan), 0)
+        XCTAssertEqual(model.timeline.foldSummaries.map(\.turn), [2],
+                       "被裁掉的轮次的概要不能留下（否则投影出幽灵轮次）")
+        // 还留着的第二轮照常折叠：一条轮次行 + 回答。
+        let rows = model.rowsFor(screen: "s-1")
+        XCTAssertTrue(rows.contains { item in
+            if case .processHeader(let header) = item.kind { return header.scope == .turn }
+            return false
+        })
+    }
+
+    private func foldSummary(seq: Int, turn: Int, start: Int, end: Int) -> JSONValue {
+        .object([
+            "type": .string("+link/fold"), "seq": .int(seq),
+            "data": .object([
+                "v": .int(2), "turn": .int(turn),
+                "startSeq": .int(start), "endSeq": .int(end),
+                "durationMs": .int(139000), "endReason": .string("completed"),
+                "activities": .object(["commands": .int(1)]),
+                "groups": .array([
+                    .object([
+                        "startSeq": .int(start), "endSeq": .int(end),
+                        "activities": .object(["commands": .int(1)]),
+                        "toolCount": .int(1),
+                        "steps": .array([
+                            .object([
+                                "seq": .int(start), "kind": .string("tools"),
+                                "name": .string("bash"), "preview": .string("swift build"),
+                                "status": .string("ok"),
+                                "resultSeq": .int(end), "bytes": .int(900),
+                            ]),
+                        ]),
+                    ]),
+                ]),
+            ]),
+        ])
+    }
+
     func test_switching_sessions_resets_the_disclosure_state() async throws {
         try await openWithOneCompletedTurn()
-        let rows = await eventuallyRows { $0.count == 4 }
+        let rows = await eventuallyRows { $0.count == 3 }
         let header = try XCTUnwrap(rows.compactMap { item -> TimelineProcessHeader? in
             if case .processHeader(let value) = item.kind { return value }
             return nil
@@ -105,41 +314,66 @@ final class ChatModelProcessFoldTests: XCTestCase {
 
         await model.open(try ChatSeam.summary(id: "s-other", asOfSeq: 1))
         XCTAssertTrue(model.foldState.manualTurn.isEmpty)
-        XCTAssertTrue(model.foldState.collapsedGroups.isEmpty)
+        XCTAssertTrue(model.foldState.expandedGroups.isEmpty)
     }
 
-    func test_an_error_turn_stays_expanded_on_the_model_surface() async throws {
+    func test_an_error_turn_folds_on_the_model_surface() async throws {
+        // M5：失败与正常完成同一套折叠（有箭头、可点、默认收起），文案另行区分。
         try await openWithOneCompletedTurn(reason: "error")
-        let rows = await eventuallyRows { $0.map(\.id).contains("tool-call-1") }
-        XCTAssertTrue(rows.map(\.id).contains("tool-call-1"))
-        XCTAssertFalse(rows.contains { if case .processHeader = $0.kind { return true }; return false })
+        let rows = await eventuallyRows { rows in
+            rows.contains { if case .processHeader(let h) = $0.kind, h.scope == .turn { return true }; return false }
+        }
+        let header = try XCTUnwrap(rows.compactMap { item -> TimelineProcessHeader? in
+            if case .processHeader(let value) = item.kind, value.scope == .turn { return value }
+            return nil
+        }.first)
+        XCTAssertFalse(header.isExpanded)
+        XCTAssertTrue(header.isFoldable)
+        XCTAssertEqual(ProcessFoldText.turnLabel(endReason: header.endReason, duration: header.duration),
+                       "处理失败")
+        XCTAssertFalse(rows.map(\.id).contains("tool-call-1"))
     }
 
-    func test_group_toggle_only_hides_that_group() async throws {
+    func test_group_toggle_opens_only_that_group() async throws {
         try await openWithOneCompletedTurn(intermediate: true)
-        let folded = await eventuallyRows { $0.count == 4 }
+        let folded = await eventuallyRows { $0.count == 3 }
         let turnHeader = try XCTUnwrap(folded.compactMap { item -> TimelineProcessHeader? in
             if case .processHeader(let value) = item.kind, value.scope == .turn { return value }
             return nil
         }.first)
         model.toggleProcess(turnKey: turnHeader.id)
-        let expanded = await eventuallyRows { rows in
+        let grouped = await eventuallyRows { rows in
             rows.contains { if case .processHeader(let h) = $0.kind, h.scope == .group { return true }; return false }
         }
-        let group = try XCTUnwrap(expanded.compactMap { item -> TimelineProcessHeader? in
+        let groups = grouped.compactMap { item -> TimelineProcessHeader? in
             if case .processHeader(let value) = item.kind, value.scope == .group { return value }
             return nil
-        }.first)
-        model.toggleProcessGroup(groupKey: group.id)
-        let collapsedGroup = await eventuallyRows { rows in
-            rows.contains { if case .processHeader(let h) = $0.kind, h.id == group.id, h.isExpanded == false { return true }; return false }
         }
-        XCTAssertTrue(collapsedGroup.contains { if case .processHeader(let h) = $0.kind { return h.id == group.id && !h.isExpanded }; return false })
+        XCTAssertEqual(groups.count, 2)
+        XCTAssertTrue(groups.allSatisfy { !$0.isExpanded }, "groups start collapsed")
+
+        model.toggleProcessGroup(groupKey: groups[0].id)
+        let opened = await eventuallyRows { rows in
+            rows.contains { if case .processHeader(let h) = $0.kind, h.id == groups[0].id, h.isExpanded { return true }; return false }
+        }
+        let state = opened.compactMap { item -> TimelineProcessHeader? in
+            if case .processHeader(let value) = item.kind, value.scope == .group { return value }
+            return nil
+        }
+        XCTAssertEqual(state.first { $0.id == groups[0].id }?.isExpanded, true)
+        XCTAssertEqual(state.first { $0.id == groups[1].id }?.isExpanded, false,
+                       "the other group must stay collapsed")
+
+        model.toggleProcessGroup(groupKey: groups[0].id)
+        let closed = await eventuallyRows { rows in
+            rows.contains { if case .processHeader(let h) = $0.kind, h.id == groups[0].id, !h.isExpanded { return true }; return false }
+        }
+        XCTAssertTrue(closed.contains { if case .processHeader(let h) = $0.kind { return h.id == groups[0].id && !h.isExpanded }; return false })
     }
 
     func test_reopening_the_same_session_keeps_the_reader_state() async throws {
         try await openWithOneCompletedTurn()
-        let rows = await eventuallyRows { $0.count == 4 }
+        let rows = await eventuallyRows { $0.count == 3 }
         let header = try XCTUnwrap(rows.compactMap { item -> TimelineProcessHeader? in
             if case .processHeader(let value) = item.kind { return value }
             return nil
@@ -152,7 +386,7 @@ final class ChatModelProcessFoldTests: XCTestCase {
 
     func test_trim_plan_never_cuts_a_turn_in_half() async throws {
         try await openWithOneCompletedTurn(toolOutputBytes: 4000)
-        _ = await eventuallyRows { $0.count == 4 }
+        _ = await eventuallyRows { $0.count == 3 }
         let old = ChatProbe.shared.payloadBudgetKB
         ChatProbe.shared.payloadBudgetKB = 1
         defer { ChatProbe.shared.payloadBudgetKB = old }

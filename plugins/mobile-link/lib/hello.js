@@ -105,6 +105,11 @@ export const SERVER_CAPABILITIES = [
   // history-fold-summary: `_link/sessionWindow` 接受 `fold: true`，把已完成轮次的
   // 过程事件折成一条 `+link/fold` 摘要（见 history/fold.js）；手机展开时用普通请求取回。
   'history-fold-summary',
+  // history-fold-summary-v2: `_link/sessionWindow` 另接受 `fold: "summary"`——概要先行
+  // 取数（只回讲话 + `+link/fold` v2 概要 + 正式回答，按整轮切页，见
+  // history/fold-summary.js 与 history/summary-window.js）。**独立能力位**：
+  // 不声明 `"summary"` 的老客户端拿到的回包与改动前逐字节相同。
+  'history-fold-summary-v2',
   'history-coverage',
   // jobs-roster: 连接器答 `_link/jobRoster`（逐活会话聚合宿主任务），并推
   // `link/jobs` 帧（spec 018）。手机**只按这条能力**决定是否渲染任务面板、列表行

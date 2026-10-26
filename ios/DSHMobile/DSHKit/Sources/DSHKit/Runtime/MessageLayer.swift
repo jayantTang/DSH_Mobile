@@ -178,17 +178,31 @@ public final class MessageLayer {
                         // 退回 `session/page`，否则上拉永远停在「加载失败」。
                         let page: SessionPipeline.FetchPage
                         if client.supportsExactHistoryWindow {
+                            // 有 v2 能力就统一走概要（`fold: "summary"`），v1 只作回退：
+                            // 判据只有 `historyFoldMode` 一处，不再各调用点各判一次
+                            // （这里曾经固定 `fold: true`，v2 能力在时仍走 v1 补拉）。
+                            let mode = client.historyFoldMode
                             let value = try await client.historyWindow(HistoryWindowRequest(
                                 address: address, before: range.upperBound + 1, through: nil,
-                                limit: range.count, maxBytes: 256 * 1024,
+                                limit: mode == .summary ? HistoryWindowWire.summaryRangeTurns
+                                                         : range.count,
+                                maxBytes: 256 * 1024,
                                 encoding: client.historyWindowEncoding,
-                                fold: client.historyFoldEnabled ? true : nil,
+                                fold: mode,
                                 coverage: client.historyCoverageEnabled ? true : nil))
+                            // 概要页只下发讲话与概要：覆盖范围用连接器给的整段，
+                            // 否则被折掉的 seq 会变成缺口、还会被再取一遍。
+                            let covered: ClosedRange<Int>? = mode == .summary
+                                ? value.startSeq.flatMap { start in
+                                    value.endSeq.map { end in min(start, end)...max(start, end) }
+                                }
+                                : nil
                             page = SessionPipeline.FetchPage(
                                 records: value.records, hasMore: value.hasMore,
                                 clamped: value.clamped ?? false,
                                 knownEmpty: value.knownEmpty ?? [],
-                                revision: value.revision)
+                                revision: value.revision,
+                                coveredRange: covered)
                         } else {
                             let through = addresses.throughSeq(for: ref.sessionId)
                                 ?? HistoryWindowRequest.safeMaxBefore

@@ -37,14 +37,22 @@ actor SessionPipeline {
         /// 连接器确认无内容的号段与版本（能力 `history-coverage`）。
         public let knownEmpty: [[Int]]
         public let revision: String?
+        /// 这一页**在宿主日志里覆盖的 seq 段**（概要 v2 用）。
+        ///
+        /// 概要页只下发讲话与概要，被折掉的 seq 没有记录；如果按首尾记录算覆盖，
+        /// 中间会凭空多出一堆缺口行，还会触发把这些段再取一遍。连接器给的
+        /// `startSeq...endSeq` 才是这一页读过的范围。
+        public let coveredRange: ClosedRange<Int>?
 
         public init(records: [SessionRecord], hasMore: Bool, clamped: Bool = false,
-                    knownEmpty: [[Int]] = [], revision: String? = nil) {
+                    knownEmpty: [[Int]] = [], revision: String? = nil,
+                    coveredRange: ClosedRange<Int>? = nil) {
             self.records = records
             self.hasMore = hasMore
             self.clamped = clamped
             self.knownEmpty = knownEmpty
             self.revision = revision
+            self.coveredRange = coveredRange
         }
     }
 
@@ -677,7 +685,11 @@ actor SessionPipeline {
                 if hotWindow[record.event.seq] == nil { diff.inserted.append(record) } else { diff.updated.append(record) }
                 mergeIntoHotWindow(record)
             }
-            ranges.insert(pageRecords.first!.event.seq...pageRecords.last!.event.seq)
+            // 概要页的覆盖范围由连接器给（整轮读过的 seq 段），不能按首尾记录算：
+            // 中间被折掉的 seq 会被当成缺口，反而触发再取一遍。
+            let covered = page.coveredRange
+                ?? (pageRecords.first!.event.seq...pageRecords.last!.event.seq)
+            ranges.insert(covered)
             enqueueWrite(.upsertRecords(scope: scope, sessionId: sessionId, records: pageRecords),
                          key: pageRecords.last!.event.seq)
             if Self.reachedEnd(page, requested: requested) { topExhausted = true }
@@ -695,6 +707,20 @@ actor SessionPipeline {
         }
         diff.gaps = currentGaps()
         emit(diff)
+    }
+
+    /// 采纳一页**概要 v2**（过程正文未下发，记录稀疏但整段已读）。
+    ///
+    /// 与 `mergeFetchedPage` 同一条合并路径（热窗口 + 区间集 + 落库 + diff），
+    /// 差别只有一处：覆盖范围用连接器给的 `covered`，而不是记录的首尾 seq。
+    /// 这样被折掉的 seq 不会被当成缺口，也不会被再取一遍。
+    func adoptSummaryPage(records: [SessionRecord], covered: ClosedRange<Int>,
+                          hasMore: Bool, clamped: Bool = false,
+                          knownEmpty: [[Int]] = [], revision: String? = nil) {
+        let page = FetchPage(records: records, hasMore: hasMore, clamped: clamped,
+                             knownEmpty: knownEmpty, revision: revision,
+                             coveredRange: covered)
+        mergeFetchedPage(page, requested: covered)
     }
 
     /// 读者点了「加载失败，点击重试」（spec 009 失败语义 / tasks T016）：

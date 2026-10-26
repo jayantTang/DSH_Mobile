@@ -98,6 +98,34 @@ export function createSnapshotCache({
 }
 
 /**
+ * 快照上的「再往旧读一批」读取器（概要 v2 用）：`(cursor) => {events, floorSeq, exhausted, clamped}`。
+ *
+ * 与 `scanSnapshot` 的区别只在职责：`scanSnapshot` 是"过滤 + 交给 `pageFrom` 裁一页"，
+ * 这里只回答"seq ≤ cursor 的原始事件有哪些"，因为概要 v2 的分页单位是**整轮**，
+ * 裁剪由 `summary-window.js` 按轮做。事件已经在内存里，所以这一层是同步的。
+ */
+export function snapshotOlderReader(snapshot) {
+  const events = Array.isArray(snapshot?.events) ? snapshot.events : []
+  const newest = Number.isInteger(snapshot?.newestSeq) ? snapshot.newestSeq : -1
+  return (cursor) => {
+    const batch = []
+    for (const event of events) {
+      if (!Number.isInteger(event?.seq)) continue
+      if (event.seq > cursor) break
+      batch.push(event)
+    }
+    const floorSeq = batch.length > 0 ? batch[0].seq : 0
+    return {
+      events: batch,
+      floorSeq,
+      // 日志被裁剪过时第一条的 seq 可能不是 0；下一次读到空批就自然收敛（见调用方）。
+      exhausted: floorSeq === 0,
+      clamped: cursor > newest,
+    }
+  }
+}
+
+/**
  * 从快照扫一页。**纯函数**，返回形状与 `scanOlder` / `filteredScan` 完全一致，
  * 于是裁剪与分页仍然由 `pageFrom` 一处决定。
  *

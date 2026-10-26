@@ -5,11 +5,13 @@ import {
 } from './history/records.js'
 import { pageFrom, scanOlder } from './history/window.js'
 import { filteredScan } from './history/filter-scan.js'
-import { createSnapshotCache, scanSnapshot } from './history/session-snapshot.js'
+import { createSnapshotCache, scanSnapshot, snapshotOlderReader } from './history/session-snapshot.js'
 import {
   HISTORY_COMPRESSION_CAPABILITY, maybeCompressHistoryValue,
 } from './history/compress.js'
 import { FOLD_CAPABILITY, foldProcessRuns } from './history/fold.js'
+import { SUMMARY_FOLD_CAPABILITY, SUMMARY_FOLD_MODE } from './history/fold-summary.js'
+import { readSummaryPage } from './history/summary-window.js'
 import { emptySpans } from './history/coverage.js'
 
 // Re-exported for the caller/tests that read them off this module (single source
@@ -62,6 +64,10 @@ export const HISTORY_CAPABILITIES = [
   // history-fold-summary: `_link/sessionWindow` 接受 `fold: true`，把本页内
   // 已完成的轮次折成一条 `+link/fold` 摘要记录（展开时用不带 fold 的普通窗口取回）。
   FOLD_CAPABILITY,
+  // history-fold-summary-v2: `fold: "summary"` —— 概要先行取数模式（设计
+  // 20261025 §3.4/M6）。只回讲话 + `+link/fold` v2 概要 + 正式回答，按整轮切页。
+  // 独立能力位：老连接器不认识这个值，老客户端也不会传它，两边都没有行为变化。
+  SUMMARY_FOLD_CAPABILITY,
 ]
 
 export function isHistoryMethod(method) {
@@ -201,9 +207,11 @@ export function createHistoryService({
   /// 少一个就可能把过滤页当成浏览页返回。
   const pageCache = new Map()
 
-  function cacheKey({ sessionId, before, through, limit, maxBytes, roles, fold, coverage }) {
+  /// 缓存键里带**折叠模式**（`none` / `v1` / `summary`）而不是布尔值：三种模式的回包
+  /// 形状不同，混用一个键会把概要页当普通页发出去。
+  function cacheKey({ sessionId, before, through, limit, maxBytes, roles, foldMode, coverage }) {
     return [sessionId, before, through ?? '', limit, maxBytes,
-            roles === undefined ? '' : [...roles].sort().join(','), fold === true ? '1' : '0',
+            roles === undefined ? '' : [...roles].sort().join(','), foldMode,
             coverage === true ? '1' : '0'].join('|')
   }
 
@@ -440,11 +448,60 @@ export function createHistoryService({
     return Number.isSafeInteger(value) && value >= 0 ? value : undefined
   }
 
+  /// 概要 v2 的一页（能力 `history-fold-summary-v2`，`fold: "summary"`）。
+  ///
+  /// 为什么走**整份快照**：这一页的单位是"整轮"，而一轮可以长达两千级 seq。
+  /// 分块回读一次只有 51 条（宿主 `readEvent` 的硬上限），一页要几十次往返；
+  /// 快照一次读完整份（本机 13k 事件实测 116–315 ms），之后每页零往返。
+  /// 快照不可用（老宿主没 `readSession`、会话超过内存护栏、读失败）时退回分块回读：
+  /// 语义不变（仍按整轮、仍不切半轮），只是慢一些，并且在单轮超过回读预算时
+  /// 如实回 `link/too-large` 让客户端重试，而不是下发半轮。
+  async function summaryWindowValue({ sessionId, before, through, limit, maxBytes }) {
+    let snapshot = await snapshots.get(sessionId)
+    // 与浏览翻页同一条护栏：快照必须是"这段的上界之内"的。请求上界比快照还新
+    // （刚发出去一条消息，或快照刚好过期一瞬）时不能拿旧快照夹上界——那会把
+    // 最新的一轮整段漏掉，还谎报 `clamped`（"日志变短了"）。改走实时读。
+    if (snapshot !== undefined && before - 1 > snapshot.newestSeq) snapshot = undefined
+    let newest = snapshot?.newestSeq
+    if (!Number.isInteger(newest)) newest = await newestSeq(sessionId)
+    let upper = Math.min(before - 1, through ?? Number.MAX_SAFE_INTEGER)
+    let clamped = false
+    if (Number.isInteger(newest) && upper > newest) {
+      upper = newest
+      clamped = true
+    }
+    const readOlder = snapshot !== undefined
+      ? snapshotOlderReader(snapshot)
+      : async (cursor) => {
+          const { window: result, clamped: chunkClamped } = await readChunk(sessionId, cursor)
+          const events = Array.isArray(result.events) ? result.events : []
+          const floorSeq = Number.isInteger(result.startSeq) ? result.startSeq : (events[0]?.seq ?? 0)
+          return { events, floorSeq, exhausted: floorSeq === 0, clamped: chunkClamped }
+        }
+    const page = await readSummaryPage({ readOlder, upper, limit, maxBytes, clamped })
+    if (page.error !== undefined) return page
+    // 字段与普通窗口同形（`startSeq`/`endSeq`/`hasMore`/`truncatedBy`/`clamped`/
+    // `scanBoundary`），客户端沿用同一套游标规则即可。**不带 `folds` 副本**：
+    // 摘要已经在记录里，再抄一份就是白白多一倍概要字节（设计 §十一 的预算是按一份算的）。
+    return {
+      records: page.records,
+      startSeq: page.startSeq,
+      endSeq: page.endSeq,
+      hasMore: page.hasMore,
+      truncatedBy: page.truncatedBy,
+      clamped: page.clamped === true,
+      scanBoundary: page.startSeq,
+    }
+  }
+
   async function window(args) {
     const sessionId = idOfAddress(args.address)
     const before = Number(args.before)
     if (sessionId === undefined) return failure('gateway/bad-request', 'address must name a session')
     if (!Number.isSafeInteger(before) || before < 0) return failure('gateway/bad-request', 'before must be a non-negative integer')
+    // `limit` 的单位随模式变：普通窗口是**记录条数**；概要 v2（`fold: "summary"`）是
+    // **轮数**，因为这一模式的页单位就是整轮（字节预算由 `maxBytes` 兜）。客户端按
+    // 自己要知道的"首屏几轮"传即可。
     const limit = Number.isSafeInteger(Number(args.limit)) && Number(args.limit) > 0 ? Number(args.limit) : DEFAULT_LIMIT
     const maxBytes = Number.isSafeInteger(Number(args.maxBytes)) && Number(args.maxBytes) > 0
       ? Number(args.maxBytes) : DEFAULT_MAX_BYTES
@@ -458,9 +515,21 @@ export function createHistoryService({
     const { roles, error: rolesError } = parseRoles(args.roles)
     if (rolesError) return rolesError
 
-    const fold = args.fold === true
+    // 折叠模式三态：`none`（不传）/ `v1`（`fold: true`）/ `summary`（`fold: "summary"`）。
+    // 只有精确的 `"summary"` 切到概要 v2；`fold: true` 与所有其它取值一律按老规矩走，
+    // 所以老客户端的回包与改动前逐字节相同（`test/helpers/fold-v1-golden.json`）。
+    const summaryFold = args.fold === SUMMARY_FOLD_MODE
+    const fold = !summaryFold && args.fold === true
+    const foldMode = summaryFold ? 'summary' : fold ? 'v1' : 'none'
     const coverage = args.coverage === true
-    const requestKey = cacheKey({ sessionId, before, through, limit, maxBytes, roles, fold, coverage })
+    // 概要 v2 的语义是"整轮 + 只讲话与概要"：角色过滤会切碎轮次，覆盖区间也按原始
+    // 记录算，两者与它拼不到一起。明确拒绝，不静默退回另一种语义（否则回包看起来
+    // 正常、内容却是错的）。
+    if (summaryFold && (roles !== undefined || coverage)) {
+      return failure('gateway/bad-request',
+        'fold "summary" cannot be combined with roles or coverage')
+    }
+    const requestKey = cacheKey({ sessionId, before, through, limit, maxBytes, roles, foldMode, coverage })
     const cachedPage = cacheGet(requestKey)
     if (cachedPage !== undefined) {
       return { ok: true, value: maybeCompressHistoryValue(cachedPage, args.encoding) }
@@ -470,6 +539,12 @@ export function createHistoryService({
     if (inFlight.has(key)) return failure('link/busy', 'another window read is in flight for this session')
     inFlight.add(key)
     try {
+      if (summaryFold) {
+        const summary = await summaryWindowValue({ sessionId, before, through, limit, maxBytes })
+        if (summary.error !== undefined) return failure(summary.error.code, summary.error.message)
+        cachePut(requestKey, summary)
+        return { ok: true, value: maybeCompressHistoryValue(summary, args.encoding) }
+      }
       // 按角色过滤时走"先定位命中 seq、再定向取完整记录"（spec 016 的"来回次数"一条）：
       // 同样一段日志，过滤路径实测从 2.5–4.1 s 降到数百毫秒；未过滤的浏览翻页保持原样
       // （它要的是精确的一段原始事件，`readEvent` 每块 51 条正合适）。

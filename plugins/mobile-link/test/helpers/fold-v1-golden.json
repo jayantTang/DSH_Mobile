@@ -1,0 +1,300 @@
+{
+  "records": [
+    {
+      "type": "event",
+      "event": {
+        "seq": 1,
+        "type": "turn/start",
+        "time": 1700000000001,
+        "data": {
+          "turn": 1
+        }
+      }
+    },
+    {
+      "type": "event",
+      "event": {
+        "seq": 2,
+        "type": "user/message",
+        "time": 1700000000002,
+        "data": {
+          "content": [
+            {
+              "type": "text",
+              "text": "第一问"
+            }
+          ],
+          "source": {
+            "kind": "user",
+            "rpcId": "r1"
+          }
+        }
+      }
+    },
+    {
+      "type": "event",
+      "event": {
+        "type": "+link/fold",
+        "seq": 4,
+        "time": 1700000000004,
+        "data": {
+          "turn": 1,
+          "startSeq": 4,
+          "endSeq": 6,
+          "finalSeq": null,
+          "dividerSeq": null,
+          "toolCount": 1,
+          "reasoningCount": 0,
+          "messageCount": 1,
+          "subagentCount": 0,
+          "endReason": null,
+          "durationMs": null,
+          "foldedCount": 3
+        }
+      }
+    },
+    {
+      "type": "event",
+      "event": {
+        "seq": 8,
+        "type": "assistant/message",
+        "time": 1700000000008,
+        "data": {
+          "turn": 1,
+          "step": 2,
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "目录里有两个文件。"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "type": "event",
+      "event": {
+        "seq": 9,
+        "type": "turn/end",
+        "time": 1700000000009,
+        "data": {
+          "turn": 1,
+          "reason": {
+            "kind": "completed"
+          }
+        }
+      }
+    },
+    {
+      "type": "event",
+      "event": {
+        "seq": 10,
+        "type": "turn/start",
+        "time": 1700000000010,
+        "data": {
+          "turn": 2
+        }
+      }
+    },
+    {
+      "type": "event",
+      "event": {
+        "seq": 11,
+        "type": "user/message",
+        "time": 1700000000011,
+        "data": {
+          "content": [
+            {
+              "type": "text",
+              "text": "第二问"
+            }
+          ],
+          "source": {
+            "kind": "user",
+            "rpcId": "r2"
+          }
+        }
+      }
+    },
+    {
+      "type": "event",
+      "event": {
+        "seq": 12,
+        "type": "compaction/summary",
+        "time": 1700000000012,
+        "data": {
+          "compactionId": "cp1",
+          "summary": [
+            {
+              "type": "text",
+              "text": "压缩后的摘要"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "type": "event",
+      "event": {
+        "type": "+link/fold",
+        "seq": 13,
+        "time": 1700000000013,
+        "data": {
+          "turn": 2,
+          "startSeq": 13,
+          "endSeq": 14,
+          "finalSeq": null,
+          "dividerSeq": null,
+          "toolCount": 1,
+          "reasoningCount": 0,
+          "messageCount": 0,
+          "subagentCount": 0,
+          "endReason": null,
+          "durationMs": null,
+          "foldedCount": 2
+        }
+      }
+    },
+    {
+      "type": "event",
+      "event": {
+        "seq": 15,
+        "type": "assistant/message",
+        "time": 1700000000015,
+        "data": {
+          "turn": 2,
+          "step": 2,
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "第二答"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "type": "event",
+      "event": {
+        "seq": 16,
+        "type": "turn/end",
+        "time": 1700000000016,
+        "data": {
+          "turn": 2,
+          "reason": {
+            "kind": "completed"
+          }
+        }
+      }
+    },
+    {
+      "type": "event",
+      "event": {
+        "seq": 17,
+        "type": "turn/start",
+        "time": 1700000000017,
+        "data": {
+          "turn": 3
+        }
+      }
+    },
+    {
+      "type": "event",
+      "event": {
+        "seq": 18,
+        "type": "user/message",
+        "time": 1700000000018,
+        "data": {
+          "content": [
+            {
+              "type": "text",
+              "text": "第三问"
+            }
+          ],
+          "source": {
+            "kind": "user",
+            "rpcId": "r3"
+          }
+        }
+      }
+    },
+    {
+      "type": "event",
+      "event": {
+        "type": "+link/fold",
+        "seq": 19,
+        "time": 1700000000019,
+        "data": {
+          "turn": 3,
+          "startSeq": 19,
+          "endSeq": 19,
+          "finalSeq": null,
+          "dividerSeq": null,
+          "toolCount": 1,
+          "reasoningCount": 0,
+          "messageCount": 0,
+          "subagentCount": 0,
+          "endReason": null,
+          "durationMs": null,
+          "foldedCount": 1
+        }
+      }
+    }
+  ],
+  "startSeq": 0,
+  "endSeq": 19,
+  "hasMore": false,
+  "truncatedBy": null,
+  "clamped": false,
+  "scanBoundary": 0,
+  "folds": [
+    {
+      "turn": 1,
+      "startSeq": 4,
+      "endSeq": 6,
+      "finalSeq": null,
+      "dividerSeq": null,
+      "toolCount": 1,
+      "reasoningCount": 0,
+      "messageCount": 1,
+      "subagentCount": 0,
+      "endReason": null,
+      "durationMs": null,
+      "foldedCount": 3
+    },
+    {
+      "turn": 2,
+      "startSeq": 13,
+      "endSeq": 14,
+      "finalSeq": null,
+      "dividerSeq": null,
+      "toolCount": 1,
+      "reasoningCount": 0,
+      "messageCount": 0,
+      "subagentCount": 0,
+      "endReason": null,
+      "durationMs": null,
+      "foldedCount": 2
+    },
+    {
+      "turn": 3,
+      "startSeq": 19,
+      "endSeq": 19,
+      "finalSeq": null,
+      "dividerSeq": null,
+      "toolCount": 1,
+      "reasoningCount": 0,
+      "messageCount": 0,
+      "subagentCount": 0,
+      "endReason": null,
+      "durationMs": null,
+      "foldedCount": 1
+    }
+  ]
+}

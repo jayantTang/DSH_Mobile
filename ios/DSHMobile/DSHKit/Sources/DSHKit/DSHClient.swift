@@ -149,6 +149,12 @@ struct DSHClient: Sendable {
         capabilities.contains(HistoryWindowWire.foldCapability)
     }
 
+    /// 概要 v2（`history-fold-summary-v2`）：首屏只取讲话 + 概要 + 回答，
+    /// `limit` 按轮数算。老连接器没有它，调用方继续用 v1 / 原事件。
+    public var historySummaryFoldEnabled: Bool {
+        capabilities.contains(HistoryWindowWire.summaryFoldCapability)
+    }
+
     /// 覆盖信息（已知为空 + 版本）是否可用。
     public var historyCoverageEnabled: Bool {
         capabilities.contains(HistoryWindowWire.coverageCapability)

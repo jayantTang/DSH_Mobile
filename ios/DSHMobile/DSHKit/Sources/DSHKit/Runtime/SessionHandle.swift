@@ -67,6 +67,15 @@ public struct SessionHandle: Sendable {
         await pipeline.metricsSnapshot()
     }
 
+    /// 采纳一页概要 v2（记录稀疏但整段已读；不生成缺口、不重取）。
+    public func adoptSummaryPage(records: [SessionRecord], covered: ClosedRange<Int>,
+                                 hasMore: Bool, clamped: Bool = false,
+                                 knownEmpty: [[Int]] = [], revision: String? = nil) async {
+        await pipeline.adoptSummaryPage(records: records, covered: covered, hasMore: hasMore,
+                                        clamped: clamped, knownEmpty: knownEmpty,
+                                        revision: revision)
+    }
+
     /// 采纳对端确认的已知为空区间（带版本，版本不一致丢弃）。
     public func applyKnownEmpty(spans: [ClosedRange<Int>], revision: String) async {
         await pipeline.applyKnownEmpty(spans, revision: revision)

@@ -65,6 +65,22 @@ public enum DSHTheme {
     public static let brandBright = Color(hex: 0x6B85FF)
     /// A very low-opacity brand wash for selected rows.
     public static let brandSubtle = Color(hex: 0x4D6BFE).opacity(0.14)
+    /// 过程折叠的常驻文字（轮次行、分组行、步骤卡元信息）。
+    ///
+    /// 无障碍加深（owner 2026-10-26 选 A）：浅色从 #81858C 提到 **#61666B**，
+    /// 对白底 5.80:1；深色 **#81858C**，对 `background` 深色（#151517）4.92:1。
+    /// 两档都过 WCAG AA 正文门槛（4.5:1），由 `ColorContrastTests` 钉住。
+    public static let processLabel = adaptive(
+        light: ProcessTextTokens.processLabelLight,
+        dark: ProcessTextTokens.processLabelDark)
+
+    /// 运行中计时行的蓝（桌面 `--dsw-alias-label-deep-diving`）。
+    ///
+    /// 浅色 **#345EBA**（对白底 6.08:1，保持与桌面同色）；深色改用 **#6B85FF**
+    /// （对深色底 5.58:1）——原来的 #345EBA 在深色下只有 2.6:1 左右，读不清。
+    public static let deepDiving = adaptive(
+        light: ProcessTextTokens.deepDivingLight,
+        dark: ProcessTextTokens.deepDivingDark)
 
     // MARK: - Semantic roles
 
@@ -142,6 +158,24 @@ public enum DSHTheme {
         public static let code = Font.system(size: 13, weight: .regular, design: .monospaced)
         /// Inline code inside prose.
         public static let codeInline = Font.system(size: 14, weight: .regular, design: .monospaced)
+        /// 过程折叠的轮次行与分组行：14pt（桌面 `.l_V-RG_label` 的 14/24）。
+        public static let processLabel = Font.system(size: 14, weight: .regular)
+        /// 运行中的深度求索行：12pt（桌面 `.EvIC1a_running` 的 12/22）。
+        public static let runningLine = Font.system(size: 12, weight: .regular)
+    }
+
+    /// 过程折叠文字的颜色原值（浅/深）与两套底色的原值。
+    ///
+    /// 单独列出来是给对比度单测用的：`Color` 是随系统外观解析的动态颜色，
+    /// 测试里取不到"深色那一档到底是多少"，把数值集中在这里才能对两档都算对比度。
+    public enum ProcessTextTokens {
+        public static let processLabelLight: UInt32 = 0x61666B
+        public static let processLabelDark: UInt32 = 0x81858C
+        public static let deepDivingLight: UInt32 = 0x345EBA
+        public static let deepDivingDark: UInt32 = 0x6B85FF
+        /// 浅色底 = 窗口背景；深色底 = 窗口背景（与 `background` 同一值）。
+        public static let lightBackground: UInt32 = 0xFFFFFF
+        public static let darkBackground: UInt32 = 0x151517
     }
 
     // MARK: - Helpers

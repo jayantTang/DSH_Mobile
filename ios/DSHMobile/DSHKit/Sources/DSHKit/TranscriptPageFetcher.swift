@@ -50,7 +50,7 @@ public struct TranscriptPageFetcher: Sendable {
     private let pageSize: Int
     private let maxBytes: Int
     private let encoding: String?
-    private let fold: Bool?
+    private let fold: HistoryWindowFold?
     /// Test seam: rewrites a legacy page before the shortfall correction runs.
     /// The app passes this only under the DEBUG probe flag that reproduces "the
     /// host gave back a short page" (test case 43); production passes nothing.
@@ -72,7 +72,7 @@ public struct TranscriptPageFetcher: Sendable {
         self.maxBytes = maxBytes
         self.encoding = capabilities.contains(HistoryWindowWire.compressionCapability)
             ? HistoryWindowRequest.deflateRaw : nil
-        self.fold = capabilities.contains(HistoryWindowWire.foldCapability) ? true : nil
+        self.fold = capabilities.contains(HistoryWindowWire.foldCapability) ? .v1 : nil
         self.pageFilter = pageFilter
         self.channel = Self.channel(capabilities: capabilities)
     }

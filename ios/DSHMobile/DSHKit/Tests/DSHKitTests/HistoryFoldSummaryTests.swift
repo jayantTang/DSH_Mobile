@@ -60,7 +60,7 @@ final class HistoryFoldSummaryTests: XCTestCase {
     }
 
     func testRequestEncodesFoldOnlyWhenAsked() throws {
-        func encode(_ fold: Bool?) throws -> String {
+        func encode(_ fold: HistoryWindowFold?) throws -> String {
             let request = HistoryWindowRequest(address: .session(sessionId: "s"), before: 10, fold: fold)
             return String(data: try JSONEncoder().encode(request), encoding: .utf8) ?? ""
         }

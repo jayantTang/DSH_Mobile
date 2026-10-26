@@ -35,6 +35,13 @@ public struct TimelineItem: Identifiable, Sendable {
         /// 一段连续过程。**不是日志事件折出来的行**，只由 `DSHChatDomain` 的
         /// `TranscriptProcessFold` 产生；原始过程行仍在时间线里。
         case processHeader(TimelineProcessHeader)
+        /// 概要 v2 的一行**步骤元数据**：名称、参数预览、状态、结果字节数，
+        /// 没有正文。同样只由投影产生（`TranscriptProcessFold`）；概要模式下
+        /// 过程正文根本没有下发，所以这里不会出现伪造的 tool/result 行。
+        case processStep(TimelineProcessStep)
+        /// 末尾的运行行（`深度求索中，用时 … ···`）。显示投影生成的唯一一行，
+        /// 两个列表宿主都渲染它；不参与缓存/裁剪/搜索。
+        case runningLine(TimelineRunningLine)
 
         /// 数据行（记录折叠而来），与缺口占位行相对。
         /// 窗口边界、命中归属等"内容覆盖"判定只认数据行（009 场景⑥）。
@@ -160,6 +167,16 @@ public struct ChatTimeline: Sendable {
     /// Whether the transcript ends with a turn that never reported completion.
     public private(set) var isTurnOpen: Bool = false
 
+    /// 概要 v2（`+link/fold` 的 `v: 2`）解码出的轮次元数据，按 `startSeq` 升序。
+    ///
+    /// 它**不是行**：概要模式下过程正文没有下发，轮次行、分组行与步骤元数据行
+    /// 都由 `TranscriptProcessFold` 从这份数据投影出来。一份概要一行都不占，
+    /// 所以这里单独持有，而不是塞成一条 `processHeader`。
+    ///
+    /// 生命周期与行一致：`reset` 清空中重新折叠；旧页 `prepend` 时并入并保序；
+    /// 窗口裁剪时由 `pruneFoldSummaries(before:)` 一并丢掉。
+    public private(set) var foldSummaries: [FoldSummaryV2] = []
+
     /// Folds the last known total usage for the session.
     public private(set) var lastUsage: TokenUsageProjection?
 
@@ -188,8 +205,16 @@ public struct ChatTimeline: Sendable {
     /// 顺带消掉 App 侧三处"返回值被丢弃"的编译告警。
     @discardableResult
     public mutating func reset(with records: [SessionRecord]) -> Change {
+        // `isTurnOpen` 是"这一轮是不是还开着"的事实，不该被 reset 顺手丢掉再靠
+        // 最后一条记录推断：窗口裁到轮次中间时（turn/start 在窗口外）推断会得到
+        // "已结束"，运行行与计时随之消失。这里显式保存，回放没有轮次边界时恢复。
+        let previousTurnOpen = isTurnOpen
+        let settlesTurn = records.contains { record in
+            record.event.type == "turn/start" || record.event.type == "turn/end"
+        }
         items.removeAll(keepingCapacity: true)
         toolIndex.removeAll(keepingCapacity: true)
+        foldSummaries.removeAll(keepingCapacity: true)
         streaming = nil
         currentTurn = 0
         currentStep = 0
@@ -200,6 +225,7 @@ public struct ChatTimeline: Sendable {
         }
         // A snapshot is history, not live output: nothing is still running.
         settleRunningTools()
+        if !settlesTurn { isTurnOpen = previousTurnOpen }
         return .reloaded
     }
 
@@ -231,9 +257,15 @@ public struct ChatTimeline: Sendable {
         // Re-key the older rows so ids stay unique against the existing ones.
         let existing = Set(items.map(\.id))
         let older = scratch.items.filter { !existing.contains($0.id) }
-        guard !older.isEmpty else { return .none }
-
-        items.insert(contentsOf: older, at: 0)
+        // 旧页里的概要必须一起进来（它们是轮次行/分组行的唯一来源），
+        // 否则上翻一页之后，那一轮的折叠会凭空少掉过程。
+        guard !older.isEmpty || !scratch.foldSummaries.isEmpty else { return .none }
+        if !older.isEmpty {
+            items.insert(contentsOf: older, at: 0)
+        }
+        for summary in scratch.foldSummaries {
+            _ = upsertFoldSummary(summary)
+        }
         reindexTools()
         return .reloaded
     }
@@ -354,11 +386,40 @@ public struct ChatTimeline: Sendable {
         return append(kind: .processHeader(header), seq: event.seq, identity: header.id)
     }
 
+    /// 记下一条 v2 概要。同一段（`startSeq`）重放时替换而不是追加：窗口重读、
+    /// 运行中刷新都会再发一次同一条，重复追加会让轮次行与分组行各出现两遍。
+    private mutating func upsertFoldSummary(_ summary: FoldSummaryV2) -> Bool {
+        if let index = foldSummaries.firstIndex(where: { $0.startSeq == summary.startSeq }) {
+            guard foldSummaries[index] != summary else { return false }
+            foldSummaries[index] = summary
+            return true
+        }
+        let insertAt = foldSummaries.firstIndex { $0.startSeq > summary.startSeq }
+            ?? foldSummaries.count
+        foldSummaries.insert(summary, at: insertAt)
+        return true
+    }
+
+    /// 窗口裁剪：起点在裁剪线之前的概要随行一起丢掉，不留没有行的分组键。
+    ///
+    /// 判据用 `startSeq`（概要覆盖的整段起点）：裁剪线是按轮次起点对齐的，
+    /// 留着的那个轮次的概要不小于它，更早的整段都在它之前。
+    public mutating func pruneFoldSummaries(before seq: Int) {
+        foldSummaries.removeAll { $0.startSeq < seq }
+    }
+
 
     private mutating func applyEvent(_ event: SessionEvent) -> Change {
-        // 连接器折好下发的轮次摘要（`history-fold-summary`）。它不是宿主事件，
-        // 不经过 ChatEventDecoder：直接插一行 `processHeader`，点开时由上层回取详情。
-        if event.type == "+link/fold" { return applyFoldSummary(event) }
+        // 连接器折好下发的轮次摘要（`history-fold-summary` / `history-fold-summary-v2`）。
+        // 两条路按记录里的 `v` 分：v2 是**整轮的元数据**（分组 + 步骤），解码成独立
+        // 模型 `FoldSummaryV2` 存进 `foldSummaries`，一行都不占；v1 仍是老样子，
+        // 插一行 `processHeader`，点开时由上层回取详情。
+        if event.type == FoldSummaryV2.recordType {
+            if let summary = FoldSummaryV2.decode(event) {
+                return upsertFoldSummary(summary) ? .reloaded : .none
+            }
+            return applyFoldSummary(event)
+        }
         switch ChatEventDecoder.decode(event) {
         case .userMessage(let message):
             // The host journals plugin and runtime-context messages under the
@@ -436,6 +497,23 @@ public struct ChatTimeline: Sendable {
                     if !id.isEmpty, case .appended = change {
                         toolIndex[id] = items.count - 1
                     }
+                case .image(let attachment):
+                    // 概要 v2 会把助手消息里的 image 块原样带下来（只有 attachment
+                    // 元数据，没有字节）。图片是正式回答的一部分，不能因为折叠就丢：
+                    // 沿用「agent 发来的图片」那一种行（空正文 + 图片、靠 agent 一侧），
+                    // 这样收起态它仍算回答内容。`file` 块暂时没有行模型（UI 侧没有
+                    // 文件卡），元数据留在记录里，不在这里伪造一行。
+                    change = append(
+                        kind: .userMessage(
+                            text: "",
+                            images: [attachment],
+                            isSteering: false,
+                            isPending: false,
+                            isAgentSent: true
+                        ),
+                        seq: event.seq,
+                        identity: "assistant-image-\(event.seq)-\(index)"
+                    )
                 default:
                     continue
                 }
@@ -563,6 +641,15 @@ public struct ChatTimeline: Sendable {
             // number instead — as this used to — is what made every message
             // sent from the phone appear twice.
             let identity = spliced.rpcId.map { "user-\($0)" } ?? "inbox-\(event.seq)"
+            // 概要 v2 的页里，同一条消息可能出现两次：`user/message`（落定）与
+            // `agent/inbox/spliced`（本机回声）。回声只是乐观行，已落定的那一行
+            // 永远是正本——晚到的回声不能把确认过的正文/图片覆盖成它自己那份
+            //（实测页内两条人发消息各带一条回声；覆盖会让图文消失或重复）。
+            if let index = items.firstIndex(where: { $0.id == identity }),
+               case .userMessage(_, _, _, let isPending, _) = items[index].kind,
+               !isPending {
+                return .none
+            }
             return append(
                 kind: .userMessage(
                     text: text,
