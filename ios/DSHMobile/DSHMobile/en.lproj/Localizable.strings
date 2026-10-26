@@ -847,3 +847,11 @@ It is registered as a workspace first, so a new group appears in the desktop sid
 "排队中的消息：%@" = "Queued message: %@";
 "删除排队消息" = "Delete queued message";
 "%lld 张图片" = "%lld images";
+
+"%lld 步" = "%lld steps";
+"思考 %lld 字" = "Reasoning %lld chars";
+"思考 %@" = "Reasoning %@";
+"编辑" = "Edit";
+"网页" = "Web";
+"子代理" = "Subagent";
+"。；;." = "。；;.";

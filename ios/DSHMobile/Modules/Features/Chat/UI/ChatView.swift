@@ -109,10 +109,6 @@ public struct ChatView: View {
     /// 读者到顶后、模型状态还没切到 loading 之前的乐观提示。
     /// 只影响显示，不参与取页；加载落地/失败即清。
     @State private var olderRequestVisible = false
-    // MARK: 临时诊断（拉到顶加载延迟）
-    @State private var debugTopSince: Date?
-    @State private var debugTriggerAt: Date?
-    @State private var debugLoadingAt: Date?
     /// DEBUG 夹具：只用于核对加载条的可见性。
     private var forceOlderBanner: Bool {
         #if DEBUG
@@ -239,7 +235,6 @@ public struct ChatView: View {
                 .probed("composer")
         }
         .background(DSHTheme.background)
-        .overlay(alignment: .top) { olderDebugHUD }
         // 018：聊天页把当前会话的轮次喂成 `timeline.isTurnOpen`（列表喂的是
         // `session/list.running`，两者口径不同，这里覆盖）。
         .task { syncActivityBinding() }
@@ -631,7 +626,6 @@ public struct ChatView: View {
         }
         .onChange(of: model.isLoadingOlder) { _, loading in
             if loading {
-                debugLoadingAt = Date()
                 DSHLog.event("older.loading", ["loading": "1"])
             }
             if !loading { olderRequestVisible = false }
@@ -756,7 +750,6 @@ public struct ChatView: View {
                 canLoadOlder: { model.hasOlder },
                 isLoadingOlder: { model.isLoadingOlder },
                 onNearTop: {
-                    debugTriggerAt = Date()
                     DSHLog.event("older.trigger", [
                         "why": "hostNearTop",
                         "hasOlder": model.hasOlder ? "1" : "0",
@@ -779,7 +772,6 @@ public struct ChatView: View {
                     topDistance = distance
                     let isNear = distance < Self.prefetchMargin
                     if isNear != wasNear {
-                        debugTopSince = isNear ? Date() : nil
                         DSHLog.event("older.top", ["near": isNear ? "1" : "0",
                                                    "d": String(Int(distance))])
                     }
@@ -1084,14 +1076,6 @@ public struct ChatView: View {
         .background(DSHTheme.layer1)
         .overlay(alignment: .bottom) { Hairline() }
         .accessibilityIdentifier("chat.older.loading")
-    }
-
-    /// 临时诊断 HUD：只用于定位“到顶后多久才出现加载”。
-    private var olderDebugHUD: some View {
-        OlderDebugHUD(distance: topDistance, near: sentinelNearTop,
-                      topSince: debugTopSince, triggerAt: debugTriggerAt,
-                      loadingAt: debugLoadingAt, loading: model.isLoadingOlder,
-                      liveChars: model.liveStreamChars, frames: model.liveStreamFrames)
     }
 
     @ViewBuilder
@@ -1410,7 +1394,6 @@ public struct ChatView: View {
         // （2026-10-08 用例 53 实测：探针里重试条 7.68s 就布局好了，8.5s 的截图却是加载态）。
         // 失败之后由读者点重试条，或由那一次自动补试收尾。
         guard model.olderFailure == nil else { return }
-        debugTriggerAt = Date()
         DSHLog.event("older.trigger", ["why": "pump",
                                        "hasOlder": model.hasOlder ? "1" : "0"])
         olderPump = Task { @MainActor in
@@ -1914,54 +1897,4 @@ public struct ChatView: View {
 
 }
 
-#endif
-
-#if os(iOS)
-private struct OlderDebugHUD: View {
-    let distance: CGFloat?
-    let near: Bool
-    let topSince: Date?
-    let triggerAt: Date?
-    let loadingAt: Date?
-    let loading: Bool
-    let liveChars: Int
-    let frames: Int
-
-    var body: some View {
-        TimelineView(.periodic(from: .now, by: 0.2)) { context in
-            let now = context.date
-            VStack(spacing: 2) {
-            HStack(spacing: 8) {
-                Text("d=\(Int(distance ?? -1))")
-                Text("near=\(near ? 1 : 0)")
-                Text("top=\(Self.age(topSince, now))")
-                Text("trig=\(Self.age(triggerAt, now))")
-                Text("load=\(Self.age(loadingAt, now))")
-                Text("spin=\(loading ? 1 : 0)")
-                Text("live=\(liveChars)")
-                Text("f=\(frames)")
-            }
-            Text(Self.clock(now))
-            }
-            .font(.system(size: 9, weight: .medium, design: .monospaced))
-            .foregroundStyle(.white)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 4)
-            .background(Color.black.opacity(0.72), in: Capsule())
-            .padding(.top, 4)
-            .allowsHitTesting(false)
-        }
-    }
-
-    private static func clock(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm:ss.SSS"
-        return formatter.string(from: date)
-    }
-
-    private static func age(_ date: Date?, _ now: Date) -> String {
-        guard let date else { return "-" }
-        return String(format: "%.1fs", now.timeIntervalSince(date))
-    }
-}
 #endif
