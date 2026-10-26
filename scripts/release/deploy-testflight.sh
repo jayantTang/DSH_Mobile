@@ -187,17 +187,21 @@ say "导出完成：${IPA}（$(du -h "$IPA" | cut -f1)）"
 # `AppDiagnostics.swift` 整段在 `#if DIAGNOSTICS` 内，而 DIAGNOSTICS 只在 OTA 配置；
 # 一旦有人把条件复制进 Release，这里当场失败，不会等到用户手机上才发现。
 say "校验诊断哨兵（发布包必不带）"
-APP_BINARY="$BUILD_DIR/export/DSHMobile.app/DSHMobile"
-[ -f "$APP_BINARY" ] || die "没有导出的 App 可执行文件：$APP_BINARY（先跑一次完整发布）"
+SENTINEL_DIR="$(mktemp -d)"
+unzip -q "$IPA" -d "$SENTINEL_DIR"
+APP_BINARY="$SENTINEL_DIR/Payload/DSHMobile.app/DSHMobile"
+[ -f "$APP_BINARY" ] || die "没有导出的 App 可执行文件：${APP_BINARY}（先跑一次完整发布）"
 # 同 deploy-ota.sh：`strings | grep -q` 在 `pipefail` 下会因 SIGPIPE 误判，
 # 这里必须先把 strings 落文件，再判定。误判方向是"有哨兵却放过"，比红更危险。
 SENTINEL_DUMP="$(mktemp)"
 strings -a "$APP_BINARY" > "$SENTINEL_DUMP" 2>/dev/null || true
 if grep -q "DSHDIAG-OTA-" "$SENTINEL_DUMP"; then
   rm -f "$SENTINEL_DUMP"
+  rm -rf "$SENTINEL_DIR"
   die "发布包里出现了诊断哨兵：DIAGNOSTICS 被带进了 Release 配置，拒绝上传（见 scripts/dev/check-diag-gate.mjs）"
 fi
 rm -f "$SENTINEL_DUMP"
+rm -rf "$SENTINEL_DIR"
 
 say "上传到 App Store Connect"
 if [ -n "${ASC_KEY_ID:-}" ] && [ -n "${ASC_ISSUER_ID:-}" ]; then
