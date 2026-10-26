@@ -128,7 +128,9 @@ struct TranscriptListRepresentable: UIViewRepresentable {
                 host.apply(.setRows(items, anchorId: items.last?.id))
             }
         }
-        if pinToBottom, let last = items.last?.id { host.scrollTo(id: last) }
+        // 不要用 `scrollTo(id:last)` 来“打开即底”：它按 centeredVertically 定位，
+        // 会把最后一行放在视口中间，并把宿主的 `wantsBottom` 清掉（打开落中间的真根因）。
+        // 打开/跟尾只走 `pinAfterUpdate` → `setOffsetToBottom`。
         context.coordinator.known = Set(items.map(\.id))
         onDiagnostic("list.pinAfterUpdate", ["pin": pinToBottom ? "1" : "0", "items": String(items.count)])
         if pinToBottom { host.pinAfterUpdate() }
