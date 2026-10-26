@@ -66,6 +66,9 @@ public final class ActivityModel {
 
     // MARK: - Fixture (DEBUG)
 
+    /// 旧连接器已明确答过 `link/unsupported`：断线重连前不再问。
+    private var rosterUnsupported = false
+
     #if DEBUG
     private var fixture: ActivityFixture.Content?
     #endif
@@ -143,6 +146,7 @@ public final class ActivityModel {
     public func setConnected(_ connected: Bool) {
         store.apply(.connection(connected))
         if connected {
+            rosterUnsupported = false
             Task { await refresh() }
             startAutoRefresh()
         } else {
@@ -186,14 +190,22 @@ public final class ActivityModel {
         let capabilities = service.capabilities
         store.apply(.capabilities(capabilities))
         store.setCurrentSession(chatSessionId)
-        guard store.isAvailable else { return }
+        // 能力位是提示，不是唯一闸门：握手偶尔拿不到 capabilities（实测 relay 建连
+        // caps=0），但连接器其实能回答名单；先问一次，成功就以回应为准补上能力。
+        // 旧连接器回 `link/unsupported` 时再降级并停问，不会每 10 秒刷一次。
+        guard !rosterUnsupported else { return }
         do {
             let roster = try await client.activityRoster()
+            if !store.isAvailable {
+                store.apply(.capabilities(capabilities.union([LinkHandshake.Capability.jobsRoster])))
+                store.setCurrentSession(chatSessionId)
+            }
             store.apply(.roster(roster))
         } catch {
             // 旧连接器/无 jobs 服务：整块降级，界面与升级前一致。
             if let failure = error as? DSHRPCFailure,
                failure.code == "link/unsupported" || failure.code == "unsupported" {
+                rosterUnsupported = true
                 DSHLog.push("activity: connector answered \(failure.code); activity surfaces hidden")
                 store.apply(.capabilities(capabilities.subtracting([LinkHandshake.Capability.jobsRoster])))
                 return

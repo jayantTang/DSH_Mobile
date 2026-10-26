@@ -49,6 +49,21 @@ final class ActivityModelTests: XCTestCase {
         try await super.tearDown()
     }
 
+    func test_a_roster_answer_enables_activity_when_the_handshake_lost_capabilities() async throws {
+        // 现场：relay 建连时 `service.capabilities` 为空，但连接器其实能回答名单。
+        // 能力位只能是提示；成功回答本身要能把活动界面打开。
+        service.capabilities = []
+        model = ActivityModel()
+        try await stubRoster(at: 1, [("s1", ["j1"], 0)])
+        model.attach(service: service, hub: hub)
+        model.setConnected(true)
+        await eventually("roster enables activity") {
+            self.model.isAvailable && self.model.counts(sessionId: "s1").jobs == 1
+        }
+        XCTAssertTrue(model.isAvailable)
+        XCTAssertEqual(model.counts(sessionId: "s1").jobs, 1)
+    }
+
     // MARK: - Fixtures
 
     /// 一行的宿主 `JobView`（只带本特性用到的字段）。
