@@ -106,6 +106,9 @@ public struct ChatView: View {
     /// while the reader is scrolling back is what stops a running turn from
     /// yanking them away from what they are reading.
     @State private var isFollowing = true
+    /// 读者到顶后、模型状态还没切到 loading 之前的乐观提示。
+    /// 只影响显示，不参与取页；加载落地/失败即清。
+    @State private var olderRequestVisible = false
     /// Rate limit for tail scrolling during a stream.
     @State private var lastScrollAt = Date.distantPast
     /// 内容变化后排的那一次"确认仍在尾部"。可取消，所以流式输出时不会堆积。
@@ -595,7 +598,11 @@ public struct ChatView: View {
         }
         #endif
         .onChange(of: model.timeline.items.count) { _, count in
+            olderRequestVisible = false
             itemsCountDidChange(count, proxy: proxy)
+        }
+        .onChange(of: model.isLoadingOlder) { _, loading in
+            if !loading { olderRequestVisible = false }
         }
         .onChange(of: model.timeline.streaming?.text.count ?? 0) { _, streamed in
             ChatProbe.shared.setContent?(model.timeline.items.count, streamed)
@@ -716,7 +723,12 @@ public struct ChatView: View {
                 onDiagnostic: { name, fields in ChatProbe.shared.probeNote?(name, fields, true) },
                 canLoadOlder: { model.hasOlder },
                 isLoadingOlder: { model.isLoadingOlder },
-                onNearTop: { Task { await model.loadOlder() } },
+                onNearTop: {
+                    if model.hasOlder || model.hasUnfilledGaps {
+                        olderRequestVisible = true
+                    }
+                    Task { await model.loadOlder() }
+                },
                 onScroll: { distance in
                     model.noteReaderTopRow(listHostRef?.topVisibleRowID)
                     topDistance = distance
@@ -1013,7 +1025,7 @@ public struct ChatView: View {
         // 加载态由 `olderState` 统一表达：管道模式下缺口行不一定存在
         //（打开会话、管道还没数据时快速拉到顶部），只靠缺口行会完全无提示。
         // 这里始终显示；缺口行的 spinner 同时存在也不矛盾。
-        if model.isLoadingOlder, model.olderFailure == nil {
+        if (model.isLoadingOlder || olderRequestVisible), model.olderFailure == nil {
             HStack(spacing: DSHTheme.Spacing.hairline) {
                 ProgressView().controlSize(.mini)
                 Text("正在加载更早的消息…")
