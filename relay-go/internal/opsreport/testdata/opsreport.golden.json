@@ -2318,9 +2318,9 @@
         "accounts": 1,
         "newAccounts": 1,
         "returningAccounts": 0,
-        "messageNewAccounts": 0,
+        "messageNewAccounts": 1,
         "messageReturning7Accounts": 0,
-        "messageReturningOldAccounts": 1
+        "messageReturningOldAccounts": 0
       },
       {
         "day": 20260929,
@@ -2349,8 +2349,8 @@
         "newAccounts": 0,
         "returningAccounts": 1,
         "messageNewAccounts": 0,
-        "messageReturning7Accounts": 0,
-        "messageReturningOldAccounts": 1
+        "messageReturning7Accounts": 1,
+        "messageReturningOldAccounts": 0
       },
       {
         "day": 20261001,
@@ -2364,8 +2364,8 @@
         "newAccounts": 0,
         "returningAccounts": 1,
         "messageNewAccounts": 0,
-        "messageReturning7Accounts": 0,
-        "messageReturningOldAccounts": 1
+        "messageReturning7Accounts": 1,
+        "messageReturningOldAccounts": 0
       },
       {
         "day": 20261002,
@@ -2438,9 +2438,9 @@
         "accounts": 1,
         "newAccounts": 1,
         "returningAccounts": 0,
-        "messageNewAccounts": 0,
+        "messageNewAccounts": 1,
         "messageReturning7Accounts": 0,
-        "messageReturningOldAccounts": 1
+        "messageReturningOldAccounts": 0
       },
       {
         "day": 20261007,

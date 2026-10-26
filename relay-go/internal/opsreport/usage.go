@@ -8,12 +8,12 @@ import (
 
 // usageScan 按天读一遍 usageDaily，同时给出 series / ranked / activeByDay。
 //
-// 消息活跃账号按“首次发出消息”分三档：当天首次发消息算新增；首次发消息在最近
-// 7 天内算回访；首次发消息在 7 天以前、且今天仍发消息算超 7 天回访。三档互斥，
-// 加起来等于当天 messageAccounts。firstPrompt 来自 400 天历史，不是本次窗口。
+// 消息活跃账号按“首次使用设备”分三档：首次用量记录在当天算新增；首次用量记录
+// 在最近 7 天内算回访；首次用量记录在 7 天以前、且今天仍发消息算超 7 天回访。
+// 三档互斥，加起来等于当天 messageAccounts。firstSeen 来自 400 天历史，不是本次窗口。
 func usageScan(ctx context.Context, src Source, days int, end int64,
 	debugIDs map[string]struct{}, names map[string]*string, knownIDs,
-	external map[string]struct{}, firstPrompt map[string]int64) ([]usageDay, []accountUsageRow,
+	external map[string]struct{}, firstSeen map[string]int64) ([]usageDay, []accountUsageRow,
 	map[int64]map[string]struct{}, map[int64]map[string]struct{}, error) {
 	recent := recentDays(days, end)
 	perDay := make(map[int64]*usageDay, len(recent))
@@ -77,7 +77,7 @@ func usageScan(ctx context.Context, src Source, days int, end int64,
 	for _, day := range recent {
 		entry := perDay[day]
 		for account := range messageActiveByDay[day] {
-			first, known := firstPrompt[account]
+			first, known := firstSeen[account]
 			switch {
 			case !known:
 				entry.MessageReturningOldAccounts++
@@ -190,18 +190,17 @@ func buildUsageReport(series []usageDay, ranked []accountUsageRow,
 	}
 }
 
-// firstSeenDays 是每个账号第一次有用量记录与第一次发出消息的本地日。
+// firstSeenDays 是每个账号第一次有设备用量记录的本地日。
 //
-// 前者是连接活跃留存的起点；后者是消息活跃账号三档（当日新增 / 7 天内 /
-// 超 7 天）的唯一口径，不能用连接首次活跃代替“首次使用设备发出消息”。
+// 它是“首次使用设备”的唯一口径，也是消息活跃账号三档（当日新增 / 7 天内 /
+// 超 7 天）的起点；不能用首次发消息日代替——历史消息计数不是一直存在。
 func firstSeenDays(ctx context.Context, src Source, debugIDs map[string]struct{},
-	owners map[string]string) (map[string]int64, map[string]int64, error) {
+	owners map[string]string) (map[string]int64, error) {
 	rows, err := src.UsageTotals(ctx, retentionHistoryDays, "device")
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	first := map[string]int64{}
-	firstPrompt := map[string]int64{}
 	for _, row := range rows {
 		if row.DeviceID == nil {
 			continue
@@ -216,11 +215,6 @@ func firstSeenDays(ctx context.Context, src Source, debugIDs map[string]struct{}
 		if current, ok := first[account]; !ok || row.Day < current {
 			first[account] = row.Day
 		}
-		if row.Prompts > 0 {
-			if current, ok := firstPrompt[account]; !ok || row.Day < current {
-				firstPrompt[account] = row.Day
-			}
-		}
 	}
-	return first, firstPrompt, nil
+	return first, nil
 }

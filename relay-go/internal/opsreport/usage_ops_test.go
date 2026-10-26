@@ -7,13 +7,13 @@ import (
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/store"
 )
 
-// TestUsageScanSplitsMessageCohortsByFirstPrompt 钉住“超 7 天回访”的定义：
-// 不是“离开超过 7 天”，而是“首次发出消息距今天超过 7 天，且今天仍有消息”。
+// TestUsageScanSplitsMessageCohortsByFirstUse 钉住“超 7 天回访”的定义：
+// 不是“离开超过 7 天”，而是“首次使用设备距今超过 7 天，且今天仍有消息”。
 //
-//   - 首次发消息在今天 -> 当日新增
-//   - 首次发消息在 7 天内 -> 7 天内回访
-//   - 首次发消息在 7 天以前 -> 超 7 天回访
-func TestUsageScanSplitsMessageCohortsByFirstPrompt(t *testing.T) {
+//   - 首次使用设备在今天 -> 当日新增
+//   - 首次使用设备在 7 天内 -> 7 天内回访
+//   - 首次使用设备在 7 天以前 -> 超 7 天回访
+func TestUsageScanSplitsMessageCohortsByFirstUse(t *testing.T) {
 	makeRow := func(device, account string) store.UsageRow {
 		return store.UsageRow{
 			DeviceID: device, AgentID: "agt_1", AccountID: account,
@@ -33,10 +33,7 @@ func TestUsageScanSplitsMessageCohortsByFirstPrompt(t *testing.T) {
 		"acc_new": 20261026, "acc_recent": 20261020,
 		"acc_old": 20261010, "acc_old_only": 20261010,
 	}
-	firstPrompt := map[string]int64{
-		"acc_new": 20261026, "acc_recent": 20261020,
-		"acc_old": 20261010, "acc_old_only": 20261010,
-	}
+
 	known := map[string]struct{}{
 		"dev_new": {}, "dev_recent": {}, "dev_old": {}, "dev_old_only": {},
 	}
@@ -46,7 +43,7 @@ func TestUsageScanSplitsMessageCohortsByFirstPrompt(t *testing.T) {
 	}
 	series, ranked, activeSets, messageSets, err := usageScan(
 		context.Background(), source, 2, at(20261026, 12, 0),
-		nil, names, known, nil, firstPrompt)
+		nil, names, known, nil, firstSeen)
 	if err != nil {
 		t.Fatalf("usageScan: %v", err)
 	}
