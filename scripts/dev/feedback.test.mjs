@@ -77,10 +77,10 @@ function fixture() {
     usage: {
       perDay: [{ day: '2026-10-11', egressBytes: 1024 * 1024, connections: 3, devices: 1,
         accounts: 1, prompts: 10, answers: 2, messageAccounts: 1,
-        newAccounts: 1, returningAccounts: 0 },
+        newAccounts: 1, returningAccounts: 0, returning7Accounts: 0, returningOldAccounts: 0 },
       { day: '2026-10-12', egressBytes: 2 * 1024 * 1024, connections: 9, devices: 2,
         accounts: 2, prompts: 8, answers: 2, messageAccounts: 2,
-        newAccounts: 1, returningAccounts: 1 }],
+        newAccounts: 1, returningAccounts: 1, returning7Accounts: 1, returningOldAccounts: 0 }],
       topAccounts: [{ accountId: 'acc_a', name: 'jayant', egressBytes: 3 * 1024 * 1024,
         connections: 12, prompts: 18, answers: 4, lastSeenAt: GENERATED_AT,
         lastBuild: '1.0 20261012.1056' }],
@@ -375,6 +375,8 @@ test('日报分「今日」与「最近 30 天」两段，正文被转义', () =
   assert.ok(html.includes('今日消息') && html.includes('今日消息活跃账号'))
   assert.ok(html.includes('人均 9.0 条'), '18 条 / 2 个消息活跃账号')
   assert.ok(html.includes('每日消息'), '趋势段要有每日消息图')
+  assert.ok(html.includes('活跃账户人均') && html.includes('当天消息总数（左轴）'), '消息图要有总数与人均')
+  assert.ok(html.includes('超 7 天回访') && html.includes('7 天内回访'), '活跃图要拆出三层')
   assert.ok(html.includes('>消息<') && html.includes('>作答<'), '近 7 天表要有消息与作答列')
   // 近 7 天表：活跃账号与新增设备各一列。
   assert.ok(html.includes('活跃账号') && html.includes('新增设备'))
@@ -1306,7 +1308,8 @@ test('老服务端没有 perDay.newAccounts：退回单条折线，不自己补�
   stale.usage.perDay = stale.usage.perDay.map(({ newAccounts, returningAccounts, ...row }) => row)
   const html = renderReport(stale)
   assert.ok(html.includes('每日活跃账号'))
-  assert.ok(!html.includes('<div class="trend-legend">'), '没有拆分就不出两段图例')
+  assert.ok(!html.includes('7 天内回访') && !html.includes('超 7 天回访'),
+    '没有拆分就不出三层图例')
   assert.ok(!html.includes('当日新增'))
 })
 

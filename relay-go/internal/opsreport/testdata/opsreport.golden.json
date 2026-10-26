@@ -2287,7 +2287,9 @@
         "devices": 0,
         "accounts": 0,
         "newAccounts": 0,
-        "returningAccounts": 0
+        "returningAccounts": 0,
+        "returning7Accounts": 0,
+        "returningOldAccounts": 0
       },
       {
         "day": 20260927,
@@ -2299,7 +2301,9 @@
         "devices": 0,
         "accounts": 0,
         "newAccounts": 0,
-        "returningAccounts": 0
+        "returningAccounts": 0,
+        "returning7Accounts": 0,
+        "returningOldAccounts": 0
       },
       {
         "day": 20260928,
@@ -2311,7 +2315,9 @@
         "devices": 1,
         "accounts": 1,
         "newAccounts": 1,
-        "returningAccounts": 0
+        "returningAccounts": 0,
+        "returning7Accounts": 0,
+        "returningOldAccounts": 0
       },
       {
         "day": 20260929,
@@ -2323,7 +2329,9 @@
         "devices": 0,
         "accounts": 0,
         "newAccounts": 0,
-        "returningAccounts": 0
+        "returningAccounts": 0,
+        "returning7Accounts": 0,
+        "returningOldAccounts": 0
       },
       {
         "day": 20260930,
@@ -2335,7 +2343,9 @@
         "devices": 1,
         "accounts": 1,
         "newAccounts": 0,
-        "returningAccounts": 1
+        "returningAccounts": 1,
+        "returning7Accounts": 1,
+        "returningOldAccounts": 0
       },
       {
         "day": 20261001,
@@ -2347,7 +2357,9 @@
         "devices": 1,
         "accounts": 1,
         "newAccounts": 0,
-        "returningAccounts": 1
+        "returningAccounts": 1,
+        "returning7Accounts": 1,
+        "returningOldAccounts": 0
       },
       {
         "day": 20261002,
@@ -2359,7 +2371,9 @@
         "devices": 0,
         "accounts": 0,
         "newAccounts": 0,
-        "returningAccounts": 0
+        "returningAccounts": 0,
+        "returning7Accounts": 0,
+        "returningOldAccounts": 0
       },
       {
         "day": 20261003,
@@ -2371,7 +2385,9 @@
         "devices": 0,
         "accounts": 0,
         "newAccounts": 0,
-        "returningAccounts": 0
+        "returningAccounts": 0,
+        "returning7Accounts": 0,
+        "returningOldAccounts": 0
       },
       {
         "day": 20261004,
@@ -2383,7 +2399,9 @@
         "devices": 0,
         "accounts": 0,
         "newAccounts": 0,
-        "returningAccounts": 0
+        "returningAccounts": 0,
+        "returning7Accounts": 0,
+        "returningOldAccounts": 0
       },
       {
         "day": 20261005,
@@ -2395,7 +2413,9 @@
         "devices": 0,
         "accounts": 0,
         "newAccounts": 0,
-        "returningAccounts": 0
+        "returningAccounts": 0,
+        "returning7Accounts": 0,
+        "returningOldAccounts": 0
       },
       {
         "day": 20261006,
@@ -2407,7 +2427,9 @@
         "devices": 1,
         "accounts": 1,
         "newAccounts": 1,
-        "returningAccounts": 0
+        "returningAccounts": 0,
+        "returning7Accounts": 0,
+        "returningOldAccounts": 0
       },
       {
         "day": 20261007,
@@ -2419,7 +2441,9 @@
         "devices": 0,
         "accounts": 0,
         "newAccounts": 0,
-        "returningAccounts": 0
+        "returningAccounts": 0,
+        "returning7Accounts": 0,
+        "returningOldAccounts": 0
       },
       {
         "day": 20261008,
@@ -2431,7 +2455,9 @@
         "devices": 0,
         "accounts": 0,
         "newAccounts": 0,
-        "returningAccounts": 0
+        "returningAccounts": 0,
+        "returning7Accounts": 0,
+        "returningOldAccounts": 0
       },
       {
         "day": 20261009,
@@ -2443,7 +2469,9 @@
         "devices": 0,
         "accounts": 0,
         "newAccounts": 0,
-        "returningAccounts": 0
+        "returningAccounts": 0,
+        "returning7Accounts": 0,
+        "returningOldAccounts": 0
       },
       {
         "day": 20261010,
@@ -2455,7 +2483,9 @@
         "devices": 0,
         "accounts": 0,
         "newAccounts": 0,
-        "returningAccounts": 0
+        "returningAccounts": 0,
+        "returning7Accounts": 0,
+        "returningOldAccounts": 0
       },
       {
         "day": 20261011,
@@ -2467,7 +2497,9 @@
         "devices": 0,
         "accounts": 0,
         "newAccounts": 0,
-        "returningAccounts": 0
+        "returningAccounts": 0,
+        "returning7Accounts": 0,
+        "returningOldAccounts": 0
       },
       {
         "day": 20261012,
@@ -2479,7 +2511,9 @@
         "devices": 0,
         "accounts": 0,
         "newAccounts": 0,
-        "returningAccounts": 0
+        "returningAccounts": 0,
+        "returning7Accounts": 0,
+        "returningOldAccounts": 0
       },
       {
         "day": 20261013,
@@ -2491,7 +2525,9 @@
         "devices": 0,
         "accounts": 0,
         "newAccounts": 0,
-        "returningAccounts": 0
+        "returningAccounts": 0,
+        "returning7Accounts": 0,
+        "returningOldAccounts": 0
       },
       {
         "day": 20261014,
@@ -2503,7 +2539,9 @@
         "devices": 0,
         "accounts": 0,
         "newAccounts": 0,
-        "returningAccounts": 0
+        "returningAccounts": 0,
+        "returning7Accounts": 0,
+        "returningOldAccounts": 0
       },
       {
         "day": 20261015,
@@ -2515,7 +2553,9 @@
         "devices": 0,
         "accounts": 0,
         "newAccounts": 0,
-        "returningAccounts": 0
+        "returningAccounts": 0,
+        "returning7Accounts": 0,
+        "returningOldAccounts": 0
       },
       {
         "day": 20261016,
@@ -2527,7 +2567,9 @@
         "devices": 0,
         "accounts": 0,
         "newAccounts": 0,
-        "returningAccounts": 0
+        "returningAccounts": 0,
+        "returning7Accounts": 0,
+        "returningOldAccounts": 0
       },
       {
         "day": 20261017,
@@ -2539,7 +2581,9 @@
         "devices": 0,
         "accounts": 0,
         "newAccounts": 0,
-        "returningAccounts": 0
+        "returningAccounts": 0,
+        "returning7Accounts": 0,
+        "returningOldAccounts": 0
       },
       {
         "day": 20261018,
@@ -2551,7 +2595,9 @@
         "devices": 1,
         "accounts": 1,
         "newAccounts": 0,
-        "returningAccounts": 1
+        "returningAccounts": 1,
+        "returning7Accounts": 0,
+        "returningOldAccounts": 1
       },
       {
         "day": 20261019,
@@ -2563,7 +2609,9 @@
         "devices": 1,
         "accounts": 1,
         "newAccounts": 0,
-        "returningAccounts": 1
+        "returningAccounts": 1,
+        "returning7Accounts": 1,
+        "returningOldAccounts": 0
       },
       {
         "day": 20261020,
@@ -2575,7 +2623,9 @@
         "devices": 3,
         "accounts": 2,
         "newAccounts": 0,
-        "returningAccounts": 2
+        "returningAccounts": 2,
+        "returning7Accounts": 1,
+        "returningOldAccounts": 1
       },
       {
         "day": 20261021,
@@ -2587,7 +2637,9 @@
         "devices": 2,
         "accounts": 1,
         "newAccounts": 0,
-        "returningAccounts": 1
+        "returningAccounts": 1,
+        "returning7Accounts": 1,
+        "returningOldAccounts": 0
       },
       {
         "day": 20261022,
@@ -2599,7 +2651,9 @@
         "devices": 2,
         "accounts": 1,
         "newAccounts": 0,
-        "returningAccounts": 1
+        "returningAccounts": 1,
+        "returning7Accounts": 1,
+        "returningOldAccounts": 0
       },
       {
         "day": 20261023,
@@ -2611,7 +2665,9 @@
         "devices": 2,
         "accounts": 1,
         "newAccounts": 0,
-        "returningAccounts": 1
+        "returningAccounts": 1,
+        "returning7Accounts": 1,
+        "returningOldAccounts": 0
       },
       {
         "day": 20261024,
@@ -2623,7 +2679,9 @@
         "devices": 3,
         "accounts": 2,
         "newAccounts": 0,
-        "returningAccounts": 2
+        "returningAccounts": 2,
+        "returning7Accounts": 2,
+        "returningOldAccounts": 0
       },
       {
         "day": 20261025,
@@ -2635,7 +2693,9 @@
         "devices": 3,
         "accounts": 2,
         "newAccounts": 0,
-        "returningAccounts": 2
+        "returningAccounts": 2,
+        "returning7Accounts": 2,
+        "returningOldAccounts": 0
       }
     ],
     "topAccounts": [

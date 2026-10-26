@@ -7,22 +7,28 @@ import (
 )
 
 // usageScan 按天读一遍 usageDaily，同时给出 series / ranked / activeByDay。
+//
+// 为了区分“7 天内回访”与“超 7 天回访”，实际读取窗口比输出窗口多 7 天：输出日 D 的
+// 回访分类需要 D-7..D-1 的活跃集合。多读的 7 天不进入 series / 排名 / 留存集合。
 func usageScan(ctx context.Context, src Source, days int, end int64,
 	debugIDs map[string]struct{}, names map[string]*string, knownIDs,
-	external map[string]struct{}) ([]usageDay, []accountUsageRow,
+	external map[string]struct{}, firstSeen map[string]int64) ([]usageDay, []accountUsageRow,
 	map[int64]map[string]struct{}, map[int64]map[string]struct{}, error) {
-	recent := recentDays(days, end)
-	perDay := make(map[int64]*usageDay, len(recent))
-	activeByDay := make(map[int64]map[string]struct{}, len(recent))
-	messageActiveByDay := make(map[int64]map[string]struct{}, len(recent))
-	for _, day := range recent {
+	seriesDays := recentDays(days, end)
+	scanDays := recentDays(days+7, end)
+	perDay := make(map[int64]*usageDay, len(seriesDays))
+	for _, day := range seriesDays {
 		perDay[day] = &usageDay{Day: day}
-		activeByDay[day] = map[string]struct{}{}
-		messageActiveByDay[day] = map[string]struct{}{}
+	}
+	allActiveByDay := make(map[int64]map[string]struct{}, len(scanDays))
+	allMessageActiveByDay := make(map[int64]map[string]struct{}, len(scanDays))
+	for _, day := range scanDays {
+		allActiveByDay[day] = map[string]struct{}{}
+		allMessageActiveByDay[day] = map[string]struct{}{}
 	}
 	merged := map[string]*accountUsageRow{}
 	seenDevices := map[string]map[string]struct{}{}
-	for _, day := range recent {
+	for _, day := range scanDays {
 		rows, err := src.UsageRows(ctx, day)
 		if err != nil {
 			return nil, nil, nil, nil, err
@@ -34,18 +40,21 @@ func usageScan(ctx context.Context, src Source, days int, end int64,
 			if isOrphanUsage(row, knownIDs, external) {
 				continue
 			}
+			if row.AccountID != "" {
+				allActiveByDay[day][row.AccountID] = struct{}{}
+				if row.Prompts > 0 {
+					allMessageActiveByDay[day][row.AccountID] = struct{}{}
+				}
+			}
 			entry := perDay[day]
+			if entry == nil {
+				continue // 多读的 7 天只用于回访分类，不进入输出窗口
+			}
 			entry.EgressBytes += row.EgressBytes
 			entry.Connections += row.Connections
 			entry.Prompts += row.Prompts
 			entry.Answers += row.Answers
 			entry.Devices++
-			if row.AccountID != "" {
-				activeByDay[day][row.AccountID] = struct{}{}
-				if row.Prompts > 0 {
-					messageActiveByDay[day][row.AccountID] = struct{}{}
-				}
-			}
 			account := merged[row.AccountID]
 			if account == nil {
 				accountID := row.AccountID
@@ -70,12 +79,39 @@ func usageScan(ctx context.Context, src Source, days int, end int64,
 			}
 		}
 	}
-	series := make([]usageDay, 0, len(recent))
-	for _, day := range recent {
+
+	// 按天推进 lastActive：D 当天新增的不算回访；上次活跃在 7 天内算“7 天内回访”，
+	// 其余（含 7 天以上、或窗口前才有记录）算“超 7 天回访”。
+	lastActive := map[string]int64{}
+	for _, day := range scanDays {
+		if entry := perDay[day]; entry != nil {
+			for account := range allActiveByDay[day] {
+				if first, ok := firstSeen[account]; ok && first == day {
+					continue // NewAccounts 由 buildUsageReport 按同一个 firstSeen 算
+				}
+				last, seen := lastActive[account]
+				if !seen || dayGap(day, last) > 7 {
+					entry.ReturningOldAccounts++
+				} else {
+					entry.Returning7Accounts++
+				}
+			}
+		}
+		for account := range allActiveByDay[day] {
+			lastActive[account] = day
+		}
+	}
+
+	series := make([]usageDay, 0, len(seriesDays))
+	activeSets := make(map[int64]map[string]struct{}, len(seriesDays))
+	messageSets := make(map[int64]map[string]struct{}, len(seriesDays))
+	for _, day := range seriesDays {
 		entry := perDay[day]
-		entry.Accounts = len(activeByDay[day])
-		entry.MessageAccounts = len(messageActiveByDay[day])
+		entry.Accounts = len(allActiveByDay[day])
+		entry.MessageAccounts = len(allMessageActiveByDay[day])
 		series = append(series, *entry)
+		activeSets[day] = allActiveByDay[day]
+		messageSets[day] = allMessageActiveByDay[day]
 	}
 	ranked := make([]accountUsageRow, 0, len(merged))
 	for accountID, account := range merged {
@@ -85,14 +121,6 @@ func usageScan(ctx context.Context, src Source, days int, end int64,
 	sort.SliceStable(ranked, func(left, right int) bool {
 		return ranked[left].EgressBytes > ranked[right].EgressBytes
 	})
-	activeSets := make(map[int64]map[string]struct{}, len(activeByDay))
-	for day, set := range activeByDay {
-		activeSets[day] = set
-	}
-	messageSets := make(map[int64]map[string]struct{}, len(messageActiveByDay))
-	for day, set := range messageActiveByDay {
-		messageSets[day] = set
-	}
 	return series, ranked, activeSets, messageSets, nil
 }
 

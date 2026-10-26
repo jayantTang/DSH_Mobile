@@ -160,16 +160,16 @@ func build(ctx context.Context, src Source, days int, stamp, generated int64,
 	for _, device := range devices {
 		knownIDs[device.DeviceID] = struct{}{}
 	}
-	series, ranked, activeByDay, messageActiveByDay, err := usageScan(ctx, src, days, stamp,
-		debugIDs, names, knownIDs, external)
-	if err != nil {
-		return opsReport{}, err
-	}
 	owners := make(map[string]string, len(devices))
 	for _, device := range devices {
 		owners[device.DeviceID] = device.AccountID
 	}
 	firstSeen, err := firstSeenDays(ctx, src, debugIDs, owners)
+	if err != nil {
+		return opsReport{}, err
+	}
+	series, ranked, activeByDay, messageActiveByDay, err := usageScan(ctx, src, days, stamp,
+		debugIDs, names, knownIDs, external, firstSeen)
 	if err != nil {
 		return opsReport{}, err
 	}

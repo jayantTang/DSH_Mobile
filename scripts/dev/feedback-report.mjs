@@ -38,7 +38,7 @@ import { pathToFileURL } from 'node:url'
 const COLORS = { line: '#2563eb', open: '#f59e0b', replied: '#10b981',
   peak: '#dc2626', grid: '#eef2f7',
   // 活跃账号图的堆叠两段：回访（浅蓝面积）与当日新增（橙带），与预览稿一致。
-  returning: '#0ea5e9', fresh: '#f59e0b' }
+  returning: '#0ea5e9', returningOld: '#64748b', fresh: '#f59e0b' }
 /// 活跃分布矩阵的七档色阶（0 / 1–2 / 3–4 / 5–6 / 7–8 / 9–11 / 12+）。
 /// 分档仍是**绝对活跃账号数**（不按当前峰值做相对色阶）：相对色阶下平淡的一天也会画成
 /// 满屏深色，看不出"今天其实比昨天闲"。
@@ -369,6 +369,59 @@ function lineChart({ title, note, points, format, markers = [] }) {
   return figure(title, note, svg)
 }
 
+/** 按天消息数：柱状总数（左轴）+ 当天活跃账户人均（右轴）。
+
+为什么用右轴：总数是量、人均是强度，两个量级差一个数量级；同轴会把人均压成
+一条贴底的线。柱子用日报现有的浅蓝，人均用橙色细线，避免和峰值红抢色。 */
+function countChart({ title, note, points }) {
+  const list = (points ?? []).map((point) => ({
+    label: shortDay(point.label), total: num(point.total), avg: num(point.avg),
+  }))
+  if (!list.length || !list.some((point) => point.total > 0)) return emptyFigure(title, note)
+  const { w, h, left, top, bottom } = CHART
+  const right = 34
+  const max = Math.max(...list.map((point) => point.total), 1)
+  const avgMax = Math.max(...list.map((point) => point.avg), 1)
+  const x = (i) => (list.length === 1 ? left : left + (i * (w - left - right)) / (list.length - 1))
+  const y = (value) => h - bottom - (value / max) * (h - top - bottom)
+  const yAvg = (value) => h - bottom - (value / avgMax) * (h - top - bottom)
+  const barWidth = Math.max(2, Math.min(10, ((w - left - right) / list.length) * 0.52))
+  let body = [0, 0.5, 1].map((ratio) => {
+    const at = y(max * ratio)
+    return `<line x1="${left}" x2="${w - right}" y1="${at.toFixed(1)}" y2="${at.toFixed(1)}" class="axis"/>`
+      + `<text x="${left - 7}" y="${(at + 3.4).toFixed(1)}" text-anchor="end">${escapeHtml(formatInt(max * ratio))}</text>`
+  }).join('')
+  body += [0, 0.5, 1].map((ratio) => {
+    const at = yAvg(avgMax * ratio)
+    return `<text x="${w - right + 7}" y="${(at + 3.4).toFixed(1)}" text-anchor="start">`
+      + `${(avgMax * ratio).toFixed(1)}</text>`
+  }).join('')
+  body += list.map((point, i) => {
+    const at = y(point.total)
+    return `<rect x="${(x(i) - barWidth / 2).toFixed(1)}" y="${at.toFixed(1)}" `
+      + `width="${barWidth.toFixed(1)}" height="${Math.max(h - bottom - at, 0).toFixed(1)}" `
+      + `rx="2" fill="#bfdbfe" stroke="#93c5fd" stroke-width="0.6"/>`
+  }).join('')
+  const averagePath = list.map((point, i) => `${x(i).toFixed(1)},${yAvg(point.avg).toFixed(1)}`).join(' ')
+  body += `<polyline points="${averagePath}" fill="none" stroke="${COLORS.fresh}" stroke-width="1.7"/>`
+  body += list.map((point, i) => `<circle cx="${x(i).toFixed(1)}" cy="${yAvg(point.avg).toFixed(1)}" `
+    + `r="1.6" fill="${COLORS.fresh}"/>`).join('')
+  const peak = list.reduce((best, point, i) => (point.total > list[best].total ? i : best), 0)
+  const peakAt = x(peak)
+  const anchor = peakAt < left + 26 ? 'start' : peakAt > w - right - 26 ? 'end' : 'middle'
+  if (list[peak].total > 0) {
+    body += `<text x="${peakAt.toFixed(1)}" y="${(y(list[peak].total) - 5).toFixed(1)}" `
+      + `class="peakLabel" text-anchor="${anchor}">${escapeHtml(formatInt(list[peak].total))}</text>`
+  }
+  body += dayLabels(list, x, h)
+  const svg = `<svg viewBox="0 0 ${w} ${h}" role="img" aria-label="${escapeHtml(title)}">${body}</svg>`
+  const legend = '<div class="trend-legend">'
+    + '<span><i style="background:#bfdbfe"></i>当天消息总数（左轴）</span>'
+    + `<span><i style="background:${COLORS.fresh}"></i>活跃账户人均（右轴）</span>`
+    + '</div>'
+  return figure(title, note, svg + legend)
+}
+
 /** 折线图 + 两段堆叠：上边界是每天活跃账号，浅蓝是回访（此前活跃过），
     橙色带是当天新增。points = [{label, value, fresh}]，`fresh` 由服务端给
     （`usage.perDay[].newAccounts`）——本机不再自己按"首次活跃日"算一遍。
@@ -376,23 +429,36 @@ function lineChart({ title, note, points, format, markers = [] }) {
     为什么叠成面积而不是两条线（2026-10-19 owner 定）：新增只有总量的三成左右，
     画成两条线时几乎平行、要靠量间距才看得出构成；叠起来后带宽就是新增，直接可读。 */
 function compositionChart({ title, note, points, format }) {
-  const list = (points ?? []).map((point) => ({ label: shortDay(point.label),
-    value: num(point.value), fresh: num(point.fresh) }))
+  const list = (points ?? []).map((point) => ({
+    label: shortDay(point.label),
+    value: num(point.value),
+    fresh: num(point.fresh),
+    recent: point.recent === undefined ? undefined : num(point.recent),
+    old: point.old === undefined ? undefined : num(point.old),
+  }))
   if (!list.length || !list.some((point) => point.value > 0)) return emptyFigure(title, note)
   const { w, h, left, right, top, bottom } = CHART
   const max = Math.max(...list.map((point) => point.value), 1)
   const x = (i) => (list.length === 1 ? left : left + (i * (w - left - right)) / (list.length - 1))
   const y = (value) => h - bottom - (value / max) * (h - top - bottom)
-  const returning = list.map((point) => Math.max(point.value - point.fresh, 0))
+  const hasThree = list.some((point) => point.recent !== undefined || point.old !== undefined)
+  const old = list.map((point) => (hasThree ? num(point.old) : Math.max(point.value - point.fresh, 0)))
+  const recentTop = list.map((point, i) => (hasThree
+    ? Math.min(old[i] + num(point.recent), point.value) : point.value))
   const line = (values) => values
     .map((value, i) => `${x(i).toFixed(1)},${y(value).toFixed(1)}`).join(' ')
   const bottomEdge = `${left},${(h - bottom).toFixed(1)}`
-  const returningArea = `<polygon points="${bottomEdge} ${line(returning)} `
+  const band = (lower, upper, color, opacity) => {
+    if (!upper.some((value, i) => value > lower[i] + 0.001)) return ''
+    return `<polygon points="${line(lower)} ${line(upper).split(' ').reverse().join(' ')}" `
+      + `fill="${color}" opacity="${opacity}"/>`
+  }
+  let svgBody = gridLines(max, y, format)
+  svgBody += `<polygon points="${bottomEdge} ${line(old)} `
     + `${x(list.length - 1).toFixed(1)},${(h - bottom).toFixed(1)}" `
-    + `fill="${COLORS.returning}" opacity="0.28"/>`
-  const freshBand = `<polygon points="${line(list.map((point) => point.value))} `
-    + `${line(returning).split(' ').reverse().join(' ')}" `
-    + `fill="${COLORS.fresh}" opacity="0.55"/>`
+    + `fill="${hasThree ? COLORS.returningOld : COLORS.returning}" opacity="0.28"/>`
+  if (hasThree) svgBody += band(old, recentTop, COLORS.returning, 0.28)
+  svgBody += band(recentTop, list.map((point) => point.value), COLORS.fresh, 0.55)
   const boundary = `<polyline points="${line(list.map((point) => point.value))}" fill="none" `
     + `stroke="${COLORS.line}" stroke-width="1.8"/>`
   const peak = list.reduce((best, point, i) => (point.value > list[best].value ? i : best), 0)
@@ -408,10 +474,12 @@ function compositionChart({ title, note, points, format }) {
     : ''
   const labels = dayLabels(list, x, h)
   const svg = `<svg viewBox="0 0 ${w} ${h}" role="img" aria-label="${escapeHtml(title)}">`
-    + gridLines(max, y, format)
-    + returningArea + freshBand + boundary + dots + peakLabel + labels + '</svg>'
+    + svgBody + boundary + dots + peakLabel + labels + '</svg>'
   const legend = '<div class="trend-legend">'
-    + `<span><i style="background:${COLORS.returning}"></i>回访</span>`
+    + (hasThree
+      ? `<span><i style="background:${COLORS.returningOld}"></i>超 7 天回访</span>`
+        + `<span><i style="background:${COLORS.returning}"></i>7 天内回访</span>`
+      : `<span><i style="background:${COLORS.returning}"></i>回访</span>`)
     + `<span><i style="background:${COLORS.fresh}"></i>当日新增</span>`
     + '</div>'
   return figure(title, note, svg + legend)
@@ -1070,8 +1138,12 @@ function rangeSection(report, days, completed = false) {
   const peakNote = peak && num(peak.egressBytes) > 0
     ? `峰值 ${fullDay(peak.day)} ${formatBytes(peak.egressBytes)}` : `最近 ${days} 天`
   const userPoints = (usage.perDay ?? []).map((row) => ({ label: row.day, value: row.accounts,
-    fresh: row.newAccounts }))
-  const messagePoints = (usage.perDay ?? []).map((row) => ({ label: row.day, value: row.prompts }))
+    fresh: row.newAccounts,
+    recent: row.returning7Accounts, old: row.returningOldAccounts }))
+  const countPoints = (usage.perDay ?? []).map((row) => ({
+    label: row.day, total: num(row.prompts),
+    avg: num(row.accounts) > 0 ? num(row.prompts) / num(row.accounts) : 0,
+  }))
   const egressPoints = (usage.perDay ?? []).map((row) => ({ label: row.day, value: row.egressBytes }))
   // 发版标注：在流量图上给每个 TestFlight 发版日画一条竖线——「10-13 发版后流量翻倍」
   // 这类因果不用翻日历对。没有发版记录就没有标注；日期口径见 releaseMarkerDays。
@@ -1084,22 +1156,24 @@ function rangeSection(report, days, completed = false) {
   // 老服务端没有这个字段时退回单条折线——本机不补算"首次活跃日"，口径只能有一个所有者。
   const hasSplit = userPoints.length > 0
     && userPoints.every((point) => point.fresh !== undefined && point.fresh !== null)
+  const activeNote = hasSplit
+    ? `近 7 天 ${formatInt(usage.activeAccounts7d)} 个 · 新增/7 天内/超 7 天`
+    : `近 7 天 ${formatInt(usage.activeAccounts7d)} 个`
   const activeChart = hasSplit ? compositionChart({
     title: '每日活跃账号',
-    note: `近 7 天 ${formatInt(usage.activeAccounts7d)} 个`,
+    note: activeNote,
     points: userPoints,
     format: (value) => String(Math.round(value)),
   }) : lineChart({
     title: '每日活跃账号',
-    note: `近 7 天 ${formatInt(usage.activeAccounts7d)} 个`,
+    note: activeNote,
     points: userPoints,
     format: (value) => String(Math.round(value)),
   })
-  const messageChart = lineChart({
+  const messageChart = countChart({
     title: '每日消息',
-    note: `近 7 天消息活跃 ${formatInt(usage.messageActiveAccounts7d)} 个账号`,
-    points: messagePoints,
-    format: (value) => formatInt(value),
+    note: `左轴总数 · 右轴当天活跃账户人均 · 近 7 天消息活跃 ${formatInt(usage.messageActiveAccounts7d)} 个`,
+    points: countPoints,
   })
   const charts = activeChart + messageChart + lineChart({
     title: '每日出口流量',
