@@ -121,6 +121,15 @@ public struct SessionListView: View {
         // 宿主实时状态：`$events` 的 status/activity/added/removed 直接更新列表，
         // 不靠进页面或下拉才刷新（2026-10-26：桌面已结束、手机列表仍显示运行中）。
         .task { await observeHostLiveState() }
+        // 宿主 API（非本机事件路径）新建/归档的会话不一定有 `api-session/added`；
+        // 列表可见时低频对账一次，事件仍是主路径。20 秒只读 digest，开销可忽略。
+        .task {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(20))
+                guard !Task.isCancelled else { return }
+                await model.refresh()
+            }
+        }
         // 活动状态（后台任务/子智能体/运行点）每次变化都重算列表；
         // 行内 snapshot 仍各自读，但父视图不依赖它，单靠行内读不足以及时刷新。
         .onChange(of: activity.revision) { _, _ in }
