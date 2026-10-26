@@ -622,6 +622,10 @@ public struct ChatView: View {
             itemsCountDidChange(count, proxy: proxy)
         }
         .onChange(of: model.isLoadingOlder) { _, loading in
+            if loading {
+                debugLoadingAt = Date()
+                DSHLog.event("older.loading", ["loading": "1"])
+            }
             if !loading { olderRequestVisible = false }
         }
         .onChange(of: model.timeline.streaming?.text.count ?? 0) { _, streamed in
@@ -1383,6 +1387,9 @@ public struct ChatView: View {
         // （2026-10-08 用例 53 实测：探针里重试条 7.68s 就布局好了，8.5s 的截图却是加载态）。
         // 失败之后由读者点重试条，或由那一次自动补试收尾。
         guard model.olderFailure == nil else { return }
+        debugTriggerAt = Date()
+        DSHLog.event("older.trigger", ["why": "pump",
+                                       "hasOlder": model.hasOlder ? "1" : "0"])
         olderPump = Task { @MainActor in
             defer { olderPump = nil }
             for _ in 0..<Self.maxOlderBurst {
