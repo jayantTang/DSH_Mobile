@@ -161,10 +161,16 @@ public extension ChatModel {
         // **状态归属**：概要旧页只服务管道窗口——它的"更早"来自管道记录的最老
         // 一条，回包也并回管道。没有管道、或管道还一条记录都没有时，这里既不发
         // 请求，也不写任何可见失败态（否则非管道宿主会凭空长出一条重试胶囊）。
-        guard let bridge = pipelineBridge, let cursor = bridge.records.keys.min() else {
-            return false
+        guard let bridge = pipelineBridge else { return false }
+        guard let cursor = bridge.records.keys.min() else {
+            // 管道还没数据（打开后立刻拉到顶部）：记下这次翻页，首帧落地后自动补。
+            bridge.armPendingOlderWhenReady()
+            return true
         }
-        guard cursor > 1 else { return false }
+        guard cursor > 1 else {
+            bridge.noteSummaryOlderExhausted()
+            return true
+        }
         guard olderState != .loading else { return true }
         notePipelineOlder(state: .loading)
         pipelineBridge?.refold(messagesChanged: false, gapsChanged: true)

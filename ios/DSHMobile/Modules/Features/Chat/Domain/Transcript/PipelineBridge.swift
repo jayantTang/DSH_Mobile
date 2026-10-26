@@ -131,6 +131,14 @@ final class ChatPipelineBridge {
     /// `ChatModel+PipelineFetch.swift` 与 `apply`。
     public var pendingOlderRequest = false // internal：+PipelineFetch 要用
 
+    /// 管道还没有任何记录时也要把“向上翻页”记下来：首个数据落地后自动补一次。
+    /// 与 v1 的 `armPendingOlder` 同一套状态，不再让概要路径静默返回 false。
+    func armPendingOlderWhenReady() {
+        pendingOlderRequest = true
+        model?.notePipelineOlder(state: .loading)
+        refold(messagesChanged: false, gapsChanged: true)
+    }
+
     /// 只在首帧数据之后预热一次；低优先级、失败静默（读者上拉时仍会正常取）。
     private var didWarmOlder = false
 
