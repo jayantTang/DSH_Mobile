@@ -456,8 +456,7 @@ public struct SessionListView: View {
                            home: store.hostHome,
                            isJustCreated: session.sessionId == model.lastCreatedSessionId,
                            isUnsynced: model.pendingState(for: session.sessionId) == .unsynced,
-                           localTitle: model.pendingTitle(for: session.sessionId),
-                           activity: activity.snapshot(sessionId: session.sessionId))
+                           localTitle: model.pendingTitle(for: session.sessionId))
             }
             .buttonStyle(.plain)
             // 首个会话行真的画出来了 → 记一条 `app.first-render`（一次拨号一条）。
@@ -488,7 +487,6 @@ public struct SessionListView: View {
         NavigationLink(value: session.sessionId) {
             SessionRow(session: session, rowState: model.state(of: session),
                        home: store.hostHome, isChild: true,
-                       activity: activity.snapshot(sessionId: session.sessionId),
                        )
         }
         .buttonStyle(.plain)
@@ -509,8 +507,7 @@ public struct SessionListView: View {
         NavigationLink(value: session.sessionId) {
             SessionRow(session: session, rowState: model.state(of: session),
                        home: store.hostHome, isChild: true,
-                       isJustCreated: session.sessionId == model.lastCreatedSessionId,
-                       activity: activity.snapshot(sessionId: session.sessionId))
+                       isJustCreated: session.sessionId == model.lastCreatedSessionId)
         }
         .buttonStyle(.plain)
         // 子会话行也是"内容画出来"的一种（同一处语义的两条渲染路径，都要覆盖）。
@@ -691,7 +688,14 @@ public struct SessionRow: View {
     var localTitle: String?
     /// 018：活动快照（`ActivityStore.snapshot` 的产物）。能力位缺失时是 nil，
     /// 此时右侧计数与 `isBusy` 扩展的「运行中」都不出现。
-    var activity: SessionActivity?
+    var activityOverride: SessionActivity?
+
+    /// 行自己读活动状态：把快照当参数传时，列表父视图不重算，行永远停在旧值
+    ///（2026-10-26：面板已有后台任务、列表行没有）。读在行 body 里才会随
+    /// `ActivityModel` 的 Observable 变化刷新。
+    private var activity: SessionActivity? {
+        activityOverride ?? ActivityModel.shared.snapshot(sessionId: session.sessionId)
+    }
 
     private var projections: SessionProjectionValues? { session.projections?.values }
 
