@@ -1,3 +1,4 @@
+import DSHFoundation
 import DSHKit
 import Foundation
 
@@ -17,6 +18,10 @@ final class ChatPagingService {
 
 
     func loadOlder() async {
+        DSHLog.event("older.load.enter", [
+            "pipeline": pipelineBridge == nil ? "0" : "1",
+            "state": String(describing: model.olderState),
+        ])
         // 没有管道就没有"更早的页"可取：不请求、也不落失败（以前写成
         // 「尚未连接」，在没有管道的宿主/夹具里会凭空出现一条重试胶囊）。
         guard let bridge = pipelineBridge else {

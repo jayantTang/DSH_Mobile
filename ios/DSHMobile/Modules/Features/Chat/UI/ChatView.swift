@@ -467,6 +467,11 @@ public struct ChatView: View {
         .simultaneousGesture(
             DragGesture().onChanged { value in
                 if value.translation.height > 24 {
+                    DSHLog.event("older.drag", [
+                        "dy": String(Int(value.translation.height)),
+                        "nearTop": sentinelNearTop ? "1" : "0",
+                        "hasOlder": model.hasOlder ? "1" : "0",
+                    ])
                     isFollowing = false
                     userScrolled = true
                     // 读者往新的一头拖：在飞的那一页没必要补了（FR-016 的"反向滚动取消"）。
@@ -724,6 +729,12 @@ public struct ChatView: View {
                 canLoadOlder: { model.hasOlder },
                 isLoadingOlder: { model.isLoadingOlder },
                 onNearTop: {
+                    DSHLog.event("older.trigger", [
+                        "why": "hostNearTop",
+                        "hasOlder": model.hasOlder ? "1" : "0",
+                        "loading": model.isLoadingOlder ? "1" : "0",
+                        "pipeline": model.pipelineActive ? "1" : "0",
+                    ])
                     // 首屏还没落地时 hasOlder 是未知的，不能拿它当闸门：
                     // 读者到顶就先显示加载并尝试，是否到头由取页结果决定。
                     if !model.isOlderExhausted, model.olderFailure == nil {
@@ -927,6 +938,12 @@ public struct ChatView: View {
             // 行是被 `List` 按"离视口多远"建/拆的，这个信号一直有。
             .onAppear {
                 sentinelNearTop = true
+                DSHLog.event("older.sentinel", [
+                    "following": isFollowing ? "1" : "0",
+                    "userScrolled": userScrolled ? "1" : "0",
+                    "hasOlder": model.hasOlder ? "1" : "0",
+                    "loading": model.isLoadingOlder ? "1" : "0",
+                ])
                 ChatProbe.shared.probeNote?("older.sentinel", ["near": "1", "why": "appear",
                                                      "items": String(model.timeline.items.count)], false)
                 if isFollowing, !userScrolled {
