@@ -621,6 +621,14 @@ public struct ChatView: View {
             olderRequestVisible = false
             itemsCountDidChange(count, proxy: proxy)
         }
+        .onChange(of: sentinelNearTop) { _, near in
+            // 布局变化让哨兵进入视口时不一定有 scroll 回调；这里补一次请求。
+            guard near, !model.isLoadingOlder, !model.isOlderExhausted, model.hasOlder else { return }
+            Task {
+                await model.loadOlder()
+                listHostRef?.finishOlderRequest()
+            }
+        }
         .onChange(of: model.isLoadingOlder) { _, loading in
             if loading {
                 debugLoadingAt = Date()
@@ -1922,6 +1930,7 @@ private struct OlderDebugHUD: View {
     var body: some View {
         TimelineView(.periodic(from: .now, by: 0.2)) { context in
             let now = context.date
+            VStack(spacing: 2) {
             HStack(spacing: 8) {
                 Text("d=\(Int(distance ?? -1))")
                 Text("near=\(near ? 1 : 0)")
@@ -1932,6 +1941,8 @@ private struct OlderDebugHUD: View {
                 Text("live=\(liveChars)")
                 Text("f=\(frames)")
             }
+            Text(Self.clock(now))
+            }
             .font(.system(size: 9, weight: .medium, design: .monospaced))
             .foregroundStyle(.white)
             .padding(.horizontal, 7)
@@ -1940,6 +1951,12 @@ private struct OlderDebugHUD: View {
             .padding(.top, 4)
             .allowsHitTesting(false)
         }
+    }
+
+    private static func clock(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss.SSS"
+        return formatter.string(from: date)
     }
 
     private static func age(_ date: Date?, _ now: Date) -> String {
