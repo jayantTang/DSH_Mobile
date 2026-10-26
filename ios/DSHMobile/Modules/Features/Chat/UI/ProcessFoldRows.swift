@@ -160,12 +160,17 @@ struct RunningLine: View {
     /// 本轮开始的时刻；nil 时只写「思考中」。
     let since: Date?
     var descriptor: RunningLineDescriptor?
+    var isExpanded: Bool = false
+    var onTap: (() -> Void)?
 
     static let refresh: TimeInterval = ProcessFoldText.runningRefresh
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: Self.refresh)) { context in
             HStack(spacing: 6) {
+                Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(DSHTheme.labelDimmed)
                 Circle()
                     .fill(DSHTheme.deepDiving.opacity(0.5))
                     .frame(width: 7, height: 7)
@@ -184,9 +189,11 @@ struct RunningLine: View {
         }
         .padding(.vertical, 4)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+        .onTapGesture { onTap?() }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text(descriptor?.text ?? ProcessFoldText.deepDivingText(elapsed: nil)))
-        .allowsHitTesting(false)
+        .accessibilityHint(Text(isExpanded ? "收起过程" : "展开过程"))
     }
 
     private func elapsed(at date: Date) -> TimeInterval? {

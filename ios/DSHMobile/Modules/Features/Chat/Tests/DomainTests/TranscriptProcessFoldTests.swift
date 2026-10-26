@@ -72,6 +72,30 @@ final class TranscriptProcessFoldTests: XCTestCase {
         })
     }
 
+    func test_running_process_collapses_into_the_line_and_expands_on_demand() throws {
+        let timeline = try ProcessFoldFixtures.timeline([
+            ProcessFoldFixtures.turnStart(seq: 1, turn: 1),
+            ProcessFoldFixtures.user(seq: 2, text: "开始"),
+            ProcessFoldFixtures.assistant(seq: 3, text: "我先看看"),
+            ProcessFoldFixtures.toolCall(seq: 4, callId: "c1", name: "bash"),
+        ])
+        let plan = TranscriptProcessFold.plan(items: timeline.items, isTurnOpen: true,
+                                              currentTurn: 1)
+        let turn = try XCTUnwrap(plan.turns.first)
+        XCTAssertTrue(turn.isRunning)
+
+        let collapsed = TranscriptProcessFold.displayRows(plan, state: TranscriptFoldState())
+        XCTAssertFalse(collapsed.contains { if case .processHeader = $0.kind { return true }; return false },
+                       "运行中默认收起：只留动态运行行")
+        XCTAssertFalse(collapsed.contains { if case .toolCall = $0.kind { return true }; return false })
+
+        var expandedState = TranscriptFoldState()
+        expandedState.manualTurn[turn.key] = true
+        let expanded = TranscriptProcessFold.displayRows(plan, state: expandedState)
+        XCTAssertTrue(expanded.contains { if case .processHeader = $0.kind { return true }; return false },
+                      "点运行行后应展开过程")
+    }
+
     func test_a_send_image_tool_stays_visible_when_the_turn_is_collapsed() throws {
         let timeline = try ProcessFoldFixtures.timeline([
             ProcessFoldFixtures.turnStart(seq: 1, turn: 1),
@@ -159,7 +183,9 @@ final class TranscriptProcessFoldTests: XCTestCase {
                                                      currentTurn: 1)
         let runningTurn = try XCTUnwrap(runningPlan.turns.first)
         XCTAssertFalse(runningTurn.groups.isEmpty)
-        let runningHeaders = TranscriptProcessFold.displayRows(runningPlan, state: TranscriptFoldState())
+        var runningState = TranscriptFoldState()
+        runningState.manualTurn[runningTurn.key] = true
+        let runningHeaders = TranscriptProcessFold.displayRows(runningPlan, state: runningState)
             .compactMap { item -> TimelineProcessHeader? in
                 if case .processHeader(let header) = item.kind { return header }
                 return nil
@@ -220,14 +246,17 @@ final class TranscriptProcessFoldTests: XCTestCase {
         let rows = TranscriptProcessFold.displayRows(plan, state: TranscriptFoldState())
         XCTAssertFalse(rows.contains { header($0)?.scope == .turn }, "a running turn has no turn row")
         XCTAssertFalse(rows.contains { if case .turnDivider = $0.kind { return true }; return false })
-        let groupHeaders = rows.compactMap { item -> TimelineProcessHeader? in
+        XCTAssertFalse(rows.contains { if case .processHeader = $0.kind { return true }; return false },
+                       "运行中默认收进动态运行行")
+        var expanded = TranscriptFoldState()
+        expanded.manualTurn[turn.key] = true
+        let expandedRows = TranscriptProcessFold.displayRows(plan, state: expanded)
+        let groupHeaders = expandedRows.compactMap { item -> TimelineProcessHeader? in
             if case .processHeader(let header) = item.kind, header.scope == .group { return header }
             return nil
         }
-        XCTAssertEqual(groupHeaders.count, 1, "the current group row is the only process row")
+        XCTAssertEqual(groupHeaders.count, 1, "展开后当前分组行是唯一过程行")
         XCTAssertEqual(groupHeaders.first?.isRunning, true)
-        XCTAssertFalse(rows.contains { if case .toolCall = $0.kind { return true }; return false },
-                       "the running group is collapsed until the reader taps it")
     }
 
     func test_error_turn_folds_like_a_normal_completion() throws {
@@ -529,7 +558,9 @@ final class TranscriptProcessFoldTests: XCTestCase {
         XCTAssertTrue(turn.isRunning)
         XCTAssertEqual(turn.groups.count, 2)
 
-        let rows = TranscriptProcessFold.displayRows(plan, state: TranscriptFoldState())
+        var expanded = TranscriptFoldState()
+        expanded.manualTurn[turn.key] = true
+        let rows = TranscriptProcessFold.displayRows(plan, state: expanded)
         let groupHeaders = rows.compactMap { item -> TimelineProcessHeader? in
             if case .processHeader(let header) = item.kind, header.scope == .group { return header }
             return nil
@@ -555,7 +586,9 @@ final class TranscriptProcessFoldTests: XCTestCase {
         let plan = plan(timeline, isTurnOpen: true)
         let turn = try XCTUnwrap(plan.turns.first)
         XCTAssertEqual(turn.groups.count, 1)
-        let rows = TranscriptProcessFold.displayRows(plan, state: TranscriptFoldState())
+        var expanded = TranscriptFoldState()
+        expanded.manualTurn[turn.key] = true
+        let rows = TranscriptProcessFold.displayRows(plan, state: expanded)
         let groupHeader = try XCTUnwrap(rows.compactMap(header).first { $0.scope == .group })
         XCTAssertTrue(groupHeader.isRunning)
         XCTAssertFalse(rows.contains { if case .toolCall = $0.kind { return true }; return false })
@@ -572,6 +605,7 @@ final class TranscriptProcessFoldTests: XCTestCase {
         let turn = try XCTUnwrap(plan.turns.first)
         let group = try XCTUnwrap(turn.groups.first)
         var state = TranscriptFoldState()
+        state.manualTurn[turn.key] = true
         XCTAssertFalse(TranscriptProcessFold.displayRows(plan, state: state)
             .contains { $0.id == timeline.items[1].id })
 

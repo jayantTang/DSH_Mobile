@@ -1144,6 +1144,10 @@ public struct ChatView: View {
         // 018：subagent 卡绑定运行态与「打开子会话」；其它卡片读不到证据就不加行。
         rowView.activity = activity
         rowView.onOpenSession = onOpenSession
+        rowView.onToggleRunning = { key in model.toggleProcess(turnKey: key) }
+        if case .runningLine(let line) = item.kind, let key = line.turnKey {
+            rowView.runningExpanded = model.foldState.manualTurn[key] == true
+        }
         rowView.parentSessionId = model.session?.sessionId
         rowView.onToggleProcessStep = { id in
             // 展开步骤卡会按需取一条正文：与过程节点一样先退出跟随，

@@ -59,6 +59,10 @@ struct TimelineRowView: View {
     var parentSessionId: String?
     /// 运行行的单行文案（步数/类型/字数），由 ChatView 从模型计算后传入。
     var running: RunningLineDescriptor?
+    /// 运行行所属轮次的展开/收起回调（key = 轮次折叠键）。
+    var onToggleRunning: ((String) -> Void)?
+    /// 运行行当前是否展开（由 ChatView 从 foldState 计算）。
+    var runningExpanded: Bool = false
     /// 033：过程节点的展开/收起回调。nil 时节点不可操作（预览等场景）。
     var onToggleProcess: (() -> Void)?
     /// 概要 v2：步骤卡是否展开（模型持有），以及点开/重试。
@@ -131,7 +135,9 @@ struct TimelineRowView: View {
             }
 
         case .runningLine(let line):
-            RunningLine(since: line.since, descriptor: running)
+            RunningLine(since: line.since, descriptor: running,
+                        isExpanded: runningExpanded,
+                        onTap: line.turnKey.map { key in { onToggleRunning?(key) } })
 
         case .processStep(let step):
             ProcessStepRow(
@@ -382,6 +388,10 @@ struct ToolCallRow: View {
     var parentSessionId: String?
     /// 运行行的单行文案（步数/类型/字数），由 ChatView 从模型计算后传入。
     var running: RunningLineDescriptor?
+    /// 运行行所属轮次的展开/收起回调（key = 轮次折叠键）。
+    var onToggleRunning: ((String) -> Void)?
+    /// 运行行当前是否展开（由 ChatView 从 foldState 计算）。
+    var runningExpanded: Bool = false
     /// 018：打开子会话。
     var onOpenSession: ((String) -> Void)?
     /// `nil` follows the default for this result; a tap pins it either way.
