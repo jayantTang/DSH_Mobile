@@ -86,9 +86,22 @@ public extension ChatModel {
         }
         if case .loading = stepBodies[step.id], !force { return }
         stepBodies[step.id] = .loading
+        #if DEBUG
+        FoldPerfProbe.begin(.stepBody, fold: nil, limit: 1,
+                            maxBytes: TimelineProcessStep.detailMaxBytes)
+        #endif
         do {
-            let page = try await client.historyWindow(
-                step.detailRequest(address: address, encoding: client.historyWindowEncoding))
+            let request = step.detailRequest(address: address,
+                                             encoding: client.historyWindowEncoding)
+            let page: HistoryWindowValue
+            #if DEBUG
+            page = try await FoldPerfProbe.withActiveKind(.stepBody) {
+                try await client.historyWindow(request)
+            }
+            let landedStarted = CFAbsoluteTimeGetCurrent()
+            #else
+            page = try await client.historyWindow(request)
+            #endif
             guard let record = page.records.first(where: { $0.event.seq == step.bodySeq }),
                   let text = ProcessStepBodyReader.text(for: step.kind, in: record, seq: step.bodySeq)
             else {
@@ -97,6 +110,12 @@ public extension ChatModel {
             }
             let bytes = text.utf8.count
             stepBodies[step.id] = .loaded(text: text, bytes: bytes)
+            #if DEBUG
+            let adoptionMs = (CFAbsoluteTimeGetCurrent() - landedStarted) * 1000
+            FoldPerfProbe.finished(
+                .stepBody, records: 1, bytes: bytes,
+                parseMs: FoldPerfProbe.parseMs(.stepBody, adoptionMs: adoptionMs))
+            #endif
             await storeStepBody(step, text: text, bytes: bytes)
             ChatProbe.shared.probeNote?("step.body", [
                 "step": step.id, "bytes": String(bytes), "kind": step.kind.rawValue,
@@ -104,10 +123,16 @@ public extension ChatModel {
         } catch is CancellationError {
             stepBodies[step.id] = nil
         } catch let failure as DSHRPCFailure where failure.code == "link/too-large" {
+            #if DEBUG
+            FoldPerfProbe.failed(.stepBody, error: failure)
+            #endif
             // 2 MB 都装不下一条：落终态，卡片写「输出过大」，不再提供重试。
             stepBodies[step.id] = .tooLarge
             ChatProbe.shared.probeNote?("step.bodyTooLarge", ["step": step.id], true)
         } catch {
+            #if DEBUG
+            FoldPerfProbe.failed(.stepBody, error: error)
+            #endif
             stepBodies[step.id] = .failed
             ChatProbe.shared.probeNote?("step.bodyFailed", [
                 "step": step.id, "reason": String(describing: error),

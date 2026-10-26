@@ -51,6 +51,8 @@ public struct TranscriptPageFetcher: Sendable {
     private let maxBytes: Int
     private let encoding: String?
     private let fold: HistoryWindowFold?
+    /// 概要模式下 `limit` 是轮数：搜索缓冲/详情上下文也要按轮取，别一次要 60 轮。
+    private let limit: Int
     /// Test seam: rewrites a legacy page before the shortfall correction runs.
     /// The app passes this only under the DEBUG probe flag that reproduces "the
     /// host gave back a short page" (test case 43); production passes nothing.
@@ -72,7 +74,14 @@ public struct TranscriptPageFetcher: Sendable {
         self.maxBytes = maxBytes
         self.encoding = capabilities.contains(HistoryWindowWire.compressionCapability)
             ? HistoryWindowRequest.deflateRaw : nil
-        self.fold = capabilities.contains(HistoryWindowWire.foldCapability) ? .v1 : nil
+        // v2 能力在时统一走概要（v1 仅作回退）；`limit` 在 v2 里是轮数。
+        if capabilities.contains(HistoryWindowWire.summaryFoldCapability) {
+            self.fold = .summary
+            self.limit = min(pageSize, HistoryWindowWire.summaryRangeTurns)
+        } else {
+            self.fold = capabilities.contains(HistoryWindowWire.foldCapability) ? .v1 : nil
+            self.limit = pageSize
+        }
         self.pageFilter = pageFilter
         self.channel = Self.channel(capabilities: capabilities)
     }
@@ -86,11 +95,29 @@ public struct TranscriptPageFetcher: Sendable {
     }
 
     private func exactPage(before: Int) async throws -> TranscriptPage {
+        #if DEBUG
+        let probeKind: FoldPerfProbe.Kind = switch fold {
+        case .some(.summary): .summaryPage
+        case .some(.v1): .legacyV1
+        case .some(.none), .none: .historyNone
+        }
+        let probeFold: String? = switch fold {
+        case .some(.summary): "summary"
+        case .some(.v1): "v1"
+        case .some(.none), .none: nil
+        }
+        FoldPerfProbe.begin(probeKind, fold: probeFold,
+                            limit: pageSize, maxBytes: maxBytes)
+        #endif
         let value = try await client.historyWindow(
             HistoryWindowRequest(address: address, before: before,
-                                 through: throughSeq, limit: pageSize, maxBytes: maxBytes,
+                                 through: throughSeq, limit: limit, maxBytes: maxBytes,
                                  encoding: encoding, fold: fold)
         )
+        #if DEBUG
+        FoldPerfProbe.finished(probeKind, records: value.records.count,
+                                bytes: FoldPerfProbe.payloadBytes(value.records))
+        #endif
         return value.page()
     }
 

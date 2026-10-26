@@ -174,7 +174,14 @@ struct DSHClient: Sendable {
             args: request,
             as: JSONValue.self
         )
+        #if DEBUG
+        let parseStarted = CFAbsoluteTimeGetCurrent()
+        let value = try HistoryWindowWire.decode(raw)
+        FoldPerfProbe.noteDecodeMs((CFAbsoluteTimeGetCurrent() - parseStarted) * 1000)
+        return value
+        #else
         return try HistoryWindowWire.decode(raw)
+        #endif
     }
 
     /// Searches inside one session through the connector (spec 007).

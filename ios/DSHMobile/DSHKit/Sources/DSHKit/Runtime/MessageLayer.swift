@@ -182,6 +182,23 @@ public final class MessageLayer {
                             // 判据只有 `historyFoldMode` 一处，不再各调用点各判一次
                             // （这里曾经固定 `fold: true`，v2 能力在时仍走 v1 补拉）。
                             let mode = client.historyFoldMode
+                            #if DEBUG
+                            let probeKind: FoldPerfProbe.Kind = switch mode {
+                            case .some(.summary): .summaryPage
+                            case .some(.v1): .legacyV1
+                            case .some(.none), .none: .historyNone
+                            }
+                            let probeFold: String? = switch mode {
+                            case .some(.summary): "summary"
+                            case .some(.v1): "v1"
+                            default: nil
+                            }
+                            FoldPerfProbe.begin(
+                                probeKind, fold: probeFold,
+                                limit: mode == .summary ? HistoryWindowWire.summaryRangeTurns
+                                                        : range.count,
+                                maxBytes: 256 * 1024)
+                            #endif
                             let value = try await client.historyWindow(HistoryWindowRequest(
                                 address: address, before: range.upperBound + 1, through: nil,
                                 limit: mode == .summary ? HistoryWindowWire.summaryRangeTurns
@@ -189,7 +206,12 @@ public final class MessageLayer {
                                 maxBytes: 256 * 1024,
                                 encoding: client.historyWindowEncoding,
                                 fold: mode,
-                                coverage: client.historyCoverageEnabled ? true : nil))
+                                // 连接器拒收 `fold:"summary"` + `coverage` 的组合
+                                // （gateway/bad-request "fold summary cannot be combined
+                                // with roles or coverage"）：v2 页不带覆盖信息。
+                                coverage: mode == .summary
+                                    ? nil
+                                    : (client.historyCoverageEnabled ? true : nil)))
                             // 概要页只下发讲话与概要：覆盖范围用连接器给的整段，
                             // 否则被折掉的 seq 会变成缺口、还会被再取一遍。
                             let covered: ClosedRange<Int>? = mode == .summary
@@ -197,6 +219,11 @@ public final class MessageLayer {
                                     value.endSeq.map { end in min(start, end)...max(start, end) }
                                 }
                                 : nil
+                            #if DEBUG
+                            FoldPerfProbe.finished(
+                                probeKind, records: value.records.count,
+                                bytes: FoldPerfProbe.payloadBytes(value.records))
+                            #endif
                             page = SessionPipeline.FetchPage(
                                 records: value.records, hasMore: value.hasMore,
                                 clamped: value.clamped ?? false,
@@ -218,6 +245,14 @@ public final class MessageLayer {
                                              started: started, records: page.records.count)
                         return page
                     } catch {
+                        #if DEBUG
+                        let failedKind: FoldPerfProbe.Kind = switch client.historyFoldMode {
+                        case .some(.summary): .summaryPage
+                        case .some(.v1): .legacyV1
+                        case .some(.none), .none: .historyNone
+                        }
+                        FoldPerfProbe.failed(failedKind, error: error)
+                        #endif
                         await Self.noteFetch(probes, priority: priority, range: range,
                                              started: started, records: nil, failure: error)
                         throw error
@@ -242,9 +277,18 @@ public final class MessageLayer {
             confirmationLookup: { ref, clientId in
                 guard let client = await self.currentClient(),
                       let address = addresses.address(for: ref.sessionId) else { return nil }
+                #if DEBUG
+                FoldPerfProbe.begin(.historyNone, limit: 50, maxBytes: 256 * 1024)
+                #endif
                 let value = try? await client.historyWindow(HistoryWindowRequest(
                     address: address, before: HistoryWindowRequest.safeMaxBefore, limit: 50,
                     maxBytes: 256 * 1024, encoding: client.historyWindowEncoding))
+                #if DEBUG
+                if let value {
+                    FoldPerfProbe.finished(.historyNone, records: value.records.count,
+                                            bytes: FoldPerfProbe.payloadBytes(value.records))
+                }
+                #endif
                 return value?.records.first { record in
                     guard case .userMessage(let message) = ChatEventDecoder.decode(record.event)
                     else { return false }
@@ -488,10 +532,18 @@ public final class MessageLayer {
             do {
                 let outcome = try await backfiller.backfill(
                     scope: scope, sessionId: summary.sessionId, lastSeq: lastSeq) { before in
-                        try await client.historyWindow(HistoryWindowRequest(
+                        #if DEBUG
+                        FoldPerfProbe.begin(.historyNone, limit: 200, maxBytes: 256 * 1024)
+                        #endif
+                        let value = try await client.historyWindow(HistoryWindowRequest(
                             address: address, before: before ?? HistoryWindowRequest.safeMaxBefore,
                             limit: 200, maxBytes: 256 * 1024, roles: ["me"],
                             encoding: client.historyWindowEncoding))
+                        #if DEBUG
+                        FoldPerfProbe.finished(.historyNone, records: value.records.count,
+                                                bytes: FoldPerfProbe.payloadBytes(value.records))
+                        #endif
+                        return value
                     }
                 if case .pulled(let pages, let rows) = outcome {
                     pagesUsed += pages
@@ -534,10 +586,18 @@ public final class MessageLayer {
         let backfiller = UserInputBackfiller(store: store)
         do {
             let outcome = try await backfiller.backfill(scope: scope, sessionId: sessionId, lastSeq: lastSeq) { before in
-                try await client.historyWindow(HistoryWindowRequest(
+                #if DEBUG
+                FoldPerfProbe.begin(.historyNone, limit: 200, maxBytes: 256 * 1024)
+                #endif
+                let value = try await client.historyWindow(HistoryWindowRequest(
                     address: address, before: before ?? HistoryWindowRequest.safeMaxBefore,
                     limit: 200, maxBytes: 256 * 1024, roles: ["me"],
                     encoding: client.historyWindowEncoding))
+                #if DEBUG
+                FoldPerfProbe.finished(.historyNone, records: value.records.count,
+                                        bytes: FoldPerfProbe.payloadBytes(value.records))
+                #endif
+                return value
             }
             if case .pulled(let pages, let rows) = outcome {
                 await probes.note("userinputs.backfill", [

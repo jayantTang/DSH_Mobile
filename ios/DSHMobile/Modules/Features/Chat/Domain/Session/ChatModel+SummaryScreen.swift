@@ -74,15 +74,27 @@ public extension ChatModel {
         let limit = await hasCachedSummary(for: summary) ? 2 : Self.summaryScreenTurns
         let generation = openGeneration
         summaryScreenState = .loading
+        #if DEBUG
+        FoldPerfProbe.begin(.summaryFirst, fold: "summary", limit: limit,
+                            maxBytes: Self.summaryScreenMaxBytes)
+        #endif
         do {
-            let page = try await client.historyWindow(HistoryWindowRequest(
+            let request = HistoryWindowRequest(
                 address: address,
                 before: summary.asOfSeq + 1,
                 through: summary.asOfSeq,
                 limit: limit,
                 maxBytes: Self.summaryScreenMaxBytes,
                 encoding: client.historyWindowEncoding,
-                fold: .summary))
+                fold: .summary)
+            let page: HistoryWindowValue
+            #if DEBUG
+            page = try await FoldPerfProbe.withActiveKind(.summaryFirst) {
+                try await client.historyWindow(request)
+            }
+            #else
+            page = try await client.historyWindow(request)
+            #endif
             guard generation == openGeneration else { return }
             guard !page.records.isEmpty,
                   let lower = page.startSeq ?? page.records.first?.event.seq,
@@ -96,8 +108,20 @@ public extension ChatModel {
                 ], true)
                 return
             }
+            #if DEBUG
+            let adoptStarted = CFAbsoluteTimeGetCurrent()
+            #endif
             await adoptSummaryScreen(page, covered: min(lower, upper)...max(lower, upper))
             guard generation == openGeneration else { return }
+            #if DEBUG
+            let adoptionMs = (CFAbsoluteTimeGetCurrent() - adoptStarted) * 1000
+            FoldPerfProbe.finished(
+                .summaryFirst, records: page.records.count,
+                bytes: FoldPerfProbe.payloadBytes(page.records),
+                parseMs: FoldPerfProbe.parseMs(.summaryFirst, adoptionMs: adoptionMs))
+            // t2：采纳之后的主队列下一轮（首帧机会）。t3 视口可见没有回调，留 nil。
+            DispatchQueue.main.async { FoldPerfProbe.firstFrame(.summaryFirst) }
+            #endif
             summaryScreenState = .ready
             ChatProbe.shared.probeNote?("summary.screen", [
                 "session": summary.sessionId,
@@ -107,10 +131,16 @@ public extension ChatModel {
         } catch is CancellationError {
             summaryScreenState = .idle
         } catch let failure as DSHRPCFailure where failure.code == "link/too-large" {
+            #if DEBUG
+            FoldPerfProbe.failed(.summaryFirst, error: failure)
+            #endif
             // 单轮超过一页的回读预算：如实落到页级重试，不静默、不下发半轮。
             summaryScreenState = .failed(tooLarge: true)
             ChatProbe.shared.probeNote?("summary.screen.tooLarge", ["session": summary.sessionId], true)
         } catch {
+            #if DEBUG
+            FoldPerfProbe.failed(.summaryFirst, error: error)
+            #endif
             summaryScreenState = .failed(tooLarge: false)
             ChatProbe.shared.probeNote?("summary.screen.failed", [
                 "session": summary.sessionId, "reason": String(describing: error),
@@ -138,15 +168,27 @@ public extension ChatModel {
         guard olderState != .loading else { return true }
         notePipelineOlder(state: .loading)
         pipelineBridge?.refold(messagesChanged: false, gapsChanged: true)
+        #if DEBUG
+        FoldPerfProbe.begin(.summaryOlder, fold: "summary", limit: Self.summaryOlderTurns,
+                            maxBytes: Self.summaryScreenMaxBytes)
+        #endif
         do {
-            let page = try await client.historyWindow(HistoryWindowRequest(
+            let request = HistoryWindowRequest(
                 address: address,
                 before: cursor,
                 through: nil,
                 limit: Self.summaryOlderTurns,
                 maxBytes: Self.summaryScreenMaxBytes,
                 encoding: client.historyWindowEncoding,
-                fold: .summary))
+                fold: .summary)
+            let page: HistoryWindowValue
+            #if DEBUG
+            page = try await FoldPerfProbe.withActiveKind(.summaryOlder) {
+                try await client.historyWindow(request)
+            }
+            #else
+            page = try await client.historyWindow(request)
+            #endif
             guard let lower = page.startSeq ?? page.records.first?.event.seq,
                   let upper = page.endSeq ?? page.records.last?.event.seq
             else {
@@ -164,6 +206,9 @@ public extension ChatModel {
                 return true
             }
             let covered = min(lower, upper)...max(lower, upper)
+            #if DEBUG
+            let adoptStarted = CFAbsoluteTimeGetCurrent()
+            #endif
             if let bridge = pipelineBridge {
                 await bridge.adoptSummaryPage(
                     records: page.records, covered: covered, hasMore: page.hasMore,
@@ -177,6 +222,14 @@ public extension ChatModel {
                 }
                 scrollSignal += 1
             }
+            #if DEBUG
+            let adoptionMs = (CFAbsoluteTimeGetCurrent() - adoptStarted) * 1000
+            FoldPerfProbe.finished(
+                .summaryOlder, records: page.records.count,
+                bytes: FoldPerfProbe.payloadBytes(page.records),
+                parseMs: FoldPerfProbe.parseMs(.summaryOlder, adoptionMs: adoptionMs))
+            DispatchQueue.main.async { FoldPerfProbe.firstFrame(.summaryOlder) }
+            #endif
             if !page.hasMore {
                 pipelineBridge?.noteSummaryOlderExhausted()
             } else {
@@ -192,6 +245,9 @@ public extension ChatModel {
             finishOlderIfLoading()
             return true
         } catch let failure as DSHRPCFailure where failure.code == "link/too-large" {
+            #if DEBUG
+            FoldPerfProbe.failed(.summaryOlder, error: failure)
+            #endif
             if pipelineBridge != nil {
                 notePipelineOlder(state: .failed(String(localized: "有一轮过大，点按重试")))
             } else {
@@ -199,6 +255,9 @@ public extension ChatModel {
             }
             return true
         } catch {
+            #if DEBUG
+            FoldPerfProbe.failed(.summaryOlder, error: error)
+            #endif
             // 管道在等回包期间被停掉（切会话/断线）：这条失败已经没有归属，
             // 不再写成可见态，免得非管道宿主画出胶囊。
             if pipelineBridge != nil {

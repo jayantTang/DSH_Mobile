@@ -141,10 +141,18 @@ public extension ChatModel {
         var coveredLow = upper
         do {
             while let window = PrefetchPager.next(lower: lower, cursor: cursor) {
+                #if DEBUG
+                FoldPerfProbe.begin(.historyNone, limit: window.count,
+                                    maxBytes: 512 * 1024)
+                #endif
                 let value = try await client.historyWindow(HistoryWindowRequest(
                     address: address, before: cursor, through: nil,
                     limit: window.count, maxBytes: 512 * 1024,
                     encoding: client.historyWindowEncoding, fold: nil))
+                #if DEBUG
+                FoldPerfProbe.finished(.historyNone, records: value.records.count,
+                                        bytes: FoldPerfProbe.payloadBytes(value.records))
+                #endif
                 let records = value.records.filter { $0.event.seq >= lower && $0.event.seq <= upper }
                 guard let oldest = records.map(\.event.seq).min(), oldest < cursor else { break }
                 collected += records.count

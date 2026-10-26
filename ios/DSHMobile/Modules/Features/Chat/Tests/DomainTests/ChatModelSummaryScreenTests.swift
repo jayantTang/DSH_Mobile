@@ -328,6 +328,51 @@ final class ChatModelSummaryScreenTests: XCTestCase {
         XCTAssertTrue(summaryCalls().isEmpty, "没有 v2 能力时旧页不能发概要请求")
     }
 
+    // MARK: - 冷开（清库）只走概要，步骤卡可达
+
+    func test_cold_open_uses_summary_pages_only_and_group_expansion_reaches_steps() async throws {
+        try attachLayer(capabilities: [HistoryWindowWire.summaryFoldCapability])
+        // 空库冷开：没有任何本地记录，首屏全靠概要页。
+        carrier.unaryResponses["_link/sessionWindow"] = .success(
+            Self.windowJSON(turn: 2, start: 10, summaryStart: 12, summaryEnd: 13,
+                            answerSeq: 14, endSeq: 15))
+        await model.open(try ChatSeam.summary(id: "s-cold", asOfSeq: 15))
+        _ = await eventually { model.summaryScreenState == .ready }
+
+        // 1) 有 v2 能力时不允许再发 v1 页，也绝不能再把 fold 与 roles/coverage 组合。
+        let windowCalls = carrier.calls(to: "_link/sessionWindow")
+        XCTAssertFalse(windowCalls.contains { call in
+            call.args?["fold"]?.boolValue == true
+        }, "不得再发 fold:true（v1 页）")
+        XCTAssertFalse(windowCalls.contains { call in
+            call.args?["fold"] != nil && (call.args?["roles"] != nil
+                || call.args?["coverage"] != nil)
+        }, "fold 不能与 roles/coverage 组合（连接器会拒）")
+        XCTAssertTrue(summaryCalls().count >= 1)
+        let nonSummary = windowCalls.filter { $0.args?["fold"]?.stringValue != "summary" }
+        XCTAssertTrue(nonSummary.isEmpty,
+                      "v2 能力下冷开的取数必须全是概要页：\(nonSummary.map { $0.args?.compactDescription ?? "-" })")
+
+        // 2) 点开普通轮次的分组能看到步骤卡（与热开一致）。
+        _ = await eventually { !model.processPlan().turns.isEmpty }
+        let plan = model.processPlan()
+        let turn = try XCTUnwrap(plan.turns.first)
+        model.toggleProcess(turnKey: turn.key)
+        let group = try XCTUnwrap(turn.groups.first)
+        model.toggleProcessGroup(groupKey: group.key)
+        let rows = model.rowsFor(screen: "s-cold")
+        let steps = rows.compactMap { item -> TimelineProcessStep? in
+            if case .processStep(let step) = item.kind { return step }
+            return nil
+        }
+        XCTAssertEqual(steps.count, group.steps.count)
+        XCTAssertEqual(steps.count, 2, "分组展开必须有步骤卡：\(rows.map(\.id))")
+        XCTAssertFalse(rows.contains { item in
+            if case .toolCall = item.kind { return true }
+            return false
+        }, "概要页没有 v1 工具行")
+    }
+
     // MARK: - 概要旧页的状态归属（无管道/空页/管道停止）
 
     func test_older_summary_does_nothing_without_a_pipeline() async throws {
