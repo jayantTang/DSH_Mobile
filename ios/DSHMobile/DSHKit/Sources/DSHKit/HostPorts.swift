@@ -177,6 +177,8 @@ public protocol GatewayHosting: Sendable {
     func deleteWorkspace(id: String) async throws
     func createSession(_ request: SessionCreateRequest) async throws -> JSONValue
     func workspaces(timeout: Duration) async throws -> WorkspaceBaseline
+    /// 工作区/归档的实时帧：baseline 播种，change 增量。
+    func workspaceFrames() async -> AsyncThrowingStream<WorkspaceFrame, any Error>
     func linkHandshake(client: LinkHandshakeRequest) async throws -> LinkHandshake
     func pushDiagnostics(_ request: LinkDiagnosticsRequest) async throws -> LinkDiagnosticsAck
 }
@@ -184,6 +186,10 @@ public protocol GatewayHosting: Sendable {
 /// 连接适配器持有的宿主对象：六个按域切开的协议 + 链路门面。
 /// App/Domain 只拿其中一段，不拿这个全量类型。
 public extension GatewayHosting {
+    func workspaceFrames() async -> AsyncThrowingStream<WorkspaceFrame, any Error> {
+        AsyncThrowingStream { $0.finish() }
+    }
+
     func workspaces() async throws -> WorkspaceBaseline {
         try await workspaces(timeout: .seconds(15))
     }

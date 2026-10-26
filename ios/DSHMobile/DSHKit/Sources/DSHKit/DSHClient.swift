@@ -490,6 +490,11 @@ struct DSHClient: Sendable {
 
     // MARK: - Workspace
 
+    /// 实时工作区帧（列表订阅用）；与 `workspaces()` 共用同一条流。
+    public func workspaceFrames() async -> AsyncThrowingStream<WorkspaceFrame, any Error> {
+        await workspaceFollow()
+    }
+
     /// The workspace inventory arrives on the `workspace/follow` baseline
     /// rather than a dedicated list endpoint.
     func workspaceFollow() async -> AsyncThrowingStream<WorkspaceFrame, any Error> {

@@ -183,6 +183,14 @@ public struct LinkGateway: Sendable {
 
     // MARK: - 工作区
 
+    /// 工作区/归档实时帧（列表订阅用）。
+    @MainActor public func workspaceFrames() async -> AsyncThrowingStream<WorkspaceFrame, any Error> {
+        guard let client = clientProvider() else {
+            return AsyncThrowingStream { $0.finish() }
+        }
+        return await client.workspaceFrames()
+    }
+
     /// 宿主的 workspace 列表基线。
     @MainActor public func workspaces(timeout: Duration = .seconds(20)) async throws -> WorkspaceBaseline {
         guard let client = clientProvider() else { throw DSHTransportError.carrierClosed }

@@ -259,6 +259,9 @@ public final class SessionListModel {
     private(set) weak var store: (any LinkService)?
     /// 列表自己的 `session/control` 订阅：投影（标题/token/上下文/子智能体计时）实时更新。
     private var projectionTask: Task<Void, Never>?
+    /// 工作区/归档实时流：baseline 直接应用，change 去抖后重拉一次列表。
+    private var workspaceTask: Task<Void, Never>?
+    private var workspaceRefreshTask: Task<Void, Never>?
     private var liveProjections: [String: SessionProjectionHints] = [:]
     private weak var hub: HostEventHub?
 
@@ -379,6 +382,41 @@ public final class SessionListModel {
         self.messageLayer = messageLayer
         if let viewLog { self.viewLog = viewLog }
         startProjections()
+        startWorkspaceStream()
+    }
+
+    private func startWorkspaceStream() {
+        workspaceTask?.cancel()
+        guard let link = store?.link else { return }
+        workspaceTask = Task { @MainActor [weak self] in
+            let frames = await link.workspaceFrames()
+            do {
+                for try await frame in frames {
+                    guard !Task.isCancelled else { return }
+                    switch frame {
+                    case .baseline(let baseline):
+                        self?.workspaces = baseline.items
+                        self?.archivedSessionIds = Set(baseline.archivedSessionIds)
+                        self?.regroup()
+                    case .change:
+                        self?.scheduleWorkspaceRefresh()
+                    case .unknown:
+                        continue
+                    }
+                }
+            } catch {
+                // 旧连接器没有这条流：保持 session/list 的基线。
+            }
+        }
+    }
+
+    private func scheduleWorkspaceRefresh() {
+        workspaceRefreshTask?.cancel()
+        workspaceRefreshTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled else { return }
+            await self?.refresh()
+        }
     }
 
     private func startProjections() {
