@@ -109,6 +109,14 @@ public struct ChatView: View {
     /// 读者到顶后、模型状态还没切到 loading 之前的乐观提示。
     /// 只影响显示，不参与取页；加载落地/失败即清。
     @State private var olderRequestVisible = false
+    /// DEBUG 夹具：只用于核对加载条的可见性。
+    private var forceOlderBanner: Bool {
+        #if DEBUG
+        ProcessInfo.processInfo.arguments.contains("-DSHForceOlderBanner")
+        #else
+        false
+        #endif
+    }
     /// Rate limit for tail scrolling during a stream.
     @State private var lastScrollAt = Date.distantPast
     /// 内容变化后排的那一次"确认仍在尾部"。可取消，所以流式输出时不会堆积。
@@ -213,6 +221,9 @@ public struct ChatView: View {
 
     public var body: some View {
         VStack(spacing: 0) {
+            if (model.isLoadingOlder || olderRequestVisible || forceOlderBanner), model.olderFailure == nil {
+                olderLoadingBanner
+            }
             transcript
             if let prompts = model.pendingPrompts.first {
                 PendingPromptBanner(prompt: prompts, model: model)
@@ -224,12 +235,6 @@ public struct ChatView: View {
                 .probed("composer")
         }
         .background(DSHTheme.background)
-        // 固定的加载提示：贴在聊天内容区顶部，不随滚动容器/缺口行布局。
-        .overlay(alignment: .top) {
-            olderLoadingPill
-                .padding(.top, 6)
-                .zIndex(20)
-        }
         // 018：聊天页把当前会话的轮次喂成 `timeline.isTurnOpen`（列表喂的是
         // `session/list.running`，两者口径不同，这里覆盖）。
         .task { syncActivityBinding() }
@@ -1040,6 +1045,22 @@ public struct ChatView: View {
     }
 
     /// 补页进行中的提示：浮在转写区顶部，不进内容（行高恒定，见 `olderSentinel`）。
+    /// 布局内的加载条：不依赖滚动容器 overlay，占一行高度，必定可见。
+    @ViewBuilder
+    private var olderLoadingBanner: some View {
+        HStack(spacing: DSHTheme.Spacing.hairline) {
+            ProgressView().controlSize(.mini)
+            Text("正在加载更早的消息…")
+                .font(DSHTheme.Typography.micro)
+                .foregroundStyle(DSHTheme.labelSecondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 6)
+        .background(DSHTheme.layer1)
+        .overlay(alignment: .bottom) { Hairline() }
+        .accessibilityIdentifier("chat.older.loading")
+    }
+
     @ViewBuilder
     private var olderLoadingPill: some View {
         // 已经失败过就不再显示"正在加载"：那会让人以为还在忙，而实际上要等的是他自己点一下
