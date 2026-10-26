@@ -213,6 +213,8 @@ public final class ChatModel {
     }
     public private(set) var olderState: OlderPageState = .idle
     public var isLoadingOlder: Bool { olderState == .loading }
+    /// 已确认没有更早历史：顶部不再自动取页。
+    public var isOlderExhausted: Bool { olderState == .exhausted }
     public var olderFailure: String? {
         if case .failed(let message) = olderState { return message }
         return nil

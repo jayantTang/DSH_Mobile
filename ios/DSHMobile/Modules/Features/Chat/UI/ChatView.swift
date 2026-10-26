@@ -724,7 +724,9 @@ public struct ChatView: View {
                 canLoadOlder: { model.hasOlder },
                 isLoadingOlder: { model.isLoadingOlder },
                 onNearTop: {
-                    if model.hasOlder || model.hasUnfilledGaps {
+                    // 首屏还没落地时 hasOlder 是未知的，不能拿它当闸门：
+                    // 读者到顶就先显示加载并尝试，是否到头由取页结果决定。
+                    if !model.isOlderExhausted, model.olderFailure == nil {
                         olderRequestVisible = true
                     }
                     Task { await model.loadOlder() }
@@ -1273,7 +1275,7 @@ public struct ChatView: View {
     @State private var lastPumpTrace = Date.distantPast
 
     private func pumpOlder(_ proxy: ScrollViewProxy) {
-        guard ownsTranscript, sentinelNearTop, model.hasOlder || model.hasUnfilledGaps,
+        guard ownsTranscript, sentinelNearTop, !model.isOlderExhausted,
               !model.isLoadingOlder, olderPump == nil else {
             // 顶部不再自动补页时，必须能区分是哪一条闸门挡住的：没有这条，
             // "还有历史却不动"只能靠猜（2026-10-18 仿真连续上拉 386 次卡在同一处）。
