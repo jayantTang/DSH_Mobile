@@ -215,6 +215,9 @@ public final class ChatModel {
     public var isLoadingOlder: Bool { olderState == .loading }
     /// 已确认没有更早历史：顶部不再自动取页。
     public var isOlderExhausted: Bool { olderState == .exhausted }
+    /// 打开会话时管道还没接好，读者已经到了顶部：先显示加载，
+    /// 管道一旦启动就补发这次请求（否则这次上拉会静默丢失）。
+    public internal(set) var olderPendingBeforePipeline = false
     public var olderFailure: String? {
         if case .failed(let message) = olderState { return message }
         return nil

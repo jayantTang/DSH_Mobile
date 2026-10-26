@@ -19,7 +19,12 @@ final class ChatPagingService {
     func loadOlder() async {
         // 没有管道就没有"更早的页"可取：不请求、也不落失败（以前写成
         // 「尚未连接」，在没有管道的宿主/夹具里会凭空出现一条重试胶囊）。
-        guard let bridge = pipelineBridge else { return }
+        guard let bridge = pipelineBridge else {
+            // 会话还在打开、管道未接线：不能静默丢掉这次上拉。
+            model.olderPendingBeforePipeline = true
+            setOlderState(.loading)
+            return
+        }
         await bridge.loadOlder()
     }
 

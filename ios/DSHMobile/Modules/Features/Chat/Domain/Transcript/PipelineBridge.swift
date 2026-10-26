@@ -24,10 +24,18 @@ public extension ChatModel {
     public func startPipelineSubscription(for summary: SessionSummary) {
         pipelineBridge?.stop()
         pipelineBridge = nil
-        guard let layer = messageLayer, let scope = sessionScope else { return }
+        guard let layer = messageLayer, let scope = sessionScope else {
+            olderPendingBeforePipeline = false
+            if case .loading = olderState { setOlderState(.idle) }
+            return
+        }
         let ref = layer.sessionRef(scope: scope, sessionId: summary.sessionId)
         pipelineBridge = ChatPipelineBridge(model: self, layer: layer, ref: ref,
                                             generation: openGeneration)
+        if olderPendingBeforePipeline {
+            olderPendingBeforePipeline = false
+            Task { await self.loadOlder() }
+        }
         // T022 重启恢复：上次没发出去的消息（磁盘 status='pending'）以「未发出」呈现，
         // 不自动重发——磁盘的 pending 分不清"真没发出去"和"宿主已收下、还在队列里"。
         Task { await layer.restorePending(for: ref) }
