@@ -202,7 +202,7 @@ public final class ActivityModel {
         do {
             let roster = try await client.activityRoster()
             let live = roster.sessions.values.reduce(0) { $0 + $1.liveJobs.count }
-            logger.debug("roster sessions=\(roster.sessions.count, privacy: .public) jobs=\(live, privacy: .public)")
+            logger.info("roster sessions=\(roster.sessions.count, privacy: .public) jobs=\(live, privacy: .public)")
             if !store.isAvailable {
                 applyToStore(.capabilities(capabilities.union([LinkHandshake.Capability.jobsRoster])))
                 store.setCurrentSession(chatSessionId)
@@ -434,7 +434,7 @@ public final class ActivityModel {
         guard let value = raw["value"],
               let frame = try? value.decoded(as: LinkJobsFrame.self)
         else { return }
-        logger.debug("frame session=\(frame.sessionId, privacy: .public) running=\(frame.running.count, privacy: .public) settled=\(frame.settled, privacy: .public) at=\(frame.at, privacy: .public)")
+        logger.info("frame session=\(frame.sessionId, privacy: .public) running=\(frame.running.count, privacy: .public) settled=\(frame.settled, privacy: .public) at=\(frame.at, privacy: .public)")
         applyToStore(.frame(frame))
     }
 
