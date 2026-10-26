@@ -208,11 +208,15 @@ public struct TimelineProcessStep: Sendable, Equatable {
     public let bytes: Int?
     /// 按需取回来的正文状态。nil = 还没点开过（卡片只显示大小与入口）。
     public let body: ProcessStepBodyState?
+    /// 这一行当前是否展开（显示状态，由投影从 `TranscriptFoldState` 贴上；
+    /// 必须进行签名，否则"收起"不会触发重载，卡片会一直开着）。
+    public let isExpanded: Bool
 
     public init(id: String, groupKey: String, turn: Int, seq: Int,
                 kind: FoldSummaryV2.StepKind, name: String, preview: String,
                 status: FoldSummaryV2.StepStatus, resultSeq: Int? = nil,
-                bytes: Int? = nil, body: ProcessStepBodyState? = nil) {
+                bytes: Int? = nil, body: ProcessStepBodyState? = nil,
+                isExpanded: Bool = false) {
         self.id = id
         self.groupKey = groupKey
         self.turn = turn
@@ -224,14 +228,17 @@ public struct TimelineProcessStep: Sendable, Equatable {
         self.resultSeq = resultSeq
         self.bytes = bytes
         self.body = body
+        self.isExpanded = isExpanded
     }
 
-    /// 同一行的另一个正文状态（投影把模型侧的状态贴上来，行本身仍是不可变的）。
-    public func with(body: ProcessStepBodyState?) -> TimelineProcessStep {
+    /// 同一行的另一个正文/展开状态（投影把模型侧的状态贴上来，行本身仍是不可变的）。
+    public func with(body: ProcessStepBodyState?,
+                     isExpanded: Bool? = nil) -> TimelineProcessStep {
         TimelineProcessStep(
             id: id, groupKey: groupKey, turn: turn, seq: seq, kind: kind,
             name: name, preview: preview, status: status,
-            resultSeq: resultSeq, bytes: bytes, body: body)
+            resultSeq: resultSeq, bytes: bytes, body: body,
+            isExpanded: isExpanded ?? self.isExpanded)
     }
 
     /// 这一条正文所在的 seq：工具步骤取结果，思考步骤取自己。

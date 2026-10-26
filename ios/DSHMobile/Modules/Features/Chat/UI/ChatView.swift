@@ -1016,9 +1016,6 @@ public struct ChatView: View {
         rowView.activity = activity
         rowView.onOpenSession = onOpenSession
         rowView.parentSessionId = model.session?.sessionId
-        if case .processStep(let step) = item.kind {
-            rowView.processStepExpanded = model.isProcessStepExpanded(step.id)
-        }
         rowView.onToggleProcessStep = { id in
             // 展开步骤卡会按需取一条正文：与过程节点一样先退出跟随，
             // 免得同一次更新里的"钉底"把卡片顶走。

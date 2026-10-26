@@ -140,6 +140,33 @@ final class TranscriptProcessFoldSummaryTests: XCTestCase {
         })
     }
 
+    func test_a_step_projection_carries_its_expanded_state_and_changes_the_signature() throws {
+        let timeline = try FoldSummaryV2Fixtures.timeline(FoldSummaryV2Fixtures.twoGroupWindow)
+        let plan = plan(timeline)
+        let turn = try XCTUnwrap(plan.turns.first)
+        var open = TranscriptFoldState()
+        open.manualTurn[turn.key] = true
+        for group in turn.groups { open.expandedGroups.insert(group.key) }
+
+        let closedRows = TranscriptProcessFold.displayRows(plan, state: open)
+        let closedSteps = steps(closedRows)
+        XCTAssertFalse(closedSteps.isEmpty)
+        XCTAssertTrue(closedSteps.allSatisfy { !$0.isExpanded })
+        let id = try XCTUnwrap(closedSteps.first?.id)
+        let closedItem = try XCTUnwrap(closedRows.first { $0.id == id })
+
+        var expanded = open
+        expanded.expandedSteps.insert(id)
+        let openedRows = TranscriptProcessFold.displayRows(plan, state: expanded)
+        let openedItem = try XCTUnwrap(openedRows.first { $0.id == id })
+        guard case .processStep(let openedStep) = openedItem.kind else {
+            return XCTFail("expected a step row")
+        }
+        XCTAssertTrue(openedStep.isExpanded)
+        XCTAssertNotEqual(TimelineRowSignature.of(closedItem), TimelineRowSignature.of(openedItem),
+                          "收起/展开必须改变签名，否则列表不会重载，卡片关不掉")
+    }
+
     func test_v2_turn_and_group_wording_matches_the_desktop_wording() throws {
         let timeline = try FoldSummaryV2Fixtures.timeline(FoldSummaryV2Fixtures.twoGroupWindow)
         let plan = plan(timeline)

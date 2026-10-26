@@ -60,7 +60,6 @@ struct TimelineRowView: View {
     /// 033：过程节点的展开/收起回调。nil 时节点不可操作（预览等场景）。
     var onToggleProcess: (() -> Void)?
     /// 概要 v2：步骤卡是否展开（模型持有），以及点开/重试。
-    var processStepExpanded = false
     var onToggleProcessStep: ((String) -> Void)?
     var onRetryProcessStep: ((String) -> Void)?
     /// 运行中过程区的实时状态：只有当前那条分组行会用它写「正在… · 命令」。
@@ -126,7 +125,7 @@ struct TimelineRowView: View {
         case .processStep(let step):
             ProcessStepRow(
                 step: step,
-                isExpanded: processStepExpanded,
+                isExpanded: step.isExpanded,
                 onToggle: { onToggleProcessStep?(step.id) },
                 onRetry: { onRetryProcessStep?(step.id) }
             )

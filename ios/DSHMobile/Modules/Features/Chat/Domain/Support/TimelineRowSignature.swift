@@ -44,7 +44,7 @@ public enum TimelineRowSignature {
             case .tooLarge: body = "tooLarge"
             case nil: body = "none"
             }
-            return "\(base)|ps:\(step.status.rawValue):\(step.bytes ?? -1):\(step.resultSeq ?? -1):\(body)"
+            return "\(base)|ps:\(step.status.rawValue):\(step.bytes ?? -1):\(step.resultSeq ?? -1):\(body):\(step.isExpanded)"
         case .runningLine(let line):
             // 文案由行视图按开始时刻自己走表；开始时刻变了（新的一轮）要重载。
             return "\(item.id)|run:\(line.since?.timeIntervalSince1970 ?? -1)"

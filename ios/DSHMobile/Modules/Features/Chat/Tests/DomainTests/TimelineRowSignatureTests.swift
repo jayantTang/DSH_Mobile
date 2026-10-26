@@ -51,6 +51,16 @@ final class TimelineRowSignatureTests: XCTestCase {
         XCTAssertNotEqual(first, second, "新的一轮要重载计时")
     }
 
+    func test_a_step_signature_covers_the_expanded_state() {
+        let step = TimelineProcessStep(
+            id: "s-1", groupKey: "g-1", turn: 1, seq: 3, kind: .tools,
+            name: "bash", preview: "swift build", status: .ok, resultSeq: 4, bytes: 900,
+            body: .loaded(text: "OK", bytes: 2))
+        let closed = TimelineRowSignature.of(step.with(body: step.body, isExpanded: false).item)
+        let open = TimelineRowSignature.of(step.with(body: step.body, isExpanded: true).item)
+        XCTAssertNotEqual(closed, open, "收起不重载就会一直停在展开态")
+    }
+
     func test_a_step_signature_covers_the_fetched_body() {
         let step = TimelineProcessStep(
             id: "s-1", groupKey: "g-1", turn: 1, seq: 3, kind: .tools,

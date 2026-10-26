@@ -41,6 +41,7 @@ public extension ChatModel {
             rows.append(TimelineRunningLine(since: runningSince).item)
         }
         // 单条步骤正文的三态贴在步骤行上；模型是唯一所有者，投影只做搬运。
+        // 展开状态已经由 `TranscriptProcessFold.displayRows` 从同一份 foldState 贴上。
         if !stepBodies.isEmpty {
             for index in rows.indices {
                 guard case .processStep(let step) = rows[index].kind,

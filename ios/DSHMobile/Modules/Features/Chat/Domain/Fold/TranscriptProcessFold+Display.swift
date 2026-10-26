@@ -196,7 +196,11 @@ extension TranscriptProcessFold {
                 visibleCollapsed: false))
             guard groupExpanded else { continue }
             for (stepOffset, step) in group.steps.enumerated() {
-                events.append(Event(seq: step.seq, order: 1, base: stepOffset, item: step.item,
+                // 展开状态是显示状态：放在投影里贴到行上，列表宿主才能靠签名变化
+                // 重载它（否则点开后再点收起，行内容"没变"，卡片会一直开着）。
+                let item = step.with(body: step.body,
+                                     isExpanded: state.expandedSteps.contains(step.id)).item
+                events.append(Event(seq: step.seq, order: 1, base: stepOffset, item: item,
                                     isTurnHeader: false, isProcess: true,
                                     visibleCollapsed: false))
             }
