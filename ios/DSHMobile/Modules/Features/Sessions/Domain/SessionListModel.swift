@@ -404,11 +404,21 @@ public final class SessionListModel {
                     case "api-session/status":
                         guard let sessionId = args.first?.stringValue,
                               let running = args.dropFirst().first?.boolValue else { continue }
-                        self.applyHostStatus(sessionId: sessionId, running: running)
+                        if self.allSessions.contains(where: { $0.sessionId == sessionId }) {
+                            self.applyHostStatus(sessionId: sessionId, running: running)
+                        } else {
+                            // 子智能体等新会话第一次出现时，本地还没有行；重拉
+                            // `session/list` 才能把摘要喂给活动名单（子智能体计数）。
+                            await self.refresh()
+                        }
                     case "api-session/activity":
                         guard let sessionId = args.first?.stringValue,
                               let updatedAt = args.dropFirst().first?.doubleValue else { continue }
-                        self.applyHostActivity(sessionId: sessionId, updatedAt: updatedAt)
+                        if self.allSessions.contains(where: { $0.sessionId == sessionId }) {
+                            self.applyHostActivity(sessionId: sessionId, updatedAt: updatedAt)
+                        } else {
+                            await self.refresh()
+                        }
                     case "api-session/added", "api-session/removed", "api-session/error":
                         await self.refresh()
                     default:
