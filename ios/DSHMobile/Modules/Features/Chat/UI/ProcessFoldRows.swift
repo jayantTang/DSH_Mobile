@@ -95,6 +95,8 @@ struct ProcessGroupRow: View {
     let header: TimelineProcessHeader
     /// 运行中的实时状态；只有 `header.isRunning` 的那条会用到。
     var running: ProcessRunningDetail?
+    /// 运行中分组右侧的流式字数（纯思考时显示；命令不显示）。
+    var runningChars: Int = 0
     var onToggle: (() -> Void)?
 
     static let height: CGFloat = 20
@@ -134,6 +136,19 @@ struct ProcessGroupRow: View {
                     .font(DSHTheme.Typography.processLabel)
                     .lineLimit(1)
                     .truncationMode(.tail)
+                if header.isRunning {
+                    let stats = ProcessFoldText.runningStatsText(
+                        steps: header.toolCount + header.reasoningCount,
+                        chars: runningChars,
+                        hasActivity: activity != nil)
+                    if !stats.isEmpty {
+                        Text(stats)
+                            .font(DSHTheme.Typography.micro)
+                            .foregroundStyle(DSHTheme.labelDimmed)
+                            .lineLimit(1)
+                            .padding(.leading, 6)
+                    }
+                }
                 Spacer(minLength: 0)
             }
             .foregroundStyle(DSHTheme.processLabel)

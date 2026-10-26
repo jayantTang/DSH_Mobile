@@ -57,6 +57,8 @@ struct TimelineRowView: View {
     var onOpenSession: ((String) -> Void)?
     /// 018：这一行属于哪个会话（子智能体停止要用父会话 id）。
     var parentSessionId: String?
+    /// 运行中分组的流式字数（右侧统计用）。
+    var runningChars: Int = 0
     /// 033：过程节点的展开/收起回调。nil 时节点不可操作（预览等场景）。
     var onToggleProcess: (() -> Void)?
     /// 概要 v2：步骤卡是否展开（模型持有），以及点开/重试。
@@ -123,7 +125,8 @@ struct TimelineRowView: View {
 
         case .processHeader(let header):
             if header.scope == .group {
-                ProcessGroupRow(header: header, running: processRunning) { onToggleProcess?() }
+                ProcessGroupRow(header: header, running: processRunning,
+                                runningChars: runningChars) { onToggleProcess?() }
             } else {
                 ProcessTurnRow(header: header) { onToggleProcess?() }
             }

@@ -1096,6 +1096,18 @@ public struct ChatView: View {
         return header.scope == .group ? DSHTheme.Spacing.hairline : 16
     }
 
+    /// 运行中分组的流式字数：只用于右侧统计，不参与折叠。
+    private func runningCharsForGroup() -> Int {
+        if let streaming = model.timeline.streaming {
+            return streaming.text.count + streaming.reasoning.count
+        }
+        guard let last = model.timeline.items.last(where: { $0.isStreaming }) else { return 0 }
+        switch last.kind {
+        case .assistantText(let text), .reasoning(let text): return text.count
+        default: return 0
+        }
+    }
+
     /// 一行消息。抽出来是为了让"懒加载/非懒加载"两种排布共用同一份定义。
     private func row(_ item: TimelineItem) -> some View {
         var rowView = TimelineRowView(item: item)

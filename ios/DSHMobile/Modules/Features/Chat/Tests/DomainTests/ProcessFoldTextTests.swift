@@ -183,3 +183,13 @@ final class ProcessFoldTextTests: XCTestCase {
     func test_the_running_clock_refreshes_every_second() {
         XCTAssertEqual(ProcessFoldText.runningRefresh, 1, "运行行计时按 1 秒刷新，与桌面一致")
     }
+
+extension ProcessFoldTextTests {
+    func test_running_stats_text_keeps_action_and_numbers_secondary() {
+        XCTAssertEqual(ProcessFoldText.runningStatsText(steps: 12, chars: 328, hasActivity: false),
+                       "12 步 · 328 字")
+        XCTAssertEqual(ProcessFoldText.runningStatsText(steps: 12, chars: 328, hasActivity: true),
+                       "12 步")
+        XCTAssertEqual(ProcessFoldText.runningStatsText(steps: 0, chars: 0, hasActivity: false), "")
+    }
+}

@@ -151,6 +151,15 @@ public enum ProcessFoldText {
         return String(format: String(localized: "深度求索中，用时 %@ ···"), durationText(elapsed))
     }
 
+    /// 运行中分组行右侧的计数文案：`12 步 · 328 字` / `12 步`。
+    /// 动作短语在左，数量弱化在右；命令运行中不显示字数（没有正文在增长）。
+    public static func runningStatsText(steps: Int, chars: Int, hasActivity: Bool) -> String {
+        var parts: [String] = []
+        if steps > 0 { parts.append(String(localized: "\(steps) 步")) }
+        if !hasActivity, chars > 0 { parts.append(String(localized: "\(chars) 字")) }
+        return parts.joined(separator: " · ")
+    }
+
     // MARK: - 图标
 
     /// 活动类别对应的 SF Symbol 名（桌面 `PROCESS_ICONS`，手机用系统符号）。
