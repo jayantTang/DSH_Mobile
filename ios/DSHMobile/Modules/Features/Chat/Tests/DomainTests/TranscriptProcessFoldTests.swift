@@ -50,6 +50,29 @@ final class TranscriptProcessFoldTests: XCTestCase {
         XCTAssertEqual(answer, "answer 1")
     }
 
+    func test_a_send_image_tool_stays_visible_when_the_turn_is_collapsed() throws {
+        let timeline = try ProcessFoldFixtures.timeline([
+            ProcessFoldFixtures.turnStart(seq: 1, turn: 1),
+            ProcessFoldFixtures.user(seq: 2, text: "发张图"),
+            ProcessFoldFixtures.assistant(seq: 3, text: "好，截图"),
+            ProcessFoldFixtures.toolCall(seq: 4, callId: "img", name: "send_image"),
+            ProcessFoldFixtures.toolResult(seq: 5, callId: "img", text: "shot.png"),
+            ProcessFoldFixtures.assistant(seq: 6, text: "已发送"),
+            ProcessFoldFixtures.turnEnd(seq: 7, turn: 1),
+        ])
+        XCTAssertTrue(timeline.items.contains { if case .toolCall = $0.kind { return true }; return false },
+                      "timeline must contain the tool call: \(timeline.items.map(\.id))")
+        let plan = TranscriptProcessFold.plan(items: timeline.items, isTurnOpen: false,
+                                              currentTurn: 1)
+        let turn = try XCTUnwrap(plan.turns.first)
+        XCTAssertEqual(turn.toolCount, 0, "交付工具不算过程")
+        let rows = TranscriptProcessFold.displayRows(plan, state: TranscriptFoldState())
+        XCTAssertTrue(rows.contains { item in
+            guard case .toolCall(let invocation) = item.kind else { return false }
+            return invocation.name == "send_image"
+        }, "send_image 的卡片收起时也必须可见：\(rows.map(\.id))")
+    }
+
     func test_the_turn_divider_is_never_projected() throws {
         // 收起、展开、失败、中断四种情况都不再输出分隔行：轮次行底部的 0.5pt 线
         // 承担边界职责，屏幕上不再有第二条「已完成」。

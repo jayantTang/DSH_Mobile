@@ -112,6 +112,10 @@ extension TranscriptProcessFold {
                     // 中途输入的 user 消息是读者的内容，不是过程细节：折叠只能收
                     // 过程行，不能把读者自己说的话收进去。
                     out.append(plan.rows[index])
+                } else if case .toolCall(let invocation) = plan.rows[index].kind,
+                          TranscriptProcessFold.isDeliveryToolName(invocation.name) {
+                    // 交付类工具（send_image）的图片是成品，收起态也必须可见。
+                    out.append(plan.rows[index])
                 }
                 continue
             }
@@ -170,6 +174,10 @@ extension TranscriptProcessFold {
             let visible: Bool
             switch item.kind {
             case .userMessage, .gap:
+                visible = true
+            case .toolCall(let invocation)
+                where TranscriptProcessFold.isDeliveryToolName(invocation.name):
+                // 交付类工具（send_image）的图片是成品，始终留在收起态。
                 visible = true
             default:
                 visible = turn.answerIndexes.contains(index)

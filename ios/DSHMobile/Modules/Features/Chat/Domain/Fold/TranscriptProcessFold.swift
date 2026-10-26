@@ -202,6 +202,13 @@ public enum TranscriptProcessFold {
     /// - Parameter summaries: 概要 v2（`+link/fold` 的 `v:2`）解出的轮次元数据。
     ///   概要模式下过程正文没有下发，分组与步骤**只能**从这份数据来；缺省为空，
     ///   就是原来的 v1 路径（过程行从时间线里数）。
+    /// 交付类工具：结果里的图片就是用户要看的成品，收起态也要留在转写里。
+    public static func isDeliveryToolName(_ name: String) -> Bool {
+        let value = name.lowercased()
+        return value == "send_image" || value == "tool-send-image"
+            || value.hasSuffix("__send_image")
+    }
+
     public static func plan(items: [TimelineItem],
                             isTurnOpen: Bool,
                             currentTurn: Int = 0,
@@ -315,6 +322,15 @@ public enum TranscriptProcessFold {
             // 正式回答 = 分隔线之前**末尾连续的一段回答内容**，不只是最后一条助手文本。
             // 图片型回答（agent 发送的图片消息）不是 `assistantText`；旧规则把它当过程，
             // 收起时就被一起藏掉。工具产出里的图片仍然是过程，不会被算进来。
+            /// 交付类工具（`send_image`）的卡片是**给用户看的内容**，不是过程：
+            /// 收起态也必须留在转写里，不能折进轮次。
+            func isDeliveryRow(_ item: TimelineItem) -> Bool {
+                guard case .toolCall(let invocation) = item.kind else { return false }
+                let name = invocation.name.lowercased()
+                return name == "send_image" || name == "tool-send-image"
+                    || name.hasSuffix("__send_image")
+            }
+
             func isAnswerRow(_ item: TimelineItem) -> Bool {
                 switch item.kind {
                 case .assistantText: return true
@@ -378,6 +394,7 @@ public enum TranscriptProcessFold {
             var processIndexes: [Int] = []
             for index in leadingEnd..<answerEnd where !answerIndexes.contains(index) {
                 if suppressedBySummary(items[index]) { continue }
+                if isDeliveryRow(items[index]) { continue }
                 processIndexes.append(index)
             }
 
