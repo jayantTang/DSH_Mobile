@@ -296,24 +296,6 @@ public struct Composer: View {
                     .accessibilityLabel("已发送，等待开始")
             }
 
-            // Queue-or-steer is a separate decision from send-or-stop, so it
-            // stays its own control: one button carrying both would have to
-            // guess which the user meant.
-            if model.isRunning {
-                Button {
-                    model.steerNext.toggle()
-                } label: {
-                    Image(systemName: model.steerNext ? "arrow.turn.right.down" : "text.append")
-                        .font(.system(size: 15, weight: .medium))
-                        .foregroundStyle(model.steerNext ? DSHTheme.brand : DSHTheme.labelSecondary)
-                        .frame(width: 34, height: 34)
-                        .background(Circle().fill(DSHTheme.layer2))
-                        .overlay(Circle().stroke(DSHTheme.border2, lineWidth: 1))
-                }
-                .accessibilityIdentifier("composer.steer")
-                .accessibilityLabel(model.steerNext ? "切换为排队" : "切换为插入当前轮次")
-            }
-
             attachControl
             primaryControl
         }
@@ -406,7 +388,7 @@ public struct Composer: View {
         if model.isRunning && !canSend { return "stop.fill" }
         // While a turn is open the message does not just go: it queues behind
         // the run or interrupts it, and the glyph says which.
-        if model.isRunning { return model.steerNext ? "arrow.turn.right.down" : "text.append" }
+        if model.isRunning { return "text.append" }
         return "arrow.up"
     }
 
@@ -428,7 +410,7 @@ public struct Composer: View {
 
     private var primaryLabel: String {
         if model.isRunning && !canSend { return "停止" }
-        if model.isRunning { return model.steerNext ? "插入当前轮次" : "排队发送" }
+        if model.isRunning { return "排队发送" }
         return "发送"
     }
 

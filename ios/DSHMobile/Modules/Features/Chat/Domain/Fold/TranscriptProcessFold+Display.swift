@@ -269,6 +269,11 @@ extension TranscriptProcessFold {
                 continue
             }
             if case .turnDivider = plan.rows[index].kind { continue }
+            // 读者插入的提问永远不进折叠组：它是新的阅读分段点，不能被组收起带走。
+            if case .userMessage = plan.rows[index].kind {
+                out.append(plan.rows[index])
+                continue
+            }
             if let group = groupByStart[index] {
                 out.append(groupHeader(group, expanded: isGroupExpanded(group, plan: plan, state: state),
                                        isRunning: group.key == activeGroupKey).item)

@@ -221,9 +221,6 @@ public struct ChatView: View {
 
     public var body: some View {
         VStack(spacing: 0) {
-            if (model.isLoadingOlder || olderRequestVisible || forceOlderBanner), model.olderFailure == nil {
-                olderLoadingBanner
-            }
             transcript
             if let prompts = model.pendingPrompts.first {
                 PendingPromptBanner(prompt: prompts, model: model)
@@ -1059,23 +1056,6 @@ public struct ChatView: View {
                 }
             )
         }
-    }
-
-    /// 补页进行中的提示：浮在转写区顶部，不进内容（行高恒定，见 `olderSentinel`）。
-    /// 布局内的加载条：不依赖滚动容器 overlay，占一行高度，必定可见。
-    @ViewBuilder
-    private var olderLoadingBanner: some View {
-        HStack(spacing: DSHTheme.Spacing.hairline) {
-            ProgressView().controlSize(.mini)
-            Text("正在加载更早的消息…")
-                .font(DSHTheme.Typography.micro)
-                .foregroundStyle(DSHTheme.labelSecondary)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 6)
-        .background(DSHTheme.layer1)
-        .overlay(alignment: .bottom) { Hairline() }
-        .accessibilityIdentifier("chat.older.loading")
     }
 
     @ViewBuilder

@@ -67,6 +67,22 @@ final class TranscriptProcessFoldTests: XCTestCase {
         }, "提问前的正式回答不能折进过程：\(answerIDs)")
     }
 
+    func test_steering_input_inside_a_running_turn_stays_visible() throws {
+        let timeline = try ProcessFoldFixtures.timeline([
+            ProcessFoldFixtures.turnStart(seq: 1, turn: 1),
+            ProcessFoldFixtures.user(seq: 2, text: "开始"),
+            ProcessFoldFixtures.toolCall(seq: 3, callId: "c1", name: "bash"),
+            ProcessFoldFixtures.steering(seq: 4, text: "插入的问题"),
+            ProcessFoldFixtures.toolCall(seq: 5, callId: "c2", name: "read"),
+        ])
+        let plan = TranscriptProcessFold.plan(items: timeline.items, isTurnOpen: true,
+                                              currentTurn: 1)
+        let steering = try XCTUnwrap(timeline.items.first { $0.id == "user-steer-4" })
+        let rows = TranscriptProcessFold.displayRows(plan, state: TranscriptFoldState())
+        XCTAssertTrue(rows.contains { $0.id == steering.id },
+                      "运行中插入的提问不能被折叠掉")
+    }
+
     func test_a_send_image_tool_stays_visible_when_the_turn_is_collapsed() throws {
         let timeline = try ProcessFoldFixtures.timeline([
             ProcessFoldFixtures.turnStart(seq: 1, turn: 1),

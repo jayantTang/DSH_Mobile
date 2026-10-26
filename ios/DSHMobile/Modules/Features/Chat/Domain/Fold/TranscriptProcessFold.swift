@@ -486,12 +486,23 @@ public enum TranscriptProcessFold {
                 allGroups.append(group)
                 builder = []
             }
+            var previousProcess: Int?
             for index in processIndexes {
+                // 读者插入的提问是分段点：提问两侧的过程不能合成同一组，
+                // 否则组收起会把提问夹在中间，桌面也是按插入拆组。
+                if let previous = previousProcess,
+                   (previous + 1..<index).contains(where: {
+                       if case .userMessage = items[$0].kind { return true }
+                       return false
+                   }) {
+                    closeGroup()
+                }
                 if case .assistantText = items[index].kind {
                     closeGroup()
                 } else {
                     builder.append(index)
                 }
+                previousProcess = index
             }
             closeGroup()
 
