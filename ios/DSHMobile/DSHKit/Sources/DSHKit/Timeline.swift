@@ -668,6 +668,12 @@ public struct ChatTimeline: Sendable {
             // sent with no caption. Requiring text dropped those entirely.
             guard !text.isEmpty || !images.isEmpty else { return .none }
 
+            // 没有 request id、也不是 agent 发的图片：这是宿主/父 agent 注入的
+            // 提示（子智能体任务）。它没有本机乐观行需要回显，落定的
+            // `user/message` 才是唯一正本；再建一行就是重复（子智能体输入两次）。
+            if spliced.rpcId == nil, !Self.isAgentSent(rpcId: nil, images: images) {
+                return .none
+            }
             // Keyed by the request id, so the durable `user/message` that the
             // queue later promotes replaces this row. Keying it by sequence
             // number instead — as this used to — is what made every message

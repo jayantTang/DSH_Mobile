@@ -87,6 +87,29 @@ final class TimelineTests: XCTestCase {
         XCTAssertEqual(reply, "你好！有什么可以帮你？")
     }
 
+    func test_host_injected_splice_does_not_duplicate_the_durable_message() throws {
+        // 子智能体任务由宿主注入：spliced 没有 rpcId，随后还有落定的 user/message。
+        // 两者都画就是“用户输入出现两次”。
+        let splice = try event("""
+        {"type":"agent/inbox/spliced","seq":1,"time":1789276358000,
+         "data":{"target":"next-turn","start":1,"inserted":[
+           {"role":"user","id":"m1","content":[{"type":"text","text":"这是压力测试"}],
+            "source":{"kind":"user"}}]}}
+        """)
+        let durable = try event("""
+        {"type":"user/message","seq":2,"time":1789276359000,
+         "data":{"content":[{"type":"text","text":"这是压力测试"}],
+                 "source":{"kind":"user"},"role":"user","id":"m1"}}
+        """)
+        var timeline = ChatTimeline()
+        _ = timeline.reset(with: [SessionRecord(event: splice), SessionRecord(event: durable)])
+        let userRows = timeline.items.filter { item in
+            if case .userMessage = item.kind { return true }
+            return false
+        }
+        XCTAssertEqual(userRows.count, 1, "宿主注入的 spliced 不应再生成一条用户行")
+    }
+
     func test_message_rows_carry_the_host_time() throws {
         var timeline = ChatTimeline()
         _ = timeline.apply(try userMessage(seq: 1, text: "你好"))
