@@ -224,6 +224,12 @@ public struct ChatView: View {
                 .probed("composer")
         }
         .background(DSHTheme.background)
+        // 固定的加载提示：贴在聊天内容区顶部，不随滚动容器/缺口行布局。
+        .overlay(alignment: .top) {
+            olderLoadingPill
+                .padding(.top, 6)
+                .zIndex(20)
+        }
         // 018：聊天页把当前会话的轮次喂成 `timeline.isTurnOpen`（列表喂的是
         // `session/list.running`，两者口径不同，这里覆盖）。
         .task { syncActivityBinding() }
@@ -479,7 +485,6 @@ public struct ChatView: View {
                 }
             }
         )
-        .overlay(alignment: .top) { olderLoadingPill }
         .overlay(alignment: .top) {
             VStack(spacing: DSHTheme.Spacing.hairline) {
                 summaryRetryBar
