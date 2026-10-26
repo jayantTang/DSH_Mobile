@@ -153,8 +153,8 @@ h3 { display: flex; align-items: baseline; gap: 6px; margin: 14px 0 7px; color: 
 .kpi .k { display: block; color: #64748b; font-size: 11.5px; }
 .kpi strong { font-size: 19px; font-weight: 600; letter-spacing: -.3px; }
 .kpi em { margin-left: 6px; color: #94a3b8; font-size: 11px; font-style: normal; }
-table { width: 100%; table-layout: fixed; border-collapse: collapse; background: #fff;
-  border-radius: 11px; overflow: hidden; font-size: 12.5px; }
+table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 11px;
+  overflow: hidden; font-size: 12.5px; }
 th, td { padding: 7px 9px; border-bottom: 1px solid #eef1f5; text-align: left; }
 tr:last-child td { border-bottom: none; }
 th { background: #f8fafc; color: #64748b; font-size: 11px; font-weight: 600;
@@ -162,6 +162,8 @@ th { background: #f8fafc; color: #64748b; font-size: 11px; font-weight: 600;
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 td.nw, th.nw { white-space: nowrap; }
 td.name { max-width: 40vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 账号名不截断：允许折行，重名时补的 id 尾号必须能看全。 */
+td.wrapname { max-width: none; white-space: normal; overflow-wrap: break-word; }
 ul.rows { margin: 0; padding: 0; list-style: none; background: #fff; border-radius: 11px;
   overflow: hidden; }
 ul.rows li { padding: 8px 10px; border-bottom: 1px solid #eef1f5; }
@@ -220,13 +222,13 @@ ul.alerts .at { font-size: 12.5px; color: #334155; }
   h2, h3, figure.chart figcaption { flex-wrap: wrap; row-gap: 3px; }
   h2 > *, h3 > *, figure.chart figcaption > * { flex: 0 0 auto; }
   h2 .h2note, h3 .h2note, figure.chart .note { flex: 1 1 auto; min-width: 0; text-align: left; }
-  table { font-size: 12px; }
-  th, td { padding: 6px 7px; }
+  table { font-size: 11.5px; }
+  th, td { padding: 5px 6px; }
   th { white-space: normal; line-height: 1.25; }
   td { overflow-wrap: anywhere; }
   /* 账号列在手机上让出宽度给数字列：名字按 28vw 截断，尾部由省略号表示。 */
   td.name { max-width: 30vw; }
-  td.num, th.num { padding-left: 4px; padding-right: 4px; }
+  td.num, th.num { padding-left: 3px; padding-right: 3px; }
   .frow .fk { flex-basis: 82px; }
   .frow .fv { min-width: 82px; }
 }
@@ -630,19 +632,14 @@ function deltaChip(label, value, base) {
 
 /** columns = [{label, text(row), raw?, num?}]；cell 默认转义，raw 用于本就是 HTML 的格子。 */
 function table(columns, rows, empty) {
-  // 列宽用百分比写死（`table-layout: fixed`）：内容再长也不会把表格撑得比正文宽。
-  const colgroup = columns.some((column) => column.width)
-    ? `<colgroup>${columns.map((column) =>
-      `<col${column.width ? ` style="width:${column.width}"` : ''}>`).join('')}</colgroup>`
-    : ''
   const head = columns.map((column) =>
     `<th class="${column.num ? 'num' : ''}${column.nowrap ? ' nw' : ''}">${escapeHtml(column.label)}</th>`).join('')
   const cell = (column, row) => (column.raw ? column.text(row) : escapeHtml(column.text(row)))
   const body = rows.length
     ? rows.map((row) => `<tr>${columns.map((column) =>
-      `<td class="${column.num ? 'num' : ''}${column.wide ? ' name' : ''}${column.nowrap ? ' nw' : ''}">${cell(column, row)}</td>`).join('')}</tr>`).join('')
+      `<td class="${column.num ? 'num' : ''}${column.wide ? ' name' : ''}${column.nowrap ? ' nw' : ''}${column.wrapName ? ' wrapname' : ''}">${cell(column, row)}</td>`).join('')}</tr>`).join('')
     : `<tr><td colspan="${columns.length}" class="empty">${escapeHtml(empty)}</td></tr>`
-  return `<table>${colgroup}<thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`
+  return `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`
 }
 
 /** 两行一条的清单：一行主标题 + 状态标，一行灰色细节（比七发表的手机可读性好）。 */
@@ -894,12 +891,12 @@ function versionBlock(report, { limit = 6 } = {}) {
   }
   const total = rows.reduce((sum, row) => sum + row.devices, 0)
   const body = table([
-    { label: '版本', width: '30%', text: (row) => (row.kind === 'App' || row.kind === '合并' || row.kind === row.key
+    { label: '版本', text: (row) => (row.kind === 'App' || row.kind === '合并' || row.kind === row.key
       ? row.key : `${row.key} · ${row.kind}`) },
-    { label: '活跃账号', width: '18%', text: (row) => formatInt(row.accounts), num: true },
-    { label: '活跃设备', width: '18%', text: (row) => formatInt(row.devices), num: true },
-    { label: '设备占比', width: '16%', text: (row) => (total ? `${((row.devices / total) * 100).toFixed(0)}%` : '—'), num: true },
-    { label: '最近在线', width: '18%', text: (row) => (row.lastSeenAt ? shortTime(row.lastSeenAt) : '—'), num: true, nowrap: true },
+    { label: '账号', text: (row) => formatInt(row.accounts), num: true },
+    { label: '设备', text: (row) => formatInt(row.devices), num: true },
+    { label: '占比', text: (row) => (total ? `${((row.devices / total) * 100).toFixed(0)}%` : '—'), num: true },
+    { label: '最近在线', text: (row) => (row.lastSeenAt ? shortTime(row.lastSeenAt) : '—'), num: true, nowrap: true },
   ], shown, '窗口内没有活跃设备')
   return subheading(`版本分布（近 ${windowHours} 小时活跃）`, '与活跃账号同口径 · 设备按行') + body
 }
@@ -1211,12 +1208,13 @@ function rangeSection(report, days, completed = false) {
   const newByDay = new Map((devices.newPerDay ?? []).map((row) => [dayText(row.day), num(row.count)]))
   // 手机上一行最多放得下 6 列：「消息 / 作答」并成一格（两个数字都留着），日期不折行。
   const recent = table([
-    { label: '日期', width: '20%', text: (row) => fullDay(row.day), nowrap: true },
-    { label: '活跃账号', width: '15%', text: (row) => formatInt(row.accounts), num: true },
-    { label: '消息/作答', width: '19%', text: (row) => `${formatInt(row.prompts)}/${formatInt(row.answers)}`, num: true },
-    { label: '出口', width: '15%', text: (row) => formatBytes(row.egressBytes), num: true },
-    { label: '连接', width: '15%', text: (row) => formatInt(row.connections), num: true },
-    { label: '新增设备', width: '16%', text: (row) => formatInt(newByDay.get(dayText(row.day)) ?? 0), num: true },
+    { label: '日期', text: (row) => fullDay(row.day), nowrap: true },
+    { label: '账号', text: (row) => formatInt(row.accounts), num: true },
+    { label: '消息', text: (row) => formatInt(row.prompts), num: true },
+    { label: '作答', text: (row) => formatInt(row.answers), num: true },
+    { label: '出口', text: (row) => formatBytes(row.egressBytes), num: true },
+    { label: '连接', text: (row) => formatInt(row.connections), num: true },
+    { label: '新增', text: (row) => formatInt(newByDay.get(dayText(row.day)) ?? 0), num: true },
   ], (usage.perDay ?? []).slice(-LIMIT.recentDays), '窗口内没有用量记录')
 
   const rankedAccounts = (usage.topAccounts ?? []).slice(0, LIMIT.accounts)
@@ -1224,15 +1222,16 @@ function rangeSection(report, days, completed = false) {
   // 「最近在线」不是装饰：排名按 30 天出口总量，一个早已不再使用的账号会在窗口里
   // 顶住第一好几周（2026-10-19 实际发生：10.95 GB 全部发生在 10-02 至 10-13，
   // 之后零流量，数字一直不动，看着像算错了）。列出来才能分辨"还在用"与"已休眠"。
-  // 六列在手机上放不下（「最近在线」的 10-13 03:14 会被列宽截断），改成两行一条：
-  // 第一行账号与出口，第二行次数、设备与最近在线，信息一个不少。
-  const accounts = rowList(rankedAccounts.map((row) => ({
-    title: escapeHtml(rankLabel(row)),
-    tag: `<span class="chip">${escapeHtml(formatBytes(row.egressBytes))}</span>`,
-    meta: escapeHtml(`消息/作答 ${formatInt(row.prompts)}/${formatInt(row.answers)}`
-      + ` · 连接 ${formatInt(row.connections)} · 设备 ${formatInt(row.devices)}`
-      + ` · 最近在线 ${row.lastSeenAt ? shortTime(row.lastSeenAt) : '—'}`),
-  })), '窗口内没有用量记录')
+  // 列名取短（单位并进表头）、值只留数字，七列才放得进一行；账号列不截断也不换行。
+  const accounts = table([
+    { label: '账号', text: (row) => rankLabel(row), wide: true, wrapName: true },
+    { label: '出口', text: (row) => formatBytes(row.egressBytes), num: true },
+    { label: '消息', text: (row) => formatInt(row.prompts), num: true },
+    { label: '作答', text: (row) => formatInt(row.answers), num: true },
+    { label: '连接', text: (row) => formatInt(row.connections), num: true },
+    { label: '设备', text: (row) => formatInt(row.devices), num: true },
+    { label: '最近', text: (row) => (row.lastSeenAt ? shortTime(row.lastSeenAt) : '—'), num: true, nowrap: true },
+  ], rankedAccounts, '窗口内没有用量记录')
 
   const listedDevices = (devices.list ?? []).slice(0, LIMIT.devices)
   const deviceLabel = accountLabeler(listedDevices, (row) => text(row.accountName, row.accountId))

@@ -379,10 +379,10 @@ test('日报分「今日」与「最近 30 天」两段，正文被转义', () =
   assert.ok(html.includes('每日消息'), '趋势段要有每日消息图')
   assert.ok(html.includes('活跃账户人均') && html.includes('当天消息总数（左轴）'), '消息图要有总数与人均')
   assert.ok(html.includes('超 7 天回访') && html.includes('7 天内回访'), '活跃图要拆出三层')
-  // 手机上一行只放得下 6 列：消息与作答并成一格，两个数字都还在。
-  assert.ok(html.includes('>消息/作答<'), '近 7 天表把消息与作答并成一列')
-  // 近 7 天表：活跃账号与新增设备各一列。
-  assert.ok(html.includes('活跃账号') && html.includes('新增设备'))
+  // 近 7 天表的列名：单位进表头、名字取短，7 列才放得进一行（值只有数字）。
+  for (const label of ['>日期<', '>账号<', '>消息<', '>作答<', '>出口<', '>连接<', '>新增<']) {
+    assert.ok(html.includes(label), `近 7 天表缺列 ${label}`)
+  }
   // 留存：外部账号口径、D1/D7 与「登记后 7 天内连上」都要在页面上。
   assert.ok(html.includes('激活码登记的外部账号 · 活跃指当天有设备连接'))
   for (const label of ['登记后 7 天内连上', '次日留存', '7 日留存']) {
@@ -1262,18 +1262,22 @@ test('激活码板块：老服务端没有 usable/unused 时退回 remaining，�
   assert.match(html, /MacBook/, '老服务端的 enrollments 照样列出来')
 })
 
-test('表格按百分比定宽：正文不会被内容撑宽', () => {
+test('表格列名取短、单位进表头，值只留数字', () => {
   const data = fixture()
   data.versions = [{ appVersion: '1.0 20261012.1056', devices: 2, accounts: 2,
     lastSeenAt: GENERATED_AT }]
-  data.usage.perDay = [{ day: 20261011, egressBytes: 1024, connections: 3, devices: 1,
-    accounts: 1, prompts: 1, answers: 1 }]
+  data.usage.perDay = [{ day: 20261011, egressBytes: 2 * 1024 * 1024, connections: 1148,
+    devices: 1, accounts: 34, prompts: 11, answers: 4 }]
   const html = renderReport(data)
-  const tables = (html.match(/<table>/g) ?? []).length
-  const colgroups = (html.match(/<table><colgroup>/g) ?? []).length
-  assert.ok(tables >= 2, '页面至少有版本分布与近 7 天两张表')
-  assert.equal(colgroups, tables, '每张表都带 colgroup，列宽由布局决定而不是内容')
-  assert.ok(html.includes('table-layout: fixed'), '表格用定宽布局')
+  // 版本分布：账号 / 设备 / 占比 / 最近在线（不再是「活跃账号 / 活跃设备 / 设备占比」）。
+  for (const label of ['>账号<', '>设备<', '>占比<', '>最近在线<']) {
+    assert.ok(html.includes(label), `版本分布缺列 ${label}`)
+  }
+  // 近 7 天：出口一列的值只有数字与单位本身，不重复写「2.0 MB」这种带词的长文本。
+  assert.ok(html.includes('>1,148<'), '连接次数按千分位，纯数字')
+  // 不再用定宽布局：列宽恢复到由内容决定，靠缩短列名而不是截断文字来控制宽度。
+  assert.ok(!html.includes('table-layout: fixed'), '不用定宽硬裁')
+  assert.ok(!html.includes('<colgroup>'), '不带写死列宽')
 })
 
 test('14 天矩阵：整点格齐全，缺的一小时画空格不插值', () => {
