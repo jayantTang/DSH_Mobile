@@ -27,6 +27,8 @@ struct QueuedInputBar: View {
             .padding(.horizontal, DSHTheme.Spacing.standard)
             .padding(.bottom, DSHTheme.Spacing.tight)
             .background(DSHTheme.background)
+            // 容器标识不能盖掉子元素：行/动作要各自可寻址（UI 用例与 VoiceOver 都依赖）。
+            .accessibilityElement(children: .contain)
             .accessibilityIdentifier("chat.queue")
         }
     }
