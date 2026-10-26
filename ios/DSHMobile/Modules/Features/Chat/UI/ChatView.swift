@@ -1083,7 +1083,8 @@ public struct ChatView: View {
     private var olderDebugHUD: some View {
         OlderDebugHUD(distance: topDistance, near: sentinelNearTop,
                       topSince: debugTopSince, triggerAt: debugTriggerAt,
-                      loadingAt: debugLoadingAt, loading: model.isLoadingOlder)
+                      loadingAt: debugLoadingAt, loading: model.isLoadingOlder,
+                      liveChars: model.liveStreamChars, frames: model.liveStreamFrames)
     }
 
     @ViewBuilder
@@ -1892,6 +1893,8 @@ private struct OlderDebugHUD: View {
     let triggerAt: Date?
     let loadingAt: Date?
     let loading: Bool
+    let liveChars: Int
+    let frames: Int
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 0.2)) { context in
@@ -1903,6 +1906,8 @@ private struct OlderDebugHUD: View {
                 Text("trig=\(Self.age(triggerAt, now))")
                 Text("load=\(Self.age(loadingAt, now))")
                 Text("spin=\(loading ? 1 : 0)")
+                Text("live=\(liveChars)")
+                Text("f=\(frames)")
             }
             .font(.system(size: 9, weight: .medium, design: .monospaced))
             .foregroundStyle(.white)

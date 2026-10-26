@@ -28,7 +28,10 @@ extension ChatPipelineBridge {
         }
         // 概要 v2（能力 `history-fold-summary-v2`）：旧页也按整轮取，
         // 与首屏同一条 `adoptSummaryPage` 路径；没有能力时返回 false，走下面的 v1。
-        if await model.loadOlderSummaryPage() { return }
+        let summaryHandled = await model.loadOlderSummaryPage()
+        DSHLog.event("older.summary", ["handled": summaryHandled ? "1" : "0",
+                                       "state": String(describing: model.olderState)])
+        if summaryHandled { return }
         guard let oldest = await olderAnchor(session) else {
             DSHLog.event("page.older.skip", ["why": "no-anchor"])
             armPendingOlder(model)
