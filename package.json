@@ -71,6 +71,7 @@
     "check:module-boundaries": "node scripts/dev/check-module-boundaries.mjs",
     "check:ios-modules": "cd ios/DSHMobile/Modules && swift test && xcodebuild test -scheme DSHMobileModules-Package -destination \"platform=iOS Simulator,name=DSH-Test\"",
     "check:acceptance": "node scripts/dev/check-acceptance.mjs",
-    "test:acceptance": "node scripts/dev/run-acceptance.mjs"
+    "test:acceptance": "node scripts/dev/run-acceptance.mjs",
+    "check:crash-risks": "node scripts/dev/check-crash-risks.mjs"
   }
 }
