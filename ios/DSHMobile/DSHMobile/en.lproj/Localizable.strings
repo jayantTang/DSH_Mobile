@@ -842,3 +842,8 @@ It is registered as a workspace first, so a new group appears in the desktop sid
 /* 概要 v2：超限步骤 / 旧页概要失败（M6c） */
 "输出过大，无法在手机上展开" = "Output too large to open on this phone";
 "有一轮过大，点按重试" = "A turn is too large · Tap to retry";
+
+/* 排队输入（20261026） */
+"排队中的消息：%@" = "Queued message: %@";
+"删除排队消息" = "Delete queued message";
+"%lld 张图片" = "%lld images";

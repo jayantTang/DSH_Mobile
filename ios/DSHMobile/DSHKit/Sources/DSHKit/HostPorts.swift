@@ -19,6 +19,10 @@ public protocol ChatHosting: Sendable {
     func sessionFind(_ request: HistorySearchRequest) async throws -> HistorySearchValue
     func follow(_ request: SessionFollowRequest) async -> AsyncThrowingStream<SessionFollowFrame, any Error>
     func prompt(_ request: SessionPromptRequest) async throws
+    /// 宿主的排队控制流（`session/control`）；旧连接器没有它，订阅会失败。
+    func sessionControlFrames() async -> AsyncThrowingStream<SessionControlFrame, any Error>
+    /// 改/撤/插一条排队输入（`session/updateQueue`）。
+    func updateQueue(sessionId: String, itemId: String, action: QueueAction) async throws
     func cancel(sessionId: String) async throws
     func rename(sessionId: String, title: String) async throws
     func forkSession(sessionId: String, atSeq: Int?) async throws -> JSONValue
@@ -29,7 +33,23 @@ public protocol ChatHosting: Sendable {
     func attachment(sessionId: String, attachmentId: String) async throws -> JSONValue
 }
 
+/// 排队控制不可用（旧连接器没有 `session/control` / `session/updateQueue`）。
+public struct SessionQueueUnavailable: Error, Sendable, Equatable {
+    public init() {}
+    public var description: String { "the connector does not support queued input control" }
+}
+
 public extension ChatHosting {
+    /// 默认实现：没有控制流的连接器返回空流（UI 退回“只显示本地乐观队列”）。
+    func sessionControlFrames() async -> AsyncThrowingStream<SessionControlFrame, any Error> {
+        AsyncThrowingStream { $0.finish() }
+    }
+
+    /// 默认实现：明确报不支持，调用方据此回退本地乐观队列。
+    func updateQueue(sessionId: String, itemId: String, action: QueueAction) async throws {
+        throw SessionQueueUnavailable()
+    }
+
     /// 老连接器（不认识 v2 能力）默认没有它：所有调用方照旧走 v1 / 原事件。
     var historySummaryFoldEnabled: Bool { false }
 

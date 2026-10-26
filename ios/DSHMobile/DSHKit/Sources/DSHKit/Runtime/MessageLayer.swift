@@ -333,9 +333,10 @@ public final class MessageLayer {
 
     /// 管道上行：发一条 prompt（Domain 不再直接持 MessagePipeline）。
     public func send(text: String, to ref: MessageSessionRef,
-                     steer: Bool = false) async throws -> UUID {
+                     steer: Bool = false, requestId: UUID? = nil) async throws -> UUID {
         guard let pipeline else { throw FetchFailure.noAddress }
-        return try await pipeline.send(text: text, to: ref, steer: steer)
+        return try await pipeline.send(text: text, to: ref, steer: steer,
+                                       requestId: requestId)
     }
 
     /// 按列表顺序预取最新页（Domain 不再直接持 MessagePipeline）。

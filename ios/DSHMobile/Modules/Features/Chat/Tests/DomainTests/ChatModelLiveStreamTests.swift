@@ -163,13 +163,16 @@ enum ChatSeam {
         .object(["type": .string("event"), "event": event])
     }
 
-    static func userMessage(seq: Int, text: String, sourceKind: String = "user") -> JSONValue {
-        .object([
+    static func userMessage(seq: Int, text: String, sourceKind: String = "user",
+                            rpcId: String? = nil) -> JSONValue {
+        var source: [String: JSONValue] = ["kind": .string(sourceKind)]
+        if let rpcId { source["rpcId"] = .string(rpcId) }
+        return .object([
             "type": .string("user/message"),
             "seq": .int(seq),
             "data": .object([
                 "id": .string("message-\(seq)"),
-                "source": .object(["kind": .string(sourceKind)]),
+                "source": .object(source),
                 "content": .array([
                     .object(["type": .string("text"), "text": .string(text)]),
                 ]),

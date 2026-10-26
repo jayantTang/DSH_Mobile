@@ -86,6 +86,7 @@ final class ChatSendService {
         // durable message's source; that is what lets the transcript replace
         // this optimistic row instead of showing the message twice.
         let requestId = UUID().uuidString
+        enqueueOptimisticQueue(requestId: requestId, text: text, images: images, mode: mode)
         timeline.echoUserPrompt(requestId: requestId, text: text)
         scrollSignal += 1
         sendSignal += 1
@@ -121,6 +122,7 @@ final class ChatSendService {
             // still there, waiting quietly if they have moved on.
             // `session` was captured by the guard at the top of this function,
             // so it is this send's own session — not whatever is on screen now.
+            model.withdrawOptimisticQueued(rpcId: requestId)
             composer.restore(text: text, images: images, for: owner,
                              isCurrent: session.sessionId == owner)
             lastError = LinkErrors.describe(error)
@@ -147,13 +149,29 @@ final class ChatSendService {
             self?.isAwaitingTurnStart = false
         }
         let ref = MessageSessionRef(scope: scope, sessionId: owner)
+        let requestId = UUID()
+        enqueueOptimisticQueue(requestId: requestId.uuidString, text: text,
+                               images: [], mode: mode)
         do {
-            _ = try await layer.send(text: text, to: ref, steer: mode == .steer)
+            _ = try await layer.send(text: text, to: ref, steer: mode == .steer,
+                                     requestId: requestId)
         } catch {
             // 行已由管道标 failed（可点重发）；错误同时上错误条。
+            model.withdrawOptimisticQueued(rpcId: requestId.uuidString)
             isAwaitingTurnStart = false
             lastError = LinkErrors.describe(error)
         }
+    }
+
+    /// 本地乐观排队（输入区条带先显示；控制帧按 rpcId 合并，提升后移除）。
+    private func enqueueOptimisticQueue(requestId: String, text: String,
+                                        images: [ComposerDraftImage],
+                                        mode: SessionPromptRequest.Mode) {
+        model.enqueueOptimisticQueued(
+            rpcId: requestId,
+            placement: mode == .steer ? .steering : .queued,
+            text: text,
+            draftImages: images)
     }
 
     /// Uploads one file and tells the agent where it landed.

@@ -382,6 +382,24 @@ struct DSHClient: Sendable {
         try await carrier.unary(method: "session/prompt", args: RequestArgs(request: request))
     }
 
+    /// `session/control` 的类型化帧（队列快照 + 增量）。
+    public func sessionControlFrames() async -> AsyncThrowingStream<SessionControlFrame, any Error> {
+        let raw = await sessionControl()
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    for try await value in raw {
+                        continuation.yield(SessionControlFrame.decode(value) ?? .other(type: "unknown"))
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
     public func cancel(sessionId: String) async throws {
         try await carrier.unary(
             method: "session/cancel",
@@ -426,7 +444,8 @@ struct DSHClient: Sendable {
         )
     }
 
-    func updateQueue(sessionId: String, itemId: String, action: QueueAction) async throws {
+    /// 改/撤/插一条仍在宿主队列里的输入（`session/updateQueue`）。
+    public func updateQueue(sessionId: String, itemId: String, action: QueueAction) async throws {
         try await carrier.unary(
             method: "session/updateQueue",
             args: RequestArgs(
@@ -919,18 +938,25 @@ struct SessionAttachmentRequest: Encodable, Sendable {
     public let attachmentId: String
 }
 
-/// A queued-message mutation.
-public enum QueueAction: Sendable, Encodable {
+/// A queued-message mutation（`session/updateQueue` 的 `action`）。
+public enum QueueAction: Sendable, Encodable, Equatable {
+    /// 撤回（不发送）。
     case remove
+    /// 立即插入当前轮次。
     case steer
+    /// 改成新正文（只接受纯文本，连接器口径）。
+    case edit(text: String)
 
-    private enum CodingKeys: String, CodingKey { case kind }
+    private enum CodingKeys: String, CodingKey { case kind, content }
 
     public func encode(to encoder: any Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         switch self {
         case .remove: try container.encode("remove", forKey: .kind)
         case .steer: try container.encode("steer", forKey: .kind)
+        case .edit(let text):
+            try container.encode("edit", forKey: .kind)
+            try container.encode([["type": "text", "text": text]], forKey: .content)
         }
     }
 }

@@ -9,9 +9,10 @@ extension MessagePipeline {
     /// 确认后原地替换（身份不变）。失败标 failed（可重发，不丢身份）。
     /// `steer` 透给网络面（打断当前轮 vs 排队），与乐观行无关。
     @discardableResult
-    public func send(text: String, to session: MessageSessionRef, steer: Bool = false) async throws -> UUID {
+    public func send(text: String, to session: MessageSessionRef, steer: Bool = false,
+                     requestId: UUID? = nil) async throws -> UUID {
         _ = await ensurePrimedState(for: session)
-        let clientId = UUID()
+        let clientId = requestId ?? UUID()
         guard let row = insertOptimistic(text: text, clientId: clientId, for: session) else {
             return clientId
         }

@@ -55,6 +55,14 @@ public final class ChatModel {
     /// 首屏概要请求与重试的在飞任务（换会话/关闭时取消）。
     var summaryScreenTask: Task<Void, Never>?
 
+    /// 宿主排队输入（`session/control`）：唯一所有者是宿主，本地只做乐观回显。
+    public internal(set) var queueControlAvailable = true
+    var remoteQueue: [SessionQueuedItem] = []
+    var optimisticQueue: [OptimisticQueuedInput] = []
+    /// 本地已撤回的 rpcId：控制帧晚到时不让它闪回来。
+    var locallyWithdrawnQueuedRpcIds: Set<String> = []
+    @ObservationIgnored var queueTask: Task<Void, Never>?
+
     /// 单条步骤正文的三态（按需取，key 是步骤行 id）。
     ///
     /// 只由 `loadProcessStepBody` 写、投影贴到步骤行上；缓存在磁盘 meta 里，
@@ -539,6 +547,7 @@ public final class ChatModel {
         processToggleFollowHold = false
         // 同一会话的重试/重开保留读者的展开状态；只有换会话才重置。
         if visible?.summary.sessionId != key {
+            stopQueueSubscription()
             foldState = TranscriptFoldState()
             prefetchStatus.removeAll()
             summaryScreenState = .idle
@@ -652,6 +661,8 @@ public final class ChatModel {
         startPipelineSubscription(for: summary)
         startFollowing(link: link, summary: summary, maxMessages: syncPlan.maxMessages,
                        generation: openGeneration)
+        // 宿主排队输入：`session/control` 只取当前会话的队列（设计 §3）。
+        startQueueSubscription(for: summary)
         // 首屏概要（能力 `history-fold-summary-v2`）：缓存骨架已画出来之后才发，
         // 只为"还没有概要的新轮次"发一次；失败落到页级重试条，不静默。
         summaryScreenTask?.cancel()
@@ -731,6 +742,7 @@ public final class ChatModel {
         pendingStreamFrames.removeAll(keepingCapacity: false)
         isAwaitingTurnStart = false
         runningSince = nil
+        stopQueueSubscription()
         foldState = TranscriptFoldState()
         prefetchStatus.removeAll()
         summaryScreenTask?.cancel()
@@ -1474,8 +1486,9 @@ public final class ChatModel {
         case "turn/start":
             isAwaitingTurnStart = false
             hostReportsRunning = true
-            // 宿主事件自带时间；与时间线里的值同源，重连重放也不会把起点推后。
-            runningSince = timeline.openTurnStartedAt ?? event.date ?? Date()
+            // 以这条事件自己的宿主时间为准：桥接的时间线可能是异步更新的，
+            // 此刻 `openTurnStartedAt` 还停在上一条轮（新轮会把计时接在旧起点上）。
+            runningSince = event.date ?? timeline.openTurnStartedAt ?? Date()
             awaitingTimeout?.cancel()
             awaitingTimeout = nil
 

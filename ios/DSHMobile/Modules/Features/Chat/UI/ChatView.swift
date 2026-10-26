@@ -181,6 +181,8 @@ public struct ChatView: View {
             if let prompts = model.pendingPrompts.first {
                 PendingPromptBanner(prompt: prompts, model: model)
             }
+            // 排队输入：输入区上方独立条带，不进转写、不影响输入框高度。
+            QueuedInputBar(model: model)
             Hairline()
             Composer(model: model, isFocused: $isFocused)
                 .probed("composer")
