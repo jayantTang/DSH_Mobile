@@ -1010,8 +1010,10 @@ public struct ChatView: View {
         // （或 3 秒后那一次自动补试）。两者互斥，屏幕上也才看得出"现在是失败态"。
         // 预取现在提前一屏半发生，所以这行小字会在读者快到顶之前就出现——
         // 真机反馈过"加载中要有小字，否则以为获取历史有问题"。
-        // 009 管道模式下加载态由顶部缺口行（spinner）表达，不再叠这条小字。
-        if !model.pipelineActive, model.isLoadingOlder, model.olderFailure == nil {
+        // 加载态由 `olderState` 统一表达：管道模式下缺口行不一定存在
+        //（打开会话、管道还没数据时快速拉到顶部），只靠缺口行会完全无提示。
+        // 这里始终显示；缺口行的 spinner 同时存在也不矛盾。
+        if model.isLoadingOlder, model.olderFailure == nil {
             HStack(spacing: DSHTheme.Spacing.hairline) {
                 ProgressView().controlSize(.mini)
                 Text("正在加载更早的消息…")
