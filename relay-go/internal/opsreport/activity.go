@@ -34,7 +34,6 @@ func hourlyActivityBuckets(startMS, endMS int64, devices []store.Device,
 		return nil
 	}
 	var lines []string
-	readable := false
 	for _, unit := range units {
 		if unit == "" {
 			continue
@@ -43,10 +42,17 @@ func hourlyActivityBuckets(startMS, endMS int64, devices []store.Device,
 		if !ok {
 			continue
 		}
-		readable = true
-		lines = append(lines, found...)
+		for _, line := range found {
+			if strings.TrimSpace(line) == "" {
+				continue
+			}
+			lines = append(lines, line)
+		}
 	}
-	if !readable {
+	// 判据是"拿到内容"，不是"命令退出码"：journalctl 在没跑 systemd 的机器上
+	// 也会退出 0 并给空输出（GitHub Runner 即如此），按退出码判会把"没日志"
+	// 当成"有日志"，于是编出满窗口的空桶。
+	if len(lines) == 0 {
 		return nil
 	}
 	sort.SliceStable(lines, func(left, right int) bool {
