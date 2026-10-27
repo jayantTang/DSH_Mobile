@@ -42,7 +42,7 @@ public final class MessageLayer {
 
     /// 拉取/发送失败原因。预取路径对失败一律静默（磁盘只是缓存，取用失败即拉取
     /// 兜底），这里只为让调试日志可读。
-    public enum FetchFailure: Error {
+    enum FetchFailure: Error {
         /// 链接未建立：预取整体跳过，不刷日志（tasks T011 的硬要求）。
         case notConnected
         /// 该会话没有注册过拉取地址（不在当前列表里）。

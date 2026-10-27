@@ -19,7 +19,7 @@ public struct SessionDigestEnvelope: Sendable, Decodable {
 }
 
 /// 解信封时可能出的问题。
-public enum SessionDigestError: Error, Equatable {
+enum SessionDigestError: Error, Equatable {
     /// 连接器回了一种这个版本不认识的编码（协议往前走了或中间被改写）。
     case unsupportedEncoding(String)
     /// base64 不是合法 base64。

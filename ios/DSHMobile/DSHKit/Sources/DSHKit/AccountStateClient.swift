@@ -162,10 +162,10 @@ private struct AccountStateEnvelope: Decodable {
 ///
 /// 时间戳用**本地时钟**：设备之间有时差时，水位类靠取 max 天然容忍；开关类可能被
 /// 快钟设备"钉住"，所以写入方在下发前用服务端时间兜一层（见 `AccountStateClock`）。
-public enum AccountStateMerger {
+enum AccountStateMerger {
 
     /// 两个水位取较大的那个（逐会话逐项比较，不是整块覆盖）。
-    public static func maxWatermark(_ local: JSONValue?, _ remote: JSONValue?) -> JSONValue {
+    static func maxWatermark(_ local: JSONValue?, _ remote: JSONValue?) -> JSONValue {
         guard let remote else { return local ?? .object([:]) }
         guard let local else { return remote }
         guard case .object(let localMap) = local, case .object(let remoteMap) = remote else {
@@ -180,7 +180,7 @@ public enum AccountStateMerger {
     }
 
     /// 开关类：远端更新就用远端，否则保留本地。
-    public static func latest(_ local: AccountStateClient.Entry?,
+    static func latest(_ local: AccountStateClient.Entry?,
                              _ remote: AccountStateClient.Entry?) -> AccountStateClient.Entry? {
         switch (local, remote) {
         case (nil, nil): return nil

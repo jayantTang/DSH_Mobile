@@ -926,12 +926,12 @@ struct SessionSelectModelRequest: Encodable, Sendable {
     }
 }
 
-public struct SessionUpdateQueueRequest: Encodable, Sendable {
-    public let sessionId: String
+struct SessionUpdateQueueRequest: Encodable, Sendable {
+    let sessionId: String
     let itemId: String
-    public let action: QueueAction
+    let action: QueueAction
 
-    public init(sessionId: String, itemId: String, action: QueueAction) {
+    init(sessionId: String, itemId: String, action: QueueAction) {
         self.sessionId = sessionId
         self.itemId = itemId
         self.action = action
@@ -966,8 +966,8 @@ public enum QueueAction: Sendable, Encodable, Equatable {
     }
 }
 
-public struct SkillListRequest: Encodable, Sendable {
-    public let sessionId: String
+struct SkillListRequest: Encodable, Sendable {
+    let sessionId: String
 }
 
 struct FileReferenceArgs: Encodable, Sendable {
@@ -975,8 +975,8 @@ struct FileReferenceArgs: Encodable, Sendable {
     public let query: String
 }
 
-public struct WorkspaceCreateRequest: Encodable, Sendable {
-    public let path: String
+struct WorkspaceCreateRequest: Encodable, Sendable {
+    let path: String
 }
 
 struct WorkspaceDeleteRequest: Encodable, Sendable {

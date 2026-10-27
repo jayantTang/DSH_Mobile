@@ -21,22 +21,22 @@ import GRDB
 /// 游标推进（T039）：优先用连接器的 `scanBoundary`（这次扫到哪就推到哪）——
 /// roles 过滤会把整页滤空，按"最老返回记录"推进会在原地卡死；老连接器缺这个
 /// 字段时退回旧口径（最老返回记录的 seq）。
-public struct UserInputBackfiller: Sendable {
+struct UserInputBackfiller: Sendable {
     /// 单页取数的最长等待（秒）。回包丢失/链路挂起时回填不能永远挂着——
     /// 挂住的会话会永远标不上「灌全」，「我问过的」就一直缺（OTA 实测类）。
     let pageTimeout: TimeInterval
 
     /// 一页窗口拉取：`before == nil` 表示从最新开始（开区间上界 .max）。
-    public typealias PageFetch = @Sendable (_ before: Int?) async throws -> HistoryWindowValue
+    typealias PageFetch = @Sendable (_ before: Int?) async throws -> HistoryWindowValue
 
     /// 某会话的灌库账本（meta 键值的投影）。`resumeCursor` 是上次没灌完时的
     /// 续拉锚点（下一页的 before），灌全了为 nil。
-    public struct State: Sendable, Equatable {
-        public let pulledAt: Date
-        public let lastSeq: Int
-        public let resumeCursor: Int?
+    struct State: Sendable, Equatable {
+        let pulledAt: Date
+        let lastSeq: Int
+        let resumeCursor: Int?
 
-        public init(pulledAt: Date, lastSeq: Int, resumeCursor: Int? = nil) {
+        init(pulledAt: Date, lastSeq: Int, resumeCursor: Int? = nil) {
             self.pulledAt = pulledAt
             self.lastSeq = lastSeq
             self.resumeCursor = resumeCursor
@@ -46,7 +46,7 @@ public struct UserInputBackfiller: Sendable {
     /// 一页取数超时（回包丢失/链路挂起的兜底）。
     enum BackfillError: Error { case pageTimeout }
 
-    public enum Outcome: Sendable, Equatable {
+    enum Outcome: Sendable, Equatable {
         /// 24h 内灌过且 lastSeq 没变，整会话跳过。
         case skippedFresh
         /// 连接器没有 `history-role-filter`：跳过（不写任何东西），等升级。
@@ -89,7 +89,7 @@ public struct UserInputBackfiller: Sendable {
     }
 
     /// 灌一个会话。`lastSeq` 是列表已知的最新游标（host asOfSeq 或磁盘 newestSeq）。
-    public func backfill(
+    func backfill(
         scope: String, sessionId: String, lastSeq: Int, fetch: @escaping PageFetch
     ) async throws -> Outcome {
         // 降级：老连接器给不出归类过的完整记录，浏览模式的摘要写进 record 就是

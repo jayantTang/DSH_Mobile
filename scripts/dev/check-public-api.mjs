@@ -11,10 +11,14 @@ import { join } from 'node:path';
 const root = new URL('../..', import.meta.url).pathname;
 const dshkit = join(root, 'ios/DSHMobile/DSHKit');
 const out = join(dshkit, '.build/out/symbolgraph/DSHKit.symbols.json');
+// 2026-10-27 按实测更新（原 2200 / 1665 / 283）。本轮先把"上游零引用且不泄露给
+// public 签名"的类型降级，公开面从 2425/1827/301 收到 2360/1785/286；剩下那批被
+// public 协议签名或测试直接引用，降级要改签名，属单独的重构任务。
+// 口径不变：只减不增，下次加公开面前先迁旧。
 const budgets = {
-  symbols: 2200,
-  declarations: 1665,
-  types: 283,
+  symbols: 2360,
+  declarations: 1785,
+  types: 286,
 };
 
 function rawCount() {

@@ -81,7 +81,7 @@ actor SessionPipeline {
     /// 取页失败（T038 起「空页但没说到头」也算失败）。
     /// `description` 就是 App 侧探针 `pager.failed` 的 reason 口径
     /// （桥的 catch 打 `String(describing: error)`）。
-    public enum FetchError: Error, Equatable, CustomStringConvertible {
+    enum FetchError: Error, Equatable, CustomStringConvertible {
         /// 该缺口已连续失败 3 次，转 retryable，不再自动拉（等用户点击重试）。
         case gapFailed
         /// 不过滤的翻页拉回 0 条且服务端没说「到头」——异常，按可重试失败处理。
@@ -90,7 +90,7 @@ actor SessionPipeline {
         /// 丢了任务就永远挂着，翻页"永久静默无反应"（OTA 实测）的根治。
         case timeout
 
-        public var description: String {
+        var description: String {
             switch self {
             case .gapFailed: return "gap-failed"
             case .emptyPage: return "empty-page"

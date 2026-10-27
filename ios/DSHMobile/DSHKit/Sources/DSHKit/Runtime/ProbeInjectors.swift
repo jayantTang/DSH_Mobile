@@ -79,8 +79,8 @@ final class EmptyPageInjector: @unchecked Sendable {
 ///
 /// 公开：App 侧的旧分页路径（`ChatModel.loadOlder`）也用同一套注入，抛的必须是同一个类型，
 /// 否则 `catch is PageFailureInjected` 会漏。
-public struct PageFailureInjected: Error {
-    public init() {}
+struct PageFailureInjected: Error {
+    init() {}
 }
 
 

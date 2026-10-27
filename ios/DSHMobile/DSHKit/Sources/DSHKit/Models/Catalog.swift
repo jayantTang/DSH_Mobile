@@ -48,15 +48,15 @@ public struct ModelCatalogFailure: Sendable, Codable {
 
 // MARK: - Skills
 
-public struct SkillListValue: Sendable, Codable {
+struct SkillListValue: Sendable, Codable {
     let skills: [SkillEntry]?
 }
 
-public struct SkillEntry: Sendable, Codable, Identifiable {
-    public let name: String
-    public let description: String?
+struct SkillEntry: Sendable, Codable, Identifiable {
+    let name: String
+    let description: String?
 
-    public var id: String { name }
+    var id: String { name }
 }
 
 // MARK: - File references
