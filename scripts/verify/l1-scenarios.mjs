@@ -451,10 +451,16 @@ export async function iosLinkCarrierLifecycle({ outDir, root = REPO_ROOT, log = 
     const pinned = run(['swift', 'test', '--filter', 'LinkCarrierSocketLifecycleTests'],
                        'ios/DSHMobile/DSHKit',
                        { note: 'Relay socket lifecycle 2 条（无修复时两条都红，已做 red-check）' })
-    const pinnedOk = pinned.result.status === 0 && /Test run with 2 tests/.test(pinned.text)
+    // 钉住的语义是"那两条 lifecycle 用例必须全过"，不是"套件总数恒为 2"：
+    // 后续若给同一套件加用例，断言不该因此变红（2026-10-27 实测：套件已 4 条）。
+    const ran = /Test run with (\d+) tests/.exec(pinned.text)
+    const pinnedOk = pinned.result.status === 0 && Boolean(ran)
+      && Number(ran[1]) >= 2 && !/✘/.test(pinned.text)
     observations.push({
       step: 'pinned-tests',
-      fact: pinnedOk ? 'LinkCarrierSocketLifecycleTests 2/2 通过' : '钉住修复的单测未通过',
+      fact: pinnedOk
+        ? `LinkCarrierSocketLifecycleTests 通过（${ran ? ran[1] : '?'} 条，至少 2 条，无失败）`
+        : '钉住修复的单测未通过',
       evidence: pinned.logPath.slice(outDir.length + 1),
     })
 
