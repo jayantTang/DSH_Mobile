@@ -63,7 +63,7 @@
 **版本号口径**（owner 2026-10-17 定，2026-10-27 按实际发布校正）：**有 npm 注册版本的三件**
 （连接器、send-image、doubao-image）继续语义化 `0.x.y`，每次发布递增——包不可变，版本号就是
 发布标识；**公网中转**用语义化 `go-X.Y.Z`（随 `relay-vX.Y.Z` tag 递增）；**iOS App** 用
-`CFBundleShortVersionString`（当前 `1.0.1`），构建号另用时间戳 `CFBundleVersion`；**信件服务与
+`CFBundleShortVersionString`（当前 `1.0`），构建号另用时间戳 `CFBundleVersion`；**信件服务与
 Web 客户端**没有注册表，用构建号 `yyyyMMdd.HHmm`（北京时间），一眼能看出发布先后；
 **DSH 宿主**沿用上游版本，只读。skills 随所属插件版本，不单独编号。
 
@@ -133,7 +133,7 @@ Web 客户端**没有注册表，用构建号 `yyyyMMdd.HHmm`（北京时间）�
 
 | 部件 | 编号方式 | 说明 |
 |---|---|---|
-| iOS App | 对外版本 `CFBundleShortVersionString`（当前 `1.0.1`）；构建号 `CFBundleVersion` 用 `yyyyMMdd.HHmm`（**北京时间**） | 构建号由 `deploy-ota.sh` 自动打（规则与用例在 `scripts/release/ota-version.mjs`）：两段整数、都在 `CFBundleVersion` 上限内（早先那个 12 位时间戳越界，iOS 会静默不装，看起来像「必须先删掉旧 App」）；拿线上 `version.json` 的号当下界保证严格递增；安装页、`version.json`、CHANGELOG 与提交信息一律北京时间 |
+| iOS App | 对外版本 `CFBundleShortVersionString`（当前 `1.0`）；构建号 `CFBundleVersion` 用 `yyyyMMdd.HHmm`（**北京时间**） | 构建号由 `deploy-ota.sh` 自动打（规则与用例在 `scripts/release/ota-version.mjs`）：两段整数、都在 `CFBundleVersion` 上限内（早先那个 12 位时间戳越界，iOS 会静默不装，看起来像「必须先删掉旧 App」）；拿线上 `version.json` 的号当下界保证严格递增；安装页、`version.json`、CHANGELOG 与提交信息一律北京时间 |
 | 连接器 / 插件 | 语义化 `0.x.y` | 写在各自 `package.json`；连接器把它当 `SERVER_VERSION` 回显给 App（缺口 1 已解决）。线上真值以 `npm view <name> version` 为准 |
 | 中转 | 语义化 `go-X.Y.Z` | `/healthz` 暴露 `relayVersion` 与 `build`；安装时写 `/opt/dsh-relay-go/bin/build.json`（版本 + commit + 部署时刻），启动日志也打一行。Go 版按发版节奏打 `relay-vX.Y.Z` tag，构建号即发布标识 |
 | 信件服务 | 部署构建号 `yyyyMMdd.HHmm`（与 App 构建号同一口径） | `mail/deploy/deploy.sh` 写 `/opt/dsh-mail/build.json`；该服务 `/healthz` 的 `version` 读它 |

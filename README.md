@@ -26,7 +26,7 @@
 
 | 组件 | 当前版本 | 分发方式 |
 |---|---|---|
-| iOS App | 1.0.1 | TestFlight 公开测试（[加入](https://testflight.apple.com/join/tHKQsbCk)）；需先安装 TestFlight，构建 90 天后过期 |
+| iOS App | 1.0 | TestFlight 公开测试（[加入](https://testflight.apple.com/join/tHKQsbCk)）；需先安装 TestFlight，构建 90 天后过期 |
 | 连接器 `dsh-plugin-mobile-link` | 0.7.0 | npm |
 | 中转（DLP v1） | 本仓库 `relay-go/`（Go，`go-0.2.3`） | 自行部署 |
 
