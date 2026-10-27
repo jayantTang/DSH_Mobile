@@ -1323,6 +1323,68 @@ test('sessionDigest：宿主失败时返回与老方法同形的错误', async (
   assert.match(res.error.message, /DSH is not connected/)
 })
 
+// 下面两条钉的是 2026-10-27「新建会话未同步」的直接现场：宿主列表中新增一条会话后，
+// 同一设备带 `since` 的第二次请求必须能把它带回来，而不是回一份空增量。
+
+/** 宿主 `SessionSummary` 形状的会话项：身份字段是 `sessionId`，没有 `id`。 */
+const hostSession = (sessionId, title, updatedAt = 1_791_860_000_000) => ({
+  sessionId,
+  updatedAt,
+  agentAvailable: true,
+  blank: false,
+  projections: { kind: 'sequenced', asOfSeq: 1, values: { title } },
+})
+
+const hostPage = (items) => ({ ok: true, value: { items } })
+
+test('sessionDigest：同一设备连续两次请求，第二次增量带出新增会话', async () => {
+  const { agent, dsh, socket } = makeAgent({
+    responses: { 'session/list': hostPage([hostSession('s-1', '一')]) },
+  })
+  await agent.handleRelayFrame(attach('dev_1'))
+
+  await agent.handleRelayFrame(digestReq({ _request: {} }, 'dg1'))
+  const first = socket.last('res')
+  assert.equal(first.ok, true)
+  const firstValue = first.value.value
+  assert.equal(firstValue.full, true, '首次请求没有 since，必须是全量')
+  assert.deepEqual(firstValue.items.map((row) => row.sessionId), ['s-1'])
+  assert.equal(typeof firstValue.version, 'string')
+  assert.notEqual(firstValue.version, 'da39a3ee5e6b4b0d', '指纹表不许是空表版本')
+
+  // 宿主又列出一条新建会话：这正是此前永远到不了手机的那条变化。
+  dsh.responses.set('session/list', hostPage([hostSession('s-1', '一'), hostSession('s-2', '二')]))
+  await agent.handleRelayFrame(digestReq({ _request: {}, since: firstValue.version }, 'dg2'))
+  const second = socket.last('res')
+  assert.equal(second.ok, true)
+  const secondValue = second.value.value
+  assert.equal(secondValue.full, false, '版本对得上时必须是增量')
+  assert.deepEqual(secondValue.items.map((row) => row.sessionId), ['s-2'],
+    '宿主新增的会话必须出现在第二次回包里')
+  assert.deepEqual(secondValue.removed, [])
+  assert.equal(typeof secondValue.version, 'string')
+  assert.notEqual(secondValue.version, firstValue.version, '内容变了版本就要变')
+})
+
+test('sessionDigest：回包里有认不出身份的项时退化为全量，下一次仍是全量', async () => {
+  const items = [hostSession('s-1', '一'), { title: '没有 sessionId' }]
+  const { agent, socket } = makeAgent({ responses: { 'session/list': hostPage(items) } })
+  await agent.handleRelayFrame(attach('dev_1'))
+
+  await agent.handleRelayFrame(digestReq({ _request: {} }, 'dg1'))
+  const first = socket.last('res').value.value
+  assert.equal(first.full, true)
+  assert.equal(first.items.length, 2, '退化全量不许丢项')
+  assert.deepEqual(first.removed, [])
+
+  // 带上上一轮的 version：仍必须是全量（不能把「认不出」变成「没变化」）。
+  await agent.handleRelayFrame(digestReq({ _request: {}, since: first.version }, 'dg2'))
+  const second = socket.last('res').value.value
+  assert.equal(second.full, true, '身份不可识别时下一次请求仍要全量')
+  assert.deepEqual(second.items.map((row) => row.sessionId ?? null), ['s-1', null])
+  assert.deepEqual(second.removed, [])
+})
+
 // ---------------------------------------------------------------------------
 // 会话内搜索的**链路级**集成：设备帧经连接器的路由表落到历史服务，再回来带上片数进度。
 // 这一层盖住"单元测试各自过、拼起来却不对"的位置：方法名路由、args 解包、响应字段出网。

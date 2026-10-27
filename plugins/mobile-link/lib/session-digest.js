@@ -133,11 +133,16 @@ export function digestFingerprint(item) {
   }
 }
 
-/** 一批会话的指纹表（id → 指纹）。 */
+/**
+ * 一批会话的指纹表（sessionId → 指纹）。
+ *
+ * 键是宿主 `SessionSummary.sessionId`——会话身份在宿主只有这一个名字。
+ * 这里不认 `id`：多认一个名字就是第二份身份，正是它让指纹表恒为空（2026-10-27）。
+ */
 export function digestFingerprints(items) {
   const map = new Map()
   for (const item of items ?? []) {
-    if (item && typeof item.id === 'string') map.set(item.id, digestFingerprint(item))
+    if (item && typeof item.sessionId === 'string') map.set(item.sessionId, digestFingerprint(item))
   }
   return map
 }
@@ -153,20 +158,29 @@ export function fingerprintsVersion(map) {
 /**
  * 相对上一次指纹表的增量。
  *
- * 入参 `previous` 为 Map 或 null；返回 changed（新增或内容变化的项）、
- * removed（消失的 id）与新版本。`previous` 为空时调用方应按全量处理。
+ * 入参 `previous` 为 Map 或 null。返回：
+ *   - `full`：能不能把这份结果当增量发；
+ *   - `changed`：新增或内容变化的项（`full` 时为整份 items）；
+ *   - `removed`：消失的 sessionId（`full` 时为空）；
+ *   - `version` / `fingerprints`：下一次比较用的版本与指纹表。
+ *
+ * **身份不可识别时退化为全量**：摘要是优化，不是事实来源。只要有一项没有 `sessionId`，
+ * 就没法证明其余项没变；此时宁可多发一份全量，也不能回空增量——后者不报错、不更新，
+ * 界面看起来正常却永远冻结（2026-10-27 的现场）。
  */
 export function digestDelta(previous, items) {
   const list = Array.isArray(items) ? items : []
+  const identifiable = list.every((item) => item && typeof item.sessionId === 'string')
   const next = digestFingerprints(list)
+  const version = fingerprintsVersion(next)
+  if (previous === null || !identifiable) {
+    return { full: true, changed: list, removed: [], version, fingerprints: next }
+  }
   const changed = []
   for (const item of list) {
-    if (!item || typeof item.id !== 'string') continue
-    if (!previous || previous.get(item.id) !== next.get(item.id)) changed.push(item)
+    if (previous.get(item.sessionId) !== next.get(item.sessionId)) changed.push(item)
   }
   const removed = []
-  if (previous) {
-    for (const id of previous.keys()) if (!next.has(id)) removed.push(id)
-  }
-  return { changed, removed, version: fingerprintsVersion(next), fingerprints: next }
+  for (const sessionId of previous.keys()) if (!next.has(sessionId)) removed.push(sessionId)
+  return { full: false, changed, removed, version, fingerprints: next }
 }

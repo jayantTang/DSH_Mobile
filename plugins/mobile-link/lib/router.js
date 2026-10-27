@@ -658,9 +658,10 @@ export class DeviceRouter {
         const since = typeof args.since === 'string' ? args.since : null
         this.digestCursors ??= new Map()
         const previous = since ? this.digestCursors.get(deviceId) : null
-        // 版本对得上才发增量；对不上（首次、连接器重启、设备被清理）发全量。
-        const incremental = Boolean(previous && previous.version === since)
-        const delta = digestDelta(incremental ? previous.fingerprints : null, items)
+        // 版本对得上才认那份指纹表；对不上（首次、连接器重启、设备被清理）就当没有历史。
+        // 能不能当增量发由 digestDelta 决定：它持有指纹，也只有它能判断身份是否可识别。
+        const usable = previous && previous.version === since ? previous : null
+        const delta = digestDelta(usable ? usable.fingerprints : null, items)
         this.digestCursors.set(deviceId, { version: delta.version, fingerprints: delta.fingerprints })
         if (this.digestCursors.size > 32) {
           const oldest = this.digestCursors.keys().next().value
@@ -668,10 +669,10 @@ export class DeviceRouter {
         }
         const value = {
           ...trimmed,
-          items: incremental ? delta.changed : items,
-          removed: incremental ? delta.removed : [],
+          items: delta.changed,
+          removed: delta.removed,
           version: delta.version,
-          full: !incremental,
+          full: delta.full,
         }
         payload = { ok: true, value: encodeDigest(value, args.encoding) }
       }
