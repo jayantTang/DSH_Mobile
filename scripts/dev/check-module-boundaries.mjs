@@ -21,7 +21,7 @@
 //     例外数比上次记录上升也判红（例外只减不增）。
 //
 // 退出码：0 = 无未豁免发现；1 = 有；2 = 工具自身错误。
-import { readFileSync, readdirSync, existsSync, writeFileSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -321,6 +321,9 @@ try {
     if (exceptionCount > prev) err(`[C5] 例外数上升：${prev} → ${exceptionCount}（例外只减不增）`);
   }
 } catch { /* 状态文件损坏不判红，下次重写 */ }
+// `.lanes/` 是工具自己的产物目录，不入库；全新检出的目录（CI）里不存在，
+// 写之前得自己建。少了这一步，检查器在公共 runner 上以 ENOENT 退出（run 40498565955）。
+mkdirSync(path.dirname(stateFile), { recursive: true });
 writeFileSync(stateFile, JSON.stringify({ count: exceptionCount, at: new Date().toISOString() }));
 
 // ---------- 汇总 ----------
