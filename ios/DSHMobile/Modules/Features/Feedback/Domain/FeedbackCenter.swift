@@ -31,16 +31,25 @@ public final class FeedbackCenter {
 
     // MARK: - 可观察状态
 
-    /// 入口角标：服务端 `unreadCount` 与本机已读口径取较大者。
+    /// 入口角标：**只读服务端**（`/feedback/inbox` 与 `/feedback/read` 回包给的那个数），
+    /// 落盘在镜像里。不再与本机重算值取最大——那会让服务端事实被永久压住（P1-5）。
     public private(set) var unreadCount = 0
     /// 显示用列表；内容来自镜像，所以离线打开也有东西可看。
     public var threads: [FeedbackThread] { mirror.displayThreads }
 
-    /// 调用方是不是团队账号（030 二期）：true 时两栏方向对调。
+    /// 调用方是不是团队账号（服务端判定）：只作账号级提示与旧服务端缺 `mySide` 时的
+    /// 推导依据；两栏方向、未读归属、回信入口一律看每线程的 `mySide`。
     public var teamPerspective: Bool { mirror.teamPerspective }
     public var notices: [FeedbackNotice] { mirror.displayNotices }
+    /// 正文长度上限：服务端下发的值，旧服务端没有就退编译期默认。
+    /// 发送窗口与回信输入框都读这一个（全 App 只有这一处兜底）。
+    public var limits: FeedbackLimits { mirror.limits ?? .fallback }
     public private(set) var isRefreshing = false
     public private(set) var isSubmitting = false
+    /// 底部"加载更早"那一次请求在飞；两栏共用同一个入口。
+    public private(set) var isLoadingEarlier = false
+    /// 上一次"加载更早"失败了（底部那行据此变成可重试）。
+    public private(set) var loadEarlierFailed = false
     /// 最近一次失败的分类；成功一次即清空。
     public private(set) var lastError: FeedbackClientError?
     public private(set) var lastRefreshedAt: Date?
@@ -48,12 +57,13 @@ public final class FeedbackCenter {
     // MARK: - 依赖
 
     private let store: FeedbackLocalStore
+    /// 镜像两条列表的行数上限（评审 A1 之前是两条都 300，满 300 后翻页变空操作）。
+    public let rowLimits: FeedbackMirrorLimits
     private let minimumRefreshInterval: TimeInterval
     private let endpointProvider: () -> Endpoint?
     /// 待投递的崩溃报告（MetricKit 在下次启动交给我们）。
     private let crashArchive: CrashReportArchive
     private var mirror: FeedbackMirror
-    private var serverUnreadCount = 0
     /// 镜像文件不存在（首次安装、换机、刚清过缓存）：下一次拉取要以服务端补种已读。
     private var needsSeed: Bool
     /// 同一条草稿重试时复用的幂等键，见 ``clientRefForRetry()``。
@@ -63,9 +73,11 @@ public final class FeedbackCenter {
         store: FeedbackLocalStore = FeedbackLocalStore(),
         minimumRefreshInterval: TimeInterval = 15,
         endpointProvider: (() -> Endpoint?)? = nil,
-        crashArchive: CrashReportArchive = CrashReportArchive()
+        crashArchive: CrashReportArchive = CrashReportArchive(),
+        rowLimits: FeedbackMirrorLimits? = nil
     ) {
         self.store = store
+        self.rowLimits = rowLimits ?? Self.automationRowLimits() ?? .default
         self.minimumRefreshInterval = minimumRefreshInterval
         self.endpointProvider = endpointProvider ?? { FeedbackCenter.systemEndpoint() }
         self.crashArchive = crashArchive
@@ -73,6 +85,32 @@ public final class FeedbackCenter {
         self.needsSeed = !store.mirrorExists
         recomputeUnread()
     }
+
+    #if DEBUG
+    /// 仿真器截图钩子：`-DSHFeedbackRowLimits 5,5` 把镜像上限调小，让"触顶"的终止态
+    /// 在几十条数据内可见。发布构建里这一整段被编译掉（与 `DSH_FEEDBACK_STORE_DIR`
+    /// 的测试重定向同一性质）。
+    static func automationRowLimits() -> FeedbackMirrorLimits? {
+        let arguments = CommandLine.arguments
+        guard let index = arguments.firstIndex(of: "-DSHFeedbackRowLimits"),
+              index + 1 < arguments.count
+        else { return nil }
+        let joined = arguments[index + 1]
+        let parts = joined.split(separator: ",").compactMap { Int($0) }
+        if parts.count == 2 {
+            guard parts[0] > 0, parts[1] > 0 else { return nil }
+            return FeedbackMirrorLimits(threads: parts[0], notices: parts[1])
+        }
+        // 运行器把 `-DSHFeedbackRowLimits 5,5` 拆成两个独立参数（`5` `5`）。
+        guard index + 2 < arguments.count,
+              let threads = Int(joined), let notices = Int(arguments[index + 2]),
+              threads > 0, notices > 0
+        else { return nil }
+        return FeedbackMirrorLimits(threads: threads, notices: notices)
+    }
+    #else
+    static func automationRowLimits() -> FeedbackMirrorLimits? { nil }
+    #endif
 
     // MARK: - 地址与令牌
 
@@ -254,11 +292,16 @@ public final class FeedbackCenter {
         defer { isRefreshing = false }
         do {
             let inbox = try await client(endpoint).inbox(tickets: store.tickets())
-            mirror = mirror.refreshing(with: inbox, seedingReadState: needsSeed)
+            mirror = mirror.refreshing(with: inbox, seedingReadState: needsSeed, rowLimits: rowLimits)
+            if !inbox.isVersion2 {
+                // v1 回落（旧服务端、或服务端单侧回滚到 v1）：响应里没有分页字段，
+                // 不能沿用它上次 v2 的游标——清掉，底部"加载更早"随之消失（设计 §2.5）。
+                mirror.clearPageCursors()
+            }
             needsSeed = false
-            serverUnreadCount = inbox.unreadCount
             persistMirror()
             lastError = nil
+            loadEarlierFailed = false
             lastRefreshedAt = Date()
         } catch let error as FeedbackClientError {
             // 离线：保留上一次拉到的镜像与未读，不清、不崩。
@@ -268,6 +311,48 @@ public final class FeedbackCenter {
         }
         recomputeUnread()
     }
+
+    /// 往回翻一页（设计 §M6）。**同一个入口服务两栏**：比较两条列表已加载的最旧边界，
+    /// 只推进"边界更靠后（更新）"的那一路，直到两路 `more` 都为 false。
+    ///
+    /// 旧服务端没有分页（两路游标都是 nil），此方法不发请求，`hasEarlier` 为 false。
+    public func loadEarlier() async {
+        guard !isLoadingEarlier, let kind = earlierPage else { return }
+        guard let endpoint = endpointProvider() else {
+            lastError = .network("no-relay-endpoint")
+            loadEarlierFailed = true
+            return
+        }
+        isLoadingEarlier = true
+        loadEarlierFailed = false
+        defer { isLoadingEarlier = false }
+        do {
+            let inbox = try await client(endpoint).inbox(
+                tickets: store.tickets(),
+                // 每页都带两路首页（协议 §2.3.4 的约定）。F10：这里曾经只取线程那一路
+                // （`notices:false`），服务端于是回一个"通知没有更多"的页，把本地通知
+                // 游标覆盖成到底；现在按文档口径两路都取，游标更新由 `covering` 限定。
+                threadsPage: kind == .threads
+                    ? FeedbackPageRequest(before: mirror.threadsPage?.nextBefore) : nil,
+                noticePage: kind == .notices
+                    ? FeedbackPageRequest(before: mirror.noticesPage?.nextBefore) : nil
+            )
+            mirror = mirror.refreshing(with: inbox, seedingReadState: false, rowLimits: rowLimits,
+                                       covering: kind == .threads ? .threads : .notices)
+            persistMirror()
+            lastError = nil
+            recomputeUnread()
+        } catch let error as FeedbackClientError {
+            lastError = error
+            loadEarlierFailed = true
+        } catch {
+            lastError = .network(String(describing: error))
+            loadEarlierFailed = true
+        }
+    }
+
+    /// 还能不能往回翻（两路任一路有下一页）。
+    public var hasEarlier: Bool { earlierPage != nil }
 
     /// App 回到前台时调用（`ScenePhase` 变成 `.active`）。
     public func applicationBecameActive() async {
@@ -289,7 +374,8 @@ public final class FeedbackCenter {
                        tickets: [store.ticket(for: threadId)].compactMap { $0 })
     }
 
-    /// 用户真正打开了某条通知。
+    /// 用户真正打开了某条通知（正文已经拿到之后才调；取正文失败时不要调它——
+    /// 不能因为网络失败把未读吃掉）。
     public func openNotice(_ noticeId: String) async {
         await markRead(threadIds: [], noticeIds: [noticeId], tickets: [])
     }
@@ -301,7 +387,7 @@ public final class FeedbackCenter {
             let remaining = try await client(endpoint).markRead(
                 threadIds: threadIds, noticeIds: noticeIds, tickets: tickets
             )
-            serverUnreadCount = remaining
+            mirror.serverUnreadCount = remaining
         } catch let error as FeedbackClientError {
             lastError = error
             return
@@ -325,6 +411,42 @@ public final class FeedbackCenter {
         notices.first { $0.noticeId == noticeId }
     }
 
+    /// 这条通知的正文是否已经在镜像里（离线可读）。`nil` = 还没取过。
+    public func cachedNoticeBody(_ noticeId: String) -> String? {
+        mirror.cachedBody(of: noticeId)
+    }
+
+    /// 取一条通知的正文（v2 按需路由）：成功即写进镜像，之后离线也能读。
+    ///
+    /// 失败按 ``FeedbackClientError`` 抛出——`notFound` 是"这条已经不在了"，
+    /// 其余（含网络不通）都算"还能重试"。调用方**不得**在失败后标记已读。
+    @discardableResult
+    public func fetchNotice(_ noticeId: String) async throws -> FeedbackNotice {
+        guard let endpoint = endpointProvider() else {
+            lastError = .network("no-relay-endpoint")
+            throw FeedbackClientError.network("no-relay-endpoint")
+        }
+        do {
+            let notice = try await client(endpoint).notice(noticeId: noticeId)
+            // F7：详情没带正文是契约异常，按失败处理——不能把"空正文"缓存成
+            // `bodyCached = true`，那会把这封通知永久记成一封空信。
+            guard let body = notice.body else {
+                throw FeedbackClientError.decoding("feedback/notice answered without a body")
+            }
+            mirror.storeBody(of: notice, cachedBody: body, noticeLimit: rowLimits.notices)
+            persistMirror()
+            lastError = nil
+            return notice
+        } catch {
+            if let classified = error as? FeedbackClientError {
+                lastError = classified
+            } else {
+                lastError = .network(LinkErrors.describe(error))
+            }
+            throw error
+        }
+    }
+
     /// 单条回信的未读：列表按「哪封信没看过」标蓝点，服务端的 `unread` 只到线程粒度。
     public func isUnread(messageId: String) -> Bool {
         mirror.isUnread(messageId: messageId)
@@ -343,13 +465,60 @@ public final class FeedbackCenter {
     public func clearLocalMirror() {
         store.clearMirror()
         mirror = FeedbackMirror()
-        serverUnreadCount = 0
         needsSeed = true
         lastRefreshedAt = nil
+        loadEarlierFailed = false
         recomputeUnread()
     }
 
     // MARK: - 内部
+
+    /// 底部"加载更早"这次该推哪一路。
+    private enum EarlierPage { case threads, notices }
+
+    /// 这一路还能不能翻：服务端有下一页 **且** 本机镜像还没到保存上限。
+    private func pageCanAdvance(_ page: FeedbackPage?, rows: Int, limit: Int) -> Bool {
+        (page?.more ?? false) && page?.nextBefore != nil && rows < limit
+    }
+
+    /// 这一路"服务端还有、但本机已满"：触顶后不再发请求，改为可见的终止状态。
+    private func pageIsCapped(_ page: FeedbackPage?, rows: Int, limit: Int) -> Bool {
+        (page?.more ?? false) && rows >= limit
+    }
+
+    private var threadsCanAdvance: Bool {
+        pageCanAdvance(mirror.threadsPage, rows: mirror.threads.count, limit: rowLimits.threads)
+    }
+
+    private var noticesCanAdvance: Bool {
+        pageCanAdvance(mirror.noticesPage, rows: mirror.notices.count, limit: rowLimits.notices)
+    }
+
+    /// 两路都还有下一页时，只推"已加载边界更靠后（更新）"的那一路——把两栏合并列表
+    /// 里 T1..T2 之间的洞压小（设计 §M6.3；残余缺口见设计第七节第 12 条）。
+    /// 已触顶的那一路不参与：它再翻也只会把刚取回的行立刻裁掉（评审 F1）。
+    private var earlierPage: EarlierPage? {
+        switch (threadsCanAdvance, noticesCanAdvance) {
+        case (true, true):
+            let threadsBoundary = mirror.threadsPage?.nextBefore?.boundary ?? .distantFuture
+            let noticesBoundary = mirror.noticesPage?.nextBefore?.boundary ?? .distantFuture
+            return threadsBoundary >= noticesBoundary ? .threads : .notices
+        case (true, false):
+            return .threads
+        case (false, true):
+            return .notices
+        default:
+            return nil
+        }
+    }
+
+    /// 服务端还有更早的记录，但本机已达保存上限（两路都已无法推进）。
+    /// 底部那行据此变成不可点的说明，而不是继续假装还能翻。
+    public var earlierCapped: Bool {
+        earlierPage == nil
+            && (pageIsCapped(mirror.threadsPage, rows: mirror.threads.count, limit: rowLimits.threads)
+                || pageIsCapped(mirror.noticesPage, rows: mirror.notices.count, limit: rowLimits.notices))
+    }
 
     private func client(_ endpoint: Endpoint) -> RelayFeedbackClient {
         RelayFeedbackClient(relayURL: endpoint.url, deviceToken: endpoint.deviceToken)
@@ -363,8 +532,9 @@ public final class FeedbackCenter {
         }
     }
 
+    /// 角标只认镜像里那个服务端值（刷新与已读回包各写一次）。
     private func recomputeUnread() {
-        unreadCount = max(serverUnreadCount, mirror.localUnreadCount)
+        unreadCount = max(0, mirror.serverUnreadCount)
     }
 }
 

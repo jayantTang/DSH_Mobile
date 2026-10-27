@@ -144,6 +144,21 @@ public struct FeedbackThreadSource: Sendable, Hashable, Codable {
 
 /// One feedback thread, as the relay returns it in an inbox answer.
 public struct FeedbackThread: Sendable, Hashable, Identifiable, Codable {
+    /// 我在这条线程上的那一侧（服务端 v2 的 `mySide`）。
+    ///
+    /// 团队账号既是团队又是用户，账号级的一个布尔表达不了（2026-10-27 设计 §2.4）；
+    /// 两栏方向、未读归属与回信入口都只认这个字段。旧服务端不下发，``FeedbackInbox``
+    /// 在写入模型前按 `teamPerspective` 补一次（见 ``mySide``）。
+    public enum Side: String, Sendable, Hashable, Codable {
+        case user
+        case owner
+
+        /// 这一侧写的留言署谁的名。
+        public var author: FeedbackMessage.Author { self == .owner ? .owner : .user }
+        /// 对侧：未读归属与收件箱里那一封都是它写的。
+        public var counterpart: FeedbackMessage.Author { self == .owner ? .user : .owner }
+    }
+
     public let threadId: String
     /// The one-line title the sender wrote, when they wrote one.
     ///
@@ -160,6 +175,9 @@ public struct FeedbackThread: Sendable, Hashable, Identifiable, Codable {
     public let unread: Int
     /// 团队侧口径：这条线程里团队没读的用户来信条数（团队收件箱扩展，缺省 0）。
     public let teamUnread: Int
+    /// 我这一侧（v2 才下发）。缺省时 ``FeedbackInbox`` 按 `teamPerspective` 补，
+    /// 所以从收件箱/镜像读到的线程都会有值；直接构造的测试夹具可能留空。
+    public let mySide: Side?
     /// 发件人标识（团队收件箱扩展）；全部字段可缺省，老服务端不下发时为 nil。
     public let source: FeedbackThreadSource?
     public let messages: [FeedbackMessage]
@@ -169,6 +187,10 @@ public struct FeedbackThread: Sendable, Hashable, Identifiable, Codable {
     /// Whether we have answered at least once.
     public var isReplied: Bool { status == "replied" }
 
+    /// 我这一侧的确定值：只有旧服务端/旧镜像才可能缺 `mySide`，那按用户侧读
+    /// （普通用户与今天逐像素一致）。分类判断请用这个，不要再另立一套视角规则。
+    public var resolvedSide: Side { mySide ?? .user }
+
     public init(
         threadId: String,
         subject: String? = nil,
@@ -177,6 +199,7 @@ public struct FeedbackThread: Sendable, Hashable, Identifiable, Codable {
         lastMessageAt: Date?,
         unread: Int,
         teamUnread: Int = 0,
+        mySide: Side? = nil,
         source: FeedbackThreadSource? = nil,
         messages: [FeedbackMessage]
     ) {
@@ -187,12 +210,24 @@ public struct FeedbackThread: Sendable, Hashable, Identifiable, Codable {
         self.lastMessageAt = lastMessageAt
         self.unread = unread
         self.teamUnread = teamUnread
+        self.mySide = mySide
         self.source = source
         self.messages = messages
     }
 
+    /// 补上推导出来的 `mySide`；`FeedbackInbox` 用它把 v1 负载抬成同一种读法。
+    public func withMySide(_ side: Side) -> FeedbackThread {
+        guard mySide == nil else { return self }
+        return FeedbackThread(
+            threadId: threadId, subject: subject, status: status,
+            createdAt: createdAt, lastMessageAt: lastMessageAt,
+            unread: unread, teamUnread: teamUnread, mySide: side,
+            source: source, messages: messages
+        )
+    }
+
     private enum CodingKeys: String, CodingKey {
-        case threadId, subject, status, createdAt, lastMessageAt, unread, teamUnread, source, messages
+        case threadId, subject, status, createdAt, lastMessageAt, unread, teamUnread, mySide, source, messages
     }
 
     public init(from decoder: any Decoder) throws {
@@ -206,16 +241,22 @@ public struct FeedbackThread: Sendable, Hashable, Identifiable, Codable {
         unread = (try? container.decode(Int.self, forKey: .unread)) ?? 0
         // 团队收件箱扩展：缺字段/类型不对一律退默认，老服务端照常能解。
         teamUnread = (try? container.decode(Int.self, forKey: .teamUnread)) ?? 0
+        // v2 的 mySide；旧服务端没有这个键，留给 `FeedbackInbox` 按视角推导。
+        mySide = try? container.decodeIfPresent(Side.self, forKey: .mySide)
         source = try? container.decodeIfPresent(FeedbackThreadSource.self, forKey: .source)
         messages = (try? container.decode([FeedbackMessage].self, forKey: .messages)) ?? []
     }
 }
 
 /// One notice we broadcast to an account; independent of any thread.
+///
+/// v2 的列表只返回摘要（标题/时间/格式/已读），正文要打开时单取
+/// （`POST /feedback/notice`），所以 ``body`` 是可选的：`nil` 就是"这份响应没带正文"。
+/// 老 App 与旧服务端仍读到内联正文，那边的 `body` 不会是 `nil`。
 public struct FeedbackNotice: Sendable, Hashable, Identifiable, Codable {
     public let noticeId: String
     public let subject: String?
-    public let body: String
+    public let body: String?
     /// 正文格式（FR-034），口径与 ``FeedbackMessage/format`` 完全一致：缺字段与未知值
     /// 一律 `text`，只有明确的 `html` 才走锁死的 HTML 容器。
     public let format: String?
@@ -229,7 +270,10 @@ public struct FeedbackNotice: Sendable, Hashable, Identifiable, Codable {
     /// 解析后的格式：判断走哪条渲染路径时用这个。
     public var bodyFormat: FeedbackBodyFormat { FeedbackBodyFormat(wire: format) }
 
-    public init(noticeId: String, subject: String?, body: String, format: String? = nil,
+    /// 摘要行是否需要正文：列表不再显示通知正文，只需要标题与时间。
+    public var hasBody: Bool { body != nil }
+
+    public init(noticeId: String, subject: String?, body: String?, format: String? = nil,
                 createdAt: Date?, read: Bool) {
         self.noticeId = noticeId
         self.subject = subject
@@ -247,7 +291,8 @@ public struct FeedbackNotice: Sendable, Hashable, Identifiable, Codable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         noticeId = try container.decode(String.self, forKey: .noticeId)
         subject = try? container.decodeIfPresent(String.self, forKey: .subject)
-        body = (try? container.decode(String.self, forKey: .body)) ?? ""
+        // v2 的摘要不带 body：缺字段就是"没带正文"，不是空正文。
+        body = try? container.decodeIfPresent(String.self, forKey: .body)
         // 与 `FeedbackMessage` 同一个归一：读不出来就是 Markdown。
         format = FeedbackBodyFormat(
             wire: try? container.decodeIfPresent(String.self, forKey: .format)
@@ -257,25 +302,179 @@ public struct FeedbackNotice: Sendable, Hashable, Identifiable, Codable {
     }
 }
 
+/// 一页的翻页位置：线程用 `(lastMessageAt, threadId)`，通知用 `(createdAt, noticeId)`。
+///
+/// 两条列表共用同一个形状（设计 §M6：`FeedbackNoticePage` 与 `FeedbackThreadPage`
+/// 同形），只有游标里填的键不同。时间一律走 relay 的毫秒整数。
+public struct FeedbackPageCursor: Sendable, Hashable, Codable {
+    public let lastMessageAt: Date?
+    public let threadId: String?
+    public let createdAt: Date?
+    public let noticeId: String?
+
+    public init(lastMessageAt: Date? = nil, threadId: String? = nil,
+                createdAt: Date? = nil, noticeId: String? = nil) {
+        self.lastMessageAt = lastMessageAt
+        self.threadId = threadId
+        self.createdAt = createdAt
+        self.noticeId = noticeId
+    }
+
+    /// 这页最旧一条的时间；两条列表比"谁加载得更靠后"用它。缺时间按最旧算。
+    public var boundary: Date {
+        lastMessageAt ?? createdAt ?? .distantPast
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case lastMessageAt, threadId, createdAt, noticeId
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        lastMessageAt = RelayDevice.date(fromMilliseconds: try? container.decodeIfPresent(Int.self, forKey: .lastMessageAt))
+        threadId = try? container.decodeIfPresent(String.self, forKey: .threadId)
+        createdAt = RelayDevice.date(fromMilliseconds: try? container.decodeIfPresent(Int.self, forKey: .createdAt))
+        noticeId = try? container.decodeIfPresent(String.self, forKey: .noticeId)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        if let lastMessageAt {
+            try container.encode(Int(lastMessageAt.timeIntervalSince1970 * 1000), forKey: .lastMessageAt)
+        }
+        try container.encodeIfPresent(threadId, forKey: .threadId)
+        if let createdAt {
+            try container.encode(Int(createdAt.timeIntervalSince1970 * 1000), forKey: .createdAt)
+        }
+        try container.encodeIfPresent(noticeId, forKey: .noticeId)
+    }
+}
+
+/// 一条列表"还能不能往回翻"以及下一页从哪儿开始（响应里的 `threadsPage` / `noticesPage`）。
+public struct FeedbackPage: Sendable, Hashable, Codable {
+    public let more: Bool
+    public let nextBefore: FeedbackPageCursor?
+
+    public init(more: Bool, nextBefore: FeedbackPageCursor? = nil) {
+        self.more = more
+        self.nextBefore = nextBefore
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case more, nextBefore
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        more = (try? container.decodeIfPresent(Bool.self, forKey: .more)) ?? false
+        nextBefore = try? container.decodeIfPresent(FeedbackPageCursor.self, forKey: .nextBefore)
+    }
+}
+
+/// 一次翻页请求的那一段（请求里的 `threadsPage` / `noticePage`）。
+///
+/// `limit` 与 `before` 都可省：省掉 `limit` 就用服务端的默认页长（30 / 40），
+/// 省掉 `before` 就是第一页。客户端不复制服务端的页长策略。
+public struct FeedbackPageRequest: Sendable, Hashable, Encodable {
+    public let limit: Int?
+    public let before: FeedbackPageCursor?
+
+    public init(limit: Int? = nil, before: FeedbackPageCursor? = nil) {
+        self.limit = limit
+        self.before = before
+    }
+}
+
+/// 正文长度的上限：**服务端下发**的那一份（v2 响应的 `limits`）。
+///
+/// 客户端不再自己写死 4000：缺字段时退到 ``fallback``（与 mail 的
+/// `LIMITS.textChars / textBytes` 同口径）。这是全 App 唯一的兜底处，发送窗口与
+/// 回信输入框读的是同一个值。
+public struct FeedbackLimits: Sendable, Hashable, Codable {
+    public let textChars: Int
+    public let textBytes: Int
+    public let subjectChars: Int
+
+    /// 编译期兜底：旧服务端不下发 `limits` 时用它。
+    public static let fallback = FeedbackLimits()
+
+    public init(textChars: Int = 4000, textBytes: Int = 12000, subjectChars: Int = 80) {
+        self.textChars = textChars
+        self.textBytes = textBytes
+        self.subjectChars = subjectChars
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case textChars, textBytes, subjectChars
+    }
+
+    /// 每个字段单独退默认：缺一个不影响另外两个。
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        textChars = (try? container.decodeIfPresent(Int.self, forKey: .textChars)) ?? Self.fallback.textChars
+        textBytes = (try? container.decodeIfPresent(Int.self, forKey: .textBytes)) ?? Self.fallback.textBytes
+        subjectChars = (try? container.decodeIfPresent(Int.self, forKey: .subjectChars)) ?? Self.fallback.subjectChars
+    }
+}
+
 /// One inbox answer: threads we own, the notices delivered to this account, and the
 /// relay's unread total. Pulling it **never** changes read state.
 public struct FeedbackInbox: Sendable, Hashable {
+    /// 服务端回显的契约版本。`2` = `unread` 是"我这一侧"；`nil` = 旧服务端，按 v1 读。
+    public let inboxVersion: Int?
     public let threads: [FeedbackThread]
     public let notices: [FeedbackNotice]
     public let unreadCount: Int
-    /// 调用方是不是团队账号（服务端判定）：true 时两栏方向对调——
-    /// 收件箱是用户来信、已发送是团队回信。缺省 false（用户侧逐像素不变）。
+    /// 调用方是不是团队账号（服务端判定）。v2 之后它只作账号级提示与 v1 回退的
+    /// `mySide` 推导依据，**不再**参与两栏分类（分类只看每线程 `mySide`）。
     public let teamPerspective: Bool
+    /// 线程列表的这一页；旧服务端没有分页，为 nil（此时不显示"加载更早"）。
+    public let threadsPage: FeedbackPage?
+    /// 通知摘要的这一页；同上。
+    public let noticesPage: FeedbackPage?
+    /// 服务端下发的长度上限；旧服务端没有，为 nil（读取方退 ``FeedbackLimits/fallback``）。
+    public let limits: FeedbackLimits?
 
-    public init(threads: [FeedbackThread], notices: [FeedbackNotice], unreadCount: Int,
-                teamPerspective: Bool = false) {
-        self.threads = threads.sorted {
-            ($0.lastMessageAt ?? $0.createdAt ?? .distantPast)
-                > ($1.lastMessageAt ?? $1.createdAt ?? .distantPast)
-        }
-        self.notices = notices.sorted { ($0.createdAt ?? .distantPast) > ($1.createdAt ?? .distantPast) }
-        self.unreadCount = unreadCount
+    /// v2 语义：`unread` 是我这一侧的未读数（v1 要按 `teamUnread` 分侧取）。
+    public var isVersion2: Bool { inboxVersion == 2 }
+
+    public init(
+        threads: [FeedbackThread],
+        notices: [FeedbackNotice],
+        unreadCount: Int,
+        teamPerspective: Bool = false,
+        inboxVersion: Int? = nil,
+        threadsPage: FeedbackPage? = nil,
+        noticesPage: FeedbackPage? = nil,
+        limits: FeedbackLimits? = nil
+    ) {
+        self.inboxVersion = inboxVersion
         self.teamPerspective = teamPerspective
+        // 旧服务端不下发 mySide：按视角推导一次，之后所有读法只有一种。
+        let fallback: FeedbackThread.Side = teamPerspective ? .owner : .user
+        self.threads = threads
+            .map { $0.withMySide(fallback) }
+            .sorted { Self.threadOrder($0, $1) }
+        self.notices = notices.sorted { Self.noticeOrder($0, $1) }
+        self.unreadCount = unreadCount
+        self.threadsPage = threadsPage
+        self.noticesPage = noticesPage
+        self.limits = limits
+    }
+
+    /// 新的在前；同一时刻按 id 倒序（与服务端 `lastMessageAt DESC, threadId DESC` 一致）。
+    static func threadOrder(_ lhs: FeedbackThread, _ rhs: FeedbackThread) -> Bool {
+        let left = lhs.lastMessageAt ?? lhs.createdAt ?? .distantPast
+        let right = rhs.lastMessageAt ?? rhs.createdAt ?? .distantPast
+        if left != right { return left > right }
+        return lhs.threadId > rhs.threadId
+    }
+
+    static func noticeOrder(_ lhs: FeedbackNotice, _ rhs: FeedbackNotice) -> Bool {
+        let left = lhs.createdAt ?? .distantPast
+        let right = rhs.createdAt ?? .distantPast
+        if left != right { return left > right }
+        return lhs.noticeId > rhs.noticeId
     }
 }
 
@@ -425,31 +624,51 @@ public struct RelayFeedbackClient: Sendable {
     ///
     /// Read-only by contract: the relay does not move `userReadAt` here, so a
     /// refresh on its own can never clear the unread badge.
+    ///
+    /// 请求声明 `inboxVersion: 2`（设计 §M2）：这是本项目**唯一**把 v2 数据面打开
+    /// 的地方。带 `threadsPage` / `noticePage` 就是往回翻一页；两个都省就是首屏。
+    /// 旧服务端不认识这两个字段，按 v1 形状原样回答（响应里没有 `inboxVersion`），
+    /// 调用方据此回落（``FeedbackInbox/isVersion2``）。
     public func inbox(
         tickets: [FeedbackTicket],
-        messagesPerThread: Int = 50,
-        notices: Bool = true
+        messagesPerThread: Int? = nil,
+        notices: Bool = true,
+        threadsPage: FeedbackPageRequest? = nil,
+        noticePage: FeedbackPageRequest? = nil
     ) async throws -> FeedbackInbox {
         struct WireTicket: Encodable {
             let threadId: String
             let ticketKey: String
         }
         struct Request: Encodable {
+            let inboxVersion: Int
             let tickets: [WireTicket]
-            let messagesPerThread: Int
+            let messagesPerThread: Int?
             let notices: Bool
+            let threadsPage: FeedbackPageRequest?
+            let noticePage: FeedbackPageRequest?
         }
         struct Answer: Decodable {
             let ok: Bool?
+            let inboxVersion: Int?
             let threads: [FeedbackThread]?
             let notices: [FeedbackNotice]?
+            let threadsPage: FeedbackPage?
+            let noticesPage: FeedbackPage?
             let unreadCount: Int?
             let teamPerspective: Bool?
+            let limits: FeedbackLimits?
             let error: DSHRPCFailure?
         }
         let wire = tickets.map { WireTicket(threadId: $0.threadId, ticketKey: $0.ticketKey) }
         let data = try await post("/feedback/inbox", Request(
-            tickets: wire, messagesPerThread: messagesPerThread, notices: notices
+            inboxVersion: 2,
+            tickets: wire,
+            // 省掉 = 用服务端默认（v2 每线程 6 条，v1 仍是 50 条）。
+            messagesPerThread: messagesPerThread,
+            notices: notices,
+            threadsPage: threadsPage,
+            noticePage: noticePage
         ))
         let answer = try decode(Answer.self, from: data)
         guard answer.ok == true else { throw Self.failure(answer.error, status: 200) }
@@ -457,8 +676,33 @@ public struct RelayFeedbackClient: Sendable {
             threads: answer.threads ?? [],
             notices: answer.notices ?? [],
             unreadCount: answer.unreadCount ?? 0,
-            teamPerspective: answer.teamPerspective ?? false
+            teamPerspective: answer.teamPerspective ?? false,
+            inboxVersion: answer.inboxVersion,
+            threadsPage: answer.threadsPage,
+            noticesPage: answer.noticesPage,
+            limits: answer.limits
         )
+    }
+
+    /// 取一条通知的正文（v2，按需）：列表只带摘要，打开时才走这里。
+    ///
+    /// 授权只按 `(accountId, noticeId)`：匿名、不是本人的投递、不存在的 id 三者
+    /// 都是同一个 `feedback/not-found`（不泄露存在性）。
+    public func notice(noticeId: String) async throws -> FeedbackNotice {
+        struct Request: Encodable {
+            let noticeId: String
+        }
+        struct Answer: Decodable {
+            let ok: Bool?
+            let notice: FeedbackNotice?
+            let error: DSHRPCFailure?
+        }
+        let data = try await post("/feedback/notice", Request(noticeId: noticeId))
+        let answer = try decode(Answer.self, from: data)
+        guard answer.ok == true, let notice = answer.notice else {
+            throw Self.failure(answer.error, status: 200)
+        }
+        return notice
     }
 
     /// Adds one message to an existing thread; the thread goes back to `open` so

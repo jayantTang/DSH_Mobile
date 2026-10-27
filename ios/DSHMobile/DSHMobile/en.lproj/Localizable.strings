@@ -643,7 +643,7 @@ It is registered as a workspace first, so a new group appears in the desktop sid
 "说说遇到的问题，或者你希望增加的功能…" = "Describe the problem you hit, or the feature you would like…";
 /* 字数提示只在剩余 ≤500 字时出现，平时不显示 */
 "还能输入 %lld 字" = "%lld characters left";
-"已超出 4000 字上限，请精简后再发" = "Over the 4000-character limit — please trim it before sending";
+"已超出字数上限，请精简后再发" = "Over the character limit — please trim it before sending";
 "会一并提交的技术信息" = "Technical details sent along";
 "机型" = "Device";
 "iOS 版本" = "iOS version";
@@ -651,7 +651,7 @@ It is registered as a workspace first, so a new group appears in the desktop sid
 "隐私说明" = "Privacy note";
 "网络不通，正文还在，可以再点一次发送。" = "No network. Your text is still here — tap send again.";
 "提交太频繁了，稍等一会儿再试。" = "Too many submissions. Wait a moment and try again.";
-"正文太长了，请精简到 4000 字以内。" = "That is too long. Please trim it to 4000 characters or fewer.";
+"正文太长了，请精简后再试。" = "That is too long. Please trim it and try again.";
 "这条反馈在服务器上已经不在了。" = "This feedback is no longer on the server.";
 "服务器没能保存这条反馈（错误码 %lld），正文还在，可以再试。" = "The server could not save this feedback (error %lld). Your text is still here — try again.";
 "服务器返回了看不懂的内容，正文还在，可以再试。" = "The server answered with something unexpected. Your text is still here — try again.";
@@ -704,6 +704,13 @@ It is registered as a workspace first, so a new group appears in the desktop sid
 
 /* Team inbox: placeholder for the reply editor (030 phase 2) */
 "写下你的回信…" = "Write your reply…";
+
+/* 2026-10-27 信件整改：分页、通知按需正文、长度双约束（M5/M6） */
+"加载更早" = "Load earlier";
+"正在加载通知…" = "Opening notice…";
+"需要联网查看" = "Connect to the internet to view it";
+"内容超出可发送大小（表情等字符按字节计）" = "Over the size limit — emoji and some characters count by bytes";
+"更早的记录已超出本机保存上限" = "Older records exceed this device's storage limit";
 
 /* Devices page: paired count against the cap (032) */
 "已配对的设备 %lld/%lld" = "Paired devices %lld/%lld";

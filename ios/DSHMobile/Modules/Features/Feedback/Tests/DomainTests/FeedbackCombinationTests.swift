@@ -70,8 +70,9 @@ final class FeedbackCombinationTests: FeedbackCenterTestCase {
                       "the pull must ask about the new thread through its ticket")
         XCTAssertEqual(center.storedTicketCount, 1,
                        "the credential is what makes the thread recoverable")
-        XCTAssertNil(center.thread("th_new"),
-                     "thread content follows the relay, which has not listed it yet")
+        let pending = try XCTUnwrap(center.thread("th_new"))
+        XCTAssertTrue(pending.messages.isEmpty,
+                      "the cached row stays on screen; its content still follows the relay")
 
         // 服务端知道了这条线程：下一次拉取把行带回来，已读仍然不复活。
         stub.on("/feedback/inbox", answer: .json(inboxJSON(

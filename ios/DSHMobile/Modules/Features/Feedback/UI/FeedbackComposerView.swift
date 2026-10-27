@@ -4,18 +4,12 @@ import DSHDesign
 import SwiftUI
 import DSHFeedbackDomain
 
-/// 服务器强制的正文上限（`specs/014-feedback-channel/data-model.md` 第一节）。
-/// 界面上先拦一次，超长的提交服务器也会拒；两处用的是同一个数。
-public enum FeedbackLimits {
-    static let maxBodyLength = 4000
-    /// 主题上限（契约：`subject` ≤80 字符）。超过就拦住，不去赌服务端截断。
-    static let maxSubjectLength = 80
-}
-
 /// 把 `FeedbackClientError` 翻成一句用户能照做的话。
 ///
 /// `.network` / `.decoding` 带的是诊断串（`invalid-relay-url`、解码报错原文），
 /// 只进日志、**不**给用户看：用户看到 `typeMismatch(...)` 什么都做不了。
+///
+/// 文案里**不写具体字数**：上限由服务端下发（`limits`），写死一个数字迟早第二次漂移。
 public enum FeedbackErrorText {
 
     static func text(for error: FeedbackClientError) -> String {
@@ -25,7 +19,7 @@ public enum FeedbackErrorText {
         case .rateLimited:
             return String(localized: "提交太频繁了，稍等一会儿再试。")
         case .tooLong:
-            return String(localized: "正文太长了，请精简到 4000 字以内。")
+            return String(localized: "正文太长了，请精简后再试。")
         case .notFound:
             return String(localized: "这条反馈在服务器上已经不在了。")
         case .server(let status, _):
@@ -54,12 +48,12 @@ public struct FeedbackComposerView: View {
 
     private var center: FeedbackCenter { .shared }
 
-    private var remaining: Int { FeedbackLimits.maxBodyLength - text.count }
+    /// 正文长度上限：服务端下发的值，旧服务端退编译期默认（与回信输入框同一份）。
+    private var limits: FeedbackLimits { center.limits }
 
     private var canSend: Bool {
-        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && remaining >= 0
-            && subject.count <= FeedbackLimits.maxSubjectLength
+        FeedbackDraftLength.canSend(text, limits: limits)
+            && subject.count <= limits.subjectChars
             && !center.isSubmitting
     }
 
@@ -126,10 +120,10 @@ public struct FeedbackComposerView: View {
                     .font(DSHTheme.Typography.body)
                     .foregroundStyle(DSHTheme.labelPrimary)
                     .accessibilityIdentifier("feedback.subject")
-                    // 超上限就当场截断：契约是 ≤80 字符，截断比"发出去被拒"好。
+                    // 超上限就当场截断：契约是主题 ≤ 服务端下发的字符数，截断比"发出去被拒"好。
                     .onChange(of: subject) { _, value in
-                        if value.count > FeedbackLimits.maxSubjectLength {
-                            subject = String(value.prefix(FeedbackLimits.maxSubjectLength))
+                        if value.count > limits.subjectChars {
+                            subject = String(value.prefix(limits.subjectChars))
                         }
                     }
             }
@@ -166,24 +160,7 @@ public struct FeedbackComposerView: View {
                     }
                 }
                 .accessibilityIdentifier("feedback.text")
-            counter
-        }
-    }
-
-    /// 剩余字数：只剩 500 字以内才出现，平时不占地方；超了就变色并说"精简"，
-    /// 不是等提交被服务器拒了才说。
-    @ViewBuilder
-    private var counter: some View {
-        if remaining < 0 {
-            Text("已超出 4000 字上限，请精简后再发")
-                .font(DSHTheme.Typography.micro)
-                .foregroundStyle(DSHTheme.labelError)
-                .frame(maxWidth: .infinity, alignment: .trailing)
-        } else if remaining <= 500 {
-            Text("还能输入 \(remaining) 字")
-                .font(DSHTheme.Typography.micro)
-                .foregroundStyle(DSHTheme.labelTertiary)
-                .frame(maxWidth: .infinity, alignment: .trailing)
+            FeedbackLengthHint(text: text, limits: limits)
         }
     }
 
@@ -287,7 +264,7 @@ public struct FeedbackComposerView: View {
 
     private func send() async {
         let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !body.isEmpty, body.count <= FeedbackLimits.maxBodyLength else { return }
+        guard FeedbackDraftLength.canSend(body, limits: limits) else { return }
         failure = nil
         do {
             // 主题跟着一起提交；空白由中心按未填处理。
@@ -305,6 +282,42 @@ public struct FeedbackComposerView: View {
         onSent()
         dismiss()
         await center.refreshInbox(force: true)
+    }
+}
+
+/// 正文长度提示：发送窗口与回信输入框共用同一份（同一条判定、同一套文案）。
+///
+/// 平时不占地方——只剩 500 字以内才显示剩余字数；触顶时按**哪个先触顶**分两句：
+/// 字符超了说"字数"，字节先超了（表情等 4 字节字符）说"大小"。文案里不出现写死的
+/// 数字：上限是服务端下发的。
+struct FeedbackLengthHint: View {
+
+    public let text: String
+    public let limits: FeedbackLimits
+
+    private var remaining: Int { FeedbackDraftLength.remaining(text, limits: limits) }
+
+    public var body: some View {
+        Group {
+            switch FeedbackDraftLength.overflow(text, limits: limits) {
+            case .characters:
+                Text("已超出字数上限，请精简后再发")
+                    .foregroundStyle(DSHTheme.labelError)
+                    .accessibilityIdentifier("feedback.length.over.chars")
+            case .bytes:
+                Text("内容超出可发送大小（表情等字符按字节计）")
+                    .foregroundStyle(DSHTheme.labelError)
+                    .accessibilityIdentifier("feedback.length.over.bytes")
+            case .none:
+                if remaining <= 500 {
+                    Text("还能输入 \(remaining) 字")
+                        .foregroundStyle(DSHTheme.labelTertiary)
+                        .accessibilityIdentifier("feedback.length.remaining")
+                }
+            }
+        }
+        .font(DSHTheme.Typography.micro)
+        .frame(maxWidth: .infinity, alignment: .trailing)
     }
 }
 #endif

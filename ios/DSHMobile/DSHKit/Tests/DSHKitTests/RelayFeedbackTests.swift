@@ -494,4 +494,195 @@ struct RelayFeedbackTests {
         let encoded = try JSONEncoder().encode(inbox.notices.first)
         #expect(String(decoding: encoded, as: UTF8.self).contains("\"format\":\"html\""))
     }
+
+    // MARK: - v2 契约形状（2026-10-27 信件整改）
+
+    private var v2Answer: Data {
+        Data("""
+        {"ok":true,"inboxVersion":2,"teamPerspective":true,"unreadCount":3,
+         "threads":[{"threadId":"th_1","subject":"s","status":"open","createdAt":1760000000000,
+                     "lastMessageAt":1760000001000,"unread":0,"teamUnread":9,"mySide":"owner",
+                     "messages":[{"messageId":"u_1","author":"user","body":"q","createdAt":1760000001000}]}],
+         "threadsPage":{"more":true,"nextBefore":{"lastMessageAt":1760000001000,"threadId":"th_1"}},
+         "notices":[{"noticeId":"nt_1","subject":"weekly","format":"text",
+                     "createdAt":1760000002000,"read":false}],
+         "noticesPage":{"more":true,"nextBefore":{"createdAt":1760000002000,"noticeId":"nt_1"}},
+         "limits":{"textChars":4000,"textBytes":12000,"subjectChars":80,"maxTicketPairs":200}}
+        """.utf8)
+    }
+
+    @Test("a v2 answer carries the per-thread side, both pages, limits and summaries without bodies")
+    func v2InboxShape() async throws {
+        Stub.reset([.init(status: 200, body: v2Answer)])
+
+        let inbox = try await client().inbox(tickets: [ticket()])
+
+        #expect(inbox.inboxVersion == 2)
+        #expect(inbox.isVersion2)
+        #expect(inbox.threads.first?.mySide == .owner)
+        #expect(inbox.threads.first?.resolvedSide == .owner)
+        #expect(inbox.notices.first?.body == nil, "v2 lists carry summaries only")
+        #expect(inbox.threadsPage?.more == true)
+        #expect(inbox.threadsPage?.nextBefore?.threadId == "th_1")
+        #expect(inbox.threadsPage?.nextBefore?.lastMessageAt == Date(timeIntervalSince1970: 1_760_000_001))
+        #expect(inbox.noticesPage?.more == true)
+        #expect(inbox.noticesPage?.nextBefore?.noticeId == "nt_1")
+        #expect(inbox.limits?.textChars == 4000)
+        #expect(inbox.limits?.textBytes == 12000)
+
+        let body = try jsonBody()
+        #expect(body["inboxVersion"] as? Int == 2, "v2 is switched on by the request, not sniffed")
+        #expect(body["messagesPerThread"] == nil, "omitted = the server's own default")
+        #expect(body["threadsPage"] == nil)
+        #expect(body["noticePage"] == nil)
+    }
+
+    @Test("a v1 answer without mySide derives the side from the account perspective")
+    func v1InboxDerivesMySide() async throws {
+        Stub.reset([.init(status: 200, body: Data("""
+        {"ok":true,"teamPerspective":true,"unreadCount":0,
+         "threads":[{"threadId":"th_1","status":"open","unread":0,"teamUnread":0,
+                     "messages":[{"messageId":"u_1","author":"user","body":"q","createdAt":1}]}],
+         "notices":[]}
+        """.utf8))])
+        let team = try await client().inbox(tickets: [ticket()])
+        #expect(team.inboxVersion == nil)
+        #expect(!team.isVersion2)
+        #expect(team.threads.first?.mySide == .owner)
+        #expect(team.threadsPage == nil, "an old relay has no pages")
+        #expect(team.limits == nil)
+
+        Stub.reset([.init(status: 200, body: Data("""
+        {"ok":true,"unreadCount":0,
+         "threads":[{"threadId":"th_1","status":"reply","unread":0,
+                     "messages":[{"messageId":"o_1","author":"owner","body":"a","createdAt":1}]}],
+         "notices":[]}
+        """.utf8))])
+        let user = try await client().inbox(tickets: [ticket()])
+        #expect(user.threads.first?.mySide == .user)
+    }
+
+    @Test("mySide stays optional: missing or unknown values never fail the inbox")
+    func mySideIsOptional() throws {
+        let owner = try JSONDecoder().decode(FeedbackThread.self, from: Data(
+            #"{"threadId":"th_1","mySide":"owner","messages":[]}"#.utf8))
+        #expect(owner.mySide == .owner)
+        #expect(owner.resolvedSide == .owner)
+
+        let missing = try JSONDecoder().decode(FeedbackThread.self, from: Data(
+            #"{"threadId":"th_1","messages":[]}"#.utf8))
+        #expect(missing.mySide == nil)
+        #expect(missing.resolvedSide == .user, "the only nil fallback is the user side")
+
+        let unknown = try JSONDecoder().decode(FeedbackThread.self, from: Data(
+            #"{"threadId":"th_1","mySide":"robot","messages":[]}"#.utf8))
+        #expect(unknown.mySide == nil)
+    }
+
+    @Test("a paging request carries only the cursor of the path being advanced")
+    func pagingRequestCarriesTheCursor() async throws {
+        Stub.reset([.init(status: 200, body: Data(
+            #"{"ok":true,"inboxVersion":2,"threads":[],"notices":[],"unreadCount":0}"#.utf8))])
+
+        _ = try await client().inbox(
+            tickets: [],
+            threadsPage: FeedbackPageRequest(
+                limit: 30,
+                before: FeedbackPageCursor(lastMessageAt: Date(timeIntervalSince1970: 1_760_000_000),
+                                           threadId: "th_1"))
+        )
+
+        let body = try jsonBody()
+        #expect(body["noticePage"] == nil)
+        let page = try #require(body["threadsPage"] as? [String: Any])
+        #expect(page["limit"] as? Int == 30)
+        let before = try #require(page["before"] as? [String: Any])
+        #expect(before["lastMessageAt"] as? Int == 1_760_000_000_000, "the relay reads milliseconds")
+        #expect(before["threadId"] as? String == "th_1")
+        #expect(before["createdAt"] == nil)
+    }
+
+    @Test("notice fetches one body by id and maps both failures like a thread")
+    func noticeRequest() async throws {
+        Stub.reset([.init(status: 200, body: Data("""
+        {"ok":true,"notice":{"noticeId":"nt_1","subject":"daily","body":"<h1>daily</h1>",
+                             "format":"html","createdAt":5000,"read":false}}
+        """.utf8))])
+
+        let notice = try await client().notice(noticeId: "nt_1")
+
+        #expect(notice.body == "<h1>daily</h1>")
+        #expect(notice.bodyFormat == .html)
+        #expect(Stub.requests.first?.url?.absoluteString == "https://relay.test/dsh-link/feedback/notice")
+        #expect(try jsonBody()["noticeId"] as? String == "nt_1")
+
+        Stub.reset([.init(status: 404, body: Data(
+            #"{"ok":false,"error":{"code":"feedback/not-found","message":"gone"}}"#.utf8))])
+        let gone = await failure { _ = try await client().notice(noticeId: "nt_x") }
+        #expect(gone == .notFound)
+
+        Stub.reset([.init(status: 200, body: Data(#"{"ok":true}"#.utf8))])
+        let empty = await failure { _ = try await client().notice(noticeId: "nt_x") }
+        #expect(empty == .server(status: 200, code: nil))
+    }
+
+    @Test("a v2 notice summary decodes without a body and keeps html format")
+    func noticeSummaryWithoutBody() throws {
+        let summary = try JSONDecoder().decode(FeedbackNotice.self, from: Data(
+            #"{"noticeId":"nt_1","subject":"s","format":"html","createdAt":1,"read":false}"#.utf8))
+        #expect(summary.body == nil)
+        #expect(!summary.hasBody)
+        #expect(summary.bodyFormat == .html, "the list still knows how to render it once fetched")
+
+        let inline = try JSONDecoder().decode(FeedbackNotice.self, from: Data(
+            #"{"noticeId":"nt_1","body":"inline","createdAt":1,"read":true}"#.utf8))
+        #expect(inline.body == "inline")
+        #expect(inline.hasBody)
+    }
+
+    // MARK: - E3 真实服务端响应夹具
+
+    /// 真 `mail` 服务（整改后的代码）对**生产库副本**跑出来的一份 v2 响应原文。
+    ///
+    /// 抓取：2026-10-27 23:44（Asia/Shanghai），库 `/tmp/mailcopy.db` 的副本，
+    /// `POST /dsh-link/feedback/inbox {"inboxVersion":2}`，调用方是团队账号
+    /// (`acc_8627cd6700f1b07cc4`) 的设备令牌；服务端即 `mail/create_app` + 真 SQLite。
+    /// 内容：6 条线程（每线程 2 条留言，`mySide=owner`）、40 条通知摘要（无 `body`）、
+    /// `limits`（4000/12000/80）、两路 `nextBefore`（线程到头、通知还有更多）。
+    ///
+    /// 这份夹具存在的意义：客户端解码路径吃的是**服务端真实响应**，不是开发手写的桩；
+    /// 桩与服务端一旦键名漂移，这条会红。
+    private func realMailV2Answer() throws -> Data {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .appendingPathComponent("Fixtures/feedback-inbox-v2.json")
+        return try Data(contentsOf: url)
+    }
+
+    @Test("a real v2 answer from the mail service decodes with mySide, both pages and limits")
+    func realServerAnswerDecodes() async throws {
+        Stub.reset([.init(status: 200, body: try realMailV2Answer())])
+
+        let inbox = try await client().inbox(tickets: [])
+
+        #expect(inbox.inboxVersion == 2)
+        #expect(inbox.isVersion2)
+        #expect(inbox.teamPerspective)
+        #expect(inbox.threads.count == 6)
+        #expect(inbox.notices.count == 40)
+        // 每条线程都带服务端判定的 mySide（这份响应的 6 条都是团队侧看的用户来信）。
+        #expect(inbox.threads.allSatisfy { $0.mySide == .owner })
+        #expect(inbox.threads.allSatisfy { !$0.messages.isEmpty })
+        // v2 列表只给摘要：正文按需取，列表里一条 body 都没有。
+        #expect(inbox.notices.allSatisfy { $0.body == nil })
+        #expect(inbox.notices.allSatisfy { ($0.subject?.isEmpty == false) })
+        // 分页与 limits 都是服务端下发的真实值（不是客户端补的默认）。
+        #expect(inbox.threadsPage?.more == false)
+        #expect(inbox.threadsPage?.nextBefore?.threadId != nil)
+        #expect(inbox.noticesPage?.more == true)
+        #expect(inbox.noticesPage?.nextBefore?.noticeId != nil)
+        #expect(inbox.limits == FeedbackLimits(textChars: 4000, textBytes: 12000, subjectChars: 80))
+        // 真响应里的请求体没有被夹具夹带：这次请求仍然只声明 v2。
+        #expect(try jsonBody()["inboxVersion"] as? Int == 2)
+    }
 }

@@ -41,6 +41,10 @@ let package = Package(
             // 同时依赖两者：RelayDeviceAdminTests 测的是 RelayKit 的类型，
             // 但它与 DLP 契约测试共用一个测试目标，这样测试文件不用搬家。
             dependencies: ["DSHKit", "RelayKit"],
+            // `Fixtures/` 是真实服务端响应的原文（E3），用例用 `#filePath` 读它；
+            // 它不是要编译/拷贝进 bundle 的源，声明成 exclude 让 SwiftPM 不再报
+            // "unhandled file" 警告。
+            exclude: ["Fixtures"],
             swiftSettings: [
                 .swiftLanguageMode(.v6),
             ]

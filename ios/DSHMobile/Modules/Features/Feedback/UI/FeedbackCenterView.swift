@@ -138,24 +138,24 @@ public struct FeedbackCenterView: View {
             }
             ForEach(sentThreads) { thread in
                 NavigationLink(value: FeedbackDestination.thread(thread.threadId, .sent)) {
-                    FeedbackSentRow(thread: thread, teamPerspective: center.teamPerspective)
+                    FeedbackSentRow(thread: thread)
                 }
                 .accessibilityIdentifier("feedback.row.\(thread.threadId)")
             }
+            moreRow
         }
     }
 
     /// 发件箱按**我发信的时间**倒序：`center.threads` 是按 `lastMessageAt` 排的，收到回信之后
     /// 那封信会往前跳，看起来像"我刚发了一封"（2026-10-12 改成单封信模型后一并修）。
+    ///
+    /// 「我发的那封」按每线程 `mySide` 取：用户侧是 user 留言，团队侧是 owner 回信；
+    /// 团队账号自己的提交（`mySide == .user`）因此落在这一栏。
     private var sentThreads: [FeedbackThread] {
-        let mine = center.threads.filter { thread in
-            thread.messages.contains { $0.author == sentAuthor }
-        }
-        return mine.sorted { sentAt($0) > sentAt($1) }
+        center.threads
+            .filter { $0.myLetter != nil }
+            .sorted { sentAt($0) > sentAt($1) }
     }
-
-    /// 团队视角的「已发送」＝我们回过的信（线程里有 owner 留言）。
-    private var sentAuthor: FeedbackMessage.Author { center.teamPerspective ? .owner : .user }
 
     /// 空态**只留一行**（owner：参考一般邮箱，无谓的小字不要有）。
     ///
@@ -166,7 +166,7 @@ public struct FeedbackCenterView: View {
     }
 
     private func sentAt(_ thread: FeedbackThread) -> Date {
-        thread.messages.last { $0.author == sentAuthor }?.createdAt ?? thread.createdAt ?? .distantPast
+        thread.myLetter?.createdAt ?? thread.createdAt ?? .distantPast
     }
 
     // MARK: - 收件箱
@@ -183,17 +183,11 @@ public struct FeedbackCenterView: View {
                 switch item {
                 case .reply(let thread, let message):
                     NavigationLink(value: FeedbackDestination.thread(thread.threadId, .inbox)) {
-                        FeedbackMailRow(firstLine: center.teamPerspective
-                                            ? (thread.source?.displayLine ?? String(localized: "匿名来信"))
-                                            : String(localized: "DSH Mobile 团队"),
-                                        // 主题优先用线程自己的 `subject`；没有就退到
-                                        // 「关于你的反馈：<用户那句>」，而不是把回信的
-                                        // 「你好：」顶到标题行（见 `FeedbackSubject.replyLine`）。
-                                        subject: FeedbackSubject.replyLine(
-                                            threadSubject: thread.subject,
-                                            userBody: thread.messages.first { $0.author == .user }?.body,
-                                            replyBody: message.body,
-                                            replyFormat: message.bodyFormat),
+                        FeedbackMailRow(firstLine: thread.counterpartyLine,
+                                        // 主题优先用线程自己的 `subject`；用户看回信时没有就退到
+                                        // 「关于你的反馈：<用户那句>」，团队看来信时用来信自己的
+                                        // 主题（见 `FeedbackThread.inboxSubject(for:)`）。
+                                        subject: thread.inboxSubject(for: message),
                                         snippet: FeedbackSubject.snippet(of: message.body,
                                                                          format: message.bodyFormat),
                                         createdAt: message.createdAt,
@@ -202,28 +196,47 @@ public struct FeedbackCenterView: View {
                     .accessibilityIdentifier("feedback.row.\(thread.threadId)")
                 case .notice(let notice):
                     NavigationLink(value: FeedbackDestination.notice(notice.noticeId)) {
+                        // 通知行只有"服务通知 / 标题 / 时间"：正文改成打开时按需取
+                        // （设计 §M6.6），列表不再有摘要行。
                         FeedbackMailRow(firstLine: String(localized: "服务通知"),
                                         subject: FeedbackSubject.line(subject: notice.subject,
                                                                       body: notice.body,
                                                                       format: notice.bodyFormat),
-                                        snippet: FeedbackSubject.snippet(of: notice.body,
-                                                                         format: notice.bodyFormat),
                                         createdAt: notice.createdAt,
                                         unread: center.isUnread(noticeId: notice.noticeId))
                     }
                     .accessibilityIdentifier("feedback.row.\(notice.noticeId)")
                 }
             }
+            moreRow
         }
     }
 
-    /// 回信＝某条线程里最后一次 owner 留言；与通知混排，按时间倒序看先后。
-    /// 团队视角（030 二期）：收件箱是**用户来信**（最后一封 user 留言）。
+    /// 两栏共用的底部"加载更早"：线程与通知两路游标都由 ``FeedbackCenter/loadEarlier()``
+    /// 推进（设计 §M6.3）。旧服务端没有分页时这一行不出现。
+    @ViewBuilder
+    private var moreRow: some View {
+        if center.hasEarlier || center.isLoadingEarlier || center.loadEarlierFailed {
+            FeedbackMoreRow(isLoading: center.isLoadingEarlier,
+                            failed: center.loadEarlierFailed) {
+                Task { await center.loadEarlier() }
+            }
+        } else if center.earlierCapped {
+            // F1：服务端还有更早的记录，但本机已达保存上限——这必须是看得见的终止态，
+            // 不是继续可点的"加载更早"（点了也只会取回一页再被裁掉）。
+            Text("更早的记录已超出本机保存上限")
+                .font(DSHTheme.Typography.caption)
+                .foregroundStyle(DSHTheme.labelTertiary)
+                .frame(maxWidth: .infinity, alignment: .center)
+                .accessibilityIdentifier("feedback.more.capped")
+        }
+    }
+
+    /// 回信＝某条线程里对侧最近一封留言；与通知混排，按时间倒序看先后。
+    /// 哪一封是"对侧"只看线程自己的 `mySide`（团队账号自己的信因此不会进收件箱）。
     private var inboxItems: [InboxItem] {
-        let isTeam = center.teamPerspective
-        let author: FeedbackMessage.Author = isTeam ? .user : .owner
         let replies = center.threads.compactMap { thread in
-            thread.messages.last { $0.author == author }.map { InboxItem.reply(thread, $0) }
+            thread.incomingLetter.map { InboxItem.reply(thread, $0) }
         }
         let notices = center.notices.map { InboxItem.notice($0) }
         return (replies + notices).sorted { $0.createdAt > $1.createdAt }
@@ -241,7 +254,8 @@ private struct FeedbackMailRow: View {
 
     public let firstLine: String
     public let subject: String
-    public let snippet: String
+    /// 摘要行。通知不再有正文摘要（正文按需取），所以缺省为空 = 不画这一行。
+    public var snippet: String = ""
     public let createdAt: Date?
     /// 没传 = 这一栏没有未读这回事（已发送），只留出与收件箱对齐的空位，不画点。
     public var unread: Bool?
@@ -289,37 +303,55 @@ private struct FeedbackMailRow: View {
 private struct FeedbackSentRow: View {
 
     public let thread: FeedbackThread
-    /// 团队视角：首行写收信人（那位用户）；用户视角写「DSH Mobile 团队」（030 二期）。
-    public var teamPerspective: Bool = false
 
     public var body: some View {
+        let letter = thread.myLetter
         FeedbackMailRow(
-            firstLine: teamPerspective
-                ? (thread.source?.displayLine ?? String(localized: "匿名来信"))
-                : String(localized: "DSH Mobile 团队"),
-            subject: subject,
-            snippet: summary,
+            firstLine: thread.counterpartyLine,
+            subject: subject(letter),
+            snippet: FeedbackSubject.snippet(of: letter?.body, format: letter?.bodyFormat ?? .text),
             // 发件箱里显示的是**我发信那一刻**：`lastMessageAt` 在收到回信之后会变成回信时间，
             // 挂在"我发出的"那一行上就成了错的时间（2026-10-12 owner 要求发件箱也按邮件的样子）。
-            createdAt: myLetter?.createdAt ?? thread.createdAt
+            createdAt: letter?.createdAt ?? thread.createdAt
         )
     }
 
     /// 主题：用户没写就退到正文首句（与详情、收件箱同一个函数）。
-    private var subject: String {
-        let line = FeedbackSubject.line(subject: thread.subject, body: myLetter?.body)
+    private func subject(_ letter: FeedbackMessage?) -> String {
+        let line = FeedbackSubject.line(subject: thread.subject, body: letter?.body,
+                                        format: letter?.bodyFormat ?? .text)
         return line.isEmpty ? String(localized: "已提交，正在同步") : line
     }
+}
 
-    /// 摘要：我发出的那封的正文（跳过问候与署名那几行）；刚提交、正文还没同步回来时
-    /// 就不显示这一行。取"最后一封我发的"，而不是线程里最后一条——后者可能是回信。
-    private var summary: String {
-        FeedbackSubject.snippet(of: myLetter?.body)
+/// 两栏共用的底部"加载更早"行：一次点击推进线程或通知那一路游标中的一个
+/// （选哪一路由 ``FeedbackCenter/loadEarlier()`` 按已加载边界决定）。
+///
+/// 三种可见状态都落在这一行上：还能翻（"加载更早"）、正在翻、上一次失败（可重试）。
+private struct FeedbackMoreRow: View {
+
+    public let isLoading: Bool
+    public let failed: Bool
+    public let action: () -> Void
+
+    private var title: String {
+        if isLoading { return String(localized: "正在读取更早的记录") }
+        if failed { return String(localized: "读取更早的记录失败，点按重试") }
+        return String(localized: "加载更早")
     }
 
-    /// 「我发出的那封」按视角取：用户取 user 留言，团队取 owner 回信（030）。
-    private var myLetter: FeedbackMessage? {
-        thread.messages.last { $0.author == (teamPerspective ? .owner : .user) }
+    public var body: some View {
+        Button(action: action) {
+            HStack {
+                Spacer(minLength: 0)
+                Text(title)
+                    .font(DSHTheme.Typography.caption)
+                    .foregroundStyle(failed ? DSHTheme.labelError : DSHTheme.labelSecondary)
+                Spacer(minLength: 0)
+            }
+        }
+        .disabled(isLoading)
+        .accessibilityIdentifier("feedback.more")
     }
 }
 #endif

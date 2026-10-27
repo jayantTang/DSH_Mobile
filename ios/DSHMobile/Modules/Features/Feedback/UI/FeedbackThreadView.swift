@@ -150,8 +150,24 @@ public enum FeedbackSubject {
     /// 信件的"脚手架"行：称呼（短且以冒号收尾）、署名、纯日期。
     private static func isScaffolding(_ line: String) -> Bool {
         if line.count <= 6 { return true }
-        if line.hasPrefix("DSH Mobile 团队") { return true }
+        if line.hasPrefix(String(localized: "DSH Mobile 团队")) { return true }
         return line.allSatisfy { $0.isNumber || $0 == "-" || $0 == "/" || $0 == "." }
+    }
+}
+
+extension FeedbackThread {
+    /// 收件箱那一行的主题。
+    ///
+    /// 我这一侧是团队时，收件箱里是**用户来信**：用来信自己的主题，没写就取正文首句。
+    /// 我这一侧是用户时，收件箱里是我们的回信：没有主题就退到
+    /// 「关于你的反馈：<用户那句>」，而不是把「你好：」顶到标题行（2026-10-12 修过的毛病）。
+    func inboxSubject(for message: FeedbackMessage) -> String {
+        resolvedSide == .owner
+            ? FeedbackSubject.line(subject: subject, body: message.body, format: message.bodyFormat)
+            : FeedbackSubject.replyLine(threadSubject: subject,
+                                        userBody: myLetter?.body,
+                                        replyBody: message.body,
+                                        replyFormat: message.bodyFormat)
     }
 }
 
@@ -203,15 +219,15 @@ public struct FeedbackThreadView: View {
                             .font(DSHTheme.Typography.caption)
                             .foregroundStyle(DSHTheme.labelSecondary)
                     }
+                    // FR-5：我这一侧是团队、且看的是收件箱时，底部给回信入口。
+                    // 团队账号自己的信（mySide == .user）没有回信入口。
+                    if side == .inbox, thread.canReply {
+                        replyBox
+                    }
                 } else {
                     Text("这条记录在服务器上已不存在，可能已被删除。")
                         .font(DSHTheme.Typography.caption)
                         .foregroundStyle(DSHTheme.labelSecondary)
-                }
-
-                // FR-5：团队视角 + 看的是来信时，底部给回信入口。
-                if center.teamPerspective, side == .inbox, thread != nil {
-                    replyBox
                 }
             }
             .padding(DSHTheme.Spacing.loose)
@@ -258,6 +274,7 @@ public struct FeedbackThreadView: View {
                 // 容器上不要再挂 id：SwiftUI 会把整块当成一个无障碍元素，子元素的 id 就找不到了
                 // （2026-10-16 实测：外层 feedback.reply.box 在时 feedback.reply.input 查不到）。
                 .accessibilityIdentifier("feedback.reply.input")
+            FeedbackLengthHint(text: replyText, limits: limits)
             HStack {
                 if let replyError {
                     Text(replyError)
@@ -281,21 +298,20 @@ public struct FeedbackThreadView: View {
                     }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(replyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isReplying)
+                // 与发送窗口同一套长度判定（字符 + UTF-8 字节）：超了就不许发。
+                .disabled(!FeedbackDraftLength.canSend(replyText, limits: limits) || isReplying)
                 .accessibilityIdentifier("feedback.reply.send")
             }
         }
     }
 
-    /// 这一页要呈现的那封信。旧数据里同一线程可能有多封我方留言（append 时代留下的），
-    /// 取最近的那封：与列表行的口径一致。
+    /// 回信输入框与发送窗口读同一个上限（服务端下发的 `limits`，缺失退编译期默认）。
+    private var limits: FeedbackLimits { center.limits }
+
+    /// 这一页要呈现的那封信：**只看线程自己的 `mySide`**——收件箱是对方的来信，
+    /// 已发送是我这一侧的那封。旧数据里同一侧可能有多封，取最近的那封。
     private func letter(in thread: FeedbackThread) -> FeedbackMessage? {
-        // 团队视角（030 二期）：收件箱是用户来信、已发送是我们的回信，两侧对调。
-        let isTeam = center.teamPerspective
-        switch (side, isTeam) {
-        case (.inbox, false), (.sent, true): return thread.messages.last { $0.author == .owner }
-        case (.inbox, true), (.sent, false): return thread.messages.last { $0.author == .user }
-        }
+        side == .sent ? thread.myLetter : thread.incomingLetter
     }
 
     @ViewBuilder
@@ -303,17 +319,10 @@ public struct FeedbackThreadView: View {
         switch side {
         case .inbox:
             LetterCard(
-                sender: center.teamPerspective
-                    ? (thread.source?.displayLine ?? String(localized: "匿名来信"))
-                    : String(localized: "DSH Mobile 团队"),
+                sender: thread.counterpartyLine,
                 isMine: false,
-                // 与收件箱那一行用同一个函数：没有主题时退到「关于你的反馈：…」，
-                // 而不是把回信开头的「你好：」当成标题。
-                subject: FeedbackSubject.replyLine(
-                    threadSubject: thread.subject,
-                    userBody: thread.messages.last { $0.author == .user }?.body,
-                    replyBody: message.body,
-                    replyFormat: message.bodyFormat),
+                // 与收件箱那一行用同一个函数，两处标题不会漂。
+                subject: thread.inboxSubject(for: message),
                 text: message.body,
                 format: message.bodyFormat,
                 createdAt: message.createdAt)
@@ -321,9 +330,7 @@ public struct FeedbackThreadView: View {
             // 主题只写用户真填过的那句；没填就不写抬头行——列表里的兜底标题是列表的需要，
             // 在这里会与正文第一句重复。
             LetterCard(
-                sender: center.teamPerspective
-                    ? String(localized: "我发出的")
-                    : String(localized: "我发出的"),
+                sender: String(localized: "我发出的"),
                 isMine: true,
                 subject: writtenSubject(of: thread),
                 text: message.body,
@@ -354,7 +361,9 @@ private struct LetterHeader: View {
 
     public var body: some View {
         HStack(spacing: DSHTheme.Spacing.hairline) {
-            Text(isMine ? "我" : initial)
+            // 三元另一支是 String（机型首字母），整个表达式因此是 `String`，`Text` 按
+            // 原样显示——必须显式本地化，否则英文构建里头像仍写「我」。
+            Text(isMine ? String(localized: "我") : initial)
                 .font(DSHTheme.Typography.micro)
                 .foregroundStyle(isMine ? DSHTheme.labelSecondary : DSHTheme.brand)
                 .frame(width: 20, height: 20)
@@ -433,31 +442,67 @@ public struct LetterCard: View {
     }
 }
 
-/// 一条通知的详情：与回信同一种信件式版式，打开即记已读。
+/// 一条通知的详情：与回信同一种信件式版式。
+///
+/// 四种结局都在这一屏（设计 §M6.4）：加载中 / 正文 / 需要联网 + 重试 / 已不存在。
+/// 正文按需取（列表只带摘要）；状态由 ``FeedbackNoticeDetail`` 持有，**取正文失败
+/// 不标已读**——失败只能落到"需要联网查看"并给重试入口。
 public struct FeedbackNoticeView: View {
 
     public let noticeId: String
 
+    @State private var detail: FeedbackNoticeDetail
+
     private var center: FeedbackCenter { .shared }
     private var notice: FeedbackNotice? { center.notice(noticeId) }
+
+    public init(noticeId: String) {
+        self.noticeId = noticeId
+        _detail = State(initialValue: FeedbackNoticeDetail(noticeId: noticeId))
+    }
 
     public var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: DSHTheme.Spacing.standard) {
-                if let notice {
-                    LetterCard(
-                        sender: String(localized: "服务通知"),
-                        isMine: false,
-                        subject: FeedbackSubject.line(subject: notice.subject, body: notice.body,
-                                                      format: notice.bodyFormat),
-                        text: notice.body,
-                        format: notice.bodyFormat,
-                        createdAt: notice.createdAt
-                    )
-                } else {
-                    Text("这条通知已经不在了。")
-                        .font(DSHTheme.Typography.caption)
-                        .foregroundStyle(DSHTheme.labelSecondary)
+                switch detail.phase {
+                case .loading:
+                    HStack(spacing: DSHTheme.Spacing.tight) {
+                        ProgressView()
+                        Text("正在加载通知…")
+                            .font(DSHTheme.Typography.caption)
+                            .foregroundStyle(DSHTheme.labelSecondary)
+                    }
+                    .accessibilityIdentifier("feedback.notice.loading")
+                case .ready:
+                    if let notice {
+                        LetterCard(
+                            sender: String(localized: "服务通知"),
+                            isMine: false,
+                            subject: FeedbackSubject.line(subject: notice.subject, body: notice.body,
+                                                          format: notice.bodyFormat),
+                            text: notice.body ?? "",
+                            format: notice.bodyFormat,
+                            createdAt: notice.createdAt
+                        )
+                    } else {
+                        gone
+                    }
+                case .needsNetwork:
+                    VStack(alignment: .leading, spacing: DSHTheme.Spacing.tight) {
+                        // id 挂在文案上，不挂容器：容器上的 id 会下传给子元素，
+                        // 把重试按钮自己的 id 覆盖掉（2026-10-16 的坑）。
+                        Text("需要联网查看")
+                            .font(DSHTheme.Typography.body)
+                            .foregroundStyle(DSHTheme.labelPrimary)
+                            .accessibilityIdentifier("feedback.notice.offline")
+                        Button(String(localized: "重试")) {
+                            Task { await detail.load() }
+                        }
+                        .buttonStyle(.bordered)
+                        .accessibilityIdentifier("feedback.notice.retry")
+                    }
+                case .gone:
+                    gone
                 }
             }
             .padding(DSHTheme.Spacing.loose)
@@ -467,7 +512,14 @@ public struct FeedbackNoticeView: View {
         .accessibilityIdentifier("feedback.notice")
         .navigationTitle("通知")
         .navigationBarTitleDisplayMode(.inline)
-        .task { await center.openNotice(noticeId) }
+        .task { await detail.load() }
+    }
+
+    private var gone: some View {
+        Text("这条通知已经不在了。")
+            .font(DSHTheme.Typography.caption)
+            .foregroundStyle(DSHTheme.labelSecondary)
+            .accessibilityIdentifier("feedback.notice.gone")
     }
 }
 #endif

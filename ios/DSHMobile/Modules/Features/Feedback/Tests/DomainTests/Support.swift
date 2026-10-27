@@ -145,12 +145,13 @@ class FeedbackCenterTestCase: XCTestCase {
         store: FeedbackLocalStore,
         interval: TimeInterval = 0,
         url: URL? = nil,
-        token: String? = nil
+        token: String? = nil,
+        rowLimits: FeedbackMirrorLimits? = nil
     ) -> FeedbackCenter {
         let target = url ?? stub.baseURL
         return FeedbackCenter(store: store, minimumRefreshInterval: interval, endpointProvider: {
             FeedbackCenter.Endpoint(url: target, deviceToken: token)
-        })
+        }, rowLimits: rowLimits)
     }
 
     /// A mirror with one owner reply it has not read and one unread notice.
@@ -160,6 +161,8 @@ class FeedbackCenterTestCase: XCTestCase {
                                        messages: [mirrorUserMessage("m_u1", at: 1_000),
                                                   mirrorOwnerMessage("m_1", at: 2_000)])]
         mirror.notices = [mirrorNotice("n_1", body: Zh.noticeBody, at: 3_000)]
+        // 上一次服务端给的角标数（角标只认这个值，不读本机重算）。
+        mirror.serverUnreadCount = 2
         return mirror
     }
 }
@@ -182,6 +185,7 @@ func mirrorThread(
     status: String = "replied",
     createdAt: Int? = nil,
     lastMessageAt: Int,
+    mySide: FeedbackThread.Side = .user,
     messages: [FeedbackMirror.Message]
 ) -> FeedbackMirror.Thread {
     FeedbackMirror.Thread(
@@ -190,6 +194,7 @@ func mirrorThread(
         status: status,
         createdAt: date(createdAt ?? lastMessageAt),
         lastMessageAt: date(lastMessageAt),
+        mySide: mySide,
         messages: messages
     )
 }
@@ -199,9 +204,11 @@ func mirrorNotice(
     subject: String? = nil,
     body: String = Zh.noticeText,
     format: String? = nil,
-    at millis: Int
+    at millis: Int,
+    bodyCached: Bool = true
 ) -> FeedbackMirror.Notice {
-    FeedbackMirror.Notice(noticeId: id, subject: subject, body: body, format: format, createdAt: date(millis))
+    FeedbackMirror.Notice(noticeId: id, subject: subject, body: body, format: format,
+                          createdAt: date(millis), bodyCached: bodyCached)
 }
 
 // MARK: - Wire fixtures (what the relay answers)
@@ -228,6 +235,8 @@ func wireThreadJSON(
     subject: String? = nil,
     status: String = "replied",
     unread: Int = 0,
+    teamUnread: Int = 0,
+    mySide: String? = nil,
     lastMessageAt: Int,
     messages: [String]
 ) -> String {
@@ -235,34 +244,59 @@ func wireThreadJSON(
         #""threadId":"\#(id)""#,
         #""status":"\#(status)""#,
         #""unread":\#(unread)"#,
+        #""teamUnread":\#(teamUnread)"#,
         #""createdAt":\#(lastMessageAt)"#,
         #""lastMessageAt":\#(lastMessageAt)"#,
     ]
     if let subject { fields.append(#""subject":"\#(subject)""#) }
+    if let mySide { fields.append(#""mySide":"\#(mySide)""#) }
     fields.append(#""messages":[\#(messages.joined(separator: ","))]"#)
     return "{\(fields.joined(separator: ","))}"
 }
 
 func wireNoticeJSON(
     _ id: String,
-    body: String,
+    body: String? = nil,
+    subject: String? = nil,
     format: String? = nil,
     read: Bool,
     at millis: Int
 ) -> String {
     var fields = [
         #""noticeId":"\#(id)""#,
-        #""body":"\#(body)""#,
         #""createdAt":\#(millis)"#,
         #""read":\#(read)"#,
     ]
+    if let body { fields.append(#""body":"\#(body)""#) }
+    if let subject { fields.append(#""subject":"\#(subject)""#) }
     if let format { fields.append(#""format":"\#(format)""#) }
     return "{\(fields.joined(separator: ","))}"
 }
 
-/// One `/feedback/inbox` answer.
-func inboxJSON(threads: [String] = [], notices: [String] = [], unreadCount: Int = 0) -> String {
-    #"{"ok":true,"threads":[\#(threads.joined(separator: ","))],"notices":[\#(notices.joined(separator: ","))],"unreadCount":\#(unreadCount)}"#
+/// One `/feedback/inbox` answer。不带 `inboxVersion` 就是旧服务端的 v1 形状
+/// （新增参数都有默认值，所以老用例读起来仍像 v1 负载）。
+func inboxJSON(
+    threads: [String] = [],
+    notices: [String] = [],
+    unreadCount: Int = 0,
+    teamPerspective: Bool? = nil,
+    inboxVersion: Int? = nil,
+    threadsPage: String? = nil,
+    noticesPage: String? = nil,
+    limits: String? = nil
+) -> String {
+    var fields = [
+        #""ok":true"#,
+        #""threads":[\#(threads.joined(separator: ","))]"#,
+        #""notices":[\#(notices.joined(separator: ","))]"#,
+        #""unreadCount":\#(unreadCount)"#,
+    ]
+    if let teamPerspective { fields.append(#""teamPerspective":\#(teamPerspective)"#) }
+    if let inboxVersion { fields.append(#""inboxVersion":\#(inboxVersion)"#) }
+    if let threadsPage { fields.append(#""threadsPage":\#(threadsPage)"#) }
+    if let noticesPage { fields.append(#""noticesPage":\#(noticesPage)"#) }
+    if let limits { fields.append(#""limits":\#(limits)"#) }
+    return "{\(fields.joined(separator: ","))}"
 }
 
 /// One `/feedback/read` answer.
