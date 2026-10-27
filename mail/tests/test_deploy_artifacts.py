@@ -61,6 +61,24 @@ def test_the_snippet_routes_feedback_to_the_mail_port():
     assert "header_up X-Forwarded-For {remote_host}" in text, "限流桶靠它分辨调用方"
 
 
+def test_the_snippet_compresses_inside_the_feedback_handle_block_only():
+    """压缩只加在 mail 自己的 handle 块内：放到站点级会改到中转的 WS 路由。"""
+    lines = SNIPPET.read_text().splitlines()
+    opens = [index for index, line in enumerate(lines)
+             if line.strip().startswith("handle ")]
+    assert [lines[index].strip() for index in opens] == ["handle /dsh-link/feedback/* {"], \
+        "片段里只能有 mail 自己的 handle 块"
+
+    start = opens[0]
+    end = next(index for index in range(start + 1, len(lines)) if lines[index].strip() == "}")
+    inside = lines[start:end + 1]
+    assert "encode zstd gzip" in [line.strip() for line in inside], "块内要有 encode"
+    before = [line.strip() for line in lines[:start]]
+    after = [line.strip() for line in lines[end + 1:]]
+    assert all("encode" not in line for line in before + after), \
+        "块外（含站点级）不许出现 encode"
+
+
 def test_insert_and_remove_touch_only_the_mail_block(tmp_path):
     caddyfile = tmp_path / "Caddyfile"
     caddyfile.write_text(CADDYFILE)

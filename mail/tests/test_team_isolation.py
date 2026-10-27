@@ -7,7 +7,7 @@
 1. 取件凭据（`fk_` 明文只在写信人自己手机的 Keychain，服务端只存 SHA-256）；
 2. 设备命中（`deviceId` 相同）；
 3. 账号命中（`accountId` 相同）；
-   外加团队那一侧：`teamAccountId` = 调用方账号（只在开关打开时参与）。
+   外加团队那一侧：调用方**就是**团队账号，且线程命中派生谓词（只在开关打开时参与）。
 
 本文件按身份矩阵逐格钉：匿名 / 无关账号 / 写信人 / 团队，四者对**同一个线程**
 分别能读什么、能写什么。矩阵之外的边界（错凭据、坏令牌、缺字段）在
@@ -49,11 +49,38 @@ async def test_an_unrelated_account_sees_nothing_of_a_letter_it_did_not_write(cl
     anonymous = await _inbox(client, None)
     assert anonymous["threads"] == [], "匿名调用只有凭据，没有凭据就什么都没有"
 
-    # 对照：写信人与团队都看得到（团队那一侧由开关与绑定决定）。
+    # 对照：写信人与团队都看得到（团队那一侧由派生谓词决定，不落库）。
     assert [t["threadId"] for t in (await _inbox(client, author))["threads"]] == [letter_id]
     team = register_device(client, account_id=TEAM)
     assert [t["threadId"] for t in (await _inbox(client, team))["threads"]] == [letter_id]
-    assert store.feedback_thread(letter_id, None)["teamAccountId"] == TEAM_ACCOUNT
+    assert store.feedback_thread(letter_id, None, team=TEAM_ACCOUNT,
+                                 caller_account=TEAM)["userLetter"] is True
+
+
+async def test_the_team_hit_path_never_answers_a_non_team_caller(client, store):
+    """团队那条命中路径的判据是「调用方**就是**团队账号」——扩出来的隔离用例。
+
+    修 P0-2 时要改的正是这一处：旧实现靠"线程上的 teamAccountId 等于调用方账号"
+    隐式达到，改成派生谓词后必须显式比较调用方账号，否则任何账号都会命中全部来信。
+    """
+    author = register_device(client, account_id=AUTHOR)
+    submitted = await client.post("/feedback/submit", json={
+        "text": "只有我和团队该看到这封信", "deviceModel": "iPhone15,4"},
+        headers=device_headers(author))
+    assert submitted.status == 200, await submitted.text()
+    letter_id = (await submitted.json())["threadId"]
+
+    # 两个不同的非团队账号，各自带着"团队开关已打开"的同一份配置，一条来信都拿不到。
+    for account_id in (OTHER, "acc_someone_else"):
+        stranger = register_device(client, account_id=account_id)
+        body = await _inbox(client, stranger)
+        assert letter_id not in {t["threadId"] for t in body["threads"]}
+        assert body["unreadCount"] == 0
+
+    # 存储层同一格：给了 team_account 也只回答"调用方自己是不是团队"。
+    assert store.feedback_threads_by_device("dev_stranger", OTHER, team_account=TEAM) == []
+    assert [t["threadId"] for t in store.feedback_threads_by_device(
+        "dev_any", TEAM, team_account=TEAM)] == [letter_id]
 
 
 async def test_an_unrelated_account_cannot_append_even_knowing_the_thread_id(client, store):
@@ -152,16 +179,17 @@ async def test_every_test_harness_model_stays_out_of_the_team_inbox(client, stor
     """测试台机型名单是"别把自己的验收单当用户来信"的**唯一**防线，逐项钉住。"""
     submitted = await client.post("/feedback/submit", json={"text": "验收单", "deviceModel": model})
     assert submitted.status == 200, await submitted.text()
-    assert store.feedback_thread((await submitted.json())["threadId"], None)["teamAccountId"] is None
+    assert store.feedback_thread((await submitted.json())["threadId"], None,
+                                 team=TEAM_ACCOUNT)["userLetter"] is False
 
     team = register_device(client, account_id=TEAM)
     assert (await _inbox(client, team))["threads"] == []
 
 
-async def test_a_real_model_is_bound_even_when_the_hint_field_is_missing(client, store):
+async def test_a_real_model_counts_as_a_letter_even_when_the_hint_field_is_missing(client, store):
     """名单之外（含完全不填机型）的提交一律算真实来信——宁可信其真。"""
     for payload in ({"text": "无机型字段"}, {"text": "空机型字段", "deviceModel": ""}):
         submitted = await client.post("/feedback/submit", json=payload)
         assert submitted.status == 200, await submitted.text()
-        assert store.feedback_thread((await submitted.json())["threadId"],
-                                     None)["teamAccountId"] == TEAM_ACCOUNT
+        assert store.feedback_thread((await submitted.json())["threadId"], None,
+                                     team=TEAM_ACCOUNT)["userLetter"] is True

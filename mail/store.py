@@ -30,6 +30,102 @@ FEEDBACK_FORMATS = ("text", "html")
 TEST_DEVICE_MODELS = {"arm64", "x86_64", "deploy-check", "Node", "simulator", "test-harness"}
 DEFAULT_FEEDBACK_FORMAT = "text"
 
+# ── 线程归属：「这条线程是不是写给团队的用户来信」──────────────────────────
+#
+# 归属是**派生谓词**，不是提交时的配置快照（P2-7：`teamAccountId` 在团队开关为空
+# 期间收的信上永远是 NULL，补不回来；快照也回答不了"团队自己写的那条算不算"）。
+#
+#   is_user_letter(thread, team) =
+#       (thread.accountId is NULL or thread.accountId != team)
+#       and (thread.deviceModel is NULL or thread.deviceModel not in TEST_DEVICE_MODELS)
+#
+# 两份实现必须逐格等价，由 `test_the_sql_fragment_and_the_pure_function_agree_on_every_combination`
+# 穷举钉住：SQL 片段用于命中查询与未读聚合，纯函数用于内存判定（回信侧、管理清单）。
+_MODELS_SQL = ",".join("'" + model.replace("'", "''") + "'" for model in sorted(TEST_DEVICE_MODELS))
+_USER_LETTER_TEMPLATE = (
+    "({p}accountId IS NULL OR {p}accountId <> ?)"
+    " AND ({p}deviceModel IS NULL OR {p}deviceModel NOT IN (" + _MODELS_SQL + "))")
+
+#: 无表别名的谓词（一次请求里只有 feedbackThreads 一张表）。
+USER_LETTER_SQL = _USER_LETTER_TEMPLATE.format(p="")
+#: `JOIN feedbackThreads t` 里的谓词（未读聚合用）。
+USER_LETTER_SQL_T = _USER_LETTER_TEMPLATE.format(p="t.")
+
+
+def is_user_letter(account_id: str | None, device_model: str | None, team: str) -> bool:
+    """谓词的内存实现：这封是不是"给团队的用户来信"。参数取**线程**的来源与当前团队账号。"""
+    if account_id is not None and account_id == team:
+        return False
+    return device_model is None or device_model not in TEST_DEVICE_MODELS
+
+
+def my_side(user_letter: bool, caller_is_team: bool) -> str:
+    """调用方在这条线程上的视角：只有"调用方是团队"且"这条是用户来信"时才是 owner 侧。
+
+    客户端此后只用它决定两栏方向、未读归哪一侧、回信入口；不再按账号级布尔去猜。
+    """
+    return "owner" if (user_letter and caller_is_team) else "user"
+
+
+def _before_clause(time_column: str, id_column: str, before: dict[str, Any] | None,
+                   time_key: str, id_key: str) -> tuple[str, list[Any]]:
+    """keyset 游标：严格早于 `(before.time, before.id)`。两条列表共用这一份。
+
+    排序键是 `(时间 DESC, id DESC)`；线程的时间是 `lastMessageAt`（会因新回信前移），
+    通知是 `createdAt`（不可变）。幂等键在两种情况下都保证"不漏"（最多重复）。
+    同毫秒多条时按 id **降序**，与 `page_thread_rows` 的排序、以及线程查询的
+    `ORDER BY lastMessageAt DESC, threadId DESC` 是同一个口径。
+    """
+    if not before:
+        return "", []
+    stamp, ident = int(before[time_key]), str(before[id_key])
+    return (f" AND ({time_column} < ? OR ({time_column} = ? AND {id_column} < ?))",
+            [stamp, stamp, ident])
+
+
+def take_page(rows: list[Any], limit: int) -> tuple[list[Any], bool]:
+    """limit+1 多取一条判 `more`。两条列表（以及合并后的线程列表）共用这一份判定。"""
+    return list(rows[:limit]), len(rows) > limit
+
+
+def my_unread(counts: dict[str, int], side: str) -> int:
+    """两侧未读明细里取"我这一侧"的那一个数——不在这里重新判侧（侧由 `my_side` 决定）。"""
+    return int(counts.get(side, 0))
+
+
+def page_thread_rows(rows: list[Any], *, limit: int | None,
+                     before: dict[str, Any] | None = None
+                     ) -> tuple[list[Any], bool]:
+    """线程行的一页：`(lastMessageAt DESC, threadId DESC)` → 跳过游标 → 多取一条判 `more`。
+
+    `limit=None` 是不设窗口的旧路径（v1 不会翻页）。切片只在这里发生：先取**全部**
+    可见行，再切页，未读合计因此可以覆盖全部可见线程（角标不受窗口影响）。
+    """
+    # 排序口径只有这一处：`(lastMessageAt DESC, threadId DESC)`，与 SQL 的 ORDER BY 和
+    # `is_after_before` 的 `id <` 一致（同毫秒多条时 threadId 降序）。
+    ordered = sorted(rows, key=lambda row: (int(row["lastMessageAt"]), str(row["threadId"])),
+                     reverse=True)
+    ordered = [row for row in ordered if is_after_before(row, before, "lastMessageAt", "threadId")]
+    if limit is None:
+        return ordered, False
+    return take_page(ordered, limit)
+
+
+def is_after_before(row: dict[str, Any], before: dict[str, Any] | None,
+                    time_key: str, id_key: str) -> bool:
+    """内存侧的同一个游标口径：这一行是否**严格晚于** `before`（`_before_clause` 的镜像）。
+
+    排序键是 `(时间 DESC, id DESC)`，所以"更晚"= 时间更小，或同时间 id **更小**
+    （降序里 id 小的排在后面）——与 `_before_clause` 的 `id < ?` 逐字对应。
+    合并列表（凭据命中 ∪ 绑定命中）只能在这里过滤。
+    """
+    if not before:
+        return True
+    row_time, row_id = int(row[time_key]), str(row[id_key])
+    before_time, before_id = int(before[time_key]), str(before[id_key])
+    return row_time < before_time or (row_time == before_time and row_id < before_id)
+
+
 SCHEMA = """
 -- 列序与迁移源（旧中转库）的同名表一致：迁移脚本按列名拷贝，且「迁移库 vs 新建库
 -- 列序一致」有测试钉住（沿用 relay 侧 subject/format 必须留在表末的理由）。
@@ -48,8 +144,8 @@ CREATE TABLE IF NOT EXISTS feedbackThreads (
   status         TEXT NOT NULL DEFAULT 'open',
   clientRef      TEXT UNIQUE,
   subject        TEXT,
-  -- 团队收件箱（2026-10-15）：非团队提交的线程都绑到团队账号，团队（= owner 的
-  -- 开发者账号）由此在自己的收件箱里看到用户来信并直接回信。同样留在表末。
+  -- 团队收件箱（2026-10-15）：曾经在提交时把线程绑到团队账号。归属改为派生谓词
+  -- 之后本列不再读也不再写，只留给"回滚到旧包"的 `feedback-rebind` 补齐（M9 处置）。
   teamAccountId  TEXT
 );
 CREATE INDEX IF NOT EXISTS feedbackThreadsByDevice ON feedbackThreads(deviceId);
@@ -185,8 +281,7 @@ class Store:
                                account_id: str | None = None, device_id: str | None = None,
                                app_version: str | None = None, device_model: str | None = None,
                                system_version: str | None = None, client_ref: str | None = None,
-                               subject: str | None = None, team_account_id: str | None = None,
-                               at: int | None = None) -> dict[str, Any]:
+                               subject: str | None = None, at: int | None = None) -> dict[str, Any]:
         """建一条线程，并把用户原文作为线程里的第一条留言。
 
         `clientRef` 命中唯一索引时**不新建**：返回既有那条（`created` 为 False），
@@ -209,11 +304,10 @@ class Store:
             thread_id = new_id("th")
             self._conn.execute(
                 "INSERT INTO feedbackThreads(threadId, ticketHash, accountId, deviceId, appVersion,"
-                " deviceModel, systemVersion, createdAt, lastMessageAt, status, clientRef, subject,"
-                " teamAccountId) VALUES(?,?,?,?,?,?,?,?,?,'open',?,?,?)",
+                " deviceModel, systemVersion, createdAt, lastMessageAt, status, clientRef, subject)"
+                " VALUES(?,?,?,?,?,?,?,?,?,'open',?,?)",
                 (thread_id, ticket_hash, account_id, device_id, app_version, device_model,
-                 system_version, stamp, stamp, client_ref, clean_feedback_subject(subject),
-                 team_account_id))
+                 system_version, stamp, stamp, client_ref, clean_feedback_subject(subject)))
             self._conn.execute(
                 "INSERT INTO feedbackMessages(messageId, threadId, author, body, format, createdAt)"
                 " VALUES(?,?,'user',?,'text',?)", (new_id("fm"), thread_id, text, stamp))
@@ -292,65 +386,123 @@ class Store:
         return {"noticeId": notice_id, "createdAt": stamp, "recipients": len(targets)}
 
     def feedback_thread(self, thread_id: str, ticket_hash: str | None = None, *,
-                        messages_per_thread: int = 50) -> dict[str, Any] | None:
-        """一条线程（最近 N 条留言 + 用户侧未读 + 留言总数）；取不到返回 None。
+                        messages_per_thread: int = 50, team: str = "",
+                        caller_account: str | None = None) -> dict[str, Any] | None:
+        """一条线程（最近 N 条留言 + 我这一侧未读 + 留言总数）；取不到返回 None。
 
         `ticket_hash` 给了就必须匹配，否则和"线程不存在"一样返回 None——不泄露
         线程是否存在。传 None 是内部/owner 路径。
+
+        `team` / `caller_account` 决定 `mySide` 与"我这一侧"的未读；不给就是
+        用户视角（owner 内部路径不需要分侧）。
         """
         row = self._row("SELECT * FROM feedbackThreads WHERE threadId=?", (thread_id,))
         if row is None:
             return None
         if ticket_hash is not None and not secrets.compare_digest(row["ticketHash"], ticket_hash):
             return None
-        return self._feedback_payload(row, messages_per_thread)
+        return self._feedback_payload(row, messages_per_thread, team=team,
+                                      caller_account=caller_account)
+
+    def visible_thread_rows(self, pairs: Iterable[tuple[str, str]] = (),
+                            device_id: str | None = None, account_id: str | None = None, *,
+                            team_account: str | None = None) -> list[sqlite3.Row]:
+        """这次调用能看到的**全部**线程行（不带留言、不带未读）——可见性只有这一份实现。
+
+        来源与判据（收件箱与已读共用，`feedback_threads_by_*` 只是它的两种投影）：
+
+        1. 取件凭据：逐对按 `threadId` 取行、用 `compare_digest` 校验哈希——不把哈希
+           比较交给 SQL 的字符串比较（那是把常量时间比较换成了提前返回）；
+        2. 设备/账号：`deviceId` 相同，或 `accountId` 相同（重装重配靠账号找回）；
+        3. 团队收件箱：`team_account` 非空**且**调用方自己就是团队账号时，再并上
+           派生谓词 `USER_LETTER_SQL` 命中的线程（不是团队自己写的、也不是测试机型）。
+
+        行按 `threadId` 去重；团队那条路径永远不会把别人的信交给非团队调用方。
+
+        只返回**行**（不含留言、不含未读）：调用方先在这里拿到全部可见行，再切页、
+        只给当页构造 payload；未读合计也覆盖全部可见行，因此角标不受窗口影响。
+        每次请求取全部行的代价是 O(1) 条查询、行数受凭据上限与团队来信总量约束
+        （生产实测团队账号 165 行），换来可见性只有这一份实现。
+        """
+        rows: dict[str, sqlite3.Row] = {}
+        for thread_id, ticket_hash in pairs:
+            if not thread_id or not ticket_hash or thread_id in rows:
+                continue
+            row = self._row("SELECT * FROM feedbackThreads WHERE threadId=?", (thread_id,))
+            if row is not None and secrets.compare_digest(row["ticketHash"], ticket_hash):
+                rows[thread_id] = row
+        if device_id is not None:
+            clauses = ["deviceId=?", "(accountId IS NOT NULL AND accountId=?)"]
+            params: list[Any] = [device_id, account_id]
+            if team_account and account_id == team_account:
+                clauses.append(USER_LETTER_SQL)
+                params.append(team_account)
+            for row in self._rows(
+                    f"SELECT * FROM feedbackThreads WHERE {' OR '.join(clauses)}", params):
+                rows.setdefault(row["threadId"], row)
+        return list(rows.values())
+
+    def unread_counts_by_thread(self, thread_ids: Iterable[str]) -> dict[str, dict[str, int]]:
+        """每个线程**两侧**各自的未读条数：`{threadId: {"user": n, "owner": m}}`。
+
+        一次分组查询算全部线程（不按线程循环）：`reader` 由留言作者决定——我们写的
+        留言算"用户侧还没读"，用户写的算"团队侧还没读"；"哪一侧是我"由调用方用
+        `my_side` 去取，SQL 里不写这套规则。
+        """
+        ids = list(dict.fromkeys(thread_id for thread_id in thread_ids if thread_id))
+        if not ids:
+            return {}
+        counts: dict[str, dict[str, int]] = {}
+        for start in range(0, len(ids), 500):        # 参数个数上限之内分批，形状不变
+            batch = ids[start:start + 500]
+            marks = ",".join("?" * len(batch))
+            for row in self._rows(
+                    "SELECT m.threadId AS threadId, m.author AS author, COUNT(*) AS unread"
+                    " FROM feedbackMessages m JOIN feedbackThreads t ON t.threadId = m.threadId"
+                    f" WHERE m.threadId IN ({marks})"
+                    " AND ((m.author='owner' AND (t.userReadAt IS NULL"
+                    "        OR m.createdAt > t.userReadAt))"
+                    "   OR (m.author='user' AND (t.ownerReadAt IS NULL"
+                    "        OR m.createdAt > t.ownerReadAt)))"
+                    " GROUP BY m.threadId, m.author", batch):
+                reader = "owner" if row["author"] == "user" else "user"
+                counts.setdefault(row["threadId"], {})[reader] = int(row["unread"])
+        return counts
+
+    def thread_payloads(self, rows: Iterable[sqlite3.Row], messages_per_thread: int = 50, *,
+                        team: str = "", caller_account: str | None = None,
+                        unread: dict[str, dict[str, int]] | None = None) -> list[dict[str, Any]]:
+        """给这些行构造线程 payload：只给这一页取留言，未读取一次分组查询的结果。"""
+        listed = list(rows)
+        counts = unread if unread is not None else self.unread_counts_by_thread(
+            [row["threadId"] for row in listed])
+        return [self._feedback_payload(row, messages_per_thread, team=team,
+                                       caller_account=caller_account,
+                                       unread_counts=counts.get(row["threadId"], {}))
+                for row in listed]
 
     def feedback_threads_by_tickets(self, pairs: Iterable[tuple[str, str]], *,
-                                    messages_per_thread: int = 50) -> list[dict[str, Any]]:
+                                    messages_per_thread: int = 50, team: str = "",
+                                    caller_account: str | None = None) -> list[dict[str, Any]]:
         """凭据命中的线程；对子里是 `(threadId, ticketHash)`。同一个线程只出现一次。"""
-        found: list[dict[str, Any]] = []
-        seen: set[str] = set()
-        for thread_id, ticket_hash in pairs:
-            if not thread_id or not ticket_hash or thread_id in seen:
-                continue
-            thread = self.feedback_thread(thread_id, ticket_hash,
-                                          messages_per_thread=messages_per_thread)
-            if thread is None:
-                continue
-            seen.add(thread_id)
-            found.append(thread)
-        return found
+        rows = self.visible_thread_rows(pairs)
+        return self.thread_payloads(rows, messages_per_thread, team=team,
+                                    caller_account=caller_account)
 
     def feedback_threads_by_device(self, device_id: str, account_id: str | None = None, *,
                                    messages_per_thread: int = 50,
                                    team_account: str | None = None) -> list[dict[str, Any]]:
-        """绑定到这台设备**或它所属账号**的线程，最近的在前。
+        """绑定到这台设备**或它所属账号**的线程（团队还并上来信），最近的在前。
 
-        账号也算命中：重装后重新配对换来一个新的 `deviceId`，只有账号还是同一个，
-        "重装后重新配对即可找回"靠的就是这一条。
-
-        团队绑定（teamAccountId）是第三条命中路径：团队账号由此看到用户的来信
-        （2026-10-15 团队收件箱）。用户自己的可见性不受影响——teamAccountId 只会
-        等于团队账号，不会撞上普通用户的账号。
-
-        **`team_account` 为空 = 团队收件箱关闭**（2026-10-17 生产事故）：那条命中
-        路径整条不参与，而不是"线程照发、视角却是用户侧"。后者会把用户的来信塞进
-        owner 的「已发送」——开关被部署清空的那半天就是这么表现的。开关的真值在
-        `MAIL_TEAM_ACCOUNT`（`api._team_account`），这里只按调用方给的值判定。
-
-        注意第三条的**参数仍取调用方自己的 `account_id`**（不是传进来的团队账号）：
-        团队线程只对"团队账号本人"可见，`team_account` 只回答"这条路径开不开"。
-        否则开关一开，任意账号都会命中所有团队线程——那是把别人的信群发出去。
+        判据全部在 :meth:`visible_thread_rows` 里：这里只是"取全部行 → 构造 payload"，
+        不复制一份可见性（团队那条路径的两半：`team_account` 非空、且调用方自己就是
+        团队账号，也在那一处判）。
         """
-        clauses = ["deviceId=?", "(accountId IS NOT NULL AND accountId=?)"]
-        params: list[Any] = [device_id, account_id]
-        if team_account:
-            clauses.append("(teamAccountId IS NOT NULL AND teamAccountId=?)")
-            params.append(account_id)
-        rows = self._rows(
-            f"SELECT * FROM feedbackThreads WHERE {' OR '.join(clauses)}"
-            " ORDER BY lastMessageAt DESC", params)
-        return [self._feedback_payload(row, messages_per_thread) for row in rows]
+        rows = self.visible_thread_rows((), device_id, account_id,
+                                        team_account=team_account)
+        rows, _more = page_thread_rows(rows, limit=None)
+        return self.thread_payloads(rows, messages_per_thread, team=team_account or "",
+                                    caller_account=account_id)
 
     def mark_thread_read(self, thread_id: str, upto_ms: int | None = None) -> bool:
         """把用户的 `userReadAt` 推到 `upto_ms`；默认推到最后一条 owner 消息。幂等只前进。"""
@@ -392,16 +544,60 @@ class Store:
             self._conn.commit()
         return True
 
-    def notices_for_account(self, account_id: str, *, limit: int = 200) -> list[dict[str, Any]]:
-        """投给这个账号的通知，最近的在前；`read` 是**账号级**已读。"""
-        rows = self._rows(
-            "SELECT n.noticeId AS noticeId, n.subject AS subject, n.body AS body,"
-            " n.format AS format, n.createdAt AS createdAt, n.createdBy AS createdBy,"
-            " d.readAt AS readAt"
-            " FROM notices n JOIN noticeDeliveries d ON d.noticeId = n.noticeId"
-            " WHERE d.accountId=? ORDER BY n.createdAt DESC, n.noticeId DESC LIMIT ?",
-            (account_id, limit))
-        return [{**dict(row), "read": row["readAt"] is not None} for row in rows]
+    #: 通知的字段投影：详情与列表只差"要不要正文"（同一份行、同一份读法）。
+    _NOTICE_SELECT = ("SELECT n.noticeId AS noticeId, n.subject AS subject, n.body AS body,"
+                      " n.format AS format, n.createdAt AS createdAt, n.createdBy AS createdBy,"
+                      " d.readAt AS readAt"
+                      " FROM notices n JOIN noticeDeliveries d ON d.noticeId = n.noticeId")
+
+    def notices_for_account(self, account_id: str, *, limit: int = 200,
+                            before: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+        """投给这个账号的通知，最近的在前；`read` 是**账号级**已读。
+
+        默认 200 条是 v1 投影的窗口；v2 用 :meth:`notice_page` 翻页。
+        """
+        return self.notice_page(account_id, limit=limit, before=before)[0]
+
+    def notice_page(self, account_id: str, *, limit: int,
+                    before: dict[str, Any] | None = None
+                    ) -> tuple[list[dict[str, Any]], bool]:
+        """一页通知与 `more`；排序 `(createdAt DESC, noticeId DESC)`。"""
+        cursor, params = _before_clause("n.createdAt", "n.noticeId", before,
+                                        "createdAt", "noticeId")
+        rows = self._rows(self._NOTICE_SELECT + " WHERE d.accountId=?" + cursor
+                          + " ORDER BY n.createdAt DESC, n.noticeId DESC LIMIT ?",
+                          [account_id, *params, int(limit) + 1])
+        page, more = take_page(rows, int(limit))
+        return [{**dict(row), "read": row["readAt"] is not None} for row in page], more
+
+    def notice_for_account(self, account_id: str, notice_id: str) -> dict[str, Any] | None:
+        """某条通知的全文——**只按 (accountId, noticeId) 授权**，没这条投递返回 None。
+
+        详情是正文的唯一所有者：列表只给摘要，正文在这里按需取（P1-4）。
+        """
+        row = self._row(self._NOTICE_SELECT + " WHERE d.accountId=? AND n.noticeId=?",
+                        (account_id, notice_id))
+        return None if row is None else {**dict(row), "read": row["readAt"] is not None}
+
+    def unread_notice_count(self, account_id: str) -> int:
+        """这个账号还没读的通知数——与任何窗口无关（角标不再随 200 条截断）。"""
+        return int(self._row(
+            "SELECT COUNT(*) AS n FROM noticeDeliveries WHERE accountId=? AND readAt IS NULL",
+            (account_id,))["n"])
+
+    def notice_delivery_stats(self, notice_id: str) -> dict[str, Any] | None:
+        """某次群发的覆盖与已读：`delivered` / `read` / `unread`（只读，事后核对用）。"""
+        row = self._row("SELECT noticeId, subject FROM notices WHERE noticeId=?", (notice_id,))
+        if row is None:
+            return None
+        counts = self._row(
+            "SELECT COUNT(*) AS delivered,"
+            " COUNT(CASE WHEN readAt IS NOT NULL THEN 1 END) AS read FROM noticeDeliveries"
+            " WHERE noticeId=?", (notice_id,))
+        delivered = int(counts["delivered"])
+        read = int(counts["read"])
+        return {"noticeId": row["noticeId"], "subject": row["subject"],
+                "delivered": delivered, "read": read, "unread": delivered - read}
 
     def mark_notices_read(self, account_id: str, notice_ids: Iterable[str],
                           at: int | None = None) -> int:
@@ -417,14 +613,43 @@ class Store:
             self._conn.commit()
             return cursor.rowcount or 0
 
-    def owner_unread_counts(self) -> dict[str, int]:
-        """owner 还没看过的用户消息数，按线程。清单里标"新"用。"""
+    def owner_unread_counts(self, team: str = "") -> dict[str, int]:
+        """owner 还没看过的**用户来信**数，按线程。清单里标"新"用。
+
+        只统计命中谓词的线程：团队自己的提交与测试机型（验收单）不再在清单里留一条
+        永远清不掉的未读（P2-7 那条 `th_c98c7e26…` 的形状）。
+        """
         rows = self._rows(
             "SELECT m.threadId AS threadId, COUNT(*) AS unread FROM feedbackMessages m"
             " JOIN feedbackThreads t ON t.threadId = m.threadId"
             " WHERE m.author='user' AND (t.ownerReadAt IS NULL OR m.createdAt > t.ownerReadAt)"
-            " GROUP BY m.threadId")
+            f" AND {USER_LETTER_SQL_T}"
+            " GROUP BY m.threadId", (team,))
         return {row["threadId"]: int(row["unread"]) for row in rows}
+
+    def rebind_team_account(self, team: str, *, dry_run: bool = False) -> dict[str, Any]:
+        """把旧的 `teamAccountId` 列按谓词补写一遍（**只**为回滚到旧包准备）。
+
+        M1 之后本列不再读也不再写；旧包仍按它判断团队命中，所以回滚前必须补齐，
+        否则旧包看不到停写之后收到的信。`dry_run` 只报数、不写库。
+        """
+        to_bind = [row["threadId"] for row in self._rows(
+            f"SELECT threadId, teamAccountId FROM feedbackThreads WHERE {USER_LETTER_SQL}"
+            " AND (teamAccountId IS NULL OR teamAccountId <> ?)", (team, team))]
+        to_clear = [row["threadId"] for row in self._rows(
+            f"SELECT threadId FROM feedbackThreads WHERE NOT {USER_LETTER_SQL}"
+            " AND teamAccountId IS NOT NULL", (team,))]
+        if not dry_run:
+            with self._lock:
+                self._conn.executemany(
+                    "UPDATE feedbackThreads SET teamAccountId=? WHERE threadId=?",
+                    [(team, thread_id) for thread_id in to_bind])
+                self._conn.executemany(
+                    "UPDATE feedbackThreads SET teamAccountId=NULL WHERE threadId=?",
+                    [(thread_id,) for thread_id in to_clear])
+                self._conn.commit()
+        return {"team": team, "bound": len(to_bind), "cleared": len(to_clear),
+                "dryRun": bool(dry_run)}
 
     def touch_owner_read(self, thread_id: str, at: int | None = None) -> bool:
         """记下 owner 读过这条线程；线程不存在返回 False。"""
@@ -435,8 +660,13 @@ class Store:
             return bool(cursor.rowcount)
 
     def list_feedback_threads(self, *, status: str | None = None, since_ms: int | None = None,
-                              limit: int = 50, messages_per_thread: int = 0) -> list[dict[str, Any]]:
-        """owner 清单：按最近活动倒序的线程。默认不带留言——清单只要摘要。"""
+                              limit: int = 50, messages_per_thread: int = 0,
+                              team: str = "") -> list[dict[str, Any]]:
+        """owner 清单：按最近活动倒序的线程。默认不带留言——清单只要摘要。
+
+        `team` 让每一行带上 `userLetter`（管理清单的 `--scope user|test` 直接用它，
+        不另写一份"这是不是来信"的判定）。
+        """
         clauses: list[str] = []
         params: list[Any] = []
         if status:
@@ -448,8 +678,9 @@ class Store:
         where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
         params.append(int(limit))
         rows = self._rows(
-            f"SELECT * FROM feedbackThreads{where} ORDER BY lastMessageAt DESC LIMIT ?", params)
-        return [self._feedback_payload(row, messages_per_thread) for row in rows]
+            f"SELECT * FROM feedbackThreads{where}"
+            " ORDER BY lastMessageAt DESC, threadId DESC LIMIT ?", params)
+        return self.thread_payloads(rows, messages_per_thread, team=team)
 
     def delete_feedback_thread(self, thread_id: str) -> int:
         """连线程带它的留言一起删（响应隐私删除请求）；返回删掉的留言数。"""
@@ -498,9 +729,20 @@ class Store:
             return True
         return bool(account_id) and row["accountId"] == account_id
 
-    def _feedback_payload(self, row: sqlite3.Row, messages_per_thread: int = 50) -> dict[str, Any]:
+    def _feedback_payload(self, row: sqlite3.Row, messages_per_thread: int = 50, *,
+                          team: str = "", caller_account: str | None = None,
+                          unread_counts: dict[str, int] | None = None) -> dict[str, Any]:
         """一行线程（含 `subject`，可为 None）+ 最近 N 条留言（按时间升序）
-        + 用户侧未读 + 留言总数。"""
+        + **两个原始未读计数** + 留言总数 + `mySide`。
+
+        这里只产出事实、不产出投影：`ownerUnread` = 我们写的留言里用户还没读的条数
+        （旧 wire 的 `unread`），`userUnread` = 用户写的留言里我们还没读的条数
+        （旧 wire 的 `teamUnread`）。两个数来自同一次分组查询，不额外查库。
+
+        `mySide` / `callerIsTeam` / `userLetter` 也在这里定（谓词 + 调用方身份）：
+        v2 用 `mySide` 取"我这一侧"，v1 用它们把团队自有信的 `teamUnread` 归零
+        （P0-2 的修复），但**不改变** v1 那两个字段的原始语义。
+        """
         thread_id = row["threadId"]
         messages: list[dict[str, Any]] = []
         if messages_per_thread > 0:
@@ -509,14 +751,14 @@ class Store:
                 " ORDER BY createdAt DESC, rowid DESC LIMIT ?",
                 (thread_id, int(messages_per_thread)))
             messages = [dict(message) for message in reversed(recent)]
-        read_at = row["userReadAt"]
-        unread = self._row(
-            "SELECT COUNT(*) AS n FROM feedbackMessages WHERE threadId=? AND author='owner'"
-            " AND (? IS NULL OR createdAt > ?)", (thread_id, read_at, read_at))
-        owner_at = row["ownerReadAt"]
-        team_unread = self._row(
-            "SELECT COUNT(*) AS n FROM feedbackMessages WHERE threadId=? AND author='user'"
-            " AND (? IS NULL OR createdAt > ?)", (thread_id, owner_at, owner_at))
+        counts = unread_counts if unread_counts is not None \
+            else self.unread_counts_by_thread([thread_id]).get(thread_id, {})
         count = self._row("SELECT COUNT(*) AS n FROM feedbackMessages WHERE threadId=?", (thread_id,))
+        user_letter = is_user_letter(row["accountId"], row["deviceModel"], team)
+        caller_is_team = bool(team) and caller_account == team
         return {**dict(row), "messages": messages, "messageCount": int(count["n"]),
-                "unread": int(unread["n"]), "teamUnread": int(team_unread["n"])}
+                # 两个原始计数：authors 与读者的对应关系只有这一处声明。
+                "ownerUnread": my_unread(counts, "user"),
+                "userUnread": my_unread(counts, "owner"),
+                "mySide": my_side(user_letter, caller_is_team),
+                "callerIsTeam": caller_is_team, "userLetter": user_letter}

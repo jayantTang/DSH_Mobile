@@ -17,6 +17,7 @@ import argparse
 import asyncio
 import datetime
 import json
+import os
 import sys
 import time
 from typing import Any, Iterable
@@ -63,12 +64,16 @@ def _read_body(args: argparse.Namespace) -> str:
     return body
 
 
-def _show_thread(store: Store, thread_id: str) -> dict[str, Any] | None:
-    """一条线程的全部留言；顺手把 `ownerReadAt` 推到最新一条用户消息（只前进）。"""
-    head = store.feedback_thread(thread_id, None, messages_per_thread=0)
+def _show_thread(store: Store, thread_id: str, team: str = "") -> dict[str, Any] | None:
+    """一条线程的全部留言；顺手把 `ownerReadAt` 推到最新一条用户消息（只前进）。
+
+    `team` 只影响这一行携带的 `userLetter`（"这封会不会进团队收件箱"）——与服务的
+    判定同一份谓词，排查 P2-7 那类线程时 CLI 与 App 看到的是同一个事实。
+    """
+    head = store.feedback_thread(thread_id, None, messages_per_thread=0, team=team)
     if head is None:
         return None
-    thread = store.feedback_thread(thread_id, None,
+    thread = store.feedback_thread(thread_id, None, team=team,
                                    messages_per_thread=max(1, int(head["messageCount"])))
     latest_user = max((int(message["createdAt"]) for message in thread["messages"]
                        if message["author"] == "user"), default=None)
@@ -80,11 +85,43 @@ def _show_thread(store: Store, thread_id: str) -> dict[str, Any] | None:
     return thread
 
 
+def _require_team(team: str, command: str) -> None:
+    """这些命令要靠团队账号判"哪条线程算用户来信"，team 为空时必须报错而不是猜。
+
+    静默降级的样子：`is_user_letter(account, model, "")` 把所有非空账号都判成来信，
+    于是团队自己的提交也被算进清单与未读。宁可退非零让调用方补参数
+    （`feedback.mjs` 会自动传 `.env.local` 的 DSH_ACCOUNT_ID）。
+    """
+    if team:
+        return
+    raise StoreError(f"{command} 需要团队账号：显式给 --team-account <accountId>，"
+                     "或在环境里设 MAIL_TEAM_ACCOUNT。没有它无法判定哪条线程算用户来信"
+                     "（不会把所有账号都判成来信）")
+
+
+def _in_scope(row: dict[str, Any], scope: str) -> bool:
+    """清单口径：`user` = 命中归属谓词（能进团队收件箱的），`test` = 命不中的。
+
+    判定本身不在这里重写：`list_feedback_threads(team=…)` 已经把
+    `store.is_user_letter` 的结果放进每一行的 `userLetter`。
+    """
+    if scope == "user":
+        return bool(row.get("userLetter"))
+    if scope == "test":
+        return not row.get("userLetter")
+    return True
+
+
 def _feedback_rows(store: Store, *, status: str | None, since_ms: int | None,
-                   limit: int) -> list[dict[str, Any]]:
-    """owner 清单的每一行（与中转管理命令的同名输出同形——日报与工具解同一份 JSON）。"""
-    unread = store.owner_unread_counts()
-    rows = store.list_feedback_threads(status=status, since_ms=since_ms, limit=limit)
+                   limit: int, scope: str = "all", team: str = "") -> list[dict[str, Any]]:
+    """owner 清单的每一行（与中转管理命令的同名输出同形——日报与工具解同一份 JSON）。
+
+    `team` 决定"哪条算用户来信"；未读只对 `user` 口径计数（测试机型与团队自己的
+    提交不再在清单里留一条清不掉的未读）。
+    """
+    unread = store.owner_unread_counts(team)
+    rows = [row for row in store.list_feedback_threads(
+        status=status, since_ms=since_ms, limit=limit, team=team) if _in_scope(row, scope)]
     digest = store.feedback_digest([row["threadId"] for row in rows])
     return [
         {
@@ -182,7 +219,7 @@ def _feedback_report(store: Store, threads: list[dict[str, Any]],
 
 
 def _feedback_stats(store: Store, days: int, *, as_of: int | None = None,
-                    debug_ids: set[str] | None = None) -> dict[str, Any]:
+                    debug_ids: set[str] | None = None, team: str = "") -> dict[str, Any]:
     """日报的两个反馈板块（`feedback` + `today.feedback`），形状与中转的 ops-report 一致。
 
     owner 工具把这份 JSON 与中转的 ops-report 在本机合并（DESIGN-20261015 I-3）——
@@ -191,7 +228,7 @@ def _feedback_stats(store: Store, days: int, *, as_of: int | None = None,
     debug_ids = debug_ids or set()
     stamp = now_ms() if as_of is None else int(as_of)
     listed = _feedback_rows(store, status=None, since_ms=stamp - days * 86_400_000,
-                            limit=REPORT_THREAD_LIMIT)
+                            limit=REPORT_THREAD_LIMIT, team=team)
     # 锚点之后新建的线程不属于这份报告（00:00 跑、报刚过去那一天的那一刀）。
     listed = [row for row in listed if int(row["createdAt"]) <= stamp]
     threads = [row for row in listed if not _is_test_thread(row, debug_ids)]
@@ -215,12 +252,22 @@ def _feedback_stats(store: Store, days: int, *, as_of: int | None = None,
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="admin.py", description="DSH mail administration")
     parser.add_argument("--db", default="mail.db", help="path to the mail SQLite database")
+    #: 团队账号与服务同一份配置来源（`MAIL_TEAM_ACCOUNT`）：归属谓词要靠它判"用户来信"。
+    parser.add_argument("--team-account", default=os.environ.get("MAIL_TEAM_ACCOUNT", ""),
+                        help="the account id that acts as the DSH Mobile team inbox "
+                             "(default: $MAIL_TEAM_ACCOUNT)")
     subs = parser.add_subparsers(dest="command", required=True)
 
     feedback_list = subs.add_parser("feedback-list", help="list feedback threads (owner inbox)")
     feedback_list.add_argument("--status", choices=["open", "replied", "all"], default="all")
     feedback_list.add_argument("--limit", type=int, default=50)
     feedback_list.add_argument("--since", type=int, help="only threads from the last N days")
+    feedback_list.add_argument("--scope", choices=["user", "test", "all"], default=None,
+                               help="user = 能进团队收件箱的用户来信（命中归属谓词）；"
+                                    "test = 命不中归属谓词的行，包含测试机型与团队自己的提交"
+                                    "（两者都永远进不了团队收件箱）；all = 全部。"
+                                    "给了 --scope 就必须有团队账号（--team-account 或 "
+                                    "MAIL_TEAM_ACCOUNT），否则拒绝执行而不是把所有账号判成来信")
 
     feedback_show = subs.add_parser("feedback-show", help="one thread with its full trail")
     feedback_show.add_argument("--thread", required=True)
@@ -251,6 +298,18 @@ def build_parser() -> argparse.ArgumentParser:
     feedback_delete = subs.add_parser("feedback-delete", help="delete a thread (needs --yes)")
     feedback_delete.add_argument("--thread", required=True)
     feedback_delete.add_argument("--yes", action="store_true")
+
+    notice_stats = subs.add_parser("feedback-notice-stats",
+                                   help="delivery coverage of one notice (read-only)")
+    notice_stats.add_argument("--notice", required=True)
+
+    rebind = subs.add_parser("feedback-rebind",
+                             help="rewrite the legacy teamAccountId column from the predicate "
+                                  "(only before rolling back to an old build)")
+    rebind_mode = rebind.add_mutually_exclusive_group()
+    rebind_mode.add_argument("--yes", action="store_true", help="actually write")
+    rebind_mode.add_argument("--dry-run", dest="dry_run", action="store_true",
+                             help="report the counts and write nothing (the default)")
 
     stats = subs.add_parser("feedback-stats", help="the feedback sections for the daily report")
     stats.add_argument("--days", type=int, default=30)
@@ -305,15 +364,33 @@ def _notify_account_state(account_ids: Iterable[str | None]) -> None:
 def _dispatch(store: Store, args: argparse.Namespace) -> int:
     command = args.command
 
+    team = str(getattr(args, "team_account", "") or "").strip()
+
     if command == "feedback-list":
+        if args.scope is not None:
+            _require_team(team, "feedback-list --scope")
         since_ms = (now_ms() - max(1, int(args.since)) * 86_400_000
                     if args.since is not None else None)
         _emit(_feedback_rows(store, status=None if args.status == "all" else args.status,
-                             since_ms=since_ms, limit=max(1, int(args.limit))))
+                             since_ms=since_ms, limit=max(1, int(args.limit)),
+                             scope=args.scope or "all", team=team))
+        return 0
+
+    if command == "feedback-notice-stats":
+        stats_row = store.notice_delivery_stats(args.notice)
+        if stats_row is None:
+            _emit({"ok": False, "error": "notice not found"})
+            return 1
+        _emit(stats_row)
+        return 0
+
+    if command == "feedback-rebind":
+        _require_team(team, "feedback-rebind")
+        _emit(store.rebind_team_account(team, dry_run=not args.yes))
         return 0
 
     if command == "feedback-show":
-        thread = _show_thread(store, args.thread)
+        thread = _show_thread(store, args.thread, team)
         if thread is None:
             _emit({"ok": False, "error": "thread not found"})
             return 1
@@ -376,9 +453,10 @@ def _dispatch(store: Store, args: argparse.Namespace) -> int:
         return 0
 
     if command == "feedback-stats":
+        _require_team(team, "feedback-stats")
         _emit(_feedback_stats(store, max(1, int(args.days)),
                               as_of=_resolve_as_of(args.as_of),
-                              debug_ids=set(args.debug_device)))
+                              debug_ids=set(args.debug_device), team=team))
         return 0
 
     raise StoreError(f"unknown command: {command}")

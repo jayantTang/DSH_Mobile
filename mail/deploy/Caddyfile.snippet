@@ -28,6 +28,9 @@
 # ─────────────────────────────────────────────────────────────────────────────
 handle /dsh-link/feedback/* {
 	uri strip_prefix /dsh-link
+	# 压缩只加在这个 handle 块内（站点级会改到中转的 WS 路由）：收件箱响应 6.95 MB
+	# 降到 1.2 MB 量级。Caddy 默认 minimum_length 512，小响应不压缩属预期。
+	encode zstd gzip
 	reverse_proxy 127.0.0.1:8788 {
 		transport http {
 			dial_timeout 5s

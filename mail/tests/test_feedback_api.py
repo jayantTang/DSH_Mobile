@@ -12,6 +12,7 @@ import json
 import pytest
 
 import mail as mail_module
+from store import sha256_hex
 from conftest import (TEAM_ACCOUNT, device_headers, device_of, feedback_ticket,
                       register_device, unregister_device)
 
@@ -71,17 +72,30 @@ async def test_submit_accepts_exactly_four_thousand_characters(client):
     assert response.status == 200, await response.text()
 
 
-async def test_submit_rejects_text_over_the_limits(client):
-    too_many_chars = await client.post("/feedback/submit", json={"text": "x" * 4001})
+async def submit_raw(client, payload: dict):
+    """按 App 的做法发未转义的 UTF-8。
+
+    `json=` 会把非 ASCII 转成 `\\uXXXX`（每个 emoji 12 B），先撞体上限得到 413——
+    那是体上限的断言，不是正文上限的断言。
+    """
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    return await client.post("/feedback/submit", data=body,
+                             headers={"content-type": "application/json"})
+
+
+async def test_submit_takes_four_thousand_characters_and_twelve_thousand_bytes(client):
+    """两个上限同一条判定：4000 字符 / 12000 字节（4000 汉字正好 12000 B）。"""
+    exact = await submit_raw(client, {"text": "中" * 4000})
+    assert len(("中" * 4000).encode("utf-8")) == 12_000
+    assert exact.status == 200, await exact.text()
+
+    too_many_chars = await submit_raw(client, {"text": "中" * 4001})
     assert too_many_chars.status == 400
     assert (await too_many_chars.json())["error"]["code"] == "feedback/too-long"
 
-    # 3000 个汉字 = 9000 字节：字符数没超，字节数超了（上限 8000）。按 App 的做法发
-    # 未转义的 UTF-8（`json=` 会把汉字转成 `\uXXXX`，那样先撞上 16 KB 的体上限）。
-    body = json.dumps({"text": "中" * 3000}, ensure_ascii=False).encode("utf-8")
-    assert 8000 < len(body) < 16 * 1024
-    too_many_bytes = await client.post("/feedback/submit", data=body,
-                                       headers={"content-type": "application/json"})
+    # 字符数没超、字节数超了：3001 个 emoji = 12004 B（体仍在 40 KB 以内，所以不是 413）。
+    too_many_bytes = await submit_raw(client, {"text": "😀" * 3001})
+    assert len(("😀" * 3001).encode("utf-8")) == 12_004
     assert too_many_bytes.status == 400
     assert (await too_many_bytes.json())["error"]["code"] == "feedback/too-long"
 
@@ -91,8 +105,21 @@ async def test_submit_rejects_text_over_the_limits(client):
     assert (await long_version.json())["error"]["code"] == "feedback/too-long"
 
 
-async def test_submit_rejects_a_body_over_sixteen_kilobytes(client):
-    response = await client.post("/feedback/submit", json={"text": "x" * 20000})
+async def test_submit_rejects_a_body_over_forty_kilobytes(client):
+    """体上限 40 KB（与凭据条数、正文上限是同一个耦合三元组）。"""
+    def padded(total: int) -> bytes:
+        base = len(json.dumps({"text": "x", "pad": ""}).encode())
+        return json.dumps({"text": "x", "pad": "x" * (total - base)}).encode()
+
+    exact = padded(40 * 1024)
+    assert len(exact) == 40 * 1024
+    assert (await client.post("/feedback/submit", data=exact,
+                              headers={"content-type": "application/json"})).status == 200
+
+    over = padded(40 * 1024 + 1)
+    assert len(over) == 40 * 1024 + 1
+    response = await client.post("/feedback/submit", data=over,
+                                 headers={"content-type": "application/json"})
     assert response.status == 413
     assert (await response.json())["error"]["code"] == "feedback/too-large"
 
@@ -232,11 +259,34 @@ async def test_inbox_messages_per_thread_defaults_to_fifty_and_caps_at_two_hundr
     assert capped["threads"][0]["messages"][-1]["body"] == "补充 204", "取最近的 N 条"
 
 
-async def test_inbox_rejects_more_than_fifty_tickets(client):
-    response = await client.post("/feedback/inbox", json={
-        "tickets": [{"threadId": "th_x", "ticketKey": TICKET}] * 51})
-    assert response.status == 400
-    assert (await response.json())["error"]["code"] == "feedback/bad-request"
+def real_ticket_pairs(count: int) -> list[dict]:
+    """真实形状的凭据对：`th_` + 18 位、`fk_` + 43 位（每对 102 B，与生产同形）。"""
+    return [{"threadId": f"th_{index:018x}", "ticketKey": "fk_" + "A" * 43}
+            for index in range(count)]
+
+
+async def test_two_hundred_ticket_pairs_fit_and_two_hundred_and_one_do_not(client):
+    """条数与体上限必须一起改：只抬条数时 200 对会被 413 拦住。按字节断言。"""
+    accepted = {"tickets": real_ticket_pairs(200)}
+    assert len(json.dumps(accepted).encode()) == 20_413, "200 对的真实体长"
+    ok = await client.post("/feedback/inbox", json=accepted)
+    assert ok.status == 200, await ok.text()
+
+    over = {"tickets": real_ticket_pairs(201)}
+    assert len(json.dumps(over).encode()) == 20_515, "201 对只多 102 B"
+    rejected = await client.post("/feedback/inbox", json=over)
+    assert rejected.status == 400
+    assert (await rejected.json())["error"]["code"] == "feedback/bad-request"
+
+
+async def test_the_ticket_pair_limit_and_the_body_limit_are_one_coupling(client, monkeypatch):
+    """把体上限改回 16 KB：同一份 200 对请求立刻变成 413——两个上限只有一起改才成立。"""
+    import api
+
+    monkeypatch.setattr(api, "_MAX_BODY_BYTES", 16 * 1024)
+    response = await client.post("/feedback/inbox", json={"tickets": real_ticket_pairs(200)})
+    assert response.status == 413
+    assert (await response.json())["error"]["code"] == "feedback/too-large"
 
 
 @pytest.mark.parametrize("payload", [
@@ -521,7 +571,7 @@ async def test_read_clears_the_unread_count_and_is_idempotent(client, store):
     again = await client.post("/feedback/read", json=payload)
     assert await again.json() == {"ok": True, "unreadCount": 0}, "重复调用幂等"
     thread = store.feedback_thread(ticket["threadId"], None)
-    assert thread["unread"] == 0 and thread["userReadAt"] is not None
+    assert thread["ownerUnread"] == 0 and thread["userReadAt"] is not None
     assert (await inbox(client, [ticket_pair(ticket)]))["unreadCount"] == 0
 
 
@@ -732,3 +782,411 @@ async def test_parallel_submits_each_get_their_own_thread(client, store):
     subjects = {store.feedback_thread(thread_id, None)["messages"][0]["body"]
                 for thread_id in thread_ids}
     assert subjects == {payload["text"] for payload in payloads}
+
+
+# ── v2 数据面（M2）：同一批行的第二种投影，老形状一个字段都不变 ──────────────
+
+
+async def inbox_v2(client, tickets=(), headers=None, **extra) -> dict:
+    response = await client.post("/feedback/inbox",
+                                 json={"inboxVersion": 2, "tickets": list(tickets), **extra},
+                                 headers=headers or {})
+    assert response.status == 200, await response.text()
+    return await response.json()
+
+
+def without_message_ids(body: dict) -> dict:
+    """把随机的 `fm_…` 换成占位，换来可以逐字段对比的快照。"""
+    for thread in body["threads"]:
+        for message in thread["messages"]:
+            message["messageId"] = "<messageId>"
+    return body
+
+
+async def test_the_v1_inbox_shape_is_pinned_verbatim(client, store):
+    """不带 `inboxVersion` 的响应形状逐字钉住：老 App 的 wire 契约不是第二份数据。"""
+    token = await paired_device(client, name="DSH-V1")
+    account_id = device_of(client, token)["accountId"]
+    submitted = await client.post("/feedback/submit", json={
+        "text": "原文", "subject": "主题", "deviceModel": "iPhone15,4",
+        "appVersion": "1.2 (345)", "systemVersion": "18.2"}, headers=device_headers(token))
+    assert submitted.status == 200, await submitted.text()
+    ticket = await submitted.json()
+    replied_at = ticket["createdAt"] + 1_000
+    store.append_feedback_message(ticket["threadId"], "回信", author="owner", at=replied_at)
+    notice = store.create_notice("通知正文", "服务通知", [account_id], at=5_000)
+
+    body = without_message_ids(await inbox(client, headers=device_headers(token)))
+    assert body == {
+        "ok": True,
+        "threads": [{
+            "threadId": ticket["threadId"], "subject": "主题", "status": "replied",
+            "createdAt": ticket["createdAt"], "lastMessageAt": replied_at,
+            "unread": 1, "teamUnread": 1,   # 旧语义：unread=回信未读，teamUnread=来信未读
+            "source": {"kind": "device", "deviceModel": "iPhone15,4",
+                       "appVersion": "1.2 (345)", "systemVersion": "18.2",
+                       "accountHint": account_id[:12], "teamBound": True},
+            "messages": [
+                {"messageId": "<messageId>", "author": "user", "body": "原文",
+                 "format": "text", "createdAt": ticket["createdAt"]},
+                {"messageId": "<messageId>", "author": "owner", "body": "回信",
+                 "format": "text", "createdAt": replied_at},
+            ]}],
+        "notices": [{"noticeId": notice["noticeId"], "subject": "服务通知", "body": "通知正文",
+                     "format": "text", "createdAt": 5_000, "read": False}],
+        "unreadCount": 2,
+        "teamPerspective": False,
+    }
+
+
+async def test_the_v2_inbox_reports_pages_limits_and_my_side(client, store):
+    """v2：摘要 + 游标 + 一页容量 + 视角；正文、teamUnread、teamBound 不再出现。"""
+    token = await paired_device(client, name="DSH-V2")
+    account_id = device_of(client, token)["accountId"]
+    submitted = await client.post("/feedback/submit", json={
+        "text": "原文", "deviceModel": "iPhone15,4"}, headers=device_headers(token))
+    ticket = await submitted.json()
+    notice = store.create_notice("通知正文", "服务通知", [account_id], at=5_000)
+
+    body = await inbox_v2(client, headers=device_headers(token))
+    assert set(body) == {"ok", "inboxVersion", "teamPerspective", "threads", "threadsPage",
+                         "notices", "noticesPage", "unreadCount", "limits"}
+    assert body["ok"] is True and body["inboxVersion"] == 2 and body["teamPerspective"] is False
+
+    thread = body["threads"][0]
+    assert set(thread) == {"threadId", "subject", "status", "createdAt", "lastMessageAt",
+                           "mySide", "unread", "source", "messages"}
+    assert thread["mySide"] == "user" and thread["unread"] == 0
+    assert set(thread["source"]) == {"kind", "deviceModel", "appVersion", "systemVersion",
+                                     "accountHint"}, "v2 不再下发 source.teamBound"
+    assert "teamUnread" not in thread
+
+    assert body["threadsPage"] == {"more": False, "nextBefore": {
+        "lastMessageAt": thread["lastMessageAt"], "threadId": ticket["threadId"]}}
+    assert body["notices"] == [{"noticeId": notice["noticeId"], "subject": "服务通知",
+                                "format": "text", "createdAt": 5_000, "read": False}], \
+        "v2 列表只持有摘要，正文去 /feedback/notice 取"
+    assert body["noticesPage"] == {"more": False, "nextBefore": {
+        "createdAt": 5_000, "noticeId": notice["noticeId"]}}
+    assert body["limits"] == {"textChars": 4000, "textBytes": 12000, "subjectChars": 80,
+                              "maxTicketPairs": 200, "messagesPerThread": 6,
+                              "threadPageSize": 30, "noticePageSize": 40}
+    assert body["unreadCount"] == 1
+
+
+async def test_the_v2_thread_window_defaults_to_six_messages_per_thread(client, store):
+    ticket = await feedback_ticket(client)
+    for index in range(10):
+        store.append_feedback_message(ticket["threadId"], f"补充 {index}",
+                                      at=9_000_000_000_000 + index)
+    default = await inbox_v2(client, [ticket_pair(ticket)])
+    assert [m["body"] for m in default["threads"][0]["messages"]] == [
+        f"补充 {index}" for index in range(4, 10)]
+    narrowed = await inbox_v2(client, [ticket_pair(ticket)], messagesPerThread=2)
+    assert [m["body"] for m in narrowed["threads"][0]["messages"]] == ["补充 8", "补充 9"]
+
+
+@pytest.mark.parametrize("payload", [
+    {"threadsPage": {"limit": 0}},
+    {"threadsPage": {"limit": 101}},
+    {"threadsPage": {"limit": "30"}},
+    {"threadsPage": {"before": {"lastMessageAt": 1}}},
+    {"noticePage": {"limit": 101}},
+    {"noticePage": {"before": {"createdAt": "x", "noticeId": "nt_x"}}},
+])
+async def test_the_v2_pages_reject_bad_input(client, payload):
+    response = await client.post("/feedback/inbox", json={"inboxVersion": 2, **payload})
+    assert response.status == 400, await response.text()
+    assert (await response.json())["error"]["code"] == "feedback/bad-request"
+
+
+async def test_all_notice_history_is_reachable_and_the_badge_ignores_the_window(client, store):
+    """205 条未读、40/页走到尾：并集 205、无重复、每页都没有正文，角标恒为 205。"""
+    token = await paired_device(client, name="DSH-Pages")
+    account_id = device_of(client, token)["accountId"]
+    for index in range(205):
+        store.create_notice(f"日报正文 {index}", f"日报 {index}", [account_id], at=1_000 + index)
+
+    seen: list[str] = []
+    before = None
+    pages = 0
+    while True:
+        body = await inbox_v2(client, headers=device_headers(token),
+                              noticePage={"limit": 40, **({"before": before} if before else {})})
+        assert body["unreadCount"] == 205, "角标与窗口无关"
+        assert len(body["notices"]) == (40 if body["noticesPage"]["more"] else 5)
+        assert all("body" not in notice for notice in body["notices"]), "v2 列表不带正文"
+        seen.extend(notice["noticeId"] for notice in body["notices"])
+        pages += 1
+        if not body["noticesPage"]["more"]:
+            break
+        before = body["noticesPage"]["nextBefore"]
+    assert pages == 6 and len(seen) == 205 == len(set(seen))
+
+
+async def test_all_thread_history_is_reachable_through_the_thread_cursor(client, store):
+    token = await paired_device(client, name="DSH-Walk")
+    device = device_of(client, token)
+    for index in range(205):
+        thread = store.create_feedback_thread(
+            ticket_hash=sha256_hex(f"fk_{index}"), text=f"第 {index} 封",
+            device_id=device["deviceId"], account_id=device["accountId"], at=1_000 + index)
+        for extra in range(5):
+            store.append_feedback_message(thread["threadId"], f"补充 {extra}", author="owner",
+                                          at=1_000 + index)
+
+    seen: list[str] = []
+    before = None
+    pages = 0
+    while True:
+        body = await inbox_v2(client, headers=device_headers(token),
+                              messagesPerThread=6,
+                              threadsPage={"limit": 30, **({"before": before} if before else {})})
+        assert len(body["threads"]) == (30 if body["threadsPage"]["more"] else 25)
+        assert all(len(thread["messages"]) == 6 for thread in body["threads"])
+        seen.extend(thread["threadId"] for thread in body["threads"])
+        pages += 1
+        if not body["threadsPage"]["more"]:
+            break
+        before = body["threadsPage"]["nextBefore"]
+    assert pages == 7 and len(seen) == 205 == len(set(seen))
+
+
+async def test_the_v2_first_screen_stays_under_the_budget(client, store):
+    """首屏 = 30 线程 × 6 留言 + 40 条通知摘要；生产副本对照组的 v1 是 6.95 MB。"""
+    token = await paired_device(client, name="DSH-Budget")
+    device = device_of(client, token)
+    account_id = device["accountId"]
+    body_text = "会话一直转圈，日志已附上，麻烦看一下。" * 2      # 约 100 B，贴近生产正文中位
+    for index in range(30):
+        thread = store.create_feedback_thread(
+            ticket_hash=sha256_hex(f"fk_{index}"), text=body_text,
+            subject=f"问题 {index}", device_id=device["deviceId"], account_id=account_id,
+            at=1_000 + index)
+        for extra in range(5):
+            store.append_feedback_message(thread["threadId"], body_text, author="owner",
+                                          at=1_000 + index)
+    for index in range(40):
+        store.create_notice("日报正文" * 20, f"日报 {index}", [account_id], format="html",
+                            at=9_000 + index)
+
+    response = await client.post("/feedback/inbox",
+                                 json={"inboxVersion": 2}, headers=device_headers(token))
+    assert response.status == 200
+    raw = await response.read()
+    assert len(raw) < 128 * 1024, f"首屏 {len(raw)} B 超预算"
+    body = json.loads(raw)
+    assert len(body["threads"]) == 30 and len(body["notices"]) == 40
+
+
+async def test_the_v1_window_is_still_two_hundred_notices_and_counts_beyond_it(client, store):
+    """v1 的窗口与形状不变；未读聚合与 v2 同一次计算（设计 M2.5：不保留第二套算法）。"""
+    token = await paired_device(client, name="DSH-Legacy")
+    account_id = device_of(client, token)["accountId"]
+    for index in range(205):
+        store.create_notice(f"正文 {index}", f"通知 {index}", [account_id], at=1_000 + index)
+
+    body = await inbox(client, headers=device_headers(token))
+    assert len(body["notices"]) == 200, "v1 仍是 200 条窗口"
+    assert set(body["notices"][0]) == {"noticeId", "subject", "body", "format", "createdAt",
+                                       "read"}, "v1 仍内联正文"
+    assert body["unreadCount"] == 205, "角标不再被封顶在 200"
+
+
+# ── POST /feedback/notice（M2）：正文按需取，三次未命中同一条 404 ─────────────
+
+
+async def test_the_notice_endpoint_returns_the_body_to_its_recipient(client, store):
+    token = await paired_device(client, name="DSH-Notice")
+    account_id = device_of(client, token)["accountId"]
+    notice = store.create_notice("通知正文", "服务通知", [account_id], format="html", at=5_000)
+
+    response = await client.post("/feedback/notice", json={"noticeId": notice["noticeId"]},
+                                 headers=device_headers(token))
+    assert response.status == 200, await response.text()
+    assert await response.json() == {
+        "ok": True,
+        "notice": {"noticeId": notice["noticeId"], "subject": "服务通知", "body": "通知正文",
+                   "format": "html", "createdAt": 5_000, "read": False}}
+
+
+async def test_the_notice_endpoint_answers_one_404_for_anonymous_missing_and_foreign(
+        client, store):
+    token = await paired_device(client, name="DSH-Notice")
+    foreign = store.create_notice("给别人的正文", "别人的通知", ["acc_someone"], at=5_000)
+
+    other = await client.post("/feedback/notice", json={"noticeId": foreign["noticeId"]},
+                              headers=device_headers(token))
+    missing = await client.post("/feedback/notice", json={"noticeId": "nt_nope"},
+                                headers=device_headers(token))
+    anonymous = await client.post("/feedback/notice", json={"noticeId": foreign["noticeId"]})
+    assert [response.status for response in (other, missing, anonymous)] == [404, 404, 404]
+
+    bodies = [await response.read() for response in (other, missing, anonymous)]
+    assert bodies[0] == bodies[1] == bodies[2], "不泄露通知是否存在/是否投给这个账号"
+    append_404 = await client.post("/feedback/append", json={
+        "threadId": "th_nope", "ticketKey": TICKET, "text": "补充"})
+    assert await append_404.read() == bodies[0], "与线程那条 404 逐字节相同"
+
+
+async def test_the_notice_endpoint_charges_the_read_budget(client, store):
+    from api import ClaimLimiter
+
+    notice = store.create_notice("正文", "通知", ["acc_someone"], at=5_000)
+    client.app["feedback_read_limiter"] = ClaimLimiter(limit=1, window_s=600)
+    first = await client.post("/feedback/notice", json={"noticeId": notice["noticeId"]})
+    assert first.status == 404, "未命中同样计入预算"
+    second = await client.post("/feedback/notice", json={"noticeId": notice["noticeId"]})
+    assert second.status == 429
+    assert (await second.json())["error"]["code"] == "feedback/rate-limited"
+
+
+async def test_the_notice_route_is_registered_under_the_prefix(prefixed_client):
+    response = await prefixed_client.post("/dsh-link/feedback/notice",
+                                          json={"noticeId": "nt_nope"})
+    assert response.status == 404
+    assert (await response.json())["error"]["code"] == "feedback/not-found"
+
+
+async def test_notices_false_still_counts_the_unread_badge(client, store):
+    """`notices: false` 只是不返回通知列表：未读数照算（与窗口也无关系）。"""
+    token = await paired_device(client, name="DSH-NoList")
+    account_id = device_of(client, token)["accountId"]
+    store.create_notice("正文", "通知", [account_id], at=5_000)
+    body = await inbox_v2(client, headers=device_headers(token), notices=False)
+    assert body["notices"] == []
+    assert body["noticesPage"] == {"more": False, "nextBefore": None}
+    assert body["unreadCount"] == 1
+
+
+# ── 角标不受线程窗口影响（复核意见）：unreadCount 对所有可见线程成立 ──────────
+#
+# v2 的线程列表有窗口（30/页），但未读合计不是"当页之和"：它与 `feedback_read`
+# 的回包必须永远是同一个数，否则同一账号会看到两个角标。
+
+
+async def seed_unread_threads(client, store, count: int, *, side: str) -> dict:
+    """造 `count` 条线程，每条留一句没读的留言（`side` = 谁没读）。"""
+    token = await paired_device(client, name=f"DSH-Badge-{side}")
+    device = device_of(client, token)
+    for index in range(count):
+        thread = store.create_feedback_thread(
+            ticket_hash=sha256_hex(f"fk_badge_{index}"), text=f"第 {index} 封",
+            device_id=device["deviceId"], account_id=device["accountId"], at=1_000 + index)
+        store.append_feedback_message(
+            thread["threadId"], f"未读 {index}",
+            author="owner" if side == "user" else "user", at=2_000 + index)
+    return {"token": token, "device": device}
+
+
+async def test_the_badge_counts_every_visible_thread_not_just_the_first_page(client, store):
+    """205 条线程 × 1 条未读、30/页：首页 unreadCount == 205（不是 30）。"""
+    seeded = await seed_unread_threads(client, store, 205, side="user")
+    body = await inbox_v2(client, headers=device_headers(seeded["token"]))
+    assert len(body["threads"]) == 30 and body["threadsPage"]["more"] is True
+    assert body["unreadCount"] == 205
+
+
+async def test_the_badge_equals_the_sum_of_the_pages(client, store):
+    """逐页累加当页线程的 unread == 每页都相同的 unreadCount。"""
+    seeded = await seed_unread_threads(client, store, 205, side="user")
+    seen: list[str] = []
+    total = 0
+    before = None
+    while True:
+        body = await inbox_v2(client, headers=device_headers(seeded["token"]),
+                              threadsPage={"limit": 30, **({"before": before} if before else {})})
+        assert body["unreadCount"] == 205
+        total += sum(thread["unread"] for thread in body["threads"])
+        seen.extend(thread["threadId"] for thread in body["threads"])
+        if not body["threadsPage"]["more"]:
+            break
+        before = body["threadsPage"]["nextBefore"]
+    assert len(seen) == 205 == len(set(seen))
+    assert total == 205
+
+
+async def test_the_read_response_and_the_next_v2_pull_agree_on_the_badge(client, store):
+    """用户侧：read 回包与紧接的 v2 收件箱 unreadCount 相等（读完 10 条后都是 195）。"""
+    seeded = await seed_unread_threads(client, store, 205, side="user")
+    first = await inbox_v2(client, headers=device_headers(seeded["token"]))
+    to_read = [thread["threadId"] for thread in first["threads"][:10]]
+
+    marked = await client.post("/feedback/read", json={"threadIds": to_read},
+                               headers=device_headers(seeded["token"]))
+    assert marked.status == 200, await marked.text()
+    after = await inbox_v2(client, headers=device_headers(seeded["token"]))
+    assert (await marked.json())["unreadCount"] == 195
+    assert after["unreadCount"] == 195, "read 与紧接的拉取必须是同一个数"
+
+
+async def test_the_team_badge_also_counts_threads_beyond_the_first_page(client, store):
+    """团队侧：40 封来信各 1 条未读，读 5 封后 read 回包 == v2 收件箱 == 35。"""
+    letters: list[str] = []
+    for index in range(40):
+        letter = store.create_feedback_thread(
+            ticket_hash=sha256_hex(f"fk_letter_{index}"), text=f"第 {index} 封来信",
+            account_id="acc_letter_writer", device_id=f"dev_writer_{index}",
+            device_model="iPhone15,4", at=1_000 + index)
+        letters.append(letter["threadId"])
+
+    team_token = register_device(client, account_id=TEAM_ACCOUNT)
+    first = await inbox_v2(client, headers=device_headers(team_token))
+    assert len(first["threads"]) == 30 and first["threadsPage"]["more"] is True
+    assert first["unreadCount"] == 40
+    assert all(thread["mySide"] == "owner" for thread in first["threads"])
+
+    marked = await client.post("/feedback/read", json={"threadIds": letters[:5]},
+                               headers=device_headers(team_token))
+    assert marked.status == 200, await marked.text()
+    after = await inbox_v2(client, headers=device_headers(team_token))
+    assert (await marked.json())["unreadCount"] == 35
+    assert after["unreadCount"] == 35
+
+
+async def test_v1_and_v2_report_the_same_badge(client, store):
+    """同一账号、同一时刻：v1（可见集合即全部）与 v2（有窗口）给出的角标相等。"""
+    seeded = await seed_unread_threads(client, store, 205, side="user")
+    legacy = await inbox(client, headers=device_headers(seeded["token"]))
+    modern = await inbox_v2(client, headers=device_headers(seeded["token"]))
+    assert len(legacy["threads"]) == 205 and len(modern["threads"]) == 30, "窗口仍然不同"
+    assert legacy["unreadCount"] == modern["unreadCount"] == 205
+
+
+async def test_v1_keeps_the_original_unread_semantics_and_v2_takes_my_side(client, store):
+    """同一份非零未读（2 条未读回信 + 1 条未读来信）：
+
+    v1 的 `unread` 仍是"我们写的、用户还没读"（2），`teamUnread` 仍是"用户写的、
+    我们还没读"（1）——与旧实现逐字段一致；v2 的 `unread` 才取我这一侧（团队 = 1）。
+    """
+    letter = store.create_feedback_thread(
+        ticket_hash=sha256_hex("fk_semantics"), text="原信", subject="主题",
+        account_id="acc_user", device_id="dev_user", device_model="iPhone15,4",
+        app_version="1.0", system_version="18.0", at=1_000)
+    store.append_feedback_message(letter["threadId"], "补充", author="user", at=1_400)
+    store.append_feedback_message(letter["threadId"], "回信一", author="owner", at=2_000)
+    store.append_feedback_message(letter["threadId"], "回信二", author="owner", at=3_000)
+    store._conn.execute(
+        "UPDATE feedbackThreads SET userReadAt=1500, ownerReadAt=1200, lastMessageAt=3000"
+        " WHERE threadId=?", (letter["threadId"],))
+    store._conn.commit()
+
+    team_token = register_device(client, account_id=TEAM_ACCOUNT)
+    user_token = register_device(client, account_id="acc_user")
+
+    for label, token, expected in (("团队", team_token, {"unread": 2, "teamUnread": 1,
+                                                        "unreadCount": 1}),
+                                   ("用户", user_token, {"unread": 2, "teamUnread": 1,
+                                                        "unreadCount": 2})):
+        body = await inbox(client, headers=device_headers(token))
+        thread = next(t for t in body["threads"] if t["threadId"] == letter["threadId"])
+        assert thread["unread"] == expected["unread"], label
+        assert thread["teamUnread"] == expected["teamUnread"], label
+        assert body["unreadCount"] == expected["unreadCount"], label
+
+    modern = await inbox_v2(client, headers=device_headers(team_token))
+    thread = next(t for t in modern["threads"] if t["threadId"] == letter["threadId"])
+    assert thread["mySide"] == "owner"
+    assert thread["unread"] == 1, "团队这一侧真正没读的来信只有 1 条"
+    assert "teamUnread" not in thread
+    assert modern["unreadCount"] == 1

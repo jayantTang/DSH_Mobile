@@ -550,3 +550,134 @@ def test_feedback_notify_dry_run_tells_nobody(tmp_path, capsys, notified):
     assert code == 0, out
     assert out["dryRun"] is True
     assert notified == []
+
+
+# ── M8：清单口径（--scope）、投递可查、回滚前的 rebind ──────────────────────
+#
+# 「哪条线程算用户来信」只有一份判据（store.is_user_letter）；管理清单的 scope
+# 只是它的两个投影：user = 命中谓词的，test = 命不中的（测试机型/调试设备）。
+
+TEAM = "acc_team"
+
+
+def seed_scope_db(db: str) -> dict:
+    """一库三行：真实来信、团队自己的提交、验收单（arm64）。"""
+    store = Store(db)
+    try:
+        letter = store.create_feedback_thread(ticket_hash=sha256_hex("fk_letter"), text="用户来信",
+                                              account_id="acc_user", device_id="dev_user",
+                                              device_model="iPhone15,4", at=1_000)
+        mine = store.create_feedback_thread(ticket_hash=sha256_hex("fk_mine"), text="自己测试",
+                                            account_id=TEAM, device_id="dev_team",
+                                            device_model="iPhone15,4", at=2_000)
+        simulator = store.create_feedback_thread(ticket_hash=sha256_hex("fk_sim"), text="验收单",
+                                                 device_model="arm64", at=3_000)
+    finally:
+        store.close()
+    return {"letter": letter["threadId"], "mine": mine["threadId"],
+            "simulator": simulator["threadId"]}
+
+
+def test_feedback_list_scope_separates_user_letters_from_test_rows(relay, tmp_path, capsys):
+    seeded = seed_scope_db(str(tmp_path / "scope.db"))
+    db = str(tmp_path / "scope.db")
+
+    code, everything = run_cli(db, "--team-account", TEAM, "feedback-list", capsys=capsys)
+    assert code == 0 and len(everything) == 3, "默认 scope=all，向后兼容"
+
+    code, users = run_cli(db, "--team-account", TEAM, "feedback-list", "--scope", "user",
+                          capsys=capsys)
+    assert code == 0
+    assert {row["threadId"] for row in users} == {seeded["letter"]}
+    assert users[0]["ownerUnread"] == 1, "未读只对 user 口径计数"
+
+    code, tests = run_cli(db, "--team-account", TEAM, "feedback-list", "--scope", "test",
+                          capsys=capsys)
+    assert code == 0
+    assert {row["threadId"] for row in tests} == {seeded["simulator"], seeded["mine"]}
+    assert all(row["ownerUnread"] == 0 for row in tests), "测试口径不产生未读"
+
+
+def test_feedback_notice_stats_reports_the_delivery_coverage(relay, capsys):
+    store = Store(relay["db"])
+    try:
+        notice = store.create_notice("日报正文", "运营日报",
+                                     ["acc_a", "acc_b", "acc_c"], at=5_000)
+        store.mark_notices_read("acc_a", [notice["noticeId"]])
+    finally:
+        store.close()
+
+    code, stats = run_cli(relay["db"], "feedback-notice-stats", "--notice",
+                          notice["noticeId"], capsys=capsys)
+    assert code == 0
+    assert stats == {"noticeId": notice["noticeId"], "subject": "运营日报",
+                     "delivered": 3, "read": 1, "unread": 2}
+
+    code, missing = run_cli(relay["db"], "feedback-notice-stats", "--notice", "nt_nope",
+                            capsys=capsys)
+    assert code == 1 and missing == {"ok": False, "error": "notice not found"}
+
+
+def test_feedback_rebind_is_a_dry_run_until_yes(tmp_path, capsys):
+    """回滚到旧包之前把 `teamAccountId` 按谓词补齐；不带 --yes 一个字都不写。"""
+    db = str(tmp_path / "rebind.db")
+    seeded = seed_scope_db(db)
+
+    code, preview = run_cli(db, "--team-account", TEAM, "feedback-rebind", capsys=capsys)
+    assert code == 0 and preview["dryRun"] is True and preview["bound"] == 1
+    assert all(row["teamAccountId"] is None for row in query(
+        db, "SELECT teamAccountId FROM feedbackThreads"))
+
+    code, done = run_cli(db, "--team-account", TEAM, "feedback-rebind", "--yes", capsys=capsys)
+    assert code == 0 and done == {"team": TEAM, "bound": 1, "cleared": 0, "dryRun": False}
+    column = {row["threadId"]: row["teamAccountId"]
+              for row in query(db, "SELECT threadId, teamAccountId FROM feedbackThreads")}
+    assert column[seeded["letter"]] == TEAM
+    assert column[seeded["mine"]] is None and column[seeded["simulator"]] is None
+
+
+def test_feedback_show_reports_the_derived_user_letter_flag(tmp_path, capsys):
+    """CLI 与 App 用同一份谓词："这封会不会进团队收件箱"在两边是同一个事实。"""
+    db = str(tmp_path / "show.db")
+    seeded = seed_scope_db(db)
+    code, letter = run_cli(db, "--team-account", TEAM, "feedback-show", "--thread",
+                           seeded["letter"], capsys=capsys)
+    assert code == 0 and letter["userLetter"] is True
+    code, simulator = run_cli(db, "--team-account", TEAM, "feedback-show", "--thread",
+                              seeded["simulator"], capsys=capsys)
+    assert code == 0 and simulator["userLetter"] is False
+
+
+# ── F2（评审）：没有团队账号时拒绝静默降级 ─────────────────────────────────
+#
+# `is_user_letter(account, model, "")` 会把所有非空账号都判成用户来信（团队自己的提交
+# 也在内）。这三条命令要靠团队账号判口径，team 为空时必须报错，而不是猜。
+
+
+def test_feedback_list_scope_refuses_to_guess_without_a_team_account(relay, capsys):
+    before = count(relay["db"], "feedbackThreads")
+    code, report = run_cli(relay["db"], "feedback-list", "--scope", "user", capsys=capsys)
+    assert code == 1, "业务失败（与其它 StoreError 同一约定），不是 0 也不是 2"
+    assert "--team-account" in report["stderr"] and "MAIL_TEAM_ACCOUNT" in report["stderr"]
+    assert count(relay["db"], "feedbackThreads") == before, "只读命令不许写库"
+
+    # 不给 --scope 时保持既有行为：行集与以前一样（默认 all），不因为缺团队账号失败。
+    code, rows = run_cli(relay["db"], "feedback-list", capsys=capsys)
+    assert code == 0 and len(rows) == 1
+
+
+def test_feedback_stats_refuses_to_guess_without_a_team_account(relay, capsys):
+    code, report = run_cli(relay["db"], "feedback-stats", capsys=capsys)
+    assert code == 1
+    assert "--team-account" in report["stderr"]
+    # 给了团队账号就照常出报告（形状不变）。
+    code, stats = run_cli(relay["db"], "--team-account", TEAM, "feedback-stats", capsys=capsys)
+    assert code == 0 and stats["ok"] is True and stats["feedback"]["new"] == 1
+
+
+def test_feedback_rebind_refuses_without_a_team_account(relay, capsys):
+    code, report = run_cli(relay["db"], "feedback-rebind", "--yes", capsys=capsys)
+    assert code == 1
+    assert "--team-account" in report["stderr"]
+    assert all(row["teamAccountId"] is None for row in query(
+        relay["db"], "SELECT teamAccountId FROM feedbackThreads")), "报错时一列都不许写"

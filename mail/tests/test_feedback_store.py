@@ -11,7 +11,8 @@ import sqlite3
 
 import pytest
 
-from store import NotFound, Store, StoreError, sha256_hex
+from store import (USER_LETTER_SQL, NotFound, Store, StoreError, is_user_letter, my_side,
+                   page_thread_rows, sha256_hex)
 
 NEW_TABLES = ("feedbackThreads", "feedbackMessages", "notices", "noticeDeliveries")
 
@@ -262,21 +263,22 @@ def test_threads_are_found_by_ticket_or_by_device(tmp_path):
 
 
 def test_the_team_clause_of_by_device_is_gated_by_the_callers_switch(tmp_path):
-    """团队绑定只在调用方**给了** `team_account` 时参与命中（2026-10-17 事故）。
+    """团队那条命中路径只在调用方**就是**团队账号、且开关打开时参与（2026-10-17 事故）。
 
-    事故形状是"开关被部署清空、库里的绑定还在"：修复前团队设备仍然拿得到用户的
-    来信，于是 App 按用户视角把它们排进 owner 的「已发送」。这里从存储层钉住
-    判据：不给 `team_account` 就没有团队那条路径，且**不影响**写信人自己的命中。
+    归属是派生谓词（accountId / deviceModel + 当前团队账号），不是提交时的
+    `teamAccountId` 快照；因此开关被部署清空时团队两侧都看不到来信，
+    而写信人自己的可见性、以及团队自己的线程都不受影响。
     """
     store = Store(str(tmp_path / "state.db"))
     try:
         letter = store.create_feedback_thread(ticket_hash=sha256_hex("fk_letter"), text="用户来信",
                                               device_id="dev_user", account_id="acc_user",
-                                              team_account_id="acc_team", at=1_000)
+                                              device_model="iPhone15,4", at=1_000)
         mine = store.create_feedback_thread(ticket_hash=sha256_hex("fk_mine"), text="owner 自己",
-                                            device_id="dev_owner", account_id="acc_team", at=2_000)
+                                            device_id="dev_owner", account_id="acc_team",
+                                            device_model="iPhone15,4", at=2_000)
 
-        # 开关打开：团队看得到别人的来信，也看得到自己的。
+        # 开关打开且调用方就是团队：别人的来信 + 自己那条。
         assert {t["threadId"] for t in store.feedback_threads_by_device(
             "dev_owner", "acc_team", team_account="acc_team")} == {letter["threadId"],
                                                                    mine["threadId"]}
@@ -285,8 +287,7 @@ def test_the_team_clause_of_by_device_is_gated_by_the_callers_switch(tmp_path):
             "dev_owner", "acc_team")] == [mine["threadId"]]
         assert [t["threadId"] for t in store.feedback_threads_by_device(
             "dev_user", "acc_user")] == [letter["threadId"]], "写信人不受开关影响"
-        # 开着开关也不会把别家的账号当成团队：线索仍按**调用方自己的**账号配对，
-        # 无关账号一条都拿不到（开关只决定这条路径开不开）。
+        # 开着开关也不会把别家的账号当成团队：判据是调用方自己的账号。
         assert store.feedback_threads_by_device("dev_other", "acc_other",
                                                 team_account="acc_team") == []
         # 顺序仍是最近活动在前。
@@ -318,8 +319,8 @@ def test_a_migrated_database_gains_the_team_column_and_the_index(tmp_path):
         assert columns(path, "feedbackThreads") == EXPECTED_COLUMNS["feedbackThreads"]
         assert "feedbackThreadsByTeam" in {row[1] for row in
                                            store._rows("PRAGMA index_list(feedbackThreads)")}
-        store._conn.execute("UPDATE feedbackThreads SET teamAccountId='acc_team' WHERE threadId='th_old'")
-        store._conn.commit()
+        # 老库补出来的列照旧可读（回滚时 feedback-rebind 会按谓词把它补齐）；
+        # 但归属判定已不再读它，团队路径按派生谓词命中。
         assert [t["threadId"] for t in store.feedback_threads_by_device(
             "dev_owner", "acc_team", team_account="acc_team")] == ["th_old"]
         assert store.feedback_threads_by_device("dev_owner", "acc_team") == []
@@ -353,9 +354,9 @@ def test_unread_counts_owner_messages_after_user_read_at(tmp_path):
         store.append_feedback_message(thread["threadId"], "回信一", author="owner", at=2_000)
         store.append_feedback_message(thread["threadId"], "回信二", author="owner", at=3_000)
 
-        assert store.feedback_thread(thread["threadId"], None)["unread"] == 2
+        assert store.feedback_thread(thread["threadId"], None)["ownerUnread"] == 2
         assert store.mark_thread_read(thread["threadId"]) is True
-        assert store.feedback_thread(thread["threadId"], None)["unread"] == 0
+        assert store.feedback_thread(thread["threadId"], None)["ownerUnread"] == 0
         assert store.feedback_thread(thread["threadId"], None)["userReadAt"] == 3_000
 
         # 幂等：重复标记不改变结果，也不把时间往前挪。
@@ -365,7 +366,7 @@ def test_unread_counts_owner_messages_after_user_read_at(tmp_path):
         assert store.feedback_thread(thread["threadId"], None)["userReadAt"] == 3_000
 
         store.append_feedback_message(thread["threadId"], "回信三", author="owner", at=4_000)
-        assert store.feedback_thread(thread["threadId"], None)["unread"] == 1
+        assert store.feedback_thread(thread["threadId"], None)["ownerUnread"] == 1
         assert store.mark_thread_read("th_nope") is False
     finally:
         store.close()
@@ -604,5 +605,374 @@ def test_an_unknown_format_is_refused_before_anything_is_written(tmp_path):
         assert count(store, "SELECT COUNT(*) FROM feedbackMessages") == 1
         assert count(store, "SELECT COUNT(*) FROM notices") == 0
         assert count(store, "SELECT COUNT(*) FROM noticeDeliveries") == 0
+    finally:
+        store.close()
+
+
+# ── M1：线程归属谓词（SQL 片段 + 纯函数）与每线程 mySide ────────────────────
+#
+# 「这条线程是不是写给团队的用户来信」只有一个事实、两份实现（SQL 用于命中与
+# 未读聚合，纯函数用于内存判定），两者由下面的组合穷举钉成等价。
+
+TEAM = "acc_team"
+OTHER = "acc_other"
+
+
+@pytest.mark.parametrize("account_id,device_model,expected", [
+    (None, None, True),
+    (None, "iPhone12,1", True),
+    (None, "arm64", False),
+    (TEAM, None, False),
+    (TEAM, "iPhone12,1", False),
+    (TEAM, "arm64", False),
+    (OTHER, None, True),
+    (OTHER, "iPhone12,1", True),
+    (OTHER, "arm64", False),
+])
+def test_the_user_letter_predicate_over_every_combination(account_id, device_model, expected):
+    assert is_user_letter(account_id, device_model, TEAM) is expected
+
+
+def test_the_sql_fragment_and_the_pure_function_agree_on_every_combination(tmp_path):
+    """谓词的两个实现必须逐格等价：`{NULL, 团队, 他人} × {NULL, arm64, iPhone12,1}`。"""
+    store = Store(str(tmp_path / "state.db"))
+    try:
+        thread_ids: dict[tuple[str | None, str | None], str] = {}
+        for account_id in (None, TEAM, OTHER):
+            for device_model in (None, "arm64", "iPhone12,1"):
+                thread = store.create_feedback_thread(
+                    ticket_hash=sha256_hex(f"fk_{account_id}_{device_model}"), text="正文",
+                    account_id=account_id, device_model=device_model, at=1_000)
+                thread_ids[(account_id, device_model)] = thread["threadId"]
+
+        sql_hits = {row["threadId"] for row in store._rows(
+            f"SELECT threadId FROM feedbackThreads WHERE {USER_LETTER_SQL}", (TEAM,))}
+        pure_hits = {thread_id for (account_id, device_model), thread_id in thread_ids.items()
+                     if is_user_letter(account_id, device_model, TEAM)}
+
+        assert sql_hits == pure_hits
+        assert len(pure_hits) == 4, "匿名与他人 × 真实机型这四格是用户来信"
+        assert thread_ids[(TEAM, "iPhone12,1")] not in sql_hits, "团队自己写的不算来信"
+        assert thread_ids[(None, "arm64")] not in sql_hits, "测试机型不算来信"
+    finally:
+        store.close()
+
+
+def test_my_side_is_owner_only_for_the_team_on_a_user_letter():
+    assert my_side(True, caller_is_team=True) == "owner"
+    assert my_side(True, caller_is_team=False) == "user", "普通用户永远是 user 侧"
+    assert my_side(False, caller_is_team=True) == "user", "团队自己的信落在 user 侧"
+    assert my_side(False, caller_is_team=False) == "user"
+
+
+def test_the_payload_reports_my_side_and_only_my_side_unread(tmp_path):
+    """团队与用户在**同一条来信**上看到各自一侧的未读；对方的那个数不出现。"""
+    store = Store(str(tmp_path / "state.db"))
+    try:
+        letter = store.create_feedback_thread(ticket_hash=sha256_hex("fk_one"), text="第一句",
+                                              account_id=OTHER, device_model="iPhone12,1", at=1_000)
+        store.append_feedback_message(letter["threadId"], "回信", author="owner", at=2_000)
+        store.append_feedback_message(letter["threadId"], "补充", author="user", at=3_000)
+
+        as_user = store.feedback_thread(letter["threadId"], None, team=TEAM, caller_account=OTHER)
+        assert as_user["userLetter"] is True and as_user["mySide"] == "user"
+        assert as_user["callerIsTeam"] is False
+        assert as_user["ownerUnread"] == 1, "我们写的留言里用户还没读的条数"
+        assert as_user["userUnread"] == 2, "用户写的留言里我们还没读的条数"
+
+        as_team = store.feedback_thread(letter["threadId"], None, team=TEAM, caller_account=TEAM)
+        assert as_team["mySide"] == "owner" and as_team["callerIsTeam"] is True
+        assert as_team["ownerUnread"] == 1 and as_team["userUnread"] == 2, "两个原始计数与视角无关"
+
+        store.mark_team_thread_read(letter["threadId"])
+        after = store.feedback_thread(letter["threadId"], None, team=TEAM, caller_account=TEAM)
+        assert after["userUnread"] == 0, "团队读完来信"
+        assert after["ownerUnread"] == 1, "用户那一侧没变"
+    finally:
+        store.close()
+
+
+def test_the_teams_own_letter_never_counts_as_unread_for_the_team(tmp_path):
+    store = Store(str(tmp_path / "state.db"))
+    try:
+        mine = store.create_feedback_thread(ticket_hash=sha256_hex("fk_mine"), text="自己测试",
+                                            account_id=TEAM, device_model="iPhone15,4", at=1_000)
+        payload = store.feedback_thread(mine["threadId"], None, team=TEAM, caller_account=TEAM)
+        assert payload["userLetter"] is False
+        assert payload["mySide"] == "user", "自己的提交归已发送那一侧"
+        assert payload["callerIsTeam"] is True, "调用方确实是团队（否则 v1 不需归零）"
+        assert payload["ownerUnread"] == 0 and payload["userUnread"] == 1
+    finally:
+        store.close()
+
+
+def test_the_team_path_lists_user_letters_but_never_answers_a_non_team_caller(tmp_path):
+    """第三条命中路径的判据是「调用方**就是**团队账号」——隔离用例的存储层一半。"""
+    store = Store(str(tmp_path / "state.db"))
+    try:
+        letter = store.create_feedback_thread(ticket_hash=sha256_hex("fk_letter"), text="用户来信",
+                                              account_id=OTHER, device_model="iPhone12,1",
+                                              device_id="dev_user", at=1_000)
+        own = store.create_feedback_thread(ticket_hash=sha256_hex("fk_own"), text="团队自己",
+                                           account_id=TEAM, device_model="iPhone15,4",
+                                           device_id="dev_team", at=2_000)
+        anonymous = store.create_feedback_thread(ticket_hash=sha256_hex("fk_anon"), text="匿名来信",
+                                                 device_model="iPhone17,1", at=3_000)
+        simulator = store.create_feedback_thread(ticket_hash=sha256_hex("fk_sim"), text="验收单",
+                                                 device_model="arm64", at=4_000)
+
+        team_view = {thread["threadId"] for thread in store.feedback_threads_by_device(
+            "dev_team", TEAM, team_account=TEAM)}
+        assert team_view == {letter["threadId"], own["threadId"], anonymous["threadId"]}, \
+            "团队看得到来信（含匿名），看不到验收单，也看得到自己那条"
+        assert simulator["threadId"] not in team_view
+
+        # 别人拿着同一个团队开关参数，一条来信都命中不了（且不是信的作者）。
+        assert store.feedback_threads_by_device("dev_stranger", "acc_stranger",
+                                                team_account=TEAM) == []
+        # 开关关闭（team_account 为空）：团队只剩自己的线程。
+        assert [t["threadId"] for t in store.feedback_threads_by_device("dev_team", TEAM)] == [
+            own["threadId"]]
+        # 写信人自己的可见性不受团队那条路径影响。
+        assert [t["threadId"] for t in store.feedback_threads_by_device(
+            "dev_user", OTHER)] == [letter["threadId"]]
+    finally:
+        store.close()
+
+
+def test_owner_unread_counts_only_user_letters(tmp_path):
+    """owner 清单的未读只算来信：团队自己的与测试机型的都不再显示 1 条清不掉的未读。"""
+    store = Store(str(tmp_path / "state.db"))
+    try:
+        letter = store.create_feedback_thread(ticket_hash=sha256_hex("fk_letter"), text="来信",
+                                              account_id=OTHER, device_model="iPhone12,1", at=1_000)
+        own = store.create_feedback_thread(ticket_hash=sha256_hex("fk_mine"), text="自己",
+                                     account_id=TEAM, device_model="iPhone15,4", at=2_000)
+        store.create_feedback_thread(ticket_hash=sha256_hex("fk_sim"), text="验收",
+                                     device_model="arm64", at=3_000)
+        assert store.owner_unread_counts(TEAM) == {letter["threadId"]: 1}
+        # 团队账号为空时谓词只剩"非测试机型"这一半：验收单照样出去，其余都算。
+        # 管理命令因此必须用 --team-account 给出同一个团队账号（与服务的配置同源）。
+        assert store.owner_unread_counts() == {letter["threadId"]: 1,
+                                               own["threadId"]: 1}
+    finally:
+        store.close()
+
+
+def test_rebind_rewrites_the_legacy_column_from_the_predicate(tmp_path):
+    """回滚到旧包之前的唯一写入口：把旧列按谓词补齐，`--dry-run` 零写入。"""
+    store = Store(str(tmp_path / "state.db"))
+    try:
+        letter = store.create_feedback_thread(ticket_hash=sha256_hex("fk_letter"), text="来信",
+                                              account_id=OTHER, device_model="iPhone12,1", at=1_000)
+        own = store.create_feedback_thread(ticket_hash=sha256_hex("fk_mine"), text="自己",
+                                           account_id=TEAM, device_model="iPhone15,4", at=2_000)
+        simulator = store.create_feedback_thread(ticket_hash=sha256_hex("fk_sim"), text="验收",
+                                                 device_model="arm64", at=3_000)
+
+        dry = store.rebind_team_account(TEAM, dry_run=True)
+        assert dry == {"team": TEAM, "bound": 1, "cleared": 0, "dryRun": True}
+        assert store._row("SELECT teamAccountId FROM feedbackThreads WHERE threadId=?",
+                          (letter["threadId"],))["teamAccountId"] is None, "dry-run 不写库"
+
+        run = store.rebind_team_account(TEAM)
+        assert run == {"team": TEAM, "bound": 1, "cleared": 0, "dryRun": False}
+        column = {row["threadId"]: row["teamAccountId"] for row in store._rows(
+            "SELECT threadId, teamAccountId FROM feedbackThreads")}
+        assert column[letter["threadId"]] == TEAM
+        assert column[own["threadId"]] is None and column[simulator["threadId"]] is None
+        # 幂等：再跑一遍不再改动任何一行。
+        assert store.rebind_team_account(TEAM)["bound"] == 0
+    finally:
+        store.close()
+
+
+# ── M2：两条列表共用一套「游标 + limit+1」分页，通知详情与未读聚合 ────────────
+
+
+def test_notice_pages_walk_the_whole_history_without_gaps(tmp_path):
+    store = Store(str(tmp_path / "state.db"))
+    try:
+        created = [store.create_notice(f"正文 {index}", f"通知 {index}", ["acc_a"], at=1_000 + index)
+                   for index in range(205)]
+
+        seen: list[str] = []
+        pages = 0
+        before = None
+        while True:
+            page, more = store.notice_page("acc_a", limit=40, before=before)
+            assert len(page) == (40 if more else 5), "每页 40，最后一页 5"
+            seen.extend(notice["noticeId"] for notice in page)
+            pages += 1
+            if not more:
+                break
+            before = {"createdAt": page[-1]["createdAt"], "noticeId": page[-1]["noticeId"]}
+        assert pages == 6
+        assert len(seen) == 205 == len(set(seen)), "并集 205、无重复、无缺口"
+        assert seen == [notice["noticeId"] for notice in reversed(created)], "最近的在最前"
+
+        # 旧入口是同一份实现的第一页：v1 仍拿 200 条窗口。
+        assert len(store.notices_for_account("acc_a")) == 200
+    finally:
+        store.close()
+
+
+def test_notice_pages_stay_stable_when_rows_share_one_timestamp(tmp_path):
+    """同毫秒多条：靠 noticeId 做幂等键，翻页不重不漏。"""
+    store = Store(str(tmp_path / "state.db"))
+    try:
+        created = [store.create_notice("正文", "通知", ["acc_a"], at=5_000) for _ in range(9)]
+        seen: list[str] = []
+        before = None
+        while True:
+            page, more = store.notice_page("acc_a", limit=2, before=before)
+            seen.extend(notice["noticeId"] for notice in page)
+            if not more:
+                break
+            before = {"createdAt": page[-1]["createdAt"], "noticeId": page[-1]["noticeId"]}
+        assert len(seen) == 9 == len(set(seen))
+        assert seen == sorted((notice["noticeId"] for notice in created), reverse=True)
+    finally:
+        store.close()
+
+
+def test_the_notice_detail_is_only_available_to_its_recipient(tmp_path):
+    store = Store(str(tmp_path / "state.db"))
+    try:
+        notice = store.create_notice("通知正文", "标题", ["acc_a"], at=5_000)
+        detail = store.notice_for_account("acc_a", notice["noticeId"])
+        assert detail["body"] == "通知正文" and detail["read"] is False
+        assert detail["subject"] == "标题" and detail["format"] == "text"
+        assert store.notice_for_account("acc_b", notice["noticeId"]) is None, "没这条投递"
+        assert store.notice_for_account("acc_a", "nt_nope") is None, "不存在"
+    finally:
+        store.close()
+
+
+def test_the_unread_notice_count_is_independent_of_any_window(tmp_path):
+    store = Store(str(tmp_path / "state.db"))
+    try:
+        ids = [store.create_notice("正文", "通知", ["acc_a"], at=1_000 + index)["noticeId"]
+               for index in range(205)]
+        assert store.unread_notice_count("acc_a") == 205
+        store.mark_notices_read("acc_a", ids[:5])
+        assert store.unread_notice_count("acc_a") == 200
+        assert store.unread_notice_count("acc_b") == 0
+    finally:
+        store.close()
+
+
+def test_the_notice_delivery_stats_count_the_audience(tmp_path):
+    store = Store(str(tmp_path / "state.db"))
+    try:
+        notice = store.create_notice("正文", "标题", ["acc_a", "acc_b", "acc_c"], at=5_000)
+        store.mark_notices_read("acc_a", [notice["noticeId"]])
+        assert store.notice_delivery_stats(notice["noticeId"]) == {
+            "noticeId": notice["noticeId"], "subject": "标题", "delivered": 3, "read": 1,
+            "unread": 2}
+        assert store.notice_delivery_stats("nt_nope") is None
+    finally:
+        store.close()
+
+
+def test_thread_pages_walk_every_thread_without_gaps(tmp_path):
+    store = Store(str(tmp_path / "state.db"))
+    try:
+        created = []
+        for index in range(205):
+            thread = store.create_feedback_thread(
+                ticket_hash=sha256_hex(f"fk_{index}"), text=f"第 {index} 封",
+                device_id="dev_walk", account_id="acc_walk", at=1_000 + index)
+            for extra in range(5):
+                store.append_feedback_message(thread["threadId"], f"补充 {extra}", author="owner",
+                                              at=1_000 + index)
+            created.append(thread["threadId"])
+
+        # 可见集合一次取全部行，再切页（未读合并不受窗口影响的前提）。
+        rows = store.visible_thread_rows((), "dev_walk", "acc_walk")
+        custom = store.unread_counts_by_thread([row["threadId"] for row in rows])
+
+        seen: list[str] = []
+        before = None
+        while True:
+            page_rows, more = page_thread_rows(rows, limit=30, before=before)
+            page = store.thread_payloads(page_rows, 6, unread=custom)
+            assert all(len(thread["messages"]) == 6 for thread in page)
+            seen.extend(thread["threadId"] for thread in page)
+            if not more:
+                break
+            before = {"lastMessageAt": page[-1]["lastMessageAt"],
+                      "threadId": page[-1]["threadId"]}
+        assert len(seen) == 205 == len(set(seen)), "并集 205、无重复、无缺口"
+        assert seen == list(reversed(created)), "lastMessageAt 倒序（同毫秒按 threadId）"
+    finally:
+        store.close()
+
+
+def test_a_thread_that_moves_while_paging_is_never_lost(tmp_path):
+    """翻页中途来了一条回信：`lastMessageAt` 前移，最多重复，绝不丢。"""
+    store = Store(str(tmp_path / "state.db"))
+    try:
+        for index in range(65):
+            store.create_feedback_thread(
+                ticket_hash=sha256_hex(f"fk_{index}"), text=f"第 {index} 封",
+                device_id="dev_walk", account_id="acc_walk", at=1_000 + index)
+
+        rows = store.visible_thread_rows((), "dev_walk", "acc_walk")
+        first_rows, more = page_thread_rows(rows, limit=30)
+        assert more is True
+        first = store.thread_payloads(first_rows, 6)
+        moved = first[-1]["threadId"]
+        store.append_feedback_message(moved, "翻页途中来的回信", author="user", at=9_000_000)
+
+        seen = [thread["threadId"] for thread in first]
+        before = {"lastMessageAt": first[-1]["lastMessageAt"], "threadId": moved}
+        while True:
+            page_rows, more = page_thread_rows(rows, limit=30, before=before)
+            page = store.thread_payloads(page_rows, 6)
+            seen.extend(thread["threadId"] for thread in page)
+            if not more:
+                break
+            before = {"lastMessageAt": page[-1]["lastMessageAt"],
+                      "threadId": page[-1]["threadId"]}
+        assert set(seen) == {thread["threadId"] for thread in store.list_feedback_threads(limit=1000)}
+        assert len(seen) == len(set(seen)), "时间只增不减时不该重复"
+    finally:
+        store.close()
+
+
+def test_thread_pages_stay_stable_when_rows_share_one_timestamp(tmp_path):
+    """同毫秒多条：`(lastMessageAt DESC, threadId DESC)`，2/页走到尾，不丢不重。"""
+    store = Store(str(tmp_path / "state.db"))
+    try:
+        for index in range(5):
+            store.create_feedback_thread(
+                ticket_hash=sha256_hex(f"fk_same_ms_{index}"), text=f"第 {index} 封",
+                device_id="dev_same", account_id="acc_same", at=5_000)
+
+        rows = store.visible_thread_rows((), "dev_same", "acc_same")
+        counts = store.unread_counts_by_thread([row["threadId"] for row in rows])
+        seen: list[str] = []
+        before = None
+        while True:
+            page_rows, more = page_thread_rows(rows, limit=2, before=before)
+            page = store.thread_payloads(page_rows, 1, unread=counts)
+            assert [int(t["lastMessageAt"]) for t in page] == [5_000] * len(page)
+            seen.extend(t["threadId"] for t in page)
+            if not more:
+                break
+            before = {"lastMessageAt": page[-1]["lastMessageAt"],
+                      "threadId": page[-1]["threadId"]}
+
+        assert len(seen) == 5 == len(set(seen)), "同毫秒也不丢不重"
+        assert seen == sorted(seen, reverse=True), "同毫秒时 threadId 降序（与文档一致）"
+        # 游标的 SQL 口径与内存口径必须一致：`id <` 而不是 `id >`。
+        from store import is_after_before
+        assert is_after_before({"lastMessageAt": 5_000, "threadId": "th_b"},
+                               {"lastMessageAt": 5_000, "threadId": "th_c"},
+                               "lastMessageAt", "threadId") is True
+        assert is_after_before({"lastMessageAt": 5_000, "threadId": "th_d"},
+                               {"lastMessageAt": 5_000, "threadId": "th_c"},
+                               "lastMessageAt", "threadId") is False
     finally:
         store.close()

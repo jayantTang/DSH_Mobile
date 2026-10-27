@@ -51,6 +51,7 @@ Relay 只做两件事：**鉴权**与**按 `agentId` 转发**。它不解析 DLP
 | `GET` | `/account/state` | 读调用方账户的状态条目（设备令牌鉴权；`?keys=a,b` 取子集） |
 | `PUT` | `/account/state` | 写账户状态（只前进不后退），成功后给同账户其他在线设备发一帧 `accountState` |
 | `POST` | `/internal/account-state/touch` | **仅回环**：信件服务已读落库后，让中转替它向同账户设备扇一声"去看看信件" |
+| `POST` | `/dsh-link/feedback/{submit,inbox,append,read,notice}` | 信件端点，由**独立信件服务**（非中转）应答，见 §2.3 |
 | `POST` | `/agents/enroll` | 用邀请码自助登记，换 `agentId` / `agentSecret` |
 | `GET`  | `/devices` | 用 device token 列出**自己的**配对设备 |
 | `POST` | `/devices/revoke` | 用 device token 撤销自己的某台配对设备 |
@@ -147,6 +148,126 @@ PUT /account/state     Authorization: Bearer <deviceToken>
 WS 升级阶段失败直接回 HTTP `401` / `403`（不进入 WS 状态机）。
 两条凭据通道的优先级：`Authorization: Bearer` 头存在且格式正确时一律以头为准、完全忽略子协议；头缺失时子协议缺失/前缀不符/后缀为空/令牌无效均回 401，文案与既有通道一致。令牌字符必须是合法 token 字符（当前 `token_urlsafe` 产物只含 `A-Za-z0-9-_`）。
 进入 WS 后鉴权失败回 `{"t":"error","code":"auth/...","fatal":true}` 并关闭。
+
+### 2.3 信件端点（信件服务）
+
+信件（用户反馈线程 + 通知收件箱）由独立服务提供：网关把 `/dsh-link/feedback/*` 剥掉
+`/dsh-link` 前缀后转到信件服务，公网路径与拆分前一致。以下五个端点都是
+`POST`，请求与响应均为 JSON，`Authorization: Bearer <deviceToken>` 可选
+（缺省或无效即匿名，不是 401）。
+
+| 路径 | 语义 | 鉴权 |
+|---|---|---|
+| `/feedback/submit` | 新建一条线程，返回一次性取件凭据 `ticketKey`（库里只存 SHA-256） | 可选令牌；`clientRef` 幂等 |
+| `/feedback/inbox` | 拉取线程与通知；**只读**，不改已读 | 凭据对 + 设备/账号归属 |
+| `/feedback/append` | 在线程里补一句（异步留言，不是即时对话） | 取件凭据、设备归属、或团队侧 |
+| `/feedback/read` | 标记已读（线程按侧、通知按账号） | 同上 |
+| `/feedback/notice` | 取一条通知的正文（v2 列表不再内联正文） | 只按 `(accountId, noticeId)` 投递 |
+
+**授权失败一律同一条 404** `{"ok":false,"error":{"code":"feedback/not-found"}}`：
+匿名、线程/通知不存在、凭据不匹配、这个账号没有该投递，四者响应的状态码与字节完全相同，
+不泄露"它是否存在"。写入路径另有按来源（以及按设备）的限流桶，超限回
+`429 feedback/rate-limited`；读取（`inbox`/`read`/`notice`）共用更宽的一只桶。
+
+#### 2.3.1 收件箱的两个版本
+
+形状只由请求显式声明，不按客户端版本嗅探：
+
+- 不带 `inboxVersion`（老客户端）= **v1**：线程不设窗口（可见多少给多少）、
+  通知最多 200 条且无游标、正文内联、`unread` 与 `teamUnread` 双口径并列。
+  字段名、语义、错误码与拆分前逐字一致（`unread` = 团队发出的留言里收件方还没读的
+  条数，`teamUnread` = 收件方写的留言里团队还没读的条数；团队自有信的
+  `teamUnread` 恒为 0）。
+- 带 `"inboxVersion": 2` = **v2**：摘要 + 游标 + 每线程一个视角。响应回显
+  `"inboxVersion": 2`；客户端据此选定语义分支，两个分支不混读。
+
+v2 请求（追加字段，老字段含义不变）：
+
+```json
+{ "inboxVersion": 2,
+  "tickets": [{"threadId": "th_…", "ticketKey": "fk_…"}],
+  "messagesPerThread": 6,
+  "notices": true,
+  "threadsPage": {"limit": 30, "before": {"lastMessageAt": 1793063836987, "threadId": "th_…"}},
+  "noticePage":  {"limit": 40, "before": {"createdAt": 1793063836987, "noticeId": "nt_…"}} }
+```
+
+`before` 缺省即第一页；`limit` 缺省 30（线程）/ 40（通知），区间 `1..100`，
+越界回 `400 feedback/bad-request`。`messagesPerThread` v2 缺省 6、上限 200。
+
+v2 响应：
+
+```json
+{ "ok": true, "inboxVersion": 2, "teamPerspective": true,
+  "threads": [{"threadId": "th_…", "subject": "…", "status": "replied",
+               "createdAt": 0, "lastMessageAt": 0, "mySide": "owner", "unread": 0,
+               "source": {"kind": "device", "deviceModel": "iPhone12,1",
+                          "appVersion": "…", "systemVersion": "…", "accountHint": "acc_…"},
+               "messages": []}],
+  "threadsPage": {"more": true, "nextBefore": {"lastMessageAt": 0, "threadId": "th_…"}},
+  "notices": [{"noticeId": "nt_…", "subject": "…", "format": "html",
+               "createdAt": 0, "read": false}],
+  "noticesPage": {"more": true, "nextBefore": {"createdAt": 0, "noticeId": "nt_…"}},
+  "unreadCount": 3,
+  "limits": {"textChars": 4000, "textBytes": 12000, "subjectChars": 80,
+             "maxTicketPairs": 200, "messagesPerThread": 6,
+             "threadPageSize": 30, "noticePageSize": 40} }
+```
+
+v2 不再下发 `body`（走 `/feedback/notice`）、`teamUnread` 与 `source.teamBound`。
+
+#### 2.3.2 视角、未读与计数的所有者
+
+- **`mySide`（每线程一个事实）**：`"owner"` 仅当调用方是团队账号、且这条线程是
+  "写给团队的用户来信"（不是团队自己写的、也不是测试机型）；其余情形一律 `"user"`。
+  客户端只用它决定两栏方向、未读归哪一侧、回信入口，不再按账号级布尔去推断。
+- **每线程两个原始未读计数**：`ownerUnread` = 团队发出的留言里收件方还没读的条数；
+  `userUnread` = 收件方写的留言里团队还没读的条数。两者来自同一次分组查询，不出网。
+- **v1 的 `unread` / `teamUnread` 是这两个原始计数的兼容视图**，语义与拆分前一致：
+  `unread` = `ownerUnread`、`teamUnread` = `userUnread`；只有团队**自有信**的
+  `teamUnread` 归 0（P0-2 的修复：角标不再把团队自己的提交算成来信）。
+- **v2 的 `unread`（每线程一个数）**：调用方**自己这一侧**还没读的条数——
+  `mySide="owner"` 取 `userUnread`，否则取 `ownerUnread`。v2 不下发 `teamUnread`。
+- **`unreadCount`（一个响应一个数）**：Σ 每条**可见**线程"我这一侧"的未读（按 `mySide`
+  取侧，不是把每线程的 `unread` 字段相加——v1 的 `unread` 是兼容视图）+ 该账号未读通知数
+  （SQL 聚合，与通知窗口无关）。`notices:false` 也照算。v1 与 v2 用同一次计算，因此
+  同一次请求的 `unreadCount` 与 `feedback/read` 回包永远是同一个数；旧实现的"对 200 条
+  窗口求和"已删除，窗口外的未读不再被截断。
+
+#### 2.3.3 游标与翻页
+
+两条列表共用一套"幂等键倒序 + 多取一条判 `more`"：
+
+- 线程：`(lastMessageAt DESC, threadId DESC)`；`lastMessageAt` 会因新回信**前移**，
+  所以翻页可能把同一条线程返回两次（不会漏，因为键只增不减）。客户端按 `threadId` 去重。
+- 通知：`(createdAt DESC, noticeId DESC)`；`createdAt` 不可变。
+- `nextBefore` 取本页最后一条的键；`more=false` 时没有下一页。
+
+**两路各自独立，未声明的那一路按第一页返回**：每次 `inbox` 响应总是带两路的第一页
+（除非该路被请求关掉，如 `notices:false`）。客户端翻页时只在请求里写要推进的那一路
+（`threadsPage` 或 `noticePage`），被省掉的那一路按第一页返回，**属预期**——不是
+"回退了"，也不需要客户端合并时特殊处理（同一 id 以本次响应为准）。因此单次响应的
+体积按"一路的一页 + 另一路的第一页"计：线程首页约 30 条 × 6 条留言（约 30 KB）+
+通知首页 40 条摘要（约 7 KB），仍在 §2.1 的 128 KB 预算内。服务端**不**提供
+"只取这一路"的开关：两路首页对齐是客户端每次刷新都能看到的同一份事实，
+加开关会让"某一路停在旧位置"变成一个新的状态。
+
+#### 2.3.4 正文与请求体的上限
+
+正文两条判定同时生效：4000 字符且 12000 字节（传输时必须发原始 UTF-8；
+把非 ASCII 转义成 `\uXXXX` 会让每个字符变成 6 字节，先撞上请求体上限得到 413）。
+超限回 `400 feedback/too-long`。
+
+请求体上限 40 KB（`413 feedback/too-large`）。它与凭据条数、单对字节数是一个
+**耦合三元组**：`maxTicketPairs` 200 对按真实形状是 20,413 B；只把条数从 50 抬到 200
+而不同时抬体上限，整个收件箱会从 400 变成 413 而照样打不开。
+
+#### 2.3.5 v1 投影的退出条件
+
+v1 与 v2 是**同一批行的两种投影**，没有第二份存储、也没有第二套未读算法。删除 v1
+分支的条件写死如下：中转 `devices` 表里 `appVersion` 低于新构建的未撤销设备数为 0，
+且发布方书面确认最低支持版本。届时删除 v1 投影分支，并同步删除只服务 v1 的
+`source.teamBound` 与 `teamUnread` 两个字段。
 
 ---
 
