@@ -229,6 +229,24 @@
       "rule": "range",
       "snippet": "carry.removeSubrange(carry.startIndex...newline)",
       "reason": "newline 由 carry.firstIndex(of: 0x0A) 得到，恒 >= startIndex。"
+    },
+    {
+      "file": "ios/DSHMobile/DSHKit/Sources/DSHKit/Runtime/MessageLayer.swift",
+      "rule": "range",
+      "snippet": "value.endSeq.map { end in min(start, end)...max(start, end) }",
+      "reason": "两端由 min/max 现算，min <= max 恒成立；min/max 自身不溢出。"
+    },
+    {
+      "file": "ios/DSHMobile/DSHKit/Sources/DSHKit/SessionPipeline.swift",
+      "rule": "range",
+      "snippet": "?? (pageRecords.first!.event.seq...pageRecords.last!.event.seq)",
+      "reason": "pageRecords 是 page.records 按 event.seq 升序排好的（mergeFetchedPage 第二行），且所在 else 分支已排除空数组，首尾 seq 恒有 lower <= upper。"
+    },
+    {
+      "file": "ios/DSHMobile/DSHKit/Sources/DSHKit/TimelineProcess.swift",
+      "rule": "sentinel",
+      "snippet": "TimelineItem(id: id, kind: .runningLine(self), seq: Int.max - 2)",
+      "reason": "排序键哨兵，只活在 Timeline 的内存行序里：不落库、不进分页游标，也不做算术（Timeline 的注释明确它不能当搜索命中/跳转目标）。它是常量表达式，不随数据变化。"
     }
   ]
 }

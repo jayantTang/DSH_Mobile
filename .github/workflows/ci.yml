@@ -51,23 +51,10 @@ jobs:
             fi
           done
           exit $status
-      - name: 跟踪文件里没有家目录路径、也没有凭据形状的字符串
-        run: |
-          set -e
-          # 文档与样例统一写占位家目录（/Users/example、/Users/you、/Users/...）。
-          # 除此之外的 /Users/<名字> 都当成真实家目录——白名单而不是黑名单，
-          # 免得把真实名字写进这个文件，那本身就是泄漏。
-          # tester/tester2/testerworkshop/second 是 028 路径前缀折叠与并发用例的夹具
-          # （与 scripts/dev/check-secrets.mjs 的 ALLOWED_HOMES 同一份名单）。
-          allowed='example|you|your|yourname|user|username|me|someone|name|placeholder|x|dev|\.\.\.|tester|tester2|testerworkshop|second'
-          if git grep -n -I -o -E '/Users/[A-Za-z0-9._-]+' -- . | grep -v -E "/Users/($allowed)$"; then
-            echo "::error::上面这些行里有真实家目录路径"; exit 1
-          fi
-          # agentId / agentSecret 的真值比测试夹具长得多，夹具都是短名（agt_cfg 之类）。
-          if git grep -n -I -E '\b(agt|acc|dev)_[A-Za-z0-9_-]{16,}|\bas_[A-Za-z0-9_-]{16,}' -- .; then
-            echo "::error::上面这些行像真实凭据，检查一遍"; exit 1
-          fi
-          echo "ok  没发现家目录或凭据形状的字符串"
+      # 家目录、凭据形状、邀请码形状、真实中转地址统一由下面这一步的脚本判定。
+      # 这里曾经有一段内联 grep，它与脚本各持一份白名单：2026-10-24 新增的 Go 夹具
+      # （`agt_0123456789abcdef` 等）只登记在脚本里，内联那份当场把绿灯判成红灯。
+      # 判定只留一处，重复的那份删掉。
       - name: 真值检查（邀请码形状、真实中转地址、本机凭据）
         # 同一个脚本也能在本机跑（`npm run check:secrets`）：有 .env.local 时连真实值
         # 一起比对，公共 runner 上没有它，就只跑不依赖真值的形状检查。
