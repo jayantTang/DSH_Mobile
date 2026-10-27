@@ -7,7 +7,8 @@
 //   - 信件类（list/show/template/reply/notify/delete）→ `/opt/dsh-mail`（信件服务）
 //   - 用量与报告数据（report/report-data）→ `/opt/dsh-relay`（中转）的 ops-report
 //     + `/opt/dsh-mail` 的 feedback-stats，**在本机合并**后渲染（两服务之间没有调用）。
-//   - `notify --all` 在发送前从中转的 account-list 展开成逐个点名（mail 没有账号表）。
+//   - `notify` 在审批打印之前只读取一次中转的 account-list 打印覆盖（全库 / 本次点名 / 缺口）；
+//     `--all` 在发送时再取一次作为名单，投递后断言投递数 == 名单数（M7 / P1-6）。mail 没有账号表。
 //
 //   node scripts/dev/feedback.mjs list [--status open|replied|all] [--limit 20] [--since 30]
 //   node scripts/dev/feedback.mjs show --thread th_x
@@ -15,7 +16,7 @@
 //   node scripts/dev/feedback.mjs reply --thread th_x --body-file /tmp/reply.txt [--subject S]
 //                                  [--format text|html] [--send] [--owner-approved "<owner 的原话>"]
 //   node scripts/dev/feedback.mjs notify --body-file /tmp/notice.txt [--subject S]
-//                                  [--format text|html] [--all] [--yes] [--owner-approved "…"]
+//                                  [--format text|html] [--all] [--partial] [--yes] [--owner-approved "…"]
 //   node scripts/dev/feedback.mjs delete --thread th_x [--yes]
 //   node scripts/dev/feedback.mjs report [--days 30] [--date today|yesterday|YYYY-MM-DD]
 //                                  [--full-day] [--out maintainers/reports]
@@ -91,17 +92,21 @@ const TESTFLIGHT_CACHE = join(DEFAULT_OUT, '.testflight-releases.json')
 const TESTFLIGHT_TTL_MS = 6 * 3600_000
 
 /// 子命令 → 服务：信件类打 mail，用量/报告数据打中转（拆分后的路由表）。
-const MAIL_SUBS = new Set(['list', 'show', 'template', 'reply', 'notify', 'delete'])
+const MAIL_SUBS = new Set(['list', 'show', 'template', 'reply', 'notify', 'delete', 'rebind'])
 
 const AGENT_LABEL = 'com.jayanttang.dsh-daily-report'
 const AGENT_TEMPLATE = join(HERE, 'launchd', `${AGENT_LABEL}.plist`)
 const AGENT_LOG = 'Library/Logs/dsh-daily-report.log'
 
-const SUBCOMMANDS = new Set(['list', 'show', 'template', 'reply', 'notify', 'delete', 'report', 'report-data'])
+const SUBCOMMANDS = new Set(['list', 'show', 'template', 'reply', 'notify', 'delete', 'rebind',
+  'report', 'report-data'])
 const NEEDS_THREAD = new Set(['show', 'reply', 'delete'])
 const NEEDS_BODY = new Set(['reply', 'notify'])
 /// 正文形态：`text` 由手机按 Markdown 渲染，`html` 走锁死的 HTML 容器（日报这类带图的）。
 const FORMATS = new Set(['text', 'html'])
+/// 管理清单的口径：`user` = 命中归属谓词（能进团队收件箱）、`test` = 命不中（测试机型与
+/// 团队自己的提交，两者都永远进不了收件箱）、`all` = 全部。
+const SCOPES = new Set(['user', 'test', 'all'])
 /// 审批门（AGENTS.md 硬性约束第 9 条）：写给别人之前要 owner 的批准原话。
 const OWNER_APPROVED = '--owner-approved'
 const APPROVAL_LOG = 'Library/Logs/dsh-feedback-approvals.log'
@@ -109,14 +114,15 @@ const APPROVAL_LOG = 'Library/Logs/dsh-feedback-approvals.log'
 const THREAD_LOOKUP_LIMIT = 500
 
 const USAGE = `用法：
-  feedback.mjs list [--status open|replied|all] [--limit 20] [--since DAYS]
+  feedback.mjs list [--status open|replied|all] [--scope user|test|all] [--limit 20] [--since DAYS]
   feedback.mjs show --thread th_x
   feedback.mjs template
   feedback.mjs reply --thread th_x (--body-file PATH | --body TEXT) [--subject S] [--format text|html] [--send]
                     [--owner-approved "owner 的原话"]
-  feedback.mjs notify (--body-file PATH | --body TEXT) [--subject S] [--format text|html] [--account ACC]... [--all] [--yes]
-                    [--owner-approved "owner 的原话"]
+  feedback.mjs notify (--body-file PATH | --body TEXT) [--subject S] [--format text|html] [--account ACC]... [--all]
+                    [--partial] [--yes] [--owner-approved "owner 的原话"]
   feedback.mjs delete --thread th_x [--yes]
+  feedback.mjs rebind [--yes]         回滚旧包前把 teamAccountId 按归属谓词补齐（默认预演）
   feedback.mjs report [--days 30] [--date today|yesterday|YYYY-MM-DD] [--full-day] [--out DIR]
                     [--send [--account ACC]...] [--owner-approved "…"]
   feedback.mjs report [--install-agent | --uninstall-agent]
@@ -132,9 +138,15 @@ const USAGE = `用法：
   （收件人里有非 owner 账号（.env.local 的 DSH_ACCOUNT_ID）时必须给 --owner-approved "<owner 的原话>"，
     否则拒发（退出码 2）；只发给 owner 自己的（日报、自测）不需要。预演不判）
   （发给别人的信发送成功后，脚本自动向 owner 账号投一条「发件存档」通知：信件全文 +
-    发送对象 + 发送人。只发给 owner 自己的不存档；存档失败只警告需手动补档、不重发原件）
+    发送对象 + 覆盖记录 + 发送人。只发给 owner 自己的不存档；存档失败只警告需手动补档、不重发原件）
+  （notify 在审批打印之前只读取一次中转账号清单，打印「全库 N，本次点名 M（缺 K：…）」；
+    点名名单是全库的真子集且多于 1 个账号时默认拒发（退出码 2），确认有意只发这部分才加 --partial；
+    --all 在发送时再取一次清单作为名单，投递数不等于名单数就退非零（1）并打印差额）
   （双目标：信件类命令打 /opt/dsh-mail，用量与报告数据打 /opt/dsh-relay-go 并与 mail 的
-    feedback-stats 在本机合并；notify --all 先从中转展开成点名账号再投）`
+    feedback-stats 在本机合并；notify --all 先从中转展开成点名账号再投）
+  （--scope 只对 list 有意义：user = 能进团队收件箱的用户来信、test = 测试机型与团队自己的
+    提交（都永远进不了收件箱）、all = 全部；它要判"哪条算来信"，所以远端一定要有团队账号——
+    这条命令会自动把 .env.local 的 DSH_ACCOUNT_ID 作为 --team-account 传给服务器）`
 
 /// 用法错误（退出码 2）与业务失败（1）分开。
 class UsageError extends Error {}
@@ -146,6 +158,10 @@ class ApprovalError extends Error {
     this.hint = hint
   }
 }
+
+/// 点名发送命中"全库的真子集"（M7 / P1-6）：默认拒发，要 `--partial` 显式声明意图。
+/// 与用法错误同一个退出码（2），只打印缺口与放行条件，不刷整屏用法。
+class PartialError extends Error {}
 
 function localEnv() {
   const out = {}
@@ -225,8 +241,8 @@ export function parseArgs(argv) {
   const sub = argv[0]
   if (!sub) throw new UsageError('缺少子命令')
   if (!SUBCOMMANDS.has(sub)) throw new UsageError(`未知子命令 ${sub}`)
-  const opts = { local: false, dryRun: false, send: false, yes: false, all: false, accounts: [], days: 30,
-    installAgent: false, uninstallAgent: false, fullDay: false }
+  const opts = { local: false, dryRun: false, send: false, yes: false, all: false, partial: false,
+    accounts: [], days: 30, installAgent: false, uninstallAgent: false, fullDay: false }
   for (let i = 1; i < argv.length; i += 1) {
     const flag = argv[i]
     switch (flag) {
@@ -235,12 +251,19 @@ export function parseArgs(argv) {
       case '--send': opts.send = true; break
       case '--yes': opts.yes = true; break
       case '--all': opts.all = true; break
+      case '--partial': opts.partial = true; break
       case '--install-agent': opts.installAgent = true; break
       case '--uninstall-agent': opts.uninstallAgent = true; break
       case '--full-day': opts.fullDay = true; break
       case '--date': opts.date = need(argv, ++i, flag); break
       case '--thread': opts.thread = need(argv, ++i, flag); break
       case '--status': opts.status = need(argv, ++i, flag); break
+      case '--scope':
+        opts.scope = need(argv, ++i, flag)
+        if (!SCOPES.has(opts.scope)) {
+          throw new UsageError(`--scope 只能是 ${[...SCOPES].join(' / ')}，收到 ${opts.scope}`)
+        }
+        break
       case '--body': opts.body = need(argv, ++i, flag); break
       case '--body-file': opts.bodyFile = need(argv, ++i, flag); break
       case '--subject': opts.subject = need(argv, ++i, flag); break
@@ -287,14 +310,22 @@ function readBody(opts) {
   }
 }
 
-/// 组装 `admin.py` 的参数（`--db` 必须在子命令之前，argparse 只认顶层可选参数）。
-export function adminArgs({ sub, opts }, db) {
+/// 组装 `admin.py` 的参数（`--db` 与 `--team-account` 必须在子命令之前：argparse 只认顶层
+/// 可选参数）。
+///
+/// `teamAccount` 必须**显式**传：`feedback.mjs` 走的是 `ssh <host> '…'`，远端是非交互 shell，
+/// 拿不到 systemd 单元里的 `MAIL_TEAM_ACCOUNT`；而管理命令要靠它判"哪条线程算用户来信"
+/// （评审 F2）。没有它就拼空值——宁可让 admin 报错，也不让它把空团队号当成"所有账号都是来信"。
+export function adminArgs({ sub, opts, teamAccount = '' }, db) {
   const head = ['--db', db]
+  const mailHead = [...head, ...(teamAccount ? ['--team-account', teamAccount] : [])]
   switch (sub) {
     case 'list':
-      return [...head, 'feedback-list', '--status', opts.status ?? 'open', '--limit', String(opts.limit ?? 50),
-        ...(opts.since ? ['--since', String(opts.since)] : [])]
-    case 'show': return [...head, 'feedback-show', '--thread', opts.thread]
+      return [...mailHead, 'feedback-list', '--status', opts.status ?? 'open',
+        '--limit', String(opts.limit ?? 50),
+        ...(opts.since ? ['--since', String(opts.since)] : []),
+        ...(opts.scope ? ['--scope', opts.scope] : [])]
+    case 'show': return [...mailHead, 'feedback-show', '--thread', opts.thread]
     case 'template': return [...head, 'feedback-reply', '--template']
     case 'reply':
       // `--subject` 是回信给线程起的标题（邮件那一行）；不传就沿用用户写的那句。
@@ -317,13 +348,16 @@ export function adminArgs({ sub, opts }, db) {
     }
     case 'delete':
       return [...head, 'feedback-delete', '--thread', opts.thread, ...(opts.yes && !opts.dryRun ? ['--yes'] : [])]
+    // 回滚旧包前的一次性补列（M1 之后本列不再读写）；不带 --yes 时是 admin 的 dry-run。
+    case 'rebind':
+      return [...mailHead, 'feedback-rebind', ...(opts.yes && !opts.dryRun ? ['--yes'] : [])]
     // 桥用的两个只读清单（feedback.mjs 自己的子命令表里没有它们；buildInvocation
     // 直接构造 parsed 对象调用，不经过 parseArgs）。
     case 'account-list': return [...head, 'account-list']
     case 'device-list': return [...head, 'device-list', ...(opts.all ? ['--all'] : [])]
     // mail 侧给日报的反馈板块：--debug-device 是中转的调试设备 id（剔测试提交）。
     case 'feedback-stats': {
-      return [...head, 'feedback-stats', '--days', String(opts.days ?? 30),
+      return [...mailHead, 'feedback-stats', '--days', String(opts.days ?? 30),
         ...(opts.asOf ? ['--as-of', opts.asOf] : []),
         ...(opts.debugDevices ?? []).flatMap((id) => ['--debug-device', id])]
     }
@@ -348,7 +382,7 @@ export function buildInvocation({ sub, opts }, { env = {}, exists = existsSync }
       db: LOCAL_MAIL_DB } : MAIL_REMOTE)
     : (opts.local ? { argv: [exists(LOCAL_RELAY_BIN) ? LOCAL_RELAY_BIN : 'dsh-relay', 'admin'],
       db: LOCAL_DB } : REMOTE)
-  const args = adminArgs({ sub, opts }, target.db)
+  const args = adminArgs({ sub, opts, teamAccount: ownerAccount(env) }, target.db)
   if (opts.local) {
     return { kind: 'local', argv: [...target.argv, ...args] }
   }
@@ -584,8 +618,10 @@ export function archiveBody(parsed, info = {}) {
   const lines = [
     '【发件存档】（feedback.mjs 自动投递）',
     `发送对象：${archiveRecipients(parsed)}`,
-    `发送人：${sender}`,
   ]
+  // 覆盖记录（M7 / P1-6）：群发漏掉的账号要留在 owner 的收件箱里，而不是只出现在终端。
+  if (opts.coverage) lines.push(coverageArchiveLine(opts.coverage))
+  lines.push(`发送人：${sender}`)
   const id = resultId(info.result)
   if (id) lines.push(`原件 ID：${id}`)
   lines.push(`存档时间：${new Date(info.now ?? Date.now()).toISOString()}`)
@@ -654,6 +690,89 @@ export function reportSubject(file) {
 export function relayAccountsInvocation(parsed, { env, exists }) {
   return buildInvocation({ sub: 'account-list', opts: { local: parsed.opts.local } },
     { env, exists }, 'relay')
+}
+
+/// `account-list` 的回包 → 账号 id 列表（保序去重）。不是数组 = 读不出来（null）。
+export function relayAccountIds(raw) {
+  let rows
+  try {
+    rows = JSON.parse(String(raw ?? ''))
+  } catch {
+    return null
+  }
+  if (!Array.isArray(rows)) return null
+  return [...new Set(rows.map((row) => String(row?.accountId ?? '').trim()).filter(Boolean))]
+}
+
+/// 取一次中转的账号清单（只读）。两个调用点——审批前的覆盖自检、`--all` 的发送名单——
+/// 共用同一条 argv 与同一份解析，避免"名单"在两处各有各的理解。读不到回 null，连不上照抛。
+export function fetchRelayAccounts(parsed, ctx) {
+  return relayAccountIds(ctx.run(relayAccountsInvocation(parsed, ctx).argv))
+}
+
+/// 覆盖自检（M7 / P1-6）：全库是谁、这次点名谁、差谁。
+///
+/// 一个事实只在这里算一次：`total`（全库，读不到为 null）、`named`（本次点名，--all 时就是
+/// 全库、读不到为 null）、`missing`（按全库顺序的缺口）、`subset`（点名名单是全库的**真**
+/// 子集——点名发送要显式 `--partial` 才算声明了意图）。
+export function coverageRecord(allAccounts, accounts) {
+  const all = Array.isArray(allAccounts) ? [...new Set(allAccounts)] : null
+  const named = accounts == null
+    ? null
+    : [...new Set(accounts.map((account) => String(account ?? '').trim()).filter(Boolean))]
+  const missing = all && named ? all.filter((account) => !named.includes(account)) : null
+  const subset = Boolean(all && named && missing.length && named.length
+    && named.every((account) => all.includes(account)))
+  return { total: all ? all.length : null, named: named ? named.length : null, missing, subset }
+}
+
+/// 缺口里的账号：最多列 8 个（超出的用 `…` 收束）——事故规模（6 个）能完整看到。
+export function gapAccounts(ids, limit = 8) {
+  const list = Array.isArray(ids) ? ids : []
+  if (list.length <= limit) return list.join('、')
+  return `${list.slice(0, limit).join('、')}…`
+}
+
+/// 审批之前那一行覆盖摘要：`全库 171，本次点名 165（缺 6：acc_a、acc_b）` / `（缺 0）`。
+export function coverageSummary(coverage) {
+  const named = coverage?.named == null ? '未知' : coverage.named
+  if (!coverage || coverage.total == null) {
+    return `全库未知，本次点名 ${named}（缺 ?：读不到账号清单，覆盖无法核对）`
+  }
+  const gap = coverage.missing.length
+    ? `缺 ${coverage.missing.length}：${gapAccounts(coverage.missing)}`
+    : '缺 0'
+  return `全库 ${coverage.total}，本次点名 ${named}（${gap}）`
+}
+
+/// 发件存档里的覆盖行：`覆盖：全库 171，本次 165，未含 acc_a、acc_b×6`（缺口也留档）。
+export function coverageArchiveLine(coverage) {
+  const named = coverage?.named == null ? '未知' : coverage.named
+  if (!coverage || coverage.total == null) {
+    return `覆盖：全库未知，本次 ${named}，未含未知（读不到中转账号清单）`
+  }
+  const missing = coverage.missing ?? []
+  const gap = missing.length ? `${gapAccounts(missing)}×${missing.length}` : '0'
+  return `覆盖：全库 ${coverage.total}，本次 ${named}，未含 ${gap}`
+}
+
+/// mail 的 `feedback-notify` 回包里 `recipients` 就是这次真正写下的投递行数。
+export function deliveredCount(raw) {
+  try {
+    const count = JSON.parse(String(raw ?? ''))?.recipients
+    return Number.isInteger(count) ? count : null
+  } catch {
+    return null
+  }
+}
+
+/// `--all` 的投递断言：返回 null（相等）或一句带差额的说明。读不出投递数也算不相等。
+export function deliveryMismatch(raw, expected) {
+  const delivered = deliveredCount(raw)
+  if (delivered == null) return `清单 ${expected} 个账号，投递数读不出来，无法确认覆盖`
+  if (delivered === expected) return null
+  const delta = delivered - expected
+  return `清单 ${expected} 个账号，实际投递 ${delivered} 个，差 ${delta > 0 ? '+' : ''}${delta} 个`
 }
 
 /// 中转的设备清单（`--all`：含已撤销，与 ops-report 的口径一致）。
@@ -933,6 +1052,26 @@ function uninstallAgent(io) {
   return 0
 }
 
+/// 审批之前那一次**只读**的覆盖自检（M7 / P1-6）。
+///
+/// `--all` 的"本次点名"就是全库；点名发送就是命令行给的账号。读不到清单时覆盖记为未知
+/// （不拦发送：这里只负责让缺口可见，投递本身仍由 mail 按名单写行）。
+/// 除了覆盖记录，还把这份全库名单交给预演用——`mail` 拒收 `--all`（它没有账号表），
+/// 预演要真的跑通就得展开成点名，而这次读取本来就已经发生。返回 `{ coverage, accounts }`。
+function notifyCoverage(parsed, ctx, io) {
+  const { opts } = parsed
+  let all = null
+  try {
+    all = fetchRelayAccounts(parsed, ctx)
+  } catch (error) {
+    io.err(`（覆盖自检）读不到中转账号清单：${failureText(error)}`)
+  }
+  if (!all) {
+    return { coverage: coverageRecord(null, opts.all ? null : opts.accounts), accounts: null }
+  }
+  return { coverage: coverageRecord(all, opts.all ? all : opts.accounts), accounts: all }
+}
+
 /** 依赖全部经参数注入（runner/env/exists/out/err），测试才能断言"预演没执行写命令"。 */
 export function main(argv, deps = {}) {
   const io = {
@@ -950,6 +1089,8 @@ export function main(argv, deps = {}) {
     const exists = deps.exists ?? existsSync
     const run = (command) => String((deps.runner ?? defaultRunner)(command))
     const owner = ownerAccount(env)
+    // 一个派生布尔代替两处字面量比较：notify 的"审批前自检"与"审批后展开"是同一条链路的两段。
+    const isNotify = sub === 'notify'
     if (sub === 'report' && opts.send) {
       // 收件账号：命令行优先，其次 `.env.local` 的 DSH_ACCOUNT_ID（定时任务的口径）。
       opts.accounts = opts.accounts.length ? opts.accounts : [env.DSH_ACCOUNT_ID].filter(Boolean)
@@ -961,15 +1102,35 @@ export function main(argv, deps = {}) {
       return reportAndSend(parsed, { env, exists, run, io, owner, approvalReason,
         github: deps.github, testflight: deps.testflight })
     }
+    // 覆盖自检（M7 / P1-6）在**审批打印之前**只读地取一次中转账号清单：owner 批准时就要
+    // 看到"全库多少、本次点名多少、缺谁"。读不到不算发送失败（这里只是核对），把覆盖标成
+    // 未知；`--all` 的名单在发送时还会再取一次，那一次读不到才是致命的。
+    let preflight = null
+    if (isNotify) {
+      preflight = notifyCoverage(parsed, { env, exists, run }, io)
+      opts.coverage = preflight.coverage
+      io.err(`（覆盖自检）${coverageSummary(opts.coverage)}`)
+      // 点名发送命中全库的真子集（且不止一个账号）默认拒发：要 `--partial` 显式声明意图，
+      // 不是按比例猜。"名单少了"最常见的成因就是复用了过期的账号清单。
+      if (opts.coverage.subset && !opts.partial && opts.coverage.named > 1) {
+        throw new PartialError(coverageSummary(opts.coverage))
+      }
+    }
     const approvalReason = requireOwnerApproval(parsed, { env, exists, run }, owner, io, deps)
-    // `notify --all` 的展开（审批之后：拒发时连只读的 account-list 也不跑）：
-    // mail 没有账号表（名单真值在中转），把 --all 换成逐个点名（DESIGN-20261015 I-4）。
-    if (sub === 'notify' && opts.all && opts.yes && !opts.dryRun) {
-      const accounts = JSON.parse(run(relayAccountsInvocation(parsed, { env, exists }).argv))
-      opts.accounts = (Array.isArray(accounts) ? accounts : [])
-        .map((row) => row.accountId).filter(Boolean)
+    // `notify --all` 的展开：mail 没有账号表，名单真值在中转，--all 一律展开成逐个点名
+    // （DESIGN-20261015 I-4）。真发在审批之后**再取一次**清单作为名单（M7：复用审批前那份
+    // 会漏掉这期间新登记的账号）；预演复用审批前那次只读结果，不再多跑一次 ssh。
+    if (isNotify && opts.all) {
+      const sending = opts.yes && !opts.dryRun
+      const listed = sending
+        ? fetchRelayAccounts(parsed, { env, exists, run })
+        : preflight?.accounts
+      if (!listed) throw new Error('中转账号清单读不到，取不到 --all 的发送名单（预演也不会下传 --all）')
+      opts.accounts = listed
       opts.all = false
       opts.expandedFromAll = true
+      // 存档里的覆盖行按"发送时这份名单"记（它就是这次投递的分母）。
+      opts.coverage = coverageRecord(listed, listed)
       if (!opts.accounts.length) {
         io.err('（展开 --all）中转一个账号都没有；没有发出任何东西')
         return 1
@@ -990,10 +1151,20 @@ export function main(argv, deps = {}) {
     if (sub === 'reply' && ((!opts.send && !opts.yes) || opts.dryRun)) return previewReply(invocation, opts, io)
     const raw = runLetterCommand(parsed, { env, exists, run, io })
     io.out(raw.trimEnd())
+    // `--all` 的投递断言（M7 / P1-6）：投递数必须等于发送时那份清单的账号数。不等就退非零
+    // 并把差额打出来——漏发在 mail 库里看不出来，只能在这里对账。
+    const shortfall = sub === 'notify' && opts.expandedFromAll && opts.yes && !opts.dryRun
+      ? deliveryMismatch(raw, opts.accounts.length)
+      : null
     // 发件存档：审批门要拦的那类发送（收件人里有别人）落地后，自动抄送 owner 账号。
     if (approvalReason) archiveSentLetter(parsed, owner, { result: raw }, { env, exists, run, io })
+    if (shortfall) {
+      io.err(`（覆盖断言未过）${shortfall}。信件已发出，不要直接重跑（会重发），先按名单核对`)
+      return 1
+    }
     if (sub === 'notify' && !opts.yes) io.err('（预演）没有 --yes：服务器只统计了收件人，没有落库')
     if (sub === 'delete' && !opts.yes) io.err('（预演）没有 --yes：还没有删除任何数据')
+    if (sub === 'rebind' && !opts.yes) io.err('（预演）没有 --yes：没有写任何一列')
     return 0
   } catch (error) {
     if (error instanceof UsageError) {
@@ -1008,6 +1179,11 @@ export function main(argv, deps = {}) {
         io.err(`  ${OWNER_APPROVED} "<owner 的原话>"`)
         io.err('（预演不加 --send/--yes 即可；留痕落在 ~/Library/Logs/dsh-feedback-approvals.log）')
       }
+      return 2
+    }
+    if (error instanceof PartialError) {
+      io.err(`点名发送默认拒发：${error.message}`)
+      io.err('这次只发给全库的一部分账号。确认就是要这样发（不是漏了名单），再加 --partial 重跑')
       return 2
     }
     io.err(failureText(error))

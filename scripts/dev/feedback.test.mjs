@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { buildInvocation, debugDeviceIds, fetchGitHubStats, foreignRecipients, main,
+import { adminArgs, buildInvocation, debugDeviceIds, fetchGitHubStats, foreignRecipients, main,
   mergeReportData, readGitHubStats, readTestFlightReleases, renderAgentPlist, reportPath,
   resolveSshTarget } from './feedback.mjs'
 import { escapeHtml, humanModel, releaseMarkerDays, renderReport, updateHistory } from './feedback-report.mjs'
@@ -108,11 +108,39 @@ function fixture() {
   }
 }
 
-/// 假 runner：记录被调用过的 argv，并回一条像 admin.py 的 JSON。
-function spy(reply = '{"ok":true}') {
-  const calls = []
-  return { calls, runner: (argv) => { calls.push(argv); return reply } }
+/// 中转 `account-list` 的回包形状（对象数组，带 accountId）。
+function accountList(ids) {
+  return JSON.stringify(ids.map((accountId) => ({ accountId, name: accountId })))
 }
+
+/// 默认全库：owner 自己 + 两个别的账号。`notify` 会在审批打印之前只读一次这份清单算覆盖
+/// （M7 / P1-6），所以凡是跑 notify 的假 runner 都要先回答 account-list。
+const ALL_ACCOUNTS = [OWNER, 'acc_b', 'acc_c']
+
+/// 假 runner：记录被调用过的 argv，并回一条像 admin.py 的 JSON。
+/// `account-list`（只读的覆盖自检）统一回 `accounts`；其余回 `reply`（可传函数按 argv 决定）。
+function spy(reply = '{"ok":true}', { accounts = ALL_ACCOUNTS } = {}) {
+  const calls = []
+  return {
+    calls,
+    runner: (argv) => {
+      calls.push(argv)
+      if (accounts && /account-list/.test(String(argv.at(-1)))) return accountList(accounts)
+      return typeof reply === 'function' ? reply(argv) : reply
+    },
+  }
+}
+
+/// 从被调用记录里取某条命令（`notify` 前后会多出覆盖自检的只读 account-list，不能按下标数）。
+function called(calls, pattern = /feedback-notify/) {
+  return calls.find((argv) => pattern.test(String(argv.at(-1)))) ?? []
+}
+
+/// 发件存档那次调用（同样是 feedback-notify，用标题里的「发件存档」认出来）。
+function archiveCall(calls) {
+  return calls.find((argv) => /发件存档/.test(String(argv.at(-1)))) ?? []
+}
+
 
 /// 00:02 自动日报的那一份：生成时刻是 10-13 00:05，`today` 板块覆盖的是已经过完的 10-12
 /// （服务端按 `--as-of yesterday` 给的 `today.day` / `dayStartAt` / `asOf`）。
@@ -172,7 +200,8 @@ test('默认经 ssh 跑服务器上的 admin.py（信件类打 mail）', () => {
   assert.equal(rest[2], 'BatchMode=yes')
   assert.equal(rest.at(-2), `root@${HOST}`)
   assert.match(rest.at(-1), /^\/opt\/dsh-mail\/\.venv\/bin\/python \/opt\/dsh-mail\/admin\.py /)
-  assert.match(rest.at(-1), /--db \/var\/lib\/dsh-mail\/mail\.db feedback-list --status open --limit 20/)
+  assert.match(rest.at(-1),
+    /--db \/var\/lib\/dsh-mail\/mail\.db --team-account acc_owner feedback-list --status open --limit 20/)
   assert.equal(out, '{"threads":[]}')
 })
 
@@ -219,7 +248,9 @@ test('--dry-run 压过 --send/--yes，一次写都不发', () => {
 
   const notify = spy('{"ok":true,"dryRun":true}')
   run(['notify', '--body', '正文', '--yes', '--dry-run'], { runner: notify.runner })
-  assert.ok(!notify.calls[0].at(-1).includes('--yes'))
+  assert.ok(!String(called(notify.calls).at(-1)).includes('--yes'))
+  assert.equal(notify.calls.length, 2, '只读的覆盖自检 + 预演那次统计')
+  assert.ok(notify.calls.every((argv) => !String(argv.at(-1)).includes('--yes')), '一次写都没有')
 
   // reply 也接受 --yes 这种写法（命令契约把两个开关并列写过）；真发后跟着一条存档。
   const alias = spy('{"ok":true}')
@@ -232,27 +263,36 @@ test('notify 默认预演：服务器只统计收件人，argv 里没有 --yes',
   const fake = spy('{"ok":true,"dryRun":true,"recipients":3}')
   const { code, out, err } = run(['notify', '--body', '维护通知'], { runner: fake.runner })
   assert.equal(code, 0)
-  assert.equal(fake.calls.length, 1)
-  assert.ok(!fake.calls[0].at(-1).includes('--yes'), '预演不得带 --yes')
+  assert.equal(fake.calls.length, 2, '只读的覆盖自检 + 服务器那次统计')
+  assert.match(fake.calls[0].at(-1), /account-list/, '审批之前先只读一次账号清单')
+  const preview = called(fake.calls)
+  assert.ok(!String(preview.at(-1)).includes('--yes'), '预演不得带 --yes')
   assert.match(out, /dryRun/)
   assert.match(err, /没有 --yes/)
+  assert.match(err, /（覆盖自检）全库 3，本次点名 0（缺 3：acc_owner、acc_b、acc_c）/)
 })
 
 test('notify --yes 才落库；delete 同理', () => {
-  // notify --all：审批后先从中转展开账号（account-list 是第一条），再打 mail 的 notify。
+  // notify --all：审批之前只读一次清单算覆盖，审批之后**再取一次**作为发送名单，
+  // 投递行数与这份名单对齐才算发全（M7 / P1-6）。
   const calls = []
+  const accounts = ['acc_b', 'acc_c']
   const runner = (argv) => {
     calls.push(argv)
     const remote = argv.at(-1)
-    if (/account-list/.test(remote)) return JSON.stringify([{ accountId: 'acc_b' }, { accountId: 'acc_c' }])
+    if (/account-list/.test(remote)) return accountList(accounts)
     if (/feedback-notify/.test(remote)) return '{"ok":true,"noticeId":"nt_a","recipients":2}'
     return '{"ok":true}'
   }
   const { code, err } = run(['notify', '--body', '维护通知', '--subject', 'S', '--all', '--yes', ...APPROVED],
     { runner, approvalLog: approvalLogFile() })
   assert.equal(code, 0)
+  assert.deepEqual(calls.map((argv) => (/account-list/.test(argv.at(-1)) ? 'account-list'
+    : /feedback-notify/.test(argv.at(-1)) ? 'notify' : 'other')),
+  ['account-list', 'account-list', 'notify', 'notify'], '覆盖自检 → 审批后重新取名单 → 投递 → 存档')
+  assert.match(err, /（覆盖自检）全库 2，本次点名 2（缺 0）/)
   assert.match(err, /展开 --all）中转共 2 个账号/)
-  const notifyRemote = calls[1].at(-1)
+  const notifyRemote = String(called(calls).at(-1))
   assert.match(notifyRemote, /\/opt\/dsh-mail\/admin\.py [^\n]*feedback-notify --body /)
   assert.match(notifyRemote, /--subject S/)
   assert.match(notifyRemote, /--account acc_b --account acc_c/)
@@ -275,12 +315,13 @@ test('notify --format html 的发件存档也按 html 投递（横幅 + 原件�
   const { code } = run(['notify', '--body', html, '--subject', '专题', '--format', 'html',
     '--account', 'acc_b', '--yes', ...APPROVED], { runner: fake.runner, approvalLog: approvalLogFile() })
   assert.equal(code, 0)
-  assert.equal(fake.calls.length, 2, '发信一次 + 发件存档一次')
-  const archive = fake.calls[1].at(-1)
+  assert.equal(fake.calls.length, 3, '覆盖自检 + 发信一次 + 发件存档一次')
+  const archive = String(archiveCall(fake.calls).at(-1))
   assert.match(archive, /feedback-notify --body /)
   assert.match(archive, /--format html/, '存档跟随原件格式，否则 owner 收到一屏源码')
   assert.match(archive, /【发件存档】/)
   assert.match(archive, /发送对象：acc_b/)
+  assert.match(archive, /覆盖：全库 3，本次 1，未含 acc_owner、acc_c×2/, '存档留覆盖记录')
   assert.match(archive, /<body><div style=/, '元数据横幅插在 body 之后')
   assert.match(archive, /<p>海报正文<\/p>/, '原件正文原样保留')
   assert.match(archive, /发件存档：通知「专题」/)
@@ -742,12 +783,12 @@ test('reply / notify 的 --format 透传；不传就不出现在 argv 里', () =
   const notify = spy('{"ok":true}')
   run(['notify', '--body', '维护通知', '--account', 'acc_a', '--format', 'html', '--yes', ...APPROVED],
     { runner: notify.runner })
-  assert.match(notify.calls[0].at(-1), /feedback-notify --body .*--format html/)
+  assert.match(String(called(notify.calls).at(-1)), /feedback-notify --body .*--format html/)
 
   // 不传 --format 时保持既有 argv：服务器默认 text。
   const plain = spy('{"ok":true}')
   run(['notify', '--body', '维护通知', '--account', 'acc_a', '--yes', ...APPROVED], { runner: plain.runner })
-  assert.ok(!plain.calls[0].at(-1).includes('--format'), '不传 --format 不得凭空加参数')
+  assert.ok(!String(called(plain.calls).at(-1)).includes('--format'), '不传 --format 不得凭空加参数')
 
   const plainReply = spy('{"ok":true}')
   run(['reply', '--thread', 'th_x', '--body', '正文', '--send', ...APPROVED], { runner: plainReply.runner })
@@ -920,23 +961,27 @@ test('foreignRecipients：没配 DSH_ACCOUNT_ID 时每个账号都算别人', ()
 })
 
 test('审批门：写给别人的信没给 --owner-approved 就退 2，一次写都不发', () => {
-  // notify 点名别人的账号
+  // notify 点名别人的账号：拒发前会跑一次只读的覆盖自检（M7），写命令一条都不执行。
   const notify = spy('{"ok":true,"noticeId":"nt_a"}')
   const notified = run(['notify', '--body', '维护通知', '--account', 'acc_b', '--yes'],
     { runner: notify.runner, approvalLog: approvalLogFile() })
   assert.equal(notified.code, 2)
-  assert.equal(notify.calls.length, 0, '拒发时一条命令都不执行')
+  assert.deepEqual(notify.calls.map((argv) => (/account-list/.test(argv.at(-1)) ? 'account-list' : 'write')),
+    ['account-list'], '拒发时只跑了只读的覆盖自检')
   assert.match(notified.err, /未获 owner 批准/)
   assert.match(notified.err, /--owner-approved/)
   assert.match(notified.err, /acc_b/)
+  assert.match(notified.err, /（覆盖自检）全库 3，本次点名 1（缺 2：acc_owner、acc_c）/)
 
   // notify --all：本机看不到账号名单，一律要批准
   const everyone = spy('{"ok":true,"noticeId":"nt_b"}')
   const all = run(['notify', '--body', '全体通知', '--all', '--yes'],
     { runner: everyone.runner, approvalLog: approvalLogFile() })
   assert.equal(all.code, 2)
-  assert.equal(everyone.calls.length, 0)
+  assert.deepEqual(everyone.calls.map((argv) => (/account-list/.test(argv.at(-1)) ? 'account-list' : 'write')),
+    ['account-list'])
   assert.match(all.err, /--all/)
+  assert.match(all.err, /（覆盖自检）全库 3，本次点名 3（缺 0）/)
 
   // reply：只允许读一次线程清单，读出来不是 owner 的就不回信
   const reply = spy(JSON.stringify([{ threadId: 'th_x', source: { accountId: 'acc_b' } }]))
@@ -974,7 +1019,8 @@ test('审批门：只发给 owner 自己、或回复自己的线程，不需要�
   const mine = run(['notify', '--body', '给自己', '--account', OWNER, '--yes'],
     { runner: notify.runner, approvalLog: log })
   assert.equal(mine.code, 0)
-  assert.match(notify.calls[0].at(-1), new RegExp(`--account ${OWNER}`))
+  assert.match(String(called(notify.calls).at(-1)), new RegExp(`--account ${OWNER}`))
+  assert.match(mine.err, /（覆盖自检）全库 3，本次点名 1（缺 2：acc_b、acc_c）/)
 
   // 日报的默认收件账号就是 DSH_ACCOUNT_ID（定时任务的口径）→ 不加审批也照发
   const outDir = mkdtempSync(join(tmpdir(), 'feedback-gate-daily-'))
@@ -1000,7 +1046,9 @@ test('审批门：预演不判——没有 --send/--yes 或带 --dry-run 都能�
   const preview = run(['notify', '--body', '通知', '--all'],
     { runner: notify.runner, approvalLog: approvalLogFile() })
   assert.equal(preview.code, 0)
-  assert.ok(!notify.calls[0].at(-1).includes('--yes'))
+  assert.equal(notify.calls.length, 2, '只读的覆盖自检 + 服务器那次统计（不展开、不下发）')
+  assert.ok(notify.calls.every((argv) => !String(argv.at(-1)).includes('--yes')))
+  assert.match(preview.err, /（覆盖自检）全库 3，本次点名 3（缺 0）/, '预演也要给出覆盖')
 
   const dry = spy('{"ok":true,"dryRun":true}')
   assert.equal(run(['notify', '--body', '通知', '--all', '--yes', '--dry-run'],
@@ -1018,7 +1066,7 @@ test('审批门：批准过的发送留一条 JSON 痕（原话 + 收件人）',
   const { code, err } = run(['notify', '--body', '维护通知', '--subject', 'S', '--account', 'acc_b', '--yes', ...APPROVED],
     { runner: notify.runner, approvalLog: log })
   assert.equal(code, 0)
-  assert.match(notify.calls[0].at(-1), /--yes/)
+  assert.match(String(called(notify.calls).at(-1)), /--yes/)
   const record = JSON.parse(readFileSync(log, 'utf8'))
   assert.equal(record.sub, 'notify')
   assert.deepEqual(record.accounts, ['acc_b'])
@@ -1048,7 +1096,8 @@ test('审批门：留痕写不进去就不发（不留无凭据的发送）', ()
   const { code, err } = run(['notify', '--body', '通知', '--account', 'acc_b', '--yes', ...APPROVED],
     { runner: fake.runner, approvalLog: join(blocker, 'nested', 'approvals.log') })
   assert.equal(code, 2)
-  assert.equal(fake.calls.length, 0)
+  assert.deepEqual(fake.calls.map((argv) => (/account-list/.test(argv.at(-1)) ? 'account-list' : 'write')),
+    ['account-list'], '留痕写不进去：只跑了只读的覆盖自检，没有发信')
   assert.match(err, /留痕/)
 })
 
@@ -1060,13 +1109,14 @@ test('发件存档：notify 发给别人的信，存档含全文、发送对象�
     ['notify', '--body', '维护通知正文', '--subject', '维护', '--account', 'acc_b', '--yes', ...APPROVED],
     { runner: fake.runner, approvalLog: approvalLogFile() })
   assert.equal(code, 0)
-  assert.equal(fake.calls.length, 2, '一次发信 + 一次存档')
-  const archive = fake.calls[1].at(-1)
+  assert.equal(fake.calls.length, 3, '覆盖自检 + 一次发信 + 一次存档')
+  const archive = String(archiveCall(fake.calls).at(-1))
   assert.match(archive, new RegExp(`--account ${OWNER} `))
   assert.match(archive, /--yes/)
   assert.ok(!archive.includes('acc_b --yes') || archive.includes(`--account ${OWNER}`))
   assert.match(archive, /发件存档：通知「维护」/)
   assert.match(archive, /发送对象：acc_b/)
+  assert.match(archive, /覆盖：全库 3，本次 1，未含 acc_owner、acc_c×2/)
   assert.match(archive, /系统代发（owner 审批原话：同意，发吧）/)
   assert.match(archive, /原件 ID：nt_9/)
   assert.match(archive, /维护通知正文/)
@@ -1075,19 +1125,21 @@ test('发件存档：notify 发给别人的信，存档含全文、发送对象�
 
 test('发件存档：群发 --all 展开后也存档，发送对象写"全部账号（展开为 N 个）"', () => {
   const calls = []
+  const accounts = ['acc_b', 'acc_c']
   const runner = (argv) => {
     calls.push(argv)
     const remote = String(argv.at(-1))
-    if (/account-list/.test(remote)) return JSON.stringify([{ accountId: 'acc_b' }, { accountId: 'acc_c' }])
-    if (/feedback-notify/.test(remote)) return '{"ok":true,"noticeId":"nt_10"}'
+    if (/account-list/.test(remote)) return accountList(accounts)
+    if (/feedback-notify/.test(remote)) return '{"ok":true,"noticeId":"nt_10","recipients":2}'
     return '{"ok":true}'
   }
   const { code } = run(['notify', '--body', '公告', '--all', '--yes', ...APPROVED],
     { runner, approvalLog: approvalLogFile() })
   assert.equal(code, 0)
-  assert.equal(calls.length, 3, 'account-list（中转展开）→ notify（mail）→ 存档（mail）')
-  assert.match(calls[1].at(-1), /--account acc_b --account acc_c/)
-  assert.match(calls[2].at(-1), /发送对象：全部账号（--all 群发，展开为 2 个）/)
+  assert.equal(calls.length, 4, '覆盖自检 → 发送时重新取名单 → notify（mail）→ 存档（mail）')
+  assert.match(String(called(calls).at(-1)), /--account acc_b --account acc_c/)
+  assert.match(String(archiveCall(calls).at(-1)), /发送对象：全部账号（--all 群发，展开为 2 个）/)
+  assert.match(String(archiveCall(calls).at(-1)), /覆盖：全库 2，本次 2，未含 0/)
 })
 
 test('发件存档：只发给 owner 自己的不存档（自己的收件箱里本来就有）', () => {
@@ -1095,7 +1147,8 @@ test('发件存档：只发给 owner 自己的不存档（自己的收件箱里�
   const { code } = run(['notify', '--body', '给自己', '--account', OWNER, '--yes'],
     { runner: fake.runner, approvalLog: approvalLogFile() })
   assert.equal(code, 0)
-  assert.equal(fake.calls.length, 1, '不抄送自己')
+  assert.equal(fake.calls.length, 2, '覆盖自检 + 发信，不抄送自己')
+  assert.equal(archiveCall(fake.calls).length, 0, '没有存档那次调用')
 
   // 回复 owner 自己的线程同样不存档。
   const ownThread = spy(JSON.stringify([{ threadId: 'th_mine', source: { accountId: OWNER } }]))
@@ -1108,13 +1161,15 @@ test('发件存档：存档失败不改退出码（原件已发出，退非零�
   const calls = []
   const runner = (argv) => {
     calls.push(argv)
-    if (calls.length === 2) throw new Error('存档挂了')   // 2 = 存档那次
+    const remote = String(argv.at(-1))
+    if (/account-list/.test(remote)) return accountList(ALL_ACCOUNTS)
+    if (/发件存档/.test(remote)) throw new Error('存档挂了')
     return '{"ok":true,"noticeId":"nt_12"}'
   }
   const { code, err } = run(['notify', '--body', '通知', '--account', 'acc_b', '--yes', ...APPROVED],
     { runner, approvalLog: approvalLogFile() })
   assert.equal(code, 0, '原件已发出，不得退非零诱发重发')
-  assert.equal(calls.length, 2)
+  assert.equal(calls.length, 3, '覆盖自检 + 发信 + 存档')
   assert.match(err, /发件存档失败（信件已发出，需手动补档）/)
 })
 
@@ -1122,12 +1177,136 @@ test('发件存档：预演与拒发都不存档', () => {
   const dry = spy('{"ok":true,"dryRun":true}')
   run(['notify', '--body', '通知', '--all', '--yes', '--dry-run'],
     { runner: dry.runner, approvalLog: approvalLogFile() })
-  assert.equal(dry.calls.length, 1, '预演只有服务器那次统计')
+  assert.equal(dry.calls.length, 2, '预演只有只读的覆盖自检与服务器那次统计')
+  assert.equal(archiveCall(dry.calls).length, 0)
 
   const refused = spy('{"ok":true}')
   run(['notify', '--body', '通知', '--account', 'acc_b', '--yes'],
     { runner: refused.runner, approvalLog: approvalLogFile() })
-  assert.equal(refused.calls.length, 0, '没批准连原件都没发，更没有存档')
+  assert.deepEqual(refused.calls.map((argv) => (/account-list/.test(argv.at(-1)) ? 'read' : 'write')),
+    ['read'], '没批准连原件都没发，更没有存档')
+})
+
+// ── 群发覆盖（M7 / P1-6）：审批前就看见缺口，发送后对账，存档留覆盖行 ────────────────
+
+test('notify --all：审批前只读一次清单，发送时再取一次作为名单，argv 与投递集合一致', () => {
+  const accounts = ['acc_1', 'acc_2', 'acc_3', 'acc_4', 'acc_5']
+  const calls = []
+  const runner = (argv) => {
+    calls.push(argv)
+    const remote = String(argv.at(-1))
+    if (/account-list/.test(remote)) return accountList(accounts)
+    if (/feedback-notify/.test(remote)) {
+      return JSON.stringify({ ok: true, noticeId: 'nt_all', recipients: accounts.length })
+    }
+    return '{"ok":true}'
+  }
+  const { code, err } = run(['notify', '--body', '公告', '--subject', 'S', '--all', '--yes', ...APPROVED],
+    { runner, approvalLog: approvalLogFile() })
+  assert.equal(code, 0)
+  const lists = calls.filter((argv) => /account-list/.test(String(argv.at(-1))))
+  assert.equal(lists.length, 2, '审批前一次（只读算覆盖）+ 发送时一次（作为名单）')
+  assert.ok(calls.indexOf(lists[0]) < calls.indexOf(lists[1]), '先后次序：覆盖在前、发送名单在后')
+  const notifyRemote = String(called(calls).at(-1))
+  for (const id of accounts) assert.ok(notifyRemote.includes(`--account ${id}`), `argv 缺 ${id}`)
+  assert.equal((notifyRemote.match(/--account /g) ?? []).length, accounts.length,
+    'argv 里的收件集合 == 发送时那份清单')
+  assert.ok(!notifyRemote.includes('--all'), '--all 已展开成点名，不再下传')
+  assert.match(err, /（覆盖自检）全库 5，本次点名 5（缺 0）/)
+})
+
+test('notify --all：投递数不等于清单数 → 退 1 并打印差额，存档照写', () => {
+  const accounts = ['acc_1', 'acc_2', 'acc_3', 'acc_4', 'acc_5']
+  const calls = []
+  const runner = (argv) => {
+    calls.push(argv)
+    const remote = String(argv.at(-1))
+    if (/account-list/.test(remote)) return accountList(accounts)
+    if (/feedback-notify/.test(remote) && !/发件存档/.test(remote)) {
+      return '{"ok":true,"noticeId":"nt_short","recipients":3}'
+    }
+    return '{"ok":true,"noticeId":"nt_arch"}'
+  }
+  const { code, err } = run(['notify', '--body', '公告', '--all', '--yes', ...APPROVED],
+    { runner, approvalLog: approvalLogFile() })
+  assert.equal(code, 1, '投递数对不上就退非零，漏发必须可见')
+  assert.match(err, /（覆盖断言未过）清单 5 个账号，实际投递 3 个，差 -2 个/)
+  assert.match(err, /不要直接重跑/)
+  assert.ok(archiveCall(calls).length, '信件已发出，存档仍要写')
+})
+
+test('点名发送是全库真子集（>1 个账号）时默认拒发：打印缺口与 --partial，一次写都不发', () => {
+  const accounts = ['acc_owner', 'acc_a', 'acc_b', 'acc_c', 'acc_d']
+  for (const argv of [
+    ['notify', '--body', '通知', '--account', 'acc_a', '--account', 'acc_b'],
+    ['notify', '--body', '通知', '--account', 'acc_a', '--account', 'acc_b', '--yes'],
+  ]) {
+    const fake = spy('{"ok":true,"noticeId":"nt_p"}', { accounts })
+    const { code, err } = run(argv, { runner: fake.runner, approvalLog: approvalLogFile() })
+    assert.equal(code, 2, argv.join(' '))
+    assert.equal(fake.calls.length, 1, '只跑了只读的覆盖自检')
+    assert.match(fake.calls[0].at(-1), /account-list/)
+    assert.match(err, /（覆盖自检）全库 5，本次点名 2（缺 3：acc_owner、acc_c、acc_d）/)
+    assert.match(err, /点名发送默认拒发/)
+    assert.match(err, /--partial/)
+  }
+})
+
+test('--partial 放行点名子集：argv 只有那两个账号，存档写出未含的账号', () => {
+  const accounts = ['acc_owner', 'acc_a', 'acc_b', 'acc_c', 'acc_d']
+  const fake = spy('{"ok":true,"noticeId":"nt_partial"}', { accounts })
+  const { code, out } = run(['notify', '--body', '只发两台', '--account', 'acc_a', '--account', 'acc_b',
+    '--partial', '--yes', ...APPROVED],
+  { runner: fake.runner, approvalLog: approvalLogFile() })
+  assert.equal(code, 0)
+  const notifyRemote = String(called(fake.calls).at(-1))
+  assert.match(notifyRemote, /--account acc_a --account acc_b/)
+  assert.equal((notifyRemote.match(/--account /g) ?? []).length, 2, '不能顺手补成全体')
+  assert.ok(!notifyRemote.includes('--partial'), '--partial 是本机意图开关，不下传给 admin.py')
+  assert.match(String(archiveCall(fake.calls).at(-1)),
+    /覆盖：全库 5，本次 2，未含 acc_owner、acc_c、acc_d×3/)
+  assert.match(out, /（发件存档）已投给 owner 账号：nt_partial/)
+})
+
+test('点名名单正好是全库时不需要 --partial（不是真子集）', () => {
+  const accounts = ['acc_owner', 'acc_a']
+  const fake = spy('{"ok":true,"noticeId":"nt_eq"}', { accounts })
+  const { code } = run(['notify', '--body', '全体', '--account', 'acc_owner', '--account', 'acc_a',
+    '--yes', ...APPROVED], { runner: fake.runner, approvalLog: approvalLogFile() })
+  assert.equal(code, 0)
+  assert.match(String(called(fake.calls).at(-1)), /--account acc_owner --account acc_a/)
+})
+
+test('读不到中转账号清单：覆盖标未知，不拦点名发送，存档照记未知', () => {
+  const calls = []
+  const runner = (argv) => {
+    calls.push(argv)
+    const remote = String(argv.at(-1))
+    if (/account-list/.test(remote)) {
+      const error = new Error('ssh failed')
+      error.stderr = 'ssh: connect to host refused'
+      throw error
+    }
+    return '{"ok":true,"noticeId":"nt_unknown"}'
+  }
+  const { code, err } = run(['notify', '--body', '通知', '--account', 'acc_b', '--yes', ...APPROVED],
+    { runner, approvalLog: approvalLogFile() })
+  assert.equal(code, 0, '覆盖只是核对，读不到不该拦住发送')
+  assert.match(err, /（覆盖自检）读不到中转账号清单：[\s\S]*ssh: connect to host refused/)
+  assert.match(err, /（覆盖自检）全库未知，本次点名 1（缺 \?：读不到账号清单，覆盖无法核对）/)
+  assert.match(String(archiveCall(calls).at(-1)), /覆盖：全库未知，本次 1，未含未知/)
+})
+
+test('缺口很多时摘要只列前 8 个账号（用 … 收束），存档同样收束', () => {
+  const accounts = [...Array(12).keys()].map((index) => `acc_${index}`)
+  const fake = spy('{"ok":true,"noticeId":"nt_cap"}', { accounts })
+  const { code, err } = run(['notify', '--body', '两台', '--account', 'acc_0', '--account', 'acc_1',
+    '--partial', '--yes', ...APPROVED], { runner: fake.runner, approvalLog: approvalLogFile() })
+  assert.equal(code, 0)
+  assert.match(err,
+    /（覆盖自检）全库 12，本次点名 2（缺 10：acc_2、acc_3、acc_4、acc_5、acc_6、acc_7、acc_8、acc_9…）/)
+  assert.match(String(archiveCall(fake.calls).at(-1)),
+    /覆盖：全库 12，本次 2，未含 acc_2、acc_3、acc_4、acc_5、acc_6、acc_7、acc_8、acc_9…×10/)
 })
 
 
@@ -1180,15 +1359,23 @@ test('--all 展开的中转一个账号都没有：退 1，一条写命令都不
   const { code, err } = run(['notify', '--body', '公告', '--all', '--yes', ...APPROVED],
     { runner, approvalLog: approvalLogFile() })
   assert.equal(code, 1)
-  assert.equal(calls.length, 1, '只读了 account-list，没发任何东西')
+  assert.equal(calls.length, 2, '覆盖自检 + 发送时那次清单；没有发出任何东西')
+  assert.match(err, /（覆盖自检）全库 0，本次点名 0（缺 0）/)
   assert.match(err, /中转一个账号都没有/)
 })
 
-test('--all 不带 --yes：仍是预演，不展开、不下发', () => {
-  const fake = spy('{"ok":true,"dryRun":true,"recipients":3}')
+test('--all 不带 --yes：预演只把名单展开成点名（只读），不下发、不写库', () => {
+  const accounts = ['acc_owner', 'acc_b', 'acc_c']
+  const fake = spy('{"ok":true,"dryRun":true,"recipients":3}', { accounts })
   const { code, err } = run(['notify', '--body', '公告', '--all'], { runner: fake.runner })
   assert.equal(code, 0)
-  assert.equal(fake.calls.length, 1, '预演不读账号清单')
+  // mail 拒收 --all（它没有账号表），所以预演也展开——用的是审批前那次只读结果，不再多跑一次 ssh。
+  assert.equal(fake.calls.filter((argv) => /account-list/.test(String(argv.at(-1)))).length, 1)
+  const preview = String(called(fake.calls).at(-1))
+  for (const id of accounts) assert.ok(preview.includes(`--account ${id}`), `预演 argv 缺 ${id}`)
+  assert.ok(!preview.includes('--all'), '展开成点名再下传')
+  assert.ok(!preview.includes('--yes'), '预演不写库')
+  assert.match(err, /（覆盖自检）全库 3，本次点名 3（缺 0）/)
   assert.match(err, /没有 --yes/)
 })
 
@@ -1438,4 +1625,68 @@ test('已过完一天的日报：激活码按覆盖日结算，不按生成时�
   const html = renderReport(data)
   assert.match(html, /今日激活 1/, '覆盖日 22:00 的那次登记才算今日')
   assert.doesNotMatch(html, /10-13/, '曲线与表格都不该出现覆盖日的次日')
+})
+
+
+// ── F2（评审）：M8 必须接到真实调用路径 ──────────────────────────────────────
+//
+// ssh 远端是非交互 shell，拿不到 systemd 单元里的 MAIL_TEAM_ACCOUNT；归属谓词（哪条线程
+// 算用户来信）离不开团队账号，所以工具必须显式把它拼进 argv，并且允许 list 选口径。
+
+test('adminArgs 为 list/show/stats/rebind 显式带 --team-account（评审 F2）', () => {
+  const db = '/var/lib/dsh-mail/mail.db'
+  const argv = (parsed) => adminArgs({ ...parsed, teamAccount: OWNER }, db)
+
+  assert.deepEqual(argv({ sub: 'list', opts: { status: 'open', limit: 20 } }), [
+    '--db', db, '--team-account', OWNER, 'feedback-list',
+    '--status', 'open', '--limit', '20'])
+  assert.deepEqual(argv({ sub: 'show', opts: { thread: 'th_x' } }), [
+    '--db', db, '--team-account', OWNER, 'feedback-show', '--thread', 'th_x'])
+  assert.deepEqual(argv({ sub: 'feedback-stats', opts: { days: 7 } }), [
+    '--db', db, '--team-account', OWNER, 'feedback-stats', '--days', '7'])
+  assert.deepEqual(argv({ sub: 'rebind', opts: { yes: true } }), [
+    '--db', db, '--team-account', OWNER, 'feedback-rebind', '--yes'])
+
+  // 读不到 owner 账号时不拼空值：让 admin 明确报错，而不是把"空团队号"当成"所有账号都是来信"。
+  assert.deepEqual(adminArgs({ sub: 'list', opts: {}, teamAccount: '' }, db),
+    ['--db', db, 'feedback-list', '--status', 'open', '--limit', '50'])
+  // 中转侧的命令不该带上 mail 的开关（它是 mail 的 admin 参数）。
+  assert.ok(!adminArgs({ sub: 'ops-report', opts: { days: 7 }, teamAccount: OWNER }, db)
+    .includes('--team-account'))
+})
+
+test('feedback.mjs list --scope 透传到 feedback-list --scope（评审 F2）', () => {
+  const fake = spy('{"threads":[]}')
+  const { code } = run(['list', '--scope', 'test'], { runner: fake.runner })
+  assert.equal(code, 0)
+  assert.match(fake.calls[0].at(-1),
+    new RegExp(`--team-account ${OWNER} feedback-list .*--scope test`))
+
+  const users = spy('{"threads":[]}')
+  assert.equal(run(['list', '--scope', 'user'], { runner: users.runner }).code, 0)
+  assert.match(users.calls[0].at(-1), /feedback-list .*--scope user/)
+
+  const bad = run(['list', '--scope', 'mine'], { runner: spy('[]').runner })
+  assert.equal(bad.code, 2, '未知口径是用法错误，不是悄悄按 all 跑')
+  assert.match(bad.err, /--scope 只能是/)
+  assert.match(bad.err, /用法/)
+
+  // 不给 --scope 时 argv 里不该出现它（保持既有调用形状）
+  const plain = spy('{"threads":[]}')
+  run(['list'], { runner: plain.runner })
+  assert.ok(!plain.calls[0].at(-1).includes('--scope'))
+})
+
+test('feedback.mjs rebind 走 mail、带团队账号，默认是预演（评审 F2）', () => {
+  const fake = spy('{"team":"acc_owner","bound":0,"cleared":0,"dryRun":true}')
+  const dry = run(['rebind'], { runner: fake.runner })
+  assert.equal(dry.code, 0)
+  assert.match(fake.calls[0].at(-1), /--team-account acc_owner feedback-rebind$/)
+  assert.ok(!fake.calls[0].at(-1).includes('--yes'), '不带 --yes 时 admin 只预演')
+  assert.match(dry.err, /预演/)
+
+  const write = spy('{"team":"acc_owner","bound":1,"cleared":0,"dryRun":false}')
+  assert.equal(run(['rebind', '--yes'], { runner: write.runner }).code, 0)
+  assert.match(write.calls[0].at(-1), /--team-account acc_owner feedback-rebind --yes$/)
+  assert.match(write.calls[0].at(-1), /\/opt\/dsh-mail\/admin\.py/, '打的是信件服务，不是中转')
 })
