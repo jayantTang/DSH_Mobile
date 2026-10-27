@@ -68,15 +68,23 @@ func TestHourlyActivityMergesBothUnits(t *testing.T) {
 	}
 }
 
-// TestHourlyActivityTreatsEmptyJournalAsNoLogs 钉住「命令成功但没有输出」不算读到日志。
-// 没跑 systemd 的机器上 journalctl 也会退出 0 并给空输出（GitHub Runner 即如此），
-// 按退出码判会把「没日志」当成「有日志」，日报上就会出现一张全 0 的图。
+// TestHourlyActivityTreatsEmptyJournalAsNoLogs 钉住「没有可解析的日志」不算读到日志。
+// 没跑 systemd 的机器上 journalctl 也会退出 0：输出可能是空串，也可能是
+// `-- No entries --` 这类提示行（GitHub Runner 如此）。两种都不能当日志，
+// 否则日报上会出现一张全 0 的图。
 func TestHourlyActivityTreatsEmptyJournalAsNoLogs(t *testing.T) {
-	journal := func(string, int64, int64) ([]string, bool) {
-		return []string{""}, true
+	cases := map[string][]string{
+		"空串":   {""},
+		"提示行":  {"-- No entries --"},
+		"空数组":  nil,
 	}
-	buckets := hourlyActivityBuckets(0, 3_600_000, nil, nil, []string{"dsh-relay-go"}, journal)
-	if buckets != nil {
-		t.Fatalf("没有日志行时 buckets 应为 nil，得到 %d 格", len(buckets))
+	for name, lines := range cases {
+		t.Run(name, func(t *testing.T) {
+			journal := func(string, int64, int64) ([]string, bool) { return lines, true }
+			buckets := hourlyActivityBuckets(0, 3_600_000, nil, nil, []string{"dsh-relay-go"}, journal)
+			if buckets != nil {
+				t.Fatalf("没有可解析的日志时 buckets 应为 nil，得到 %d 格", len(buckets))
+			}
+		})
 	}
 }

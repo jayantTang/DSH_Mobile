@@ -49,9 +49,7 @@ func hourlyActivityBuckets(startMS, endMS int64, devices []store.Device,
 			lines = append(lines, line)
 		}
 	}
-	// 判据是"拿到内容"，不是"命令退出码"：journalctl 在没跑 systemd 的机器上
-	// 也会退出 0 并给空输出（GitHub Runner 即如此），按退出码判会把"没日志"
-	// 当成"有日志"，于是编出满窗口的空桶。
+	// 空行直接丢：journalctl 的 `-- No entries --` 之外的形状也要落到同一条判据。
 	if len(lines) == 0 {
 		return nil
 	}
@@ -117,6 +115,12 @@ func hourlyActivityBuckets(startMS, endMS int64, devices []store.Device,
 	for deviceID, previous := range openAt {
 		spans = append(spans, span{opened: previous.at, closed: end,
 			device: deviceID, agent: previous.agent})
+	}
+	// 判据落到"解析出了设备事件"：没跑 systemd 的机器上 journalctl 会退出 0，
+	// 并给出 `-- No entries --` 这类非空提示行（GitHub Runner 即如此）。只判
+	// 有无非空行仍会把提示当日志，编出满窗口的 0 桶。没有事件就没有图。
+	if len(spans) == 0 {
+		return nil
 	}
 
 	accountOf := func(deviceID, agentID string) string {
