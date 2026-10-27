@@ -1,9 +1,9 @@
 # DSH Link Protocol (DLP) v1
 
-> 面向：实现者与自建中转的部署方 · 状态：stable（DLP v1） · 最近核对：2026-09-20
+> 面向：实现者与自建中转的部署方 · 状态：stable（DLP v1） · 最近核对：2026-10-27
 
 规范版本：`1`
-状态：draft-1（已按本规范实现 relay / agent / iOS 客户端）
+状态：stable（已按本规范实现 relay-go / agent / iOS 客户端）
 
 DLP 解决的核心问题：**电脑端 DSH 没有公网 IP**。电脑侧连接器（agent）主动外连中转服务器，
 手机（device）也连中转服务器，由中转按 `agentId` 配对并转发帧。
@@ -40,7 +40,7 @@ Relay 只做两件事：**鉴权**与**按 `agentId` 转发**。它不解析 DLP
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| `GET`  | `/healthz` | 健康检查，返回 `{"ok":true,"version":1,"relayVersion":"20261017.1240"}`；`version` 是**协议版本**，`relayVersion` 是这次部署的**构建号**（`yyyyMMdd.HHmm`，北京时间），`build` 另带 commit 与部署时刻 |
+| `GET`  | `/healthz` | 健康检查，返回 `{"ok":true,"version":1,"relayVersion":"go-0.2.3"}`；`version` 是**协议版本**，`relayVersion` 是这次部署的版本（语义化 `go-X.Y.Z`），`build` 另带 commit 与部署时刻 |
 | `GET`  | `/stats` | **运维侧**实时负载与流量（不属于协议，见 §5.3）；**仅回环可达**（回环校验 + 网关显式拒绝，两半缺一不可） |
 | `WS`   | `/link/agent?agentId=<id>` | 电脑侧连接器接入；`Authorization: Bearer <agentToken>` |
 | `WS`   | `/link/device?agentId=<id>` | 手机侧接入；`Authorization: Bearer <deviceToken>`；浏览器客户端可在 `Sec-WebSocket-Protocol` 里携带 `dsh.device.<deviceToken>`（头优先，子协议仅在无头时生效；握手响应显式回显该子协议） |

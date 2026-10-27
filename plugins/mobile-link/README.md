@@ -31,7 +31,7 @@ plugins/mobile-link/
 │   ├── files.js          # phone → computer file transfers (`_link/file*` methods)
 │   ├── enroll.js         # invite-code redemption, writes ~/.dsh/mobile-link/agent.json
 │   ├── journal.js        # lifecycle journal: why a relay link was dropped, after the fact
-│   ├── routes.js         # GET /mobile-link/status, POST /pair-code, GET /qr
+│   ├── routes.js         # GET /mobile-link/status, POST /pair-code, POST /pair-code/regenerate
 │   ├── qr.js             # dependency-free QR SVG
 │   └── cli.js            # dsh-mobile-link: enroll / mint-pair-code
 └── test/                 # node --test, 100+ tests (no DSH, no network)
@@ -90,10 +90,11 @@ dsh plugin --profile web add ./plugins/mobile-link
    ```
 
    Or open the **移动端连接** panel at the bottom of the sidebar in the DSH client
-   (spec 010) — same code, same QR, with the validity countdown.
+   (spec 010) — same persistent code, same QR, shown until you click 重新生成.
 
-3. Scan it in the iOS app. After that the phone reconnects on its own — nothing
-   else has to be run by hand.
+3. Scan it in the iOS app. The code can be claimed again for another phone, a reinstall
+   or a new device; only 重新生成 revokes it (already-paired devices stay connected).
+   After that the phone reconnects on its own — nothing else has to be run by hand.
 
 `GET /mobile-link/status` reports whether the link is up, which devices are
 attached, and whether this computer is registered yet. Its `journal` block carries

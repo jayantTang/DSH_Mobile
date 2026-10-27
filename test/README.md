@@ -39,8 +39,8 @@
 DSH_CONNECT=relay ./test/run.sh run test/cases/fixed/01-全部独立页面逐屏核对.md
 ```
 
-运行器自己配对、跑完自己撤销（`test/tools/relaypair.mjs`）：配对码是一次性的，谁领谁才知道
-device id，所以让 App 去领就等于没人能撤销——以前每跑一轮，用户设备列表里就多一行
+运行器自己配对、跑完自己撤销（`test/tools/relaypair.mjs`）：配对码持久且可反复认领，但**只有
+认领方拿得到 device id**，所以让 App 去领就等于没人能撤销——以前每跑一轮，用户设备列表里就多一行
 `DSH-Test`。现在用的是「先领码 → 把凭据交给 App → `finally` 里撤销」，撤销失败会红字提醒
 到手机上手删。
 

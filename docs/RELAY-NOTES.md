@@ -1,6 +1,6 @@
 # Relay NOTES — deviations and fills for DLP v1
 
-> 面向：实现者与部署方 · 状态：stable · 最近核对：2026-10-24
+> 面向：实现者与部署方 · 状态：stable · 最近核对：2026-10-27
 
 [`RELAY-PROTOCOL.md`](RELAY-PROTOCOL.md) is normative. Each entry below records either a point the
 spec left open where a concrete choice was required, or a point where following it literally would
@@ -26,10 +26,17 @@ override is honoured as-is.
 only exposes `/pair/claim` and `/pair/refresh`, and the code must be *validated*
 by the relay — so the relay has to be the one that mints it.
 
-`POST /pair/code` with `Authorization: Bearer <agentSecret>` and an optional
-`{"ttlMs": 600000}` returns `{"ok":true,"code":"XXXX-XXXX","expiresAt":<ms>,"agentId":...}`.
-The connector calls it from `POST /mobile-link/pair-code`. Codes are one-time and
-default to 10 minutes.
+`POST /pair/code` with `Authorization: Bearer <agentSecret>` returns
+`{"ok":true,"code":"XXXX-XXXX","expiresAt":<ms>,"persistent":<bool>,"agentId":...}`.
+The connector calls it from `POST /mobile-link/pair-code`.
+
+**Codes are persistent by default** (spec 032): omitting `ttlMs` — or sending `null` —
+mints a code that never expires, which is what the DSH panel uses. Sending an explicit
+`ttlMs` still mints a time-limited code for older callers, capped at one hour. A
+persistent code may be claimed repeatedly, so one code can pair several devices; the
+panel reuses it until the user clicks “重新生成”, which calls
+`POST /pair/code/regenerate` to revoke the old code (already-paired devices keep working)
+and mint a new one. Per-account pairing is capped at 8 clients.
 
 ## 2b. The QR deep link is `dsh://pair?relay=…&code=…`
 

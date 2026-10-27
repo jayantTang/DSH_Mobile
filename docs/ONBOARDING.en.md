@@ -22,9 +22,10 @@ they differ only in who runs the relay.
    and the connector prints the enrolment command when it starts without an identity.
 4. **Restart DSH** so the connector picks up its new identity. After that it reconnects by itself.
 5. **Pair the phone:** click **移动端连接** at the bottom of the sidebar in DSH and scan the QR
-   code it shows; the relay address and the one-time pairing code are both inside that code, so
-   nothing has to be typed. (With no GUI around, `node scripts/dev/show-pair-qr.mjs` prints the
-   same code as an image.)
+   code it shows; the relay address and the pairing code are both inside that code, so nothing has
+   to be typed. The code is persistent and can be claimed again for another phone, a reinstall or
+   a new device; click 重新生成 only when you want to revoke it. (With no GUI around,
+   `node scripts/dev/show-pair-qr.mjs` prints the same code as an image.)
 6. **Check the link:** the app's status chip turns green and the session list fills in.
 
 ## B · Run your own relay (20 minutes)

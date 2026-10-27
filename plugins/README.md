@@ -21,7 +21,7 @@ plugins/mobile-link/
 │   ├── dlp.js            # pure frame codec, stream table, dedupe, backoff
 │   ├── ws.js             # WebSocket adapter (global WebSocket, `ws` fallback)
 │   ├── state.js          # ~/.dsh/mobile-link/agent.json (mode 0600)
-│   ├── routes.js         # GET /mobile-link/status, POST /mobile-link/pair-code
+│   ├── routes.js         # GET /mobile-link/status, POST /pair-code, POST /pair-code/regenerate
 │   └── cli.js            # standalone runner for dev/tests/headless use
 └── test/                 # node --test (no DSH, no network)
 ```
@@ -125,9 +125,18 @@ auth), like every other plugin route.
 
 ### `POST /mobile-link/pair-code`
 
-Body (optional): `{"ttlMs": 600000}` (capped at 1 hour). Returns
-`{"ok":true,"code":"XXXX-XXXX","expiresAt":…,"ttlMs":…,"relayUrl":…,"agentId":…,"qrPayload":"dsh://pair?relay=…&code=…"}`.
-`502` with `code: "relay/unavailable"` when the relay cannot be reached.
+Body (optional). **No `ttlMs` (or `null`) mints a persistent code** — that is what the
+DSH panel uses; an explicit `ttlMs` mints a time-limited code (capped at 1 hour). Returns
+`{"ok":true,"code":"XXXX-XXXX","persistent":true,"expiresAt":null,"ttlMs":null,"maxPairedDevices":8,"pairedDevices":1,"relayUrl":…,"agentId":…,"qrPayload":"dsh://pair?relay=…&code=…","svg":"<svg…>"}`.
+A persistent code can be claimed repeatedly (several phones, reinstalls, a new device),
+so the panel keeps showing the same one. `502` with `code: "relay/unavailable"` when the
+relay cannot be reached.
+
+### `POST /mobile-link/pair-code/regenerate`
+
+Revokes this computer's current code(s) and mints a new one; **already-paired devices are
+not touched**. Same response shape plus `revoked` = how many codes were revoked. This is
+the only way a persistent code changes.
 
 ## Configuration
 
@@ -145,7 +154,7 @@ profile's own patch layer, which is applied after it):
 | `heartbeatMs` | `20000` | DLP `ping` cadence to the relay |
 | `pongTimeoutMs` | `60000` | no `pong` for this long ⇒ reconnect |
 | `maxBackoffMs` | `30000` | reconnect backoff ceiling (1s → 2s → … with ±20 % jitter) |
-| `pairTtlMs` | `600000` | default lifetime for `/mobile-link/pair-code` |
+| `pairTtlMs` | `600000` | fallback lifetime when a caller sends `ttlMs` but not a positive number; persistent codes ignore it |
 
 Environment overrides (useful for headless runs):
 `DSH_MOBILE_LINK_RELAY`, `DSH_MOBILE_LINK_AGENT_ID`, `DSH_MOBILE_LINK_AGENT_SECRET`.

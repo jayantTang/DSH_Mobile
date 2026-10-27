@@ -1,7 +1,8 @@
 # relay-go — DSH 中转的 Go 实现（生产）
 
-DSH Link Protocol v1 中转的 Go 单二进制实现，自 2026-10-24 03:21 CST 起承担生产流量
-（`relayVersion=go-0.1.2`）。安装、升级与回滚见 [`deploy/README.md`](deploy/README.md)。
+DSH Link Protocol v1 中转的 Go 单二进制实现，自 2026-10-24 起承担生产流量；当前生产版本
+`relayVersion=go-0.2.3`（2026-10-26 17:22 CST 上线）。安装、升级与回滚见
+[`deploy/README.md`](deploy/README.md)。
 
 三类入口共用一个二进制：`serve`、`admin`、`alert-dispatch` / `purge`。功能面覆盖 HTTP
 （配对、设备、账户状态、自助登记、`/stats`、限流）、两条 WebSocket `/link/*`（帧转发、
@@ -57,7 +58,7 @@ curl -s http://127.0.0.1:8787/healthz
 {"ok":true,"version":1,"relayVersion":"0.0.0","capabilities":["device-subprotocol-auth","persistent-pair-code","account-state","account-state-push","file-transfer"]}
 ```
 
-`relayVersion` 取可执行文件旁的 `build.json`（`{"version":"20261023.1200","commit":"…","deployedAt":"…"}`），
+`relayVersion` 取可执行文件旁的 `build.json`（`{"version":"go-0.2.3","commit":"…","deployedAt":"…"}`），
 读不到就是 `0.0.0`（表示"这不是一次部署"）。部署脚本负责生成该文件。
 
 `--port 0` 由内核分配端口，启动日志的 `addr` 字段是实际地址。
@@ -324,7 +325,7 @@ requestId，后续同类只累计次数。
             "connectedAt":1790000000000,"lastInbound":1790000000123,
             "lastInboundAgeMs":10,"queueDepth":0,"queuedBytes":0,
             "controlDrops":0,"droppedFrames":0,
-            "connectorVersion":"0.6.6","hostVersion":"1.0.0",
+            "connectorVersion":"0.7.0","hostVersion":"1.0.0",
             "generation":3,"closing":false,"closeCode":0,"lastError":""}],
  "devices":[{"kind":"device","agentId":"agt_x","deviceId":"dev_x","remote":"198.51.100.8:5555",
              "connectedAt":1790000000000,"lastInbound":0,"lastInboundAgeMs":0,

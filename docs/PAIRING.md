@@ -1,6 +1,6 @@
 # 连接与配对设计
 
-> 面向：实现者与部署方 · 状态：stable · 最近核对：2026-10-24
+> 面向：实现者与部署方 · 状态：stable · 最近核对：2026-10-27
 
 ## 决定：只保留一条路
 
@@ -22,8 +22,8 @@
 |---|---|
 | 中转 `agents` 表 | 存在，且 `agentSecret` **只存哈希** |
 | 中转 `accounts` 表 | 已启用：邀请码登记时在同一事务里建账户与电脑，设备、用量与配额按账户归属 |
-| 配对码 | 中转 `POST /pair/code` 签发（一次性、默认 10 分钟）；连接器 `/mobile-link/pair-code` 取用，手机 `/pair/claim` 兑换 |
-| 二维码 | 连接器 `POST /mobile-link/pair-code` 一次返回码、payload 与图案（`dsh://pair?relay=…&code=…`）；DSH 界面左下角「移动端连接」小窗展示它，App 扫码或手输配对码。取码接口**每次调用都新签一张**，小窗在码被兑换（在线手机台数增长）或剩余不足 1 分钟时自动换，也可手动换（spec 010）。旧的浏览器页面 `GET /mobile-link/qr` 已删除 |
+| 配对码 | 中转 `POST /pair/code` 签发；**不带 `ttlMs`（或给 `null`）是持久码**（一直有效，直到用户点「重新生成」），显式带 `ttlMs` 才是限时码（老连接器走这条）；连接器 `/mobile-link/pair-code` 取用，手机 `/pair/claim` 兑换 |
+| 二维码 | 连接器 `POST /mobile-link/pair-code` 一次返回码、payload 与图案（`dsh://pair?relay=…&code=…`）；DSH 界面左下角「移动端连接」小窗展示它，App 扫码或手输配对码。小窗**复用同一张持久码**，只有用户点「重新生成」（`POST /pair/code/regenerate`）才换码，换码不作废已配对设备（spec 010 / 032）。旧的浏览器页面 `GET /mobile-link/qr` 已删除 |
 | 设备令牌 | 已签发，按 agent 归属，长期有效并随 `/pair/refresh` 轮换 |
 | 设备管理 | 中转 `GET /devices`、`POST /devices/revoke` + `dsh-relay admin device-list`；**App 设置页已可看已配对设备并撤销** |
 | 直连入口 | App 连接页**已去掉**，只保留中转配对；`dsh://direct` 仅 DEBUG 参数 |
@@ -39,7 +39,7 @@
 ② 首次启动，连接器向中转「登记」，拿到 agentId + agentSecret
         │        （需要账号或邀请码，不能完全开放）
         ▼
-③ 连接器在 DSH 界面（侧栏底部「移动端连接」）显示一个二维码（含 relayUrl + 一次性配对码）
+③ 连接器在 DSH 界面（侧栏底部「移动端连接」）显示一个二维码（含 relayUrl + 持久配对码）
         │
 ④ 手机 App 扫码 → POST /pair/claim → 拿到 deviceToken
         │
@@ -81,13 +81,15 @@
 连接器 `status` 现已回报：
 
 ```json
-{ "serverVersion": "0.2.0",
+{ "serverVersion": "0.7.0",
   "capabilities": ["file-transfer", "events", "session-streams",
-                   "pair-code", "qr-pairing", "self-enroll"] }
+                   "pair-code", "qr-pairing", "self-enroll", "git",
+                   "background-transfer", "persistent-pair-code"] }
 ```
 
-（实际清单来自 `plugins/mobile-link/lib/hello.js` 的 `SERVER_CAPABILITIES`；
-`serverVersion` 读的是插件 `package.json`，不是手写常量。）
+（节选：完整清单来自 `plugins/mobile-link/lib/hello.js` 的 `SERVER_CAPABILITIES`，还含
+`history-*`、`jobs-roster`、`dir-mtimes`、`account-state` 等；`serverVersion` 读的是插件
+`package.json`，不是手写常量。）
 
 App **必须做能力探测而非版本比较**：老连接器缺某个能力时，对应入口隐藏并说明，
 而不是让调用打到 Host 上得到 404。这一条已经踩过——文件功能在旧连接器下只报
@@ -96,7 +98,9 @@ App **必须做能力探测而非版本比较**：老连接器缺某个能力时
 ## 安全待办
 
 - `agentSecret` / `deviceToken` 已只存哈希（已具备）
-- 已定：配对码一次性、默认 10 分钟；失败原因在协议上分成 `pair/invalid-code` /
-  `pair/used-code` / `pair/expired-code`，限流见 `_CLAIM_FAILURES`
-- 待确认：设备撤销后的令牌失效传播
+- 已定：配对码默认持久，显式 `ttlMs` 才是限时码；失败原因在协议上分成 `pair/invalid-code` /
+  `pair/used-code` / `pair/expired-code` / `pair/revoked-code` / `pair/rate-limited`，限流见
+  `_CLAIM_FAILURES`
+- 已具备：撤销设备时中转立即断开该设备的 socket 并拒绝其令牌再次接入
+  （`relay-go/internal/httpapi/devices.go` 的 `DropDevice`、`relay-go/internal/hub/attach.go`）
 - 待确认：中转上的会话数据是否落盘（当前为纯转发，应保持不落盘）

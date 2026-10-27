@@ -26,9 +26,9 @@
 
 | 组件 | 当前版本 | 分发方式 |
 |---|---|---|
-| iOS App | 1.0 | TestFlight 公开测试（[加入](https://testflight.apple.com/join/tHKQsbCk)）；需先安装 TestFlight，构建 90 天后过期 |
-| 连接器 `dsh-plugin-mobile-link` | 0.6.0 | npm |
-| 中转（DLP v1） | 本仓库 `relay-go/`（Go，`go-0.1.2`） | 自行部署 |
+| iOS App | 1.0.1 | TestFlight 公开测试（[加入](https://testflight.apple.com/join/tHKQsbCk)）；需先安装 TestFlight，构建 90 天后过期 |
+| 连接器 `dsh-plugin-mobile-link` | 0.7.0 | npm |
+| 中转（DLP v1） | 本仓库 `relay-go/`（Go，`go-0.2.3`） | 自行部署 |
 
 三者的版本组合与发布策略见 [`docs/VERSIONING.md`](docs/VERSIONING.md)。
 表中版本以 **npm 上已发布的为准**（`npm view dsh-plugin-mobile-link version`），不是仓库里 `package.json` 的值。
@@ -55,7 +55,7 @@
    （`DSH_MOBILE_LINK_INVITE=<邀请码> dsh web`）。**第 2 步装插件本身不需要重启**——命令行 web 宿主会
    自己把新装的插件挂上；桌面版按应用内提示。
 5. 手机 App →「扫码配对」，扫描电脑上的二维码：点 DSH 界面**左下角的「移动端连接」**，小窗里就是
-   二维码、配对码与有效期（也可用 `node scripts/dev/show-pair-qr.mjs` 在没有界面的环境里出图）。
+   二维码与配对码（点「重新生成」才会换；也可用 `node scripts/dev/show-pair-qr.mjs` 在没有界面的环境里出图）。
 
 邀请码为一次性、绑定一台电脑，在 [issue #1](https://github.com/jayantTang/DSH_Mobile/issues/1) 领取；
 中转地址与邀请码写在同一行。登录后确认手机顶部显示「已连接」，即为成功。故障排查见
@@ -126,7 +126,7 @@ sudo systemctl enable --now dsh-relay-go
 cd ios/DSHMobile/DSHKit && swift test        # 协议层
 cd plugins/mobile-link  && npm test          # 连接器
 cd relay-go && make test                     # 中转（Go，生产实现）
-cd relay && .venv/bin/python -m pytest -q    # 中转回滚实现与黑盒契约基线
+cd mail && ../.venv/bin/python -m pytest -q   # 信件服务
 npm run check:secrets                        # 本机真值没有进跟踪文件
 npm run check:docs                           # 文档规范（结构、口吻、链接）
 

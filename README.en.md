@@ -17,7 +17,7 @@ stored on the relay — it forwards frames and keeps daily byte counters.
    `dsh plugin --profile web add dsh-plugin-mobile-link`
 3. **The app**, from TestFlight:
    <https://testflight.apple.com/join/tHKQsbCk>
-   (The App Store release is in review. TestFlight builds expire after 90 days and need a manual
+   (TestFlight is the current distribution channel; builds expire after 90 days and need a manual
    update in the TestFlight app.)
 4. **An invite code.** The relay is invite-only while it is in early use. Codes are handed out in
    [issue #1](https://github.com/jayantTang/DSH_Mobile/issues/1) — one code enrolls one computer,
@@ -26,8 +26,9 @@ stored on the relay — it forwards frames and keeps daily byte counters.
 ## Pairing
 
 On the computer, click **移动端连接** at the bottom of the sidebar in DSH: the panel shows the QR
-code, the pairing code and how long it stays valid. Scan it in the app (**Scan QR code**); if the
-camera is unavailable, the same panel shows the code to type by hand.
+code and the pairing code (it stays the same until you click 重新生成). Scan it in the app
+(**Scan QR code**); if the camera is unavailable, the same panel shows the code to type by hand.
+The same code can be used again for another phone, a reinstall or a new device.
 
 Once paired, the app lists that computer's sessions. It works the same way as the desktop client:
 open a session to read its transcript, type to continue it, and answer whenever the agent asks for

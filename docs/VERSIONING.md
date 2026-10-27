@@ -1,6 +1,6 @@
 # 版本与部署策略
 
-> 面向：维护者与部署方 · 状态：stable · 最近核对：2026-10-17
+> 面向：维护者与部署方 · 状态：stable · 最近核对：2026-10-27
 >
 > 日期只表示最后一次人工过目，**内容是否仍然成立以本文件内的 `文件:行` 引用与
 > 第六节那几条命令为准**（见「六、本篇的结论怎么自己验」）。
@@ -40,10 +40,10 @@
 
 | 部署目标 | 代码来源 | 发布命令 | 生效方式 | 版本标识 |
 |---|---|---|---|---|
-| **iOS App** | `ios/DSHMobile/` | `./scripts/release/deploy-ota.sh` | 手机 Safari 装 OTA | `CFBundleVersion`（时间戳） |
-| **电脑端连接器 + 插件（本机）** | `plugins/` | `./scripts/install/install-plugin.sh` | **重启 DSH** | 各自 `package.json` 的语义化版本，连接器把它当 `SERVER_VERSION` 回显给 App |
+| **iOS App** | `ios/DSHMobile/` | `./scripts/release/deploy-ota.sh`（开发版）/ `deploy-testflight.sh`（对外） | 开发版走 OTA 安装页；**用户版本只经 TestFlight** | `CFBundleShortVersionString` + `CFBundleVersion`（时间戳） |
+| **电脑端连接器 + 插件（本机）** | `plugins/` | `./scripts/install/install-plugin.sh` | 安装时由宿主挂载；源码改动保存即热更，替换同名包或改 skill 才需重启 | 各自 `package.json` 的语义化版本，连接器把它当 `SERVER_VERSION` 回显给 App |
 | **电脑端连接器 + 插件（发给别人）** | npm 上的同名包 | `scripts/release/publish-plugins.sh --publish` | 对方 `dsh plugin add` | 同上；线上真值以 `npm view <name> version` 为准 |
-| **公网中转** | `relay-go/` | `relay-go/deploy` 安装，或 `switch.sh --to-go` | 服务重启 | `/healthz` 的 `version`（协议版本）与 `relayVersion`（`go-X.Y.Z`）+ `build`（commit/部署时刻） |
+| **公网中转** | `relay-go/` | `relay-go/deploy` 安装 | 服务重启 | `/healthz` 的 `version`（协议版本）与 `relayVersion`（`go-X.Y.Z`）+ `build`（commit/部署时刻） |
 | **信件服务** | `mail/` | `mail/deploy/deploy.sh` | 服务重启 | 该服务 `/healthz` 的 `version`（同一个构建号口径） |
 | skill | `skills/` | `./scripts/install/install-skills.sh` | 重启 DSH | 无 |
 
@@ -60,10 +60,11 @@
 **DLP 协议版本**：`/healthz` 返回 `{"ok":true,"version":1}`，连接器在握手中声明
 `protocolVersion`。
 
-**版本号口径**（owner 2026-10-17 定）：**有 npm 注册版本的三件**（连接器、send-image、
-doubao-image）继续语义化 `0.x.y`，每次发布递增——包不可变，版本号就是发布标识；
-**没有注册表的**（iOS App、公网中转、信件服务、Web 客户端）一律用构建号
-`yyyyMMdd.HHmm`（北京时间），与 App 的 `CFBundleVersion` 同口径，一眼能看出发布先后；
+**版本号口径**（owner 2026-10-17 定，2026-10-27 按实际发布校正）：**有 npm 注册版本的三件**
+（连接器、send-image、doubao-image）继续语义化 `0.x.y`，每次发布递增——包不可变，版本号就是
+发布标识；**公网中转**用语义化 `go-X.Y.Z`（随 `relay-vX.Y.Z` tag 递增）；**iOS App** 用
+`CFBundleShortVersionString`（当前 `1.0.1`），构建号另用时间戳 `CFBundleVersion`；**信件服务与
+Web 客户端**没有注册表，用构建号 `yyyyMMdd.HHmm`（北京时间），一眼能看出发布先后；
 **DSH 宿主**沿用上游版本，只读。skills 随所属插件版本，不单独编号。
 
 **四段版本各自的出口**（只走控制帧，业务帧不重复携带）：
@@ -73,7 +74,7 @@ doubao-image）继续语义化 `0.x.y`，每次发布递增——包不可变，
 | iOS App | `CFBundleShortVersionString` + `CFBundleVersion` | 设置「关于」 | 每次连接 `_link/hello` 的 `clientVersion`/`clientBuild` → `devices.appVersion` |
 | 连接器 | `package.json`（`SERVER_VERSION`，读文件、不读 `require` 缓存） | `_link/hello` 的 `serverVersion` → 「关于」 | `hostStatus.info.version` → `agents.connectorVersion` |
 | DSH 宿主 | 进程环境 `DSH_CLIENT_VERSION` | `_link/hello` 的 `hostVersion` → 「关于」 | `hostStatus.info.hostVersion` → `agents.hostVersion` |
-| 公网中转 | 部署构建号 `yyyyMMdd.HHmm`（`deploy.sh` 生成，写进 `build.json`） | 中转发的 `hostStatus.info.relayVersion` → 「关于」 | `/healthz` 的 `relayVersion` + `build` |
+| 公网中转 | 语义化 `go-X.Y.Z`（写进 `build.json`） | 中转发的 `hostStatus.info.relayVersion` → 「关于」 | `/healthz` 的 `relayVersion` + `build` |
 
 中转在**值变化时**才写一次库（`agents.versionsAt` 是最后一次上报时刻）；连接器只在每次
 链路建立时写一行流水（`link.open` 的 `serverVersion`/`hostVersion`）。排障时
@@ -111,11 +112,11 @@ doubao-image）继续语义化 `0.x.y`，每次发布递增——包不可变，
 
 ```
 1. 改代码（仓库内）
-2. 跑单测：DSHKit (swift test) + plugins/* (npm test) + relay-go (make test) + relay (pytest，回滚实现)
-3. 仿真器里实跑逐屏核对（用例层已删除，等用户重新设计）
+2. 跑单测：DSHKit (swift test) + plugins/* (npm test) + relay-go (make test) + mail (pytest)
+3. 仿真器里按 `test/RULES.md` 跑对应用例、看截图并出报告
 4. 按需部署：
-   - 只改了 App      → ./scripts/release/deploy-ota.sh
-   - 改了连接器/插件 → ./scripts/install/install-plugin.sh 然后**重启 DSH**
+   - 只改了 App      → ./scripts/release/deploy-ota.sh（开发版）/ deploy-testflight.sh（对外）
+   - 改了连接器/插件 → 保存即热更（`plugins/*/lib/*.js`）；替换同名包（升级）或卸载重装才需要重启
    - 要把插件发给别人 → 升各自 package.json 的版本，scripts/release/publish-plugins.sh --publish
                         （发之前先 --staged 看 npm 的暂存队列，同名旧暂存会挡住发布）
    - 改了中转        → 升 `relay-go` 版本号、重建二进制、重启 `dsh-relay-go`，并打 `relay-vX.Y.Z` tag
@@ -124,17 +125,18 @@ doubao-image）继续语义化 `0.x.y`，每次发布递增——包不可变，
 7. git commit
 ```
 
-**必须遵守**：连接器或插件改动后**不重启 DSH 等于没生效**。这一条已经导致过一次
-整轮无效排查——运行中的连接器把新方法的调用转发给 Host 并返回 404，看起来像代码错误。
+**必须遵守**：`plugins/*/lib/*.js` 保存即热更，不需要重启 DSH；只有**替换同名包（升级）**、
+**卸载后重装**或**改 skill** 才需要重启。插件改动尽量落在热更范围内，方案里要写清不重启的
+生效路径与验证方法。
 
 ## 五、版本号约定
 
 | 部件 | 编号方式 | 说明 |
 |---|---|---|
-| iOS App | `yyyyMMdd.HHmm`（**北京时间**） | 由 `deploy-ota.sh` 自动打（规则与用例在 `scripts/release/ota-version.mjs`）：两段整数、都在 `CFBundleVersion` 上限内（早先那个 12 位时间戳越界，iOS 会静默不装，看起来像「必须先删掉旧 App」）；拿线上 `version.json` 的号当下界保证严格递增；安装页、`version.json`、CHANGELOG 与提交信息一律北京时间 |
+| iOS App | 对外版本 `CFBundleShortVersionString`（当前 `1.0.1`）；构建号 `CFBundleVersion` 用 `yyyyMMdd.HHmm`（**北京时间**） | 构建号由 `deploy-ota.sh` 自动打（规则与用例在 `scripts/release/ota-version.mjs`）：两段整数、都在 `CFBundleVersion` 上限内（早先那个 12 位时间戳越界，iOS 会静默不装，看起来像「必须先删掉旧 App」）；拿线上 `version.json` 的号当下界保证严格递增；安装页、`version.json`、CHANGELOG 与提交信息一律北京时间 |
 | 连接器 / 插件 | 语义化 `0.x.y` | 写在各自 `package.json`；连接器把它当 `SERVER_VERSION` 回显给 App（缺口 1 已解决）。线上真值以 `npm view <name> version` 为准 |
 | 中转 | 语义化 `go-X.Y.Z` | `/healthz` 暴露 `relayVersion` 与 `build`；安装时写 `/opt/dsh-relay-go/bin/build.json`（版本 + commit + 部署时刻），启动日志也打一行。Go 版按发版节奏打 `relay-vX.Y.Z` tag，构建号即发布标识 |
-| 信件服务 | 部署构建号 `yyyyMMdd.HHmm`（与中转同一口径） | `mail/deploy/deploy.sh` 写 `/opt/dsh-mail/build.json`；该服务 `/healthz` 的 `version` 读它 |
+| 信件服务 | 部署构建号 `yyyyMMdd.HHmm`（与 App 构建号同一口径） | `mail/deploy/deploy.sh` 写 `/opt/dsh-mail/build.json`；该服务 `/healthz` 的 `version` 读它 |
 
 ## 六、本篇的结论怎么自己验
 

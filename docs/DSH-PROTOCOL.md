@@ -1,18 +1,20 @@
 # DSH Client Protocol Reference
 
-> 面向：实现者 · 状态：stable（随 DSH 上游变动） · 最近核对：2026-09-20
+> 面向：实现者 · 状态：stable（随 DSH 上游变动） · 最近核对：2026-10-27
 
 Authoritative, implementation-oriented reference for the **DeepSeek Harness (DSH) browser/client Remote API**, sufficient to build a native client (iOS) against a running DSH host **without access to the DSH source**.
 
 | | |
 |---|---|
-| **DSH version** | `0.2.0-rc.2` |
+| **DSH version** | `0.2.0-rc.2`（本快照） |
 | **Generated at** | `2026-09-13T05:51:44.713Z` (job surface re-verified `2026-10-17`) |
 | **Probed server** | `http://127.0.0.1:54499` (pid 43814, desktop shell) |
 | **Endpoints catalogued** | **50** (45 unary, 5 stream) |
 | **Method** | Host FaceModels (`typert.host.js` `TYPERT.invocations`) cross-checked against the live server with the descriptor-validation probe, plus verbatim `.d.ts` extraction and live captures in `docs/artifacts/samples/`. The `job/*` surface and the forwarded-event allowlist were re-read from the installed `0.2.0-rc.2` packages and probed against a running host on `2026-10-17` (Section 7.6). |
 
 > **Provenance rules used throughout.** Every argument name in Section 2 was confirmed **empirically** against the live server, not read from source alone. Every type in Section 3 is copied **verbatim** from the installed `.d.ts` files. Where the two disagree, or where a feature is absent from this deployment, it is called out explicitly in Section 7.
+
+> **Snapshot staleness (2026-10-27).** This reference was probed against `0.2.0-rc.2`. The host installed on the maintainer machine is now `0.2.1-rc.3`; the endpoint list, argument names and event allowlist have **not** been re-probed against it. Treat this file as the `0.2.0-rc.2` snapshot, and re-run the capture/probe pipeline before relying on details for a newer host.
 
 ---
 
