@@ -35,7 +35,7 @@ public struct SessionActivity: Sendable, Hashable {
 /// .capabilities(LinkHandshake.capabilities)   // 缺 jobs-roster → 整块不可用
 /// .roster(ActivityRoster)                     // _link/jobRoster 首答 / 重连后重问
 /// .frame(LinkJobsFrame)                       // link/jobs 推帧（单会话整格替换）
-/// .sessions([SessionSummary])                 // session/list（子会话 + subagentTiming）
+/// .sessions([SessionSummary])                 // session/list 的**整份**会话行
 /// .connection(true/false)                     // 断线 / 重连
 /// .turnOpen(sessionId, Bool)                  // 该会话的轮次是否进行中
 /// ```
@@ -45,6 +45,16 @@ public struct SessionActivity: Sendable, Hashable {
 ///    一律丢弃（不变式 4：断线后不再由本地推断更新 `isBusy`）。
 /// 2. **能力变化即换代**：`.capabilities` 的集合一旦不同，就清空上一代名单并
 ///    `generation += 1`（不变式 5）。
+///
+/// `.capabilities` 有**三个**合法写入口：**新连接协商时的握手集合**、**名单答出后的
+/// 一次升档**（握手拿不到能力位、连接器却能答名单时，见 `ActivityModel.refresh()`）、
+/// 以及连接器**明确答 `link/unsupported` 时的降档**。轮询、刷新、推帧一处也没有。
+///
+/// 升档那一路不是可选项：现场出现过握手 `caps=0` 而名单可答的连接，删掉它这种连接就
+/// 永久不可用（`_link/jobRoster` 永远不满足 `isAvailable`，面板与计数整块不出现）。
+/// 反过来，每轮重喂一次握手集合也不行——它会在握手缺能力位时把升好的档位打回去，
+/// 任务与子会话随换代清空（2026-10-28 的症状二）。判据不是"写入口共几处"，而是
+/// "**轮询里零处**"。
 ///
 /// 读到 `_link/jobRoster` 回 `link/unsupported` 时，应用层喂一份**去掉
 /// `jobs-roster`** 的能力集即可：这同样是一次换代，`isAvailable` 变 false，
@@ -69,6 +79,12 @@ public struct ActivityStore: Sendable {
     private var cellAt: [String: Double] = [:]
     private var settledBySession: [String: Int] = [:]
     private var childrenByParent: [String: [SessionSummary]] = [:]
+    /// 最近一次 `.sessions` 的**全部**会话行（不筛活跃，不筛能力位）。
+    ///
+    /// 与 `childrenByParent` 同一次写入、同一次整份替换：两者是同一份输入的两个
+    /// 视图，不允许其中一份比另一份新。会话行是 `session/list` 的事实，不属于
+    /// 活动名单，所以换代（`.capabilities` 变化）与断线都不清它。
+    private var rowsBySession: [String: SessionSummary] = [:]
     private var turnOpenBySession: [String: Bool] = [:]
 
     /// 每次连接重建 / 能力重协商 +1（`data-model.md` §1）。
@@ -98,13 +114,16 @@ public struct ActivityStore: Sendable {
             guard let open else { return nil }
             return SessionActivity(sessionId: sessionId, turnOpen: open, liveJobs: [], liveChildCount: 0)
         }
-        let jobs = jobsBySession[sessionId]
+        let jobs = attributedJobs(for: sessionId)
         let children = childrenByParent[sessionId]
-        guard jobs != nil || children != nil || open != nil else { return nil }
+        // `hasOwnCell` 与任务列表分开判：名单里"这一格已知且为空"（`[]`）与
+        // "根本没听说过这个会话"是两件事，前者要给出 0 而不是 nil。
+        let hasOwnCell = jobsBySession[sessionId] != nil
+        guard hasOwnCell || !jobs.isEmpty || children != nil || open != nil else { return nil }
         return SessionActivity(
             sessionId: sessionId,
             turnOpen: open ?? false,
-            liveJobs: jobs ?? [],
+            liveJobs: jobs,
             liveChildCount: children?.count ?? 0
         )
     }
@@ -113,9 +132,12 @@ public struct ActivityStore: Sendable {
     ///
     /// 能力位缺失时恒为 `(0, 0)`（不变式 3）：视图因此不渲染任何计数，
     /// 也不会把"降级"显示成"0 个"。
+    ///
+    /// `jobs` 是**整棵会话树**在跑的任务数（见 ``attributedJobs(for:)``）；
+    /// `agents` 只数直接活跃子会话，不递归。
     public func counts(sessionId: String) -> (agents: Int, jobs: Int) {
         guard isAvailable else { return (0, 0) }
-        return (childrenByParent[sessionId]?.count ?? 0, jobsBySession[sessionId]?.count ?? 0)
+        return (childrenByParent[sessionId]?.count ?? 0, attributedJobs(for: sessionId).count)
     }
 
     /// 工具栏计数：当前打开会话的在跑件数（不含轮次本身，`activity-ui.md` §2）。
@@ -137,10 +159,28 @@ public struct ActivityStore: Sendable {
         return childrenByParent[parentSessionId] ?? []
     }
 
+    /// 最近一次 `.sessions` 里这一行（子会话卡片据此读标签 / 模式 / 计时）。
+    ///
+    /// 不按能力位过滤：会话行是列表事实，老连接器上子会话卡片照样要显示。
+    public func row(_ sessionId: String) -> SessionSummary? {
+        rowsBySession[sessionId]
+    }
+
+    /// 最近一次 `.sessions` 收到的全部会话行。
+    ///
+    /// 覆盖**整份**：包含没有在跑子会话的父行、本轮已结束的子会话、未分组会话。
+    /// 需要"正在跑的子会话"请用 ``children(of:)``，不要在这里再筛一遍。
+    public var rows: [SessionSummary] {
+        Array(rowsBySession.values)
+    }
+
     /// 该会话还活着的任务（面板逐行渲染用）。
+    ///
+    /// 含**后代会话**的任务：子智能体在自己那一格里起的任务，要显示在它所属的列表行上
+    /// （见 ``attributedJobs(for:)``）。面板打开子会话时读到的仍是那份含它自己的集合。
     public func liveJobs(sessionId: String) -> [Job] {
         guard isAvailable else { return [] }
-        return jobsBySession[sessionId] ?? []
+        return attributedJobs(for: sessionId)
     }
 
     /// 显式指定"当前会话"。`.turnOpen` 也会顺带设置它；列表行若也喂 `.turnOpen`，
@@ -236,16 +276,60 @@ public struct ActivityStore: Sendable {
         lastKnown = false
     }
 
+    /// 这一行应当呈现的任务：**本格 + 全部后代格**，按 `job.id` 去重。
+    ///
+    /// 为什么需要它：连接器按 `job.owner` 建格（`jobs-roster.js` 的 `cellOf`），而子智能体
+    /// 是在自己的会话里起任务，所以"子会话起的任务"只落在子会话那一格；子会话行按 018 的
+    /// 界面口径不显示任何活动。父会话本轮结束后，它这一格空、活跃子会话也为 0，行就稳定
+    /// 停在完成态——实际上整棵树还有活在跑。
+    ///
+    /// 归属是**派生**，不落第二份状态：沿 ``rowsBySession`` 的 `parentSessionId` 递归收后代，
+    /// 再去格子里取任务。同一个 `job.id` 可能同时出现在父子两格（连接器把无主任务放进每一格），
+    /// 去重按 `job.id`，不看格子。
+    ///
+    /// `settledCount` 不参与聚合：面板「已结束」的明细来自宿主 `job/list(row)`，聚合计数会与
+    /// 明细对不上。
+    private func attributedJobs(for rowId: String) -> [Job] {
+        // 先收整棵子树（含自己）：广度优先，`visited` 兼作环保护。
+        var cells: [String] = [rowId]
+        var visited: Set<String> = [rowId]
+        var index = 0
+        while index < cells.count {
+            let cell = cells[index]
+            index += 1
+            for row in rowsBySession.values
+            where row.isSubagent && row.parentSessionId == cell && !visited.contains(row.sessionId) {
+                visited.insert(row.sessionId)
+                cells.append(row.sessionId)
+            }
+        }
+        var jobs: [Job] = []
+        var jobIds: Set<String> = []
+        for cell in cells {
+            for job in jobsBySession[cell] ?? [] where jobIds.insert(job.id).inserted {
+                jobs.append(job)
+            }
+        }
+        return jobs
+    }
+
     /// 会话行的更新**只**影响子会话计数与子会话运行态，不清空任务名单（不变式 6）。
+    ///
+    /// **输入语义是整份替换，不是增量**（接口契约）：没出现在 `summaries` 里的会话
+    /// 就是"列表已经没有这一行"，`rows` 与 `childrenByParent` 同一次整份换掉。
+    /// 增量的存在与合并只属于应用层的列表模型，活动层看不到"只带变化项"的回包。
     private mutating func applySessions(_ summaries: [SessionSummary]) {
+        var rows: [String: SessionSummary] = [:]
         var next: [String: [SessionSummary]] = [:]
         for summary in summaries {
+            rows[summary.sessionId] = summary
             guard summary.isSubagent,
                   let parent = summary.parentSessionId,
                   summary.isSubagentActive
             else { continue }
             next[parent, default: []].append(summary)
         }
+        rowsBySession = rows
         childrenByParent = next
     }
 }

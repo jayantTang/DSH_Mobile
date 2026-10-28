@@ -36,9 +36,6 @@ public final class ActivityModel {
     private var outputTask: Task<Void, Never>?
     private var isAttached = false
 
-    /// 最近一次 `session/list` 的会话行（子会话卡片读标签 / 模式 / 计时）。
-    public private(set) var summaries: [String: SessionSummary] = [:]
-
     /// 聊天页当前打开的会话：`.turnOpen` 用 `timeline.isTurnOpen` 覆盖列表的
     /// `running`，并把它钉成 `currentSessionId`（工具栏计数按它取）。
     private var chatSessionId: String?
@@ -121,14 +118,16 @@ public final class ActivityModel {
     }
 
     /// 会话行（含已结束的子会话，卡片据此绑定"已完成"与计时）。
+    ///
+    /// 读状态机里那一份（`.sessions` 唯一的整份输入），本层不再存第二份。
     public func summary(sessionId: String) -> SessionSummary? {
-        summaries[sessionId]
+        store.row(sessionId)
     }
 
     /// 正在跑的子会话行（只认 `subagentTiming.active`，判定在 `SessionSummary`）。
     public func activeChild(sessionId: String) -> SessionSummary? {
-        guard let summary = summaries[sessionId], summary.isSubagentActive else { return nil }
-        return summary
+        guard let row = store.row(sessionId), row.isSubagentActive else { return nil }
+        return row
     }
 
     // MARK: - Wiring
@@ -155,6 +154,11 @@ public final class ActivityModel {
         applyToStore(.connection(connected))
         if connected {
             rosterUnsupported = false
+            // 一次连接协商一次：握手能力位只在这里进状态机。它只是**提示**——
+            // 名单应答才是证据，所以拿不到能力位也照问（见 `refresh()`）。
+            // 反过来，连接期内不再重喂：每轮重喂会在握手缺能力位时把升好的档位
+            // 打回去，任务与子会话随换代清空。
+            applyToStore(.capabilities(service?.capabilities ?? []))
             Task { await refresh() }
             startAutoRefresh()
         } else {
@@ -188,7 +192,14 @@ public final class ActivityModel {
         autoRefreshTask = nil
     }
 
-    /// 重读能力位与整份名单（建连 / 重连 / 下拉 / 回到前台）。
+    /// 重读整份名单（建连 / 重连 / 下拉 / 回到前台）。
+    ///
+    /// **只问名单、只喂 `.roster`**，不碰可用性档位。档位有三个写入口，全在连接边界上：
+    /// `setConnected(true)` 的握手集合（`setConnected`）、名单答出后的一次升档（本方法
+    /// 的 `!store.isAvailable` 分支）、连接器明确答 `link/unsupported` 时的降档（本方法的
+    /// catch）。轮询、刷新、推帧一处也没有。握手能力位只作提示：偶尔拿不到
+    /// capabilities（实测 relay 建连 caps=0），但连接器其实能回答名单；名单答出即以
+    /// 回应为准**升档一次**，连接期内不再降。
     public func refresh() async {
         #if DEBUG
         // 夹具优先：UI 用例要的是确定性名单，不让真实链路把它覆盖掉。
@@ -196,11 +207,7 @@ public final class ActivityModel {
         #endif
         guard let service, let client = service.activityHost else { return }
         let capabilities = service.capabilities
-        applyToStore(.capabilities(capabilities))
         store.setCurrentSession(chatSessionId)
-        // 能力位是提示，不是唯一闸门：握手偶尔拿不到 capabilities（实测 relay 建连
-        // caps=0），但连接器其实能回答名单；先问一次，成功就以回应为准补上能力。
-        // 旧连接器回 `link/unsupported` 时再降级并停问，不会每 10 秒刷一次。
         guard !rosterUnsupported else { return }
         do {
             let roster = try await client.activityRoster()
@@ -212,7 +219,8 @@ public final class ActivityModel {
             }
             applyToStore(.roster(roster))
         } catch {
-            // 旧连接器/无 jobs 服务：整块降级，界面与升级前一致。
+            // 旧连接器/无 jobs 服务：整块降级，界面与升级前一致。降档只有这一条路
+            // （档位不许在连接期内因别的错误变化），且 `rosterUnsupported` 只答一次。
             if let failure = error as? DSHRPCFailure,
                failure.code == "link/unsupported" || failure.code == "unsupported" {
                 rosterUnsupported = true
@@ -233,9 +241,6 @@ public final class ActivityModel {
         #if DEBUG
         if fixture != nil { return }
         #endif
-        var next: [String: SessionSummary] = [:]
-        for session in sessions { next[session.sessionId] = session }
-        summaries = next
         applyToStore(.sessions(sessions))
         for session in sessions where session.sessionId != chatSessionId {
             applyToStore(.turnOpen(session.sessionId, session.running))
@@ -257,9 +262,6 @@ public final class ActivityModel {
             let content = ActivityFixture.canned(parentSessionId: sessionId)
             fixture = content
             store = content.applied()
-            var next: [String: SessionSummary] = [:]
-            for summary in content.sessions { next[summary.sessionId] = summary }
-            summaries = next
         }
         #endif
         if let sessionId {
@@ -271,16 +273,21 @@ public final class ActivityModel {
     // MARK: - Actions
 
     /// 停止一个后台任务。**不改本地状态**：只等名单回流（契约 §3）。
+    ///
+    /// 宿主按任务的 `owner` 隔离任务，所以请求要回到任务**自己那一格**：父行面板上停一个
+    /// 子会话起的任务时，用父行 id 去停会答 `job/not-found`。owner 缺失（无主任务，连接器
+    /// 把它放进每一格）时退回行 id，与聚合之前的口径一致。
     public func killJob(sessionId: String, jobId: String) async {
+        let target = jobCell(in: sessionId, jobId: jobId)
         #if DEBUG
         if fixture != nil {
-            killFixtureJob(sessionId: sessionId, jobId: jobId)
+            killFixtureJob(sessionId: target, jobId: jobId)
             return
         }
         #endif
         guard let client = service?.activityHost else { return }
         do {
-            let value = try await client.jobKill(sessionId: sessionId, jobId: jobId)
+            let value = try await client.jobKill(sessionId: target, jobId: jobId)
             if value.outcome == .alreadyFinished {
                 notice = String(localized: "任务已经结束了")
             }
@@ -316,11 +323,14 @@ public final class ActivityModel {
     // MARK: - Job output
 
     /// 展开输出：订阅 `job/follow`。再展开另一条会先退订上一条。
+    ///
+    /// 订阅同样要回到任务**自己那一格**（`owner`）：读的是宿主按 owner 隔离的那份输出。
     public func openOutput(sessionId: String, job: Job) {
         closeOutput()
+        let target = job.owner ?? sessionId
         var feed = OutputFeed(
             id: job.id,
-            sessionId: sessionId,
+            sessionId: target,
             jobLabel: job.label,
             outputLost: job.headOutputLost
         )
@@ -342,7 +352,7 @@ public final class ActivityModel {
         let jobId = job.id
         outputTask = Task { [weak self] in
             do {
-                for try await frame in await client.jobFollow(sessionId: sessionId, jobId: jobId) {
+                for try await frame in await client.jobFollow(sessionId: target, jobId: jobId) {
                     guard let self, self.outputFeed?.id == jobId else { return }
                     self.applyOutput(frame)
                 }
@@ -418,7 +428,7 @@ public final class ActivityModel {
 
     /// 已结束的子智能体（最近 5 个），来自 `session/list` 的 `subagentTiming`。
     public func finishedChildren(parentSessionId: String) -> [SessionSummary] {
-        summaries.values
+        store.rows
             .filter { $0.parentSessionId == parentSessionId && !$0.isSubagentActive && $0.subagentTiming?.lastTurnCompleted != nil }
             .sorted { ($0.projections?.values?.subagentTiming?.settledMs ?? 0) > ($1.projections?.values?.subagentTiming?.settledMs ?? 0) }
             .prefix(5)
@@ -426,6 +436,14 @@ public final class ActivityModel {
     }
 
     // MARK: - Internals
+
+    /// 一个任务在宿主侧的归属会话：任务自己带 `owner` 就用它，否则用所在行的 id。
+    ///
+    /// 父行上的任务可能是子会话起的（归属派生自状态机，见 `ActivityStore`），
+    /// 停它必须回到子会话那一格；无主任务的 `owner` 为空，按行 id 处理（与聚合前一致）。
+    private func jobCell(in sessionId: String, jobId: String) -> String {
+        store.liveJobs(sessionId: sessionId).first { $0.id == jobId }?.owner ?? sessionId
+    }
 
     private func applyToStore(_ input: ActivityStore.Input) {
         store.apply(input)
@@ -469,9 +487,6 @@ public final class ActivityModel {
         let content = ActivityFixture.canned()
         fixture = content
         store = content.applied()
-        var next: [String: SessionSummary] = [:]
-        for session in content.sessions { next[session.sessionId] = session }
-        summaries = next
     }
 
     /// 夹具行为（`activity-ui.md` §8）：不发真实停止请求，行直接收敛。

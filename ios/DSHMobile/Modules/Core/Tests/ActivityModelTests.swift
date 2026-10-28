@@ -62,6 +62,14 @@ final class ActivityModelTests: XCTestCase {
         }
         XCTAssertTrue(model.isAvailable)
         XCTAssertEqual(model.counts(sessionId: "s1").jobs, 1)
+
+        // 用例 i 的补充（设计 §8.2）：连接期内只升不降。握手能力位一直是空的，
+        // 一轮轮询不许把它翻下去，也不许多出一次换代。
+        let revision = model.revision
+        await model.refresh()
+        XCTAssertTrue(model.isAvailable, "连接期内不再降档")
+        XCTAssertEqual(model.counts(sessionId: "s1").jobs, 1, "轮询不改数据")
+        XCTAssertEqual(model.revision, revision + 1, "一轮轮询只该有名单本身这一次状态变化")
     }
 
     func test_a_settle_frame_clears_the_list_row_counts() async throws {
@@ -93,6 +101,21 @@ final class ActivityModelTests: XCTestCase {
 
     private func json(_ text: String) throws -> JSONValue {
         try JSONDecoder().decode(JSONValue.self, from: Data(text.utf8))
+    }
+
+    /// 一行 `session/list`（照线上形状写，让产品代码自己解）。
+    ///
+    /// `parent` 非空即子会话行：`origin=subagent` + `subagentTiming`。
+    private func sessionRow(_ id: String, parent: String?, active: Bool) throws -> SessionSummary {
+        let relation = parent.map { #","parentSessionId":"\#($0)","origin":"subagent""# } ?? ""
+        let timing = active ? #"{"active":{"since":1}}"# : "{}"
+        let text = """
+        {"sessionId":"\(id)","updatedAt":1,"running":false,"blank":false\(relation),
+         "projections":{"asOfSeq":0,"values":{
+           "subagent":{"mode":"continuable","label":"\(id)"},
+           "subagentTiming":\(timing)}}}
+        """
+        return try JSONDecoder().decode(SessionSummary.self, from: Data(text.utf8))
     }
 
     /// `_link/jobRoster` 的下一次回答（连接器本地方法的 `value`）。
@@ -186,6 +209,117 @@ final class ActivityModelTests: XCTestCase {
         XCTAssertEqual(model.settledCount(sessionId: "s1"), 4, "settled from the push must reach the store")
     }
 
+    // MARK: - 修改项 4：可用性档位只在连接边界与明确拒答时变更（用例 g / h）
+
+    /// g：轮询不许改可用性档位。
+    ///
+    /// 现场（设计 §3.2）：`refresh()` 每轮重喂握手能力位。握手拿不到 `jobs-roster`
+    /// 时（实测 relay 建连 caps=0），这一喂把状态机打回上一代：任务与子会话清空、
+    /// `isAvailable` 变 false；等名单回包再升回来。空窗期内 `counts` 全是 0，
+    /// 「轮次已结束但后台任务还在跑」的行因此在窗口里显示完成态。
+    ///
+    /// 这条用例把名单回包卡在 RPC 上，直接看窗口期内的状态，而不是只看最终结果
+    /// （只看最终结果的话，升降档各一次会互相抵消，测不出来）。
+    func test_g_a_poll_never_lowers_the_availability_tier() async throws {
+        service.capabilities = []
+        model = ActivityModel()
+        try await stubRoster(at: 1, [("s1", ["j1"], 0)])
+        model.attach(service: service, hub: hub)
+        model.setConnected(true)
+        await eventually("first roster enables activity") {
+            self.model.isAvailable && self.model.counts(sessionId: "s1").jobs == 1
+        }
+
+        let gated = GatedCarrier(carrier)
+        let gate = TestGate()
+        // `hold` 在转发之前跑，调用记录要等放行之后才落下：所以"轮询进到名单调用"
+        // 只能靠这里的计数观察，不能看 `calls`。
+        let entered = LockedCounter()
+        gated.hold = { method in
+            guard method == HostClientFactory.jobsRosterMethod else { return }
+            entered.bump()
+            await gate.wait()
+        }
+        service.clientOverride = HostClientFactory.make(carrier: gated)
+
+        let revision = model.revision
+        let polling = Task { await self.model.refresh() }
+        await eventually("the poll reaches the roster call") { entered.value == 1 }
+        XCTAssertTrue(model.isAvailable, "轮询不许把可用性档位降下来")
+        XCTAssertEqual(model.counts(sessionId: "s1").jobs, 1, "空窗期内计数不许归零")
+
+        await gate.open()
+        await polling.value
+        XCTAssertTrue(model.isAvailable)
+        XCTAssertEqual(model.counts(sessionId: "s1").jobs, 1)
+        XCTAssertEqual(model.revision, revision + 1, "一轮轮询只该有名单本身这一次状态变化")
+    }
+
+    /// h：老连接器明确答 `link/unsupported` → 整块隐藏，且连接期内不再重问。
+    func test_h_an_old_connector_hides_the_surfaces_and_is_asked_only_once() async throws {
+        service.capabilities = []
+        model = ActivityModel()
+        carrier.unaryResponses[HostClientFactory.jobsRosterMethod] = .failure(
+            DSHRPCFailure(code: "link/unsupported", message: "old connector")
+        )
+        model.attach(service: service, hub: hub)
+        model.setConnected(true)
+        await eventually("the connector is asked once") {
+            self.carrier.calls(to: HostClientFactory.jobsRosterMethod).count >= 1
+        }
+
+        // 把建连那一次轮询也落定，再量"后续还问不问"。
+        await model.refresh()
+        XCTAssertFalse(model.isAvailable, "明确拒答即降档")
+        XCTAssertEqual(model.counts(sessionId: "s1").jobs, 0)
+        XCTAssertEqual(model.counts(sessionId: "s1").agents, 0)
+
+        let asked = carrier.calls(to: HostClientFactory.jobsRosterMethod).count
+        await model.refresh()
+        XCTAssertEqual(carrier.calls(to: HostClientFactory.jobsRosterMethod).count, asked,
+                       "明确答过 link/unsupported 之后不再每轮重问")
+    }
+
+    // MARK: - 修改项 3：子会话的任务归到父行，停/看输出回到任务自己的 owner 会话
+
+    /// 父行聚合来的任务，停它与看它的输出都必须用**任务自己的 owner 会话**：
+    /// 宿主按 owner 隔离任务，用父行 id 去停会答 `job/not-found`、去订阅会读不到输出。
+    func test_m3_a_child_session_job_is_killed_and_followed_under_its_owner_session() async throws {
+        // 名单：任务只在子会话那一格里（连接器按 `job.owner` 建格）。
+        try stubRoster(at: 1, [("sub-a", ["bash-child"], 0)])
+        carrier.unaryResponses["job/kill"] = .success(try json(#"{"outcome":"requested"}"#))
+        carrier.registerLiveStream("job/follow")
+        model.attach(service: service, hub: hub)
+        model.setConnected(true)
+        // 会话行：父行本轮已结束，子会话本轮也已结束（只剩它起的后台任务在跑）。
+        model.applySessions([
+            try sessionRow("s1", parent: nil, active: false),
+            try sessionRow("sub-a", parent: "s1", active: false),
+        ])
+        await eventually("the child job reaches the parent row") {
+            self.model.counts(sessionId: "s1").jobs == 1
+        }
+        let job = try XCTUnwrap(model.liveJobs(sessionId: "s1").first)
+        XCTAssertEqual(job.owner, "sub-a")
+
+        // 停任务：请求里的 sessionId 必须是任务自己的 owner。
+        await model.killJob(sessionId: "s1", jobId: job.id)
+        let kill = try XCTUnwrap(carrier.calls(to: "job/kill").last)
+        XCTAssertEqual(kill.args?["request"]?["sessionId"]?.stringValue, "sub-a",
+                       "停任务要回到任务自己的格，不能拿父行 id 去停")
+        XCTAssertEqual(kill.args?["request"]?["jobId"]?.stringValue, job.id)
+
+        // 看输出：`job/follow` 的 sessionId 同理。
+        model.openOutput(sessionId: "s1", job: job)
+        await eventually("the follow subscription goes out") {
+            self.carrier.calls(to: "job/follow").count == 1
+        }
+        let follow = try XCTUnwrap(carrier.calls(to: "job/follow").first)
+        XCTAssertEqual(follow.args?["request"]?["sessionId"]?.stringValue, "sub-a",
+                       "读输出要回到任务自己的格")
+        model.closeOutput()
+    }
+
     // MARK: - G17：输出面板的订阅
 
     func testG17_openOutput_subscribes_once_and_closing_unsubscribes() async throws {
@@ -234,5 +368,23 @@ final class ActivityModelTests: XCTestCase {
         model.closeOutput()
         XCTAssertNil(model.outputFeed)
         await eventually("the stream is cancelled after collapsing") { self.isTerminated(secondStream) }
+    }
+}
+
+/// 给 `hold` 闭包用的计数（闭包是 `@Sendable`，会在别的执行器上被调用）。
+private final class LockedCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+
+    var value: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return count
+    }
+
+    func bump() {
+        lock.lock()
+        count += 1
+        lock.unlock()
     }
 }

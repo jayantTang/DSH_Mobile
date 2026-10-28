@@ -711,7 +711,11 @@ public final class SessionListModel {
             // 018 T028：会话行喂给活动状态机（子会话计数 + 行轮次）。
             // 轮次口径沿用列表既有语义（`summary.running`）；聊天页当前会话由
             // `ActivityModel.bindChat` 用 `timeline.isTurnOpen` 覆盖。
-            (activityModel ?? ActivityModel.shared).applySessions(value.items)
+            //
+            // 传**合并后的整份** `allSessions`，不是这一轮的回包：`value.items` 在
+            // 增量回包里只含变化项（通常为空），而状态机的 `.sessions` 是整份替换
+            // 语义——喂增量等于每次都把活动层清成"这几行"。
+            (activityModel ?? ActivityModel.shared).applySessions(allSessions)
             // Retried: the fallback is the wrong grouping, so it should be a
             // last resort rather than the first answer to a slow response.
             if let baseline = await loadWorkspaces(link: link) {

@@ -186,6 +186,7 @@ final class ActivityStoreTests: XCTestCase {
         XCTAssertEqual(store.settledCount(sessionId: "s1"), 0)
         XCTAssertEqual(store.liveJobs(sessionId: "s1"), [], "换代后上一代名单一律作废")
         XCTAssertNil(store.snapshot(sessionId: "s1"), "没有名单就没有「已知」可言")
+        XCTAssertEqual(store.rows.map(\.sessionId), ["sub-1"], "会话行不属于活动名单，换代不丢")
 
         // 同一份能力重复喂不算换代（一次连接里两次握手不该清掉刚拿到的名单）。
         store.apply(.roster(roster(at: 1_100, ["s1": cell([job("bash-2")])])))
@@ -205,15 +206,161 @@ final class ActivityStoreTests: XCTestCase {
         XCTAssertEqual(store.counts(sessionId: "s1").agents, 2)
         XCTAssertEqual(store.counts(sessionId: "s1").jobs, 1, "会话行更新不清空任务名单")
         XCTAssertEqual(store.children(of: "s1").map(\.sessionId), ["sub-1", "sub-2"])
+        XCTAssertEqual(store.rows.map(\.sessionId).sorted(), ["sub-1", "sub-2"])
 
         // 子会话本轮结束（subagentTiming.active 消失）→ 只剩一个。
+        // 会话行**不筛活跃**：结束的子会话仍要在 `rows` 里（面板的"已结束"读它）。
         store.apply(.sessions([try session("sub-1", parent: "s1", active: false)]))
         XCTAssertEqual(store.counts(sessionId: "s1").agents, 0)
         XCTAssertEqual(store.counts(sessionId: "s1").jobs, 1)
+        XCTAssertFalse(store.row("sub-1")?.isSubagentActive ?? true)
 
         // 会话行整份替换：上一批子会话不堆积。
         store.apply(.sessions([try session("sub-3", parent: "s1")]))
         XCTAssertEqual(store.children(of: "s1").map(\.sessionId), ["sub-3"])
+        XCTAssertEqual(store.rows.map(\.sessionId).sorted(), ["sub-3"], "rows 与 children 同一次整份替换")
+    }
+
+    // MARK: - 用例 a–c：子会话任务归到它所属的列表行（修改项 3）
+
+    /// a：父行 `running=false`、子会话本轮已结束（`subagentTiming.active` 缺失）、
+    /// 名单里**子会话那一格**有 1 条活任务 → 父行忙、父行 1 个任务，子格仍是 1。
+    ///
+    /// 这是"稳定停在完成态"的最小复现：今天的实现只看本格，父行三个来源全空。
+    func testA_DescendantJobsCountAsWorkOnTheParentRow() throws {
+        let store = makeStore(capabilities: withRoster, inputs: [
+            .roster(roster(at: 1_000, ["sub-1": cell([job("bash-child")])])),
+            .sessions([
+                try session("s1", active: false),
+                try session("sub-1", parent: "s1", active: false),
+            ]),
+            .turnOpen("s1", false),
+        ])
+
+        let parent = try XCTUnwrap(store.snapshot(sessionId: "s1"))
+        XCTAssertFalse(parent.turnOpen, "本轮已结束")
+        XCTAssertEqual(parent.liveChildCount, 0, "子会话本轮已结束，不算活跃子会话")
+        XCTAssertEqual(parent.liveJobs.map(\.id), ["bash-child"])
+        XCTAssertTrue(parent.isBusy, "子会话起的任务还在跑，父行不能显示完成态")
+        XCTAssertEqual(store.counts(sessionId: "s1").jobs, 1)
+        XCTAssertEqual(store.counts(sessionId: "s1").agents, 0)
+        XCTAssertEqual(store.counts(sessionId: "sub-1").jobs, 1, "子自己的格不变：面板打开子会话仍能看到")
+    }
+
+    /// b：同一个 `job.id` 同时出现在父格与子格（连接器把无主任务放进每一格）→ 只计 1。
+    func testB_TheSameJobInTwoCellsCountsOnce() throws {
+        let store = makeStore(capabilities: withRoster, inputs: [
+            .roster(roster(at: 1_000, [
+                "s1": cell([job("bash-shared")]),
+                "sub-1": cell([job("bash-shared")]),
+            ])),
+            .sessions([
+                try session("s1", active: false),
+                try session("sub-1", parent: "s1", active: false),
+            ]),
+            .turnOpen("s1", false),
+        ])
+
+        XCTAssertEqual(store.counts(sessionId: "s1").jobs, 1, "父子两格里的同一件任务只算一次")
+        XCTAssertEqual(store.snapshot(sessionId: "s1")?.liveJobs.map(\.id), ["bash-shared"])
+        XCTAssertEqual(store.counts(sessionId: "sub-1").jobs, 1)
+    }
+
+    /// c：嵌套——孙会话起的任务归到最外层正式会话行；别的树的同名任务不许串进来。
+    func testC_NestedDescendantJobsRollUpToTheOutermostRow() throws {
+        let store = makeStore(capabilities: withRoster, inputs: [
+            .roster(roster(at: 1_000, [
+                "grand-1": cell([job("bash-deep")]),
+                "other": cell([job("bash-other")]),
+            ])),
+            .sessions([
+                try session("s1", active: false),
+                try session("sub-1", parent: "s1", active: false),
+                try session("grand-1", parent: "sub-1", active: false),
+                try session("other", active: false),
+            ]),
+            .turnOpen("s1", false),
+        ])
+
+        XCTAssertEqual(store.counts(sessionId: "s1").jobs, 1, "孙会话的任务归到最外层")
+        XCTAssertEqual(store.snapshot(sessionId: "s1")?.liveJobs.map(\.id), ["bash-deep"])
+        XCTAssertTrue(store.snapshot(sessionId: "s1")?.isBusy ?? false)
+        XCTAssertEqual(store.counts(sessionId: "sub-1").jobs, 1, "中间那一层也看得到自己的后代")
+        XCTAssertEqual(store.counts(sessionId: "grand-1").jobs, 1)
+        XCTAssertEqual(store.counts(sessionId: "other").jobs, 1, "另一棵树的任务不许串进来")
+        XCTAssertEqual(store.snapshot(sessionId: "other")?.liveJobs.map(\.id), ["bash-other"])
+    }
+
+    // MARK: - 会话行归入状态机（修改项 2）
+
+    /// d：`.sessions` 是**整份替换**，`childrenByParent` 与 `rows` 同一次写入。
+    ///
+    /// 活动层只承认整份：第二份里没有的会话就是没有行，不能拿上一份补齐。
+    func testD_SessionsReplaceChildrenAndRowsInOneGo() throws {
+        var store = makeStore(capabilities: withRoster, inputs: [
+            .sessions([
+                try session("s1", active: false),
+                try session("sub-1", parent: "s1"),
+            ]),
+        ])
+        XCTAssertEqual(store.children(of: "s1").map(\.sessionId), ["sub-1"])
+        XCTAssertEqual(store.rows.map(\.sessionId).sorted(), ["s1", "sub-1"])
+        XCTAssertEqual(store.row("sub-1")?.parentSessionId, "s1")
+
+        // 第二份整份里没有 sub-1：两个派生集合同时不含它。
+        store.apply(.sessions([
+            try session("s1", active: false),
+            try session("sub-2", parent: "s1"),
+        ]))
+        XCTAssertEqual(store.children(of: "s1").map(\.sessionId), ["sub-2"])
+        XCTAssertEqual(store.rows.map(\.sessionId).sorted(), ["s1", "sub-2"])
+        XCTAssertNil(store.row("sub-1"), "整份替换后上一份的行不准留下来")
+    }
+
+    /// e：可用性单调。同一份能力集重复喂不给换代，名单与计数保持原样。
+    ///
+    /// 这一条是"轮到轮询只读数据、不改档位"的状态机半边：适配层不再每轮喂能力位
+    /// 之后，状态机这里必须保证"同一份集合重复喂"是幂等的。
+    func testE_RepeatingTheSameCapabilitiesNeverStartsANewGeneration() throws {
+        var store = makeStore(capabilities: withRoster, inputs: [
+            .roster(roster(at: 1_000, ["s1": cell([job("bash-1")])])),
+        ])
+        let generation = store.generation
+        XCTAssertTrue(store.isAvailable)
+
+        store.apply(.capabilities(withRoster))
+
+        XCTAssertEqual(store.generation, generation, "同一份能力集不许再换代")
+        XCTAssertTrue(store.isAvailable)
+        XCTAssertEqual(store.counts(sessionId: "s1").jobs, 1, "名单不被重喂清掉")
+        XCTAssertEqual(store.sampledAt, 1_000)
+    }
+
+    /// f：重连只切连接态（不变式 4：不清数据）；换代清任务与子会话，**会话行保留**。
+    ///
+    /// 会话行是 `session/list` 的事实，不属于活动名单：能力重协商只作废"谁在跑"，
+    /// 不作废"有哪些会话"。否则面板会在换代后连子会话标签都读不到。
+    func testF_ReconnectKeepsRowsAndANewGenerationOnlyClearsTheRoster() throws {
+        var store = makeStore(capabilities: withRoster, inputs: [
+            .roster(roster(at: 1_000, ["s1": cell([job("bash-1")])])),
+            .sessions([try session("s1", active: false), try session("sub-1", parent: "s1")]),
+        ])
+
+        store.apply(.connection(false))
+        XCTAssertTrue(store.lastKnown)
+        store.apply(.connection(true))
+        XCTAssertEqual(store.children(of: "s1").map(\.sessionId), ["sub-1"], "重连不清子会话")
+        XCTAssertEqual(store.rows.map(\.sessionId).sorted(), ["s1", "sub-1"], "重连不清会话行")
+
+        // 新一代连接（能力重协商）：任务与子会话作废，会话行保留。
+        store.apply(.capabilities(withRoster.union([LinkHandshake.Capability.git])))
+
+        XCTAssertEqual(store.generation, 2)
+        XCTAssertEqual(store.counts(sessionId: "s1").jobs, 0)
+        XCTAssertTrue(store.children(of: "s1").isEmpty)
+        XCTAssertEqual(store.rows.map(\.sessionId).sorted(), ["s1", "sub-1"],
+                       "换代不丢会话行")
+        XCTAssertFalse(store.lastKnown, "换代后不再展示上一代的「上次已知」")
     }
 
     // MARK: - 回放：link-job-roster.md 的样例帧序列
@@ -333,6 +480,45 @@ final class ActivityStoreTests: XCTestCase {
         XCTAssertEqual(store.activeCount, 0)
     }
 
+    /// 工具栏计数（`activeCount`）读同一个派生：当前会话设成父行、任务在子格 → 也算 1。
+    ///
+    /// 评审盲区（设计 §13.6 第 3 条）：`activeCount` 现在也含整棵子树的在跑件数，
+    /// 但没有用例；以后改 `counts` 容易忘了它，所以在这里钉一条。
+    func testActiveCountIncludesDescendantJobsOfTheCurrentSession() throws {
+        var store = makeStore(capabilities: withRoster, inputs: [
+            .roster(roster(at: 1_000, ["sub-1": cell([job("bash-child")])])),
+            .sessions([
+                try session("s1", active: false),
+                try session("sub-1", parent: "s1", active: false),
+            ]),
+        ])
+
+        store.setCurrentSession("s1")
+        XCTAssertEqual(store.activeCount, 1, "父行没有任何本格任务，但子树里有 1 条")
+
+        store.setCurrentSession("sub-1")
+        XCTAssertEqual(store.activeCount, 1, "子会话自己的格照旧可读")
+    }
+
+    /// 无主任务（`owner` 为空）会被连接器放进**每一格**：去重只挡同一棵树内的重复，
+    /// **挡不掉跨树重复**——两行各算 1。
+    ///
+    /// 这是连接器的既有口径（设计 §10.4 记账），本改动不修；写出来是为了别把
+    /// "按 `job.id` 去重"误读成"全局只算一次"。
+    func testUnownedJobStillCountsOncePerUnrelatedRow() throws {
+        let store = makeStore(capabilities: withRoster, inputs: [
+            .roster(roster(at: 1_000, [
+                "s1": cell([job("bash-unowned")]),
+                "s2": cell([job("bash-unowned")]),
+            ])),
+            .sessions([try session("s1", active: false), try session("s2", active: false)]),
+        ])
+
+        XCTAssertEqual(store.counts(sessionId: "s1").jobs, 1)
+        XCTAssertEqual(store.counts(sessionId: "s2").jobs, 1,
+                       "跨树重复照旧各算一次：连接器既有的建格口径，不在本改动范围")
+    }
+
     func testTurnOpenAloneMakesTheSessionBusy() {
         let store = makeStore(capabilities: withRoster, inputs: [.turnOpen("s1", true)])
         XCTAssertEqual(store.snapshot(sessionId: "s1")?.isBusy, true)
@@ -397,11 +583,14 @@ final class ActivityStoreTests: XCTestCase {
         XCTAssertEqual(store.counts(sessionId: "s1").agents, 1)
         XCTAssertEqual(store.children(of: "s1").map(\.sessionId), ["sub-2"])
         XCTAssertEqual(store.snapshot(sessionId: "s1")?.liveChildCount, 1)
+        XCTAssertEqual(store.rows.map(\.sessionId).sorted(), ["sub-1", "sub-2"],
+                       "活名单收窄，会话行照旧是整份")
 
         // 下一份里一个活的都没有 → 计数归零，且没有任务/轮次时该会话不再有痕迹。
         store.apply(.sessions([try session("sub-2", parent: "s1", active: false)]))
         XCTAssertEqual(store.counts(sessionId: "s1").agents, 0)
         XCTAssertNil(store.snapshot(sessionId: "s1"))
+        XCTAssertEqual(store.rows.map(\.sessionId), ["sub-2"], "rows 仍保留这一行（只是不再活跃）")
     }
 
     /// G12：名单里有、`session/list` 里没有这一行 —— 任务计数照样要给。
@@ -470,6 +659,8 @@ final class ActivityStoreTests: XCTestCase {
         XCTAssertTrue(store.liveJobs(sessionId: "s1").isEmpty)
         XCTAssertEqual(store.snapshot(sessionId: "s1")?.liveJobs, [])
         XCTAssertEqual(store.snapshot(sessionId: "s1")?.liveChildCount, 0)
+        XCTAssertEqual(store.rows.map(\.sessionId).sorted(), ["sub-1"],
+                       "降档清的是活动名单，不是会话行")
     }
 
     /// G15：`lastKnown` 的迁移。断线置 true（继续按最后一份名单显示）；
@@ -491,6 +682,7 @@ final class ActivityStoreTests: XCTestCase {
         XCTAssertEqual(store.settledCount(sessionId: "s1"), 0)
         XCTAssertTrue(store.liveJobs(sessionId: "s1").isEmpty)
         XCTAssertTrue(store.children(of: "s1").isEmpty)
+        XCTAssertEqual(store.rows.map(\.sessionId), ["c1"], "会话行不吃能力位：它由 .sessions 写")
 
         let snapshot = try XCTUnwrap(store.snapshot(sessionId: "s1"), "轮次仍在时 snapshot 不该为 nil")
         XCTAssertTrue(snapshot.turnOpen, "轮次口径不依赖能力位")
