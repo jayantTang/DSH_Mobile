@@ -78,7 +78,11 @@ public final class ChatModel {
     /// 注意：**不要**用它判断"这些行是不是这一屏的"——判断用 `rowsFor(screen:)`。
     public internal(set) var timeline: ChatTimeline {
         get { transcriptStore.timeline }
-        set { transcriptStore.timeline = newValue }
+        set {
+            let previous = transcriptStore.timeline.tail
+            transcriptStore.timeline = newValue
+            noteTailTransition(from: previous, to: newValue.tail)
+        }
     }
 
     /// 这一屏该画哪些行：**只有这批行属于这一屏时才交出去**。
@@ -93,7 +97,7 @@ public final class ChatModel {
         displayRowsFor(screen: sessionId)
     }
 
-    public private(set) var phase: Phase = .idle
+    public internal(set) var phase: Phase = .idle
     /// What the agent is doing right now.
     ///
     /// This has to come from the turn events on the session's own follow
@@ -201,8 +205,6 @@ public final class ChatModel {
 
     /// Set between submitting a prompt and the host starting its turn.
     var isAwaitingTurnStart = false
-    /// The host's own view of whether it is running, from the session summary.
-    private var hostReportsRunning = false
     var awaitingTimeout: Task<Void, Never>?
     private var lastSeenCompletionAt: Date?
     /// 向上取页的唯一状态源：进行中、失败、已到最早、空闲。
@@ -346,7 +348,7 @@ public final class ChatModel {
     /// internal：冷启动半边在 ChatModel+ColdStart.swift（文件按职责拆分）。
     weak var messageLayer: MessageLayer?
     /// Warm transcripts, most recently used last.
-    private let transcriptCache = TranscriptCache()
+    let transcriptCache = TranscriptCache()   // internal：+Tail.swift 的重试入口要读缓存
 
     /// 搜索缓冲（存储在 `searchState`）：往前读进来、但还没并进时间线的那一段。
     var searchRecords: [SessionRecord] {
@@ -390,7 +392,7 @@ public final class ChatModel {
     private var persistSuspended = false
 
     /// 用户最后想看、但可能还没连上而没能打开的会话。
-    private var pendingOpen: SessionSummary?
+    var pendingOpen: SessionSummary?
 
     /// 打开这个会话时属于哪台电脑。
     ///
@@ -439,6 +441,8 @@ public final class ChatModel {
     /// "`open(B)` 已开始、可见状态还是 A"的那一刻，断言渲染入口不会把 A 的行交给 B 那一屏。
     /// 它只让出主线程，不做任何取舍；生产构建里这个属性不存在，也没有任何调用点。
     var beforeVisibleSwap: (@MainActor () async -> Void)?
+    /// 用例注入：让重试的 5 s 上限能被真实跑到（生产构建里没有这个属性）。
+    var tailRetryHold: (@MainActor () async -> Void)?
     #endif
     /// 009 渲染数据源桥（tasks T013）：非 nil 时，时间线由 MessagePipeline 的
     /// 快照驱动（订阅/折叠/重试全在 ChatModel+Pipeline.swift 的桥里）。
@@ -475,7 +479,7 @@ public final class ChatModel {
         })?.seq
     }
     /// The cut the follow stream opened at; older pages must stay below it.
-    private var throughSeq: Int = 0
+    var throughSeq: Int = 0
 
     var address: SessionAddress? { session?.address }
 
@@ -531,6 +535,10 @@ public final class ChatModel {
             searchScopeVersion += 1
             phase = .ready
             scrollSignal += 1
+            // 占位行三态由第二个 DEBUG 参数钉住（M7'-2）。
+            if let state = ProcessFoldFixture.placeholderState {
+                probeApplyPlaceholderState(state)
+            }
             return
         }
         #endif
@@ -545,6 +553,7 @@ public final class ChatModel {
         persistSuspended = false
         // 冷进入回到跟底默认态（T017：首帧贴底纪律在 ChatModel+ColdStart/T012）。
         noteFollowResetForOpen()
+        clearTailScope()
         // 这次跟 host 要多少条快照：本地尾部很新（差 ≤20 条）时只要 20 条就够对齐，
         // 少拉一遍重复数据；本地落后很多或没有本地缓存时按 60 条来，避免中间留洞。
         var syncPlan = TranscriptSyncPlan.plan(localThrough: nil, hostCursor: summary.asOfSeq)
@@ -574,11 +583,11 @@ public final class ChatModel {
         // This session's own half-written message, not the last one's.
         composer.load(sessionId: key)
         lastError = nil
-        hostReportsRunning = summary.running
         isAwaitingTurnStart = false
         catalogState.load(from: summary)
         // 分页状态同样归上一个会话：先清掉，等这个会话的窗口观察再置位。
         hasOlder = false
+        let boundarySeed = await seedBoundary(for: summary, cached: cached)
 
         #if DEBUG
         // 测试挂起点（DEBUG-only，生产恒为 nil）：在**发布点之前**让出主线程，
@@ -594,6 +603,7 @@ public final class ChatModel {
         var seed = cached?.timeline ?? ChatTimeline()
         seed.clearStreaming()
         seed.record(usage: summary.projections?.values?.tokenUsage)
+        seed.seedTail(boundarySeed)
         // 换会话就丢掉上一个会话的标题覆盖，避免把 A 的标题带到 B。
         titleOverride = nil
         visible = VisibleSession(summary: summary, timeline: seed)
@@ -611,6 +621,7 @@ public final class ChatModel {
         //    这两次等待都在发布之后，所以界面看到的永远是自洽的一对。
         await outgoing.flush()
 
+        var backfillPrefix: [SessionRecord] = []
         if let cached {
             // Restore immediately: same rows, same scroll position, no spinner.
             // 记录也要一起恢复：否则下一次落盘会把"这个会话只有刚到的这几条"
@@ -631,32 +642,29 @@ public final class ChatModel {
                 "host": String(summary.asOfSeq),
                 "maxMessages": String(syncPlan.maxMessages),
                 "rebase": syncPlan.reBase ? "1" : "0",
+                "seed": TailTrace.name(boundarySeed),
             ], true)
             // 接不上（落后太多，或本地游标比 host 还大）就别画本地那段了：
             // 画出来只会先闪一下跟 host 对不上的内容，然后被快照换掉。
             // 更老的历史仍在电脑上，往前翻能取回。
-            timeline = ChatTimeline()
-            timeline.record(usage: summary.projections?.values?.tokenUsage)
+            var rebuilt = ChatTimeline()
+            rebuilt.record(usage: summary.projections?.values?.tokenUsage)
+            // 重建必须带种子（M2'-3 / M6 同一纪律）：rebase 分支既不调 `openStoredTail`
+            // 也没有 `reset(with:seeding:)`，不带种子就把已算出的边界丢成 unknown
+            //（ARCH-REVIEW 3 R1：实测一帧空屏 1.41 s，切在长轮次中段时运行行再也不会自己回来）。
+            rebuilt.seedTail(boundarySeed)
+            timeline = rebuilt
             if syncPlan.reBase {
                 recentRecords = []
                 throughSeq = summary.asOfSeq
                 noteWindow(oldest: nil, hasMore: false)
                 phase = .loading
             } else {
-                // 冷启动/新进程：用落盘的尾部立刻把转写画出来，**不进 loading**。
-                // 随后 follow 的快照会按 seq 合并进来，只补差量。
-                timeline.reset(with: stored.records)
-                recentRecords = stored.records
-                throughSeq = max(stored.newest ?? 0, summary.asOfSeq)
-                noteWindow(oldest: stored.oldest, hasMore: stored.hasOlder)
-                phase = .ready
-                scrollSignal += 1
-                ChatProbe.shared.probeNote?("transcript.loaded", [
-                    "session": key,
-                    "records": String(stored.records.count),
-                    // 诊断用：读回来的"最老一条"必须等于记录里的第一条
-                    "oldest": String(stored.oldest ?? -1),
-                ], true)
+                // 冷启动/新进程：补读到最近的轮次边界之后立刻把转写画出来，**不进 loading**
+                //（整段在 `openStoredTail`，M5'-3）。随后 follow 的快照按 seq 只补差量。
+                backfillPrefix = await openStoredTail(stored, scope: scope, sessionId: key,
+                                                      syncPlan: syncPlan, seeding: boundarySeed,
+                                                      hostSeq: summary.asOfSeq)
             }
         } else {
             noteWindow(oldest: nil, hasMore: false)
@@ -672,6 +680,7 @@ public final class ChatModel {
         }
         // T013：渲染数据源切到 MessagePipeline 快照（管道缺位时桥为 nil，走原路径）。
         startPipelineSubscription(for: summary)
+        await absorbTailPrefix(backfillPrefix)
         startFollowing(link: link, summary: summary, maxMessages: syncPlan.maxMessages,
                        generation: openGeneration)
         // 宿主排队输入：`session/control` 只取当前会话的队列（设计 §3）。
@@ -1180,15 +1189,6 @@ public final class ChatModel {
                           hasOlder: (restoredOldest ?? 1) > 1 || state.hasMore)
     }
 
-    /// The tail the store can hand back on a cold start.
-    /// internal：ChatModel+ColdStart.swift 的 009 首帧路径复用同一形状。
-    struct StoredTail {
-        public let records: [SessionRecord]
-        public let oldest: Int?
-        public let newest: Int?
-        public let hasOlder: Bool
-    }
-
     private func saveToCache() {
         guard let key = session?.sessionId, !timeline.items.isEmpty else { return }
         transcriptCache.store(
@@ -1281,7 +1281,8 @@ public final class ChatModel {
     }
 
     /// Serializes store writes without blocking the caller.
-    private func enqueueWrite(_ work: @escaping @Sendable () async -> Void) {
+    /// 写链入队；`ChatModel+Tail.swift` 的边界落库也走这里（唯一写链）。
+    func enqueueWrite(_ work: @escaping @Sendable () async -> Void) {
         let previous = writeChain
         writeChain = Task { await previous?.value; await work() }
     }
@@ -1386,7 +1387,7 @@ public final class ChatModel {
             if let bridge = pipelineBridge {
                 bridge.applyDownstream(records: snapshot.records)
             } else if timeline.items.isEmpty || needsReBase {
-                timeline.reset(with: snapshot.records)
+                timeline.reset(with: snapshot.records, seeding: timeline.tail.boundary)
                 if needsReBase, !timeline.items.isEmpty, localLastAtSnapshot != nil {
                     ChatProbe.shared.probeNote?("transcript.rebased", [
                         "localLast": String(recentRecords.last?.event.seq ?? -1),
@@ -1437,6 +1438,7 @@ public final class ChatModel {
                 titleOverride = title
                 if let id = session?.sessionId { onSessionTitle?(id, title) }
             }
+            noteTailConflict(event)
             mergeTail([SessionRecord(event: event)])
             persistIfDue()
             // A live event proves the stream is healthy even if the summary
@@ -1501,7 +1503,6 @@ public final class ChatModel {
         switch event.type {
         case "turn/start":
             isAwaitingTurnStart = false
-            hostReportsRunning = true
             // 以这条事件自己的宿主时间为准：桥接的时间线可能是异步更新的，
             // 此刻 `openTurnStartedAt` 还停在上一条轮（新轮会把计时接在旧起点上）。
             runningSince = event.date ?? timeline.openTurnStartedAt ?? Date()
@@ -1510,7 +1511,6 @@ public final class ChatModel {
 
         case "turn/end":
             isAwaitingTurnStart = false
-            hostReportsRunning = false
             runningSince = nil
             awaitingTimeout?.cancel()
             awaitingTimeout = nil
@@ -1565,7 +1565,6 @@ public final class ChatModel {
         // 只换摘要本身（标题/运行态/权限），时间线仍属于同一个会话，所以这一处赋值
         // 依然是自洽的一对——不要在这里重发 `visible`，否则会把正在流式的时间线冲掉。
         visible?.summary = updated
-        hostReportsRunning = updated.running
         catalogState.currentPermission = updated.projections?.values?.permissions?.currentValue
         timeline.record(usage: updated.projections?.values?.tokenUsage)
     }
@@ -1634,7 +1633,7 @@ public final class ChatModel {
     /// 记录一次窗口观察（打开会话时来自缓存/落盘，管道建立后由重建入口接管）。
     ///
     /// 旧 `TranscriptPager` 删除后，这里只落两个视图可见的事实：最老 seq 与"还有更早"。
-    private func noteWindow(oldest: Int?, hasMore: Bool) {
+    func noteWindow(oldest: Int?, hasMore: Bool) {
         hasOlder = hasMore || (oldest ?? 1) > 1
         setOlderState(.idle)
     }

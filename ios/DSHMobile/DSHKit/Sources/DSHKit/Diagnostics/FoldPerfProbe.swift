@@ -145,7 +145,7 @@ public enum FoldPerfProbe {
     /// 客户端解码回包的耗时（`DSHClient.historyWindow` 里量，按 kind 记）。
     private nonisolated(unsafe) static var decodeMsByKind: [Kind: Double] = [:]
     /// 当前请求的 kind：解码发生在 `DSHClient` 里，用 TaskLocal 把 kind 带过去。
-    @TaskLocal public static var activeKind: Kind?
+    @TaskLocal static var activeKind: Kind?
     /// kind → 最近一条样本下标（帧/可见回填用）。
     private nonisolated(unsafe) static var sampleIndex: [Kind: Int] = [:]
 
@@ -172,7 +172,7 @@ public enum FoldPerfProbe {
     }
 
     /// `DSHClient.historyWindow` 解码完成后调用。
-    public static func noteDecodeMs(_ ms: Double) {
+    static func noteDecodeMs(_ ms: Double) {
         guard isEnabled, let kind = activeKind else { return }
         withLock { decodeMsByKind[kind] = ms }
     }
@@ -229,7 +229,7 @@ public enum FoldPerfProbe {
     }
 
     /// 视口真正可见（t3）；当前没有视口回调时不会调用。
-    public static func firstVisible(_ kind: Kind) {
+    static func firstVisible(_ kind: Kind) {
         guard isEnabled else { return }
         let now = CFAbsoluteTimeGetCurrent()
         withLock {

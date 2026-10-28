@@ -26,6 +26,9 @@ enum ProcessFoldFixture {
         case cancelled
         /// 一轮以 max-steps 结束、带时长：按正常完成处理。
         case maxSteps = "max-steps"
+        /// 一轮的中段：没有 turn/start、没有 turn/end。
+        /// 边界必然未知（`reset` 的默认种子），首帧就是占位行（设计 M7'-2 / R3）。
+        case unknownTail = "unknown-tail"
     }
 
     static var variant: Variant {
@@ -39,6 +42,24 @@ enum ProcessFoldFixture {
 
     static var records: [SessionRecord] { events(for: variant).map(Self.record) }
 
+    /// 第二个 DEBUG 参数把占位行的状态钉住：`-DSHProbePlaceholderState failed-hole`
+    ///（取值 `unresolved|failed-hole|failed-read|failed-timeout`）。
+    ///
+    /// 只在 `-DSHProbeProcessFoldFixture` 的夹具分支被读，**不是产品开关**：
+    /// 它决定的是"这一帧画哪一态"，好让失败态能在仿真器里被截到（D6 要求三态各一张）。
+    static var placeholderState: TimelineProcessPlaceholder.State? {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let index = arguments.firstIndex(of: "-DSHProbePlaceholderState"),
+              index + 1 < arguments.count else { return nil }
+        switch arguments[index + 1] {
+        case "unresolved": return .unresolved
+        case "failed-hole": return .failed(.hole)
+        case "failed-read": return .failed(.read)
+        case "failed-timeout": return .failed(.timeout)
+        default: return nil
+        }
+    }
+
     // MARK: - 变体
 
     private static func events(for variant: Variant) -> [[String: JSONValue]] {
@@ -48,7 +69,40 @@ enum ProcessFoldFixture {
         case .running: return runningEvents()
         case .cancelled: return cancelledEvents()
         case .maxSteps: return maxStepsEvents()
+        case .unknownTail: return unknownTailEvents()
         }
+    }
+
+    /// 窗口切在轮次中段：有回答/工具调用/结果，**没有** `turn/start`、**没有** `turn/end`。
+    ///
+    /// 这就是"本地窗口按条数切开尾轮"的真实形状：边界只能是 unknown，投影于是输出
+    /// 一行 44pt 占位行，而不是把这几百条工具卡铺开。
+    private static func unknownTailEvents() -> [[String: JSONValue]] {
+        var builder = Builder(start: 1_760_000_000_000)
+        let base = builder.start
+
+        builder.append("assistant/message",
+                       assistantData(turn: 1, step: 1,
+                                     reasoning: "FIXTURE-MID-REASONING the window starts here"),
+                       at: base)
+        builder.append("tool/call", toolData(turn: 1, step: 1, callId: "fixture-mid-1",
+                                             name: "bash",
+                                             arguments: "{\"command\":\"swift build\"}"),
+                       at: base + 800)
+        builder.append("tool/result", resultData(turn: 1, step: 1, callId: "fixture-mid-1",
+                                                 text: "FIXTURE-MID-OUTPUT"),
+                       at: base + 1_600)
+        builder.append("tool/call", toolData(turn: 1, step: 2, callId: "fixture-mid-2",
+                                             name: "grep",
+                                             arguments: "{\"pattern\":\"FIXTURE\"}"),
+                       at: base + 2_400)
+        builder.append("tool/result", resultData(turn: 1, step: 2, callId: "fixture-mid-2",
+                                                 text: "FIXTURE-MID-OUTPUT"),
+                       at: base + 3_200)
+        builder.append("assistant/message",
+                       assistantData(turn: 1, step: 3, text: "FIXTURE-MID-ANSWER"),
+                       at: base + 4_000)
+        return builder.events
     }
 
     /// 被取消的一轮：概要里 bash 仍是 `running`，轮次以 aborted 收尾。

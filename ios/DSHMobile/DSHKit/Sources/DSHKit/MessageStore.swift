@@ -66,6 +66,11 @@ actor MessageStore {
         migrator.registerMigration("v4-fts-all-content-parts") { db in
             try migrateToV4FtsAllParts(db)
         }
+        // v5 只 `CREATE TABLE`：不动任何既有表，旧库打开即成空表
+        //（空表 = 全部 unknown，与"没有这条事实"一致）。
+        migrator.registerMigration("v5-session-tail") { db in
+            try createTailSchema(db)
+        }
         return migrator
     }()
 

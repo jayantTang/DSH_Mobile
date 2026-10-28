@@ -111,7 +111,7 @@ enum FoldSummaryV2Fixtures {
     static func plan(_ timeline: ChatTimeline) -> TranscriptProcessFold.Plan {
         TranscriptProcessFold.plan(
             items: timeline.items,
-            isTurnOpen: timeline.isTurnOpen,
+            tail: timeline.tail,
             currentTurn: timeline.currentTurn,
             summaries: timeline.foldSummaries)
     }

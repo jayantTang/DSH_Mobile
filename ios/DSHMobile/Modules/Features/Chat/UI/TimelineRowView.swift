@@ -41,6 +41,7 @@ struct TimelineRowView: View {
             return header.turn > 0 ? "row.process.turn.\(header.turn)" : "row.process"
         case .processStep: return "row.process.step"
         case .runningLine: return "row.runningLine"
+        case .processPlaceholder: return "row.process.unknown"
         }
     }
 
@@ -69,6 +70,7 @@ struct TimelineRowView: View {
     var onRetryProcessStep: ((String) -> Void)?
     /// 运行中过程区的实时状态：只有当前那条分组行会用它写「正在… · 命令」。
     var processRunning: ProcessRunningDetail?
+    var onRetryProcessBoundary: (() -> Void)?
 
     @ViewBuilder
     private var row: some View {
@@ -139,6 +141,7 @@ struct TimelineRowView: View {
         case .runningLine(let line):
             RunningLine(since: line.since)
 
+        case .processPlaceholder(let placeholder): ProcessPlaceholderRow(placeholder: placeholder) { onRetryProcessBoundary?() }
         case .processStep(let step):
             ProcessStepRow(
                 step: step,

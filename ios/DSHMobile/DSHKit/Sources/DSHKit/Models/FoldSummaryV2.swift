@@ -20,7 +20,7 @@ import Foundation
 /// 一页里同一轮可能有多条（中间讲话把过程切成多段），按 `startSeq` 各自成组。
 public struct FoldSummaryV2: Sendable, Equatable {
     /// 线类型。以 `+` 开头，不会与宿主事件类型相撞（与 DSHKit `Timeline` 同一常量值）。
-    public static let recordType = "+link/fold"
+    static let recordType = "+link/fold"
     /// 本客户端认识的版本。没有 `v` 的记录是 v1，仍走老路径。
     public static let version = 2
 
@@ -221,7 +221,7 @@ extension TimelineProcessActivity {
     /// 连接器用的是桌面 `activity(name)` 那张表，比手机枚举细（`readImage`、
     /// `webSearch`、`webFetch`）。这里并回手机既有的三类，保证分组标题与 v1
     /// 由工具名分类出来的结果一致；不认识的线名按 `tools` 计（与 `classify` 同口径）。
-    public static func fromWireName(_ name: String) -> TimelineProcessActivity {
+    static func fromWireName(_ name: String) -> TimelineProcessActivity {
         switch name {
         case "read", "readImage": return .read
         case "write": return .write

@@ -117,7 +117,7 @@ public struct MessagePrefetchTarget: Sendable, Hashable {
 }
 
 /// 一次落库变更（上行 pending / 下行记录共用）。
-public enum MessageRecordChange: Sendable {
+enum MessageRecordChange: Sendable {
     case upsertRecords(scope: String, sessionId: String, records: [SessionRecord])
     case upsertPending(scope: String, sessionId: String, clientId: String, record: SessionRecord)
     case confirmPending(scope: String, sessionId: String, clientId: String, record: SessionRecord)

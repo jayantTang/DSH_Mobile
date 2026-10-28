@@ -45,6 +45,20 @@ final class TimelineRowSignatureTests: XCTestCase {
                           TimelineRowSignature.of(loading.with(prefetchStatus: .failed).item))
     }
 
+    /// 占位行三态必须各有签名：`.unresolved → resolving → failed` 都要重载
+    ///（与过程节点的 `prefetchStatus` 同一理由），否则屏幕停在旧文案上。
+    func test_a_placeholder_signature_changes_with_its_state() {
+        let base = TimelineProcessPlaceholder(turn: 7, startSeq: 100)
+        let signatures = [
+            base.item,
+            base.with(state: .resolving).item,
+            base.with(state: .failed(.read)).item,
+            base.with(state: .failed(.hole)).item,
+            base.with(state: .failed(.timeout)).item,
+        ].map { TimelineRowSignature.of($0) }
+        XCTAssertEqual(Set(signatures).count, signatures.count, "五种状态必须是五个签名")
+    }
+
     func test_a_running_line_signature_follows_its_start_time() {
         let first = TimelineRowSignature.of(TimelineRunningLine(since: Date(timeIntervalSince1970: 100)).item)
         let second = TimelineRowSignature.of(TimelineRunningLine(since: Date(timeIntervalSince1970: 200)).item)

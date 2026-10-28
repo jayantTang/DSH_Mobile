@@ -410,6 +410,188 @@ async function probeHost(host, dshHome) {
 }
 
 /**
+ * 场景：iOS App 逐屏——折叠形态词 / 占位行四态 / 首帧无整块铺开（仿真器经中转）。
+ *
+ * 为什么需要它：`ios-app × l1 = required` 早就在矩阵里，但 l1 没有"跑 App 逐屏用例"
+ * 这个场景，于是 App 侧改动只能拿别的场景（链路握手 / 信件）的旧证据去顶——
+ * 2026-10-27/28 两次评审踩的都是这个坑（`check:lanes` 按 lane+status+新鲜度匹配，
+ * 不按 scenario 匹配，所以错配的证据它拦不住；见 scripts/verify/README.md）。
+ *
+ * 覆盖边界（写清，防止被当成"App 改动全保"）：只覆盖**逐屏看得出对错**的那一档——
+ * 占位行四态、形态词（`empty/unknown/running/folded` 等）与首帧有没有整块铺开。
+ * **不覆盖** D1/D2/D3 的抖动统计：那需要在真实长会话上按 25 s 取探针序列，
+ * 本场景的一条用例给不了（详见设计 §12.14 与本文件顶部说明）。
+ *
+ * 四态怎么给：
+ * - 前置缺（没有 xcrun / 没有已启动的仿真器 / 用例文件不在 / 中转设备表读不到）→ `blocked`；
+ * - 构建失败、用例引擎不 PASS、像素未过、截图不足、探针缺项 → `fail`；
+ * - 全部达标 → `pass`。
+ *
+ * 用例文件默认 `test/cases/current/131-过程区占位行四态与重试.md`（`test/cases/*` 被 gitignore，
+ * 所以"找不到"是常态而不是缺陷）；可用环境变量 `FOLD_L1_CASE` 指向一份等价用例。
+ */
+export async function iosTranscriptFold({ outDir, root = REPO_ROOT, log = () => {}, env = process.env }) {
+  const before = snapshotRealData()
+  const observations = []
+  const commands = []
+  const CASE = String(env.FOLD_L1_CASE ?? 'test/cases/current/131-过程区占位行四态与重试.md').trim()
+  let status = 'fail'
+  let note
+  let blockedReason
+  let nextStep
+
+  const slug = (argv) => argv.join('_').replace(/[^A-Za-z0-9._-]+/g, '-').slice(0, 80)
+  const run = (argv, cwd, options = {}) => {
+    const started = Date.now()
+    const result = spawnSync(argv[0], argv.slice(1), {
+      cwd: join(root, cwd),
+      encoding: 'utf8',
+      timeout: options.timeoutMs ?? 30 * 60 * 1000,
+      env: { ...process.env, ...(options.env ?? {}) },
+    })
+    const logPath = join(outDir, `${slug(argv)}.log`)
+    writeFileSync(logPath, `${result.stdout ?? ''}\n${result.stderr ?? ''}`)
+    commands.push({ argv, cwd, exitCode: result.status ?? -1, stdoutPath: logPath, note: options.note })
+    log(`L1: ${argv.join(' ')} → exit ${result.status}（${((Date.now() - started) / 1000).toFixed(1)}s）`)
+    return { result, text: `${result.stdout ?? ''}\n${result.stderr ?? ''}`, logPath }
+  }
+
+  try {
+    // 0) 前置：缺任何一项都是 blocked（不是 fail——"跑不起来"与"结论为否"必须分开）。
+    // 三条探路命令也走 `run()`：证据包的 `commands` 不得为空（blocked 时尤其重要，
+    // 它是"跑不起来"的现场）。
+    const xcrun = run(['xcrun', '--version'], '.', { note: 'xcrun 可用性', timeoutMs: 60_000 })
+    const booted = run(['xcrun', 'simctl', 'list', 'devices', 'booted'], '.',
+                       { note: '已启动的仿真器', timeoutMs: 60_000 })
+    const devicesList = run(['node', 'scripts/dev/relay-devices.mjs', 'list'], '.',
+                            { note: '中转设备表（只读）', timeoutMs: 60_000 })
+    const missing = []
+    if (xcrun.result.status !== 0) missing.push('xcrun（Xcode 命令行工具）不可用')
+    if (booted.result.status !== 0 || !/Booted/.test(booted.text)) missing.push('没有已启动的仿真器')
+    if (!existsSync(join(root, CASE))) missing.push(`用例文件 ${CASE} 不在本机`)
+    if (devicesList.result.status !== 0) missing.push('读不到中转设备表（`node scripts/dev/relay-devices.mjs list`）')
+    observations.push({
+      step: 'preconditions',
+      fact: missing.length
+        ? `前置缺 ${missing.length} 项：${missing.join('；')}`
+        : `前置齐备（仿真器已启动、用例 ${CASE} 在本机、中转设备表可读）`,
+    })
+    if (missing.length) {
+      status = 'blocked'
+      blockedReason = `App 逐屏用例跑不起来：${missing.join('；')}`
+      nextStep = '先 `xcrun simctl boot DSH-Test`（或 `open -a Simulator`）并完成一次中转配对；'
+        + '用例文件不在本机时把它复制到 test/cases/current/，或用 FOLD_L1_CASE 指向等价用例'
+      note = blockedReason
+      throw Object.assign(new Error(blockedReason), { blocked: true })
+    }
+
+    // 1) 构建：改动要能进 App 产物。
+    const build = run(['xcodebuild', '-scheme', 'DSHMobile',
+                       '-destination', 'platform=iOS Simulator,name=DSH-Test', 'build'],
+                      'ios/DSHMobile', { note: 'BUILD SUCCEEDED' })
+    const buildOk = build.result.status === 0 && /BUILD SUCCEEDED/.test(build.text)
+    observations.push({
+      step: 'build',
+      fact: buildOk ? '仿真器构建成功（BUILD SUCCEEDED）' : '仿真器构建失败',
+      evidence: build.logPath.slice(outDir.length + 1),
+    })
+    if (!buildOk) throw new Error('构建失败')
+
+    // 2) 经产品通道（中转）跑用例。
+    const caseRun = run(['./test/run.sh', 'run', CASE], '.',
+                        { env: { DSH_CONNECT: 'relay' }, note: `DSH_CONNECT=relay；用例 ${CASE}` })
+    const runMatch = caseRun.text.match(/结果写入\s+test\/runs\/([0-9A-Za-z-]+)\//)
+    if (!runMatch) {
+      const envBroken = /No booted device|xcrun: error|配对|pair\b/i.test(caseRun.text)
+      if (envBroken) {
+        status = 'blocked'
+        blockedReason = '用例跑不起来：运行器报环境问题（无已启动设备 / xcrun 出错 / 配对失败）'
+        nextStep = '先 `xcrun simctl boot DSH-Test` 并重跑配对；详见本次 test_run_sh*.log'
+        note = blockedReason
+        throw Object.assign(new Error(blockedReason), { blocked: true })
+      }
+      throw new Error('用例没跑出运行号（test/run.sh 输出里没有「结果写入 test/runs/<stamp>/」）')
+    }
+    const runId = runMatch[1]
+    const runDir = join(root, 'test', 'runs', runId)
+    observations.push({
+      step: 'simulator-case',
+      fact: `用例 ${CASE} 跑出运行 ${runId}`,
+      evidence: `test/runs/${runId}/report.html`,
+    })
+
+    // 3) summary：引擎 PASS + 像素过 + 截图 ≥5。
+    const summaryPath = join(runDir, 'summary.json')
+    if (!existsSync(summaryPath)) throw new Error(`运行 ${runId} 缺 summary.json`)
+    const summary = JSON.parse(readFileSync(summaryPath, 'utf8'))
+    const shots = (summary.screenshots ?? []).length
+    const summaryOk = summary.engineVerdict === 'PASS' && summary.pixelOk === true && shots >= 5
+    observations.push({
+      step: 'summary',
+      fact: `引擎 ${summary.engineVerdict}、像素 ${summary.pixelOk ? '通过' : '未过'}、${shots} 张截图`
+        + (summary.judgementNote ? `（${summary.judgementNote}）` : ''),
+      evidence: `test/runs/${runId}/summary.json`,
+    })
+    if (!summaryOk) {
+      throw new Error(`summary 不达标（engine=${summary.engineVerdict} pixel=${summary.pixelOk} shots=${shots}，要求 PASS/true/≥5）`)
+    }
+
+    // 4) 探针：整块铺开、形态词、重试终态三条。
+    const probePath = join(runDir, 'detail', 'probe.log')
+    if (!existsSync(probePath)) throw new Error(`运行 ${runId} 没有 detail/probe.log（跑完了却没有探针本身就是问题）`)
+    const probe = readFileSync(probePath, 'utf8')
+    const unfolded = probe.split('\n').filter((line) => /(?:^| )anomaly\.unfolded(?: |$)/.test(line))
+    const shapeUnknown = /(?:^| )fold\.shape\b[^\n]* shape=unknown(?: |$)/.test(probe)
+    const shapeFolded = /(?:^| )fold\.shape\b[^\n]* shape=folded(?: |$)/.test(probe)
+    const terminals = probe.split('\n')
+      .filter((line) => /(?:^| )process\.unknown\.retry(?: |$)/.test(line))
+      .map((line) => (/(?:^| )state=([^ ]*)/.exec(line) ?? [])[1] ?? '')
+      .filter((state) => ['unresolved', 'failed:read', 'failed:hole', 'failed:timeout'].includes(state))
+    const probeOk = unfolded.length === 0 && shapeUnknown && shapeFolded && terminals.length > 0
+    const copy = join(outDir, 'probe.log')
+    writeFileSync(copy, probe)
+    observations.push({
+      step: 'probe',
+      fact: `anomaly.unfolded ${unfolded.length} 条；shape=unknown ${shapeUnknown ? '有' : '缺'}；`
+        + `shape=folded ${shapeFolded ? '有' : '缺'}；process.unknown.retry 终态 ${terminals.length} 条`,
+      evidence: 'probe.log',
+    })
+    if (!probeOk) {
+      throw new Error('探针不达标（要求：无 anomaly.unfolded、出现 shape=unknown 与 shape=folded、'
+        + 'process.unknown.retry 有非 resolving 终态）')
+    }
+
+    status = 'pass'
+    note = 'App 逐屏：占位行四态、形态词与首帧无整块铺开均达标（仿真器经中转）'
+  } catch (error) {
+    if (error.blocked) {
+      // blocked 已在上面的分支里写好 reason/nextStep。
+    } else {
+      status = 'fail'
+      note = error.message
+      observations.push({ step: 'error', fact: error.message })
+    }
+  }
+
+  const after = snapshotRealData()
+  const untouched = before.digest === after.digest
+  return {
+    status,
+    note,
+    blockedReason,
+    nextStep,
+    observations,
+    commands,
+    isolation: {
+      dshHome: '真实 ~/.dsh（本场景只读：打开的是夹具会话，不写真实会话数据）',
+      realHomeUntouched: untouched,
+      proof: `跑前 ${before.digest} / 跑后 ${after.digest}（agent.json 的 sha256 + mtime）；`
+        + '运行器配对的 DSH-Runner 调试设备跑完自行撤销；证据包 = verdict.json + xcodebuild/test_run_sh 日志 + test/runs/<stamp>/report.html',
+    },
+  }
+}
+
+/**
  * 场景：iOS 协议层——relay socket 的生命周期（断开/替换时必须 cancel）。
  *
  * 为什么需要它：`LinkCarrier` 断开时只把 socket 置 nil、不 cancel，丢引用的

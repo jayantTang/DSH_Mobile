@@ -58,6 +58,10 @@ extension MessageStore {
                            arguments: [scope, sessionId])
             try db.execute(sql: "DELETE FROM session_state WHERE scope = ? AND session_id = ?",
                            arguments: [scope, sessionId])
+            // 尾轮边界的持久化副本同会话一起清：它对读者没有独立价值，
+            // 留着只会在"清完缓存"之后又把旧边界播回来。
+            try db.execute(sql: "DELETE FROM session_tail WHERE scope = ? AND session_id = ?",
+                           arguments: [scope, sessionId])
             // 会话级 kv（搜索缓冲覆盖范围、用户输入灌库账本、单条步骤正文缓存）
             // 同会话一起清。
             try db.execute(sql: "DELETE FROM meta WHERE key IN (?, ?, ?)",
@@ -74,6 +78,7 @@ extension MessageStore {
         try await pool.write { db in
             try db.execute(sql: "DELETE FROM record")
             try db.execute(sql: "DELETE FROM session_state")
+            try db.execute(sql: "DELETE FROM session_tail")
             try db.execute(sql: "DELETE FROM meta")
         }
     }

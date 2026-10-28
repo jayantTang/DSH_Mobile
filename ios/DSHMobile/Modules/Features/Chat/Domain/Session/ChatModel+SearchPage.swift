@@ -157,7 +157,10 @@ extension ChatModel {
             ChatProbe.shared.probeNote?("search.rebase", ["seq": String(seq), "records": "0"], true)
             return nil
         }
-        timeline.reset(with: records)
+        // 换窗口打开的是中间窗口：末段不是会话尾部（不许标 running、不许出占位行），
+        // 但"这一轮到底结没结束"这个事实原样带过来（设计 M1 调用点表）。
+        timeline.reset(with: records, seeding: timeline.tail.boundary,
+                       showsTail: false)
         prependSignal += 1
         let oldest = records.first?.event.seq
         let newest = records.last?.event.seq

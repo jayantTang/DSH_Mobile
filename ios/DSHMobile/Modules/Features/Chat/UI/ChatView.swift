@@ -1145,6 +1145,7 @@ public struct ChatView: View {
         rowView.onSendVerify = { rowId in
             Task { await model.verifySend(rowId: rowId) }
         }
+        rowView.onRetryProcessBoundary = { Task { await model.retryTailBoundary() } }
         // 运行中的那条分组行写「正在<动作> · <当前命令/工具>」。
         if case .processHeader(let header) = item.kind, header.scope == .group, header.isRunning {
             rowView.processRunning = model.runningDetail

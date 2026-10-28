@@ -102,8 +102,8 @@ final class ChatPipelineBridge {
 
     public weak var model: ChatModel? // internal：+PipelineFetch（取页半边）要用
     /// 数据层门面（spec 023 边界收敛：不再直接持 `MessagePipeline`）。
-    private let layer: MessageLayer
-    private let ref: MessageSessionRef
+    let layer: MessageLayer
+    let ref: MessageSessionRef
     /// 会话级把手（拿一次存下来：取页/重试/读 topExhausted 都走它）。
     public var session: SessionHandle? // internal：+PipelineFetch 要用
 
@@ -410,6 +410,8 @@ final class ChatPipelineBridge {
         let snapshot = records.sorted { $0.key < $1.key }.map(\.value)
         let currentGaps = gaps
         let statuses = sendStatuses
+        // 边界是"这一轮结没结束"的事实：重建换的是窗口，不是它（切开的窗口可能一条边界行都没有）。
+        let seed = model?.timeline.tail ?? .unknown
         Task { @MainActor [weak self] in
             guard let self, let model = self.model else { return }
             let exhausted = await self.session?.topExhausted ?? false
@@ -421,7 +423,7 @@ final class ChatPipelineBridge {
             let foldStartedAt = Date()
             let folded = await Task.detached(priority: .userInitiated) {
                 var timeline = ChatTimeline()
-                _ = timeline.reset(with: snapshot)
+                _ = timeline.reset(with: snapshot, seeding: seed.boundary, showsTail: seed.showsTail)
                 // T022：发送状态回标（pending 回声样式 / failed 可点重发），
                 // 状态变化不改行身份、不改行高（spec 场景 11）。
                 timeline.markSendStates(statuses)

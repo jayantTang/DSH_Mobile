@@ -45,6 +45,31 @@ docker pull node:22-bookworm-slim # 确认拉得动（本机直连 Docker Hub �
 是悬空链接、dockerd 会去问 `[::1]:53`。所以这两件事每次都靠上面那条脚本补，
 doctor 则以 `docker info` 自报为准（不看配置文件，免得得到假结论）。
 
+**L1 · App 逐屏（`ios-transcript-fold`）**
+
+`ios-app` 这一档的正式证据只能来自"仿真器经公网中转跑一条逐屏用例"：
+
+```bash
+npm run lane:l1 -- run --scenario ios-transcript-fold
+# 用例默认 test/cases/current/03-折叠占位行四态.md；换一份等价用例：
+FOLD_L1_CASE=test/cases/example/xxx.md npm run lane:l1 -- run --scenario ios-transcript-fold
+然后 npm run check:lanes -- --changed <本次文件>
+```
+
+- **前置**：Xcode 命令行工具可用、仿真器已启动（`xcrun simctl boot DSH-Test`）、
+  中转已配对、用例文件在本机（`test/cases/*` 被 gitignore，所以"找不到"是常态）。
+  缺任何一项场景返回 **blocked**（带 `blockedReason` + `nextStep`），不是 fail。
+- **判据**：构建 `BUILD SUCCEEDED` → 用例 `engineVerdict=PASS`、`pixelOk=true`、截图 ≥5 →
+  `detail/probe.log` 里没有 `anomaly.unfolded`、出现 `shape=unknown` 与 `shape=folded`、
+  `process.unknown.retry` 至少一条非 `resolving` 终态。任一不满足 → **fail**。
+- **覆盖边界**：只覆盖"逐屏看得出对错"的那一档（占位行四态、形态词、首帧有没有整块铺开）。
+  **不覆盖** D1/D2/D3 的抖动统计——那要在真实长会话上按 25 s 取探针序列，一条用例给不了；
+  别把它当成"App 改动全保"。
+- **别拿别的场景的 l1 verdict 顶替**：`check:lanes` 按 `lane + status + 新鲜度` 匹配，
+  不按 `scenario` 匹配，所以它**拦不住错配**（2026-10-27/28 两次评审踩过：
+  用 `ios-link-carrier-lifecycle`、`mail-tests` 的旧证据顶 App 逐屏结论）。
+  要真正防错配得给 `verdict.scenario` 与 `subjects` 建映射，属另立项。
+
 **L3（干净环境，在真实环境里跑）**
 
 三种实现都算，任选其一（owner 2026-10-08 决定：不要求本机装虚拟机）：

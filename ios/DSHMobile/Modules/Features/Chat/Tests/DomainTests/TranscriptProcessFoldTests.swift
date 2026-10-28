@@ -12,13 +12,18 @@ final class TranscriptProcessFoldTests: XCTestCase {
                                                reasoning: 1, intermediate: intermediate))
     }
 
-    private func plan(_ timeline: ChatTimeline, isTurnOpen: Bool = false) -> TranscriptProcessFold.Plan {
-        TranscriptProcessFold.plan(items: timeline.items, isTurnOpen: isTurnOpen,
+    private func plan(_ timeline: ChatTimeline, running: Bool = false) -> TranscriptProcessFold.Plan {
+        TranscriptProcessFold.plan(items: timeline.items,
+                                   tail: ProcessFoldFixtures.tail(timeline, running: running),
                                    currentTurn: timeline.currentTurn)
     }
 
-    private func plan(_ items: [TimelineItem], isTurnOpen: Bool = false) -> TranscriptProcessFold.Plan {
-        TranscriptProcessFold.plan(items: items, isTurnOpen: isTurnOpen, currentTurn: 1)
+    private func plan(_ items: [TimelineItem], running: Bool = false) -> TranscriptProcessFold.Plan {
+        let boundary: TranscriptTail.Boundary = running
+            ? .open(turn: 1, startedAt: nil) : .closed(turn: 1, reason: "completed")
+        return TranscriptProcessFold.plan(items: items,
+                                          tail: TranscriptTail(boundary: boundary, showsTail: true),
+                                          currentTurn: 1)
     }
 
     private func header(_ item: TimelineItem) -> TimelineProcessHeader? {
@@ -57,7 +62,7 @@ final class TranscriptProcessFoldTests: XCTestCase {
             ProcessFoldFixtures.assistant(seq: 3, text: "我的建议是 A"),
             ProcessFoldFixtures.toolCall(seq: 4, callId: "q1", name: "ask_user"),
         ])
-        let plan = TranscriptProcessFold.plan(items: timeline.items, isTurnOpen: true,
+        let plan = TranscriptProcessFold.plan(items: timeline.items, tail: ProcessFoldFixtures.tail(timeline, running: true),
                                               currentTurn: 1)
         let turn = try XCTUnwrap(plan.turns.first)
         let answerIDs = turn.answerIndexes.map { timeline.items[$0].id }
@@ -75,7 +80,7 @@ final class TranscriptProcessFoldTests: XCTestCase {
             ProcessFoldFixtures.steering(seq: 4, text: "插入的问题"),
             ProcessFoldFixtures.toolCall(seq: 5, callId: "c2", name: "read"),
         ])
-        let plan = TranscriptProcessFold.plan(items: timeline.items, isTurnOpen: true,
+        let plan = TranscriptProcessFold.plan(items: timeline.items, tail: ProcessFoldFixtures.tail(timeline, running: true),
                                               currentTurn: 1)
         let steering = try XCTUnwrap(timeline.items.first { $0.id == "user-steer-4" })
         let rows = TranscriptProcessFold.displayRows(plan, state: TranscriptFoldState())
@@ -95,7 +100,7 @@ final class TranscriptProcessFoldTests: XCTestCase {
         ])
         XCTAssertTrue(timeline.items.contains { if case .toolCall = $0.kind { return true }; return false },
                       "timeline must contain the tool call: \(timeline.items.map(\.id))")
-        let plan = TranscriptProcessFold.plan(items: timeline.items, isTurnOpen: false,
+        let plan = TranscriptProcessFold.plan(items: timeline.items, tail: .unknown,
                                               currentTurn: 1)
         let turn = try XCTUnwrap(plan.turns.first)
         XCTAssertEqual(turn.toolCount, 0, "交付工具不算过程")
@@ -166,7 +171,7 @@ final class TranscriptProcessFoldTests: XCTestCase {
             ProcessFoldFixtures.toolCall(seq: 3, callId: "c1", name: "bash"),
         ]
         for event in running { _ = timeline.apply(try ProcessFoldFixtures.record(event).event) }
-        let runningPlan = TranscriptProcessFold.plan(items: timeline.items, isTurnOpen: true,
+        let runningPlan = TranscriptProcessFold.plan(items: timeline.items, tail: ProcessFoldFixtures.tail(timeline, running: true),
                                                      currentTurn: 1)
         let runningTurn = try XCTUnwrap(runningPlan.turns.first)
         XCTAssertFalse(runningTurn.groups.isEmpty)
@@ -182,7 +187,7 @@ final class TranscriptProcessFoldTests: XCTestCase {
 
         _ = timeline.apply(try ProcessFoldFixtures.record(
             ProcessFoldFixtures.turnEnd(seq: 4, turn: 1, reason: "interrupted")).event)
-        let endedPlan = TranscriptProcessFold.plan(items: timeline.items, isTurnOpen: false,
+        let endedPlan = TranscriptProcessFold.plan(items: timeline.items, tail: .unknown,
                                                    currentTurn: 1)
         let endedTurn = try XCTUnwrap(endedPlan.turns.first)
         var state = TranscriptFoldState()
@@ -224,7 +229,7 @@ final class TranscriptProcessFoldTests: XCTestCase {
             ProcessFoldFixtures.user(seq: 2, text: "q"),
             ProcessFoldFixtures.toolCall(seq: 3, callId: "c1", name: "bash"),
         ])
-        let plan = plan(timeline, isTurnOpen: true)
+        let plan = plan(timeline, running: true)
         let turn = try XCTUnwrap(plan.turns.first)
         XCTAssertTrue(turn.isRunning)
         XCTAssertFalse(turn.isFoldable)
@@ -384,7 +389,12 @@ final class TranscriptProcessFoldTests: XCTestCase {
 
     // MARK: - Defaults and reader context
 
-    func test_reader_inside_process_holds_the_turn_open() throws {
+    /// 读者手工展开/收起是**唯一**的整轮展开依据（M3）。
+    ///
+    /// 旧实现还要读一个 `readerTopRowID`（列表宿主回传的顶部可见行）来"不把内容从
+    /// 读者脚下收走"——那条通路的语义已改成"轮次关闭那一刻的一次性保位"，判定在
+    /// `ChatModel.noteTailTransition` 上（用例在 `ChatModelProcessFoldTests`）。
+    func test_manual_toggle_is_the_only_whole_turn_input() throws {
         let timeline = try completed(tools: 2)
         let plan = plan(timeline)
         let turn = try XCTUnwrap(plan.turns.first)
@@ -393,46 +403,23 @@ final class TranscriptProcessFoldTests: XCTestCase {
             return false
         })
         var state = TranscriptFoldState()
-        state.readerTopRowID = toolRow.id
+        XCTAssertFalse(TranscriptProcessFold.isTurnExpanded(turn, plan: plan, state: state),
+                       "默认收起：已完成的轮次不等任何测量值")
+        XCTAssertFalse(ids(TranscriptProcessFold.displayRows(plan, state: state)).contains(toolRow.id))
+
+        state.manualTurn[turn.key] = true
         XCTAssertTrue(TranscriptProcessFold.isTurnExpanded(turn, plan: plan, state: state))
+        // 展开整轮先看到分组行；组默认收起，组内过程行仍不出现（桌面同款）。
+        let group = try XCTUnwrap(turn.groups.first)
+        XCTAssertTrue(ids(TranscriptProcessFold.displayRows(plan, state: state)).contains(group.key))
+        XCTAssertFalse(ids(TranscriptProcessFold.displayRows(plan, state: state)).contains(toolRow.id))
+
+        state.expandedGroups.insert(group.key)
         XCTAssertTrue(ids(TranscriptProcessFold.displayRows(plan, state: state)).contains(toolRow.id))
-    }
 
-    func test_reader_on_the_answer_does_not_hold_it_open() throws {
-        let timeline = try completed(tools: 2)
-        let plan = plan(timeline)
-        let turn = try XCTUnwrap(plan.turns.first)
-        let answer = try XCTUnwrap(plan.rows.first { item in
-            if case .assistantText = item.kind { return true }
-            return false
-        })
-        var state = TranscriptFoldState()
-        state.readerTopRowID = answer.id
-        XCTAssertFalse(TranscriptProcessFold.isTurnExpanded(turn, plan: plan, state: state))
-    }
-
-    func test_reader_on_a_group_header_holds_the_turn_open() throws {
-        let timeline = try completed(tools: 4, intermediate: true)
-        let plan = plan(timeline)
-        let turn = try XCTUnwrap(plan.turns.first)
-        let group = try XCTUnwrap(turn.groups.last)
-        var state = TranscriptFoldState()
-        state.readerTopRowID = group.key
-        XCTAssertTrue(TranscriptProcessFold.isTurnExpanded(turn, plan: plan, state: state))
-    }
-
-    func test_manual_collapse_wins_over_reader_context() throws {
-        let timeline = try completed(tools: 2)
-        let plan = plan(timeline)
-        let turn = try XCTUnwrap(plan.turns.first)
-        let toolRow = try XCTUnwrap(plan.rows.first { item in
-            if case .toolCall = item.kind { return true }
-            return false
-        })
-        var state = TranscriptFoldState()
-        state.readerTopRowID = toolRow.id
         state.manualTurn[turn.key] = false
         XCTAssertFalse(TranscriptProcessFold.isTurnExpanded(turn, plan: plan, state: state))
+        XCTAssertFalse(ids(TranscriptProcessFold.displayRows(plan, state: state)).contains(toolRow.id))
     }
 
     // MARK: - Partial / edge
@@ -535,7 +522,7 @@ final class TranscriptProcessFoldTests: XCTestCase {
             ProcessFoldFixtures.toolCall(seq: 6, callId: "c2", name: "read"),
             ProcessFoldFixtures.toolResult(seq: 7, callId: "c2"),
         ])
-        let plan = plan(timeline, isTurnOpen: true)
+        let plan = plan(timeline, running: true)
         let turn = try XCTUnwrap(plan.turns.first)
         XCTAssertTrue(turn.isRunning)
         XCTAssertEqual(turn.groups.count, 2)
@@ -563,7 +550,7 @@ final class TranscriptProcessFoldTests: XCTestCase {
             ProcessFoldFixtures.toolCall(seq: 5, callId: "c2", name: "read"),
             ProcessFoldFixtures.toolResult(seq: 6, callId: "c2"),
         ])
-        let plan = plan(timeline, isTurnOpen: true)
+        let plan = plan(timeline, running: true)
         let turn = try XCTUnwrap(plan.turns.first)
         XCTAssertEqual(turn.groups.count, 1)
         let rows = TranscriptProcessFold.displayRows(plan, state: TranscriptFoldState())
@@ -579,7 +566,7 @@ final class TranscriptProcessFoldTests: XCTestCase {
             ProcessFoldFixtures.toolCall(seq: 3, callId: "c1", name: "bash"),
             ProcessFoldFixtures.toolResult(seq: 4, callId: "c1"),
         ])
-        let plan = plan(timeline, isTurnOpen: true)
+        let plan = plan(timeline, running: true)
         let turn = try XCTUnwrap(plan.turns.first)
         let group = try XCTUnwrap(turn.groups.first)
         var state = TranscriptFoldState()
@@ -655,7 +642,7 @@ final class TranscriptProcessFoldTests: XCTestCase {
             ProcessFoldFixtures.turnEnd(seq: 8, turn: 1),
         ] { _ = summarized.apply(try ProcessFoldFixtures.record(event).event) }
         let summarizedTurn = try XCTUnwrap(
-            TranscriptProcessFold.plan(items: summarized.items, isTurnOpen: false).turns.first)
+            TranscriptProcessFold.plan(items: summarized.items, tail: .unknown).turns.first)
         XCTAssertEqual(summarizedTurn.toolCount, 3)
         XCTAssertEqual(summarizedTurn.reasoningCount, 1)
 
@@ -671,7 +658,7 @@ final class TranscriptProcessFoldTests: XCTestCase {
             ProcessFoldFixtures.turnEnd(seq: 8, turn: 1),
         ] { _ = detailed.apply(try ProcessFoldFixtures.record(event).event) }
         let detailedTurn = try XCTUnwrap(
-            TranscriptProcessFold.plan(items: detailed.items, isTurnOpen: false).turns.first)
+            TranscriptProcessFold.plan(items: detailed.items, tail: .unknown).turns.first)
         XCTAssertEqual(detailedTurn.toolCount, summarizedTurn.toolCount)
         XCTAssertEqual(detailedTurn.reasoningCount, summarizedTurn.reasoningCount)
     }
@@ -691,7 +678,7 @@ final class TranscriptProcessFoldTests: XCTestCase {
             ProcessFoldFixtures.assistant(seq: 5, text: "a"),
         ]
         for event in events { _ = timeline.apply(try ProcessFoldFixtures.record(event).event) }
-        let plan = TranscriptProcessFold.plan(items: timeline.items, isTurnOpen: false)
+        let plan = TranscriptProcessFold.plan(items: timeline.items, tail: .unknown)
         let turn = try XCTUnwrap(plan.turns.first)
         XCTAssertTrue(turn.isFoldable)
         var expanded = TranscriptFoldState()
@@ -723,7 +710,7 @@ final class TranscriptProcessFoldTests: XCTestCase {
         ]
         for event in events { _ = timeline.apply(try ProcessFoldFixtures.record(event).event) }
 
-        let plan = TranscriptProcessFold.plan(items: timeline.items, isTurnOpen: false)
+        let plan = TranscriptProcessFold.plan(items: timeline.items, tail: .unknown)
         let turn = try XCTUnwrap(plan.turns.first)
         // 2026-10-18：预折摘要不再让整轮铺开，表头与近期轮次同一样式；
         // 计数取摘要里的值（明细没下发时按行数会漏）。
@@ -768,7 +755,7 @@ final class TranscriptProcessFoldTests: XCTestCase {
         ]
         for event in events { _ = timeline.apply(try ProcessFoldFixtures.record(event).event) }
 
-        let plan = TranscriptProcessFold.plan(items: timeline.items, isTurnOpen: false)
+        let plan = TranscriptProcessFold.plan(items: timeline.items, tail: .unknown)
         let rows = TranscriptProcessFold.displayRows(plan, state: TranscriptFoldState())
         let headers = rows.compactMap { item -> TimelineProcessHeader? in
             if case .processHeader(let header) = item.kind { return header }

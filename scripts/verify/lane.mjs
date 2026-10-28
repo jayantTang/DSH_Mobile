@@ -10,7 +10,7 @@
  * 不需要真的起宿主或容器（宪法 VII.1）。
  */
 
-import { mkdirSync } from 'node:fs'
+import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { formatDoctor, runDoctor } from './doctor.mjs'

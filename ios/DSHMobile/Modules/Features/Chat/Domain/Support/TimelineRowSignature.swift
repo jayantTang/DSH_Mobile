@@ -45,6 +45,10 @@ public enum TimelineRowSignature {
             case nil: body = "none"
             }
             return "\(base)|ps:\(step.status.rawValue):\(step.bytes ?? -1):\(step.resultSeq ?? -1):\(body):\(step.isExpanded)"
+        case .processPlaceholder(let placeholder):
+            // 占位行的三态就是它的全部内容（44pt 固定高度，没有正文载荷）：
+            // 状态不进签名，`.unresolved → resolving → failed` 就不会重载。
+            return "\(item.id)|pp:\(placeholder.state)"
         case .runningLine(let line):
             // 文案由行视图按开始时刻自己走表；开始时刻变了（新的一轮）要重载。
             return "\(item.id)|run:\(line.since?.timeIntervalSince1970 ?? -1)"

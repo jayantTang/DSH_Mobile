@@ -35,7 +35,7 @@ final class ChatModelProcessFoldTests: XCTestCase {
     func test_the_ui_fixture_is_two_foldable_completed_turns() {
         var timeline = ChatTimeline()
         _ = timeline.reset(with: ProcessFoldFixture.records)
-        let plan = TranscriptProcessFold.plan(items: timeline.items, isTurnOpen: false)
+        let plan = TranscriptProcessFold.plan(items: timeline.items, tail: .unknown)
         XCTAssertEqual(plan.turns.count, 2)
         XCTAssertTrue(plan.turns.allSatisfy(\.isFoldable))
         XCTAssertGreaterThan(plan.turns[0].toolCount, 2)
@@ -84,16 +84,19 @@ final class ChatModelProcessFoldTests: XCTestCase {
         XCTAssertFalse(collapsed.map(\.id).contains("tool-call-1"))
     }
 
-    func test_reader_inside_the_process_keeps_it_open_then_collapses_after_leaving() async throws {
+    /// 旧行为已删除（2026-10-27 折叠抖动）：读者停在过程行上**不再持续**保住整轮。
+    ///
+    /// 原来每帧都用宿主回传的顶部行重判一次，而折叠结果又决定顶部行——两态互为输入，
+    /// 不需要任何数据变化就每帧翻转。现在只在"轮次关闭"那一刻判定一次
+    ///（`ChatModelTailHoldTests.test_reader_on_process_row_holds_the_turn_when_it_closes`），
+    /// 一次已经结束的轮次不会因为读者停在哪里而展开。
+    func test_reporting_a_top_row_never_holds_a_finished_turn_open() async throws {
         try await openWithOneCompletedTurn()
         model.noteReaderTopRow("tool-call-1")
-        let held = await eventuallyRows { $0.map(\.id).contains("tool-call-1") }
-        XCTAssertTrue(held.map(\.id).contains("tool-call-1"),
-                      "the turn collapsed under a reader who was inside its process")
-
-        model.noteReaderTopRow(nil)
-        let collapsed = await eventuallyRows { !$0.map(\.id).contains("tool-call-1") }
-        XCTAssertFalse(collapsed.map(\.id).contains("tool-call-1"))
+        let rows = await eventuallyRows { $0.count == 3 }
+        XCTAssertFalse(rows.map(\.id).contains("tool-call-1"),
+                       "已结束的轮次不因读者位置而展开：\(rows.map(\.id))")
+        XCTAssertTrue(model.foldState.manualTurn.isEmpty)
     }
 
     func test_search_reveal_expands_the_turn_and_returns_the_row() async throws {

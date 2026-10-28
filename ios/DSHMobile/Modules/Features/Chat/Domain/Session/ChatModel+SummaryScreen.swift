@@ -342,10 +342,13 @@ public extension ChatModel {
     }
 
     /// 运行轮的计时起点：窗口里没有 `turn/start` 时，用概要记录里的 `startedAt`。
-    /// 只在“这一轮确实开着”时采纳，避免把已完成轮的时间贴到新一轮。
+    ///
+    /// 判据是**概要本身**有没有「还没结束的一段」，不是 `isTurnOpen`：运行行是否
+    /// 显示由 `isTurnOpen` 管，`runningSince` 只是计时起点，多写一个起点不会多出一行；
+    /// 反过来（先要求 isTurnOpen 才采纳）会让"边界还没落地但概要在跑"的会话
+    /// 永远拿不到计时起点。`isTurnOpen` 也不再是"开着的那一轮恰好在这份窗口里"。
     @MainActor
     private func adoptRunningStart(from records: [SessionRecord]) {
-        guard timeline.isTurnOpen else { return }
         if let start = timeline.openTurnStartedAt {
             runningSince = start
             return

@@ -500,12 +500,12 @@ public final class MessageLayer {
     /// 常用会话照旧"点开即完整"，其余交给按需灌（`backfillUserInput`，见下），
     /// 后台流量不再无上限。
     public static let warmupPageBudget = 200
-    public static let warmupTimeBudget: TimeInterval = 60
+    static let warmupTimeBudget: TimeInterval = 60
 
     public func backfillUserInputs(scope: String, summaries: [SessionSummary],
                                    roleFilterSupported: Bool,
                                    pageBudget: Int = MessageLayer.warmupPageBudget,
-                                   timeBudget: TimeInterval = MessageLayer.warmupTimeBudget) async {
+                                   timeBudget: TimeInterval = 60) async {   // = `warmupTimeBudget`
         guard let store, let client = await self.currentClient() else { return }
         guard roleFilterSupported else {
             await probes.note("userinputs.backfill.degraded", [

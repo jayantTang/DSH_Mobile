@@ -39,7 +39,7 @@ public struct WorkspaceFileDownloader: Sendable {
     static let minimumWindowBytes = 32 * 1024
 
     /// How many times one window is retried before the transfer gives up.
-    public static let windowRetries = 4
+    static let windowRetries = 4
 
     private let client: any FilesHosting
     private let pacing: Duration
@@ -55,7 +55,7 @@ public struct WorkspaceFileDownloader: Sendable {
     public init(
         client: any FilesHosting,
         pacing: Duration = .milliseconds(50),
-        retries: Int = WorkspaceFileDownloader.windowRetries,
+        retries: Int = 4,   // = `windowRetries`（内部常量，默认参数只能用字面量）
         backoff: @escaping @Sendable (Int) -> Duration = { attempt in
             let seconds = 0.5 * pow(2, Double(max(0, attempt)))
             return .milliseconds(Int(seconds * 1000))

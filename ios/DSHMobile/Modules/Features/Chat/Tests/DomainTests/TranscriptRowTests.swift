@@ -195,6 +195,17 @@ final class TranscriptRowTests: XCTestCase {
         XCTAssertNil(item.selectableMessage)
     }
 
+    /// R5：占位行没有可复制正文（两个列表宿主的长按门只读这一个谓词）。
+    ///
+    /// 静置态与失败态都要断言：有人把占位行加进可复制分支，这条就红。
+    func test_a_process_placeholder_offers_nothing_to_copy() {
+        for state in [TimelineProcessPlaceholder.State.unresolved,
+                      TimelineProcessPlaceholder.State.failed(.hole)] {
+            let item = TimelineProcessPlaceholder(turn: 1, startSeq: 3, state: state).item
+            XCTAssertNil(item.selectableMessage, "占位行没有可复制正文：\(state)")
+        }
+    }
+
     // MARK: - Pending echoes and rows the fold would not produce
 
     func test_an_unconfirmed_echo_is_the_only_pending_row() throws {

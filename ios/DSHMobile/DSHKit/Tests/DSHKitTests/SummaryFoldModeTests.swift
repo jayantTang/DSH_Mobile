@@ -39,23 +39,38 @@ final class SummaryFoldModeTests: XCTestCase {
                        HistoryWindowWire.summaryFoldCapability)
     }
 
-    // MARK: - reset 不丢运行态 / 本地缓存键
+    // MARK: - reset 的边界种子 / 本地缓存键
 
-    func test_reset_keeps_the_open_turn_when_the_window_has_no_turn_boundary() throws {
+    /// 旧行为已删除：`reset` 曾用「窗口里有没有 `turn/start` / `turn/end`」恢复上一轮的
+    /// 运行态（`previousTurnOpen` + `settlesTurn`）。这是推断，不是事实——管道重建时
+    /// 它恒为 false，被条数切开的尾轮于是既不"在跑"也不"可折叠"（设计 §1.2）。
+    ///
+    /// 现在边界由调用方显式播种，窗口里的记录按合并表改写。这条用例钉的是**替代行为**，
+    /// 不是放宽断言：不给种子 ⇒ 不推断；给了种子 ⇒ 恰好是种子说的那个状态。
+    func test_reset_takes_the_open_turn_from_the_caller_seed_and_never_infers_it() throws {
         var timeline = ChatTimeline()
         timeline.apply(try JSONDecoder().decode(
             SessionEvent.self,
             from: Data(#"{"type":"turn/start","seq":1,"data":{"turn":1}}"#.utf8)))
         XCTAssertTrue(timeline.isTurnOpen)
-        // 裁到轮次中间：窗口里只有过程行，没有任何轮次边界——reset 不能凭"没看到
-        // turn/start"就以为这一轮结束了（运行行与计时都靠这一位）。
+
+        // 裁到轮次中间：窗口里只有过程行，没有任何轮次边界。**不给种子**就是不成立
+        //（不再沿用"上一份窗口里开着"）。
         timeline.reset(with: [try record(
             #"{"type":"tool/call","seq":2,"data":{"turn":1,"step":1,"callId":"c1","name":"bash","arguments":"{}"}}"#)])
-        XCTAssertTrue(timeline.isTurnOpen, "没有轮次边界时保留原来的运行态")
+        XCTAssertFalse(timeline.isTurnOpen, "没有种子时不再推断运行态")
+        XCTAssertEqual(timeline.tail.boundary, .unknown)
 
-        // 有边界时以记录为准（这里是一轮结束）。
+        // 同样的窗口，调用方知道这一轮在跑：种子说了算。
         timeline.reset(with: [try record(
-            #"{"type":"turn/end","seq":3,"data":{"turn":1,"reason":{"kind":"completed"}}}"#)])
+            #"{"type":"tool/call","seq":2,"data":{"turn":1,"step":1,"callId":"c1","name":"bash","arguments":"{}"}}"#)],
+            seeding: .open(turn: 1, startedAt: nil))
+        XCTAssertTrue(timeline.isTurnOpen, "种子说开着就是开着")
+
+        // 有边界时以记录为准（这里是一轮结束）：种子先给，记录后到。
+        timeline.reset(with: [try record(
+            #"{"type":"turn/end","seq":3,"data":{"turn":1,"reason":{"kind":"completed"}}}"#)],
+            seeding: .open(turn: 1, startedAt: nil))
         XCTAssertFalse(timeline.isTurnOpen)
     }
 

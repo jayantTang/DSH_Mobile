@@ -11,15 +11,15 @@ import Foundation
 /// 少于 `lowWatermark` 行就加倍，多到 `highWatermark` 行就收回基数；窗口上限
 /// 同时受连接器单次调用预算约束（超了会拆成多页，反而更慢）。
 public struct HistoryFetchWindowPolicy: Sendable, Equatable {
-    public static let basePages = 3
-    public static let minimumPages = 1
-    public static let maximumPages = 8
-    public static let lowWatermark = 6
-    public static let highWatermark = 40
+    static let basePages = 3
+    static let minimumPages = 1
+    static let maximumPages = 8
+    static let lowWatermark = 6
+    static let highWatermark = 40
 
     public private(set) var pages: Int
 
-    public init(pages: Int = HistoryFetchWindowPolicy.basePages) {
+    public init(pages: Int = 3) {   // = `basePages`（内部常量，默认参数只能用字面量）
         self.pages = min(Self.maximumPages, max(Self.minimumPages, pages))
     }
 

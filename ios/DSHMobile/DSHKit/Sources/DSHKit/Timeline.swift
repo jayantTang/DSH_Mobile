@@ -42,11 +42,15 @@ public struct TimelineItem: Identifiable, Sendable {
         /// 末尾的运行行（`深度求索中，用时 … ···`）。显示投影生成的唯一一行，
         /// 两个列表宿主都渲染它；不参与缓存/裁剪/搜索。
         case runningLine(TimelineRunningLine)
+        /// 尾轮边界未确认时的固定高度占位行（设计 20261027 / M7）：只由投影产生，替代
+        /// 过去"铺开原始过程行"；没有磁盘正文，不参与搜索/回收/窗口边界。
+        case processPlaceholder(TimelineProcessPlaceholder)
 
-        /// 数据行（记录折叠而来），与缺口占位行相对。
+        /// 数据行（记录折叠而来），与缺口行、占位行相对。
         /// 窗口边界、命中归属等"内容覆盖"判定只认数据行（009 场景⑥）。
         public var isContentRow: Bool {
             if case .gap = self { return false }
+            if case .processPlaceholder = self { return false }
             return true
         }
 
@@ -106,7 +110,7 @@ public struct TimelineItem: Identifiable, Sendable {
                      parentID: parentID, fullText: fullText, at: at)
     }
 
-    public var isUnsavedInput: Bool {
+    var isUnsavedInput: Bool {
         guard case .userMessage(_, _, _, let isPending, _) = kind else { return false }
         return isPending || sendFailed || sendUnconfirmed
     }
@@ -178,10 +182,14 @@ public struct ChatTimeline: Sendable {
 
     /// The newest turn and step observed, for the activity header.
     public private(set) var currentTurn: Int = 0
-    public private(set) var currentStep: Int = 0
+    private(set) var currentStep: Int = 0
+
+    /// 尾轮边界与「窗口落不落在会话尾部」；写入口只在 `Timeline+Tail.swift`。
+    public internal(set) var tail: TranscriptTail = .unknown
 
     /// Whether the transcript ends with a turn that never reported completion.
-    public private(set) var isTurnOpen: Bool = false
+    /// 派生只读：事实在 `tail.boundary`，不另存一份布尔。
+    public var isTurnOpen: Bool { tail.boundary.isOpen }
 
     /// 概要 v2（`+link/fold` 的 `v: 2`）解码出的轮次元数据，按 `startSeq` 升序。
     ///
@@ -197,20 +205,8 @@ public struct ChatTimeline: Sendable {
     public private(set) var lastUsage: TokenUsageProjection?
 
     /// When each open turn began, so its duration can be reported when it ends.
-    private var turnStartedAt: [Int: Date] = [:]
-
-    /// 正在跑的那一轮的开始时刻（宿主 `turn/start` 的时间）。运行行的计时起点用它，
-    /// 不拿“手机观察到的时间”代替；切后台/重开也还是同一个值。
-    public var openTurnStartedAt: Date? {
-        guard isTurnOpen else { return nil }
-        if let start = turnStartedAt[currentTurn] { return start }
-        // 起点不在本地窗口：运行中的概要带着轮次的 startedAt（宿主时间），用它兜底。
-        // 同一轮可能被讲话切成多段，每段同值；取最后一条有值的即可。
-        let fromSummary = foldSummaries.last {
-            $0.turn == currentTurn && $0.startedAt != nil
-        }
-        return fromSummary?.startedAt.map { Date(timeIntervalSince1970: $0 / 1000) }
-    }
+    /// 模块内可读：`openTurnStartedAt` 住在 `Timeline+Tail.swift`。
+    var turnStartedAt: [Int: Date] = [:]
 
     /// The most recent completed turn, for the transient "done" indicator.
     public private(set) var lastCompletion: Completion?
@@ -229,32 +225,30 @@ public struct ChatTimeline: Sendable {
     // MARK: - Bulk load
 
     /// Replaces the transcript with one history snapshot.
+    ///
+    /// 不再推断运行态（设计 §1.2）：边界是调用方给的显式种子，记录随后按合并表改写。
+    ///
     /// 整份替换（冷启动落盘、re-base 用）。返回的 `Change` 目前**没有任何调用方**使用——
     /// 这些场景都是"整屏重画"，不需要增量差异；标注 `@discardableResult` 说明这一点，
     /// 顺带消掉 App 侧三处"返回值被丢弃"的编译告警。
     @discardableResult
-    public mutating func reset(with records: [SessionRecord]) -> Change {
-        // `isTurnOpen` 是"这一轮是不是还开着"的事实，不该被 reset 顺手丢掉再靠
-        // 最后一条记录推断：窗口裁到轮次中间时（turn/start 在窗口外）推断会得到
-        // "已结束"，运行行与计时随之消失。这里显式保存，回放没有轮次边界时恢复。
-        let previousTurnOpen = isTurnOpen
-        let settlesTurn = records.contains { record in
-            record.event.type == "turn/start" || record.event.type == "turn/end"
-        }
+    public mutating func reset(with records: [SessionRecord],
+                               seeding boundary: TranscriptTail.Boundary = .unknown,
+                               showsTail: Bool = true) -> Change {
         items.removeAll(keepingCapacity: true)
         toolIndex.removeAll(keepingCapacity: true)
         foldSummaries.removeAll(keepingCapacity: true)
         streaming = nil
         currentTurn = 0
         currentStep = 0
-        isTurnOpen = false
+        turnStartedAt.removeAll(keepingCapacity: true)
+        tail = TranscriptTail(boundary: boundary, showsTail: showsTail)
 
         for record in records {
             applyEvent(record.event)
         }
         // A snapshot is history, not live output: nothing is still running.
         settleRunningTools()
-        if !settlesTurn { isTurnOpen = previousTurnOpen }
         return .reloaded
     }
 
@@ -273,6 +267,7 @@ public struct ChatTimeline: Sendable {
             applyEvent(record.event)
         }
         reindexTools()
+        tail.showsTail = true
         return .reloaded
     }
 
@@ -305,6 +300,7 @@ public struct ChatTimeline: Sendable {
     @discardableResult
     public mutating func apply(_ event: SessionEvent) -> Change {
         let change = applyEvent(event)
+        tail.showsTail = true   // 实时事件说明窗口底下就是尾部（搜索换窗口显式传 false）
         return change
     }
 
@@ -316,7 +312,9 @@ public struct ChatTimeline: Sendable {
             streaming = StreamingAttempt(attemptId: attemptId, turn: turn, step: step)
             currentTurn = max(currentTurn, turn)
             currentStep = step
-            isTurnOpen = true
+            // 流式开始也是"这一轮开着"的证据；不带宿主时间，计时起点留空。
+            noteBoundary(.open(turn: turn, startedAt: nil))
+            tail.showsTail = true
             return .appended
 
         case .chunk(_, _, _, _, let chunk):
@@ -418,6 +416,8 @@ public struct ChatTimeline: Sendable {
     /// 记下一条 v2 概要。同一段（`startSeq`）重放时替换而不是追加：窗口重读、
     /// 运行中刷新都会再发一次同一条，重复追加会让轮次行与分组行各出现两遍。
     private mutating func upsertFoldSummary(_ summary: FoldSummaryV2) -> Bool {
+        // 概要也是边界的证据（连接器折的时候知道这一段结没结束）。
+        adoptBoundary(from: summary)
         if let index = foldSummaries.firstIndex(where: { $0.startSeq == summary.startSeq }) {
             guard foldSummaries[index] != summary else { return false }
             foldSummaries[index] = summary
@@ -613,13 +613,13 @@ public struct ChatTimeline: Sendable {
 
         case .turnStart(let turn):
             currentTurn = max(currentTurn, turn)
-            isTurnOpen = true
             turnStartedAt[turn] = event.date ?? Date()
+            noteBoundary(.open(turn: turn, startedAt: event.date ?? Date()))
             return .none
 
         case .turnEnd(let turn, let reason):
             currentTurn = max(currentTurn, turn)
-            isTurnOpen = false
+            noteBoundary(.closed(turn: turn, reason: reason))
             streaming = nil
             settleRunningTools()
 

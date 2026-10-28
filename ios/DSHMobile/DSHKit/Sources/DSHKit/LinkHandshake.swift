@@ -67,9 +67,9 @@ public struct LinkHandshake: Decodable, Sendable {
         public static let historyRoleFilter = "history-role-filter"
         /// `_link/sessionWindow` 接受 `encoding: "deflate-raw"`，回包是压缩信封
         /// （spec 016 后续）。无此能力的旧连接器不认这个参数，回纯 JSON。
-        public static let historyCompression = "history-compression"
+        static let historyCompression = "history-compression"
         /// `_link/sessionWindow` 接受 `fold: true`，把完成轮次折成摘要（spec 034）。
-        public static let historyFoldSummary = "history-fold-summary"
+        static let historyFoldSummary = "history-fold-summary"
         /// `_link/sessionWindow` 接受 `fold: "summary"`：整轮只回讲话 + 概要 + 回答。
         public static let historyFoldSummaryV2 = "history-fold-summary-v2"
         /// 连接器能回答 `_link/jobRoster`，并会推 `link/jobs` 帧（spec 018）。

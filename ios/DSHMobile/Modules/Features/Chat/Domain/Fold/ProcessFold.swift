@@ -28,7 +28,7 @@ public extension ChatModel {
         guard let visible, visible.summary.sessionId == sessionId else { return [] }
         let plan = TranscriptProcessFold.plan(
             items: visible.timeline.items,
-            isTurnOpen: visible.timeline.isTurnOpen,
+            tail: visible.timeline.tail,
             currentTurn: visible.timeline.currentTurn,
             summaries: visible.timeline.foldSummaries)
         // 折叠摘要：只在状态变化时发（`FoldTrace.note` 内部比较并节流）。
@@ -56,6 +56,12 @@ public extension ChatModel {
                 rows[index].kind = .processStep(step.with(body: body))
             }
         }
+        // 占位行的三态贴在行上（与 `stepBodies` / `prefetchStatus` 同一纪律）：
+        // 模型是唯一所有者，投影只搬运。
+        for index in rows.indices {
+            guard case .processPlaceholder(let placeholder) = rows[index].kind else { continue }
+            rows[index].kind = .processPlaceholder(placeholder.with(state: tailBoundaryAttempt))
+        }
         // 展开摘要的取详情进度贴在表头上；模型是唯一所有者，投影只做搬运。
         if !prefetchStatus.isEmpty {
             for index in rows.indices {
@@ -64,6 +70,10 @@ public extension ChatModel {
                 rows[index].kind = .processHeader(header.with(prefetchStatus: status))
             }
         }
+        // 形态探针（M8'-1）：必须放在所有「贴状态」之后——行数与三态都定稿了，
+        // 它才和 `list.reconcile rows=` 是同一批行（两者偏差为 0 的前提）。
+        FoldTrace.noteShape(rows: rows, plan: plan, state: foldState,
+                            tail: visible.timeline.tail, session: sessionId)
         return rows
     }
 
@@ -229,9 +239,11 @@ public extension ChatModel {
         processToggleFollowHold = false
     }
 
+    /// 宿主回传的**测量值**：记在模型上，不写折叠态（折叠判据读不到它，
+    /// 反馈环在类型上就不存在）。只在"轮次关闭"那一刻被读一遍。
     func noteReaderTopRow(_ id: String?) {
-        guard foldState.readerTopRowID != id else { return }
-        foldState.readerTopRowID = id
+        guard readerTopRowID != id else { return }
+        readerTopRowID = id
     }
 
     /// Compute the oldest rows the payload budget wants to drop, aligned so a
@@ -298,19 +310,21 @@ public extension ChatModel {
         foldState.expandedGroups.formIntersection(groupKeys)
         foldState.expandedSteps.formIntersection(stepKeys)
         stepBodies = stepBodies.filter { stepKeys.contains($0.key) }
-        if let top = foldState.readerTopRowID,
+        // 测量值随行一起剪：顶部行已经不在窗口里，留着它只会在下一次保位判定里
+        // 命中一个不存在的 id（那次判定会自己拒绝，但状态该永远反映"看得见什么"）。
+        if let top = readerTopRowID,
            !plan.rows.contains(where: { $0.id == top }) {
-            foldState.readerTopRowID = nil
+            readerTopRowID = nil
         }
     }
 
     func processPlan() -> TranscriptProcessFold.Plan {
         guard let visible else {
-            return TranscriptProcessFold.plan(items: [], isTurnOpen: false)
+            return TranscriptProcessFold.plan(items: [], tail: .unknown)
         }
         return TranscriptProcessFold.plan(
             items: visible.timeline.items,
-            isTurnOpen: visible.timeline.isTurnOpen,
+            tail: visible.timeline.tail,
             currentTurn: visible.timeline.currentTurn,
             summaries: visible.timeline.foldSummaries)
     }

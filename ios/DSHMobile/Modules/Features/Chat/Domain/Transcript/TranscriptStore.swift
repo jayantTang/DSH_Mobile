@@ -24,6 +24,14 @@ final class TranscriptStore {
     /// 唯一被发布的会话可见状态；换会话时只赋值一次。
     public internal(set) var visible: VisibleSession?
 
+    /// 读者顶部可见行：列表宿主回传的**测量值**，不是折叠输入。它只在"轮次关闭"
+    /// 那一刻被读一次（`ChatModel.noteTailTransition`），此后不再参与任何判定。
+    /// 与 `visible` 同属会话级状态：换会话/重开时由 `ChatModel.clearTailScope()` 清空。
+    var readerTopRowID: String?
+
+    /// 过程区「边界未确认」的三态：占位行显示什么只由模型写，投影只搬运。
+    var tailBoundaryAttempt: TimelineProcessPlaceholder.State = .unresolved
+
     public init() {}
 
     public var session: SessionSummary? { visible?.summary }

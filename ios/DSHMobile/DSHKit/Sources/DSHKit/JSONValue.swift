@@ -111,7 +111,7 @@ extension JSONValue {
         return value
     }
 
-    public var isNull: Bool {
+    var isNull: Bool {
         if case .null = self { return true }
         return false
     }

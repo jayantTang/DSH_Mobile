@@ -44,7 +44,7 @@ public struct HistoryWindowRequest: Sendable, Codable {
     /// `before`；Swift 的 `Int.max`（2^63−1）过 JSON.parse 会变成 2^63，
     /// 不是安全整数，连接器一律回 `gateway/bad-request`（T036 慢闸抓出：
     /// 灌库首拉全挂、账本永远为空）。2^53−1 是能过校验的最大整数。
-    public static let safeMaxBefore = 9_007_199_254_740_991
+    static let safeMaxBefore = 9_007_199_254_740_991
 
     public init(address: SessionAddress, before: Int, through: Int? = nil,
                 limit: Int? = nil, maxBytes: Int? = nil, roles: [String]? = nil,

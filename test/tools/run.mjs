@@ -38,21 +38,51 @@ import {
 /// addressable by name, which is the whole point of the fallback.
 const RUNNER_DEVICE_NAME = 'DSH-Runner'
 
+/// 「会话区变白」的默认墨迹下限。
+///
+/// 0.12 是照真实转写定的：一屏折叠行 + 正文通常有 20–40% 墨迹，掉到 12% 以下
+/// 要么是空白，要么是半画。**但稀疏画面（夹具只投影 1 行占位 + 1 行回答）天然
+/// 只有 4% 左右**，用 0.12 会把它判成"白过"。所以下限可由用例的 front matter
+/// `空白墨迹下限: <0..0.12>` 下调；不写就是 0.12，谁也放宽不了默认值。
+/// 为什么不当成产品侧的阈值：这个数只回答"这次运行的画面算不算白"，
+/// 它属于判定口径、不属于 App 的行为；App 里的量具（`ViewportProbe`）照旧只
+/// 负责量，不因为用例而改阈值。
+const DEFAULT_BLANK_INK_FLOOR = 0.12
+
+/// 用例声明的 `空白墨迹下限:` → 实际用的下限。
+///
+/// 只允许**下调**（0 ≤ x ≤ 默认值）：写大了等于把"没有变白"这条判定放水，
+/// 写歪了（非数字）按默认值处理并提示一句，不让一个笔误把判定变成通过。
+function blankInkFloor(raw) {
+  const text = String(raw ?? '').trim()
+  if (!text) return DEFAULT_BLANK_INK_FLOOR
+  const value = Number(text)
+  if (!Number.isFinite(value) || value < 0) {
+    warn(`空白墨迹下限「${text}」不是 0..${DEFAULT_BLANK_INK_FLOOR} 的数，按默认值处理`)
+    return DEFAULT_BLANK_INK_FLOOR
+  }
+  if (value > DEFAULT_BLANK_INK_FLOOR) {
+    warn(`空白墨迹下限「${value}」比默认值 ${DEFAULT_BLANK_INK_FLOOR} 宽，按默认值处理`)
+    return DEFAULT_BLANK_INK_FLOOR
+  }
+  return value
+}
+
 /// 把 App 内探针（`-DSHViewportProbe`，DEBUG-only）的日志取回来，并对
 /// "会话区有没有真的变白"下一条机器判定。
 ///
 /// 为什么值得进测试台：用户报的是**概率性**的空白，一张两张截图证不了它不在，
 /// 而录像又要人一帧帧看。探针在 App 里每 0.5 秒把转写区画一遍、数墨迹占比，
 /// 于是"这一轮有没有白过"变成一个可以复核的数字。用例没带探针参数时静默跳过。
-function analyzeProbe({ simId, detailDir, verdicts, log }) {
+function analyzeProbe({ simId, detailDir, verdicts, log, inkFloor = DEFAULT_BLANK_INK_FLOOR }) {
   try {
-    probeVerdicts({ simId, detailDir, verdicts, log })
+    probeVerdicts({ simId, detailDir, verdicts, log, inkFloor })
   } catch (error) {
     warn(`探针分析失败（不影响本轮的其它判定）：${error.message.split('\n')[0]}`)
   }
 }
 
-function probeVerdicts({ simId, detailDir, verdicts, log }) {
+function probeVerdicts({ simId, detailDir, verdicts, log, inkFloor = DEFAULT_BLANK_INK_FLOOR }) {
   let container = ''
   try {
     container = run('xcrun', ['simctl', 'get_app_container', simId, BUNDLE_ID, 'data'],
@@ -110,7 +140,7 @@ function probeVerdicts({ simId, detailDir, verdicts, log }) {
 
   // 相邻 0.7 秒内的空白算一段：偶发的一两帧抖动不算，用户看到的是"白了一片"。
   const episodes = []
-  for (const sample of samples.filter((item) => item.ink < 0.12)) {
+  for (const sample of samples.filter((item) => item.ink < inkFloor)) {
     const last = episodes[episodes.length - 1]
     if (last && sample.at - last.to <= 0.7) last.to = sample.at
     else episodes.push({ from: sample.at, to: sample.at })
@@ -125,8 +155,10 @@ function probeVerdicts({ simId, detailDir, verdicts, log }) {
     seq: -3, id: 'probe.blank', kind: 'probe',
     status: meaningful.length ? 'fail' : 'pass',
     detail: meaningful.length
-      ? `会话区白过 ${meaningful.length} 段（${describe}）；现场图见 detail/probe-*-blank*.png`
-      : `探针 ${samples.length} 个采样点里会话区墨迹最低 ${Math.min(...samples.map((s) => s.ink)).toFixed(3)}，没有变白`
+      ? `会话区白过 ${meaningful.length} 段（${describe}，墨迹下限 ${inkFloor}）；`
+        + '现场图见 detail/probe-*-blank*.png'
+      : `探针 ${samples.length} 个采样点里会话区墨迹最低 ${Math.min(...samples.map((s) => s.ink)).toFixed(3)}，`
+        + `没有低于下限 ${inkFloor}`
         + (ignored ? `（另有 ${ignored} 段单帧过渡空白，不计）` : ''),
   })
   // 启动那几拍的内容高度是 1pt（会话还没折进来），不参与统计。
@@ -636,7 +668,8 @@ async function runCase(flags, positional, pairing) {
   drain()
   writeFileSync(join(detailDir, 'events.ndjson'), readEvents(simId))
 
-  analyzeProbe({ simId, detailDir, verdicts, log })
+  analyzeProbe({ simId, detailDir, verdicts, log,
+                 inkFloor: blankInkFloor(meta0['空白墨迹下限']) })
 
   exportScreenshots({ resultBundle, shotsDir, manifest })
   // The runner's own container is not the one the test writes in, so the live

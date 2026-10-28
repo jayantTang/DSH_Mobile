@@ -16,9 +16,9 @@ public enum HistoryWindowWire {
     /// 连接器在 `_link/hello` 里声明：接受 `fold: "summary"`（概要 v2，按整轮下发）。
     public static let summaryFoldCapability = "history-fold-summary-v2"
     /// 概要模式下每页取几轮（管道路径的取页粒度；`limit` 在 v2 里是轮数）。
-    public static let summaryRangeTurns = 6
+    static let summaryRangeTurns = 6
     /// 覆盖信息（已知为空 + 版本）。
-    public static let coverageCapability = "history-coverage"
+    static let coverageCapability = "history-coverage"
 
     public static func decode(_ raw: JSONValue,
                               limit: Int = 32 * 1024 * 1024) throws -> HistoryWindowValue {

@@ -242,7 +242,7 @@ public struct SessionProjectionHints: Sendable, Codable, Hashable {
 /// available as raw JSON so a DSH upgrade cannot break decoding.
 public struct SessionProjectionValues: Sendable, Codable, Hashable {
     public let title: String?
-    public let goal: GoalProjection?
+    let goal: GoalProjection?
     public let tokenUsage: TokenUsageProjection?
     public let contextPressure: ContextPressureProjection?
     let sessionStats: SessionStatsProjection?
@@ -346,14 +346,14 @@ public struct SubagentProjection: Sendable, Codable, Hashable {
     public let seq: Int?
 }
 
-public struct GoalProjection: Sendable, Codable, Hashable {
-    public let goal: Goal?
+struct GoalProjection: Sendable, Codable, Hashable {
+    let goal: Goal?
 
-    public struct Goal: Sendable, Codable, Hashable {
-        public let id: String
-        public let revision: Int
-        public let objective: String
-        public let phase: String?
+    struct Goal: Sendable, Codable, Hashable {
+        let id: String
+        let revision: Int
+        let objective: String
+        let phase: String?
         let roundsStarted: Int?
         let maxGoalRounds: Int?
         /// Why the goal is blocked.
@@ -373,7 +373,7 @@ public struct GoalProjection: Sendable, Codable, Hashable {
             let message: String?
         }
 
-        public init(from decoder: any Decoder) throws {
+        init(from decoder: any Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
             id = try container.decode(String.self, forKey: .id)
             revision = try container.decode(Int.self, forKey: .revision)
@@ -416,9 +416,9 @@ public struct ContextPressureProjection: Sendable, Codable, Hashable {
     }
 }
 
-public struct SessionStatsProjection: Sendable, Codable, Hashable {
-    public let turns: Int?
-    public let steps: Int?
+struct SessionStatsProjection: Sendable, Codable, Hashable {
+    let turns: Int?
+    let steps: Int?
     let llmMs: Double?
     let toolMs: Double?
 }
@@ -439,8 +439,8 @@ public struct ModelSelectionProjection: Sendable, Codable, Hashable {
     public let pending: ModelSelection?
 }
 
-public struct SessionListMetadata: Sendable, Codable, Hashable {
-    public let blank: Bool?
+struct SessionListMetadata: Sendable, Codable, Hashable {
+    let blank: Bool?
     let lastPromptAt: Double?
 }
 

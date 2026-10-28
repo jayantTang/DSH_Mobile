@@ -98,7 +98,7 @@ public struct JobOutput: Sendable, Codable, Hashable {
     public let total: Int
     /// 还保留着的最老字节偏移。
     public let earliest: Int
-    public let spillPaths: [String]?
+    let spillPaths: [String]?
 
     public init(total: Int, earliest: Int = 0, spillPaths: [String]? = nil) {
         self.total = total
@@ -107,7 +107,7 @@ public struct JobOutput: Sendable, Codable, Hashable {
     }
 
     /// 头部被丢过（输出页必须显式提示，`contracts/activity-ui.md` §3）。
-    public var headLost: Bool { earliest > 0 }
+    var headLost: Bool { earliest > 0 }
 
     private enum CodingKeys: String, CodingKey {
         case total, earliest, spillPaths
@@ -529,12 +529,12 @@ struct JobKillRequest: Encodable, Sendable {
 ///
 /// `mode` 在宿主 schema 里是字面量 `continuable`（`dsh-api-remotes`），一次性
 /// 子智能体用不了这个端点，所以手机侧不开放 `mode` 参数。
-public struct SubagentInterruptRequest: Encodable, Sendable, Hashable {
-    public let childSessionId: String
-    public let parentSessionId: String
-    public let mode: String
+struct SubagentInterruptRequest: Encodable, Sendable, Hashable {
+    let childSessionId: String
+    let parentSessionId: String
+    let mode: String
 
-    public init(childSessionId: String, parentSessionId: String) {
+    init(childSessionId: String, parentSessionId: String) {
         self.childSessionId = childSessionId
         self.parentSessionId = parentSessionId
         self.mode = "continuable"

@@ -8,7 +8,7 @@
 public enum HistoryTriggerPolicy {
     /// 低水位：距顶部不足两屏时请求。下限 240pt 兼容极矮的窗口。
     public static let screens: Double = 2
-    public static let minimumMargin: Double = 240
+    static let minimumMargin: Double = 240
 
     public static func margin(viewportHeight: Double) -> Double {
         max(minimumMargin, viewportHeight * screens)

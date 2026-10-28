@@ -345,4 +345,142 @@ func test_known_empty_round_trip_and_revision_replacement() async throws {
         XCTAssertEqual(second, [MessageStore.KnownEmptyRecord(revision: "11", spans: [9...9])],
                        "旧版本的结论必须被替换，不能与新版本混用")
     }
+
+    // MARK: - 尾轮边界的持久化副本（设计 M2'-1）
+
+    /// `session_state` 的列名（迁移附加性对照的第一半）。
+    private static func sessionStateColumns(_ db: Database) throws -> [String] {
+        try Row.fetchAll(db, sql: "PRAGMA table_info(session_state)")
+            .compactMap { $0["name"] as String? }
+    }
+
+    /// `session_state` 的全部列值压成一行字符串（第二半）。
+    private static func sessionStateSnapshot(_ db: Database) throws -> [String] {
+        try Row.fetchAll(db, sql: """
+            SELECT scope, session_id, oldest_seq, newest_seq, has_more, last_opened,
+                   last_snippet, unread_count, ranges_json
+            FROM session_state ORDER BY scope, session_id
+            """).map { row -> String in
+            let scope: String = row["scope"]
+            let sessionId: String = row["session_id"]
+            let oldest: Int? = row["oldest_seq"]
+            let newest: Int? = row["newest_seq"]
+            let hasMore: Int = row["has_more"]
+            let opened: Double = row["last_opened"]
+            let snippet: String? = row["last_snippet"]
+            let unread: Int = row["unread_count"]
+            let ranges: String = row["ranges_json"]
+            return [scope, sessionId, String(oldest ?? -1), String(newest ?? -1),
+                    String(hasMore), String(opened), snippet ?? "", String(unread), ranges]
+                .joined(separator: "|")
+        }
+    }
+
+    private func boundaryRows(_ store: MessageStore) async throws -> Int {
+        try await store.pool.read { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM session_tail") ?? 0
+        }
+    }
+
+    func test_tail_boundary_round_trip() async throws {
+        let started = Date(timeIntervalSince1970: 1_760_000_000)
+        try await store.setTailBoundary(
+            scope: "mac", sessionId: "s1",
+            try XCTUnwrap(StoredTailBoundary(.open(turn: 3, startedAt: started))))
+
+        let open = try await store.tailBoundary(scope: "mac", sessionId: "s1")
+        XCTAssertEqual(open?.boundary, StoredTailBoundary.openValue)
+        XCTAssertEqual(open?.turn, 3)
+        XCTAssertEqual(open?.startedAt, started)
+        XCTAssertEqual(open?.asBoundary, .open(turn: 3, startedAt: started),
+                       "读回值必须能还原成同一个边界事实")
+
+        try await store.setTailBoundary(
+            scope: "mac", sessionId: "s1",
+            try XCTUnwrap(StoredTailBoundary(.closed(turn: 3, reason: "completed"))))
+        let closed = try await store.tailBoundary(scope: "mac", sessionId: "s1")
+        XCTAssertEqual(closed?.asBoundary, .closed(turn: 3, reason: "completed"))
+        XCTAssertNil(closed?.startedAt, "换成 closed 之后旧的开始时刻不许留着")
+        let rows = try await boundaryRows(store)
+        XCTAssertEqual(rows, 1, "一个会话一行：再次写入是原地替换，不是追加")
+    }
+
+    func test_unknown_boundary_cannot_be_made_storable() {
+        // `.unknown` 不是一条证据：类型上就造不出可落库的行（M2'-4 的硬约束）。
+        XCTAssertNil(StoredTailBoundary(.unknown))
+    }
+
+    func test_tail_table_migration_is_additive() async throws {
+        let url = directory.appendingPathComponent("v4.sqlite3")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let pool = try DatabasePool(path: url.path)
+        // 只跑到 v4：得到"升级前的库"。
+        try MessageStore.migrator.migrate(pool, upTo: "v4-fts-all-content-parts")
+        try await pool.write { db in
+            try db.execute(sql: """
+                INSERT INTO session_state
+                  (scope, session_id, oldest_seq, newest_seq, has_more, last_opened,
+                   last_snippet, unread_count, ranges_json)
+                VALUES ('mac', 's1', 1, 9, 0, 1000, 'hello', 2, '[]')
+                """)
+        }
+        let before = try await pool.read { db in
+            (try Self.sessionStateColumns(db), try Self.sessionStateSnapshot(db))
+        }
+        try await pool.close()
+
+        let migrated = try MessageStore(path: url)
+        let after = try await migrated.pool.read { db in
+            (try Self.sessionStateColumns(db), try Self.sessionStateSnapshot(db))
+        }
+        XCTAssertEqual(after.0, before.0, "新迁移不许动 session_state 的列集合")
+        XCTAssertEqual(after.1, before.1,
+                       "新迁移只建表：session_state 的列与值一个字节都不许变")
+        let tables = try await migrated.tableNamesForTesting()
+        let tailRows = try await boundaryRows(migrated)
+        XCTAssertTrue(tables.contains("session_tail"))
+        XCTAssertEqual(tailRows, 0, "旧库升级后是空表 = 全部 unknown，不凭空造边界")
+    }
+
+    func test_clear_removes_tail_row() async throws {
+        try await store.setTailBoundary(
+            scope: "mac", sessionId: "s1",
+            try XCTUnwrap(StoredTailBoundary(.closed(turn: 2, reason: "completed"))))
+        try await store.setTailBoundary(
+            scope: "mac", sessionId: "s2",
+            try XCTUnwrap(StoredTailBoundary(.closed(turn: 5, reason: "completed"))))
+
+        try await store.clear(scope: "mac", sessionId: "s1")
+
+        let cleared = try await store.tailBoundary(scope: "mac", sessionId: "s1")
+        let kept = try await store.tailBoundary(scope: "mac", sessionId: "s2")
+        XCTAssertNil(cleared)
+        XCTAssertEqual(kept?.turn, 5, "清一个会话不许把别的会话一起清掉")
+    }
+
+    func test_clear_all_removes_tail_rows() async throws {
+        try await store.setTailBoundary(
+            scope: "mac", sessionId: "s1",
+            try XCTUnwrap(StoredTailBoundary(.closed(turn: 2, reason: "completed"))))
+        try await store.clearAll()
+        let remaining = try await boundaryRows(store)
+        XCTAssertEqual(remaining, 0)
+    }
+
+    func test_tail_write_throws_instead_of_silently_dropping() async throws {
+        // 为什么不是"把库路径指向只读目录"：WAL 的读写句柄在 `MessageStore.init` 里
+        // 已经打开，事后 chmod 对已打开的 fd 不生效，那样写会假成功。这里制造一次
+        // 真实的写失败（表不存在），断言是 `throw` 而不是静默丢弃。
+        try await store.pool.write { db in
+            try db.execute(sql: "DROP TABLE session_tail")
+        }
+        do {
+            try await store.setTailBoundary(
+                scope: "mac", sessionId: "s1",
+                try XCTUnwrap(StoredTailBoundary(.closed(turn: 1, reason: "completed"))))
+            XCTFail("写失败必须抛出，不许当成成功")
+        } catch {
+            // 期望路径：错误交给调用方落 `tail.persist.failed` 探针。
+        }
+    }
 }

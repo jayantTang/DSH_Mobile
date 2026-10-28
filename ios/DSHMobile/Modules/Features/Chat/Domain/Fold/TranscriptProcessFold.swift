@@ -6,6 +6,8 @@ import Foundation
 /// This is UI state, not transcript data: switching sessions or relaunching
 /// starts from the defaults. Keys are header identities, so a turn or group
 /// keeps its state while its members grow.
+///
+/// **结构护栏**：字段只有这三个"读者动作"集合；位置/几何/可见性字段一律不许进来。
 public struct TranscriptFoldState: Sendable, Equatable {
     /// `true` = the reader expanded the turn; `false` = collapsed it.
     /// Absent means "use the default": finished turns fold, stopped turns stay open.
@@ -15,18 +17,12 @@ public struct TranscriptFoldState: Sendable, Equatable {
     public var expandedGroups: Set<String>
     /// 读者亲手展开的**步骤卡**（概要 v2）：展开才按需取那一条正文。
     public var expandedSteps: Set<String>
-    /// The top fully visible row reported by the list host. Used to keep the
-    /// turn the reader is currently inside from collapsing under their finger.
-    public var readerTopRowID: String?
-
     public init(manualTurn: [String: Bool] = [:],
                 expandedGroups: Set<String> = [],
-                expandedSteps: Set<String> = [],
-                readerTopRowID: String? = nil) {
+                expandedSteps: Set<String> = []) {
         self.manualTurn = manualTurn
         self.expandedGroups = expandedGroups
         self.expandedSteps = expandedSteps
-        self.readerTopRowID = readerTopRowID
     }
 }
 
@@ -125,6 +121,7 @@ public enum TranscriptProcessFold {
         public let groups: [Group]
         public let isFoldable: Bool
         public let isRunning: Bool
+        public let isBoundaryUnknown: Bool
         public let hasFailure: Bool
         public let hasGap: Bool
         public let hasInterleavedInput: Bool
@@ -230,7 +227,7 @@ public enum TranscriptProcessFold {
     }
 
     public static func plan(items: [TimelineItem],
-                            isTurnOpen: Bool,
+                            tail: TranscriptTail,
                             currentTurn: Int = 0,
                             summaries: [FoldSummaryV2] = []) -> Plan {
         var segments: [Segment] = []
@@ -301,7 +298,8 @@ public enum TranscriptProcessFold {
         for (segmentIndex, segment) in segments.enumerated() {
             let range = segment.start..<(segment.end + 1)
             let isTail = segmentIndex == segments.count - 1
-            let isRunning = !segment.hasDivider && isTail && isTurnOpen
+            let facts = Self.tailFacts(isLast: isTail, hasDivider: segment.hasDivider, tail: tail)
+            let isRunning = facts.isRunning
 
             var leadingEnd = segment.start
             while leadingEnd <= segment.end,
@@ -393,11 +391,12 @@ public enum TranscriptProcessFold {
                 }
             }
 
-            // 提问/审批会中断一轮但没有 `turn/end`：桌面仍把中断前的最后一段
-            // 正式回答与 agent 图片留在外面，不折进过程。这里用同一判据补上。
+            // 提问/审批会中断一轮但没有 `turn/end`；边界事实也可能说尾轮已关闭而窗口里
+            // 没有分隔行。两种都要把末尾连续的回答行留在外面，否则收起态正文消失。
             if answerIndexes.isEmpty, !segment.hasDivider,
-               Self.segmentHasQuestion(range: leadingEnd..<answerEnd, items: items,
-                                       summaries: summariesForTurn) {
+               facts.settledWithoutDivider
+                || Self.segmentHasQuestion(range: leadingEnd..<answerEnd, items: items,
+                                           summaries: summariesForTurn) {
                 var last: Int?
                 for index in stride(from: answerEnd - 1, through: leadingEnd, by: -1)
                 where isAnswerRow(items[index]) {
@@ -597,7 +596,7 @@ public enum TranscriptProcessFold {
             // 缺失区间与中途输入不再取消整轮折叠；摘要也不再让整轮铺开——
             // 概要本身就代表"这一段已完成"，即使窗口里没有结束分隔线也按已完成折叠。
             let foldable = Self.isFoldable(
-                hasDivider: segment.hasDivider || hasPrefetchedSummary || hasSummaryV2,
+                hasDivider: facts.settled || hasPrefetchedSummary || hasSummaryV2,
                 isRunning: isRunning,
                 hasProcessRows: !processIndexes.isEmpty || !groups.isEmpty)
 
@@ -612,6 +611,7 @@ public enum TranscriptProcessFold {
                 groups: groups,
                 isFoldable: foldable,
                 isRunning: isRunning,
+                isBoundaryUnknown: facts.boundaryUnknown,
                 hasFailure: segment.hasFailure,
                 hasGap: segment.hasGap,
                 hasInterleavedInput: interleaved,

@@ -13,7 +13,7 @@ import Foundation
 ///       `specs/020-link-diagnostics/contracts/connector-diagnostics-method.md`
 public actor LinkDiagnostics {
     /// 环容量（条）。
-    public static let ringLimit = 200
+    static let ringLimit = 200
     /// 单文件上限（字节）。
     public static let maxBytes = 128 * 1024
     /// 单批导出上限（字节），与契约 §1 的 `args.events` 对齐。
@@ -74,7 +74,7 @@ public actor LinkDiagnostics {
     ///   - limit / maxBytes: 上限，测试注入小值以便覆盖滚动。
     public init(directory: URL? = nil,
                 now: @escaping @Sendable () -> Int = { Int(Date().timeIntervalSince1970 * 1000) },
-                limit: Int = LinkDiagnostics.ringLimit,
+                limit: Int = 200,   // = `ringLimit`（内部常量，默认参数只能用字面量）
                 maxBytes: Int = LinkDiagnostics.maxBytes,
                 batchBytes: Int = LinkDiagnostics.batchBytes) {
         self.directory = directory

@@ -166,7 +166,7 @@ public struct LinkGateway: Sendable {
     /// 下载器在包内构造（它直接持 `DSHClient`），App 只拿到对象、不碰 client。
     @MainActor
     public func fileDownloader(pacing: Duration = .milliseconds(50),
-                              retries: Int = WorkspaceFileDownloader.windowRetries)
+                              retries: Int = 4)   // = `windowRetries`（默认参数只能用字面量）
         -> WorkspaceFileDownloader? {
         guard let client = clientValue else { return nil }
         return WorkspaceFileDownloader(client: client, pacing: pacing, retries: retries)

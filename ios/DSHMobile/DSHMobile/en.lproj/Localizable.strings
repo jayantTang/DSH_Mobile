@@ -198,6 +198,12 @@
 "加载失败，点击重试" = "Couldn't load — tap to retry";
 "发送失败，点击重发" = "Couldn't send — tap to resend";
 "已到最早" = "Beginning of the conversation";
+/* 过程区占位行（设计 20261027 折叠抖动方案 A / M7）：三态各一条文案 */
+"过程区状态未确认" = "Process status not confirmed";
+"正在确认过程区状态…" = "Checking process status…";
+"读取过程区状态失败，点击重试" = "Could not read process status. Tap to retry";
+"过程区缺一段记录，点击重试" = "Part of the process log is missing. Tap to retry";
+"确认过程区状态超时，点击重试" = "Process status check timed out. Tap to retry";
 "继续下拉会接着往前读" = "Keep scrolling down to read further back";
 "已经读到这段会话的最开头。" = "You have reached the start of this conversation.";
 "提问已同步到本机，列表与搜索不联网。" = "Your questions are synced to this device; this list and its search work offline.";

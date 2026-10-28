@@ -34,9 +34,9 @@ public protocol ChatHosting: Sendable {
 }
 
 /// 排队控制不可用（旧连接器没有 `session/control` / `session/updateQueue`）。
-public struct SessionQueueUnavailable: Error, Sendable, Equatable {
-    public init() {}
-    public var description: String { "the connector does not support queued input control" }
+struct SessionQueueUnavailable: Error, Sendable, Equatable {
+    init() {}
+    var description: String { "the connector does not support queued input control" }
 }
 
 public extension ChatHosting {

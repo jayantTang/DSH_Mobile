@@ -48,7 +48,7 @@ public enum ActivityFixture {
     ///
     /// 曾经取"进程启动时刻"，在开机很久的机器上会算出几百小时（模拟器核对时出现 249:45:38），
     /// 看起来像数据坏了。3 分钟既能让"已跑时长"跳，又落在合理区间。
-    public static var processStartedAt: Double {
+    static var processStartedAt: Double {
         Date().timeIntervalSince1970 * 1000 - 180_000
     }
 
@@ -60,7 +60,7 @@ public enum ActivityFixture {
     /// - Parameter parentSessionId: 把夹具挂到哪个会话上。默认是夹具自己的固定 id；
     ///   UI 用例要开一个**真实存在**的（临时）会话时，把它传进来，面板才有内容可点。
     public static func canned(
-        startedAt: Double = ActivityFixture.processStartedAt,
+        startedAt: Double = Date().timeIntervalSince1970 * 1000 - 180_000,  // = `processStartedAt`
         at: Double = Date().timeIntervalSince1970 * 1000,
         parentSessionId: String = ActivityFixture.parentSessionId
     ) -> Content {

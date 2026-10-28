@@ -21,7 +21,7 @@ public enum OutgoingFiles {
     /// Twenty-four hours, not "anything not mine": the sweep runs while a
     /// transfer from a previous launch may still be a live task the system is
     /// about to resume, and a day is comfortably longer than any of those takes.
-    public static let sweepAge: TimeInterval = 24 * 60 * 60
+    static let sweepAge: TimeInterval = 24 * 60 * 60
 
     /// The root of the staging area: `Caches/outgoing-files`.
     public static var root: URL {
@@ -90,7 +90,7 @@ public enum OutgoingFiles {
     /// the per-send delete. Age is measured on the file, and only whole
     /// per-send directories older than `age` are removed.
     @discardableResult
-    public static func sweep(olderThan age: TimeInterval = sweepAge) -> Int {
+    public static func sweep(olderThan age: TimeInterval = 24 * 60 * 60) -> Int {   // = `sweepAge`（同上）
         let manager = FileManager.default
         guard let entries = try? manager.contentsOfDirectory(
             at: root, includingPropertiesForKeys: [.contentModificationDateKey]

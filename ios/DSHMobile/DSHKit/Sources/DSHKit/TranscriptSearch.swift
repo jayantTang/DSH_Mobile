@@ -123,7 +123,9 @@ public enum TranscriptSearch {
                 .filter { !$0.isEmpty }
             return parts.isEmpty ? nil : (.tool, parts.joined(separator: "\n"))
         case .reasoning, .notice, .turnDivider, .unknown, .gap, .processHeader, .processStep,
-             .runningLine:
+             .runningLine, .processPlaceholder:
+            // 占位行是显示态（「过程区状态未确认」），不是会话内容：搜它没有意义，
+            // 匹配到还会把读者带到一个不代表任何记录的行上。
             return nil
         }
     }

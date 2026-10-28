@@ -9,6 +9,16 @@ enum ProcessFoldFixtures {
         return SessionRecord(event: try JSONDecoder().decode(SessionEvent.self, from: data))
     }
 
+    /// 计划用的边界种子：测试只关心"这一轮在跑 / 已经结束 / 不知道"，
+    /// 不关心轮次号的细节。`running` 用窗口里最新观察到的轮次号。
+    static func tail(_ timeline: ChatTimeline, running: Bool) -> TranscriptTail {
+        let turn = max(timeline.currentTurn, 1)
+        let boundary: TranscriptTail.Boundary = running
+            ? .open(turn: turn, startedAt: nil)
+            : .closed(turn: turn, reason: "completed")
+        return TranscriptTail(boundary: boundary, showsTail: true)
+    }
+
     static func timeline(_ events: [[String: JSONValue]]) throws -> ChatTimeline {
         var timeline = ChatTimeline()
         for event in events {

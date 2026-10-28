@@ -7,7 +7,8 @@ import XCTest
 final class TranscriptProcessFoldEdgeTests: XCTestCase {
 
     private func plan(_ timeline: ChatTimeline, open: Bool = false) -> TranscriptProcessFold.Plan {
-        TranscriptProcessFold.plan(items: timeline.items, isTurnOpen: open,
+        TranscriptProcessFold.plan(items: timeline.items,
+                                   tail: ProcessFoldFixtures.tail(timeline, running: open),
                                    currentTurn: timeline.currentTurn)
     }
 
@@ -87,15 +88,30 @@ final class TranscriptProcessFoldEdgeTests: XCTestCase {
             hasDivider: true, isRunning: false, hasProcessRows: false))
     }
 
-    func test_tail_without_a_divider_and_not_running_is_not_folded() throws {
+    /// 尾段能不能折，由**边界事实**决定，不再由「窗口里有没有分隔行」推断。
+    ///
+    /// 旧断言（"没有分隔行且不在跑 ⇒ 不可折"）是本次删除的旧行为：它正是长轮次
+    /// 被条数切开后整段铺开的原因。现在两个世界的形状分开钉：
+    /// 边界不知道 ⇒ 不折（投影出占位行）；边界说已结束 ⇒ 折。
+    func test_a_tail_without_a_divider_is_decided_by_the_boundary() throws {
         let timeline = try ProcessFoldFixtures.timeline([
             ProcessFoldFixtures.turnStart(seq: 1, turn: 1),
             ProcessFoldFixtures.user(seq: 2, text: "q"),
             ProcessFoldFixtures.toolCall(seq: 3, callId: "c1", name: "bash"),
         ])
-        let turn = try XCTUnwrap(plan(timeline, open: false).turns.first)
-        XCTAssertFalse(turn.isFoldable)
-        XCTAssertTrue(turn.isPartial)
+        let unknown = try XCTUnwrap(
+            TranscriptProcessFold.plan(items: timeline.items, tail: .unknown,
+                                       currentTurn: timeline.currentTurn).turns.first)
+        XCTAssertFalse(unknown.isFoldable)
+        XCTAssertTrue(unknown.isBoundaryUnknown)
+        XCTAssertTrue(unknown.isPartial)
+
+        let closed = TranscriptTail(boundary: .closed(turn: 1, reason: "completed"), showsTail: true)
+        let settled = try XCTUnwrap(
+            TranscriptProcessFold.plan(items: timeline.items, tail: closed,
+                                       currentTurn: timeline.currentTurn).turns.first)
+        XCTAssertTrue(settled.isFoldable, "边界说这一轮结束了，就是可折叠")
+        XCTAssertFalse(settled.isBoundaryUnknown)
     }
 
     func test_header_falls_back_to_seq_when_the_turn_number_is_unknown() throws {
@@ -142,19 +158,6 @@ final class TranscriptProcessFoldEdgeTests: XCTestCase {
         XCTAssertTrue(expanded.contains { if case .assistantText(let text) = $0.kind { return text.hasPrefix("answer") }; return false })
     }
 
-    func test_reader_on_a_group_member_holds_the_turn_open() throws {
-        let timeline = try ProcessFoldFixtures.timeline(
-            ProcessFoldFixtures.completedTurn(turn: 1, startSeq: 1, tools: 4,
-                                               reasoning: 2, intermediate: true))
-        let plan = plan(timeline)
-        let turn = try XCTUnwrap(plan.turns.first)
-        let member = try XCTUnwrap(turn.groups.last?.indexes.first).self
-        let row = timeline.items[member]
-        var state = TranscriptFoldState()
-        state.readerTopRowID = row.id
-        XCTAssertTrue(TranscriptProcessFold.isTurnExpanded(turn, plan: plan, state: state))
-    }
-
     func test_projection_of_a_500_row_transcript_stays_under_the_budget() throws {
         var events: [[String: JSONValue]] = []
         var seq = 1
@@ -169,7 +172,7 @@ final class TranscriptProcessFoldEdgeTests: XCTestCase {
         var durations: [Double] = []
         for _ in 0..<20 {
             let started = CFAbsoluteTimeGetCurrent()
-            let plan = TranscriptProcessFold.plan(items: timeline.items, isTurnOpen: false,
+            let plan = TranscriptProcessFold.plan(items: timeline.items, tail: .unknown,
                                                   currentTurn: timeline.currentTurn)
             _ = TranscriptProcessFold.displayRows(plan, state: state)
             durations.append(CFAbsoluteTimeGetCurrent() - started)
@@ -179,7 +182,7 @@ final class TranscriptProcessFoldEdgeTests: XCTestCase {
         XCTAssertLessThan(average, 0.016, "average projection took \(average * 1000)ms")
         state.manualTurn["turn-process:1"] = true
         let expanded = TranscriptProcessFold.displayRows(
-            TranscriptProcessFold.plan(items: timeline.items, isTurnOpen: false),
+            TranscriptProcessFold.plan(items: timeline.items, tail: .unknown),
             state: state)
         XCTAssertGreaterThan(expanded.count, 0)
     }

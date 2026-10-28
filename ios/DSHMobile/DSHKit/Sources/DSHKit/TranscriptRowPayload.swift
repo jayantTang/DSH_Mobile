@@ -29,6 +29,8 @@ public struct TranscriptRowPayload {
         case processStep
         /// 末尾运行行：显示状态，没有载荷。
         case runningLine
+        /// 过程区占位行（20261027 折叠抖动方案 A / M7）：显示态，没有载荷。
+        case processPlaceholder
     }
 
     public let id: String
@@ -75,7 +77,7 @@ public struct TranscriptRowPayload {
         case .toolCall(let invocation):
             return invocation.arguments.utf8.count + invocation.resultText.utf8.count
         case .notice(let text, _): return text.utf8.count
-        case .processHeader, .processStep, .runningLine: return 0
+        case .processHeader, .processStep, .runningLine, .processPlaceholder: return 0
         default: return 0
         }
     }
@@ -84,7 +86,9 @@ public struct TranscriptRowPayload {
     public mutating func reclaim() {
         guard let item, !isReclaimed else { return }
         switch item.kind {
-        case .processHeader, .processStep, .runningLine: return
+        // 显示行（过程节点 / 步骤 / 运行行 / 占位行）没有磁盘记录可水合：
+        // 回收只会把"行还在但内容没了"变成永久状态。
+        case .processHeader, .processStep, .runningLine, .processPlaceholder: return
         default: break
         }
         state = .reclaimed(seq: item.seq, kind: Self.kind(of: item), height: height ?? 0)
@@ -107,6 +111,7 @@ public struct TranscriptRowPayload {
         case .processHeader: return .processHeader
         case .processStep: return .processStep
         case .runningLine: return .runningLine
+        case .processPlaceholder: return .processPlaceholder
         default: return .notice
         }
     }

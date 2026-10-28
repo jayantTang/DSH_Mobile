@@ -23,7 +23,8 @@ public extension TimelineItem {
             return ("工具 · \(invocation.name)", body, true)
 
         case .reasoning, .notice, .turnDivider, .unknown, .gap, .processHeader,
-             .processStep, .runningLine:
+             .processStep, .runningLine, .processPlaceholder:
+            // 占位行不是会话内容（它是显示态的提示），没有可复制/可单独阅读的正文。
             return nil
         }
     }

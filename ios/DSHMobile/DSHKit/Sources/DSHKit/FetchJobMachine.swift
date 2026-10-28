@@ -30,7 +30,7 @@ public struct FetchJobMachine: Sendable, Equatable {
     public static let defaultAttemptTimeout: TimeInterval = 3
     public static let defaultBatchBudget: TimeInterval = 6
     /// 首次 + 3 次退避，共 4 次尝试。
-    public static let defaultMaxAttempts = 4
+    static let defaultMaxAttempts = 4
     public static let defaultBackoff: [TimeInterval] = [0.5, 1, 2]
 
     public let slot: Slot
@@ -45,7 +45,7 @@ public struct FetchJobMachine: Sendable, Equatable {
     public init(slot: Slot,
                 attemptTimeout: TimeInterval = FetchJobMachine.defaultAttemptTimeout,
                 batchBudget: TimeInterval = FetchJobMachine.defaultBatchBudget,
-                maxAttempts: Int = FetchJobMachine.defaultMaxAttempts,
+                maxAttempts: Int = 4,   // = `defaultMaxAttempts`（同上：默认参数只能用字面量）
                 backoff: [TimeInterval] = FetchJobMachine.defaultBackoff) {
         self.slot = slot
         self.attemptTimeout = attemptTimeout

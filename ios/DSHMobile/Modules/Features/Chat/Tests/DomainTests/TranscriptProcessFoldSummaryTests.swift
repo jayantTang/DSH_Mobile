@@ -443,14 +443,14 @@ final class TranscriptProcessFoldSummaryTests: XCTestCase {
             ProcessFoldFixtures.completedTurn(turn: 1, startSeq: 1, tools: 3,
                                                reasoning: 1, intermediate: true))
         let legacy = TranscriptProcessFold.plan(
-            items: timeline.items, isTurnOpen: timeline.isTurnOpen,
+            items: timeline.items, tail: timeline.tail,
             currentTurn: timeline.currentTurn)
         var state = TranscriptFoldState()
         state.manualTurn[try XCTUnwrap(legacy.turns.first).key] = true
         let before = TranscriptProcessFold.displayRows(legacy, state: state).map(\.id)
 
         let withEmpty = TranscriptProcessFold.plan(
-            items: timeline.items, isTurnOpen: timeline.isTurnOpen,
+            items: timeline.items, tail: timeline.tail,
             currentTurn: timeline.currentTurn, summaries: [])
         XCTAssertEqual(TranscriptProcessFold.displayRows(withEmpty, state: state).map(\.id), before)
         XCTAssertEqual(legacy.turns.first?.summaries.count, 0)
@@ -471,7 +471,7 @@ final class TranscriptProcessFoldSummaryTests: XCTestCase {
         }
         XCTAssertEqual(summaries.count, 2)
         let plan = TranscriptProcessFold.plan(
-            items: timeline.items, isTurnOpen: false,
+            items: timeline.items, tail: .unknown,
             currentTurn: timeline.currentTurn, summaries: summaries)
         XCTAssertEqual(plan.turns.count, 1)
         XCTAssertEqual(plan.turns[0].summaries.count, 0, "别的轮次的概要不能认领这一段")

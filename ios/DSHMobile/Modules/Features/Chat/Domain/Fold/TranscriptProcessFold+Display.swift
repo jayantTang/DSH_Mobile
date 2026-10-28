@@ -26,36 +26,25 @@ extension TranscriptProcessFold {
         return RevealTarget(turnKey: turnKey, groupKey: plan.rowGroupKey[rowID], rowID: rowID)
     }
 
-    /// 整轮是否展开。
+    /// 整轮是否展开：**只读读者动作**。
+    ///
+    /// 这里曾经再读一个"读者顶部可见行"来保证"不把内容从读者脚下收走"，那正是
+    /// 抖动的结构原因：折叠结果决定渲染哪些行，渲染结果又决定顶部行，顶部行再回到
+    /// 折叠判定，两态互为输入、每帧翻转。现在"不收走"改成轮次关闭那一刻的**一次性**
+    /// 判定（`ChatModel.noteTailTransition` → `readerHold`），此后不再逐帧测量。
     ///
     /// 只有"能收起"的轮次才读状态：停止的轮次常开（桌面实拍），运行中的轮次
     /// 没有轮次行、过程区本来就铺开。
     public static func isTurnExpanded(_ turn: Turn, plan: Plan,
                                       state: TranscriptFoldState) -> Bool {
         guard turn.canCollapse else { return true }
-        if let manual = state.manualTurn[turn.key] { return manual }
-        guard let top = state.readerTopRowID else { return false }
-        // A group header is part of the process surface: keeping the turn open
-        // while the reader sits on it avoids collapsing the content under them.
-        if turn.groups.contains(where: { $0.key == top }) { return true }
-        guard let topTurn = plan.rowTurnKey[top],
-              topTurn == turn.key,
-              plan.processRowIDs.contains(top) else { return false }
-        return true
+        return state.manualTurn[turn.key] ?? false
     }
 
-    /// 一条分组行是否展开：读者亲手展开过，或者读者正停在组内某一行上
-    ///（同 `isTurnExpanded` 的理由：不能把读者脚下的内容收走）。
-    ///
-    /// 概要 v2 的组没有成员行（组内步骤是投影生成的行），所以读者停在组行本身
-    /// 或某条步骤行上时，这一组也算"正被阅读"，不能收走。
+    /// 一条分组行是否展开：只认读者亲手展开过的组（缺省收起，桌面同款）。
     public static func isGroupExpanded(_ group: Group, plan: Plan,
                                        state: TranscriptFoldState) -> Bool {
-        if state.expandedGroups.contains(group.key) { return true }
-        guard let top = state.readerTopRowID else { return false }
-        if top == group.key { return true }
-        if group.isFromSummary { return group.steps.contains { $0.id == top } }
-        return group.indexes.contains { plan.rows[$0].id == top }
+        state.expandedGroups.contains(group.key)
     }
 
     // MARK: - Display internals
@@ -78,7 +67,14 @@ extension TranscriptProcessFold {
             return displaySummary(turn, plan: plan, state: state)
         }
         if turn.isRunning { return displayRunning(turn, plan: plan, state: state) }
-        guard turn.isFoldable else { return withoutDivider(plan.rows[turn.range]) }
+        guard turn.isFoldable else {
+            // 边界未知、又没有别的"这一段已完成"的证据（分隔行/预折摘要/概要 v2）：
+            // 输出一行固定高度的占位行，而不是把原始行铺开（那会让首帧行高集合与
+            // 后续不一致，形态必跳一次）。能折叠时走正常折叠——摘要是比边界更强的证据。
+            return turn.isBoundaryUnknown
+                ? displayUnknown(turn, plan: plan, state: state)
+                : withoutDivider(plan.rows[turn.range])
+        }
         let expanded = isTurnExpanded(turn, plan: plan, state: state)
         let header = turnHeader(turn, expanded: expanded)
         let processSet = Set(turn.processIndexes)
