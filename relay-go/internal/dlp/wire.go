@@ -836,6 +836,11 @@ func textOf(content []byte) string {
 // sameBytes 比较 JSON 字段原始字节与期望值，零分配。
 //
 // `string(b) == s` 是编译器认得的无分配比较（不建字符串头）。
+// sameBytes 比的是**原始字节**。
+//
+// 只能用在 frame kind（`req` / `res` / `item` …）与 JSON 键名这类不含转义的 ASCII 上。
+// 字符串**值**一律走 FieldEquals：iOS 的 JSONEncoder 会把 `/` 写成 `\/`，
+// 字节比较会把真实请求全部漏掉（2026-10-29 的 `_link/hello` 就是这么漏的）。
 func sameBytes(raw []byte, want string) bool {
 	return len(raw) == len(want) && string(raw) == want
 }
