@@ -74,9 +74,9 @@ func TestHourlyActivityMergesBothUnits(t *testing.T) {
 // 否则日报上会出现一张全 0 的图。
 func TestHourlyActivityTreatsEmptyJournalAsNoLogs(t *testing.T) {
 	cases := map[string][]string{
-		"空串":   {""},
-		"提示行":  {"-- No entries --"},
-		"空数组":  nil,
+		"空串":  {""},
+		"提示行": {"-- No entries --"},
+		"空数组": nil,
 	}
 	for name, lines := range cases {
 		t.Run(name, func(t *testing.T) {

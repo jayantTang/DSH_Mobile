@@ -157,6 +157,10 @@ func (h *Hub) noteClientBuild(link *DeviceLink, wire dlp.Wire) {
 		return
 	}
 	reported := strings.Join(parts, " ")
+	// 每连接一次都留一行：排查"帧到没到"时，只靠"变了才写"的日志分不出
+	// "没上报"与"上报了但没变化"。
+	h.log.Info("relay: device handshake seen",
+		"deviceId", link.DeviceID, "build", reported)
 	// 记进当天那行要在"和上次一样就跳过"之前：重连时设备行里已经是这个构建号，
 	// 早退的话当天那行的 lastBuild 永远是空的。
 	h.usage.NoteBuild(link.ref(), reported)

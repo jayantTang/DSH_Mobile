@@ -302,3 +302,34 @@ func sameJSON(t *testing.T, left, right Frame) bool {
 	}
 	return string(leftJSON) == string(rightJSON)
 }
+
+// TestIsHelloAcceptsTheEscapedSlash 钉住真实设备线上的写法：iOS 的 JSONEncoder
+// 把 `_link/hello` 写成 `_link\/hello`。按原始字节比会漏掉每一条真实握手，
+// 中转因此记不到手机构建号（2026-10-29 实测）。
+func TestIsHelloAcceptsTheEscapedSlash(t *testing.T) {
+	escaped := testWire(t, `{"t":"req","id":"h1","method":"_link\/hello","args":{}}`)
+	if !escaped.IsHello() {
+		t.Fatal("带转义的 _link\\/hello 应被认成握手")
+	}
+	plain := testWire(t, `{"t":"req","id":"h2","method":"_link/hello","args":{}}`)
+	if !plain.IsHello() {
+		t.Fatal("不转义的 _link/hello 也应被认成握手")
+	}
+	other := testWire(t, `{"t":"req","id":"h3","method":"_link/other","args":{}}`)
+	if other.IsHello() {
+		t.Fatal("别的方法不该认成握手")
+	}
+}
+
+// testWire 把一段原始 JSON 扫成 Wire；坏帧直接失败。
+func testWire(t *testing.T, raw string) Wire {
+	t.Helper()
+	wire, damage, err := Scan([]byte(raw))
+	if err != nil {
+		t.Fatalf("Scan(%s): %v", raw, err)
+	}
+	if damage != nil {
+		t.Fatalf("用例里的帧不该带损伤：%s", raw)
+	}
+	return wire
+}

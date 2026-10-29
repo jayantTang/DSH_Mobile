@@ -447,9 +447,14 @@ func IsAgentControlKind(kind []byte) bool {
 // HelloMethod 是手机每条连接调一次的保留方法（连接器负责回答，中转只读参数）。
 const HelloMethod = "_link/hello"
 
-// IsHello 判断这一帧是不是 `_link/hello` 调用；零分配。
+// IsHello 判断这一帧是不是 `_link/hello` 调用。
+//
+// 方法名里带斜杠，而 iOS 的 JSONEncoder 会把它写成 `_link\/hello`：按原始字节比
+// （sameBytes）对真实设备永远不成立，中转因此记不到手机的构建号（2026-10-29 实测：
+// 连接器正常回答了 hello，中转一行"device handshake seen"都没有）。走 FieldEquals，
+// 只有带转义时才解码再比。
 func (w Wire) IsHello() bool {
-	return w.Is("req") && sameBytes(w.Field("method"), HelloMethod)
+	return w.Is("req") && w.FieldEquals("method", HelloMethod)
 }
 
 // IsStreamingKind 判断帧类型字节是否是流式帧（res / item）。
