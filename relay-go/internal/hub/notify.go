@@ -131,10 +131,17 @@ func (h *Hub) shouldPush(link *AgentLink, row store.Device, kind string) bool {
 func (h *Hub) noteClientBuild(link *DeviceLink, wire dlp.Wire) {
 	frame, err := wire.Decode()
 	if err != nil {
+		// 帧到了但解不开：说明握手调用存在、只是结构不对（不该发生，出现即查协议）。
+		h.log.Warn("relay: device handshake could not be decoded",
+			"deviceId", link.DeviceID, "error", err)
 		return
 	}
 	args, ok := frame["args"].(map[string]any)
 	if !ok {
+		// 2026-10-29 排查用：设备行里的构建号一直不刷新，先分清是"帧没到"还是
+		// "到了但没带字段"。这条只在解不出 args 时出现，平时不会刷日志。
+		h.log.Warn("relay: device handshake carried no args",
+			"deviceId", link.DeviceID)
 		return
 	}
 	var parts []string
@@ -144,6 +151,9 @@ func (h *Hub) noteClientBuild(link *DeviceLink, wire dlp.Wire) {
 		}
 	}
 	if len(parts) == 0 {
+		h.log.Warn("relay: device handshake carried no client build",
+			"deviceId", link.DeviceID, "clientVersion", args["clientVersion"],
+			"clientBuild", args["clientBuild"])
 		return
 	}
 	reported := strings.Join(parts, " ")

@@ -191,3 +191,29 @@ func TestSupersedeLogsBothGenerationsAndLifetime(t *testing.T) {
 		t.Fatalf("superseded 缺 oldDurationMs：%v", entry)
 	}
 }
+
+// TestDeviceHandshakeBuildReporting 钉住版本上报的两种失败形态：
+// 帧到了但没带 clientBuild、帧带全了。前者以前静默丢，2026-10-29 的日报里
+// 设备行一直停在旧构建号，就是靠这条日志才分得清"帧没到"和"字段空"。
+func TestDeviceHandshakeBuildReporting(t *testing.T) {
+	fixture, buffer := newHubLogFixture(t, Options{Limits: DefaultLimits()})
+	owner := fixture.newTenant("build-mac")
+	_, agentSink := fixture.attachAgent(owner)
+	device := fixture.pairDevice(owner, "M2-iPhone")
+	link, _ := fixture.mustAttachDevice(device)
+	waitFrame(t, agentSink, "deviceAttach", isKind("deviceAttach"))
+
+	fixture.hub.RouteFromDevice(link, scanWire(t,
+		`{"t":"req","id":"h1","method":"_link/hello","args":{"clientName":"DSHMobile"}}`))
+	missing := buffer.find(t, "relay: device handshake carried no client build")
+	if missing["deviceId"] != device.DeviceID {
+		t.Fatalf("缺构建号的告警没带设备：%v", missing)
+	}
+
+	fixture.hub.RouteFromDevice(link, scanWire(t,
+		`{"t":"req","id":"h2","method":"_link/hello","args":{"clientVersion":"1.0","clientBuild":"20261028.1033"}}`))
+	reported := buffer.find(t, "relay: device reports its build")
+	if reported["build"] != "1.0 20261028.1033" {
+		t.Fatalf("上报名不对：%v", reported)
+	}
+}
