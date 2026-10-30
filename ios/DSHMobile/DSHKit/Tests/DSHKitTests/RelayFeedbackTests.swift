@@ -646,7 +646,7 @@ struct RelayFeedbackTests {
     ///
     /// 抓取：2026-10-27 23:44（Asia/Shanghai），库 `/tmp/mailcopy.db` 的副本，
     /// `POST /dsh-link/feedback/inbox {"inboxVersion":2}`，调用方是团队账号
-    /// (`acc_8627cd6700f1b07cc4`) 的设备令牌；服务端即 `mail/create_app` + 真 SQLite。
+    /// （团队账号，已脱敏）的设备令牌；服务端即 `mail/create_app` + 真 SQLite。
     /// 内容：6 条线程（每线程 2 条留言，`mySide=owner`）、40 条通知摘要（无 `body`）、
     /// `limits`（4000/12000/80）、两路 `nextBefore`（线程到头、通知还有更多）。
     ///
