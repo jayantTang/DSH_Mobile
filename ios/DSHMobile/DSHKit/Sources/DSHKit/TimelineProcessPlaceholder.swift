@@ -1,4 +1,3 @@
-import CoreGraphics
 import Foundation
 
 /// 过程区「状态未确认」的占位行（设计 `20261027-折叠抖动-方案A.md` M7 / A4）。
