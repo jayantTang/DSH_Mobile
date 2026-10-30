@@ -43,6 +43,10 @@ const DEFAULTS = {
   relayUrl: process.env.DSH_RELAY_URL
     || process.env.DSH_MOBILE_LINK_RELAY
     || 'wss://relay.example.com/dsh-link',
+  // 面板的默认中转：只用于预填，不参与拨号优先级。它和 `relayUrl` 分开，是因为
+  // 把地址钉进 `relayUrl` 会覆盖身份文件里真正登记过的地址；这里只给表单一个
+  // 可修改的初值。
+  defaultRelayUrl: process.env.DSH_DEFAULT_RELAY_URL || '',
   agentId: '',
   agentSecret: '',
   stateFile: '',
@@ -101,6 +105,9 @@ function buildAgent(config, logger) {
   return new MobileLinkAgent({
     enabled: config.enabled !== false,
     relayUrl: typeof config.relayUrl === 'string' ? config.relayUrl : DEFAULTS.relayUrl,
+    defaultRelayUrl: typeof config.defaultRelayUrl === 'string'
+      ? config.defaultRelayUrl
+      : DEFAULTS.defaultRelayUrl,
     agentId: typeof config.agentId === 'string' ? config.agentId : '',
     agentSecret: typeof config.agentSecret === 'string' ? config.agentSecret : '',
     stateFile: typeof config.stateFile === 'string' && config.stateFile ? config.stateFile : undefined,

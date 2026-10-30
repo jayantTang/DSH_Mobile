@@ -7,7 +7,7 @@
 import { EventEmitter } from 'node:events'
 
 import { DshClient } from './dsh-client.js'
-import { agentEndpoint, decodeFrame, encodeFrameChecked, nextBackoff, normalizeRelayUrl, pongFor } from './dlp.js'
+import { agentEndpoint, decodeFrame, encodeFrameChecked, isPlaceholderRelayUrl, nextBackoff, normalizeRelayUrl, pongFor } from './dlp.js'
 
 /**
  * 进程级登记表：**同一个进程里只允许有一条到中转的 agent 连接**。
@@ -18,7 +18,7 @@ import { agentEndpoint, decodeFrame, encodeFrameChecked, nextBackoff, normalizeR
  * 挂在 `globalThis` 上是因为模块重载会把模块作用域清掉，只有进程级才留得住。
  */
 const LIVE_AGENT = Symbol.for('dsh.mobile-link.live-agent')
-import { enrollAgent, enrollCommand, inviteFrom } from './enroll.js'
+import { EnrollError, enrollAgent, enrollCommand, inviteFrom } from './enroll.js'
 import { handoffFromEndpoint, writeHandoff } from './handoff.js'
 import { LinkJournal, defaultJournalPath } from './journal.js'
 import { LogSpool, defaultLogsRoot } from './logs.js'
@@ -30,7 +30,7 @@ import {
 } from './router.js'
 import { SERVER_VERSION, SERVER_CAPABILITIES, hostVersion } from './hello.js'
 import { createJobsRoster } from './jobs-roster.js'
-import { MissingIdentity, resolveIdentity } from './state.js'
+import { MissingIdentity, defaultStatePath, readState, resolveIdentity } from './state.js'
 import { connect as wsConnect } from './ws.js'
 
 const PROTOCOL_VERSION = 1
@@ -64,7 +64,7 @@ export class MobileLinkAgent extends EventEmitter {
     slowRequestMs = DEFAULT_SLOW_REQUEST_MS,
     // 关掉手机推送的接收（回退闸）；见 contracts/connector-diagnostics-method.md §4。
     diagnostics = true,
-    inviteCode, fetchImpl = fetch, env = process.env,
+    inviteCode, defaultRelayUrl, fetchImpl = fetch, env = process.env,
     // 生命周期流水（见 journal.js）：`journal` 传实例（测试注入），`journalPath`
     // 传路径（`defaultJournalPath()` 之外的位置），false 表示只留内存不落盘。
     journal, journalPath,
@@ -76,7 +76,7 @@ export class MobileLinkAgent extends EventEmitter {
     eventsBacklog = numberFromEnv(env.DSH_MOBILE_LINK_EVENTS_BACKLOG, DEFAULT_EVENTS_BACKLOG),
   } = {}) {
     super()
-    this.config = { relayUrl, agentId, agentSecret, agentName, stateFile, dshUrl, inviteCode }
+    this.config = { relayUrl, defaultRelayUrl, agentId, agentSecret, agentName, stateFile, dshUrl, inviteCode }
     this.logger = logger
     this.heartbeatMs = heartbeatMs
     this.pongTimeoutMs = pongTimeoutMs
@@ -173,6 +173,8 @@ export class MobileLinkAgent extends EventEmitter {
     this._lastPong = 0
     this._loop = undefined
     this._loopActive = false
+    /** Single-flight guard for panel enrollment: two clicks redeem one code. */
+    this._enrolling = undefined
     this._watchdog = undefined
     this._lastProgressAt = 0
     this._abort = new AbortController()
@@ -285,7 +287,26 @@ export class MobileLinkAgent extends EventEmitter {
       }
     }
     globalThis[LIVE_AGENT] = this
-    if (this._loop) return this
+    // 只认"正在跑"的 loop：loop 可能因为未登记而结束，此时 `_loop` 还留着已完成的
+    // promise；拿它当"已在运行"会让面板登记完之后再也起不来。
+    if (this._loopActive) return this
+    // 显式 start 表示"要跑"：把 stop() 留下的栅栏放下来；不要靠 #launch 里
+    // 那个"正在停止就别启动"的保护来代劳。
+    this._stopping = false
+    this.#launch()
+    return this
+  }
+
+  /**
+   * Start one run of the reconnect loop.
+   *
+   * The single owner of "how a loop starts": `start()` calls it on boot and
+   * `enroll()` calls it after the identity is written. Never copy the loop
+   * bootstrapping into a second path — a divergent copy would skip the watchdog,
+   * the journal entry or the LIVE_AGENT bookkeeping.
+   */
+  #launch() {
+    if (this._stopping) return
     this._stopping = false
     this._abort = new AbortController()
     this.startedAt = this.now()
@@ -311,7 +332,6 @@ export class MobileLinkAgent extends EventEmitter {
     }).finally(() => {
       this._loopActive = false
     })
-    return this
   }
 
   async stop() {
@@ -397,7 +417,13 @@ export class MobileLinkAgent extends EventEmitter {
    * starts) and because `status()` reports whether it is still outstanding.
    */
   async enrollNow() {
-    const relayUrl = this.config.relayUrl
+    // A packaged install may pin only `defaultRelayUrl` (the panel prefill) and
+    // leave `relayUrl` at the placeholder; boot-time enrollment should still use
+    // the default rather than dial example.com.
+    const configured = this.config.relayUrl
+    const relayUrl = configured && !isPlaceholderRelayUrl(configured)
+      ? configured
+      : (this.config.defaultRelayUrl || configured)
     const settled = await enrollAgent({
       relayUrl,
       inviteCode: inviteFrom({ inviteCode: this.config.inviteCode, env: this.env }),
@@ -406,15 +432,81 @@ export class MobileLinkAgent extends EventEmitter {
       fetchImpl: this.fetchImpl,
       logger: this.logger,
     })
+    this.identity = settled
     this.needsEnroll = false
     this.lastError = undefined
     this.emit('status')
     return settled
   }
 
+  /**
+   * Redeem an invite code supplied by the panel, then start the link in place.
+   *
+   * This is the only path that may enroll *while the process is running*. It is
+   * single-flight (a double click must not consume two codes), refuses to replace
+   * an existing identity, and writes nothing on failure. On success the loop is
+   * relaunched here, so the person does not have to restart DSH.
+   *
+   * @param {{inviteCode: string, relayUrl: string, agentName?: string}} options
+   */
+  enroll({ inviteCode, relayUrl, agentName } = {}) {
+    if (this._enrolling) return this._enrolling
+    this._enrolling = this.#enrollOnce({ inviteCode, relayUrl, agentName })
+      .finally(() => { this._enrolling = undefined })
+    return this._enrolling
+  }
+
+  async #enrollOnce({ inviteCode, relayUrl, agentName }) {
+    if (this.enabled === false) {
+      throw new EnrollError('enroll/disabled', 'mobile-link: the connector is disabled; enable it before enrolling')
+    }
+    if (this._stopping) {
+      throw new EnrollError('enroll/unavailable', 'mobile-link: the connector is stopping; try again')
+    }
+    const stateFile = this.config.stateFile || defaultStatePath()
+    const existing = await readState(stateFile)
+    if (existing?.agentId && existing?.agentSecret) {
+      // Never replace a working identity behind the user's back: that would
+      // silently unpair every phone that is already attached.
+      throw new EnrollError('enroll/already-registered',
+        `mobile-link: this computer is already registered (${existing.agentId}); refusing to replace it`,
+        { status: 409 })
+    }
+
+    const settled = await enrollAgent({
+      relayUrl,
+      inviteCode,
+      name: agentName,
+      stateFile,
+      fetchImpl: this.fetchImpl,
+      logger: this.logger,
+    })
+
+    // Publish the fresh identity before relaunching: `#enrollPending()` consults
+    // `this.identity`, and a stale value would make the new loop redeem the
+    // configured/env invite a second time on top of what the panel just wrote.
+    this.identity = settled
+    this.needsEnroll = false
+    this.lastError = undefined
+    this.reconnectAttempts = 0
+    this.emit('status')
+
+    if (this.enabled !== false && !this._stopping) {
+      // If the previous loop is unwinding, let it finish before starting a new
+      // one; two loops would fight over the same relay agent session.
+      if (this._loopActive) await this._loop?.catch(() => {})
+      if (!this._loopActive && !this._stopping) this.#launch()
+    }
+    return settled
+  }
+
   /** What a person has to run to register this computer. */
   enrollHint() {
-    return enrollCommand(this.config.relayUrl, this.config.agentName)
+    const configured = this.config.relayUrl
+    const relay = configured && !isPlaceholderRelayUrl(configured)
+      ? configured
+      : (this.config.defaultRelayUrl || configured)
+    return enrollCommand(relay, this.config.agentName)
   }
 
   /** One relay connection: resolves when the socket closes. */

@@ -17,11 +17,14 @@ they differ only in who runs the relay.
 
 1. **Install the app** from the TestFlight link above.
 2. **Install the connector** on your computer (step 2 above), then keep DSH running.
-3. **Enrol this computer with an invite code.** Claim one from
-   [issue #1](https://github.com/jayantTang/DSH_Mobile/issues/1) — one code enrols one computer,
-   and the connector prints the enrolment command when it starts without an identity.
-4. **Restart DSH** so the connector picks up its new identity. After that it reconnects by itself.
-5. **Pair the phone:** click **移动端连接** at the bottom of the sidebar in DSH and scan the QR
+3. **Register this computer from the panel.** Claim an invite code from
+   [issue #1](https://github.com/jayantTang/DSH_Mobile/issues/1) — one code enrols one computer.
+   Click **移动端连接** at the bottom of the DSH sidebar; the relay address is prefilled, type the
+   code and click **登记并连接**. The connector saves the identity and reconnects in place.
+4. **Headless installs only:** use `dsh-mobile-link enroll --invite … --relay …`, or start the host
+   with `DSH_MOBILE_LINK_INVITE` so registration and connection happen in the same boot. The panel
+   path needs neither a terminal nor a restart.
+5. **Pair the phone:** the same **移动端连接** panel now shows the QR code; scan it
    code it shows; the relay address and the pairing code are both inside that code, so nothing has
    to be typed. The code is persistent and can be claimed again for another phone, a reinstall or
    a new device; click 重新生成 only when you want to revoke it. (With no GUI around,

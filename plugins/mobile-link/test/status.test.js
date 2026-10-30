@@ -169,3 +169,43 @@ test('the doc anchors this payload promises really exist in ONBOARDING', async (
     assert.ok(doc.includes(`## ${title}`), `ONBOARDING 里没有小节「${title}」`)
   }
 })
+
+test('the enrollment block exposes a safe relay prefill and its lock', () => {
+  const configured = statusSnapshot(fakeAgent({
+    needsEnroll: true,
+    identity: undefined,
+    config: { relayUrl: 'wss://relay.test/dsh-link', stateFile: '/tmp/agent.json' },
+  }))
+  assert.equal(configured.enroll.panel, true)
+  assert.equal(configured.enroll.relayPrefill, 'wss://relay.test/dsh-link')
+  assert.equal(configured.enroll.relayLocked, true)
+  assert.equal(configured.enroll.relayUrl, 'wss://relay.test/dsh-link')
+
+  const placeholder = statusSnapshot(fakeAgent({
+    needsEnroll: true,
+    identity: undefined,
+    config: { relayUrl: 'wss://relay.example.com/dsh-link', stateFile: '/tmp/agent.json' },
+  }))
+  assert.equal(placeholder.enroll.relayPrefill, null, 'the placeholder is "unset", never a prefill')
+  assert.equal(placeholder.enroll.relayLocked, false)
+  assert.equal(placeholder.enroll.relayUrl, null, 'the placeholder must not be reported as a real relay')
+
+  const registered = statusSnapshot(fakeAgent())
+  assert.equal(registered.enroll.relayUrl, 'ws://relay.test')
+  assert.equal(registered.enroll.relayLocked, true)
+
+  const formDefault = statusSnapshot(fakeAgent({
+    needsEnroll: true,
+    identity: undefined,
+    config: {
+      relayUrl: 'wss://relay.example.com/dsh-link',
+      defaultRelayUrl: 'wss://relay.test/dsh-link',
+      stateFile: '/tmp/agent.json',
+    },
+  }))
+  assert.equal(formDefault.enroll.relayPrefill, 'wss://relay.test/dsh-link',
+    'a form default prefill must not require a real relayUrl')
+  assert.equal(formDefault.enroll.relayLocked, false, 'the form default stays editable')
+  assert.equal(formDefault.enroll.relayUrl, null,
+    'the form default is not an authoritative relay address')
+})

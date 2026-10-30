@@ -6,6 +6,7 @@
  * 函数只读 agent 的字段，不持有状态，因此可以直接被单测调用。
  */
 
+import { isPlaceholderRelayUrl } from './dlp.js'
 import { SERVER_CAPABILITIES, SERVER_VERSION, hostVersion } from './hello.js'
 
 const PROTOCOL_VERSION = 1
@@ -81,6 +82,26 @@ const STATUS_JOURNAL_ENTRIES = 20
  */
 export function statusSnapshot(agent) {
   const hostEntry = HOST_HINTS[agent.hostForm] ?? HOST_HINTS.unknown
+  // One resolved view of the relay address, shared by the form and the panel:
+  // a configured address outranks the identity, but the repository placeholder
+  // is "unset", never a value to prefill. `relayLocked` says the address came
+  // from config/env, so the form must be read-only — otherwise the panel would
+  // enroll with one address and the next boot would dial another.
+  const configuredRelay = typeof agent.config?.relayUrl === 'string' ? agent.config.relayUrl : ''
+  const realConfiguredRelay = configuredRelay && !isPlaceholderRelayUrl(configuredRelay)
+    ? configuredRelay
+    : null
+  // `defaultRelayUrl` is a *form default*, not a dialing override: it only
+  // prefills the input, so the user can replace it and the identity file still
+  // wins on the next boot. A real `relayUrl` is the operator pin and locks it.
+  const configuredDefault = typeof agent.config?.defaultRelayUrl === 'string'
+    ? agent.config.defaultRelayUrl
+    : ''
+  const defaultRelay = configuredDefault && !isPlaceholderRelayUrl(configuredDefault)
+    ? configuredDefault
+    : null
+  const effectiveRelay = agent.identity?.relayUrl ?? realConfiguredRelay ?? null
+  const relayPrefill = realConfiguredRelay ?? defaultRelay ?? agent.identity?.relayUrl ?? null
   return {
     ok: true,
     enabled: agent.enabled !== false,
@@ -102,11 +123,18 @@ export function statusSnapshot(agent) {
       // computer half is installed but not yet registered, and what to run.
       registered: !agent.needsEnroll,
       needsEnroll: agent.needsEnroll,
+      // `panel` is a host-UI capability, not a phone capability: an older
+      // connector omits it, and the panel falls back to the command. It is
+      // deliberately not in SERVER_CAPABILITIES (that list is what the app asks
+      // for over `_link/hello`; the phone has no use for a panel form).
+      panel: true,
       stateFile: agent.identity?.stateFile ?? agent.config.stateFile ?? null,
-      relayUrl: agent.config.relayUrl ?? null,
+      relayUrl: effectiveRelay,
+      relayPrefill,
+      relayLocked: Boolean(realConfiguredRelay),
       command: agent.needsEnroll ? agent.enrollHint() : null,
       hint: agent.needsEnroll
-        ? '这台电脑还没有登记到中转。请带上邀请码运行一次登记命令，然后重启 DSH。'
+        ? '这台电脑还没有登记到中转。在「移动端连接」面板里填入中转地址与激活码即可。'
         : null,
     },
     state: agent.state,

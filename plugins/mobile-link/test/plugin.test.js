@@ -21,6 +21,7 @@ process.env.DSH_HOME = TEST_HOME
 process.on('exit', () => rmSync(TEST_HOME, { recursive: true, force: true }))
 
 import * as plugin from '../lib/index.js'
+import { EnrollError } from '../lib/enroll.js'
 
 const BASE_CONFIG = {
   enabled: false,
@@ -110,7 +111,7 @@ test('the plugin advertises no required services', () => {
 test('apply registers every route through ctx.inject and starts the agent', () => {
   const { ctx, routes, effects, injected } = fakeContext()
   plugin.apply(ctx, BASE_CONFIG)
-  assert.deepEqual([...routes.keys()].sort(), ['/mobile-link/pair-code', '/mobile-link/pair-code/regenerate', '/mobile-link/status'])
+  assert.deepEqual([...routes.keys()].sort(), ['/mobile-link/enroll', '/mobile-link/pair-code', '/mobile-link/pair-code/regenerate', '/mobile-link/status'])
   // `sessionQuery` is injected **optionally**: history reads fall back to
   // `session/page` when the Host does not have the service (spec 007 FR-002).
   // `jobs` / `sessions` 同理（spec 018）：缺了活动名单回 `link/unsupported`，
@@ -200,6 +201,11 @@ test('wrong HTTP methods get a 405 with Allow', async () => {
   await routes.get('/mobile-link/pair-code').handler(fakeRequest('GET'), pair)
   assert.equal(pair.statusCode, 405)
   assert.equal(pair.headers.allow, 'POST')
+
+  const enroll = fakeResponse()
+  await routes.get('/mobile-link/enroll').handler(fakeRequest('GET'), enroll)
+  assert.equal(enroll.statusCode, 405)
+  assert.equal(enroll.headers.allow, 'POST')
 })
 
 // ── POST /mobile-link/pair-code ────────────────────────────────────────────
@@ -302,6 +308,79 @@ test('POST /mobile-link/pair-code fails closed when the relay is unreachable', a
   assert.equal(body.svg, undefined, '拿不到码就不许给半张图')
 })
 
+// ── POST /mobile-link/enroll ────────────────────────────────────────────────
+
+/** Runs `fn` with every agent's `enroll` replaced. */
+async function withEnroll(stub, fn) {
+  const original = plugin.MobileLinkAgent.prototype.enroll
+  plugin.MobileLinkAgent.prototype.enroll = stub
+  try {
+    return await fn()
+  } finally {
+    plugin.MobileLinkAgent.prototype.enroll = original
+  }
+}
+
+const ENROLLED = {
+  agentId: 'agt_panel', agentSecret: 'as_must_not_leak', agentName: 'Panel Mac',
+  relayUrl: 'wss://relay.test/dsh-link', stateFile: '/tmp/agent.json',
+}
+
+test('POST /mobile-link/enroll returns the identity facts but never the secret', async () => {
+  const { ctx, routes } = fakeContext()
+  plugin.apply(ctx, BASE_CONFIG)
+  const res = fakeResponse()
+  await withEnroll(async () => ({ ...ENROLLED }), async () => {
+    await routes.get('/mobile-link/enroll').handler(fakeRequest('POST', {
+      relayUrl: 'wss://relay.test/dsh-link', inviteCode: 'ABCD-EFGH', agentName: 'Panel Mac',
+    }), res)
+  })
+  assert.equal(res.statusCode, 200)
+  const body = JSON.parse(res.body)
+  assert.deepEqual(Object.keys(body).sort(), ['agentId', 'agentName', 'ok', 'relayUrl'])
+  assert.equal(body.agentId, 'agt_panel')
+  assert.equal(body.ok, true)
+  assert.equal(body.agentSecret, undefined, 'the browser must never receive the durable secret')
+})
+
+test('POST /mobile-link/enroll maps enrollment failures to a code and status', async () => {
+  const { ctx, routes } = fakeContext()
+  plugin.apply(ctx, BASE_CONFIG)
+  const cases = [
+    ['enroll/used', 400],
+    ['enroll/already-registered', 409],
+    ['enroll/timeout', 504],
+    ['enroll/rate-limited', 429],
+    ['enroll/state-write', 500],
+    ['enroll/relay-error', 502],
+  ]
+  for (const [code, status] of cases) {
+    const res = fakeResponse()
+    await withEnroll(async () => { throw new EnrollError(code, `failed: ${code}`) }, async () => {
+      await routes.get('/mobile-link/enroll').handler(fakeRequest('POST', {
+        relayUrl: 'wss://relay.test/dsh-link', inviteCode: 'CODE',
+      }), res)
+    })
+    assert.equal(res.statusCode, status, code)
+    const body = JSON.parse(res.body)
+    assert.equal(body.ok, false)
+    assert.equal(body.code, code)
+  }
+})
+
+test('POST /mobile-link/enroll validates the two required fields before calling the agent', async () => {
+  const { ctx, routes } = fakeContext()
+  plugin.apply(ctx, BASE_CONFIG)
+  let calls = 0
+  await withEnroll(async () => { calls += 1 }, async () => {
+    const res = fakeResponse()
+    await routes.get('/mobile-link/enroll').handler(fakeRequest('POST', { relayUrl: 'wss://relay.test/dsh-link' }), res)
+    assert.equal(res.statusCode, 400)
+    assert.equal(JSON.parse(res.body).code, 'enroll/bad-request')
+  })
+  assert.equal(calls, 0)
+})
+
 test('detectHostForm reads evidence from the process, never from inherited env', () => {
   // 官方桌面版：入口脚本是私有的 dsh-desktop-host，或可执行文件在应用包里。
   assert.equal(plugin.detectHostForm({ argv: ['node', '/x/@deepseek-ai/dsh-desktop-host/lib/index.js'], execPath: '/usr/bin/node' }), 'desktop')
@@ -339,13 +418,13 @@ test('the status snapshot carries the host form the plugin set', () => {
 test('with no connection service the routes stay registered and the privileged ones fail closed', async () => {
   const { ctx, routes } = fakeContext({ fence: 'missing' })
   assert.doesNotThrow(() => plugin.apply(ctx, BASE_CONFIG))
-  assert.equal(routes.size, 3, 'connection 缺失不该让路由消失')
+  assert.equal(routes.size, 4, 'connection 缺失不该让路由消失')
 
   const status = fakeResponse()
   await routes.get('/mobile-link/status').handler(fakeRequest('GET'), status)
   assert.equal(status.statusCode, 200, '/status 是诊断用的，栅栏缺失时仍要能读')
 
-  for (const path of ['/mobile-link/pair-code', '/mobile-link/pair-code/regenerate']) {
+  for (const path of ['/mobile-link/enroll', '/mobile-link/pair-code', '/mobile-link/pair-code/regenerate']) {
     const pair = fakeResponse()
     await routes.get(path).handler(fakeRequest('POST', {}), pair)
     assert.equal(pair.statusCode, 403, `${path} 必须失败关闭`)

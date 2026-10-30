@@ -16,8 +16,29 @@
  * invite code must be present, because the relay is on the public internet.
  */
 
-import { enrollEndpoint } from './dlp.js'
+import { enrollEndpoint, isPlaceholderRelayUrl, normalizeRelayUrl } from './dlp.js'
 import { DEFAULT_AGENT_NAME, INVITE_ENV, defaultStatePath, readState, writeState } from './state.js'
+
+/**
+ * A failed enrollment, tagged with a machine-readable code.
+ *
+ * The CLI prints `.message`; the panel maps `.code` to Chinese copy. Keeping both
+ * on one error is deliberate: the relay's three invite failures need different
+ * advice, and the UI must not re-parse English text to find out which one it got.
+ */
+export class EnrollError extends Error {
+  constructor(code, message, { status, retryable = false, stateFile } = {}) {
+    super(message)
+    this.name = 'EnrollError'
+    this.code = code
+    this.status = status
+    this.retryable = Boolean(retryable)
+    if (stateFile) this.stateFile = stateFile
+  }
+}
+
+/** How long a relay may take to answer an enrollment before it is called stuck. */
+export const ENROLL_TIMEOUT_MS = 15000
 
 /** Where the invite code may come from: explicit argument, then environment. */
 export function inviteFrom({ inviteCode, env = process.env } = {}) {
@@ -59,44 +80,103 @@ export async function enrollPlan({ stateFile, inviteCode, relayUrl, env = proces
  */
 export async function enrollAgent({
   relayUrl, inviteCode, name, stateFile, deviceName,
-  fetchImpl = fetch, logger = undefined,
+  fetchImpl = fetch, logger = undefined, timeoutMs = ENROLL_TIMEOUT_MS,
 } = {}) {
   if (!inviteCode || !String(inviteCode).trim()) {
-    throw new Error('mobile-link: an invite code is required to enroll (--invite <code>)')
+    throw new EnrollError('enroll/bad-request', 'mobile-link: an invite code is required to enroll (--invite <code>)')
   }
   if (!relayUrl || !String(relayUrl).trim()) {
-    throw new Error('mobile-link: a relay URL is required to enroll (--relay <url>)')
+    throw new EnrollError('enroll/bad-request', 'mobile-link: a relay URL is required to enroll (--relay <url>)')
   }
+  // Validate before the network call: a typo in the relay address should not
+  // look like a rejected invite, and the placeholder shipped in the repository
+  // must never be dialed as if it were a deployment.
+  try {
+    normalizeRelayUrl(relayUrl)
+  } catch (error) {
+    throw new EnrollError('enroll/invalid-relay',
+      `mobile-link: invalid relay URL ${JSON.stringify(relayUrl)}: ${messageOf(error)}`)
+  }
+  if (isPlaceholderRelayUrl(relayUrl)) {
+    throw new EnrollError('enroll/placeholder-relay',
+      'mobile-link: the relay address is the repository placeholder; use the address your provider gave you')
+  }
+
   const path = stateFile || defaultStatePath()
   const agentName = (name || deviceName || '').trim() || DEFAULT_AGENT_NAME
+  const waitMs = Number.isFinite(Number(timeoutMs)) && Number(timeoutMs) > 0
+    ? Number(timeoutMs)
+    : ENROLL_TIMEOUT_MS
+
+  // `Promise.race` rather than relying on the signal alone: an injected fetch
+  // (or a runtime that does not honour AbortSignal) must still surface a
+  // timeout instead of leaving the panel on "登记中" forever.
+  const controller = new AbortController()
+  let timer
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      controller.abort()
+      reject(new EnrollError('enroll/timeout',
+        `mobile-link: the relay did not answer within ${waitMs} ms`, { retryable: true }))
+    }, waitMs)
+    // Deliberately NOT unref'd: if an injected fetch holds no handle, an unref'd
+    // timer lets Node decide the event loop is empty and exit with the promise
+    // still pending (caught by the Linux L2 run). The timer is cleared on every
+    // settled fetch, so it only keeps the process alive while a request is
+    // genuinely outstanding.
+  })
 
   let response
   try {
-    response = await fetchImpl(enrollEndpoint(relayUrl), {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ inviteCode: String(inviteCode).trim(), name: agentName }),
-    })
+    response = await Promise.race([
+      fetchImpl(enrollEndpoint(relayUrl), {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ inviteCode: String(inviteCode).trim(), name: agentName }),
+        signal: controller.signal,
+      }),
+      timeout,
+    ])
   } catch (error) {
-    throw new Error(`mobile-link: cannot reach the relay at ${relayUrl}: ${messageOf(error)}`)
+    if (error instanceof EnrollError) throw error
+    throw new EnrollError('enroll/unreachable',
+      `mobile-link: cannot reach the relay at ${relayUrl}: ${messageOf(error)}`, { retryable: true })
+  } finally {
+    clearTimeout(timer)
   }
 
   let body
   try {
     body = await response.json()
   } catch {
-    throw new Error(`mobile-link: the relay answered HTTP ${response.status} to /agents/enroll`)
+    throw new EnrollError('enroll/bad-response',
+      `mobile-link: the relay answered HTTP ${response.status} to /agents/enroll`,
+      { status: response.status })
   }
   if (!response.ok || body?.ok !== true || !body.agentId || !body.agentSecret) {
-    throw new Error(describeEnrollFailure(body, response.status))
+    const code = body?.error?.code
+    throw new EnrollError(typeof code === 'string' && code ? code : 'enroll/relay-error',
+      describeEnrollFailure(body, response.status), {
+        status: response.status,
+        retryable: code === 'enroll/rate-limited' || code === 'enroll/store-error' || code === 'internal/error',
+      })
   }
 
-  await writeState(path, {
-    relayUrl,
-    agentId: body.agentId,
-    agentSecret: body.agentSecret,
-    agentName: body.agentName || agentName,
-  })
+  try {
+    await writeState(path, {
+      relayUrl,
+      agentId: body.agentId,
+      agentSecret: body.agentSecret,
+      agentName: body.agentName || agentName,
+    })
+  } catch (error) {
+    // The code has already been redeemed at this point. Say so explicitly:
+    // retrying with the same code will fail with "already used", and the person
+    // needs to know the identity could not be saved (and where).
+    throw new EnrollError('enroll/state-write',
+      `mobile-link: the identity was redeemed but could not be saved to ${path}: ${messageOf(error)}`,
+      { stateFile: path })
+  }
   logger?.info?.(`mobile-link: enrolled as ${body.agentId} (${body.agentName || agentName})`)
   return {
     agentId: body.agentId,

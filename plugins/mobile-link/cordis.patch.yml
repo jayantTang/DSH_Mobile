@@ -17,6 +17,11 @@
 #                  ws://127.0.0.1:8787). Left unset here on purpose: a value
 #                  pinned in this file outranks both DSH_RELAY_URL and the
 #                  address already enrolled in ~/.dsh/mobile-link/agent.json.
+#   defaultRelayUrl  Form-only default for the 移动端连接 panel. It prefills the
+#                  relay input but does not outrank the identity file, so a user
+#                  can edit it and the edit survives a restart. Official installs
+#                  set this (not `relayUrl`) to prefill the real address.
+#                  Status: enroll.relayPrefill / relayLocked.
 #   agentId        overrides ~/.dsh/mobile-link/agent.json
 #   agentSecret    overrides ~/.dsh/mobile-link/agent.json
 #   stateFile      agent identity file (default ~/.dsh/mobile-link/agent.json)

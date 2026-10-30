@@ -28,7 +28,9 @@
 | 设备管理 | 中转 `GET /devices`、`POST /devices/revoke` + `dsh-relay admin device-list`；**App 设置页已可看已配对设备并撤销** |
 | 直连入口 | App 连接页**已去掉**，只保留中转配对；`dsh://direct` 仅 DEBUG 参数 |
 
-**登记入口**：连接器用一次性邀请码走 `POST /agents/enroll` 自助领取 `agentId` + `agentSecret`；
+**登记入口**：连接器用一次性邀请码走 `POST /agents/enroll` 自助领取 `agentId` + `agentSecret`。
+首选是在 DSH 界面左下角「移动端连接」面板里填激活码（默认中转已预填，登记后原地重连）；
+无头 / 自动化安装仍可用 `dsh-mobile-link enroll` 或 `DSH_MOBILE_LINK_INVITE`。
 运营者仍可用 `dsh-relay admin agent-register` 手工预置或轮换身份。
 
 ## 目标形态

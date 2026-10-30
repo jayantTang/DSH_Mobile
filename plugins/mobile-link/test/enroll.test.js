@@ -7,12 +7,12 @@
  */
 
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, stat } from 'node:fs/promises'
+import { mkdtemp, readFile, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
-import { enrollAgent, enrollPlan, inviteFrom } from '../lib/enroll.js'
+import { EnrollError, enrollAgent, enrollPlan, inviteFrom } from '../lib/enroll.js'
 import { enrollEndpoint } from '../lib/dlp.js'
 import { INVITE_ENV, MissingIdentity, readState, resolveIdentity } from '../lib/state.js'
 
@@ -166,4 +166,72 @@ test('enrollEndpoint keeps the relay path prefix', () => {
   assert.equal(enrollEndpoint('wss://host/dsh-link'), 'https://host/dsh-link/agents/enroll')
   assert.equal(enrollEndpoint('http://127.0.0.1:8787'), 'http://127.0.0.1:8787/agents/enroll')
   assert.equal(enrollEndpoint('https://host/prefix/'), 'https://host/prefix/agents/enroll')
+})
+
+test('the relay failure keeps its machine code for the panel', async () => {
+  const path = await statePath()
+  const { fetchImpl } = relayStub({ status: 404, body: { ok: false, error: { code: 'enroll/used', message: 'nope' } } })
+  await assert.rejects(
+    () => enrollAgent({ relayUrl: RELAY, inviteCode: 'used', stateFile: path, fetchImpl }),
+    (error) => {
+      assert.ok(error instanceof EnrollError)
+      assert.equal(error.code, 'enroll/used')
+      assert.equal(error.status, 404)
+      return true
+    },
+  )
+})
+
+test('a stub or unsupported relay address is rejected before the network call', async () => {
+  const path = await statePath()
+  let calls = 0
+  const fetchImpl = async () => { calls += 1; throw new Error('must not be called') }
+  for (const [relayUrl, code] of [
+    ['ftp://relay.test/dsh-link', 'enroll/invalid-relay'],
+    ['wss://relay.example.com/dsh-link', 'enroll/placeholder-relay'],
+  ]) {
+    await assert.rejects(
+      () => enrollAgent({ relayUrl, inviteCode: 'code', stateFile: path, fetchImpl }),
+      (error) => {
+        assert.ok(error instanceof EnrollError)
+        assert.equal(error.code, code)
+        return true
+      },
+    )
+  }
+  assert.equal(calls, 0, 'validation must happen before the relay is dialed')
+})
+
+test('a relay that never answers times out instead of hanging the panel', async () => {
+  const path = await statePath()
+  const fetchImpl = () => new Promise(() => {})
+  const started = Date.now()
+  await assert.rejects(
+    () => enrollAgent({ relayUrl: RELAY, inviteCode: 'code', stateFile: path, fetchImpl, timeoutMs: 25 }),
+    (error) => {
+      assert.ok(error instanceof EnrollError)
+      assert.equal(error.code, 'enroll/timeout')
+      assert.equal(error.retryable, true)
+      return true
+    },
+  )
+  assert.ok(Date.now() - started < 500, 'the timeout must actually fire, not wait for the fetch')
+})
+
+test('a redeemed code that cannot be saved is reported as a state-write failure', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'mobile-link-enroll-write-'))
+  const blocker = join(dir, 'blocker')
+  await writeFile(blocker, 'not a directory')
+  const path = join(blocker, 'agent.json')
+  const { fetchImpl } = relayStub({ body: OK })
+  await assert.rejects(
+    () => enrollAgent({ relayUrl: RELAY, inviteCode: 'code', stateFile: path, fetchImpl }),
+    (error) => {
+      assert.ok(error instanceof EnrollError)
+      assert.equal(error.code, 'enroll/state-write')
+      assert.equal(error.stateFile, path)
+      assert.match(error.message, /redeemed/)
+      return true
+    },
+  )
 })

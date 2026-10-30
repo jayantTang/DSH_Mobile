@@ -898,6 +898,155 @@ test('重复实例：新 Link 启动会先停掉上一个（热更不会留下�
   await second.stop()
 })
 
+// ── 面板内登记：写身份后原地重连（spec 035） ────────────────────────────────
+
+function stateFileFor(label) {
+  const dir = mkdtempSync(join(tmpdir(), `mobile-link-link-${label}-`))
+  return join(dir, 'agent.json')
+}
+
+function enrollResponse(overrides = {}) {
+  return {
+    ok: true,
+    status: 200,
+    json: async () => ({
+      ok: true, agentId: 'agt_panel', agentSecret: 'as_panel', agentName: 'Panel Mac',
+      accountId: 'acc_panel', ...overrides,
+    }),
+  }
+}
+
+test('enroll() writes the identity and relaunches the loop without a restart', async () => {
+  const stateFile = stateFileFor('relaunch')
+  let connects = 0
+  const agent = new MobileLinkAgent({
+    dshClient: new FakeDsh(),
+    logger: { debug() {}, info() {}, warn() {}, error() {} },
+    relayUrl: 'ws://relay.test',
+    stateFile,
+    fetchImpl: async () => enrollResponse(),
+    connectImpl: async () => {
+      connects += 1
+      return new ConnectedSocket()
+    },
+  })
+
+  // 首次启动：没有身份，链路以 unregistered 结束。
+  await agent.start()
+  await agent._loop
+  assert.equal(agent.state, 'unregistered')
+  assert.equal(connects, 0)
+
+  const settled = await agent.enroll({ inviteCode: 'PANEL-CODE', relayUrl: 'ws://relay.test' })
+  assert.equal(settled.agentId, 'agt_panel')
+  assert.equal(agent.needsEnroll, false)
+  assert.equal(agent.identity.agentId, 'agt_panel')
+
+  // 新 loop 会自己用刚写的身份连上去；这里只等它到 connected。
+  const deadline = Date.now() + 1000
+  while (agent.state !== 'connected' && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+  assert.equal(agent.state, 'connected')
+  assert.equal(connects, 1)
+  await agent.stop()
+})
+
+test('boot enrollment falls back to defaultRelayUrl when relayUrl is the placeholder', async () => {
+  const stateFile = stateFileFor('boot-default')
+  let url
+  const agent = new MobileLinkAgent({
+    dshClient: new FakeDsh(),
+    logger: { debug() {}, info() {}, warn() {}, error() {} },
+    relayUrl: 'wss://relay.example.com/dsh-link',
+    defaultRelayUrl: 'ws://relay.test',
+    inviteCode: 'BOOT-CODE',
+    stateFile,
+    fetchImpl: async (requestUrl) => {
+      url = requestUrl
+      return enrollResponse()
+    },
+  })
+  const settled = await agent.enrollNow()
+  assert.equal(settled.agentId, 'agt_panel')
+  assert.equal(agent.identity.agentId, 'agt_panel')
+  assert.match(url, /relay\.test\/agents\/enroll/, 'the form default must be used for boot enrollment')
+})
+
+test('enroll() is single-flight and refuses to replace an existing identity', async () => {
+  const stateFile = stateFileFor('single')
+  let fetches = 0
+  let release
+  const gate = new Promise((resolve) => { release = resolve })
+  const agent = new MobileLinkAgent({
+    dshClient: new FakeDsh(),
+    logger: { debug() {}, info() {}, warn() {}, error() {} },
+    relayUrl: 'ws://relay.test',
+    stateFile,
+    fetchImpl: async () => {
+      fetches += 1
+      await gate
+      return enrollResponse()
+    },
+    connectImpl: async () => new ConnectedSocket(),
+  })
+
+  const first = agent.enroll({ inviteCode: 'ONE', relayUrl: 'ws://relay.test' })
+  const second = agent.enroll({ inviteCode: 'TWO', relayUrl: 'ws://relay.test' })
+  assert.equal(first, second, 'two clicks must share one redemption promise')
+  release()
+  await first
+  assert.equal(fetches, 1)
+
+  await assert.rejects(
+    () => agent.enroll({ inviteCode: 'THREE', relayUrl: 'ws://relay.test' }),
+    (error) => {
+      assert.equal(error.code, 'enroll/already-registered')
+      return true
+    },
+  )
+  await agent.stop()
+})
+
+test('enroll() failure leaves no identity file behind', async () => {
+  const stateFile = stateFileFor('failed')
+  const agent = new MobileLinkAgent({
+    dshClient: new FakeDsh(),
+    logger: { debug() {}, info() {}, warn() {}, error() {} },
+    relayUrl: 'ws://relay.test',
+    stateFile,
+    fetchImpl: async () => ({
+      ok: false, status: 404, json: async () => ({ ok: false, error: { code: 'enroll/used', message: 'used' } }),
+    }),
+  })
+  await assert.rejects(
+    () => agent.enroll({ inviteCode: 'USED', relayUrl: 'ws://relay.test' }),
+    (error) => {
+      assert.equal(error.code, 'enroll/used')
+      return true
+    },
+  )
+  assert.throws(() => readFileSync(stateFile, 'utf8'), /ENOENT/)
+  assert.equal(agent.needsEnroll, false)
+})
+
+test('enroll() refuses while the connector is disabled', async () => {
+  const agent = new MobileLinkAgent({
+    dshClient: new FakeDsh(),
+    logger: { debug() {}, info() {}, warn() {}, error() {} },
+    relayUrl: 'ws://relay.test',
+    enabled: false,
+    fetchImpl: async () => enrollResponse(),
+  })
+  await assert.rejects(
+    () => agent.enroll({ inviteCode: 'CODE', relayUrl: 'ws://relay.test' }),
+    (error) => {
+      assert.equal(error.code, 'enroll/disabled')
+      return true
+    },
+  )
+})
+
 // ── `_link/diagnostics`：App 推上来的阶段记录（spec 020 的 FR-011） ─────────
 
 const diagReq = (args, id = 'd1') => ({ t: 'req', id, method: '_link/diagnostics', args, deviceId: 'dev_1' })

@@ -74,7 +74,12 @@ dsh plugin --profile web add ./plugins/mobile-link
 
 ## Use
 
-1. Register this computer with a relay (once). Either redeem an invite code:
+1. Register this computer with a relay (once). Open the **移动端连接** panel at the
+   bottom of the DSH sidebar: the relay address is prefilled (editable) from the
+   installation default, type the invite code you were given, and click **登记并连接**. The
+   connector writes `~/.dsh/mobile-link/agent.json` and reconnects in place — no
+   terminal and no DSH restart. If an installation has no panel (headless, CI),
+   the CLI still works:
 
    ```bash
    dsh-mobile-link enroll --invite <邀请码> --relay wss://<你的站点>/dsh-link
@@ -83,21 +88,25 @@ dsh plugin --profile web add ./plugins/mobile-link
    …or register it on the relay host with `dsh-relay admin agent-register
    --write-config ~/.dsh/mobile-link/agent.json`.
 
-2. Mint a pairing code, and show it as a QR the phone camera can read:
+2. The same panel shows the pairing code and its QR once the relay link is up.
+   The CLI can still mint one directly:
 
    ```bash
    dsh-mobile-link --mint-pair-code        # prints JSON: code + relay + agentId
    ```
 
-   Or open the **移动端连接** panel at the bottom of the sidebar in the DSH client
-   (spec 010) — same persistent code, same QR, shown until you click 重新生成.
+   The code is persistent: it stays valid until you click 重新生成.
 
 3. Scan it in the iOS app. The code can be claimed again for another phone, a reinstall
    or a new device; only 重新生成 revokes it (already-paired devices stay connected).
    After that the phone reconnects on its own — nothing else has to be run by hand.
 
 `GET /mobile-link/status` reports whether the link is up, which devices are
-attached, and whether this computer is registered yet. Its `journal` block carries
+attached, and whether this computer is registered yet. Its `enroll` block also
+carries `panel` (this connector can enroll from the DSH panel), `relayPrefill`
+and `relayLocked` (the address to prefill and whether it came from config).
+`POST /mobile-link/enroll` performs that enrollment; it returns the agent id and
+name, never `agentSecret`, and is behind the same DSH request fence as pairing. Its `journal` block carries
 the current process's newest lifecycle events (link opened/closed with the reason,
 device attached/detached); the counters in it reset when the plugin hot-reloads, so
 the full history — across restarts — is the JSONL file at `journal.path`.
@@ -110,7 +119,8 @@ plugin's config block (`cordis.patch.yml`), not by editing this file.
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `enabled` | `true` | `false` stops the outbound link without uninstalling |
-| `relayUrl` | from `agent.json` | Relay base URL; a bare deployment dials `<relay>/link/agent` |
+| `relayUrl` | from `agent.json` | Relay base URL; a bare deployment dials `<relay>/link/agent`. Pinning a real value here outranks the enrolled identity and makes the panel field read-only |
+| `defaultRelayUrl` | empty | Form-only default: prefills the panel's relay input, but never outranks the enrolled identity. Official installs set this so users can still edit it |
 | `agentId` / `agentSecret` | from `agent.json` | Override the enrolled identity |
 | `stateFile` | `~/.dsh/mobile-link/agent.json` | Where the identity lives |
 | `journalFile` | `~/.dsh/mobile-link/link-events.jsonl` | Lifecycle journal (rotated once at 256 KiB); `false` keeps it in memory only |

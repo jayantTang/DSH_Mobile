@@ -86,6 +86,31 @@ function ttlFrom(value, fallbackMs) {
     : fallbackMs
 }
 
+/** Map an enrollment error code onto the HTTP status the panel sees. */
+export function enrollStatus(code) {
+  switch (code) {
+    case 'enroll/already-registered':
+    case 'enroll/disabled':
+      return 409
+    case 'enroll/timeout':
+      return 504
+    case 'enroll/rate-limited':
+      return 429
+    case 'enroll/state-write':
+    case 'enroll/internal':
+      return 500
+    case 'enroll/bad-request':
+    case 'enroll/invalid-relay':
+    case 'enroll/placeholder-relay':
+    case 'enroll/unknown':
+    case 'enroll/used':
+    case 'enroll/expired':
+      return 400
+    default:
+      return 502
+  }
+}
+
 /**
  * Register the routes.
  * @returns {Array<() => void>} disposers (already wrapped by the caller in ctx.effect).
@@ -93,6 +118,7 @@ function ttlFrom(value, fallbackMs) {
 export function registerMobileLinkRoutes(ctx, { agent, logger, config = {}, history }) {
   const guard = makeGuard(ctx, logger)
   const STATUS_ROUTE = '/mobile-link/status'
+  const ENROLL_ROUTE = '/mobile-link/enroll'
   const PAIR_ROUTE = '/mobile-link/pair-code'
   const REGENERATE_ROUTE = '/mobile-link/pair-code/regenerate'
   const disposers = []
@@ -112,6 +138,61 @@ export function registerMobileLinkRoutes(ctx, { agent, logger, config = {}, hist
         sendJson(res, 200, agent.status())
       } catch (error) {
         sendJson(res, 500, { ok: false, message: String(error?.message ?? error) })
+      }
+    },
+  }))
+
+  disposers.push(ctx.webServer.register({
+    kind: 'exact',
+    path: ENROLL_ROUTE,
+    handler: async (req, res) => {
+      if (guard(req, res, { requireFence: true })) return
+      if (req.method !== 'POST') {
+        res.statusCode = 405
+        res.setHeader('allow', 'POST')
+        res.end()
+        return
+      }
+      const body = await readJsonBody(req)
+      if (body === undefined) {
+        sendJson(res, 400, { ok: false, code: 'enroll/bad-request', message: 'invalid JSON body' })
+        return
+      }
+      const relayUrl = typeof body.relayUrl === 'string' ? body.relayUrl.trim() : ''
+      const inviteCode = typeof body.inviteCode === 'string' ? body.inviteCode.trim() : ''
+      const agentName = typeof body.agentName === 'string' ? body.agentName.trim() : ''
+      if (!relayUrl || !inviteCode) {
+        sendJson(res, 400, {
+          ok: false,
+          code: 'enroll/bad-request',
+          message: 'relayUrl and inviteCode are required',
+        })
+        return
+      }
+      try {
+        const settled = await agent.enroll({ inviteCode, relayUrl, agentName: agentName || undefined })
+        logger.info?.(`mobile-link: panel enrollment succeeded for ${settled.agentId}`)
+        // Never return `agentSecret`: the browser has no use for it, and one
+        // XSS in the panel would otherwise hand over the machine's credential.
+        sendJson(res, 200, {
+          ok: true,
+          agentId: settled.agentId,
+          agentName: settled.agentName,
+          relayUrl: settled.relayUrl,
+        })
+      } catch (error) {
+        // Read the code off the error rather than using `instanceof`: a hot
+        // reload can leave the route and the link on different module
+        // generations, and an identity check would then downgrade a precise
+        // "already registered" into a generic 500.
+        const code = typeof error?.code === 'string' && error.code.startsWith('enroll/')
+          ? error.code
+          : 'enroll/internal'
+        const status = enrollStatus(code)
+        if (code === 'enroll/internal') {
+          logger.warn?.(`mobile-link: panel enrollment failed: ${String(error?.message ?? error)}`)
+        }
+        sendJson(res, status, { ok: false, code, message: String(error?.message ?? error) })
       }
     },
   }))

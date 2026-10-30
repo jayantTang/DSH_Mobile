@@ -10,6 +10,7 @@
 ;(() => {
 /** 路由用相对路径：宿主把插件路由挂在同一个源上。 */
 const STATUS_ROUTE = 'mobile-link/status'
+const ENROLL_ROUTE = 'mobile-link/enroll'
 const PAIR_ROUTE = 'mobile-link/pair-code'
 const REGENERATE_ROUTE = 'mobile-link/pair-code/regenerate'
 const SLOT_ENTRY = 'sidebar.footer.action'
@@ -20,6 +21,8 @@ const STYLE_ID = 'dsh-mobile-link-style'
 const LABEL = '移动端连接'
 const TITLE = '移动端连接：二维码、已配对的手机与连接状态'
 const PRIMITIVES = '@deepseek-ai/dsh-client-ui-primitives'
+/** 可选的支持链接；不参与准入，点不点都能用。 */
+const STAR_URL = 'https://github.com/jayantTang/DSH_Mobile'
 /** 小窗打开时的状态轮询间隔；关闭时只为让侧栏状态点别停在旧值上。 */
 const OPEN_POLL_MS = 2500
 const IDLE_POLL_MS = 20000
@@ -56,6 +59,19 @@ const CSS = [
   '.dsh-mobile-link-device .dsh-mobile-link-tag{margin-left:auto}',
   '.dsh-mobile-link-error{color:var(--dsw-alias-state-error-primary,#d1242f)}',
   '.dsh-mobile-link-note{font-size:12px;line-height:1.65;color:var(--dsw-alias-label-tertiary,inherit)}',
+  '.dsh-mobile-link-form{display:flex;flex-direction:column;gap:12px}',
+  '.dsh-mobile-link-field{display:flex;flex-direction:column;gap:6px}',
+  '.dsh-mobile-link-field>span{width:100%}',
+  '.dsh-mobile-link-label{font-size:12px;font-weight:600;color:var(--dsw-alias-label-primary,inherit)}',
+  '.dsh-mobile-link-input{width:100%;height:36px;box-sizing:border-box;border:1px solid var(--dsw-alias-border-secondary,rgba(15,17,21,.16));border-radius:8px;padding:0 10px;font-size:13px;font-family:inherit;color:var(--dsw-alias-label-primary,inherit);background:var(--dsw-alias-bg-module-platform,#fff)}',
+  '.dsh-mobile-link-input:focus{outline:none;border-color:var(--dsw-alias-state-business-primary,#4176e6);box-shadow:0 0 0 3px rgba(65,118,230,.14)}',
+  '.dsh-mobile-link-input[readonly]{opacity:.78}',
+  '.dsh-mobile-link-input.dsh-mobile-link-code-input{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.12em}',
+  '.dsh-mobile-link-error-inline{padding:8px 10px;border-radius:8px;font-size:12px;line-height:1.6;color:var(--dsw-alias-state-error-primary,#d1242f);background:var(--dsw-alias-bg-error,rgba(209,36,47,.08))}',
+  '.dsh-mobile-link-link{color:var(--dsw-alias-state-business-primary,#4176e6);text-decoration:underline;text-underline-offset:2px}',
+  '.dsh-mobile-link-cmd{font-size:11px;line-height:1.65;color:var(--dsw-alias-label-tertiary,inherit)}',
+  '.dsh-mobile-link-cmd summary{cursor:pointer;user-select:none}',
+  '.dsh-mobile-link-cmd .dsh-mobile-link-mono{margin-top:6px;overflow-wrap:anywhere}',
 ].join('')
 
 function report(ctx, message) {
@@ -138,7 +154,12 @@ async function requestJson(path, init) {
     throw new Error(`连接器应答无法解析（HTTP ${response.status}）`)
   }
   if (!response.ok || body?.ok === false) {
-    throw new Error(body?.message ?? `连接器应答 HTTP ${response.status}`)
+    const error = new Error(body?.message ?? `连接器应答 HTTP ${response.status}`)
+    // Keep the machine code: the panel maps it to Chinese copy and must not
+    // parse English messages to tell "used" from "expired".
+    error.code = body?.code
+    error.status = response.status
+    throw error
   }
   return body
 }
@@ -191,6 +212,10 @@ function createPanel() {
       copied: false,
       showError: false,
       now: Date.now(),
+      // 登记表单只属于本次界面：草稿不落 localStorage，提交成功后清空。
+      enrolling: false,
+      enrollDraft: { relay: '', relayTouched: false, invite: '', name: '' },
+      enrollError: null,
     }),
     disposed: false,
     style: null,
@@ -203,11 +228,13 @@ function createPanel() {
 async function loadStatus(panel) {
   try {
     const status = await requestJson(STATUS_ROUTE, { method: 'GET' })
-    if (panel.disposed) return
+    if (panel.disposed) return undefined
     panel.store.set({ status, statusError: null })
+    return status
   } catch (error) {
-    if (panel.disposed) return
+    if (panel.disposed) return undefined
     panel.store.set({ statusError: describe(error) })
+    return undefined
   }
 }
 /**
@@ -223,6 +250,12 @@ async function loadStatus(panel) {
 async function refreshCode(panel, { regenerate = false } = {}) {
   if (panel.disposed || panel.store.get().busy) return
   if (needsEnroll(panel.store.get().status)) {
+    panel.store.set({ code: null, codeError: null })
+    return
+  }
+  // 登记成功 ≠ 已连接：链路还没起来时去取码只会失败，界面应该显示
+  // "正在连接中转"，而不是把一次连接等待误报成取码失败。
+  if (panel.store.get().status?.connected !== true) {
     panel.store.set({ code: null, codeError: null })
     return
   }
@@ -274,8 +307,15 @@ function tick(panel) {
   }
   // 持久码不因时间换码（032）：只有用户点「重新生成」才换。限时码（老中转/老调用方）
   // 仍然按原来的规则在快过期时换一张，免得把一张马上就要失效的码摆在屏幕上。
-  const code = panel.store.get().code
+  const state = panel.store.get()
+  const code = state.code
   if (code && !code.persistent && code.expiresAt != null && code.expiresAt - now <= CODE_FLOOR_MS) {
+    void refreshCode(panel)
+  }
+  // 连接恢复/登记完成后自动补一张码；取码失败后不自动重试（会把中转打爆，
+  // 也让"重试"按钮失去意义），由用户点按钮重试。
+  if (state.status?.connected === true && !needsEnroll(state.status)
+      && !state.code && !state.codeError && !state.busy) {
     void refreshCode(panel)
   }
 }
@@ -285,8 +325,11 @@ function openPanel(panel) {
   if (!panel.style?.node?.isConnected) panel.style = ensureStyle()
   panel.store.set({ open: true, now: Date.now(), copied: false })
   panel.lastStatusAt = Date.now()
-  void loadStatus(panel)
-  void refreshCode(panel)
+  void loadStatus(panel).then((status) => {
+    if (!panel.disposed && status?.connected === true && !needsEnroll(status)) {
+      void refreshCode(panel)
+    }
+  })
 }
 function closePanel(panel) {
   if (panel.disposed) return
@@ -334,6 +377,115 @@ function copyCode(panel) {
     done()
   }
 }
+/** 服务端的机器码 → 面板上的中文；原始 message 留在 details 里给排障。 */
+const ENROLL_ERRORS = {
+  'enroll/bad-request': '请填写中转地址与激活码。',
+  'enroll/invalid-relay': '中转地址格式不正确，请检查后重试。',
+  'enroll/placeholder-relay': '现在填的是仓库占位地址，请换成服务提供者给你的中转地址。',
+  'enroll/unknown': '这个激活码无效。请核对后重试，或换一个新的激活码。',
+  'enroll/used': '这个激活码已经被使用。每个激活码只能登记一台电脑，请换一个新的。',
+  'enroll/expired': '这个激活码已经过期，请换一个新的。',
+  'enroll/rate-limited': '尝试次数过多，请等几分钟再试。',
+  'enroll/unreachable': '连不上中转。请检查中转地址与网络后重试。',
+  'enroll/timeout': '中转没有在 15 秒内响应。请检查网络后重试。',
+  'enroll/bad-response': '这个地址不像中转（应答无法识别）。请检查地址与路径。',
+  'enroll/already-registered': '这台电脑已经登记过，不能再用新的激活码覆盖。',
+  'enroll/disabled': '连接器当前已停用，请先在配置里启用。',
+  'enroll/unavailable': '连接器正在停止，请稍后重试。',
+  'enroll/state-write': '身份已兑换，但未能写入本机。请检查磁盘权限或查看连接器日志；这个激活码已被消耗，不能重复使用。',
+  'enroll/relay-error': '中转登记失败，请稍后重试。',
+  'enroll/internal': '连接器内部错误，请查看日志后重试。',
+}
+function enrollMessage(error) {
+  return ENROLL_ERRORS[error?.code] ?? describe(error) ?? '登记失败，请重试。'
+}
+/** 表单字段只改草稿；不在这里写“是否已登记”之类的业务状态。 */
+function setEnrollField(panel, field, value) {
+  if (panel.disposed) return
+  if (field !== 'relay' && field !== 'invite' && field !== 'name') return
+  const draft = { ...panel.store.get().enrollDraft, [field]: String(value ?? '') }
+  if (field === 'relay') draft.relayTouched = true
+  panel.store.set({ enrollDraft: draft, enrollError: null })
+}
+/**
+ * 提交登记。
+ *
+ * 成功时先乐观地切到“已登记 / 正在连接”，随后用 `/status` 覆盖；这样即使状态
+ * 请求慢或失败，也不会把一张已经写好的身份重新当成“未登记”，让用户重复提交。
+ */
+async function submitEnroll(panel) {
+  if (panel.disposed || panel.store.get().enrolling) return
+  const state = panel.store.get()
+  const status = state.status
+  const draft = state.enrollDraft
+  const locked = Boolean(status?.enroll?.relayLocked)
+  // `relayTouched` distinguishes "the user cleared the field" from "not edited yet";
+  // otherwise an empty field would silently fall back to the prefill and the user
+  // could never replace the default address.
+  const relayUrl = (locked
+    ? status?.enroll?.relayPrefill
+    : (draft.relayTouched ? draft.relay : status?.enroll?.relayPrefill) || '').trim()
+  const inviteCode = (draft.invite || '').trim()
+  const agentName = (draft.name || '').trim()
+  if (!relayUrl || !inviteCode) {
+    panel.store.set({
+      enrollError: {
+        code: 'enroll/bad-request',
+        message: !relayUrl ? '请填写中转地址。' : '请填写激活码。',
+      },
+    })
+    return
+  }
+
+  panel.store.set({ enrolling: true, enrollError: null })
+  try {
+    const body = await requestJson(ENROLL_ROUTE, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ relayUrl, inviteCode, agentName }),
+    })
+    if (panel.disposed) return
+    const previous = panel.store.get().status ?? {}
+    const enroll = previous.enroll ?? {}
+    panel.store.set({
+      enrolling: false,
+      enrollDraft: { relay: '', relayTouched: false, invite: '', name: '' },
+      enrollError: null,
+      status: {
+        ...previous,
+        state: previous.connected ? previous.state : 'connecting',
+        connected: previous.connected === true,
+        relayUrl: body.relayUrl ?? previous.relayUrl,
+        agentId: body.agentId ?? previous.agentId,
+        agentName: body.agentName ?? previous.agentName,
+        enroll: {
+          ...enroll,
+          registered: true,
+          needsEnroll: false,
+          relayUrl: body.relayUrl ?? enroll.relayUrl ?? null,
+          hint: null,
+          command: null,
+        },
+      },
+      statusError: null,
+    })
+    const next = await loadStatus(panel)
+    if (!panel.disposed && next?.connected === true && !needsEnroll(next)) {
+      void refreshCode(panel)
+    }
+  } catch (error) {
+    if (panel.disposed) return
+    panel.store.set({
+      enrolling: false,
+      enrollError: {
+        code: error?.code ?? 'enroll/internal',
+        message: enrollMessage(error),
+        detail: describe(error),
+      },
+    })
+  }
+}
+
 /**
  * 控制器：视图只读它的 store、只调它的动作。
  *
@@ -350,6 +502,9 @@ function createController() {
     refreshCode: (options) => refreshCode(panel, options),
     copy: () => copyCode(panel),
     toggleError: () => panel.store.set({ showError: !panel.store.get().showError }),
+    enroll: () => submitEnroll(panel),
+    setEnrollField: (field, value) => setEnrollField(panel, field, value),
+    reloadStatus: () => { void loadStatus(panel) },
     start: () => startPanel(panel),
   }
 }
@@ -384,17 +539,119 @@ function statusSection(React, ui, state) {
       React.createElement('span', null, conn.text)),
     state.statusError ? React.createElement('div', { className: 'dsh-mobile-link-note dsh-mobile-link-error' },
       `${state.statusError}（连接器可能刚重启，或插件没装进当前宿主）`) : null,
-    row(React, '中转', state.status?.relayUrl ?? '—', true),
+    // 激活界面不再单独列一行固定中转地址：默认值只作为输入框初值，用户可改。
+    state.status && !needsEnroll(state.status)
+      ? row(React, '中转', state.status.relayUrl ?? '—', true)
+      : null,
     state.status?.agentName ? row(React, '电脑', state.status.agentName) : null,
-    state.status ? row(React, '手机', deviceSummary(state.status.devices)) : null)
+    // 未登记时“手机”这一行只会写“还没有手机配对过”，和表单抢空间；
+    // 设备清单属于登记后的区块，这里也不重复。
+    state.status && !needsEnroll(state.status) ? row(React, '手机', deviceSummary(state.status.devices)) : null)
 }
-/** 未登记：给命令，不给二维码（FR-008）。 */
-function enrollSection(React, status) {
+/** 官方 Input 在旧宿主可能不存在；没有就用原生 input，表单不会因此消失。 */
+function enrollInput(React, ui, props) {
+  const official = ui?.Input != null
+  const Input = official ? ui.Input : 'input'
+  const { className, ...rest } = props
+  // 官方 Input 自带边框与内层 input，不能再套我们的 class（会多一圈边框）；
+  // 原生回退才用 `.dsh-mobile-link-input`。
+  return React.createElement(Input, official
+    ? rest
+    : { className: ['dsh-mobile-link-input', className].filter(Boolean).join(' '), ...rest })
+}
+function enrollField(React, id, labelText, children) {
+  return React.createElement('div', { className: 'dsh-mobile-link-field', key: id },
+    React.createElement('label', { className: 'dsh-mobile-link-label', htmlFor: id }, labelText),
+    children)
+}
+/** 旧宿主没有面板登记能力时，退回原来的命令提示（不做 404 的空表单）。 */
+function enrollCommandSection(React, status) {
   return React.createElement('div', { className: 'dsh-mobile-link-section' },
     React.createElement('div', { className: 'dsh-mobile-link-note' },
-      '这台电脑还没有登记到中转。登记是一次性的，登记完重启 DSH 就能扫码配对：'),
+      '这台电脑还没有登记到中转。请用下面的命令登记，然后重启 DSH：'),
     React.createElement('div', { className: 'dsh-mobile-link-mono dsh-mobile-link-v', style: { textAlign: 'left' } },
-      status?.enroll?.command ?? 'dsh-mobile-link enroll --invite <邀请码> --relay <中转地址>'))
+      status?.enroll?.command ?? 'dsh-mobile-link enroll --invite <激活码> --relay <中转地址>'))
+}
+/**
+ * 未登记：在面板里登记（默认中转已预填，激活码一次性）。
+ *
+ * 旧宿主没有 `enroll.panel`，继续显示命令：这是半升级时的安全回退，不是第二条
+ * 业务通路。表单只收集三个字段，成功与否由连接器的 `/status` 决定。
+ */
+function enrollSection(React, controller, ui, state) {
+  const status = state.status
+  if (status?.enroll?.panel !== true) return enrollCommandSection(React, status)
+  if (status.enabled === false) {
+    return React.createElement('div', { className: 'dsh-mobile-link-section' },
+      React.createElement('div', { className: 'dsh-mobile-link-note' },
+        '连接器当前已停用。请先在插件配置里设置 enabled: true，再回来登记。'))
+  }
+  const enroll = status.enroll
+  const locked = Boolean(enroll.relayLocked)
+  const prefill = typeof enroll.relayPrefill === 'string' ? enroll.relayPrefill : ''
+  const draft = state.enrollDraft ?? { relay: '', relayTouched: false, invite: '', name: '' }
+  const relayValue = locked ? prefill : (draft.relayTouched ? draft.relay : prefill)
+  const submitting = Boolean(state.enrolling)
+  const error = state.enrollError
+  const setField = (field) => (event) => controller.setEnrollField(field, event?.target?.value ?? '')
+  const submitOnEnter = (event) => {
+    if (event?.key !== 'Enter') return
+    event.preventDefault?.()
+    if (!submitting) controller.enroll()
+  }
+  const command = enroll.command ?? 'dsh-mobile-link enroll --invite <激活码> --relay <中转地址>'
+
+  return React.createElement('div', { className: 'dsh-mobile-link-form' },
+    React.createElement('div', { className: 'dsh-mobile-link-note', key: 'intro' },
+      prefill
+        ? '中转地址已填好默认值；填入激活码即可。登记只做一次，成功后自动连接并显示二维码。'
+        : '填入服务提供者给你的中转地址与激活码。登记只做一次，成功后自动连接并显示二维码。'),
+    enrollField(React, 'mobile-link-relay', '中转地址',
+      enrollInput(React, ui, {
+        id: 'mobile-link-relay', type: 'text', inputMode: 'url', value: relayValue,
+        placeholder: 'wss://<中转地址>/dsh-link', readOnly: locked, disabled: submitting,
+        autoComplete: 'off', spellCheck: false, onChange: setField('relay'),
+      })),
+    React.createElement('div', { className: 'dsh-mobile-link-note', key: 'relay-hint' },
+      locked ? '由当前安装配置指定，只读。' : '已预填默认中转，可直接修改。'),
+    enrollField(React, 'mobile-link-invite', '激活码',
+      enrollInput(React, ui, {
+        id: 'mobile-link-invite', type: 'text', value: draft.invite,
+        placeholder: 'ABCD-EFGH-JKLM-NPQR', disabled: submitting,
+        autoComplete: 'off', spellCheck: false,
+        style: { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', letterSpacing: '.12em' },
+        onChange: setField('invite'), onKeyDown: submitOnEnter,
+      })),
+    React.createElement('div', { className: 'dsh-mobile-link-note', key: 'invite-hint' },
+      '一次性激活码（也叫邀请码）；登记成功后作废，不写日志、不进状态接口。'),
+    enrollField(React, 'mobile-link-name', '电脑名称（可选）',
+      enrollInput(React, ui, {
+        id: 'mobile-link-name', type: 'text', value: draft.name,
+        placeholder: 'My computer', disabled: submitting, maxLength: 64,
+        autoComplete: 'off', onChange: setField('name'), onKeyDown: submitOnEnter,
+      })),
+    error ? React.createElement('div', {
+      className: 'dsh-mobile-link-error-inline', role: 'alert', key: 'error',
+      title: error.detail ?? undefined,
+    }, error.message) : null,
+    React.createElement(ui.Button, {
+      key: 'submit', variant: 'primary', type: 'button', disabled: submitting,
+      onClick: () => controller.enroll(),
+    }, submitting ? '正在登记…' : (error ? '重试' : '登记并连接')),
+    React.createElement('div', { className: 'dsh-mobile-link-note', key: 'footnote' },
+      '登记成功后立即连接中转；连接期间显示「正在连接」，不摆空二维码。'),
+    React.createElement('details', { className: 'dsh-mobile-link-cmd', key: 'cli' },
+      React.createElement('summary', null, '命令行方式登记（无头 / 自动化兜底）'),
+      React.createElement('div', { className: 'dsh-mobile-link-mono' }, command)))
+}
+/** 成功页的可选 Star 链接：不参与准入，不点也能正常连接。 */
+function starSection(React) {
+  return React.createElement('div', { className: 'dsh-mobile-link-note', key: 'star' },
+    '如果这个工具对你有用，可以给',
+    React.createElement('a', {
+      className: 'dsh-mobile-link-link', href: STAR_URL, target: '_blank', rel: 'noreferrer',
+    }, '仓库点个 Star'),
+    '（可选，不影响连接）。')
 }
 /**
  * 二维码卡。
@@ -405,6 +662,9 @@ function enrollSection(React, status) {
  */
 function codeSection(React, controller, ui, state) {
   const code = state.code
+  // 登记成功只代表身份落盘；链路还在连的时候不要摆“还没有可用的配对码”，
+  // 也不要给一个点了没反应的“取一张码”。
+  const connecting = !code && !state.codeError && state.status?.connected !== true
   const children = []
   if (code) {
     children.push(React.createElement('div', { className: 'dsh-mobile-link-code', key: 'code' }, code.code))
@@ -427,11 +687,14 @@ function codeSection(React, controller, ui, state) {
     }
   } else if (state.codeError) {
     children.push(React.createElement('div', { className: 'dsh-mobile-link-note dsh-mobile-link-error', key: 'err' }, state.codeError))
+  } else if (connecting) {
+    children.push(React.createElement('div', { className: 'dsh-mobile-link-note', key: 'connecting' },
+      state.enrolling ? '正在登记…' : '已登记，正在连接中转…'))
   } else {
     children.push(React.createElement('div', { className: 'dsh-mobile-link-note', key: 'loading' },
       state.busy ? '正在向中转取一张新码…' : '还没有可用的配对码。'))
   }
-  const buttons = [React.createElement(ui.Button, {
+  const buttons = connecting ? [] : [React.createElement(ui.Button, {
     key: 'swap', variant: 'primary', type: 'button', disabled: Boolean(state.busy),
     onClick: () => void controller.refreshCode({ regenerate: Boolean(state.code) }),
   }, state.busy ? '取码中…'
@@ -474,8 +737,22 @@ function errorSection(React, controller, ui, status, open) {
 }
 function panelBody(React, controller, ui, state) {
   const children = [statusSection(React, ui, state)]
-  if (needsEnroll(state.status)) children.push(enrollSection(React, state.status))
-  else children.push(codeSection(React, controller, ui, state))
+  if (!state.status) {
+    children.push(React.createElement('div', { className: 'dsh-mobile-link-note', key: 'loading' },
+      state.statusError ? '读取连接状态失败。连接器可能刚重启，或插件没装进当前宿主。' : '正在读取连接状态…'))
+    if (state.statusError) {
+      children.push(React.createElement(ui.Button, {
+        key: 'retry', variant: 'outline', type: 'button', onClick: () => controller.reloadStatus(),
+      }, '重试'))
+    }
+    return React.createElement('div', { className: 'dsh-mobile-link-body' }, children)
+  }
+  if (needsEnroll(state.status)) {
+    children.push(enrollSection(React, controller, ui, state))
+    return React.createElement('div', { className: 'dsh-mobile-link-body' }, children)
+  }
+  children.push(codeSection(React, controller, ui, state))
+  children.push(starSection(React))
   children.push(devicesSection(React, ui, state.status))
   const error = errorSection(React, controller, ui, state.status, state.showError)
   if (error) children.push(error)

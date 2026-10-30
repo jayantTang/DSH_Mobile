@@ -68,6 +68,7 @@ function fakePrimitives() {
   const passthrough = (type) => (props) => ({ type, props, children: props.children ?? [] })
   return {
     Button: (props) => ({ type: 'button', props, children: props.children ?? [] }),
+    Input: (props) => ({ type: 'input', props, children: [] }),
     StateDot: ({ state }) => ({ type: 'dot', props: { state }, children: [] }),
     Tag: ({ tone, children }) => ({ type: 'tag', props: { tone }, children: [children] }),
     Modal: ({ open, title, onClose, className, children }) => (open
@@ -75,6 +76,27 @@ function fakePrimitives() {
       : null),
     DisclosureRow: passthrough('disclosure'),
   }
+}
+
+const PANEL_STATUS = {
+  ok: true,
+  enabled: true,
+  state: 'idle',
+  connected: false,
+  relayUrl: null,
+  agentName: null,
+  deviceCount: 0,
+  devices: [],
+  lastError: null,
+  enroll: {
+    registered: false,
+    needsEnroll: true,
+    panel: true,
+    relayPrefill: 'wss://relay.test/dsh-link',
+    relayLocked: false,
+    command: 'dsh-mobile-link enroll --invite <邀请码> --relay wss://relay.test/dsh-link',
+    hint: '先登记',
+  },
 }
 
 const HEALTHY_STATUS = {
@@ -95,7 +117,8 @@ const HEALTHY_STATUS = {
  * 取码每次给一张**不同的**码与图案——"每次都新签"正是被断言的行为。
  */
 function makeFetch({ status = HEALTHY_STATUS, failStatus = false, failCode = false,
-                     ttlMs = null, maxPairedDevices = 8, pairedDevices = 0 } = {}) {
+                     ttlMs = null, maxPairedDevices = 8, pairedDevices = 0,
+                     failEnroll = null, onEnroll = null, enrollBody = {} } = {}) {
   const calls = []
   let mints = 0
   const impl = async (path, init) => {
@@ -104,6 +127,19 @@ function makeFetch({ status = HEALTHY_STATUS, failStatus = false, failCode = fal
     if (String(path).includes('status')) {
       if (failStatus) throw new Error('fetch failed')
       return json({ ...status })
+    }
+    if (String(path).includes('enroll')) {
+      if (failEnroll) {
+        return json({ ok: false, code: failEnroll, message: `enrollment failed: ${failEnroll}` })
+      }
+      onEnroll?.()
+      return json({
+        ok: true,
+        agentId: 'agt_panel',
+        agentName: 'Panel Mac',
+        relayUrl: 'wss://relay.test/dsh-link',
+        ...enrollBody,
+      })
     }
     if (failCode) return json({ ok: false, message: '中转不可达' })
     mints += 1
@@ -217,6 +253,24 @@ function render(el) {
     return render(el.type({ ...el.props, children: kids.length <= 1 ? kids[0] : kids }))
   }
   return { ...el, children: kids.map(render) }
+}
+
+/** 深度优先找指定 id 的 input；元素树里可能嵌数组。 */
+function findInputById(tree, id) {
+  if (Array.isArray(tree)) {
+    for (const item of tree) {
+      const hit = findInputById(item, id)
+      if (hit) return hit
+    }
+    return null
+  }
+  if (!tree || typeof tree !== 'object') return null
+  if (tree.type === 'input' && tree.props?.id === id) return tree
+  for (const child of tree.children ?? []) {
+    const hit = findInputById(child, id)
+    if (hit) return hit
+  }
+  return null
 }
 
 /** 让 fire-and-forget 的请求跑完（控制器不等它们）。 */
@@ -539,6 +593,199 @@ test('an unregistered computer is told what to run instead of being shown a code
   assert.doesNotMatch(markup, /dsh-mobile-link-qr/)
   assert.equal(fetch.calls.filter((call) => call.path.includes('pair-code')).length, 0,
     '没登记就不该向中转要码')
+})
+
+test('an unregistered computer with panel capability gets the form, prefilled relay and no QR', async () => {
+  const { document } = makeDom()
+  const status = { ...PANEL_STATUS, enroll: { ...PANEL_STATUS.enroll } }
+  const fetch = makeFetch({ status })
+  const { api } = loadBundle({ document, fetchImpl: fetch.impl })
+  const { ctx, state } = makeCtx()
+  api.apply(ctx)
+  await flush()
+  const { entry, panel } = components(state)
+
+  render(entry.component({})).props.onClick()
+  await flush()
+  const tree = render(panel.component({}))
+  const markup = JSON.stringify(tree)
+  assert.match(markup, /中转地址/)
+  assert.match(markup, /激活码/)
+  assert.match(markup, /登记并连接/)
+  assert.doesNotMatch(markup, /dsh-mobile-link-qr/)
+  assert.equal(fetch.calls.filter((call) => call.path.includes('pair-code')).length, 0)
+
+  const relay = findInputById(tree, 'mobile-link-relay')
+  const invite = findInputById(tree, 'mobile-link-invite')
+  assert.equal(relay.props.value, 'wss://relay.test/dsh-link', '默认中转要预填')
+  assert.equal(relay.props.readOnly, false, '默认中转只做预填，用户可改')
+  assert.equal(invite.props.value, '', '激活码不预填')
+})
+
+test('an editable relay can be cleared and replaced without snapping back to the prefill', async () => {
+  const { document } = makeDom()
+  const status = {
+    ...PANEL_STATUS,
+    enroll: { ...PANEL_STATUS.enroll, relayLocked: false },
+  }
+  const fetch = makeFetch({ status })
+  const { api } = loadBundle({ document, fetchImpl: fetch.impl })
+  const { ctx, state } = makeCtx()
+  api.apply(ctx)
+  await flush()
+  const { entry, panel } = components(state)
+  render(entry.component({})).props.onClick()
+  await flush()
+
+  let tree = render(panel.component({}))
+  const relay = () => findInputById(tree, 'mobile-link-relay')
+  assert.equal(relay().props.value, 'wss://relay.test/dsh-link')
+  relay().props.onChange({ target: { value: '' } })
+  tree = render(panel.component({}))
+  assert.equal(relay().props.value, '', 'clearing the field must not fall back to the default')
+  relay().props.onChange({ target: { value: 'wss://other.test/dsh-link' } })
+  tree = render(panel.component({}))
+  assert.equal(relay().props.value, 'wss://other.test/dsh-link')
+})
+
+test('submitting the form posts the three fields and moves to the connected panel', async () => {
+  const { document } = makeDom()
+  const status = { ...PANEL_STATUS, enroll: { ...PANEL_STATUS.enroll } }
+  const fetch = makeFetch({
+    status,
+    onEnroll: () => {
+      status.enroll = {
+        ...status.enroll, registered: true, needsEnroll: false,
+        relayUrl: 'wss://relay.test/dsh-link', hint: null, command: null,
+      }
+      status.connected = true
+      status.state = 'connected'
+      status.relayUrl = 'wss://relay.test/dsh-link'
+      status.agentId = 'agt_panel'
+      status.agentName = 'Panel Mac'
+    },
+  })
+  const { api } = loadBundle({ document, fetchImpl: fetch.impl })
+  const { ctx, state } = makeCtx()
+  api.apply(ctx)
+  await flush()
+  const { entry, panel } = components(state)
+  render(entry.component({})).props.onClick()
+  await flush()
+
+  let tree = render(panel.component({}))
+  findInputById(tree, 'mobile-link-invite').props.onChange({ target: { value: 'PANEL-CODE' } })
+  tree = render(panel.component({}))
+  const submit = findByText(tree, 'button', '登记并连接')
+  submit.props.onClick()
+  await flush()
+  await flush()
+
+  const call = fetch.calls.find((item) => item.path.includes('enroll'))
+  assert.ok(call, 'submit must POST to the enrollment route')
+  assert.deepEqual(JSON.parse(call.init.body), {
+    relayUrl: 'wss://relay.test/dsh-link', inviteCode: 'PANEL-CODE', agentName: '',
+  })
+  const markup = JSON.stringify(render(panel.component({})))
+  assert.match(markup, /CODE-0001/, 'after the status flips to connected the panel fetches a code')
+  assert.doesNotMatch(markup, /登记并连接/)
+})
+
+test('after enrollment the panel says it is connecting instead of showing an empty code section', async () => {
+  const { document } = makeDom()
+  const status = { ...PANEL_STATUS, enroll: { ...PANEL_STATUS.enroll } }
+  const fetch = makeFetch({
+    status,
+    onEnroll: () => {
+      status.enroll = {
+        ...status.enroll, registered: true, needsEnroll: false,
+        relayUrl: 'wss://relay.test/dsh-link', hint: null, command: null,
+      }
+      status.connected = false
+      status.state = 'connecting'
+    },
+  })
+  const { api } = loadBundle({ document, fetchImpl: fetch.impl })
+  const { ctx, state } = makeCtx()
+  api.apply(ctx)
+  await flush()
+  const { entry, panel } = components(state)
+  render(entry.component({})).props.onClick()
+  await flush()
+
+  let tree = render(panel.component({}))
+  findInputById(tree, 'mobile-link-invite').props.onChange({ target: { value: 'PANEL-CODE' } })
+  tree = render(panel.component({}))
+  findByText(tree, 'button', '登记并连接').props.onClick()
+  await flush()
+  await flush()
+
+  const markup = JSON.stringify(render(panel.component({})))
+  assert.match(markup, /已登记，正在连接中转/)
+  assert.doesNotMatch(markup, /取一张码/)
+  assert.doesNotMatch(markup, /dsh-mobile-link-qr/)
+  assert.equal(fetch.calls.filter((call) => call.path.includes('pair-code')).length, 0,
+    'a not-yet-connected link must not try to mint a code')
+})
+
+test('a rejected code keeps the input and explains the failure in place', async () => {
+  const { document } = makeDom()
+  const status = { ...PANEL_STATUS, enroll: { ...PANEL_STATUS.enroll } }
+  const fetch = makeFetch({ status, failEnroll: 'enroll/used' })
+  const { api } = loadBundle({ document, fetchImpl: fetch.impl })
+  const { ctx, state } = makeCtx()
+  api.apply(ctx)
+  await flush()
+  const { entry, panel } = components(state)
+  render(entry.component({})).props.onClick()
+  await flush()
+
+  let tree = render(panel.component({}))
+  findInputById(tree, 'mobile-link-invite').props.onChange({ target: { value: 'USED-CODE' } })
+  tree = render(panel.component({}))
+  findByText(tree, 'button', '登记并连接').props.onClick()
+  await flush()
+
+  tree = render(panel.component({}))
+  const markup = JSON.stringify(tree)
+  assert.match(markup, /已经被使用/)
+  assert.match(markup, /USED-CODE/, '失败后输入要保留，不能让用户重打')
+  assert.doesNotMatch(markup, /dsh-mobile-link-qr/)
+})
+
+test('a status read failure shows a retry instead of an empty form or a fake QR', async () => {
+  const { document } = makeDom()
+  const fetch = makeFetch({ failStatus: true })
+  const { api } = loadBundle({ document, fetchImpl: fetch.impl })
+  const { ctx, state } = makeCtx()
+  api.apply(ctx)
+  await flush()
+  const { entry, panel } = components(state)
+  render(entry.component({})).props.onClick()
+  await flush()
+
+  const markup = JSON.stringify(render(panel.component({})))
+  assert.match(markup, /读取连接状态失败/)
+  assert.match(markup, /重试/)
+  assert.doesNotMatch(markup, /mobile-link-invite/)
+  assert.doesNotMatch(markup, /dsh-mobile-link-qr/)
+})
+
+test('the registered panel offers an optional Star link, not a gate', async () => {
+  const { document } = makeDom()
+  const fetch = makeFetch()
+  const { api } = loadBundle({ document, fetchImpl: fetch.impl })
+  const { ctx, state } = makeCtx()
+  api.apply(ctx)
+  await flush()
+  const { entry, panel } = components(state)
+  render(entry.component({})).props.onClick()
+  await flush()
+
+  const markup = JSON.stringify(render(panel.component({})))
+  assert.match(markup, /github\.com\/jayantTang\/DSH_Mobile/)
+  assert.match(markup, /Star/)
+  assert.match(markup, /不影响连接/)
 })
 
 test('a recent failure is folded away, not a permanent red line', async () => {
