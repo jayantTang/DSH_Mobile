@@ -15,7 +15,14 @@ struct AttachmentThumbnail: View {
     var maxHeight: CGFloat = 260
 
     @Environment(AttachmentImages.self) private var images
-    @State private var isShowingPreview = false
+    /// The picture being previewed, with its bytes already in hand.
+    ///
+    /// 呈现项自己持有 `UIImage`，不再在呈现时回头查缓存：缓存是可变且会被系统
+    /// 回收的（NSCache 在内存压力下随时清空），而全屏模态的生命周期比一次查找长。
+    /// 以前这里只有 `isShowingPreview` 一个 Bool，内容靠 `if let resolved` 现查——
+    /// 查不到时仍然呈现出**一个空的**全屏模态，没有工具栏也没有侧滑关闭，用户只能
+    /// 杀进程。一个状态只能有一个所有者：打开哪张图由这里决定，内容由它一起带着走。
+    @State private var preview: PresentedImage?
     /// 行内容宽，量到之前先按经验值估；T029 后它只影响占位精度，
     /// 高度由「宽度 ÷ 宽高比」一次算定，解码完成不再改。
     @State private var columnWidth: CGFloat = 320
@@ -52,7 +59,7 @@ struct AttachmentThumbnail: View {
         Group {
             if let resolved {
                 Button {
-                    isShowingPreview = true
+                    openPreview(resolved)
                 } label: {
                     Image(uiImage: resolved)
                         .resizable()
@@ -78,12 +85,35 @@ struct AttachmentThumbnail: View {
         .task(id: attachment.attachmentId) {
             await images.load(attachment.attachmentId, variant: attachment.cacheVariant)
         }
-        .fullScreenCover(isPresented: $isShowingPreview) {
-            if let resolved {
-                ImagePreview(image: resolved, label: attachmentLabel)
-            }
+        .fullScreenCover(item: $preview) { item in
+            ImagePreview(image: item.image, label: item.label)
         }
     }
+
+    /// 记下要显示的那张图。先取图、再（在调试钩子里）清缓存：呈现项从此与缓存无关。
+    private func openPreview(_ image: UIImage) {
+        preview = PresentedImage(
+            id: attachment.attachmentId, image: image, label: attachmentLabel)
+        #if DEBUG
+        // `-DSHDropImageCacheOnPreview`：把「点下去之后缓存立刻被清空」固定下来。
+        // 真机上 NSCache 何时淘汰由内存压力决定，用例等不来这一刻；注入之后走的是
+        // 真实的呈现路径。Release 里没有这个字符串。
+        if Self.dropsCacheOnPreview { images.clearAllCached() }
+        #endif
+    }
+
+    /// 全屏预览的呈现项：身份用于 `fullScreenCover(item:)`，图片随项一起持有。
+    private struct PresentedImage: Identifiable {
+        let id: String
+        let image: UIImage
+        let label: String
+    }
+
+    #if DEBUG
+    /// 只在调试构建里读一次启动参数；Release 里连这个属性都不存在。
+    private static let dropsCacheOnPreview =
+        ProcessInfo.processInfo.arguments.contains("-DSHDropImageCacheOnPreview")
+    #endif
 
     private var attachmentLabel: String {
         // Never surfaces the agent marker: it is a routing signal, not a name.

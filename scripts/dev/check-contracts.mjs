@@ -181,7 +181,7 @@ for (const copy of ladder.copies) {
 
 // ── ③ 调试钩子必须在 #if DEBUG 内 ──────────────────────────────────────────
 
-const DEBUG_HOOKS = ['-DSHDemoMode', '-DSHForgetDirect', '-DSHFailAttachmentLoad']
+const DEBUG_HOOKS = ['-DSHDemoMode', '-DSHForgetDirect', '-DSHFailAttachmentLoad', '-DSHDropImageCacheOnPreview']
 
 /**
  * 把注释行挖空（保留行数），这样闸门只看**代码**。
