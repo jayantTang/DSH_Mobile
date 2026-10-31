@@ -968,3 +968,135 @@ export async function iosUnitTests({ outDir, log = () => {} }) {
     },
   }
 }
+
+/**
+ * 场景：信件收件箱逐屏（仿真器经中转，只读用例 TC-MOB-50）。
+ *
+ * 补上 `ios-app × l1` 里"信件 UI 没有专用场景"的缺口：折叠/链路证据不能再冒充邮件界面。
+ * 判据与折叠场景同源：`test/run.sh` 出运行号 → summary 的引擎 PASS、像素通过、截图 ≥2
+ * （用例本身有 01 收件箱 / 02 通知正文两张）。用例声明为只读：不标已读、不发通知。
+ */
+export async function iosFeedbackUI({ outDir, root = REPO_ROOT, log = () => {}, env = process.env }) {
+  const before = snapshotRealData()
+  const observations = []
+  const commands = []
+  const CASE = String(env.FEEDBACK_L1_CASE ?? 'test/cases/current/50-收件箱按账号展示通知.md').trim()
+  let status = 'fail'
+  let note
+  let blockedReason
+  let nextStep
+
+  const slug = (argv) => argv.join('_').replace(/[^A-Za-z0-9._-]+/g, '-').slice(0, 80)
+  const run = (argv, cwd, options = {}) => {
+    const started = Date.now()
+    const result = spawnSync(argv[0], argv.slice(1), {
+      cwd: join(root, cwd),
+      encoding: 'utf8',
+      timeout: options.timeoutMs ?? 30 * 60 * 1000,
+      env: { ...process.env, ...(options.env ?? {}) },
+    })
+    const logPath = join(outDir, `${slug(argv)}.log`)
+    writeFileSync(logPath, `${result.stdout ?? ''}\n${result.stderr ?? ''}`)
+    commands.push({ argv, cwd, exitCode: result.status ?? -1, stdoutPath: logPath, note: options.note })
+    log(`L1: ${argv.join(' ')} → exit ${result.status}（${((Date.now() - started) / 1000).toFixed(1)}s）`)
+    return { result, text: `${result.stdout ?? ''}\n${result.stderr ?? ''}`, logPath }
+  }
+
+  try {
+    const xcrun = run(['xcrun', '--version'], '.', { note: 'xcrun 可用性', timeoutMs: 60_000 })
+    const booted = run(['xcrun', 'simctl', 'list', 'devices', 'booted'], '.',
+      { note: '已启动的仿真器', timeoutMs: 60_000 })
+    const devicesList = run(['node', 'scripts/dev/relay-devices.mjs', 'list'], '.',
+      { note: '中转设备表（只读）', timeoutMs: 60_000 })
+    const missing = []
+    if (xcrun.result.status !== 0) missing.push('xcrun（Xcode 命令行工具）不可用')
+    if (booted.result.status !== 0 || !/Booted/.test(booted.text)) missing.push('没有已启动的仿真器')
+    if (!existsSync(join(root, CASE))) missing.push(`用例文件 ${CASE} 不在本机`)
+    if (devicesList.result.status !== 0) missing.push('读不到中转设备表（`node scripts/dev/relay-devices.mjs list`）')
+    observations.push({
+      step: 'preconditions',
+      fact: missing.length ? `前置缺 ${missing.length} 项：${missing.join('；')}` : `前置齐备（仿真器已启动、用例 ${CASE} 在本机、中转设备表可读）`,
+    })
+    if (missing.length) {
+      status = 'blocked'
+      blockedReason = `信件 UI 用例跑不起来：${missing.join('；')}`
+      nextStep = '先 `xcrun simctl boot DSH-Test` 并完成一次中转配对；用例文件不在本机时放到 test/cases/current/'
+      note = blockedReason
+      throw Object.assign(new Error(blockedReason), { blocked: true })
+    }
+
+    const build = run(['xcodebuild', '-scheme', 'DSHMobile',
+      '-destination', 'platform=iOS Simulator,name=DSH-Test', 'build'],
+    'ios/DSHMobile', { note: 'BUILD SUCCEEDED' })
+    const buildOk = build.result.status === 0 && /BUILD SUCCEEDED/.test(build.text)
+    observations.push({
+      step: 'build',
+      fact: buildOk ? '仿真器构建成功（BUILD SUCCEEDED）' : '仿真器构建失败',
+      evidence: build.logPath.slice(outDir.length + 1),
+    })
+    if (!buildOk) throw new Error('构建失败')
+
+    const caseRun = run(['./test/run.sh', 'run', CASE], '.',
+      { env: { DSH_CONNECT: 'relay' }, note: `DSH_CONNECT=relay；用例 ${CASE}` })
+    const runMatch = caseRun.text.match(/结果写入\s+test\/runs\/([0-9A-Za-z-]+)\//)
+    if (!runMatch) {
+      const envBroken = /No booted device|xcrun: error|配对|pair\b/i.test(caseRun.text)
+      if (envBroken) {
+        status = 'blocked'
+        blockedReason = '用例跑不起来：运行器报环境问题（无已启动设备 / xcrun 出错 / 配对失败）'
+        nextStep = '先 `xcrun simctl boot DSH-Test` 并重跑配对；详见本次 test_run_sh*.log'
+        note = blockedReason
+        throw Object.assign(new Error(blockedReason), { blocked: true })
+      }
+      throw new Error('用例没跑出运行号（test/run.sh 输出里没有「结果写入 test/runs/<stamp>/」）')
+    }
+    const runId = runMatch[1]
+    const runDir = join(root, 'test', 'runs', runId)
+    observations.push({
+      step: 'simulator-case',
+      fact: `用例 ${CASE} 跑出运行 ${runId}`,
+      evidence: `test/runs/${runId}/report.html`,
+    })
+
+    const summaryPath = join(runDir, 'summary.json')
+    if (!existsSync(summaryPath)) throw new Error(`运行 ${runId} 缺 summary.json`)
+    const summary = JSON.parse(readFileSync(summaryPath, 'utf8'))
+    const shots = (summary.screenshots ?? []).length
+    const summaryOk = summary.engineVerdict === 'PASS' && summary.pixelOk === true && shots >= 2
+    observations.push({
+      step: 'summary',
+      fact: `引擎 ${summary.engineVerdict}、像素 ${summary.pixelOk ? '通过' : '未过'}、${shots} 张截图`
+        + (summary.judgementNote ? `（${summary.judgementNote}）` : ''),
+      evidence: `test/runs/${runId}/summary.json`,
+    })
+    if (!summaryOk) {
+      throw new Error(`summary 不达标（engine=${summary.engineVerdict} pixel=${summary.pixelOk} shots=${shots}，要求 PASS/true/≥2）`)
+    }
+    status = 'pass'
+    note = '信件收件箱逐屏：通知行、正文页与像素核对均达标（仿真器经中转，只读用例）'
+  } catch (error) {
+    if (!error.blocked) {
+      status = 'fail'
+      note = error.message
+      observations.push({ step: 'error', fact: error.message })
+    }
+  }
+
+  const after = snapshotRealData()
+  const untouched = before.digest === after.digest
+  observations.push({ step: 'isolation', fact: untouched ? '真实 agent.json 未变' : '真实 agent.json 变了' })
+  log(`L1: 信件收件箱逐屏 ${status}`)
+  return {
+    status,
+    note,
+    blockedReason,
+    nextStep,
+    observations,
+    commands,
+    isolation: {
+      dshHome: '真实 ~/.dsh（本场景只读：用例声明不标已读、不发通知）',
+      realHomeUntouched: untouched,
+      proof: `跑前 ${before.digest} / 跑后 ${after.digest}（sha256 + mtime）；运行器配对的调试设备跑完自行撤销`,
+    },
+  }
+}

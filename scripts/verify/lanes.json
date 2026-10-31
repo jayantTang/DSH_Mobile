@@ -214,7 +214,7 @@
       "lane": "l1",
       "value": "required",
       "reason": "仿真器经公网中转的逐屏核对是 App 改动的主渠道",
-      "scenarios": ["ios-transcript-fold", "ios-link-carrier-lifecycle"]
+      "scenarios": ["ios-transcript-fold", "ios-link-carrier-lifecycle", "ios-feedback-ui"]
     },
     {
       "subject": "ios-app",

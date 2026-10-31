@@ -18,7 +18,7 @@ import { join } from 'node:path'
 
 import { realDshHome, whichBinary } from './l1-runtime.mjs'
 import {
-  desktopInstance, freshInstall, iosLinkCarrierLifecycle, iosTranscriptFold, iosUnitTests,
+  desktopInstance, freshInstall, iosFeedbackUI, iosLinkCarrierLifecycle, iosTranscriptFold, iosUnitTests,
   linkDiagnostics, mailTests, pluginInstallHot, protocolTests, relayGoTests, smoke,
 } from './l1-scenarios.mjs'
 
@@ -37,6 +37,10 @@ export const lane = {
     'ios-unit-tests': {
       title: 'iOS App 单元测试（DSHMobileTests，不启动主界面、不截图）',
       run: iosUnitTests,
+    },
+    'ios-feedback-ui': {
+      title: '信件收件箱逐屏（仿真器经中转，只读用例 TC-MOB-50）',
+      run: iosFeedbackUI,
     },
     'relay-go-tests': {
       title: 'Go 中转单测（make test）在本机跑一遍，且不动真实数据',
