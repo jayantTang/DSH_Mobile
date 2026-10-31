@@ -1,24 +1,24 @@
-# 三级验证渠道
+# 两级验证渠道
 
-隔离强度 × 被测对象的矩阵与三个可独立调用的渠道。判定口径只有一份：
+隔离强度 × 被测对象的矩阵与两个可独立调用的渠道。判定口径只有一份：
 [`lanes.json`](./lanes.json)；拦截脚本读它，渠道入口也读它。
 
 设计文档：`specs/006-verify-lanes/`（本地过程产物，不在仓库里）。
 
-## 三级各是什么
+## 两级各是什么
 
 | 渠道 | 环境 | 能验 | 不能验 |
 |---|---|---|---|
 | `l1` 同机隔离 | 同一台 Mac、同一份二进制；临时 `HOME`/`DSH_HOME` + 一次性档案 | 宿主起停、插件挂载、连接器与插件单测、端点发现 | 干净机器上的首次启用 |
 | `l2` Linux 容器 | Linux guest 里的容器卷，**代码复制进卷** | 协议层纯函数、插件与脚本单测、web 宿主、relay（含真 Caddy） | 官方桌面版（`.app` 跑不进 Linux）、iOS App |
-| `l3` 干净环境 | 客体 VM / 真实干净机器 / 干净 CI runner | 干净机器从零启用的整条流程、桌面版宿主 | 每次都跑（成本高）；非交互登录 Apple ID |
 
-渠道 ≠ 通道：端到端结论只能在 `l3` 取得，`l1`/`l2` 的证据不得冒充它。
+L3 干净环境渠道已废除（owner 2026-10-31）：没有场景、没有证据，只有一句声明，
+不再作为渠道或门禁。桌面版与从零启用改为发布前人工验收。
 
 ## 命令
 
 ```bash
-npm run lane:doctor                            # 三级自检（只报告，不装东西、不拉镜像）
+npm run lane:doctor                            # 两级自检（只报告，不装东西、不拉镜像）
 npm run lane:l1                                # 单级自检
 npm run lane:l1 -- run --scenario smoke        # 跑一个场景，写证据包
 npm run check:lanes -- --changed <file>        # 这次改动必须跑哪几级、缺哪一级
@@ -27,7 +27,7 @@ npm run check:lanes -- --changed-from changed.txt --json   # CI 用
 
 退出码：`0` 齐备；`1` 缺证据或某级 `blocked`/`fail`；`2` 工具自身错误（矩阵坏、入口漂移）。
 
-## 三级各自的前提与补救
+## 两级各自的前提与补救
 
 `npm run lane:doctor` 会逐项列出；不可用时按它给的 `nextStep` 做。下面是人做的那几步：
 
@@ -77,29 +77,6 @@ FOLD_L1_CASE=test/cases/example/xxx.md npm run lane:l1 -- run --scenario ios-tra
   `ios-link-carrier-lifecycle` 与 `ios-feedback-ui` 三个场景；最后一个是只读用例 TC-MOB-50，
   覆盖信件收件箱与通知正文。其余 App 界面仍没有逐个场景，别把这三个当成全部界面的保证。
 
-**L3（干净环境，手动清单）**
-
-L3 已降为**手动清单**（owner 2026-10-31）：不再计入必跑，`lanes.json` 里没有 l3 的 required 格；
-`lane:l3` 目前也没有场景（`scenarios: {}`），`run --scenario` 只会写出 blocked。
-涉及 `host-desktop` / `e2e` 的发布，按下面清单人工确认，并在发布记录里写明结论或
-`L3: 未跑 — <理由>`：
-
-- 干净机器/客体 VM 上从零装 App、连接器、登记、配对、连上；
-- 官方桌面版宿主在“没装过任何东西”时的行为；
-- 首次配对、重连、重启后的自动恢复；
-- 跑完撤销一次性身份与设备，真实 `~/.dsh` 未被改写。
-
-可选的本机实现（装好才用，不作为门禁）：
-
-```bash
-brew install cirruslabs/cli/tart
-tart clone <干净 guest 模板> dsh-lane-l3      # 一次性实例，跑完删掉
-npm run lane:l3 -- run --scenario onboarding-from-scratch   # 目前无场景，会 blocked
-```
-
-若将来补出场景并在干净 runner 上跑通，再把它加回矩阵的 required 格；在那之前不要把它
-当成“自动验证过”。
-
 ## 纪律
 
 - **不碰真实数据**：`l1` 只读真实档案当模板（`cpSync` 复制到临时目录），跑完用
@@ -123,5 +100,5 @@ npm run lane:l3 -- run --scenario onboarding-from-scratch   # 目前无场景，
 `lanes.json` 里每个被测对象用 `globs` 把改动文件映射到自己；一个文件命中多个对象时
 **取并集**。required 格可加 `scenarios` 数组，把证据限定到具体场景（`check:lanes` 按
 `verdict.scenario` 过滤）；不写就退回"同渠道任意场景"，只在确实分不出更细粒度的格子里使用。
-当前 L2 只对 host-web 必跑并绑定 `plugin-install-hot`；L3 已降为手动清单，不再有 required 格。
+当前 L2 只对 host-web 必跑并绑定 `plugin-install-hot`；L3 已废除，不再有相关的矩阵格或声明门。
 想调整判定就改矩阵，不要在 `check-lanes.mjs` 里加第二份口径。

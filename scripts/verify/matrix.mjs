@@ -1,5 +1,5 @@
 /**
- * 矩阵：隔离强度（l1/l2/l3）× 被测对象，单一来源 `scripts/verify/lanes.json`。
+ * 矩阵：隔离强度（l1/l2）× 被测对象，单一来源 `scripts/verify/lanes.json`。
  *
  * 拦截脚本与渠道入口都从这里读判定口径——不允许在别处再写一份
  * （宪法 VI：同一类逻辑只允许一份实现）。改动文件 → 被测对象 → 必跑渠道，
@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url'
 
 export const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
 export const MATRIX_PATH = join(REPO_ROOT, 'scripts', 'verify', 'lanes.json')
-export const LANE_IDS = ['l1', 'l2', 'l3']
+export const LANE_IDS = ['l1', 'l2']
 export const VALUES = ['required', 'usable', 'limited', 'not-applicable']
 
 /** 读矩阵；文件缺失或不是 JSON 时抛错（工具自身错误，对应退出码 2）。 */
@@ -59,7 +59,7 @@ function validateLanes(lanes) {
     }
   }
   for (const id of Object.keys(lanes)) {
-    if (!LANE_IDS.includes(id)) issues.push(`lane ${id}: 不在 l1/l2/l3 之内`)
+    if (!LANE_IDS.includes(id)) issues.push(`lane ${id}: 不在 l1/l2 之内`)
   }
   return issues
 }
@@ -92,7 +92,7 @@ function validateEntries(entries, ids) {
   for (const entry of entries) {
     const key = `${entry?.subject}×${entry?.lane}`
     if (!ids.has(entry?.subject)) issues.push(`matrix ${key}: subject 不存在`)
-    if (!LANE_IDS.includes(entry?.lane)) issues.push(`matrix ${key}: lane 不在 l1/l2/l3 之内`)
+    if (!LANE_IDS.includes(entry?.lane)) issues.push(`matrix ${key}: lane 不在 l1/l2 之内`)
     if (seen.has(key)) issues.push(`matrix ${key}: 重复`)
     seen.add(key)
     if (!VALUES.includes(entry?.value)) issues.push(`matrix ${key}: value 必须是 ${VALUES.join('/')}`)

@@ -192,7 +192,16 @@ jobs:
         working-directory: ios/DSHMobile/DSHKit
         env:
           DSH_HOME: ${{ runner.temp }}/dsh-home
-        run: mkdir -p "$DSH_HOME" && swift test
+        # 四个 Live* 测试依赖本机真实 endpoint.json，CI 里没有；2026-10-31 的 job 在
+        # LiveDuplicateAuditTests 处挂起 30 分钟被取消。这里显式跳过，别让“没有数据”
+        # 变成“测试进程挂着”。
+        run: |
+          mkdir -p "$DSH_HOME"
+          swift test \
+            --skip LiveIntegrationTests \
+            --skip LiveDuplicateAuditTests \
+            --skip LiveWorkspaceFileVersionTests \
+            --skip LiveTurnTests
 
   app-build:
     runs-on: macos-latest
@@ -249,12 +258,8 @@ jobs:
           done
           exit $status
 
-  # 006：选择性拦截。CI 跑得了 L1/L2 的等价部分——就是上面那些作业（它们红了 PR 就红）；
-  # 跑不了 L3（干净 guest、真实手机、TestFlight 都不在 runner 上）。所以这里只做两件事：
-  #   ① 矩阵与渠道入口的守卫（缺格、重复、理由缺失、npm 脚本漂移 → exit 2）；
-  #   ② 改动要求 L3 时，必须在改动记录（PR 正文或提交说明）里留痕：
-  #      `L3: .lanes/runs/l3/<run-id>/verdict.json` 或 `L3: 未跑 — <理由>`。
-  # 声明会被原样打印出来，不是"验过"，只是"不许静默跳过"。
+  # 006：选择性拦截。CI 跑得了 L1/L2 的等价部分——就是上面那些作业（它们红了 PR 就红）。
+  # 这里只做矩阵与渠道入口的守卫（缺格、重复、理由缺失、npm 脚本漂移 → exit 2）。
   lanes:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -265,9 +270,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: 这次改动必须跑哪几级（L3 缺留痕即失败）
-        env:
-          DSH_L3_DECLARATION: ${{ github.event.pull_request.body }} ${{ github.event.head_commit.message }}
+      - name: 这次改动必须跑哪几级
         run: |
           set -e
           base='${{ github.event.pull_request.base.sha }}'

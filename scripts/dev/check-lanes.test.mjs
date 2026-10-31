@@ -80,9 +80,9 @@ test('入口漂移守卫：矩阵写的 npm 脚本不存在时判红', () => {
   const matrix = matrixWith((m) => {
     m.lanes.l1.entry = 'npm run lane:nope'
   })
-  const issues = validateLaneEntries(matrix, { 'lane:l1': 'x', 'lane:l2': 'x', 'lane:l3': 'x' })
+  const issues = validateLaneEntries(matrix, { 'lane:l1': 'x', 'lane:l2': 'x' })
   assert.ok(issues.some((issue) => issue.includes('lane:nope')))
-  assert.deepEqual(validateLaneEntries(loadMatrix(), { 'lane:l1': 'x', 'lane:l2': 'x', 'lane:l3': 'x' }), [])
+  assert.deepEqual(validateLaneEntries(loadMatrix(), { 'lane:l1': 'x', 'lane:l2': 'x' }), [])
 })
 
 test('glob：** 跨目录、* 不跨段', () => {
@@ -98,7 +98,7 @@ test('改动 → 被测对象：多命中取并集', () => {
   assert.deepEqual(matchSubjects(matrix, [CONNECTOR_FILE]), ['plugin'])
 })
 
-test('改动 → 必跑集合：连接器只要 L1，宿主 web 要 L1+L2，安装路径不再强制 L3', () => {
+test('改动 → 必跑集合：连接器只要 L1，宿主 web 要 L1+L2，安装路径没有自动渠道', () => {
   const matrix = loadMatrix()
   assert.deepEqual(requiredLanes(matrix, [CONNECTOR_FILE]).required, ['l1'])
   assert.deepEqual(requiredLanes(matrix, [INSTALL_FILE]).required, [])
@@ -200,12 +200,12 @@ test('拦截：矩阵坏掉按工具错误退出 2', () => {
   const matrixPath = join(dir, 'lanes.json')
   try {
     const broken = matrixWith((m) => {
-      m.matrix = m.matrix.filter((entry) => !(entry.subject === 'relay-go' && entry.lane === 'l3'))
+      m.matrix = m.matrix.filter((entry) => !(entry.subject === 'relay-go' && entry.lane === 'l2'))
     })
     writeFileSync(matrixPath, JSON.stringify(broken, null, 2))
     const result = gate({ changed: [CONNECTOR_FILE], matrixPath })
     assert.equal(result.exitCode, 2)
-    assert.ok(result.toolError.some((issue) => issue.includes('relay-go×l3')))
+    assert.ok(result.toolError.some((issue) => issue.includes('relay-go×l2')))
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
@@ -273,82 +273,35 @@ test('渠道入口：正常场景写出四态证据且能读回', async () => {
   }
 })
 
-test('CI 模式：L1/L2 由作业覆盖；显式要求 L3 时仍要声明（声明原样留痕，不是"验过"）', () => {
+test('CI 模式：L1/L2 由作业覆盖', () => {
   const root = tempDir()
-  const dir = tempDir()
-  const matrixPath = join(dir, 'lanes.json')
   try {
-    // CI 跑得了的格子（连接器 → L1）：不再要求本机证据
     const ci = gate({ changed: [CONNECTOR_FILE], evidenceRoot: root, ci: true })
     assert.deepEqual(ci.required, ['l1'])
     assert.deepEqual(ci.covered, ['l1'])
     assert.equal(ci.exitCode, 0)
-
-    // L3 已从矩阵移出 required；这里显式抬回 required，验证"强制 L3 时只认声明"。
-    const l3Required = matrixWith((m) => {
-      m.matrix.find((entry) => entry.subject === 'host-desktop' && entry.lane === 'l3').value = 'required'
-    })
-    writeFileSync(matrixPath, JSON.stringify(l3Required, null, 2))
-
-    const bare = gate({ changed: [INSTALL_FILE], matrixPath, evidenceRoot: root, ci: true })
-    assert.deepEqual(bare.required, ['l3'])
-    assert.deepEqual(bare.missing, ['l3'])
-    assert.equal(bare.exitCode, 1)
-
-    const declared = gate({
-      changed: [INSTALL_FILE],
-      matrixPath,
-      evidenceRoot: root,
-      ci: true,
-      l3Declaration: '本次改动\nL3: 未跑 — guest 镜像还没建好',
-    })
-    assert.equal(declared.exitCode, 0)
-    assert.equal(declared.exempt[0].lane, 'l3')
-    assert.ok(declared.exempt[0].reason.includes('guest 镜像'))
-
-    const withPath = gate({
-      changed: [INSTALL_FILE],
-      matrixPath,
-      evidenceRoot: root,
-      ci: true,
-      l3Declaration: 'L3: .lanes/runs/l3/20261008T101500Z-onboarding/verdict.json',
-    })
-    assert.equal(withPath.exitCode, 0)
-    assert.ok(withPath.exempt[0].reason.includes('verdict.json'))
-
-    const gibberish = gate({ changed: [INSTALL_FILE], matrixPath, evidenceRoot: root, ci: true, l3Declaration: '跑过了，放心' })
-    assert.equal(gibberish.exitCode, 1)
-    assert.deepEqual(gibberish.missing, ['l3'])
   } finally {
     rmSync(root, { recursive: true, force: true })
-    rmSync(dir, { recursive: true, force: true })
   }
 })
 
 test('缺证据时带出那一级的 doctor 原因（T031）', () => {
   const root = tempDir()
-  const dir = tempDir()
-  const matrixPath = join(dir, 'lanes.json')
   try {
     const registry = {
-      l3: {
+      l2: {
         title: '假渠道',
-        doctor: () => ({ available: false, checks: [], blockedReason: '没装 tart', nextStep: 'brew install circlabs/cli/tart' }),
+        doctor: () => ({ available: false, checks: [], blockedReason: '没装 colima', nextStep: 'brew install colima' }),
         scenarios: {},
       },
     }
-    const l3Required = matrixWith((m) => {
-      m.matrix.find((entry) => entry.subject === 'host-desktop' && entry.lane === 'l3').value = 'required'
-    })
-    writeFileSync(matrixPath, JSON.stringify(l3Required, null, 2))
-    const result = gate({ changed: [INSTALL_FILE], matrixPath, evidenceRoot: root, registry })
+    const result = gate({ changed: ['plugins/mobile-link/lib/dsh-client.js'], evidenceRoot: root, registry })
     assert.equal(result.exitCode, 1)
-    assert.deepEqual(result.missing, ['l3'])
-    assert.equal(result.hints.l3.blockedReason, '没装 tart')
-    assert.ok(result.hints.l3.nextStep.includes('tart'))
+    assert.deepEqual(result.missing, ['l1', 'l2'])
+    assert.equal(result.hints.l2.blockedReason, '没装 colima')
+    assert.ok(result.hints.l2.nextStep.includes('colima'))
   } finally {
     rmSync(root, { recursive: true, force: true })
-    rmSync(dir, { recursive: true, force: true })
   }
 })
 
@@ -357,8 +310,6 @@ test('矩阵自己能被加载且合法（真实仓库这一份）', () => {
   assert.deepEqual(validateMatrix(matrix), [])
   const pkg = JSON.parse(readFileSync(`${REPO}package.json`, 'utf8'))
   assert.deepEqual(validateLaneEntries(matrix, pkg.scripts), [])
-  // L3 已降为手动清单：矩阵里不允许再出现 l3 required，否则又会变回"只认声明"的假门禁。
-  assert.deepEqual(matrix.matrix.filter((entry) => entry.lane === 'l3' && entry.value === 'required'), [])
   // 所有 required 格必须绑定具体场景，否则 evidence 又会退化成"同渠道任意 pass 都算"。
   for (const entry of matrix.matrix.filter((item) => item.value === 'required')) {
     assert.ok(Array.isArray(entry.scenarios) && entry.scenarios.length > 0,

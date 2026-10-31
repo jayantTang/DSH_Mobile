@@ -32,22 +32,6 @@
         "任何需要真实手机配对的流程"
       ],
       "requiresCopyIn": true
-    },
-    "l3": {
-      "title": "干净环境（手动清单）",
-      "entry": "npm run lane:l3",
-      "isolation": "干净环境：macOS 客体 VM、真实干净机器或干净 CI runner（owner 2026-10-08：在真实环境里跑）；当前无自动场景，不计入必跑，发布前按手动清单确认",
-      "canVerify": [
-        "干净机器上从零启用的整条流程（装 App、装连接器、登记、配对、连上）",
-        "官方桌面版宿主在\"没装过任何东西\"时的行为",
-        "首次配对、重连、重启后的自动恢复"
-      ],
-      "cannotVerify": [
-        "改动每次都跑（成本高，只用于需要干净机器的结论）",
-        "多台设备并发的规模化结论",
-        "非交互地登录 Apple ID（TestFlight 安装那一步仍需人工）"
-      ],
-      "requiresCopyIn": false
     }
   },
   "subjects": [
@@ -136,7 +120,12 @@
       "lane": "l1",
       "value": "required",
       "reason": "纯函数与契约向量在本机就是权威口径，swift test 秒级可重跑",
-      "scenarios": ["protocol-tests", "relay-go-tests", "ios-link-carrier-lifecycle", "link-diagnostics"]
+      "scenarios": [
+        "protocol-tests",
+        "relay-go-tests",
+        "ios-link-carrier-lifecycle",
+        "link-diagnostics"
+      ]
     },
     {
       "subject": "protocol",
@@ -145,17 +134,14 @@
       "reason": "Linux Swift 工具链能跑同一份包，但平台差异要单独记账"
     },
     {
-      "subject": "protocol",
-      "lane": "l3",
-      "value": "not-applicable",
-      "reason": "纯函数在干净机器上不会给出新信息，跑一次只是重复"
-    },
-    {
       "subject": "plugin",
       "lane": "l1",
       "value": "required",
       "reason": "插件跑在宿主进程里，隔离 HOME 起宿主是它的主要验证环境",
-      "scenarios": ["plugin-install-hot", "smoke"]
+      "scenarios": [
+        "plugin-install-hot",
+        "smoke"
+      ]
     },
     {
       "subject": "plugin",
@@ -165,36 +151,30 @@
       "prerequisite": "代码必须复制进容器卷"
     },
     {
-      "subject": "plugin",
-      "lane": "l3",
-      "value": "usable",
-      "reason": "只有\"新装插件\"这类状态相关问题才需要干净机器"
-    },
-    {
       "subject": "host-web",
       "lane": "l1",
       "value": "required",
       "reason": "命令行 web 宿主在本机就能起，且插件在其中加载",
-      "scenarios": ["plugin-install-hot", "smoke", "fresh-install"]
+      "scenarios": [
+        "plugin-install-hot",
+        "smoke",
+        "fresh-install"
+      ]
     },
     {
       "subject": "host-web",
       "lane": "l2",
       "value": "required",
       "reason": "容器里能起同一套 web 宿主，是它与 CI 对齐的那条路",
-      "scenarios": ["plugin-install-hot"]
-    },
-    {
-      "subject": "host-web",
-      "lane": "l3",
-      "value": "usable",
-      "reason": "干净 guest 能起 web 宿主，但价值不如桌面版那条路"
+      "scenarios": [
+        "plugin-install-hot"
+      ]
     },
     {
       "subject": "host-desktop",
       "lane": "l1",
       "value": "not-applicable",
-      "reason": "实测（lane:l1 --scenario desktop-instance）：隔离 HOME 下直接拉 app 二进制，进程立即退出，没有新宿主、临时 HOME 里也没有 Library/ 目录——桌面版的数据目录与单实例锁都不认 HOME，隔离只能靠 L3 的干净 guest"
+      "reason": "桌面版的数据目录与单实例锁不认隔离 HOME；没有自动渠道，按人工验收"
     },
     {
       "subject": "host-desktop",
@@ -203,18 +183,15 @@
       "reason": "Electron .app 与 Desktop shell 跑不进 Linux 容器"
     },
     {
-      "subject": "host-desktop",
-      "lane": "l3",
-      "value": "limited",
-      "reason": "需要干净机器；当前没有自动场景，降为发布前手动清单，不再计入必跑",
-      "prerequisite": "guest 模板与一次性实例（Tart）"
-    },
-    {
       "subject": "ios-app",
       "lane": "l1",
       "value": "required",
       "reason": "仿真器经公网中转的逐屏核对是 App 改动的主渠道",
-      "scenarios": ["ios-transcript-fold", "ios-link-carrier-lifecycle", "ios-feedback-ui"]
+      "scenarios": [
+        "ios-transcript-fold",
+        "ios-link-carrier-lifecycle",
+        "ios-feedback-ui"
+      ]
     },
     {
       "subject": "ios-app",
@@ -223,17 +200,13 @@
       "reason": "仿真器与 Xcode 只在 macOS 上，容器里没有"
     },
     {
-      "subject": "ios-app",
-      "lane": "l3",
-      "value": "usable",
-      "reason": "干净 guest 里要装 Xcode，成本高；只在\"从零启用\"验收时用"
-    },
-    {
       "subject": "ios-unit",
       "lane": "l1",
       "value": "required",
       "reason": "改了单测或它覆盖的 App 内部代码就必须跑这一级：xcodebuild test 不启动主界面、不截图，比逐屏核对便宜一个数量级（入口 npm run test:app-unit）",
-      "scenarios": ["ios-unit-tests"]
+      "scenarios": [
+        "ios-unit-tests"
+      ]
     },
     {
       "subject": "ios-unit",
@@ -242,17 +215,13 @@
       "reason": "Xcode 与模拟器只在 macOS 上，容器里没有"
     },
     {
-      "subject": "ios-unit",
-      "lane": "l3",
-      "value": "usable",
-      "reason": "干净 guest 里要装 Xcode，成本高；这级不提供本机拿不到的信息（除非验\"从零启用\"）"
-    },
-    {
       "subject": "relay-go",
       "lane": "l1",
       "value": "required",
       "reason": "go test ./... 在本机就是权威口径；用例自带 t.TempDir() 临时库，不碰真实数据",
-      "scenarios": ["relay-go-tests"]
+      "scenarios": [
+        "relay-go-tests"
+      ]
     },
     {
       "subject": "relay-go",
@@ -261,17 +230,13 @@
       "reason": "容器里能跑同一套 go test 与黑盒契约；本机不提供 Docker，这级不作为必跑"
     },
     {
-      "subject": "relay-go",
-      "lane": "l3",
-      "value": "usable",
-      "reason": "部署后的端到端验证可以在 guest 里做，日常靠 L1 足够"
-    },
-    {
       "subject": "mail",
       "lane": "l1",
       "value": "required",
       "reason": "pytest 在本机就是权威口径，含真 Caddy 的切换演练；用例全用 tmp_path 建库",
-      "scenarios": ["mail-tests"]
+      "scenarios": [
+        "mail-tests"
+      ]
     },
     {
       "subject": "mail",
@@ -279,12 +244,6 @@
       "value": "usable",
       "reason": "CI 的 mail 作业已在干净 Linux 上跑 pytest 与真 Caddy；本机 L2 改为可选复核",
       "prerequisite": "代码必须复制进容器卷"
-    },
-    {
-      "subject": "mail",
-      "lane": "l3",
-      "value": "usable",
-      "reason": "deploy.sh 的安装/回退可以在 guest 里做，日常靠 L1 与 L2 足够"
     },
     {
       "subject": "e2e",
@@ -297,13 +256,6 @@
       "lane": "l2",
       "value": "not-applicable",
       "reason": "仿真器与真实手机都不在容器里"
-    },
-    {
-      "subject": "e2e",
-      "lane": "l3",
-      "value": "limited",
-      "reason": "只有干净 guest 能复现\"新用户从零走完整条链路\"；当前无自动场景，降为发布前手动清单",
-      "prerequisite": "一次性身份 + 跑完撤销"
     }
   ]
 }

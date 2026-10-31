@@ -59,7 +59,7 @@ test/.venv/bin/python test/tools/test_report.py    # 每条规则一个反例，
 | 一、类别 | 测的是什么 | **单元测试**：进程内调用类型或函数，外部依赖以测试替身替代。<br>**集成测试**：至少一个真实外部部件参与（真实磁盘、真实子进程、真实 Caddy、真实 DSH 实例）。<br>**UI 测试**：XCUITest 驱动真实 App 界面，经中转连接本机实例，含截图与人工核对。<br>**静态检查**：不执行被测程序，读取源码与配置做规则校验。 |
 | 二、实例影响 | 能否与业务并行 | **无接触**：不连接本机 DSH 实例；可与业务并行。<br>**只读接触**：连接实例仅查询，不写状态、不建会话；可与业务并行，代价是占用一个客户端连接。<br>**写接触**：在实例上建会话、发提示词、改已读或归档或工作区登记、删会话；不得与业务并行。 |
 | 三、执行位置 | 占用什么资源 | **macOS 进程**：不占模拟器；可并行。<br>**模拟器进程（无 UI 驱动）**：独占模拟器，不能与 UI 测试或手工操作并行。<br>**模拟器 + UI 驱动**：独占模拟器与屏幕，并需人工核对截图。 |
-| 四、证据渠道 | 证据在哪一级环境取得 | **L1 同机隔离**（同机、临时 `HOME`/`DSH_HOME`，验本机行为）；**L2 Linux 容器**（另一内核与文件系统，代码复制进卷，验跨平台可复现）；**L3 干净环境**（客体 VM 或干净机器，验从零启用）。判定入口 `scripts/verify/lanes.json`。 |
+| 四、证据渠道 | 证据在哪一级环境取得 | **L1 同机隔离**（同机、临时 `HOME`/`DSH_HOME`，验本机行为）；**L2 Linux 容器**（另一内核与文件系统，代码复制进卷，验跨平台可复现）。判定入口 `scripts/verify/lanes.json`。 |
 
 渠道与类别正交：同一个组件可以在不同渠道取证（例如 relay 的 L1 与 L2）。矩阵以"被测对象 × 渠道"给出必跑等级，用 `npm run check:lanes -- --changed <文件>` 查询。
 
@@ -83,7 +83,7 @@ test/.venv/bin/python test/tools/test_report.py    # 每条规则一个反例，
 | `scripts/**/*.test.mjs` | 非产品组件：仓库工具链 | `scripts/dev/*.test.mjs`、`scripts/release/*.test.mjs` | 重启、档案对等、插件热更、调试设备清扫 |
 | `test/cases/**` | 手机 iOS × 中转服务 × 连接器 × DSH 本体（端到端） | `test/cases/`、`test/tools/` | 真机形态界面、手势、真实链路；同时充当 `ios-app × l1` 的逐屏核对证据 |
 | `npm run lane:l1 -- run --scenario …` 的宿主场景 | DSH 本体（命令行 web 版宿主）× 连接器（插件挂载） | `plugins/mobile-link/lib/dsh-client.js`、`scripts/install/install-plugin.sh` | 起停、插件挂载、路由可达 |
-| 桌面版宿主场景（仅 L3 有效） | DSH 本体（官方桌面版宿主） | `plugins/mobile-link/lib/index.js`、`scripts/install/install-all.sh`、`scripts/dev/profile-parity*.mjs` | 安装、档案对等、安装路径；L1/L2 为 `not-applicable` |
+| 桌面版宿主场景（人工验收） | DSH 本体（官方桌面版宿主） | `plugins/mobile-link/lib/index.js`、`scripts/install/install-all.sh`、`scripts/dev/profile-parity*.mjs` | 安装、档案对等、安装路径；L1/L2 为 `not-applicable`，没有自动渠道 |
 | 13 个 `check:*` | 非产品组件：仓库静态规则（`check:i18n` 另涉手机 iOS 文案与翻译表） | `scripts/dev/check-*.mjs` 等 | 本地化、分层、契约、文档、结构、矩阵 |
 
 定位差别归纳为三句：纵向按边界分层（协议核心定通信口径、模块包实现领域逻辑、App 目标负责装配与平台适配）；横向按产品组件划分（连接器负责电脑侧接入、中转服务负责公网转发、邮件服务负责信件与通知投递、图片插件负责图片投递）；两端为横切（端到端用例把各组件连起来走真实链路，静态检查只校验结构）。

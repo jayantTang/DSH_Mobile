@@ -342,7 +342,7 @@ async function launchAndProbe({ binary, home, dshHome, existing, outDir, log }) 
  *
  * 与 `smoke` 的区别只有一处：**不复制真实档案**——`DSH_HOME` 是空的，这正是新用户第一次
  * 跑 `dsh web` 的样子。它回答的是"从零能不能自己把档案建起来并开始服务"，
- * 也就是"干净机器"里**电脑侧那一半**（真正的干净机器还需要 guest，见 L3）。
+ * 也就是"从零启用"里**电脑侧那一半**；桌面版与真实干净机器仍只能人工验收。
  */
 export async function freshInstall({ outDir, log = () => {} }) {
   const before = snapshotRealData()
@@ -816,8 +816,8 @@ async function inspectDiagnosticsJournal({ dshHome, outDir, log, timeoutMs = 30_
 /**
  * 场景：DSHKit 协议层单测（`swift test`）。
  *
- * 覆盖 `protocol` 这个被测对象里 DSHKit 的纯函数与契约向量。跳过 `LiveIntegrationTests`：
- * 那条用例吃本机真实会话，选到迁移被拒的会话会红，属于已知环境噪声，不是协议回归；
+ * 覆盖 `protocol` 这个被测对象里 DSHKit 的纯函数与契约向量。跳过四个 `Live*` 测试：
+ * 它们依赖本机真实 endpoint.json / 会话，CI 与协议层单测都不该被这些环境依赖拖住；
  * 其余测试必须全绿。`DSH_HOME` 指到临时目录，并在跑前/跑后对照真实 agent.json。
  */
 export async function protocolTests({ outDir, log = () => {} }) {
@@ -833,7 +833,13 @@ export async function protocolTests({ outDir, log = () => {} }) {
   let blockedReason
   let nextStep
 
-  const argv = ['swift', 'test', '--skip', 'LiveIntegrationTests']
+  const argv = [
+    'swift', 'test',
+    '--skip', 'LiveIntegrationTests',
+    '--skip', 'LiveDuplicateAuditTests',
+    '--skip', 'LiveWorkspaceFileVersionTests',
+    '--skip', 'LiveTurnTests',
+  ]
   try {
     const version = spawnSync('swift', ['--version'], { encoding: 'utf8', timeout: 60_000 })
     commands.push({ argv: ['swift', '--version'], exitCode: version.status ?? -1 })
@@ -855,7 +861,7 @@ export async function protocolTests({ outDir, log = () => {} }) {
     const logPath = join(outDir, 'protocol-swift-test.log')
     writeFileSync(logPath, `$ cd ios/DSHMobile/DSHKit && ${argv.join(' ')}\n${result.stdout ?? ''}${result.stderr ?? ''}`)
     commands.push({ argv, cwd: 'ios/DSHMobile/DSHKit', exitCode: result.status ?? -1, stdoutPath: logPath,
-      note: 'DSHKit swift test（跳过 LiveIntegrationTests）' })
+      note: 'DSHKit swift test（跳过四个 Live* 测试）' })
     const summary = (result.stdout ?? '').trim().split('\n').filter(Boolean).at(-1) ?? '(没有输出)'
     observations.push({
       step: 'swift-test',

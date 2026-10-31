@@ -38,15 +38,12 @@ export function collectChangedFiles({ changed = [], from = undefined, repo = REP
  * 校验必跑集合的证据。
  *
  * 两种"不算缺"的来源必须与"真的验过"分开记：
- *   - `ciCovered`：CI 模式下 L1/L2 由 workflow 自己的作业覆盖（它们挂了 PR 就红）；
- *   - `exempt`：L3 这类 CI 跑不了的格子，改动记录里给了 `L3: <verdict 路径>` 或
- *     `L3: 未跑 — <理由>` 的声明。声明是"允许未跑但要留痕"，不是"验过"。
+ *   - `ciCovered`：CI 模式下 L1/L2 由 workflow 自己的作业覆盖（它们挂了 PR 就红）。
  */
-export function evaluateEvidence({ required, reasons, entries, evidenceRoot = DEFAULT_EVIDENCE_ROOT, changedFiles = [], ciCovered = [], l3Declaration = '', scenarios = {} } = {}) {
+export function evaluateEvidence({ required, reasons, entries, evidenceRoot = DEFAULT_EVIDENCE_ROOT, changedFiles = [], ciCovered = [], scenarios = {} } = {}) {
   const newestChange = newestMtime(changedFiles)
   const satisfied = []
   const covered = []
-  const exempt = []
   const missing = []
   const blocked = []
   const evidence = {}
@@ -71,32 +68,12 @@ export function evaluateEvidence({ required, reasons, entries, evidenceRoot = DE
       covered.push(lane)
       continue
     }
-    const declared = lane === 'l3' ? parseL3Declaration(l3Declaration) : undefined
-    if (declared !== undefined) {
-      exempt.push({ lane, reason: declared })
-      continue
-    }
     if (blocks.length > 0) {
       blocked.push({ lane, reason: blocks[blocks.length - 1].verdict.blockedReason, nextStep: blocks[blocks.length - 1].verdict.nextStep })
     }
     missing.push(lane)
   }
-  return { required, satisfied, covered, exempt, missing, blocked, reasons, scenarios, evidence, stale }
-}
-
-/**
- * 改动记录里的 L3 声明。两种写法都认：
- *   `L3: .lanes/runs/l3/<run-id>/verdict.json`（本机跑过，附证据路径）
- *   `L3: 未跑 — <理由>`（明确没跑，但说清为什么）
- * 认不出的写法一律不算声明——"没写"与"写了看不懂"都要挡下来。
- */
-export function parseL3Declaration(text) {
-  const source = String(text ?? '')
-  const withEvidence = /L3[:：]\s*(\S*\.lanes\/runs\/l3\/\S*verdict\.json)/.exec(source)
-  if (withEvidence !== null) return `本机已跑 L3：${withEvidence[1]}`
-  const notRun = /L3[:：]\s*(未跑|不跑)\s*[—\-:：]?\s*([^\n]{4,})/.exec(source)
-  if (notRun !== null) return `L3 ${notRun[1]}：${notRun[2].trim()}`
-  return undefined
+  return { required, satisfied, covered, missing, blocked, reasons, scenarios, evidence, stale }
 }
 
 function newestMtime(files) {
@@ -136,7 +113,6 @@ function parseArgs(argv) {
     else if (token === '--require') require.push(argv[++index])
     else if (token === '--changed-from') flags.from = argv[++index]
     else if (token === '--evidence-root') flags.evidenceRoot = argv[++index]
-    else if (token === '--l3-declaration') flags.l3Declaration = argv[++index]
     else if (token === '--ci') flags.ci = true
     else if (token === '--json') flags.json = true
     else if (token === '--help' || token === '-h') flags.help = true
@@ -145,7 +121,7 @@ function parseArgs(argv) {
   return { changed, require, flags }
 }
 
-export function gate({ changed = [], from, require: forced = [], evidenceRoot = DEFAULT_EVIDENCE_ROOT, matrixPath, ci = false, l3Declaration = '', registry } = {}) {
+export function gate({ changed = [], from, require: forced = [], evidenceRoot = DEFAULT_EVIDENCE_ROOT, matrixPath, ci = false, registry } = {}) {
   const matrix = loadMatrix(matrixPath)
   const pkg = JSON.parse(readFileSync(join(REPO_ROOT, 'package.json'), 'utf8'))
   const issues = [...validateMatrix(matrix), ...validateLaneEntries(matrix, pkg.scripts ?? {})]
@@ -155,9 +131,9 @@ export function gate({ changed = [], from, require: forced = [], evidenceRoot = 
   const decision = requiredLanes(matrix, files)
   const required = [...new Set([...decision.required, ...forced])].sort()
   const entries = readEvidence(evidenceRoot)
-  // CI 里 L1/L2 由 workflow 自己的作业覆盖（它们红了 PR 就红）；L3 跑不了，只能要声明。
+  // CI 里 L1/L2 由 workflow 自己的作业覆盖（它们红了 PR 就红）。
   const ciCovered = ci ? required.filter((lane) => lane === 'l1' || lane === 'l2') : []
-  const verdict = evaluateEvidence({ required, reasons: decision.reasons, scenarios: decision.scenarios, entries, evidenceRoot, changedFiles: files, ciCovered, l3Declaration })
+  const verdict = evaluateEvidence({ required, reasons: decision.reasons, scenarios: decision.scenarios, entries, evidenceRoot, changedFiles: files, ciCovered })
   const ok = verdict.missing.length === 0
   return {
     exitCode: ok ? 0 : 1,
@@ -207,10 +183,7 @@ function format(result) {
     const why = result.reasons[lane] ?? '被 --require 强制要求'
     if (result.satisfied.includes(lane)) lines.push(`  ok      ${lane} — ${result.evidence[lane]}（${why}）`)
     else if (result.covered.includes(lane)) lines.push(`  CI      ${lane} — 由 workflow 作业覆盖（${why}）`)
-    else if (result.exempt.some((item) => item.lane === lane)) {
-      const item = result.exempt.find((entry) => entry.lane === lane)
-      lines.push(`  声明    ${lane} — ${item.reason}（${why}）`)
-    } else {
+    else {
       const hint = result.hints?.[lane]
       const want = result.scenarios?.[lane]
       const scenarioNote = want ? `；只认场景：${want.join('/')}` : ''
@@ -220,8 +193,7 @@ function format(result) {
   }
   for (const block of result.blocked) lines.push(`  BLOCKED ${block.lane} — ${block.reason}；下一步：${block.nextStep}`)
   if (!result.ok) {
-    lines.push('缺证据：跑 `npm run lane:<id> -- run --scenario <name>` 补齐；L3 已降为手动清单，')
-    lines.push('需要强制时用 `--require l3` 并在改动记录里写 `L3: 未跑 — <理由>`。')
+    lines.push('缺证据：跑 `npm run lane:<id> -- run --scenario <name>` 补齐。')
   }
   return lines.join('\n')
 }
@@ -236,7 +208,7 @@ async function main(argv = process.argv.slice(2)) {
   }
   if (args.flags.help) {
     process.stdout.write('用法：check-lanes.mjs [--changed <file>]… [--changed-from <file>] [--require <lane>]…\n'
-      + '                    [--ci] [--l3-declaration <text>] [--json]\n')
+      + '                    [--ci] [--json]\n')
     return 0
   }
   let result
@@ -247,7 +219,6 @@ async function main(argv = process.argv.slice(2)) {
       require: args.require,
       evidenceRoot: args.flags.evidenceRoot ?? DEFAULT_EVIDENCE_ROOT,
       ci: args.flags.ci === true,
-      l3Declaration: args.flags.l3Declaration ?? process.env.DSH_L3_DECLARATION ?? '',
     })
   } catch (error) {
     process.stderr.write(`工具错误：${error.message}\n`)

@@ -12,7 +12,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { join } from 'node:path'
 
 export const STATUSES = ['pass', 'fail', 'blocked', 'not-run']
-export const LANE_IDS = ['l1', 'l2', 'l3']
+export const LANE_IDS = ['l1', 'l2']
 
 /** `20261008T101500Z-plugin-install-hot`。目录名与 runId 相同，便于互指。 */
 export function runId(date = new Date(), slug = 'run') {
@@ -29,7 +29,7 @@ export function validateVerdict(verdict, prefix = 'verdict') {
   const issues = []
   if (verdict === null || typeof verdict !== 'object') return [`${prefix}: 不是对象`]
   const v = /** @type {Record<string, any>} */ (verdict)
-  if (!LANE_IDS.includes(v.lane)) issues.push(`${prefix}: lane 必须是 l1/l2/l3`)
+  if (!LANE_IDS.includes(v.lane)) issues.push(`${prefix}: lane 必须是 l1/l2`)
   if (typeof v.runId !== 'string' || !/^\d{8}T\d{6}Z-[a-z0-9-]+$/.test(v.runId)) {
     issues.push(`${prefix}: runId 形状应为 YYYYMMDDThhmmssZ-<slug>`)
   }

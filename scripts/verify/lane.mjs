@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * 三级验证渠道的统一入口。
+ * 两级验证渠道的统一入口。
  *
- *   npm run lane:doctor                     # 三级自检（只报告，不装东西）
+ *   npm run lane:doctor                     # 两级自检（只报告，不装东西）
  *   npm run lane:l1                         # 单级自检
  *   npm run lane:l1 -- run --scenario smoke # 跑一个场景，写证据包
  *
@@ -17,14 +17,13 @@ import { formatDoctor, runDoctor } from './doctor.mjs'
 import { runId, writeEvidence } from './evidence.mjs'
 import { lane as l1 } from './l1.mjs'
 import { lane as l2 } from './l2.mjs'
-import { lane as l3 } from './l3.mjs'
 import { REPO_ROOT } from './matrix.mjs'
 
 const EVIDENCE_ROOT = join(REPO_ROOT, '.lanes', 'runs')
 
-/** 默认三级；单测传自己的 registry 即可替换。 */
+/** 默认两级；单测传自己的 registry 即可替换。 */
 export function createRegistry(overrides = {}) {
-  return { l1, l2, l3, ...overrides }
+  return { l1, l2, ...overrides }
 }
 
 /**
@@ -150,8 +149,8 @@ async function main(argv = process.argv.slice(2)) {
     return report.ok ? 0 : 1
   }
 
-  if (!['l1', 'l2', 'l3'].includes(command)) {
-    process.stderr.write(`用法：lane.mjs doctor | <l1|l2|l3> [doctor|run --scenario <name>] [--json]\n`)
+  if (!['l1', 'l2'].includes(command)) {
+    process.stderr.write(`用法：lane.mjs doctor | <l1|l2> [doctor|run --scenario <name>] [--json]\n`)
     return 2
   }
 
