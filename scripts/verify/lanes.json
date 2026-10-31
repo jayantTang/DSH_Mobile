@@ -135,7 +135,8 @@
       "subject": "protocol",
       "lane": "l1",
       "value": "required",
-      "reason": "纯函数与契约向量在本机就是权威口径，swift test 秒级可重跑"
+      "reason": "纯函数与契约向量在本机就是权威口径，swift test 秒级可重跑",
+      "scenarios": ["protocol-tests", "relay-go-tests", "ios-link-carrier-lifecycle", "link-diagnostics"]
     },
     {
       "subject": "protocol",
@@ -153,7 +154,8 @@
       "subject": "plugin",
       "lane": "l1",
       "value": "required",
-      "reason": "插件跑在宿主进程里，隔离 HOME 起宿主是它的主要验证环境"
+      "reason": "插件跑在宿主进程里，隔离 HOME 起宿主是它的主要验证环境",
+      "scenarios": ["plugin-install-hot", "smoke"]
     },
     {
       "subject": "plugin",
@@ -172,7 +174,8 @@
       "subject": "host-web",
       "lane": "l1",
       "value": "required",
-      "reason": "命令行 web 宿主在本机就能起，且插件在其中加载"
+      "reason": "命令行 web 宿主在本机就能起，且插件在其中加载",
+      "scenarios": ["plugin-install-hot", "smoke", "fresh-install"]
     },
     {
       "subject": "host-web",
@@ -210,7 +213,8 @@
       "subject": "ios-app",
       "lane": "l1",
       "value": "required",
-      "reason": "仿真器经公网中转的逐屏核对是 App 改动的主渠道"
+      "reason": "仿真器经公网中转的逐屏核对是 App 改动的主渠道",
+      "scenarios": ["ios-transcript-fold", "ios-link-carrier-lifecycle"]
     },
     {
       "subject": "ios-app",
@@ -228,7 +232,8 @@
       "subject": "ios-unit",
       "lane": "l1",
       "value": "required",
-      "reason": "改了单测或它覆盖的 App 内部代码就必须跑这一级：xcodebuild test 不启动主界面、不截图，比逐屏核对便宜一个数量级（入口 npm run test:app-unit）"
+      "reason": "改了单测或它覆盖的 App 内部代码就必须跑这一级：xcodebuild test 不启动主界面、不截图，比逐屏核对便宜一个数量级（入口 npm run test:app-unit）",
+      "scenarios": ["ios-unit-tests"]
     },
     {
       "subject": "ios-unit",
@@ -246,7 +251,8 @@
       "subject": "relay-go",
       "lane": "l1",
       "value": "required",
-      "reason": "go test ./... 在本机就是权威口径；用例自带 t.TempDir() 临时库，不碰真实数据"
+      "reason": "go test ./... 在本机就是权威口径；用例自带 t.TempDir() 临时库，不碰真实数据",
+      "scenarios": ["relay-go-tests"]
     },
     {
       "subject": "relay-go",
@@ -264,7 +270,8 @@
       "subject": "mail",
       "lane": "l1",
       "value": "required",
-      "reason": "pytest 在本机就是权威口径，含真 Caddy 的切换演练；用例全用 tmp_path 建库"
+      "reason": "pytest 在本机就是权威口径，含真 Caddy 的切换演练；用例全用 tmp_path 建库",
+      "scenarios": ["mail-tests"]
     },
     {
       "subject": "mail",

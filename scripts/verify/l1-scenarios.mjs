@@ -812,3 +812,159 @@ async function inspectDiagnosticsJournal({ dshHome, outDir, log, timeoutMs = 30_
     observations: [...observations, ...problems.map((problem) => ({ step: 'journal', fact: `不合格：${problem}` }))],
   }
 }
+
+/**
+ * 场景：DSHKit 协议层单测（`swift test`）。
+ *
+ * 覆盖 `protocol` 这个被测对象里 DSHKit 的纯函数与契约向量。跳过 `LiveIntegrationTests`：
+ * 那条用例吃本机真实会话，选到迁移被拒的会话会红，属于已知环境噪声，不是协议回归；
+ * 其余测试必须全绿。`DSH_HOME` 指到临时目录，并在跑前/跑后对照真实 agent.json。
+ */
+export async function protocolTests({ outDir, log = () => {} }) {
+  const before = snapshotRealData()
+  const root = mkdtempSync(join(tmpdir(), 'dsh-lane-l1-protocol-'))
+  const home = join(root, 'home')
+  const dshHome = join(home, '.dsh')
+  mkdirSync(dshHome, { recursive: true })
+  const observations = []
+  const commands = []
+  let status = 'fail'
+  let note
+  let blockedReason
+  let nextStep
+
+  const argv = ['swift', 'test', '--skip', 'LiveIntegrationTests']
+  try {
+    const version = spawnSync('swift', ['--version'], { encoding: 'utf8', timeout: 60_000 })
+    commands.push({ argv: ['swift', '--version'], exitCode: version.status ?? -1 })
+    if (version.status !== 0) {
+      status = 'blocked'
+      blockedReason = 'swift 不可用，跑不了 DSHKit 协议层单测'
+      nextStep = '安装 Xcode 命令行工具并确认 `swift --version` 可用'
+      throw Object.assign(new Error(blockedReason), { blocked: true })
+    }
+
+    const started = Date.now()
+    const result = spawnSync(argv[0], argv.slice(1), {
+      cwd: join(REPO_ROOT, 'ios/DSHMobile/DSHKit'),
+      encoding: 'utf8',
+      timeout: 15 * 60 * 1000,
+      maxBuffer: 32 * 1024 * 1024,
+      env: { ...process.env, DSH_HOME: dshHome },
+    })
+    const logPath = join(outDir, 'protocol-swift-test.log')
+    writeFileSync(logPath, `$ cd ios/DSHMobile/DSHKit && ${argv.join(' ')}\n${result.stdout ?? ''}${result.stderr ?? ''}`)
+    commands.push({ argv, cwd: 'ios/DSHMobile/DSHKit', exitCode: result.status ?? -1, stdoutPath: logPath,
+      note: 'DSHKit swift test（跳过 LiveIntegrationTests）' })
+    const summary = (result.stdout ?? '').trim().split('\n').filter(Boolean).at(-1) ?? '(没有输出)'
+    observations.push({
+      step: 'swift-test',
+      fact: `${summary}（exit ${result.status}，${((Date.now() - started) / 1000).toFixed(1)}s）`,
+      evidence: 'protocol-swift-test.log',
+    })
+    if (result.status === 0) status = 'pass'
+    else note = `swift test 退出码 ${result.status}：${summary}`
+  } catch (error) {
+    if (!error.blocked) {
+      note = error.message
+      observations.push({ step: 'error', fact: error.message })
+    }
+  }
+
+  const after = snapshotRealData()
+  const untouched = before.digest === after.digest
+  observations.push({ step: 'isolation', fact: untouched ? '真实 agent.json 未变' : '真实 agent.json 变了' })
+  rmSync(root, { recursive: true, force: true })
+  log(`L1: DSHKit 协议层单测 ${status}`)
+  return {
+    status,
+    note,
+    blockedReason,
+    nextStep,
+    observations,
+    commands,
+    isolation: {
+      dshHome: `(临时 DSH_HOME: ${dshHome})`,
+      realHomeUntouched: untouched,
+      proof: `跑前 ${before.digest} / 跑后 ${after.digest}（sha256 + mtime）`,
+    },
+  }
+}
+
+/**
+ * 场景：iOS App 单元测试（`DSHMobileTests`，不启动主界面、不截图）。
+ *
+ * 覆盖 `ios-unit` 这个被测对象；入口与矩阵理由里的 `npm run test:app-unit` 一致。
+ * 只跑单测，不替代 `ios-app` 的逐屏核对；`DSH_HOME` 指到临时目录并对照真实 agent.json。
+ */
+export async function iosUnitTests({ outDir, log = () => {} }) {
+  const before = snapshotRealData()
+  const root = mkdtempSync(join(tmpdir(), 'dsh-lane-l1-ios-unit-'))
+  const home = join(root, 'home')
+  const dshHome = join(home, '.dsh')
+  mkdirSync(dshHome, { recursive: true })
+  const observations = []
+  const commands = []
+  let status = 'fail'
+  let note
+  let blockedReason
+  let nextStep
+
+  const argv = ['bash', 'scripts/dev/verify-app-unit.sh']
+  try {
+    const xcrun = spawnSync('xcrun', ['--version'], { encoding: 'utf8', timeout: 60_000 })
+    commands.push({ argv: ['xcrun', '--version'], exitCode: xcrun.status ?? -1 })
+    if (xcrun.status !== 0) {
+      status = 'blocked'
+      blockedReason = 'xcrun 不可用，跑不了 iOS App 单元测试'
+      nextStep = '安装 Xcode 命令行工具，并准备一台可用的 iPhone 模拟器'
+      throw Object.assign(new Error(blockedReason), { blocked: true })
+    }
+
+    const started = Date.now()
+    const result = spawnSync(argv[0], argv.slice(1), {
+      cwd: REPO_ROOT,
+      encoding: 'utf8',
+      timeout: 20 * 60 * 1000,
+      maxBuffer: 32 * 1024 * 1024,
+      env: { ...process.env, DSH_HOME: dshHome },
+    })
+    const logPath = join(outDir, 'ios-unit-tests.log')
+    writeFileSync(logPath, `$ ${argv.join(' ')}\n${result.stdout ?? ''}${result.stderr ?? ''}`)
+    commands.push({ argv, cwd: '.', exitCode: result.status ?? -1, stdoutPath: logPath,
+      note: 'DSHMobileTests（-only-testing，不跑 UI）' })
+    const lines = (result.stdout ?? '').trim().split('\n').filter(Boolean)
+    const summary = lines.at(-1) ?? '(没有输出)'
+    observations.push({
+      step: 'xcodebuild-test',
+      fact: `exit ${result.status}，${((Date.now() - started) / 1000).toFixed(1)}s；末行：${summary.slice(0, 240)}`,
+      evidence: 'ios-unit-tests.log',
+    })
+    if (result.status === 0) status = 'pass'
+    else note = `verify-app-unit.sh 退出码 ${result.status}：${summary}`
+  } catch (error) {
+    if (!error.blocked) {
+      note = error.message
+      observations.push({ step: 'error', fact: error.message })
+    }
+  }
+
+  const after = snapshotRealData()
+  const untouched = before.digest === after.digest
+  observations.push({ step: 'isolation', fact: untouched ? '真实 agent.json 未变' : '真实 agent.json 变了' })
+  rmSync(root, { recursive: true, force: true })
+  log(`L1: iOS App 单元测试 ${status}`)
+  return {
+    status,
+    note,
+    blockedReason,
+    nextStep,
+    observations,
+    commands,
+    isolation: {
+      dshHome: `(临时 DSH_HOME: ${dshHome})`,
+      realHomeUntouched: untouched,
+      proof: `跑前 ${before.digest} / 跑后 ${after.digest}（sha256 + mtime）`,
+    },
+  }
+}

@@ -18,8 +18,8 @@ import { join } from 'node:path'
 
 import { realDshHome, whichBinary } from './l1-runtime.mjs'
 import {
-  desktopInstance, freshInstall, iosLinkCarrierLifecycle, iosTranscriptFold, linkDiagnostics,
-  mailTests, pluginInstallHot, relayGoTests, smoke,
+  desktopInstance, freshInstall, iosLinkCarrierLifecycle, iosTranscriptFold, iosUnitTests,
+  linkDiagnostics, mailTests, pluginInstallHot, protocolTests, relayGoTests, smoke,
 } from './l1-scenarios.mjs'
 
 export const lane = {
@@ -30,6 +30,14 @@ export const lane = {
   doctor: doctorL1,
   scenarios: {
     smoke: { title: '隔离宿主能起来、连接器加载并发现宿主', run: smoke },
+    'protocol-tests': {
+      title: 'DSHKit 协议层单测（swift test，跳过吃真实会话的 LiveIntegrationTests）',
+      run: protocolTests,
+    },
+    'ios-unit-tests': {
+      title: 'iOS App 单元测试（DSHMobileTests，不启动主界面、不截图）',
+      run: iosUnitTests,
+    },
     'relay-go-tests': {
       title: 'Go 中转单测（make test）在本机跑一遍，且不动真实数据',
       run: relayGoTests,

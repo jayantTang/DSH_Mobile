@@ -70,10 +70,12 @@ FOLD_L1_CASE=test/cases/example/xxx.md npm run lane:l1 -- run --scenario ios-tra
 - **覆盖边界**：只覆盖"逐屏看得出对错"的那一档（占位行四态、形态词、首帧有没有整块铺开）。
   **不覆盖** D1/D2/D3 的抖动统计——那要在真实长会话上按 25 s 取探针序列，一条用例给不了；
   别把它当成"App 改动全保"。
-- **证据按场景绑定**：矩阵的 required 格可以写 `scenarios`，`check:lanes` 会按
-  `verdict.scenario` 过滤。目前 `host-web × l2` 绑定 `plugin-install-hot`；L1 的必跑格尚未全部
-  绑定，`ios-link-carrier-lifecycle`、`mail-tests` 之类的旧证据仍可能顶 App 逐屏结论
-  （2026-10-27/28 两次评审踩过）。给 L1 补映射是后续工作，别再靠"同一个渠道 pass 就行"。
+- **证据按场景绑定**：矩阵的 required 格写 `scenarios`，`check:lanes` 按 `verdict.scenario` 过滤；
+  当前所有 required 格都已绑定，`npm run test:scripts` 的矩阵用例会拦住未绑定的新 required 格。
+  L1 为此补了两个场景：`protocol-tests`（DSHKit `swift test`，跳过 LiveIntegrationTests）与
+  `ios-unit-tests`（`DSHMobileTests`）。覆盖边界仍要说清：`ios-app` 只认
+  `ios-transcript-fold` 与 `ios-link-carrier-lifecycle`，信件 UI 还没有专用 L1 场景，
+  别把折叠/链路的证据当成邮件界面的逐屏结论。
 
 **L3（干净环境，手动清单）**
 

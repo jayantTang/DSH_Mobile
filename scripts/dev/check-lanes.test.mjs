@@ -107,7 +107,10 @@ test('改动 → 必跑集合：连接器只要 L1，宿主 web 要 L1+L2，安�
   // host-web 的 L2 必须绑定具体场景：同渠道其它场景的证据不能顶账。
   const hostWeb = requiredLanes(matrix, ['plugins/mobile-link/lib/dsh-client.js'])
   assert.deepEqual(hostWeb.required, ['l1', 'l2'])
-  assert.deepEqual(hostWeb.scenarios, { l2: ['plugin-install-hot'] })
+  assert.deepEqual(hostWeb.scenarios, {
+    l1: ['plugin-install-hot', 'smoke', 'fresh-install'],
+    l2: ['plugin-install-hot'],
+  })
 })
 
 test('矩阵守卫：scenarios 必须是非空字符串数组', () => {
@@ -132,7 +135,7 @@ test('拦截：缺证据 → 退出码 1；补齐新鲜证据 → 0', () => {
     assert.equal(first.exitCode, 1)
     assert.deepEqual(first.missing, ['l1'])
 
-    writeEvidence({ root, verdict: passVerdict('l1') })
+    writeEvidence({ root, verdict: passVerdict('l1', { scenario: 'plugin-install-hot' }) })
     const second = gate({ changed: [CONNECTOR_FILE], evidenceRoot: root })
     assert.equal(second.exitCode, 0)
     assert.deepEqual(second.satisfied, ['l1'])
@@ -164,7 +167,7 @@ test('拦截：比改动旧的证据算缺（不许拿旧结论顶账）', () =>
   const root = tempDir()
   const newer = join(tempDir(), 'changed.js')
   try {
-    writeEvidence({ root, verdict: passVerdict('l1') })
+    writeEvidence({ root, verdict: passVerdict('l1', { scenario: 'plugin-install-hot' }) })
     const old = new Date(Date.now() - 60_000)
     for (const entry of readEvidence(root)) utimesSync(entry.path, old, old)
     writeFileSync(newer, 'x')
@@ -182,7 +185,7 @@ test('拦截：比改动旧的证据算缺（不许拿旧结论顶账）', () =>
 test('拦截：blocked 证据不算通过，且要带下一步', () => {
   const root = tempDir()
   try {
-    writeEvidence({ root, verdict: passVerdict('l1', { status: 'blocked', blockedReason: '没装 colima', nextStep: 'brew install colima' }) })
+    writeEvidence({ root, verdict: passVerdict('l1', { status: 'blocked', scenario: 'plugin-install-hot', blockedReason: '没装 colima', nextStep: 'brew install colima' }) })
     const result = gate({ changed: [CONNECTOR_FILE], evidenceRoot: root })
     assert.equal(result.exitCode, 1)
     assert.ok(result.missing.includes('l1'))
@@ -356,4 +359,9 @@ test('矩阵自己能被加载且合法（真实仓库这一份）', () => {
   assert.deepEqual(validateLaneEntries(matrix, pkg.scripts), [])
   // L3 已降为手动清单：矩阵里不允许再出现 l3 required，否则又会变回"只认声明"的假门禁。
   assert.deepEqual(matrix.matrix.filter((entry) => entry.lane === 'l3' && entry.value === 'required'), [])
+  // 所有 required 格必须绑定具体场景，否则 evidence 又会退化成"同渠道任意 pass 都算"。
+  for (const entry of matrix.matrix.filter((item) => item.value === 'required')) {
+    assert.ok(Array.isArray(entry.scenarios) && entry.scenarios.length > 0,
+      `${entry.subject}×${entry.lane} required 未绑定 scenarios`)
+  }
 })
