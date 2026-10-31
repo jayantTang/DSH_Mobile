@@ -38,15 +38,19 @@ const FEEDBACK_EMAIL = process.env.ASC_FEEDBACK_EMAIL || 'forwoshitjy@live.com'
 /// 两位试用者都静默过，而我们在 GitHub 上说不上话（他们没有公开联系方式）。
 const WHATS_TO_TEST = {
   'zh-Hans': `这一版更新：
-· 运行中的过程收为一行，点开查看步骤；已完成轮次保持折叠
-· 会话页与聊天页显示后台任务、子智能体的数量与状态，结束后自动隐藏
+· 进入会话时过程折叠不再抖动；状态未确认时显示一行占位，可点击重试
+· 会话列表的活动标识不再随刷新丢失
+· 信件收件箱改版：两栏、未读与已读对齐、通知正文按需加载
+· 修复图片预览偶发空白全屏
 
-建议先升级电脑端连接器至 0.7.0，再更新 App。遇到问题请在 TestFlight 截图反馈。`,
+建议先把电脑端连接器升到 0.8.0；本构建（App 1.0）也兼容 0.7.0。遇到问题请在 TestFlight 截图反馈。`,
   'en-US': `In this build:
-· A running process folds into one line; tap to view steps. Completed turns stay folded.
-· Session and chat screens show background jobs and subagents, hiding them when finished.
+· No more fold flicker when opening a session; an unresolved process state shows one retryable placeholder row.
+· Session-list activity badges no longer disappear on refresh.
+· Redesigned mail inbox: two columns, aligned read state, notice bodies loaded on demand.
+· Fixed the occasional blank full-screen image preview.
 
-Upgrade the desktop connector to 0.7.0 before updating the app. Send feedback with a TestFlight screenshot if anything breaks.`,
+Upgrade the desktop connector to 0.8.0 first; this build (app 1.0) also works with 0.7.0. Send feedback with a TestFlight screenshot if anything breaks.`,
 }
 /// 审核联系电话。Apple 要求填，且只在审核需要时使用；可以从环境变量覆盖。
 const CONTACT_PHONE_NOTE = 'ASC_CONTACT_PHONE 可覆盖（默认是个占位号，第一次提交后建议改成真号）'

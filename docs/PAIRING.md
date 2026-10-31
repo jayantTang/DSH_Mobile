@@ -83,7 +83,7 @@
 连接器 `status` 现已回报：
 
 ```json
-{ "serverVersion": "0.7.0",
+{ "serverVersion": "0.8.0",
   "capabilities": ["file-transfer", "events", "session-streams",
                    "pair-code", "qr-pairing", "self-enroll", "git",
                    "background-transfer", "persistent-pair-code"] }
