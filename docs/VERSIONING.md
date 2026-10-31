@@ -118,15 +118,17 @@ Web 客户端**没有注册表，用构建号 `yyyyMMdd.HHmm`（北京时间）�
 1. 改代码（仓库内）
 2. 跑单测：DSHKit (swift test) + plugins/* (npm test) + relay-go (make test) + mail (pytest)
 3. 仿真器里按 `test/RULES.md` 跑对应用例、看截图并出报告
-4. 按需部署：
+4. 涉及桌面宿主或从零启用的改动，按 `scripts/verify/README.md` 的 L3 手动清单确认，
+   并在发布记录写明结论或 `L3: 未跑 — <理由>`（L3 已不计入自动必跑）
+5. 按需部署：
    - 只改了 App      → ./scripts/release/deploy-ota.sh（开发版）/ deploy-testflight.sh（对外）
    - 改了连接器/插件 → 保存即热更（`plugins/*/lib/*.js`）；替换同名包（升级）或卸载重装才需要重启
    - 要把插件发给别人 → 升各自 package.json 的版本，scripts/release/publish-plugins.sh --publish
                         （发之前先 --staged 看 npm 的暂存队列，同名旧暂存会挡住发布）
    - 改了中转        → 升 `relay-go` 版本号、重建二进制、重启 `dsh-relay-go`，并打 `relay-vX.Y.Z` tag
-5. 真机验证（手机端）
-6. 记一行三方版本（App / 连接器 / 中转协议），发布记录在部署方内部维护
-7. git commit
+6. 真机验证（手机端）
+7. 记一行三方版本（App / 连接器 / 中转协议），发布记录在部署方内部维护
+8. git commit
 ```
 
 **必须遵守**：`plugins/*/lib/*.js` 保存即热更，不需要重启 DSH；只有**替换同名包（升级）**、
