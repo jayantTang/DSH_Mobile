@@ -19,16 +19,19 @@ export function runDoctor(registry, { env = process.env } = {}) {
         nextStep: '先修 doctor 自身，再谈这一级能不能用',
       }
     }
-    return { id, title: lane.title, ...report }
+    return { id, title: lane.title, optional: lane.optional === true, ...report }
   })
-  return { ok: lanes.every((lane) => lane.available), lanes }
+  // 可选渠道（l3 手动清单）不可用不算整体失败；否则 `lane:doctor` 会因为没装 VM 长期红，
+  // 把"手动清单"误读成"必跑门禁坏了"。
+  return { ok: lanes.every((lane) => lane.available || lane.optional), lanes }
 }
 
 /** 文本表格（人看）；JSON 由调用方决定。 */
 export function formatDoctor(report) {
   const lines = []
   for (const lane of report.lanes) {
-    lines.push(`${lane.available ? '可用  ' : '阻塞  '} ${lane.id} ${lane.title}`)
+    const status = lane.available ? '可用  ' : lane.optional ? '可选  ' : '阻塞  '
+    lines.push(`${status} ${lane.id} ${lane.title}`)
     for (const check of lane.checks) {
       lines.push(`        ${check.ok ? 'ok  ' : 'FAIL'} ${check.name} — ${check.detail}`)
       if (!check.ok && check.fix) lines.push(`             → ${check.fix}`)

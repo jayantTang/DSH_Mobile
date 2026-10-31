@@ -15,8 +15,9 @@ import { join } from 'node:path'
 
 export const lane = {
   id: 'l3',
-  title: '干净环境',
-  isolation: '干净环境：macOS 客体 VM / 真实干净机器 / 干净 CI runner（在真实环境里跑）',
+  title: '干净环境（手动清单）',
+  optional: true,
+  isolation: '干净环境：macOS 客体 VM / 真实干净机器 / 干净 CI runner；当前无自动场景，不计入必跑',
   requiresCopyIn: false,
   doctor: doctorL3,
   scenarios: {},
