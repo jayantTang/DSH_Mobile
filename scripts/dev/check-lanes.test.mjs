@@ -354,4 +354,6 @@ test('矩阵自己能被加载且合法（真实仓库这一份）', () => {
   assert.deepEqual(validateMatrix(matrix), [])
   const pkg = JSON.parse(readFileSync(`${REPO}package.json`, 'utf8'))
   assert.deepEqual(validateLaneEntries(matrix, pkg.scripts), [])
+  // L3 已降为手动清单：矩阵里不允许再出现 l3 required，否则又会变回"只认声明"的假门禁。
+  assert.deepEqual(matrix.matrix.filter((entry) => entry.lane === 'l3' && entry.value === 'required'), [])
 })
