@@ -141,16 +141,19 @@ async function pluginInstallHot({ outDir, log = () => {} }) {
   let status = 'fail'
   let note
   try {
-    prepareContainer({ name, commands, observations, log })
+    const dshEntry = prepareContainer({ name, commands, observations, log })
     // 记下宿主 pid：后面的"有没有重启"以**同一个 pid 是否还活着**为准。
-    // 用 pgrep 匹配命令行是不可靠的——容器里 dsh 装在 /usr/local/bin，argv 与宿主机不一样。
-    const boot = exec(name, ['sh', '-c', 'DSH_HOME=/root/.dsh nohup dsh --profile web --no-open --port 0 >/tmp/host.log 2>&1 & echo $! | tee /tmp/host.pid'])
+    // 不依赖 PATH 上的 `dsh` 符号链接：npm 的全局 bin 链接在容器里偶发缺失（2026-10-30
+    // 首次跑就遇到 `dsh: not found`，重跑才好），直接执行包入口才是确定性的。
+    const boot = exec(name, ['sh', '-c',
+      'DSH_HOME=/root/.dsh nohup node "$1" --profile web --no-open --port 0 >/tmp/host.log 2>&1 & echo $! | tee /tmp/host.pid',
+      'sh', dshEntry])
     const hostPid = boot.stdout.trim()
     observations.push({ step: 'boot', fact: `宿主 pid=${hostPid}` })
     const baseline = await waitEndpointInContainer(name, 25_000)
     observations.push({ step: 'baseline', fact: `装之前 endpoint.json ${baseline ? '在（基准不干净）' : '不在'}` })
     if (baseline) throw new Error('基准不干净：新档案里不该已经有连接器')
-    const outcome = await installAndObserve({ name, commands, observations, outDir })
+    const outcome = await installAndObserve({ name, dshEntry, commands, observations, outDir })
     status = outcome.status
     note = outcome.note
     collectLogs(name, outDir, observations)
@@ -292,24 +295,49 @@ async function mailTests({ outDir, log = () => {} }) {
   return finish()
 }
 
-/** 起容器 → 装 DSH 与 pnpm → 把仓库子集复制进卷。 */
+/** 起容器 → 装 DSH 与 pnpm → 把仓库子集复制进卷；返回 DSH 包入口。 */
 function prepareContainer({ name, commands, observations, log }) {
   startContainer({ name })
   commands.push({ argv: ['docker', 'run', '-d', '--name', name, '-v', `${VOLUME}:/data`, IMAGE, 'sleep', 'infinity'], exitCode: 0 })
   log(`L2: 容器已起 ${name}`)
-  const npm = exec(name, ['sh', '-c', 'mkdir -p /work && npm i -g --silent @deepseek-ai/dsh pnpm'], { timeoutMs: 600_000 })
+  const npm = exec(name, ['sh', '-c', 'mkdir -p /work && npm i -g --silent --no-audit --no-fund @deepseek-ai/dsh pnpm'], { timeoutMs: 600_000 })
   commands.push({ argv: ['docker', 'exec', name, 'npm', 'i', '-g', '@deepseek-ai/dsh', 'pnpm'], exitCode: npm.status ?? -1, note: '容器内装 DSH 与 pnpm' })
   if (npm.status !== 0) throw new Error(`容器内装 DSH 失败：${tail(`${npm.stdout}${npm.stderr}`, 400)}`)
+  const dshEntry = resolveDshEntry({ name, commands, observations })
   copyRepoIn(name)
   commands.push({ argv: ['docker', 'cp', '<仓库>/plugins,scripts,package.json', `${name}:/work`], exitCode: 0, note: '代码复制进卷（不用共享挂载）' })
   observations.push({ step: 'setup', fact: '容器内已装 DSH 与 pnpm，仓库子集已复制进 /work' })
+  return dshEntry
+}
+
+/**
+ * 从 npm 全局包解析 DSH 的真正入口，不依赖 `/usr/local/bin/dsh` 符号链接。
+ * 2026-10-30 首次 L2 跑出 `dsh: not found`，重跑才恢复；把入口当路径直接执行，
+ * 把"npm 有没有建 bin 链接"从成功条件里去掉。
+ */
+function resolveDshEntry({ name, commands, observations }) {
+  const rootResult = exec(name, ['npm', 'root', '-g'])
+  if (rootResult.status !== 0) throw new Error(`容器内读不到 npm 全局根：${tail(rootResult.stderr, 300)}`)
+  const globalRoot = rootResult.stdout.trim()
+  const packageJson = join(globalRoot, '@deepseek-ai/dsh/package.json')
+  const binResult = exec(name, ['node', '-p', `require(${JSON.stringify(packageJson)}).bin.dsh`])
+  const binRelative = binResult.stdout.trim()
+  if (binResult.status !== 0 || !binRelative) {
+    throw new Error(`DSH 包没有可执行入口（${packageJson}）：${tail(binResult.stderr, 300)}`)
+  }
+  const entry = join(globalRoot, '@deepseek-ai/dsh', binRelative)
+  const probe = exec(name, ['test', '-f', entry])
+  commands.push({ argv: ['docker', 'exec', name, 'test', '-f', entry], exitCode: probe.status ?? -1, note: 'DSH 包入口存在' })
+  if (probe.status !== 0) throw new Error(`DSH 已安装但入口不存在：${entry}`)
+  observations.push({ step: 'dsh', fact: `DSH 入口：${entry}（不依赖 PATH 上的 dsh 符号链接）` })
+  return entry
 }
 
 /** 装插件 → 不重启 → 看连接器有没有自己挂上、宿主进程有没有退出。 */
-async function installAndObserve({ name, commands, observations, outDir }) {
-  const install = exec(name, ['sh', '-c', 'cd /work && dsh plugin --profile web add /work/plugins/mobile-link'], { timeoutMs: 600_000 })
-  commands.push({ argv: ['docker', 'exec', name, 'dsh', 'plugin', '--profile', 'web', 'add', '/work/plugins/mobile-link'], exitCode: install.status ?? -1, note: '官方安装路径' })
-  writeFileSync(join(outDir, 'container-install.log'), `$ dsh plugin add /work/plugins/mobile-link\n${install.stdout ?? ''}${install.stderr ?? ''}`)
+async function installAndObserve({ name, dshEntry, commands, observations, outDir }) {
+  const install = exec(name, ['node', dshEntry, 'plugin', '--profile', 'web', 'add', '/work/plugins/mobile-link'], { timeoutMs: 600_000 })
+  commands.push({ argv: ['docker', 'exec', name, 'node', dshEntry, 'plugin', '--profile', 'web', 'add', '/work/plugins/mobile-link'], exitCode: install.status ?? -1, note: '官方安装路径' })
+  writeFileSync(join(outDir, 'container-install.log'), `$ node ${dshEntry} plugin add /work/plugins/mobile-link\n${install.stdout ?? ''}${install.stderr ?? ''}`)
   observations.push({ step: 'install', fact: `dsh plugin add 退出码 ${install.status}`, evidence: 'container-install.log' })
   if (install.status !== 0) {
     observations.push({ step: 'install-head', fact: head(`${install.stdout}${install.stderr}`, 500) })

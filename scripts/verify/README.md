@@ -45,6 +45,11 @@ docker pull node:22-bookworm-slim # 确认拉得动（本机直连 Docker Hub �
 是悬空链接、dockerd 会去问 `[::1]:53`。所以这两件事每次都靠上面那条脚本补，
 doctor 则以 `docker info` 自报为准（不看配置文件，免得得到假结论）。
 
+**L2 只对 host-web 必跑**（owner 2026-10-31 调整）：plugin 与 mail 的单测已由 CI 的 Ubuntu
+作业覆盖，本机 L2 对这两个对象改为可选复核，不再让每次插件/信件改动强制跑约 10 分钟的容器安装。
+host-web 的 L2 证据只认 `plugin-install-hot` 场景（矩阵里用 `scenarios` 绑定），
+`mail-tests` 或其它场景的 verdict 不能顶账。
+
 **L1 · App 逐屏（`ios-transcript-fold`）**
 
 `ios-app` 这一档的正式证据只能来自"仿真器经公网中转跑一条逐屏用例"：
@@ -65,29 +70,33 @@ FOLD_L1_CASE=test/cases/example/xxx.md npm run lane:l1 -- run --scenario ios-tra
 - **覆盖边界**：只覆盖"逐屏看得出对错"的那一档（占位行四态、形态词、首帧有没有整块铺开）。
   **不覆盖** D1/D2/D3 的抖动统计——那要在真实长会话上按 25 s 取探针序列，一条用例给不了；
   别把它当成"App 改动全保"。
-- **别拿别的场景的 l1 verdict 顶替**：`check:lanes` 按 `lane + status + 新鲜度` 匹配，
-  不按 `scenario` 匹配，所以它**拦不住错配**（2026-10-27/28 两次评审踩过：
-  用 `ios-link-carrier-lifecycle`、`mail-tests` 的旧证据顶 App 逐屏结论）。
-  要真正防错配得给 `verdict.scenario` 与 `subjects` 建映射，属另立项。
+- **证据按场景绑定**：矩阵的 required 格可以写 `scenarios`，`check:lanes` 会按
+  `verdict.scenario` 过滤。目前 `host-web × l2` 绑定 `plugin-install-hot`；L1 的必跑格尚未全部
+  绑定，`ios-link-carrier-lifecycle`、`mail-tests` 之类的旧证据仍可能顶 App 逐屏结论
+  （2026-10-27/28 两次评审踩过）。给 L1 补映射是后续工作，别再靠"同一个渠道 pass 就行"。
 
-**L3（干净环境，在真实环境里跑）**
+**L3（干净环境，手动清单）**
 
-三种实现都算，任选其一（owner 2026-10-08 决定：不要求本机装虚拟机）：
+L3 已降为**手动清单**（owner 2026-10-31）：不再计入必跑，`lanes.json` 里没有 l3 的 required 格；
+`lane:l3` 目前也没有场景（`scenarios: {}`），`run --scenario` 只会写出 blocked。
+涉及 `host-desktop` / `e2e` 的发布，按下面清单人工确认，并在发布记录里写明结论或
+`L3: 未跑 — <理由>`：
+
+- 干净机器/客体 VM 上从零装 App、连接器、登记、配对、连上；
+- 官方桌面版宿主在“没装过任何东西”时的行为；
+- 首次配对、重连、重启后的自动恢复；
+- 跑完撤销一次性身份与设备，真实 `~/.dsh` 未被改写。
+
+可选的本机实现（装好才用，不作为门禁）：
 
 ```bash
-# a) 本机客体 VM（最方便，但吃磁盘：镜像 ~25.5 GB 压缩 / 50 GB 稀疏盘）
 brew install cirruslabs/cli/tart
 tart clone <干净 guest 模板> dsh-lane-l3      # 一次性实例，跑完删掉
-npm run lane:l3 -- run --scenario onboarding-from-scratch
-
-# b) 真实干净机器（保真最好：能带真机、走真实网络）
-#    在那台机器上装本仓库后直接跑同一条命令
-
-# c) 干净 CI runner（macos-26，Xcode 预装；本地零磁盘，但只有仿真器）
+npm run lane:l3 -- run --scenario onboarding-from-scratch   # 目前无场景，会 blocked
 ```
 
-本机没装 VM 工具时 `lane:doctor` 会如实报阻塞——这不是"这一级不存在"，而是"本机这条实现不可用"；
-此时要么用 b/c，要么在改动记录里写 `L3: 未跑 — <理由>`（门禁会原样打印，不许静默跳过）。
+若将来补出场景并在干净 runner 上跑通，再把它加回矩阵的 required 格；在那之前不要把它
+当成“自动验证过”。
 
 ## 纪律
 
@@ -110,6 +119,7 @@ npm run lane:l3 -- run --scenario onboarding-from-scratch
 ## 调矩阵
 
 `lanes.json` 里每个被测对象用 `globs` 把改动文件映射到自己；一个文件命中多个对象时
-**取并集**（宁可多跑一级）。当前有意设成"改 `plugins/mobile-link/lib/index.js` 或安装脚本
-要跑 `l3`"——它同时影响两个宿主，只有干净机器能给出可信结论。想放宽就改矩阵，
-不要在 `check-lanes.mjs` 里加第二份口径。
+**取并集**。required 格可加 `scenarios` 数组，把证据限定到具体场景（`check:lanes` 按
+`verdict.scenario` 过滤）；不写就退回"同渠道任意场景"，只在确实分不出更细粒度的格子里使用。
+当前 L2 只对 host-web 必跑并绑定 `plugin-install-hot`；L3 已降为手动清单，不再有 required 格。
+想调整判定就改矩阵，不要在 `check-lanes.mjs` 里加第二份口径。

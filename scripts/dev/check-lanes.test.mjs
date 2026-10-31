@@ -98,13 +98,23 @@ test('改动 → 被测对象：多命中取并集', () => {
   assert.deepEqual(matchSubjects(matrix, [CONNECTOR_FILE]), ['plugin'])
 })
 
-test('改动 → 必跑集合：连接器只要 L1+L2，安装路径要 L3，App 只要 L1', () => {
+test('改动 → 必跑集合：连接器只要 L1，宿主 web 要 L1+L2，安装路径不再强制 L3', () => {
   const matrix = loadMatrix()
-  assert.deepEqual(requiredLanes(matrix, [CONNECTOR_FILE]).required, ['l1', 'l2'])
-  // 桌面版宿主只有 L3 能验（隔离 HOME 起不来第二个实例，见 research 决策 2）
-  assert.deepEqual(requiredLanes(matrix, [INSTALL_FILE]).required, ['l3'])
+  assert.deepEqual(requiredLanes(matrix, [CONNECTOR_FILE]).required, ['l1'])
+  assert.deepEqual(requiredLanes(matrix, [INSTALL_FILE]).required, [])
   assert.deepEqual(requiredLanes(matrix, [APP_FILE]).required, ['l1'])
   assert.deepEqual(requiredLanes(matrix, ['docs/PRIVACY.md']).required, [])
+  // host-web 的 L2 必须绑定具体场景：同渠道其它场景的证据不能顶账。
+  const hostWeb = requiredLanes(matrix, ['plugins/mobile-link/lib/dsh-client.js'])
+  assert.deepEqual(hostWeb.required, ['l1', 'l2'])
+  assert.deepEqual(hostWeb.scenarios, { l2: ['plugin-install-hot'] })
+})
+
+test('矩阵守卫：scenarios 必须是非空字符串数组', () => {
+  const matrix = matrixWith((m) => {
+    m.matrix.find((entry) => entry.subject === 'host-web' && entry.lane === 'l2').scenarios = []
+  })
+  assert.ok(validateMatrix(matrix).some((issue) => issue.includes('scenarios')))
 })
 
 test('证据包：blocked 缺 reason/nextStep 判不合法；realHomeUntouched 缺 proof 判不合法', () => {
@@ -120,12 +130,31 @@ test('拦截：缺证据 → 退出码 1；补齐新鲜证据 → 0', () => {
   try {
     const first = gate({ changed: [CONNECTOR_FILE], evidenceRoot: root })
     assert.equal(first.exitCode, 1)
-    assert.deepEqual(first.missing, ['l1', 'l2'])
+    assert.deepEqual(first.missing, ['l1'])
 
-    for (const lane of ['l1', 'l2']) writeEvidence({ root, verdict: passVerdict(lane) })
+    writeEvidence({ root, verdict: passVerdict('l1') })
     const second = gate({ changed: [CONNECTOR_FILE], evidenceRoot: root })
     assert.equal(second.exitCode, 0)
-    assert.deepEqual(second.satisfied, ['l1', 'l2'])
+    assert.deepEqual(second.satisfied, ['l1'])
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('拦截：证据场景不匹配时不顶账（host-web×l2 只认 plugin-install-hot）', () => {
+  const root = tempDir()
+  const hostWebFile = 'plugins/mobile-link/lib/dsh-client.js'
+  try {
+    writeEvidence({ root, verdict: passVerdict('l1', { scenario: 'smoke' }) })
+    writeEvidence({ root, verdict: passVerdict('l2', { scenario: 'mail-tests' }) })
+    const wrong = gate({ changed: [hostWebFile], evidenceRoot: root })
+    assert.equal(wrong.exitCode, 1)
+    assert.deepEqual(wrong.missing, ['l2'])
+
+    writeEvidence({ root, verdict: passVerdict('l2', { scenario: 'plugin-install-hot' }) })
+    const right = gate({ changed: [hostWebFile], evidenceRoot: root })
+    assert.equal(right.exitCode, 0)
+    assert.deepEqual(right.satisfied, ['l1', 'l2'])
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
@@ -136,14 +165,13 @@ test('拦截：比改动旧的证据算缺（不许拿旧结论顶账）', () =>
   const newer = join(tempDir(), 'changed.js')
   try {
     writeEvidence({ root, verdict: passVerdict('l1') })
-    writeEvidence({ root, verdict: passVerdict('l2') })
     const old = new Date(Date.now() - 60_000)
     for (const entry of readEvidence(root)) utimesSync(entry.path, old, old)
     writeFileSync(newer, 'x')
     const result = gate({ changed: [CONNECTOR_FILE, newer], evidenceRoot: root })
     assert.equal(result.toolError, undefined)
-    // 被改文件的 mtime 是现在，旧证据一律算缺
-    assert.deepEqual(result.missing, ['l1', 'l2'])
+    // 被改文件的 mtime 是现在，旧证据算缺
+    assert.deepEqual(result.missing, ['l1'])
     assert.ok(result.stale.l1.includes('比改动旧'))
   } finally {
     rmSync(root, { recursive: true, force: true })
@@ -242,23 +270,31 @@ test('渠道入口：正常场景写出四态证据且能读回', async () => {
   }
 })
 
-test('CI 模式：L1/L2 由作业覆盖，L3 仍要声明（声明原样留痕，不是"验过"）', () => {
+test('CI 模式：L1/L2 由作业覆盖；显式要求 L3 时仍要声明（声明原样留痕，不是"验过"）', () => {
   const root = tempDir()
+  const dir = tempDir()
+  const matrixPath = join(dir, 'lanes.json')
   try {
-    // CI 跑得了的格子（连接器 → L1+L2）：不再要求本机证据
+    // CI 跑得了的格子（连接器 → L1）：不再要求本机证据
     const ci = gate({ changed: [CONNECTOR_FILE], evidenceRoot: root, ci: true })
-    assert.deepEqual(ci.required, ['l1', 'l2'])
-    assert.deepEqual(ci.covered, ['l1', 'l2'])
+    assert.deepEqual(ci.required, ['l1'])
+    assert.deepEqual(ci.covered, ['l1'])
     assert.equal(ci.exitCode, 0)
 
-    // CI 跑不了的格子（安装路径 → 桌面版 → L3）：必须留痕
-    const bare = gate({ changed: [INSTALL_FILE], evidenceRoot: root, ci: true })
+    // L3 已从矩阵移出 required；这里显式抬回 required，验证"强制 L3 时只认声明"。
+    const l3Required = matrixWith((m) => {
+      m.matrix.find((entry) => entry.subject === 'host-desktop' && entry.lane === 'l3').value = 'required'
+    })
+    writeFileSync(matrixPath, JSON.stringify(l3Required, null, 2))
+
+    const bare = gate({ changed: [INSTALL_FILE], matrixPath, evidenceRoot: root, ci: true })
     assert.deepEqual(bare.required, ['l3'])
     assert.deepEqual(bare.missing, ['l3'])
     assert.equal(bare.exitCode, 1)
 
     const declared = gate({
       changed: [INSTALL_FILE],
+      matrixPath,
       evidenceRoot: root,
       ci: true,
       l3Declaration: '本次改动\nL3: 未跑 — guest 镜像还没建好',
@@ -269,6 +305,7 @@ test('CI 模式：L1/L2 由作业覆盖，L3 仍要声明（声明原样留痕�
 
     const withPath = gate({
       changed: [INSTALL_FILE],
+      matrixPath,
       evidenceRoot: root,
       ci: true,
       l3Declaration: 'L3: .lanes/runs/l3/20261008T101500Z-onboarding/verdict.json',
@@ -276,16 +313,19 @@ test('CI 模式：L1/L2 由作业覆盖，L3 仍要声明（声明原样留痕�
     assert.equal(withPath.exitCode, 0)
     assert.ok(withPath.exempt[0].reason.includes('verdict.json'))
 
-    const gibberish = gate({ changed: [INSTALL_FILE], evidenceRoot: root, ci: true, l3Declaration: '跑过了，放心' })
+    const gibberish = gate({ changed: [INSTALL_FILE], matrixPath, evidenceRoot: root, ci: true, l3Declaration: '跑过了，放心' })
     assert.equal(gibberish.exitCode, 1)
     assert.deepEqual(gibberish.missing, ['l3'])
   } finally {
     rmSync(root, { recursive: true, force: true })
+    rmSync(dir, { recursive: true, force: true })
   }
 })
 
 test('缺证据时带出那一级的 doctor 原因（T031）', () => {
   const root = tempDir()
+  const dir = tempDir()
+  const matrixPath = join(dir, 'lanes.json')
   try {
     const registry = {
       l3: {
@@ -294,13 +334,18 @@ test('缺证据时带出那一级的 doctor 原因（T031）', () => {
         scenarios: {},
       },
     }
-    const result = gate({ changed: [INSTALL_FILE], evidenceRoot: root, registry })
+    const l3Required = matrixWith((m) => {
+      m.matrix.find((entry) => entry.subject === 'host-desktop' && entry.lane === 'l3').value = 'required'
+    })
+    writeFileSync(matrixPath, JSON.stringify(l3Required, null, 2))
+    const result = gate({ changed: [INSTALL_FILE], matrixPath, evidenceRoot: root, registry })
     assert.equal(result.exitCode, 1)
     assert.deepEqual(result.missing, ['l3'])
     assert.equal(result.hints.l3.blockedReason, '没装 tart')
     assert.ok(result.hints.l3.nextStep.includes('tart'))
   } finally {
     rmSync(root, { recursive: true, force: true })
+    rmSync(dir, { recursive: true, force: true })
   }
 })
 

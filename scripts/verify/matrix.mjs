@@ -99,6 +99,14 @@ function validateEntries(entries, ids) {
     if (typeof entry?.reason !== 'string' || entry.reason.trim().length < 8) {
       issues.push(`matrix ${key}: reason 太短——取值必须附理由（不用理由的格子等于没判定）`)
     }
+    // 必跑格可以声明"只认哪些场景"的证据；声明了就必须是非空字符串数组，
+    // 否则一旦写错会让 check:lanes 退回"同渠道任意场景都算"，等于安静地关掉绑定。
+    if (entry?.scenarios !== undefined) {
+      if (!Array.isArray(entry.scenarios) || entry.scenarios.length === 0
+        || entry.scenarios.some((name) => typeof name !== 'string' || name.trim().length === 0)) {
+        issues.push(`matrix ${key}: scenarios 必须是非空字符串数组`)
+      }
+    }
   }
   return issues
 }
@@ -115,23 +123,35 @@ export function matchSubjects(matrix, files) {
 
 /**
  * 改动文件 → 必跑渠道集合。
- * @returns {{subjects: string[], required: string[], reasons: Record<string,string>, entries: object[]}}
+ * @returns {{subjects: string[], required: string[], reasons: Record<string,string>,
+ *            scenarios: Record<string,string[]>, entries: object[]}}
  */
 export function requiredLanes(matrix, files) {
   const subjects = matchSubjects(matrix, files)
   const required = new Set()
   const reasons = {}
   const entries = []
+  const scenarios = {}
+  const unbound = new Set()
   for (const entry of matrix.matrix ?? []) {
     if (!subjects.includes(entry.subject) || entry.value !== 'required') continue
     entries.push(entry)
     required.add(entry.lane)
     reasons[entry.lane] = `${entry.subject} × ${entry.lane} = required（${entry.reason}）`
+    if (Array.isArray(entry.scenarios) && entry.scenarios.length > 0) {
+      scenarios[entry.lane] = [...new Set([...(scenarios[entry.lane] ?? []), ...entry.scenarios])]
+    } else {
+      // 同一渠道下只要有一个必跑格没声明场景，就不能拿它去过滤别的格：
+      // 保守退回"任意场景"。
+      unbound.add(entry.lane)
+    }
   }
+  for (const lane of unbound) delete scenarios[lane]
   return {
     subjects,
     required: LANE_IDS.filter((id) => required.has(id)),
     reasons,
+    scenarios,
     entries,
   }
 }

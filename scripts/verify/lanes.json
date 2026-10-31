@@ -34,9 +34,9 @@
       "requiresCopyIn": true
     },
     "l3": {
-      "title": "干净环境",
+      "title": "干净环境（手动清单）",
       "entry": "npm run lane:l3",
-      "isolation": "干净环境：macOS 客体 VM、真实干净机器或干净 CI runner（owner 2026-10-08：在真实环境里跑）",
+      "isolation": "干净环境：macOS 客体 VM、真实干净机器或干净 CI runner（owner 2026-10-08：在真实环境里跑）；当前无自动场景，不计入必跑，发布前按手动清单确认",
       "canVerify": [
         "干净机器上从零启用的整条流程（装 App、装连接器、登记、配对、连上）",
         "官方桌面版宿主在\"没装过任何东西\"时的行为",
@@ -158,8 +158,8 @@
     {
       "subject": "plugin",
       "lane": "l2",
-      "value": "required",
-      "reason": "CI 已在干净 Linux 上跑插件单测，本机容器与之同源",
+      "value": "usable",
+      "reason": "CI 的 Ubuntu 作业已跑插件单测；本机 L2 改为可选复核，避免每次插件改动强制 10 分钟容器安装",
       "prerequisite": "代码必须复制进容器卷"
     },
     {
@@ -178,7 +178,8 @@
       "subject": "host-web",
       "lane": "l2",
       "value": "required",
-      "reason": "容器里能起同一套 web 宿主，是它与 CI 对齐的那条路"
+      "reason": "容器里能起同一套 web 宿主，是它与 CI 对齐的那条路",
+      "scenarios": ["plugin-install-hot"]
     },
     {
       "subject": "host-web",
@@ -201,8 +202,8 @@
     {
       "subject": "host-desktop",
       "lane": "l3",
-      "value": "required",
-      "reason": "装插件、档案对等、安装路径这类改动只有干净机器能给出可信结论",
+      "value": "limited",
+      "reason": "需要干净机器；当前没有自动场景，降为发布前手动清单，不再计入必跑",
       "prerequisite": "guest 模板与一次性实例（Tart）"
     },
     {
@@ -268,8 +269,8 @@
     {
       "subject": "mail",
       "lane": "l2",
-      "value": "required",
-      "reason": "CI 已在干净 Linux 上跑同一套（python 3.12 + 真 Caddy），容器里两服务与真 Caddy 齐全",
+      "value": "usable",
+      "reason": "CI 的 mail 作业已在干净 Linux 上跑 pytest 与真 Caddy；本机 L2 改为可选复核",
       "prerequisite": "代码必须复制进容器卷"
     },
     {
@@ -293,8 +294,8 @@
     {
       "subject": "e2e",
       "lane": "l3",
-      "value": "required",
-      "reason": "只有干净 guest 能复现\"新用户从零走完整条链路\"",
+      "value": "limited",
+      "reason": "只有干净 guest 能复现\"新用户从零走完整条链路\"；当前无自动场景，降为发布前手动清单",
       "prerequisite": "一次性身份 + 跑完撤销"
     }
   ]

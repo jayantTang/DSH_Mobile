@@ -42,7 +42,7 @@ export function collectChangedFiles({ changed = [], from = undefined, repo = REP
  *   - `exempt`：L3 这类 CI 跑不了的格子，改动记录里给了 `L3: <verdict 路径>` 或
  *     `L3: 未跑 — <理由>` 的声明。声明是"允许未跑但要留痕"，不是"验过"。
  */
-export function evaluateEvidence({ required, reasons, entries, evidenceRoot = DEFAULT_EVIDENCE_ROOT, changedFiles = [], ciCovered = [], l3Declaration = '' } = {}) {
+export function evaluateEvidence({ required, reasons, entries, evidenceRoot = DEFAULT_EVIDENCE_ROOT, changedFiles = [], ciCovered = [], l3Declaration = '', scenarios = {} } = {}) {
   const newestChange = newestMtime(changedFiles)
   const satisfied = []
   const covered = []
@@ -52,7 +52,12 @@ export function evaluateEvidence({ required, reasons, entries, evidenceRoot = DE
   const evidence = {}
   const stale = {}
   for (const lane of required) {
-    const candidates = entries.filter((entry) => entry.verdict?.lane === lane && entry.issues.length === 0)
+    const allowed = Array.isArray(scenarios[lane]) && scenarios[lane].length > 0
+      ? new Set(scenarios[lane])
+      : null
+    const candidates = entries.filter((entry) => entry.verdict?.lane === lane
+      && entry.issues.length === 0
+      && (allowed === null || allowed.has(entry.verdict?.scenario)))
     const passes = candidates.filter((entry) => entry.verdict.status === 'pass')
     const blocks = candidates.filter((entry) => entry.verdict.status === 'blocked')
     const fresh = passes.filter((entry) => mtimeOf(entry.path) >= newestChange)
@@ -76,7 +81,7 @@ export function evaluateEvidence({ required, reasons, entries, evidenceRoot = DE
     }
     missing.push(lane)
   }
-  return { required, satisfied, covered, exempt, missing, blocked, reasons, evidence, stale }
+  return { required, satisfied, covered, exempt, missing, blocked, reasons, scenarios, evidence, stale }
 }
 
 /**
@@ -152,7 +157,7 @@ export function gate({ changed = [], from, require: forced = [], evidenceRoot = 
   const entries = readEvidence(evidenceRoot)
   // CI 里 L1/L2 由 workflow 自己的作业覆盖（它们红了 PR 就红）；L3 跑不了，只能要声明。
   const ciCovered = ci ? required.filter((lane) => lane === 'l1' || lane === 'l2') : []
-  const verdict = evaluateEvidence({ required, reasons: decision.reasons, entries, evidenceRoot, changedFiles: files, ciCovered, l3Declaration })
+  const verdict = evaluateEvidence({ required, reasons: decision.reasons, scenarios: decision.scenarios, entries, evidenceRoot, changedFiles: files, ciCovered, l3Declaration })
   const ok = verdict.missing.length === 0
   return {
     exitCode: ok ? 0 : 1,
@@ -207,14 +212,16 @@ function format(result) {
       lines.push(`  声明    ${lane} — ${item.reason}（${why}）`)
     } else {
       const hint = result.hints?.[lane]
+      const want = result.scenarios?.[lane]
+      const scenarioNote = want ? `；只认场景：${want.join('/')}` : ''
       const suffix = hint ? `；这一级当前不可用：${hint.blockedReason} → ${hint.nextStep}` : ''
-      lines.push(`  MISS    ${lane} — ${why}${result.stale[lane] ? `；${result.stale[lane]}` : ''}${suffix}`)
+      lines.push(`  MISS    ${lane} — ${why}${scenarioNote}${result.stale[lane] ? `；${result.stale[lane]}` : ''}${suffix}`)
     }
   }
   for (const block of result.blocked) lines.push(`  BLOCKED ${block.lane} — ${block.reason}；下一步：${block.nextStep}`)
   if (!result.ok) {
-    lines.push('缺证据：跑 `npm run lane:<id> -- run --scenario <name>` 补齐；L3 跑不了时，在改动记录里写')
-    lines.push('`L3: 未跑 — <理由>` 或 `L3: .lanes/runs/l3/<run-id>/verdict.json`（声明会被原样打印，不许静默跳过）。')
+    lines.push('缺证据：跑 `npm run lane:<id> -- run --scenario <name>` 补齐；L3 已降为手动清单，')
+    lines.push('需要强制时用 `--require l3` 并在改动记录里写 `L3: 未跑 — <理由>`。')
   }
   return lines.join('\n')
 }
