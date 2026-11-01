@@ -374,3 +374,21 @@ func TestResolveAsOf(t *testing.T) {
 		t.Fatal("非法日期应报错")
 	}
 }
+
+// TestUsableInvitesExcludeInternalCodes 钉住「可用」的口径：评审演示码也在库里、
+// 也「未用未过期」，但不能算进对外的余量——否则报表说还剩 2 张、网页上一个也没有。
+func TestUsableInvitesExcludeInternalCodes(t *testing.T) {
+	stamp := at(20261101, 12, 0)
+	note := func(v string) *string { return &v }
+	rows := []store.Invite{
+		{ExpiresAt: stamp + 86_400_000, Note: note("公开试用 批次 2026-10-30")},
+		{ExpiresAt: stamp + 86_400_000, Note: note("App Review demo")},
+		{ExpiresAt: stamp + 86_400_000, Note: note("App Review demo (rotated 2026-09-18)")},
+	}
+	if got := countUsable(rows, stamp); got != 1 {
+		t.Fatalf("可用应只算公开码，得到 %d", got)
+	}
+	if got := len(inviteUnusedRows(rows, stamp)); got != 1 {
+		t.Fatalf("未用列表也不该列出评审码，得到 %d 行", got)
+	}
+}

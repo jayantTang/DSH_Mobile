@@ -3,6 +3,7 @@ package opsreport
 import (
 	"math"
 	"sort"
+	"strings"
 
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/store"
 )
@@ -28,10 +29,20 @@ func countActive(devices []store.Device, lastSeen map[string]int64, from, to int
 	return count
 }
 
+// publicInvite 判断一张码是否面向公众发放。
+//
+// 评审演示码（备注以 `App Review` 开头）也在库里、也「未用未过期」，但它**不能发**
+// 给用户。日报的「可用 N 张」若把它们算进去，就会出现「报表说还剩 2 张、网页上
+// 一个也没有」（2026-11-01 实际发生）。内部码一律不计入余量。
+func publicInvite(row store.Invite) bool {
+	note := strings.TrimSpace(derefString(row.Note))
+	return !strings.HasPrefix(strings.ToLower(note), "app review")
+}
+
 func countUsable(rows []store.Invite, stamp int64) int {
 	count := 0
 	for _, row := range rows {
-		if row.ExpiresAt > stamp {
+		if row.ExpiresAt > stamp && publicInvite(row) {
 			count++
 		}
 	}
@@ -62,7 +73,7 @@ func countExpiredUnused(rows []store.Invite, stamp int64) int {
 func inviteUnusedRows(rows []store.Invite, stamp int64) []inviteUnused {
 	usable := make([]inviteUnused, 0, len(rows))
 	for _, row := range rows {
-		if row.ExpiresAt <= stamp {
+		if row.ExpiresAt <= stamp || !publicInvite(row) {
 			continue
 		}
 		usable = append(usable, inviteUnused{
@@ -127,6 +138,14 @@ func ratio(active, cohort int) *float64 {
 func int64Value(value *int64) int64 {
 	if value == nil {
 		return 0
+	}
+	return *value
+}
+
+// derefString 把可空字符串拍平；nil 与空串都当空串。
+func derefString(value *string) string {
+	if value == nil {
+		return ""
 	}
 	return *value
 }

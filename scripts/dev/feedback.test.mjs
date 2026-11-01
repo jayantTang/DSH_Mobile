@@ -502,6 +502,17 @@ test('「关注」区只留要 owner 动作的待办，自动观察不再堆上�
   assert.ok(!html.includes('<span class="chip up">提示</span>'), '关注区不再有 info 级提示条目')
 })
 
+test('公开激活码用完时，关注区说清「新人无法登记」', () => {
+  const data = fixture()
+  data.invites.usable = 0
+  data.invites.remaining = 0
+  data.invites.minted = 200
+  data.invites.used = 200
+  const html = renderReport(data)
+  assert.match(html, /公开激活码已用完（200\/200 已用），新人无法登记/)
+  assert.match(html, /可用 0 张（已用完）/)
+})
+
 test('推送注册率只算近 7 天活跃的手机（owner 2026-10-17 定）', () => {
   // 6 台未注册推送、但一个月没上线：废弃设备不进分母，不报警。
   const quiet = fixture()

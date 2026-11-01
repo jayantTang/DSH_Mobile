@@ -764,8 +764,11 @@ function attentionItems(report, { completed = false, generatedAt = 0, history = 
   // 口径优先用 `usable`（未用且未过期）；老服务端没有这个字段时退回 `remaining`。
   const inviteLeft = num(report.invites.usable ?? report.invites.remaining)
   if (num(report.invites.minted) > 0 && inviteLeft <= THRESHOLDS.inviteLow) {
-    push('warn', `激活码只剩 ${formatInt(inviteLeft)} 张`
-      + `（${formatInt(report.invites.used)}/${formatInt(report.invites.minted)} 已用），该补铸一批`,
+    // 0 张单独成句：这条是"新人现在进不来"，与"快用完了"不是同一件事。
+    push('warn', inviteLeft === 0
+      ? `公开激活码已用完（${formatInt(report.invites.used)}/${formatInt(report.invites.minted)} 已用），新人无法登记`
+      : `公开激活码只剩 ${formatInt(inviteLeft)} 张`
+        + `（${formatInt(report.invites.used)}/${formatInt(report.invites.minted)} 已用），该补铸一批`,
       'invites-low')
   }
   // 7 日留存越线：样本够才判。
@@ -938,7 +941,8 @@ function inviteBlock(report, { generatedAt = 0, limit = 6 } = {}) {
     .filter((row) => num(row.usedAt) >= num(generatedAt) - 30 * 86_400_000).length
   const chips = [
     `<span class="chip">已激活 ${formatInt(used)}/${formatInt(minted)}</span>`,
-    `<span class="chip${usable <= THRESHOLDS.inviteLow ? ' warn' : ''}">可用 ${formatInt(usable)} 张</span>`,
+    `<span class="chip${usable <= THRESHOLDS.inviteLow ? ' warn' : ''}">可用 ${formatInt(usable)} 张`
+      + `${usable === 0 ? '（已用完）' : ''}</span>`,
     expiring > 0 ? `<span class="chip open">7 天内到期 ${formatInt(expiring)} 张</span>` : '',
     expired > 0 ? `<span class="chip down">已过期未用 ${formatInt(expired)} 张</span>` : '',
     `<span class="chip">今日激活 ${formatInt(activatedToday)}</span>`,
