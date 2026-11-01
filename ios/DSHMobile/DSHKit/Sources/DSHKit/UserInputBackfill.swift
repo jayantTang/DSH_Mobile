@@ -96,7 +96,11 @@ struct UserInputBackfiller: Sendable {
         // 脏数据（没有 source）。宁可不灌，等连接器升级。
         guard roleFilterSupported else { return .unsupported }
         let previous = try await store.userInputSyncState(scope: scope, sessionId: sessionId)
+        // 只有**已灌全**的账本才能按新鲜度跳过。没灌全时账本里留着
+        // `resumeCursor`：上次可能是页数打满提前收工，24h 内切回面板必须
+        // 从锚点继续，否则「只看我的提问」会永久停在那半截列表上。
         if let previous,
+           previous.resumeCursor == nil,
            now().timeIntervalSince(previous.pulledAt) < freshWindow,
            previous.lastSeq >= lastSeq {
             return .skippedFresh

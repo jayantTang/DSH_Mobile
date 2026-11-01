@@ -164,6 +164,25 @@ final class UserInputBackfillTests: XCTestCase {
         XCTAssertNotNil(syncedAfter)
     }
 
+    /// 上一轮因页数预算停在半截：24h 新鲜窗口内再次打开面板，也必须从锚点继续，
+    /// 不能把「同步中…」当成已完成而跳过。
+    func testIncompleteBackfillResumesWithinFreshWindow() async throws {
+        let limited = UserInputBackfiller(store: store, now: { [clock] in clock!.date }, maxPages: 1)
+        _ = try await limited.backfill(scope: "mac", sessionId: "s1", lastSeq: 100) { _ in
+            window([makeRecord(90), makeRecord(100)], hasMore: true)
+        }
+        let state = try await store.userInputSyncState(scope: "mac", sessionId: "s1")
+        XCTAssertNotNil(state?.resumeCursor)
+
+        let outcome = try await limited.backfill(scope: "mac", sessionId: "s1", lastSeq: 100) { before in
+            XCTAssertEqual(before, 90, "新鲜窗口内必须从续拉锚点继续")
+            return window([makeRecord(10)], hasMore: false)
+        }
+        XCTAssertEqual(outcome, .pulled(pages: 1, rows: 1))
+        let synced = try await store.userInputsSyncedAt(scope: "mac", sessionId: "s1")
+        XCTAssertNotNil(synced)
+    }
+
     /// 完整性标记的读侧契约（T036：「我问过的」本地路径按它判回退）：
     /// 从未灌过的会话（含灌库进行中、降级跳过）读出来是 nil → 调用方回退
     /// 连接器路径；灌全置标记 → 走本地零网络。

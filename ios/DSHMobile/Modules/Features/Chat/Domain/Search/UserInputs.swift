@@ -41,6 +41,12 @@ public extension ChatModel {
             }
     }
 
+    /// 当前连接器是否支持按角色过滤的历史窗口；不支持时面板只能显示本地已有部分，
+    /// 不应反复触发一条注定被跳过的灌库。
+    public var supportsUserInputBackfill: Bool {
+        store?.supports(LinkHandshake.Capability.historyRoleFilter) ?? false
+    }
+
     /// 本会话的用户输入子集是否已灌全（`session_state.user_inputs_synced_at` 有值）。
     ///
     /// `false` 是一等状态，不是错误：面板照常显示本地已有的命中，并在顶部挂一行

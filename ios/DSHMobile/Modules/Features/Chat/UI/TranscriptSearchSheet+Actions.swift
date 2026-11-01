@@ -199,6 +199,11 @@ extension TranscriptSearchSheet {
         while !Task.isCancelled {
             await refreshUserInputSyncState()
             guard isUserInputsSynced == false else { return }
+            // 上一轮可能因页数预算停在半截；面板还开着时继续从账本锚点补，
+            // 不能只在第一次切换时试一次（那会把「同步中…」永久留在屏幕上）。
+            if model.supportsUserInputBackfill {
+                await model.ensureUserInputsBackfilled()
+            }
             try? await Task.sleep(for: .milliseconds(Self.syncPollMilliseconds))
         }
     }
