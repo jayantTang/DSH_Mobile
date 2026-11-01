@@ -160,29 +160,26 @@ dsh plugin --profile web add dsh-plugin-mobile-link
 
 ### 第 3 步：在「移动端连接」面板登记
 
-装好连接器后，点 DSH 界面左下角的「移动端连接」。面板会预填默认中转地址；填入服务提供者给你的激活码，
-点「登记并连接」。成功后面板直接显示「已连接中转」和二维码，**不需要重启 DSH**。
+装好连接器后，点 DSH 界面左下角的「移动端连接」。面板会预填默认中转地址；点「登记」即可。
+登记成功后直接显示「已连接」和二维码，**不需要重启 DSH**。
 
-默认中转地址来自安装配置；自建中转或服务提供者另给了地址时，在面板里直接改。激活码是一次性的，
-登记成功后作废，这台电脑以后不用再登记。
+默认中转地址来自安装配置；自建中转或服务提供者另给了地址时，在面板里直接改。电脑名称由连接器
+自动获取，不需要填写。中转对开放登记会按来源限流；被拒绝时面板会显示原因。
 
 ### 第 4 步（可选）：无头 / 自动化登记
 
 没有可操作的面板（CI、服务器、批量装机）时，仍可以用命令行或环境变量登记：
 
 ```bash
-dsh-mobile-link enroll --invite ABCD-EFGH-JKLM-NPQR --relay wss://<中转地址>/dsh-link
+# 开放登记：只给中转地址
+dsh-mobile-link enroll --relay wss://<中转地址>/dsh-link
+
+# 如果部署仍要求邀请码，再加 --invite <码>
+dsh-mobile-link enroll --invite <码> --relay wss://<中转地址>/dsh-link
 ```
 
-命令行登记写的是 `~/.dsh/mobile-link/agent.json`；跑完要让宿主重新读一次身份：
-
-```bash
-# 路一：重启宿主
-# 路二：启动时就把激活码给它——登记与连接在同一次启动里完成
-DSH_MOBILE_LINK_INVITE=<激活码> DSH_RELAY_URL=wss://<中转地址>/dsh-link dsh web
-```
-
-面板登记不需要这一步：它由连接器在宿主进程内完成，成功后原地重连。
+命令行登记写的是 `~/.dsh/mobile-link/agent.json`；宿主正在运行时，跑完要重启 DSH 让它重新读取身份；
+宿主未运行则下次启动生效。面板登记不需要这一步：它由连接器在宿主进程内完成，成功后原地重连。
 
 ### 第 5 步：扫码配对
 
@@ -225,7 +222,7 @@ sudo systemctl enable --now dsh-relay-go
     invite-mint --note "给自己" --count 1 --relay wss://<你的站点>/dsh-link
 ```
 
-拿到码之后**回到 A 的第 2 步**继续（装连接器 → 在「移动端连接」面板填激活码 → 扫码）。
+拿到码之后**回到 A 的第 2 步**继续（装连接器 → 在「移动端连接」面板点「登记」 → 扫码）。如果中转开启了开放登记，也可以不铸邀请码，直接登记。
 
 Caddy 路由不新增 DNS 与证书：用 `python3 relay-go/deploy/caddy_splice.py insert /etc/caddy/Caddyfile
 relay-go/deploy/Caddyfile.snippet <你的站点>` 把带标记的片段插进既有站点块，写入前先 `caddy validate`，
@@ -290,10 +287,10 @@ dsh-mobile-link --log-level debug --once      # 打印一行 MOBILE_LINK_STATE �
 ```bash
 # 换中转：撤掉旧身份，再重新登记
 rm ~/.dsh/mobile-link/agent.json
-dsh-mobile-link enroll --invite <新邀请码> --relay wss://<新站点>/dsh-link
+dsh-mobile-link enroll --relay wss://<新站点>/dsh-link
 
 # 卸载连接器
 dsh plugin --profile web remove dsh-plugin-mobile-link
 ```
 
-手机侧在「设置 → 已配对的设备」里可以撤销某台设备；撤销后那台手机需要重新配对。
+电脑端「移动端连接」的已配对设备列表里，点「撤销」并确认，可以撤销某台设备；撤销只影响该设备，配对码不变，其他设备不掉线。手机侧「设置 → 已配对的设备」也能撤销。

@@ -60,16 +60,18 @@ async function stubRelay({ mintFails = false } = {}) {
   return { server, seen, port: server.address().port }
 }
 
-async function enrollAgainst(options) {
+async function enrollAgainst(options, { invite = 'AAAA-BBBB-CCCC-DDDD' } = {}) {
   const { server, seen, port } = await stubRelay(options)
   const directory = mkdtempSync(join(tmpdir(), 'dsh-enroll-cli-'))
   const stateFile = join(directory, 'agent.json')
   try {
-    const { stdout } = await run(process.execPath, [
-      CLI, 'enroll', '--invite', 'AAAA-BBBB-CCCC-DDDD',
-      '--relay', `ws://127.0.0.1:${port}/dsh-link`,
+    const args = [
+      CLI, 'enroll', '--relay', `ws://127.0.0.1:${port}/dsh-link`,
       '--state-file', stateFile,
-    ], { env: { ...process.env, DSH_HOME: directory } })
+    ]
+    if (invite) args.push('--invite', invite)
+    const { stdout } = await run(process.execPath, args,
+      { env: { ...process.env, DSH_HOME: directory } })
     return { stdout, stateFile, seen }
   } finally {
     server.close()
@@ -111,4 +113,16 @@ test('a refused pairing code does not make a successful enroll look failed', asy
   assert.match(stdout, /这次没能预先申请配对码/)
   assert.match(stdout, /移动端连接/)
   assert.doesNotMatch(stdout, /[▀▄█]/, '失败时不该画出半个二维码')
+})
+
+
+test('open enrollment works without an invite code', async () => {
+  const { stdout, seen } = await enrollAgainst({}, { invite: null })
+  assert.match(stdout, /这台电脑已登记/)
+  const enroll = seen.find((item) => item.url.endsWith('/agents/enroll'))
+  assert.ok(enroll)
+  const body = JSON.parse(enroll.body)
+  assert.equal(body.inviteCode, undefined)
+  assert.equal(typeof body.name, 'string')
+  assert.ok(body.name.length > 0)
 })

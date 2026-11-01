@@ -16,6 +16,8 @@
  * invite code must be present, because the relay is on the public internet.
  */
 
+import { hostname } from 'node:os'
+
 import { enrollEndpoint, isPlaceholderRelayUrl, normalizeRelayUrl } from './dlp.js'
 import { DEFAULT_AGENT_NAME, INVITE_ENV, defaultStatePath, readState, writeState } from './state.js'
 
@@ -61,7 +63,7 @@ export async function enrollPlan({ stateFile, inviteCode, relayUrl, env = proces
   }
   const invite = inviteFrom({ inviteCode, env })
   const relay = relayUrl || env?.DSH_MOBILE_LINK_RELAY || ''
-  return { needed: true, stateFile: path, invite, relayUrl: relay, canEnroll: Boolean(invite && relay) }
+  return { needed: true, stateFile: path, invite, relayUrl: relay, canEnroll: Boolean(relay) }
 }
 
 /**
@@ -82,9 +84,7 @@ export async function enrollAgent({
   relayUrl, inviteCode, name, stateFile, deviceName,
   fetchImpl = fetch, logger = undefined, timeoutMs = ENROLL_TIMEOUT_MS,
 } = {}) {
-  if (!inviteCode || !String(inviteCode).trim()) {
-    throw new EnrollError('enroll/bad-request', 'mobile-link: an invite code is required to enroll (--invite <code>)')
-  }
+  const invite = typeof inviteCode === 'string' ? inviteCode.trim() : ''
   if (!relayUrl || !String(relayUrl).trim()) {
     throw new EnrollError('enroll/bad-request', 'mobile-link: a relay URL is required to enroll (--relay <url>)')
   }
@@ -103,7 +103,7 @@ export async function enrollAgent({
   }
 
   const path = stateFile || defaultStatePath()
-  const agentName = (name || deviceName || '').trim() || DEFAULT_AGENT_NAME
+  const agentName = (name || deviceName || '').trim() || hostname().trim() || DEFAULT_AGENT_NAME
   const waitMs = Number.isFinite(Number(timeoutMs)) && Number(timeoutMs) > 0
     ? Number(timeoutMs)
     : ENROLL_TIMEOUT_MS
@@ -132,7 +132,11 @@ export async function enrollAgent({
       fetchImpl(enrollEndpoint(relayUrl), {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ inviteCode: String(inviteCode).trim(), name: agentName }),
+        // 有邀请码就带上（老的邀请码发放方式仍可用）；没有就是开放登记。
+        body: JSON.stringify({
+          ...(invite ? { inviteCode: invite } : {}),
+          name: agentName,
+        }),
         signal: controller.signal,
       }),
       timeout,
@@ -212,7 +216,8 @@ export function describeEnrollFailure(body, status) {
 
 /** The one-liner a fresh install runs, quoted for copy/paste. */
 export function enrollCommand(relayUrl, name = undefined) {
-  const parts = ['dsh-mobile-link enroll', `--relay ${relayUrl || '<relay-url>'}`, '--invite <code>']
+  // 开放登记后命令不再必须带激活码；老的邀请码仍可用 `--invite` 传。
+  const parts = ['dsh-mobile-link enroll', `--relay ${relayUrl || '<relay-url>'}`]
   if (name) parts.push(`--name ${JSON.stringify(name)}`)
   return parts.join(' ')
 }

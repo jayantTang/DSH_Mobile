@@ -14,7 +14,7 @@ import (
 // 编译期断言：生产实现必须满足端口（DESIGN §2.5 要求消费者侧做一次）。
 var _ Store = (*store.Store)(nil)
 
-// TestStorePortMatchesDesign 钉住 httpapi 自己的 15 个方法（DESIGN §2.5）。
+// TestStorePortMatchesDesign 钉住 httpapi 自己的 16 个方法（DESIGN §2.5）。
 //
 // 它**不是** wsapi/files/feedback 的并集：三者由组合根注入各自的端口。
 // 端口多一个方法就红。
@@ -22,7 +22,7 @@ func TestStorePortMatchesDesign(t *testing.T) {
 	want := []string{
 		"AccountState", "AgentBySecret", "ClaimInvite", "ClaimPairCode",
 		"CountPairedDevices", "DeviceByID", "DeviceByToken", "DeviceHygiene",
-		"ListDevices", "MintPairCode", "PutAccountStateBatch", "RefreshDevice",
+		"EnrollOpen", "ListDevices", "MintPairCode", "PutAccountStateBatch", "RefreshDevice",
 		"RegeneratePairCode", "RevokeDevice", "SetPush",
 	}
 	port := reflect.TypeOf((*Store)(nil)).Elem()

@@ -11,6 +11,7 @@
 /** 路由用相对路径：宿主把插件路由挂在同一个源上。 */
 const STATUS_ROUTE = 'mobile-link/status'
 const ENROLL_ROUTE = 'mobile-link/enroll'
+const REVOKE_ROUTE = 'mobile-link/devices/revoke'
 const PAIR_ROUTE = 'mobile-link/pair-code'
 const REGENERATE_ROUTE = 'mobile-link/pair-code/regenerate'
 const SLOT_ENTRY = 'sidebar.footer.action'
@@ -21,8 +22,9 @@ const STYLE_ID = 'dsh-mobile-link-style'
 const LABEL = '移动端连接'
 const TITLE = '移动端连接：二维码、已配对的手机与连接状态'
 const PRIMITIVES = '@deepseek-ai/dsh-client-ui-primitives'
-/** 可选的支持链接；不参与准入，点不点都能用。 */
-const STAR_URL = 'https://github.com/jayantTang/DSH_Mobile'
+/** GitHub 仓库与 iOS 公开测试链接；都只做展示，不参与准入。 */
+const GITHUB_URL = 'https://github.com/jayantTang/DSH_Mobile'
+const TESTFLIGHT_URL = 'https://testflight.apple.com/join/tHKQsbCk'
 /** 小窗打开时的状态轮询间隔；关闭时只为让侧栏状态点别停在旧值上。 */
 const OPEN_POLL_MS = 2500
 const IDLE_POLL_MS = 20000
@@ -36,8 +38,8 @@ const COPIED_MS = 2000
 const CSS = [
   '.dsh-mobile-link-entry{display:flex;align-items:center;justify-content:flex-start;gap:8px;width:100%;font-size:13px}',
   '.dsh-mobile-link-entry-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-  '.dsh-mobile-link-dialog{width:min(420px,94vw)}',
-  '.dsh-mobile-link-body{display:flex;flex-direction:column;gap:16px}',
+  '.dsh-mobile-link-dialog{width:min(500px,94vw)}',
+  '.dsh-mobile-link-body{position:relative;display:flex;flex-direction:column;gap:16px}',
   '.dsh-mobile-link-status{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:500}',
   '.dsh-mobile-link-section-title{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--dsw-alias-label-tertiary,inherit)}',
   '.dsh-mobile-link-kv{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px 16px;font-size:13px}',
@@ -56,7 +58,9 @@ const CSS = [
   '.dsh-mobile-link-devices{display:flex;flex-direction:column;gap:6px;max-height:184px;overflow:auto}',
   '.dsh-mobile-link-device{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:10px;background:var(--dsw-alias-bg-module-platform,rgba(15,17,21,.04))}',
   '.dsh-mobile-link-device-name{font-size:13px;font-weight:500}',
-  '.dsh-mobile-link-device .dsh-mobile-link-tag{margin-left:auto}',
+  '.dsh-mobile-link-device-line{display:flex;align-items:center;gap:6px;min-width:0}',
+  '.dsh-mobile-link-revoke{flex:0 0 auto;margin-left:auto;border:0;background:transparent;padding:4px 0 4px 8px;font:inherit;font-size:12px;color:var(--dsw-alias-label-tertiary,#8a919d);cursor:pointer}',
+  '.dsh-mobile-link-revoke:hover{color:var(--dsw-alias-label-secondary,#5f6672)}',
   '.dsh-mobile-link-error{color:var(--dsw-alias-state-error-primary,#d1242f)}',
   '.dsh-mobile-link-note{font-size:12px;line-height:1.65;color:var(--dsw-alias-label-tertiary,inherit)}',
   '.dsh-mobile-link-form{display:flex;flex-direction:column;gap:12px}',
@@ -71,7 +75,28 @@ const CSS = [
   '.dsh-mobile-link-link{color:var(--dsw-alias-state-business-primary,#4176e6);text-decoration:underline;text-underline-offset:2px}',
   '.dsh-mobile-link-cmd{font-size:11px;line-height:1.65;color:var(--dsw-alias-label-tertiary,inherit)}',
   '.dsh-mobile-link-cmd summary{cursor:pointer;user-select:none}',
-  '.dsh-mobile-link-cmd .dsh-mobile-link-mono{margin-top:6px;overflow-wrap:anywhere}',
+  '.dsh-mobile-link-cmd .dsh-mobile-link-mono{margin-top:6px;white-space:nowrap;overflow-x:auto}',
+  '.dsh-mobile-link-github{display:flex;flex-direction:column;gap:3px}',
+  '.dsh-mobile-link-github-line{display:flex;justify-content:space-between;gap:12px;font-size:13px;align-items:baseline}',
+  '.dsh-mobile-link-github-line .dsh-mobile-link-k{color:var(--dsw-alias-label-tertiary,inherit)}',
+  '.dsh-mobile-link-github-line a{flex:1 1 auto;min-width:0;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;color:var(--dsw-alias-state-business-primary,#4176e6);text-decoration:none;text-decoration:underline;text-underline-offset:2px;overflow-wrap:anywhere;word-break:break-all;text-align:right}',
+  '.dsh-mobile-link-welcome{font-size:11px;color:var(--dsw-alias-label-tertiary,inherit);text-align:right}',
+  '.dsh-mobile-link-ioslink{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 10px;border-radius:9px;background:var(--dsw-alias-bg-module-platform,rgba(15,17,21,.04));font-size:12px;color:var(--dsw-alias-label-secondary,inherit)}',
+  '.dsh-mobile-link-ioslink a{color:var(--dsw-alias-state-business-primary,#4176e6);text-decoration:none;font-weight:600;white-space:nowrap}',
+  '.dsh-mobile-link-overlay{position:absolute;inset:0;z-index:2;display:flex;align-items:center;justify-content:center;padding:18px;background:rgba(23,33,52,.30);border-radius:16px}',
+  '.dsh-mobile-link-alert{width:min(360px,100%);display:flex;flex-direction:column;gap:12px;padding:16px;border-radius:12px;background:var(--dsw-alias-bg-module-platform,#fff);border:1px solid var(--dsw-alias-border-secondary,#e2e6ec);box-shadow:0 18px 40px rgba(23,33,52,.20)}',
+  '.dsh-mobile-link-alert-title{font-size:14px;font-weight:700}',
+  '.dsh-mobile-link-alert-actions{display:flex;gap:10px}',
+  '.dsh-mobile-link-alert-actions .dsh-mobile-link-btn{flex:1}',
+  '.dsh-mobile-link-guide{width:min(420px,100%);max-height:calc(100% - 36px);overflow:auto;display:flex;flex-direction:column;gap:12px;padding:16px;border-radius:12px;background:var(--dsw-alias-bg-module-platform,#fff);border:1px solid var(--dsw-alias-border-secondary,#e2e6ec);box-shadow:0 18px 40px rgba(23,33,52,.20)}',
+  '.dsh-mobile-link-guide-title{font-size:15px;font-weight:700}',
+  '.dsh-mobile-link-step{display:flex;gap:9px;align-items:flex-start}',
+  '.dsh-mobile-link-step-n{flex:0 0 18px;height:18px;border-radius:50%;background:rgba(65,118,230,.12);color:var(--dsw-alias-state-business-primary,#4176e6);display:grid;place-items:center;font-size:10px;font-weight:700}',
+  '.dsh-mobile-link-step-t{font-size:12px;line-height:1.6}',
+  '.dsh-mobile-link-testflight{padding:9px;border-radius:8px;background:var(--dsw-alias-bg-module-platform,rgba(15,17,21,.04));font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10px;color:var(--dsw-alias-state-business-primary,#4176e6);overflow-wrap:anywhere}',
+  '.dsh-mobile-link-alert-actions>*{flex:1}',
+  '.dsh-mobile-link-danger{height:36px;border:0;border-radius:9px;background:var(--dsw-alias-state-error-primary,#d1242f);color:#fff;font:inherit;font-size:12px;font-weight:600;cursor:pointer}',
+  '.dsh-mobile-link-danger:disabled{opacity:.65;cursor:default}',
 ].join('')
 
 function report(ctx, message) {
@@ -171,11 +196,11 @@ function needsEnroll(status) {
 /** 状态点与状态词的唯一来源：侧栏入口与标题行共用，不会出现"点上是绿的、文字说断开"。 */
 function connectionState(state) {
   if (state.statusError) return { dot: 'error', text: '状态未知' }
-  if (!state.status) return { dot: 'ongoing', text: '正在读取连接状态' }
-  if (needsEnroll(state.status)) return { dot: 'error', text: '这台电脑还没登记到中转' }
+  if (!state.status) return { dot: 'ongoing', text: '正在读取状态…' }
+  if (needsEnroll(state.status)) return { dot: 'error', text: '此电脑尚未登记' }
   if (state.status.enabled === false) return { dot: 'idle', text: '连接器已停用' }
-  if (state.status.connected) return { dot: 'done', text: '已连接中转' }
-  return { dot: 'warning', text: '未连接，正在重连' }
+  if (state.status.connected) return { dot: 'done', text: '已连接' }
+  return { dot: 'warning', text: '未连接，正在重新连接' }
 }
 /** 手机报上来的版本：`hello` 存的是 `{name,version,build,label}`，直接插值会渲染成 [object Object]。 */
 function clientLabel(client) {
@@ -186,9 +211,9 @@ function clientLabel(client) {
 /** 在线/总数分开说：`deviceCount` 把"连着但已离线"的记录也算进去了。 */
 function deviceSummary(devices) {
   const list = Array.isArray(devices) ? devices : []
-  if (list.length === 0) return '还没有手机配对过'
+  if (list.length === 0) return '暂无已配对设备'
   const online = list.filter((device) => device.offlineSince === null || device.offlineSince === undefined).length
-  return online === list.length ? `在线 ${online} 台` : `在线 ${online} 台 · 共 ${list.length} 台`
+  return online === list.length ? `${online} 台在线` : `${online} 台在线，共 ${list.length} 台`
 }
 function clockText(expiresAt) {
   const date = new Date(Number(expiresAt))
@@ -214,8 +239,12 @@ function createPanel() {
       now: Date.now(),
       // 登记表单只属于本次界面：草稿不落 localStorage，提交成功后清空。
       enrolling: false,
-      enrollDraft: { relay: '', relayTouched: false, invite: '', name: '' },
+      enrollDraft: { relay: '', relayTouched: false },
       enrollError: null,
+      revokeTarget: null,
+      revoking: false,
+      revokeError: null,
+      guideOpen: false,
     }),
     disposed: false,
     style: null,
@@ -379,39 +408,45 @@ function copyCode(panel) {
 }
 /** 服务端的机器码 → 面板上的中文；原始 message 留在 details 里给排障。 */
 const ENROLL_ERRORS = {
-  'enroll/bad-request': '请填写中转地址与激活码。',
-  'enroll/invalid-relay': '中转地址格式不正确，请检查后重试。',
-  'enroll/placeholder-relay': '现在填的是仓库占位地址，请换成服务提供者给你的中转地址。',
-  'enroll/unknown': '这个激活码无效。请核对后重试，或换一个新的激活码。',
-  'enroll/used': '这个激活码已经被使用。每个激活码只能登记一台电脑，请换一个新的。',
-  'enroll/expired': '这个激活码已经过期，请换一个新的。',
-  'enroll/rate-limited': '尝试次数过多，请等几分钟再试。',
-  'enroll/unreachable': '连不上中转。请检查中转地址与网络后重试。',
-  'enroll/timeout': '中转没有在 15 秒内响应。请检查网络后重试。',
-  'enroll/bad-response': '这个地址不像中转（应答无法识别）。请检查地址与路径。',
-  'enroll/already-registered': '这台电脑已经登记过，不能再用新的激活码覆盖。',
-  'enroll/disabled': '连接器当前已停用，请先在配置里启用。',
+  'enroll/bad-request': '请输入中转地址。',
+  'enroll/invalid-relay': '中转地址无效。',
+  'enroll/placeholder-relay': '请输入有效的中转地址。',
+  'enroll/unknown': '激活码无效。',
+  'enroll/used': '激活码已被使用。',
+  'enroll/expired': '激活码已过期。',
+  'enroll/rate-limited': '尝试次数过多，请稍后重试。',
+  'enroll/unreachable': '无法连接中转服务器，请检查地址与网络。',
+  'enroll/timeout': '中转服务器未响应，请稍后重试。',
+  'enroll/bad-response': '中转服务器返回了无法识别的响应。',
+  'enroll/already-registered': '此电脑已登记。',
+  'enroll/disabled': '连接器已停用。',
   'enroll/unavailable': '连接器正在停止，请稍后重试。',
-  'enroll/state-write': '身份已兑换，但未能写入本机。请检查磁盘权限或查看连接器日志；这个激活码已被消耗，不能重复使用。',
-  'enroll/relay-error': '中转登记失败，请稍后重试。',
-  'enroll/internal': '连接器内部错误，请查看日志后重试。',
+  'enroll/state-write': '登记信息未能保存到此电脑，请检查磁盘权限。',
+  'enroll/relay-error': '中转服务器登记失败，请稍后重试。',
+  'enroll/internal': '连接器内部错误，请稍后重试。',
 }
 function enrollMessage(error) {
   return ENROLL_ERRORS[error?.code] ?? describe(error) ?? '登记失败，请重试。'
 }
+function revokeMessage(error) {
+  const code = error?.code
+  if (code === 'request/unknown-device') return '设备不存在或已被撤销。'
+  if (code === 'auth/agent-mismatch') return '这台设备不属于此电脑。'
+  return '撤销失败，请稍后重试。'
+}
 /** 表单字段只改草稿；不在这里写“是否已登记”之类的业务状态。 */
 function setEnrollField(panel, field, value) {
   if (panel.disposed) return
-  if (field !== 'relay' && field !== 'invite' && field !== 'name') return
+  if (field !== 'relay') return
   const draft = { ...panel.store.get().enrollDraft, [field]: String(value ?? '') }
-  if (field === 'relay') draft.relayTouched = true
+  draft.relayTouched = true
   panel.store.set({ enrollDraft: draft, enrollError: null })
 }
 /**
  * 提交登记。
  *
- * 成功时先乐观地切到“已登记 / 正在连接”，随后用 `/status` 覆盖；这样即使状态
- * 请求慢或失败，也不会把一张已经写好的身份重新当成“未登记”，让用户重复提交。
+ * 开放登记：只提交中转地址；电脑名称由连接器自动获取。成功时先乐观地切到
+ * “已登记 / 正在连接”，随后用 `/status` 覆盖。
  */
 async function submitEnroll(panel) {
   if (panel.disposed || panel.store.get().enrolling) return
@@ -419,20 +454,12 @@ async function submitEnroll(panel) {
   const status = state.status
   const draft = state.enrollDraft
   const locked = Boolean(status?.enroll?.relayLocked)
-  // `relayTouched` distinguishes "the user cleared the field" from "not edited yet";
-  // otherwise an empty field would silently fall back to the prefill and the user
-  // could never replace the default address.
   const relayUrl = (locked
     ? status?.enroll?.relayPrefill
     : (draft.relayTouched ? draft.relay : status?.enroll?.relayPrefill) || '').trim()
-  const inviteCode = (draft.invite || '').trim()
-  const agentName = (draft.name || '').trim()
-  if (!relayUrl || !inviteCode) {
+  if (!relayUrl) {
     panel.store.set({
-      enrollError: {
-        code: 'enroll/bad-request',
-        message: !relayUrl ? '请填写中转地址。' : '请填写激活码。',
-      },
+      enrollError: { code: 'enroll/bad-request', message: '请输入中转地址。' },
     })
     return
   }
@@ -442,14 +469,14 @@ async function submitEnroll(panel) {
     const body = await requestJson(ENROLL_ROUTE, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ relayUrl, inviteCode, agentName }),
+      body: JSON.stringify({ relayUrl }),
     })
     if (panel.disposed) return
     const previous = panel.store.get().status ?? {}
     const enroll = previous.enroll ?? {}
     panel.store.set({
       enrolling: false,
-      enrollDraft: { relay: '', relayTouched: false, invite: '', name: '' },
+      enrollDraft: { relay: '', relayTouched: false },
       enrollError: null,
       status: {
         ...previous,
@@ -486,6 +513,46 @@ async function submitEnroll(panel) {
   }
 }
 
+/** 打开撤销确认：只记录目标，不发送请求。 */
+function requestRevoke(panel, device) {
+  if (panel.disposed || !device?.deviceId) return
+  panel.store.set({ revokeTarget: device, revokeError: null, guideOpen: false })
+}
+function cancelRevoke(panel) {
+  if (panel.disposed || panel.store.get().revoking) return
+  panel.store.set({ revokeTarget: null, revokeError: null })
+}
+/** 确认后才调用宿主路由；成功后刷新状态，失败留在确认窗口里。 */
+async function confirmRevoke(panel) {
+  const target = panel.store.get().revokeTarget
+  if (panel.disposed || !target || panel.store.get().revoking) return
+  panel.store.set({ revoking: true, revokeError: null })
+  try {
+    await requestJson(REVOKE_ROUTE, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ deviceId: target.deviceId }),
+    })
+    if (panel.disposed) return
+    panel.store.set({ revoking: false, revokeTarget: null, revokeError: null })
+    await loadStatus(panel)
+  } catch (error) {
+    if (panel.disposed) return
+    panel.store.set({
+      revoking: false,
+      revokeError: { message: revokeMessage(error), detail: describe(error) },
+    })
+  }
+}
+function openGuide(panel) {
+  if (panel.disposed) return
+  panel.store.set({ guideOpen: true, revokeTarget: null, revokeError: null })
+}
+function closeGuide(panel) {
+  if (panel.disposed) return
+  panel.store.set({ guideOpen: false })
+}
+
 /**
  * 控制器：视图只读它的 store、只调它的动作。
  *
@@ -505,6 +572,11 @@ function createController() {
     enroll: () => submitEnroll(panel),
     setEnrollField: (field, value) => setEnrollField(panel, field, value),
     reloadStatus: () => { void loadStatus(panel) },
+    requestRevoke: (device) => requestRevoke(panel, device),
+    cancelRevoke: () => cancelRevoke(panel),
+    confirmRevoke: () => { void confirmRevoke(panel) },
+    openGuide: () => openGuide(panel),
+    closeGuide: () => closeGuide(panel),
     start: () => startPanel(panel),
   }
 }
@@ -538,23 +610,19 @@ function statusSection(React, ui, state) {
       React.createElement(ui.StateDot, { state: conn.dot }),
       React.createElement('span', null, conn.text)),
     state.statusError ? React.createElement('div', { className: 'dsh-mobile-link-note dsh-mobile-link-error' },
-      `${state.statusError}（连接器可能刚重启，或插件没装进当前宿主）`) : null,
-    // 激活界面不再单独列一行固定中转地址：默认值只作为输入框初值，用户可改。
+      '无法读取连接状态。') : null,
     state.status && !needsEnroll(state.status)
-      ? row(React, '中转', state.status.relayUrl ?? '—', true)
+      ? row(React, '中转服务器', state.status.relayUrl ?? '—', true)
       : null,
-    state.status?.agentName ? row(React, '电脑', state.status.agentName) : null,
-    // 未登记时“手机”这一行只会写“还没有手机配对过”，和表单抢空间；
-    // 设备清单属于登记后的区块，这里也不重复。
-    state.status && !needsEnroll(state.status) ? row(React, '手机', deviceSummary(state.status.devices)) : null)
+    state.status && !needsEnroll(state.status)
+      ? row(React, '设备', deviceSummary(state.status.devices))
+      : null)
 }
 /** 官方 Input 在旧宿主可能不存在；没有就用原生 input，表单不会因此消失。 */
 function enrollInput(React, ui, props) {
   const official = ui?.Input != null
   const Input = official ? ui.Input : 'input'
   const { className, ...rest } = props
-  // 官方 Input 自带边框与内层 input，不能再套我们的 class（会多一圈边框）；
-  // 原生回退才用 `.dsh-mobile-link-input`。
   return React.createElement(Input, official
     ? rest
     : { className: ['dsh-mobile-link-input', className].filter(Boolean).join(' '), ...rest })
@@ -564,19 +632,17 @@ function enrollField(React, id, labelText, children) {
     React.createElement('label', { className: 'dsh-mobile-link-label', htmlFor: id }, labelText),
     children)
 }
-/** 旧宿主没有面板登记能力时，退回原来的命令提示（不做 404 的空表单）。 */
+/** 旧宿主没有面板登记能力时，退回命令行提示。 */
 function enrollCommandSection(React, status) {
   return React.createElement('div', { className: 'dsh-mobile-link-section' },
     React.createElement('div', { className: 'dsh-mobile-link-note' },
-      '这台电脑还没有登记到中转。请用下面的命令登记，然后重启 DSH：'),
+      '此电脑尚未登记。请使用命令行完成登记：'),
     React.createElement('div', { className: 'dsh-mobile-link-mono dsh-mobile-link-v', style: { textAlign: 'left' } },
-      status?.enroll?.command ?? 'dsh-mobile-link enroll --invite <激活码> --relay <中转地址>'))
+      status?.enroll?.command ?? 'dsh-mobile-link enroll --relay <中转地址>'))
 }
 /**
- * 未登记：在面板里登记（默认中转已预填，激活码一次性）。
- *
- * 旧宿主没有 `enroll.panel`，继续显示命令：这是半升级时的安全回退，不是第二条
- * 业务通路。表单只收集三个字段，成功与否由连接器的 `/status` 决定。
+ * 未登记：开放登记。只提交中转地址；电脑名称由连接器自动获取。
+ * 旧宿主没有 `enroll.panel` 时继续显示命令，作为半升级回退。
  */
 function enrollSection(React, controller, ui, state) {
   const status = state.status
@@ -584,12 +650,12 @@ function enrollSection(React, controller, ui, state) {
   if (status.enabled === false) {
     return React.createElement('div', { className: 'dsh-mobile-link-section' },
       React.createElement('div', { className: 'dsh-mobile-link-note' },
-        '连接器当前已停用。请先在插件配置里设置 enabled: true，再回来登记。'))
+        '连接器已停用。请在插件配置中启用后重试。'))
   }
   const enroll = status.enroll
   const locked = Boolean(enroll.relayLocked)
   const prefill = typeof enroll.relayPrefill === 'string' ? enroll.relayPrefill : ''
-  const draft = state.enrollDraft ?? { relay: '', relayTouched: false, invite: '', name: '' }
+  const draft = state.enrollDraft ?? { relay: '', relayTouched: false }
   const relayValue = locked ? prefill : (draft.relayTouched ? draft.relay : prefill)
   const submitting = Boolean(state.enrolling)
   const error = state.enrollError
@@ -599,37 +665,20 @@ function enrollSection(React, controller, ui, state) {
     event.preventDefault?.()
     if (!submitting) controller.enroll()
   }
-  const command = enroll.command ?? 'dsh-mobile-link enroll --invite <激活码> --relay <中转地址>'
+  const command = enroll.command ?? 'dsh-mobile-link enroll --relay <中转地址>'
 
   return React.createElement('div', { className: 'dsh-mobile-link-form' },
     React.createElement('div', { className: 'dsh-mobile-link-note', key: 'intro' },
-      prefill
-        ? '中转地址已填好默认值；填入激活码即可。登记只做一次，成功后自动连接并显示二维码。'
-        : '填入服务提供者给你的中转地址与激活码。登记只做一次，成功后自动连接并显示二维码。'),
+      '登记此电脑以连接中转服务器。'),
     enrollField(React, 'mobile-link-relay', '中转地址',
       enrollInput(React, ui, {
         id: 'mobile-link-relay', type: 'text', inputMode: 'url', value: relayValue,
         placeholder: 'wss://<中转地址>/dsh-link', readOnly: locked, disabled: submitting,
-        autoComplete: 'off', spellCheck: false, onChange: setField('relay'),
+        autoComplete: 'off', spellCheck: false,
+        onChange: setField('relay'), onKeyDown: submitOnEnter,
       })),
     React.createElement('div', { className: 'dsh-mobile-link-note', key: 'relay-hint' },
-      locked ? '由当前安装配置指定，只读。' : '已预填默认中转，可直接修改。'),
-    enrollField(React, 'mobile-link-invite', '激活码',
-      enrollInput(React, ui, {
-        id: 'mobile-link-invite', type: 'text', value: draft.invite,
-        placeholder: 'ABCD-EFGH-JKLM-NPQR', disabled: submitting,
-        autoComplete: 'off', spellCheck: false,
-        style: { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', letterSpacing: '.12em' },
-        onChange: setField('invite'), onKeyDown: submitOnEnter,
-      })),
-    React.createElement('div', { className: 'dsh-mobile-link-note', key: 'invite-hint' },
-      '一次性激活码（也叫邀请码）；登记成功后作废，不写日志、不进状态接口。'),
-    enrollField(React, 'mobile-link-name', '电脑名称（可选）',
-      enrollInput(React, ui, {
-        id: 'mobile-link-name', type: 'text', value: draft.name,
-        placeholder: 'My computer', disabled: submitting, maxLength: 64,
-        autoComplete: 'off', onChange: setField('name'), onKeyDown: submitOnEnter,
-      })),
+      locked ? '由配置指定，不可修改。' : '已预填，可修改。'),
     error ? React.createElement('div', {
       className: 'dsh-mobile-link-error-inline', role: 'alert', key: 'error',
       title: error.detail ?? undefined,
@@ -637,38 +686,39 @@ function enrollSection(React, controller, ui, state) {
     React.createElement(ui.Button, {
       key: 'submit', variant: 'primary', type: 'button', disabled: submitting,
       onClick: () => controller.enroll(),
-    }, submitting ? '正在登记…' : (error ? '重试' : '登记并连接')),
+    }, submitting ? '正在登记…' : (error ? '重试' : '登记')),
     React.createElement('div', { className: 'dsh-mobile-link-note', key: 'footnote' },
-      '登记成功后立即连接中转；连接期间显示「正在连接」，不摆空二维码。'),
+      '登记后将自动连接。'),
     React.createElement('details', { className: 'dsh-mobile-link-cmd', key: 'cli' },
-      React.createElement('summary', null, '命令行方式登记（无头 / 自动化兜底）'),
+      React.createElement('summary', null, '命令行登记（适用于无界面环境）'),
       React.createElement('div', { className: 'dsh-mobile-link-mono' }, command)))
 }
-/** 成功页的可选 Star 链接：不参与准入，不点也能正常连接。 */
-function starSection(React) {
-  return React.createElement('div', { className: 'dsh-mobile-link-note', key: 'star' },
-    '如果这个工具对你有用，可以给',
+function githubSection(React) {
+  return React.createElement('div', { className: 'dsh-mobile-link-github', key: 'github' },
+    React.createElement('div', { className: 'dsh-mobile-link-github-line' },
+      React.createElement('span', { className: 'dsh-mobile-link-k' }, 'GitHub 仓库'),
+      React.createElement('a', { href: GITHUB_URL, target: '_blank', rel: 'noreferrer' },
+        'github.com/jayantTang/DSH_Mobile')),
+    React.createElement('div', { className: 'dsh-mobile-link-welcome' },
+      '欢迎在 GitHub 上为项目加星标。'))
+}
+function iosLinkSection(React, controller) {
+  return React.createElement('div', { className: 'dsh-mobile-link-ioslink', key: 'ios-link' },
+    React.createElement('span', null, '尚未安装 iOS App？'),
     React.createElement('a', {
-      className: 'dsh-mobile-link-link', href: STAR_URL, target: '_blank', rel: 'noreferrer',
-    }, '仓库点个 Star'),
-    '（可选，不影响连接）。')
+      href: '#', onClick: (event) => { event?.preventDefault?.(); controller.openGuide() },
+    }, '查看安装方式'))
 }
 /**
- * 二维码卡。
- *
- * 032 之前这里是"倒计时 + 换一张"（一次性码，10 分钟）。现在默认是**持久码**：
- * 所以卡片上写"长期有效，直到你点重新生成"，并且不再有进度条——一个永远走不到头的
- * 倒计时只会让人以为码快过期了。限时码（老中转/显式请求）仍然显示倒计时与剩余时间。
+ * 二维码卡。默认是持久码，所以写“长期有效直到重新生成”，不再有倒计时；
+ * 限时码（老中转/显式请求）仍然显示剩余时间。
  */
 function codeSection(React, controller, ui, state) {
   const code = state.code
-  // 登记成功只代表身份落盘；链路还在连的时候不要摆“还没有可用的配对码”，
-  // 也不要给一个点了没反应的“取一张码”。
   const connecting = !code && !state.codeError && state.status?.connected !== true
   const children = []
   if (code) {
     children.push(React.createElement('div', { className: 'dsh-mobile-link-code', key: 'code' }, code.code))
-    // 二维码：宿主给的 SVG 直接进 data URI，界面不碰图案本身。
     children.push(React.createElement('img', {
       key: 'qr', className: 'dsh-mobile-link-qr', alt: '配对二维码',
       src: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(String(code.svg))}`,
@@ -676,29 +726,29 @@ function codeSection(React, controller, ui, state) {
     if (code.persistent || code.expiresAt == null) {
       children.push(React.createElement('div', { className: 'dsh-mobile-link-count', key: 'count' },
         React.createElement('span', null,
-          `长期有效 · 直到你点「重新生成」${code.maxPairedDevices
+          `长期有效直到重新生成${code.maxPairedDevices
             ? `（已配对 ${code.pairedDevices ?? 0}/${code.maxPairedDevices}）` : ''}`)))
     } else {
       const remaining = Math.max(0, code.expiresAt - state.now)
       const percent = Math.max(0, Math.min(100, (remaining / (code.ttlMs || CODE_TTL_MS)) * 100))
       children.push(React.createElement('div', { className: 'dsh-mobile-link-count', key: 'count' },
         React.createElement('div', { className: 'dsh-mobile-link-bar' }, React.createElement('i', { style: { width: `${percent.toFixed(1)}%` } })),
-        React.createElement('span', null, `有效期至 ${clockText(code.expiresAt)}（还剩 ${remainingText(remaining)}）`)))
+        React.createElement('span', null, `有效期至 ${clockText(code.expiresAt)}（剩余 ${remainingText(remaining)}）`)))
     }
   } else if (state.codeError) {
     children.push(React.createElement('div', { className: 'dsh-mobile-link-note dsh-mobile-link-error', key: 'err' }, state.codeError))
   } else if (connecting) {
     children.push(React.createElement('div', { className: 'dsh-mobile-link-note', key: 'connecting' },
-      state.enrolling ? '正在登记…' : '已登记，正在连接中转…'))
+      state.enrolling ? '正在登记…' : '正在连接…'))
   } else {
     children.push(React.createElement('div', { className: 'dsh-mobile-link-note', key: 'loading' },
-      state.busy ? '正在向中转取一张新码…' : '还没有可用的配对码。'))
+      state.busy ? '正在获取…' : '暂无配对码。'))
   }
   const buttons = connecting ? [] : [React.createElement(ui.Button, {
     key: 'swap', variant: 'primary', type: 'button', disabled: Boolean(state.busy),
     onClick: () => void controller.refreshCode({ regenerate: Boolean(state.code) }),
-  }, state.busy ? '取码中…'
-    : (state.codeError ? '重试' : (state.code ? '重新生成' : '取一张码')))]
+  }, state.busy ? '正在获取…'
+    : (state.codeError ? '重试' : (state.code ? '重新生成' : '获取配对码')))]
   if (code) {
     buttons.push(React.createElement(ui.Button, {
       key: 'copy', variant: 'outline', type: 'button', onClick: () => controller.copy(),
@@ -707,39 +757,95 @@ function codeSection(React, controller, ui, state) {
   children.push(React.createElement('div', { className: 'dsh-mobile-link-actions', key: 'actions' }, buttons))
   return React.createElement('div', { className: 'dsh-mobile-link-card' }, children)
 }
-function deviceRow(React, ui, device) {
+function deviceRow(React, ui, device, controller) {
   const online = device.offlineSince === null || device.offlineSince === undefined
   const meta = [device.model, clientLabel(device.client)].filter(Boolean).join(' · ')
   return React.createElement('div', { className: 'dsh-mobile-link-device', key: device.deviceId ?? device.name },
     React.createElement(ui.StateDot, { state: online ? 'done' : 'idle' }),
     React.createElement('div', { style: { minWidth: 0 } },
-      React.createElement('div', { className: 'dsh-mobile-link-device-name' }, device.name ?? '未命名设备'),
+      React.createElement('div', { className: 'dsh-mobile-link-device-line' },
+        React.createElement('div', { className: 'dsh-mobile-link-device-name' }, device.name ?? '未命名设备'),
+        React.createElement(ui.Tag, { tone: online ? 'success' : 'quiet', className: 'dsh-mobile-link-tag' },
+          online ? '在线' : '离线')),
       meta ? React.createElement('div', { className: 'dsh-mobile-link-device-meta' }, meta) : null),
-    React.createElement(ui.Tag, { tone: online ? 'success' : 'quiet', className: 'dsh-mobile-link-tag' },
-      online ? '在线' : '离线'))
+    React.createElement('button', {
+      type: 'button', className: 'dsh-mobile-link-revoke',
+      onClick: () => controller.requestRevoke(device),
+    }, '撤销'))
 }
-function devicesSection(React, ui, status) {
+function devicesSection(React, ui, status, controller) {
   const devices = Array.isArray(status?.devices) ? status.devices : []
   const rows = devices.length === 0
-    ? [React.createElement('div', { className: 'dsh-mobile-link-note', key: 'none' }, '还没有手机配对过。')]
-    : devices.map((device) => deviceRow(React, ui, device))
+    ? [React.createElement('div', { className: 'dsh-mobile-link-note', key: 'none' }, '暂无已配对设备。')]
+    : devices.map((device) => deviceRow(React, ui, device, controller))
   return React.createElement('div', { className: 'dsh-mobile-link-section' },
-    React.createElement('div', { className: 'dsh-mobile-link-section-title' }, '已配对的手机'),
+    React.createElement('div', { className: 'dsh-mobile-link-section-title' }, '已配对设备'),
     React.createElement('div', { className: 'dsh-mobile-link-devices' }, rows))
 }
-/** 最近一次失败：平时收起来，别让一行红字天天抢注意力。 */
+/** 最近一次失败：平时收起来。 */
 function errorSection(React, controller, ui, status, open) {
   if (!status?.lastError) return null
   return React.createElement(ui.DisclosureRow, {
-    title: '最近一次错误', open: Boolean(open), expandable: true,
+    title: '上次错误', open: Boolean(open), expandable: true,
     onToggle: () => controller.toggleError(),
   }, React.createElement('div', { className: 'dsh-mobile-link-mono dsh-mobile-link-error' }, status.lastError))
+}
+/** 撤销确认：浮层叠加在扫码页上，不重复设备列表。 */
+function revokeOverlay(React, ui, state, controller) {
+  const target = state.revokeTarget
+  if (!target) return null
+  const name = target.name ?? '这台设备'
+  return React.createElement('div', { className: 'dsh-mobile-link-overlay', key: 'revoke-overlay' },
+    React.createElement('div', {
+      className: 'dsh-mobile-link-alert', role: 'dialog', 'aria-modal': 'true',
+      'aria-label': '撤销这台设备',
+    },
+      React.createElement('div', { className: 'dsh-mobile-link-alert-title' }, '撤销这台设备？'),
+      React.createElement('div', { className: 'dsh-mobile-link-note' },
+        `“${name}”将无法继续连接。需要重新扫码才能再次配对。`),
+      state.revokeError ? React.createElement('div', { className: 'dsh-mobile-link-error-inline', role: 'alert' },
+        state.revokeError.message) : null,
+      React.createElement('div', { className: 'dsh-mobile-link-alert-actions' },
+        React.createElement(ui.Button, {
+          variant: 'outline', type: 'button', disabled: Boolean(state.revoking),
+          onClick: () => controller.cancelRevoke(),
+        }, '取消'),
+        React.createElement('button', {
+          type: 'button', className: 'dsh-mobile-link-danger', disabled: Boolean(state.revoking),
+          onClick: () => controller.confirmRevoke(),
+        }, state.revoking ? '撤销中…' : '撤销设备'))))
+}
+/** iOS 安装指引：只给 TestFlight 公开链接。 */
+function guideOverlay(React, ui, controller) {
+  return React.createElement('div', { className: 'dsh-mobile-link-overlay', key: 'guide-overlay' },
+    React.createElement('div', {
+      className: 'dsh-mobile-link-guide', role: 'dialog', 'aria-modal': 'true',
+      'aria-label': '安装 DSH Mobile',
+    },
+      React.createElement('div', { className: 'dsh-mobile-link-guide-title' }, '安装 DSH Mobile'),
+      React.createElement('div', { className: 'dsh-mobile-link-note' }, '在 iPhone 或 iPad 上通过 TestFlight 安装。'),
+      React.createElement('div', { className: 'dsh-mobile-link-step' },
+        React.createElement('span', { className: 'dsh-mobile-link-step-n' }, '1'),
+        React.createElement('span', { className: 'dsh-mobile-link-step-t' }, '从 App Store 安装 TestFlight。')),
+      React.createElement('div', { className: 'dsh-mobile-link-step' },
+        React.createElement('span', { className: 'dsh-mobile-link-step-n' }, '2'),
+        React.createElement('span', { className: 'dsh-mobile-link-step-t' }, '打开 TestFlight 邀请链接，安装 DSH Mobile。')),
+      React.createElement('div', { className: 'dsh-mobile-link-step' },
+        React.createElement('span', { className: 'dsh-mobile-link-step-n' }, '3'),
+        React.createElement('span', { className: 'dsh-mobile-link-step-t' }, '打开 DSH Mobile，扫描电脑上的配对二维码。')),
+      React.createElement('a', {
+        className: 'dsh-mobile-link-testflight', href: TESTFLIGHT_URL, target: '_blank', rel: 'noreferrer',
+      }, TESTFLIGHT_URL),
+      React.createElement('div', { className: 'dsh-mobile-link-note' }, '需要 iOS 17、iPadOS 17 或更高版本。'),
+      React.createElement(ui.Button, {
+        variant: 'primary', type: 'button', onClick: () => controller.closeGuide(),
+      }, '完成')))
 }
 function panelBody(React, controller, ui, state) {
   const children = [statusSection(React, ui, state)]
   if (!state.status) {
     children.push(React.createElement('div', { className: 'dsh-mobile-link-note', key: 'loading' },
-      state.statusError ? '读取连接状态失败。连接器可能刚重启，或插件没装进当前宿主。' : '正在读取连接状态…'))
+      state.statusError ? '无法读取连接状态。' : '正在读取状态…'))
     if (state.statusError) {
       children.push(React.createElement(ui.Button, {
         key: 'retry', variant: 'outline', type: 'button', onClick: () => controller.reloadStatus(),
@@ -752,14 +858,13 @@ function panelBody(React, controller, ui, state) {
     return React.createElement('div', { className: 'dsh-mobile-link-body' }, children)
   }
   children.push(codeSection(React, controller, ui, state))
-  children.push(starSection(React))
-  children.push(devicesSection(React, ui, state.status))
+  children.push(githubSection(React))
+  children.push(iosLinkSection(React, controller))
+  children.push(devicesSection(React, ui, state.status, controller))
   const error = errorSection(React, controller, ui, state.status, state.showError)
   if (error) children.push(error)
-  children.push(React.createElement('div', { className: 'dsh-mobile-link-note', key: 'hint' },
-    '用 DSH Mobile App 扫码配对：这串码长期有效，可以配多台设备（手机／浏览器）。'
-    + '换掉它点「重新生成」——已经在用的设备不会掉线，只有拿旧码来配的人需要重新扫。'
-    + '相机不方便时，也可以把上面那串配对码手动输进 App 连接页底部的手输入口。'))
+  if (state.revokeTarget) children.push(revokeOverlay(React, ui, state, controller))
+  if (state.guideOpen) children.push(guideOverlay(React, ui, controller))
   return React.createElement('div', { className: 'dsh-mobile-link-body' }, children)
 }
 /** 小窗：官方 Modal 负责遮罩、顶层 Esc 与焦点归位；内容只在打开时渲染。 */

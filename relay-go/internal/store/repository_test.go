@@ -477,6 +477,41 @@ func TestWriteTxRollsBackOnError(t *testing.T) {
 	}
 }
 
+func TestEnrollOpenCreatesAccountAndAgent(t *testing.T) {
+	s := newRepoStore(t)
+	ctx := context.Background()
+	identity, err := s.EnrollOpen(ctx, "Open Mac")
+	if err != nil {
+		t.Fatalf("EnrollOpen: %v", err)
+	}
+	if identity.AccountID == "" || identity.AgentID == "" ||
+		!strings.HasPrefix(identity.AccountID, "acc_") || !strings.HasPrefix(identity.AgentID, "agt_") {
+		t.Fatalf("开放登记身份 = %+v", identity)
+	}
+	if identity.AgentName != "Open Mac" || identity.InviteNote != nil {
+		t.Fatalf("开放登记名称/备注 = %+v", identity)
+	}
+	if _, found, err := s.GetAccount(ctx, identity.AccountID); err != nil || !found {
+		t.Fatalf("开放登记账户不存在: found=%v err=%v", found, err)
+	}
+	agent, found, err := s.AgentBySecret(ctx, identity.AgentSecret)
+	if err != nil || !found || agent.AgentID != identity.AgentID {
+		t.Fatalf("开放登记 secret 不可用: %+v found=%v err=%v", agent, found, err)
+	}
+
+	// 每次开放登记都是新账户/新电脑，不复用。
+	second, err := s.EnrollOpen(ctx, "")
+	if err != nil {
+		t.Fatalf("EnrollOpen(default): %v", err)
+	}
+	if second.AccountID == identity.AccountID || second.AgentID == identity.AgentID {
+		t.Fatalf("开放登记复用了身份: %+v / %+v", identity, second)
+	}
+	if second.AgentName != "My computer" {
+		t.Fatalf("默认电脑名 = %q", second.AgentName)
+	}
+}
+
 func TestInviteClaimChargesFailuresAndRejectsReuse(t *testing.T) {
 	s := newRepoStore(t)
 	ctx := context.Background()

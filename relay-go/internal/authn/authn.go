@@ -40,6 +40,27 @@ func DeviceFromBearer(ctx context.Context, st DeviceByTokenStore, r *http.Reques
 	return device, found, err
 }
 
+// AgentBySecretStore 是 AgentFromBearer 需要的最小仓储端口（1 个方法）。
+type AgentBySecretStore interface {
+	AgentBySecret(ctx context.Context, secret string) (store.Agent, bool, error)
+}
+
+// AgentFromBearer 用 Bearer agent secret 认一台电脑；ok=false 时调用方回 401。
+//
+// 连接器要替用户撤销一台已配对设备，但手里只有 agent secret，没有那台设备的
+// 令牌；设备令牌那条路仍由 DeviceFromBearer 负责，两个入口都只在这里定义。
+func AgentFromBearer(ctx context.Context, st AgentBySecretStore, r *http.Request) (store.Agent, bool, error) {
+	token := BearerToken(r)
+	if token == "" {
+		return store.Agent{}, false, nil
+	}
+	agent, found, err := st.AgentBySecret(ctx, token)
+	if err == nil && found {
+		reqctx.NoteAgent(ctx, agent.AgentID)
+	}
+	return agent, found, err
+}
+
 // DeviceSubprotocolPrefix 是设备子协议凭据的固定前缀（Python 的
 // DEVICE_SUBPROTOCOL_PREFIX）：后缀是设备令牌原文。
 const DeviceSubprotocolPrefix = "dsh.device."

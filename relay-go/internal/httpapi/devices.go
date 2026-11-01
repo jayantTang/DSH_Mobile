@@ -118,16 +118,29 @@ type devicesRevokeResponse struct {
 // 为它保留 $events 值班流。所以落库之后立刻断开在线的那条，并让连接器收到
 // `deviceDetach(reason="revoked")`——那是它放下这台设备的唯一信号。
 func (s *server) handleDevicesRevoke(w http.ResponseWriter, r *http.Request) {
-	device, ok, err := authn.DeviceFromBearer(r.Context(), s.store, r)
+	// 两种调用方：设备用 device token 撤销自己/同 agent 的设备；连接器用
+	// agent secret 撤销它名下的一台设备（面板里的「撤销」）。两条凭据都在
+	// authn 里解析，归属校验在后面统一做。
+	device, deviceOK, err := authn.DeviceFromBearer(r.Context(), s.store, r)
 	if err != nil {
 		apierr.WriteStoreError(w, r, s.log(), store.IsBusy, err,
 			"internal/error", "the relay could not complete this request")
 		return
 	}
-	if !ok {
-		writeError(w, http.StatusUnauthorized, "auth/invalid-token",
-			"a valid device token is required", nil)
+	agent, agentOK, err := authn.AgentFromBearer(r.Context(), s.store, r)
+	if err != nil {
+		apierr.WriteStoreError(w, r, s.log(), store.IsBusy, err,
+			"internal/error", "the relay could not complete this request")
 		return
+	}
+	if !deviceOK && !agentOK {
+		writeError(w, http.StatusUnauthorized, "auth/invalid-token",
+			"a valid device token or agent secret is required", nil)
+		return
+	}
+	requesterAgentID := agent.AgentID
+	if deviceOK {
+		requesterAgentID = device.AgentID
 	}
 
 	body, _ := readJSONObject(r)
@@ -147,7 +160,7 @@ func (s *server) handleDevicesRevoke(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "request/unknown-device", "no such device", nil)
 		return
 	}
-	if row.AgentID != device.AgentID {
+	if row.AgentID != requesterAgentID {
 		writeError(w, http.StatusForbidden, "auth/agent-mismatch",
 			"that device belongs to another agent", nil)
 		return

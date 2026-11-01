@@ -6,11 +6,11 @@ import (
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/store"
 )
 
-// Store 是 HTTP 面**自己**需要的仓储端口（DESIGN-20261023 §2.5：15 个方法）。
+// Store 是 HTTP 面**自己**需要的仓储端口（DESIGN-20261023 §2.5：16 个方法）。
 //
 // 它故意不是 wsapi/files/feedback 端口的并集：那三个子 handler 由组合根
 // （cmd/dsh-relay/main.go）分别构造并注入，各自只拿自己的最小端口。httpapi 只
-// 保留路由、中间件、CORS、限流与这 15 个方法。
+// 保留路由、中间件、CORS、限流与这 16 个方法。
 //
 // 领域归属：AccountStateStore、DeviceStore、InviteStore、PairStore、AgentStore
 // 的子集。
@@ -30,6 +30,7 @@ type Store interface {
 
 	// InviteStore / PairStore / AgentStore 子集：自助登记与配对码。
 	ClaimInvite(ctx context.Context, code, name string, limiter store.FailureLimiter, countKey, clientKey string) (store.EnrolledIdentity, error)
+	EnrollOpen(ctx context.Context, name string) (store.EnrolledIdentity, error)
 	ClaimPairCode(ctx context.Context, code string, params store.ClaimParams) (store.ClaimResult, error)
 	RefreshDevice(ctx context.Context, token string, ttlMS int64) (store.RefreshResult, error)
 	MintPairCode(ctx context.Context, agentID string, ttlMS *int64) (store.MintedPairCode, error)

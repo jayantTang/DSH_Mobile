@@ -61,8 +61,8 @@ function parseArgs(argv) {
 async function main() {
   const args = parseArgs(process.argv.slice(2))
   if (args.help) {
-    process.stdout.write(`usage: cli.js enroll --invite <code> [--relay <ws url>] [--name <label>]
-  Redeem a one-time invite code for an identity in ${defaultStatePath()}.
+    process.stdout.write(`usage: cli.js enroll [--relay <ws url>] [--invite <code>] [--name <label>]
+  Register this computer (open enrollment; an invite code is optional) in ${defaultStatePath()}.
   The invite may also arrive as ${INVITE_ENV}. Exits non-zero on failure.
 
   cli.js --relay <ws url> --agent-id <id> --agent-secret <secret>

@@ -24,14 +24,14 @@ plugins/mobile-link/
 ├── package.json          # type: module, dsh.bundle.patch, bin: dsh-mobile-link
 ├── cordis.patch.yml      # bundle patch: the loader row + config reference
 ├── lib/
-│   ├── index.js          # cordis plugin: starts the agent, registers 3 routes
+│   ├── index.js          # cordis plugin: starts the agent, registers 5 routes
 │   ├── link.js           # the DLP agent transport: identity, socket, heartbeat, reconnect
 │   ├── router.js         # frames ⇄ local DSH mux streams, per-device `$events`
 │   ├── dlp.js            # DLP v1 frame codec (shared with the relay)
 │   ├── files.js          # phone → computer file transfers (`_link/file*` methods)
-│   ├── enroll.js         # invite-code redemption, writes ~/.dsh/mobile-link/agent.json
+│   ├── enroll.js         # open enrollment (invite optional), writes ~/.dsh/mobile-link/agent.json
 │   ├── journal.js        # lifecycle journal: why a relay link was dropped, after the fact
-│   ├── routes.js         # GET /mobile-link/status, POST /pair-code, POST /pair-code/regenerate
+│   ├── routes.js         # status, enroll, pair-code, pair-code/regenerate, devices/revoke
 │   ├── qr.js             # dependency-free QR SVG
 │   └── cli.js            # dsh-mobile-link: enroll / mint-pair-code
 └── test/                 # node --test, 100+ tests (no DSH, no network)
@@ -76,13 +76,15 @@ dsh plugin --profile web add ./plugins/mobile-link
 
 1. Register this computer with a relay (once). Open the **移动端连接** panel at the
    bottom of the DSH sidebar: the relay address is prefilled (editable) from the
-   installation default, type the invite code you were given, and click **登记并连接**. The
-   connector writes `~/.dsh/mobile-link/agent.json` and reconnects in place — no
-   terminal and no DSH restart. If an installation has no panel (headless, CI),
-   the CLI still works:
+   installation default; click **登记**. The connector derives the computer name
+   automatically, writes `~/.dsh/mobile-link/agent.json` and reconnects in place —
+   no terminal and no DSH restart. Open enrollment is the default; the relay
+   rate-limits by source. If an installation has no panel (headless, CI), the CLI
+   still works:
 
    ```bash
-   dsh-mobile-link enroll --invite <邀请码> --relay wss://<你的站点>/dsh-link
+   dsh-mobile-link enroll --relay wss://<你的站点>/dsh-link
+   # add --invite <code> only if the deployment still requires one
    ```
 
    …or register it on the relay host with `dsh-relay admin agent-register
@@ -95,7 +97,8 @@ dsh plugin --profile web add ./plugins/mobile-link
    dsh-mobile-link --mint-pair-code        # prints JSON: code + relay + agentId
    ```
 
-   The code is persistent: it stays valid until you click 重新生成.
+   The code is persistent: it stays valid until you click 重新生成. Each paired device
+   has a quiet 撤销 action; revoking one device leaves the code and other devices alone.
 
 3. Scan it in the iOS app. The code can be claimed again for another phone, a reinstall
    or a new device; only 重新生成 revokes it (already-paired devices stay connected).
@@ -105,8 +108,9 @@ dsh plugin --profile web add ./plugins/mobile-link
 attached, and whether this computer is registered yet. Its `enroll` block also
 carries `panel` (this connector can enroll from the DSH panel), `relayPrefill`
 and `relayLocked` (the address to prefill and whether it came from config).
-`POST /mobile-link/enroll` performs that enrollment; it returns the agent id and
-name, never `agentSecret`, and is behind the same DSH request fence as pairing. Its `journal` block carries
+`POST /mobile-link/enroll` performs that enrollment (relay only; the invite code is optional); it returns the agent id and
+name, never `agentSecret`, and is behind the same DSH request fence as pairing. `POST /mobile-link/devices/revoke`
+revokes one paired device by `deviceId` through the relay, also behind the fence; it returns only the id. Its `journal` block carries
 the current process's newest lifecycle events (link opened/closed with the reason,
 device attached/detached); the counters in it reset when the plugin hot-reloads, so
 the full history — across restarts — is the JSONL file at `journal.path`.

@@ -100,8 +100,9 @@ type server struct {
 	// feedback 是反馈四端点；线程/留言的读写归 store，限流与校验归它自己。
 	feedback *feedback.Handlers
 
-	claimLimiter  *ClaimLimiter
-	enrollLimiter *ClaimLimiter
+	claimLimiter      *ClaimLimiter
+	enrollLimiter     *ClaimLimiter
+	openEnrollLimiter *ClaimLimiter
 	// internalResolveLimiter 只服务 /internal/tokens/resolve（环回来源）。
 	internalResolveLimiter *ClaimLimiter
 
@@ -112,10 +113,12 @@ type server struct {
 
 // 与 Python api.py 的限流口径一致。
 const (
-	claimFailures  = 10
-	claimWindow    = 300 * time.Second
-	enrollFailures = 5
-	enrollWindow   = 900 * time.Second
+	claimFailures      = 10
+	claimWindow        = 300 * time.Second
+	enrollFailures     = 5
+	enrollWindow       = 900 * time.Second
+	openEnrollAttempts = 5
+	openEnrollWindow   = time.Hour
 )
 
 // New 装配 serve 用的 HTTP 处理器（路由 + CORS + panic 兜底）。
@@ -151,6 +154,7 @@ func New(opts Options) http.Handler {
 		hub:                    liveHub,
 		claimLimiter:           NewClaimLimiter(claimFailures, claimWindow),
 		enrollLimiter:          NewClaimLimiter(enrollFailures, enrollWindow),
+		openEnrollLimiter:      NewClaimLimiter(openEnrollAttempts, openEnrollWindow),
 		internalResolveLimiter: NewClaimLimiter(internalResolveLimit, internalResolveWindow),
 		accessLogMode:          NormalizeAccessLog(opts.AccessLog),
 		slowRequest:            slowRequest,

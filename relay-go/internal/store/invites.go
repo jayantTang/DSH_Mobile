@@ -125,37 +125,66 @@ func (s *Store) ClaimInvite(ctx context.Context, code, name string,
 			return &InviteRejected{Reason: reason, StoreError: StoreError{Message: message}}
 		}
 
-		accountID := newID("acc")
-		agentID := newID("agt")
-		secret := newToken("as")
-		agentName := trimOr(name, "My computer")
-		if _, err := q.ExecContext(ctx,
-			"INSERT INTO accounts(accountId, name, createdAt) VALUES(?,?,?)",
-			accountID, agentName, stamp); err != nil {
-			return fmt.Errorf("store: 兑换邀请码建账户: %w", err)
-		}
-		if _, err := q.ExecContext(ctx,
-			"INSERT INTO agents(agentId, accountId, name, secretHash, createdAt, updatedAt)"+
-				" VALUES(?,?,?,?,?,?)",
-			agentID, accountID, agentName, SHA256Hex(secret), stamp, stamp); err != nil {
-			return fmt.Errorf("store: 兑换邀请码建 agent: %w", err)
+		created, err := insertEnrollment(ctx, q, name, stamp)
+		if err != nil {
+			return err
 		}
 		if _, err := q.ExecContext(ctx,
 			"UPDATE invites SET usedAt=?, usedByAgentId=? WHERE codeHash=?",
-			stamp, agentID, invite.CodeHash); err != nil {
+			stamp, created.AgentID, invite.CodeHash); err != nil {
 			return fmt.Errorf("store: 标记邀请码已用: %w", err)
 		}
-
-		enrolled = EnrolledIdentity{
-			AccountID: accountID, AgentID: agentID, AgentName: agentName,
-			AgentSecret: secret, InviteNote: invite.Note,
-		}
+		created.InviteNote = invite.Note
+		enrolled = created
 		return nil
 	})
 	if err != nil {
 		return EnrolledIdentity{}, err
 	}
 	return enrolled, nil
+}
+
+// EnrollOpen 是不用邀请码的开放登记：同一事务里建账户与它的第一台电脑。
+//
+// 与 ClaimInvite 的建身份部分共用 insertEnrollment，避免两套 SQL 漂移；差别只在
+// 不读、不标记邀请码。调用方负责按来源限流；这里不碰预算。
+func (s *Store) EnrollOpen(ctx context.Context, name string) (EnrolledIdentity, error) {
+	stamp := NowMS()
+	var enrolled EnrolledIdentity
+	err := s.writeTx(ctx, func(ctx context.Context, q execQuerier) error {
+		created, err := insertEnrollment(ctx, q, name, stamp)
+		if err != nil {
+			return err
+		}
+		enrolled = created
+		return nil
+	})
+	if err != nil {
+		return EnrolledIdentity{}, err
+	}
+	return enrolled, nil
+}
+
+// insertEnrollment 在给定事务里建账户 + 第一台电脑，返回身份（不含邀请备注）。
+func insertEnrollment(ctx context.Context, q execQuerier, name string, stamp int64) (EnrolledIdentity, error) {
+	accountID := newID("acc")
+	agentID := newID("agt")
+	secret := newToken("as")
+	agentName := trimOr(name, "My computer")
+	if _, err := q.ExecContext(ctx,
+		"INSERT INTO accounts(accountId, name, createdAt) VALUES(?,?,?)",
+		accountID, agentName, stamp); err != nil {
+		return EnrolledIdentity{}, fmt.Errorf("store: 建账户: %w", err)
+	}
+	if _, err := q.ExecContext(ctx,
+		"INSERT INTO agents(agentId, accountId, name, secretHash, createdAt, updatedAt)"+
+			" VALUES(?,?,?,?,?,?)",
+		agentID, accountID, agentName, SHA256Hex(secret), stamp, stamp); err != nil {
+		return EnrolledIdentity{}, fmt.Errorf("store: 建 agent: %w", err)
+	}
+	return EnrolledIdentity{
+		AccountID: accountID, AgentID: agentID, AgentName: agentName, AgentSecret: secret,
+	}, nil
 }
 
 // trimOr 去首尾空白，空值回退 fallback。

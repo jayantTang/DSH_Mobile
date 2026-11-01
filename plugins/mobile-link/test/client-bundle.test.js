@@ -118,7 +118,8 @@ const HEALTHY_STATUS = {
  */
 function makeFetch({ status = HEALTHY_STATUS, failStatus = false, failCode = false,
                      ttlMs = null, maxPairedDevices = 8, pairedDevices = 0,
-                     failEnroll = null, onEnroll = null, enrollBody = {} } = {}) {
+                     failEnroll = null, onEnroll = null, enrollBody = {},
+                     failRevoke = false } = {}) {
   const calls = []
   let mints = 0
   const impl = async (path, init) => {
@@ -127,6 +128,10 @@ function makeFetch({ status = HEALTHY_STATUS, failStatus = false, failCode = fal
     if (String(path).includes('status')) {
       if (failStatus) throw new Error('fetch failed')
       return json({ ...status })
+    }
+    if (String(path).includes('devices/revoke')) {
+      if (failRevoke) return json({ ok: false, code: 'devices/revoke-failed', message: 'relay said no' })
+      return json({ ok: true, deviceId: JSON.parse(init?.body ?? '{}').deviceId })
     }
     if (String(path).includes('enroll')) {
       if (failEnroll) {
@@ -384,7 +389,7 @@ test('the status dot answers the three questions a user has', async () => {
   }
 
   const connected = await renderEntry(HEALTHY_STATUS)
-  assert.match(connected.props['aria-label'], /已连接中转/)
+  assert.match(connected.props['aria-label'], /已连接/)
   assert.equal(connected.children[0].type, 'dot')
   assert.equal(connected.children[0].props.state, 'done')
 
@@ -398,7 +403,7 @@ test('the status dot answers the three questions a user has', async () => {
     connected: false,
     enroll: { registered: false, needsEnroll: true, command: 'dsh-mobile-link enroll --invite <code>', hint: '先登记' },
   })
-  assert.match(unregistered.props['aria-label'], /还没登记到中转/)
+  assert.match(unregistered.props['aria-label'], /尚未登记/)
   assert.equal(unregistered.children[0].props.state, 'error')
 })
 
@@ -443,7 +448,7 @@ test('a time-limited code still shows a live countdown and swaps before it dies'
   await flush()
   let markup = JSON.stringify(render(panel.component({})))
   assert.match(markup, /CODE-0001/)
-  assert.match(markup, /还剩 10:00|还剩 9:5/, '限时码才有剩余时间')
+  assert.match(markup, /剩余 10:00|剩余 9:5/, '限时码才有剩余时间')
   assert.match(markup, /dsh-mobile-link-bar/, '倒数条跟着剩余时间走')
 
   // 只剩 30 秒（不足以再扫一次），下一拍就该换一张。
@@ -610,16 +615,17 @@ test('an unregistered computer with panel capability gets the form, prefilled re
   const tree = render(panel.component({}))
   const markup = JSON.stringify(tree)
   assert.match(markup, /中转地址/)
-  assert.match(markup, /激活码/)
-  assert.match(markup, /登记并连接/)
+  assert.match(markup, /登记/)
+  assert.doesNotMatch(markup, /激活码/)
+  assert.doesNotMatch(markup, /电脑名称/)
   assert.doesNotMatch(markup, /dsh-mobile-link-qr/)
   assert.equal(fetch.calls.filter((call) => call.path.includes('pair-code')).length, 0)
 
   const relay = findInputById(tree, 'mobile-link-relay')
-  const invite = findInputById(tree, 'mobile-link-invite')
   assert.equal(relay.props.value, 'wss://relay.test/dsh-link', '默认中转要预填')
   assert.equal(relay.props.readOnly, false, '默认中转只做预填，用户可改')
-  assert.equal(invite.props.value, '', '激活码不预填')
+  assert.equal(findInputById(tree, 'mobile-link-invite'), null, '开放登记不再有激活码输入')
+  assert.equal(findInputById(tree, 'mobile-link-name'), null, '电脑名称由连接器自动获取')
 })
 
 test('an editable relay can be cleared and replaced without snapping back to the prefill', async () => {
@@ -674,18 +680,14 @@ test('submitting the form posts the three fields and moves to the connected pane
   await flush()
 
   let tree = render(panel.component({}))
-  findInputById(tree, 'mobile-link-invite').props.onChange({ target: { value: 'PANEL-CODE' } })
-  tree = render(panel.component({}))
-  const submit = findByText(tree, 'button', '登记并连接')
+  const submit = findByText(tree, 'button', '登记')
   submit.props.onClick()
   await flush()
   await flush()
 
   const call = fetch.calls.find((item) => item.path.includes('enroll'))
   assert.ok(call, 'submit must POST to the enrollment route')
-  assert.deepEqual(JSON.parse(call.init.body), {
-    relayUrl: 'wss://relay.test/dsh-link', inviteCode: 'PANEL-CODE', agentName: '',
-  })
+  assert.deepEqual(JSON.parse(call.init.body), { relayUrl: 'wss://relay.test/dsh-link' })
   const markup = JSON.stringify(render(panel.component({})))
   assert.match(markup, /CODE-0001/, 'after the status flips to connected the panel fetches a code')
   assert.doesNotMatch(markup, /登记并连接/)
@@ -714,14 +716,12 @@ test('after enrollment the panel says it is connecting instead of showing an emp
   await flush()
 
   let tree = render(panel.component({}))
-  findInputById(tree, 'mobile-link-invite').props.onChange({ target: { value: 'PANEL-CODE' } })
-  tree = render(panel.component({}))
-  findByText(tree, 'button', '登记并连接').props.onClick()
+  findByText(tree, 'button', '登记').props.onClick()
   await flush()
   await flush()
 
   const markup = JSON.stringify(render(panel.component({})))
-  assert.match(markup, /已登记，正在连接中转/)
+  assert.match(markup, /正在连接/)
   assert.doesNotMatch(markup, /取一张码/)
   assert.doesNotMatch(markup, /dsh-mobile-link-qr/)
   assert.equal(fetch.calls.filter((call) => call.path.includes('pair-code')).length, 0,
@@ -741,15 +741,13 @@ test('a rejected code keeps the input and explains the failure in place', async 
   await flush()
 
   let tree = render(panel.component({}))
-  findInputById(tree, 'mobile-link-invite').props.onChange({ target: { value: 'USED-CODE' } })
-  tree = render(panel.component({}))
-  findByText(tree, 'button', '登记并连接').props.onClick()
+  findByText(tree, 'button', '登记').props.onClick()
   await flush()
 
   tree = render(panel.component({}))
   const markup = JSON.stringify(tree)
-  assert.match(markup, /已经被使用/)
-  assert.match(markup, /USED-CODE/, '失败后输入要保留，不能让用户重打')
+  assert.match(markup, /已被使用/)
+  assert.match(markup, /wss:\/\/relay\.test\/dsh-link/, '失败后中转地址要保留')
   assert.doesNotMatch(markup, /dsh-mobile-link-qr/)
 })
 
@@ -765,7 +763,7 @@ test('a status read failure shows a retry instead of an empty form or a fake QR'
   await flush()
 
   const markup = JSON.stringify(render(panel.component({})))
-  assert.match(markup, /读取连接状态失败/)
+  assert.match(markup, /无法读取连接状态/)
   assert.match(markup, /重试/)
   assert.doesNotMatch(markup, /mobile-link-invite/)
   assert.doesNotMatch(markup, /dsh-mobile-link-qr/)
@@ -784,8 +782,8 @@ test('the registered panel offers an optional Star link, not a gate', async () =
 
   const markup = JSON.stringify(render(panel.component({})))
   assert.match(markup, /github\.com\/jayantTang\/DSH_Mobile/)
-  assert.match(markup, /Star/)
-  assert.match(markup, /不影响连接/)
+  assert.match(markup, /GitHub 仓库/)
+  assert.match(markup, /加星标/)
 })
 
 test('a recent failure is folded away, not a permanent red line', async () => {
@@ -804,7 +802,7 @@ test('a recent failure is folded away, not a permanent red line', async () => {
   assert.ok(row, '有内容渲染')
   const disclosure = findByType(tree, 'disclosure')
   assert.ok(disclosure, '最近一次错误走官方 DisclosureRow')
-  assert.equal(disclosure.props.title, '最近一次错误')
+  assert.equal(disclosure.props.title, '上次错误')
   assert.equal(disclosure.props.open, false, '默认收起来')
   disclosure.props.onToggle()
   await flush()
@@ -881,4 +879,97 @@ test('apply never throws when a slot registry refuses, and the other entry survi
   await flush()
   assert.equal(state.warnings.length, 2, '两个入口各自降级并留日志')
   assert.match(state.warnings.join('\n'), /mobile-link:/)
+})
+
+
+test('the registered panel shows one device row with an inline status and a quiet revoke action', async () => {
+  const status = {
+    ...HEALTHY_STATUS,
+    deviceCount: 1,
+    devices: [{
+      deviceId: 'dev_1', name: 'iPhone', model: 'iPhone 15 Pro',
+      client: { label: 'DSHMobile 1.0' }, offlineSince: null,
+    }],
+  }
+  const { document } = makeDom()
+  const fetch = makeFetch({ status })
+  const { api } = loadBundle({ document, fetchImpl: fetch.impl })
+  const { ctx, state } = makeCtx()
+  api.apply(ctx)
+  await flush()
+  const { entry, panel } = components(state)
+  render(entry.component({})).props.onClick()
+  await flush()
+
+  const tree = render(panel.component({}))
+  const markup = JSON.stringify(tree)
+  assert.match(markup, /dsh-mobile-link-device-line/, '设备名与在线状态同一行')
+  assert.match(markup, /dsh-mobile-link-revoke/, '撤销是行内次要操作')
+  assert.doesNotMatch(markup, /扫码配对/, '配对页底部小字已删除')
+
+  const revoke = findByText(tree, 'button', '撤销')
+  assert.ok(revoke)
+  revoke.props.onClick()
+  const opened = render(panel.component({}))
+  const alert = findByClass(opened, 'dsh-mobile-link-alert')
+  assert.ok(alert, '点撤销打开确认浮层')
+  assert.match(JSON.stringify(alert), /撤销这台设备？/)
+  assert.match(JSON.stringify(alert), /iPhone/)
+  assert.doesNotMatch(JSON.stringify(alert), /已配对设备/, '确认窗口不重复设备列表')
+})
+
+test('confirming a revoke calls the host route once and closes the overlay', async () => {
+  const status = {
+    ...HEALTHY_STATUS,
+    deviceCount: 1,
+    devices: [{
+      deviceId: 'dev_1', name: 'iPhone', model: 'iPhone 15 Pro',
+      client: { label: 'DSHMobile 1.0' }, offlineSince: null,
+    }],
+  }
+  const { document } = makeDom()
+  const fetch = makeFetch({ status })
+  const { api } = loadBundle({ document, fetchImpl: fetch.impl })
+  const { ctx, state } = makeCtx()
+  api.apply(ctx)
+  await flush()
+  const { entry, panel } = components(state)
+  render(entry.component({})).props.onClick()
+  await flush()
+  findByText(render(panel.component({})), 'button', '撤销').props.onClick()
+  findByText(render(panel.component({})), 'button', '撤销设备').props.onClick()
+  await flush()
+
+  const call = fetch.calls.find((item) => item.path.includes('devices/revoke'))
+  assert.ok(call, '确认后才发送撤销请求')
+  assert.deepEqual(JSON.parse(call.init.body), { deviceId: 'dev_1' })
+  const markup = JSON.stringify(render(panel.component({})))
+  assert.doesNotMatch(markup, /dsh-mobile-link-alert/, '成功后确认浮层关闭')
+})
+
+test('the iOS guide is reachable from the registered panel and only offers TestFlight', async () => {
+  const { document } = makeDom()
+  const fetch = makeFetch()
+  const { api } = loadBundle({ document, fetchImpl: fetch.impl })
+  const { ctx, state } = makeCtx()
+  api.apply(ctx)
+  await flush()
+  const { entry, panel } = components(state)
+  render(entry.component({})).props.onClick()
+  await flush()
+
+  findByText(render(panel.component({})), 'a', '查看安装方式').props.onClick({ preventDefault() {} })
+  const tree = render(panel.component({}))
+  const guide = findByClass(tree, 'dsh-mobile-link-guide')
+  assert.ok(guide)
+  const markup = JSON.stringify(guide)
+  assert.match(markup, /iPhone 或 iPad/)
+  assert.match(markup, /iPadOS 17/)
+  assert.match(markup, /testflight\.apple\.com\/join\/tHKQsbCk/)
+  assert.doesNotMatch(markup, /ota|OTA|OTA_URL/, '不得出现 OTA 地址')
+})
+
+test('the dialog is 500px wide and the command stays on one line', () => {
+  assert.match(SOURCE, /width:min\(500px,94vw\)/)
+  assert.match(SOURCE, /white-space:nowrap;overflow-x:auto/)
 })

@@ -29,18 +29,52 @@ func (s *server) handleAgentsEnroll(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "enroll/bad-request", "body must be a JSON object", nil)
 		return
 	}
-	code := stringValue(body["inviteCode"])
-	if trimSpace(code) == "" {
-		writeError(w, http.StatusBadRequest, "enroll/bad-request", "inviteCode is required", nil)
-		return
+	code := ""
+	if value, present := body["inviteCode"]; present && value != nil {
+		text, isString := value.(string)
+		if !isString {
+			writeError(w, http.StatusBadRequest, "enroll/bad-request", "inviteCode must be a string", nil)
+			return
+		}
+		code = trimSpace(text)
 	}
 	agentName := "My computer"
 	if name := trimSpace(stringValue(body["name"])); name != "" {
 		agentName = name
 	}
+	clientKey := ClientIdentifier(r)
+
+	// 没有邀请码走开放登记。准入控制移到中转：按来源限流，避免公开端点被无限刷。
+	// 有邀请码仍走原来的兑换路径，行为不变。
+	if code == "" {
+		if s.openEnrollLimiter.Blocked(clientKey) {
+			writeError(w, http.StatusTooManyRequests, "enroll/rate-limited",
+				"too many open enrollments from this client; try again later", nil)
+			return
+		}
+		result, err := s.store.EnrollOpen(r.Context(), agentName)
+		// 成功也计数：开放登记没有"码"这道闸门，只能靠来源预算。
+		s.openEnrollLimiter.CountFailure(clientKey, true)
+		if err != nil {
+			var storeErr *store.StoreError
+			if errors.As(err, &storeErr) {
+				apierr.WriteFor(w, r, http.StatusInternalServerError, "enroll/store-error",
+					"the relay could not complete the enrollment", nil)
+				return
+			}
+			apierr.WriteStoreError(w, r, s.log(), store.IsBusy, err,
+				"internal/error", "the relay could not complete this request")
+			return
+		}
+		s.log().Info("relay: enrolled agent from open enrollment", "agentId", result.AgentID)
+		writeJSON(w, http.StatusOK, enrollResponse{
+			OK: true, AgentID: result.AgentID, AgentSecret: result.AgentSecret,
+			AgentName: result.AgentName, AccountID: result.AccountID,
+		})
+		return
+	}
 
 	codeKey := store.HashInviteCode(code)
-	clientKey := ClientIdentifier(r)
 	if s.enrollLimiter.Blocked(codeKey) {
 		writeError(w, http.StatusTooManyRequests, "enroll/rate-limited",
 			"too many failed attempts for that invite code; try again later", nil)

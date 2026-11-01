@@ -7,7 +7,7 @@
 import { EventEmitter } from 'node:events'
 
 import { DshClient } from './dsh-client.js'
-import { agentEndpoint, decodeFrame, encodeFrameChecked, isPlaceholderRelayUrl, nextBackoff, normalizeRelayUrl, pongFor } from './dlp.js'
+import { agentEndpoint, decodeFrame, deviceRevokeEndpoint, encodeFrameChecked, isPlaceholderRelayUrl, nextBackoff, normalizeRelayUrl, pongFor } from './dlp.js'
 
 /**
  * 进程级登记表：**同一个进程里只允许有一条到中转的 agent 连接**。
@@ -498,6 +498,43 @@ export class MobileLinkAgent extends EventEmitter {
       if (!this._loopActive && !this._stopping) this.#launch()
     }
     return settled
+  }
+
+  /**
+   * Revoke one paired device through the relay, authenticated with this agent's
+   * secret. The relay enforces that the device belongs to this agent and drops
+   * its socket; the local router learns about it via `deviceDetach`.
+   *
+   * @param {string} deviceId
+   */
+  async revokeDevice(deviceId) {
+    const id = typeof deviceId === 'string' ? deviceId.trim() : ''
+    if (!id) throw new Error('mobile-link: a deviceId is required')
+    const identity = this.identity ?? await resolveIdentity(this.config)
+    let response
+    try {
+      response = await this.fetchImpl(deviceRevokeEndpoint(identity.relayUrl), {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${identity.agentSecret}`,
+        },
+        body: JSON.stringify({ deviceId: id }),
+        signal: AbortSignal.timeout?.(15_000),
+      })
+    } catch (error) {
+      throw new Error(`mobile-link: cannot reach the relay to revoke ${id}: ${messageOf(error)}`)
+    }
+    let body
+    try {
+      body = await response.json()
+    } catch {
+      throw new Error(`mobile-link: the relay answered HTTP ${response.status} to /devices/revoke`)
+    }
+    if (!response.ok || body?.ok !== true) {
+      throw new Error(body?.error?.message ?? `mobile-link: the relay rejected the revoke (HTTP ${response.status})`)
+    }
+    return { deviceId: body.deviceId ?? id }
   }
 
   /** What a person has to run to register this computer. */

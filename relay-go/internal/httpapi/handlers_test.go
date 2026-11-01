@@ -304,11 +304,8 @@ func TestEnrollFlow(t *testing.T) {
 func TestEnrollRejectsMalformedRequests(t *testing.T) {
 	api := newTestAPI(t)
 	payloads := []any{
-		map[string]any{},
-		map[string]any{"inviteCode": ""},
-		map[string]any{"inviteCode": "   "},
 		map[string]any{"inviteCode": 5},
-		map[string]any{"name": "no-code"},
+		map[string]any{"inviteCode": map[string]any{"bad": true}},
 	}
 	for _, payload := range payloads {
 		rec := api.do(http.MethodPost, "/agents/enroll", payload, "")
@@ -316,6 +313,42 @@ func TestEnrollRejectsMalformedRequests(t *testing.T) {
 	}
 	raw := api.doRaw(http.MethodPost, "/agents/enroll", []byte("not json"), "")
 	assertEnvelope(t, raw, http.StatusBadRequest, "enroll/bad-request")
+}
+
+func TestEnrollOpenFlowAndSourceBudget(t *testing.T) {
+	api := newTestAPI(t)
+	for index := 0; index < openEnrollAttempts; index++ {
+		rec := api.do(http.MethodPost, "/agents/enroll",
+			map[string]any{"name": "Open Mac"}, "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("开放登记 %d 失败: %d %s", index+1, rec.Code, rec.Body.String())
+		}
+		body := decodeJSON(t, rec)
+		if body["agentName"] != "Open Mac" {
+			t.Fatalf("开放登记电脑名 = %v", body["agentName"])
+		}
+		if _, ok := body["accountId"].(string); !ok {
+			t.Fatalf("开放登记缺少 accountId: %v", body)
+		}
+		// 拿到的 secret 真的可用：铸一枚配对码。
+		secret, _ := body["agentSecret"].(string)
+		api.mintPairCode(secret, nil)
+	}
+
+	blocked := api.do(http.MethodPost, "/agents/enroll", map[string]any{"name": "Open Mac"}, "")
+	assertEnvelope(t, blocked, http.StatusTooManyRequests, "enroll/rate-limited")
+
+	// 开放登记按来源限流；一枚合法邀请码仍然能登记（邀请码有自己的桶）。
+	invite, err := api.store.MintInvite(t.Context(), store.DefaultInviteTTLMS, nil,
+		"ENROLL-AFTER-OPEN-BUDGET")
+	if err != nil {
+		t.Fatalf("MintInvite: %v", err)
+	}
+	invited := api.do(http.MethodPost, "/agents/enroll",
+		map[string]any{"inviteCode": invite.Code}, "")
+	if invited.Code != http.StatusOK {
+		t.Fatalf("开放桶用尽后合法邀请码被拒: %d %s", invited.Code, invited.Body.String())
+	}
 }
 
 func TestEnrollCodeBucketFreezesAfterFiveFailures(t *testing.T) {
@@ -547,6 +580,33 @@ func TestDevicesListAndRevoke(t *testing.T) {
 	// 缺少 deviceId。
 	missing := api.do(http.MethodPost, "/devices/revoke", map[string]any{}, tokenOf(keeper))
 	assertEnvelope(t, missing, http.StatusBadRequest, "request/device-id")
+}
+
+func TestAgentSecretCanRevokeOwnDevice(t *testing.T) {
+	api := newTestAPI(t)
+	tenant := api.newTenant("连接器撤销")
+	device := api.pairDevice(tenant, "BLACKBOX-panel", "")
+	other := api.newTenant("别人")
+	otherDevice := api.pairDevice(other, "BLACKBOX-other", "")
+
+	// 连接器只有 agent secret；用它撤销自己名下的一台设备。
+	revoked := api.do(http.MethodPost, "/devices/revoke",
+		map[string]any{"deviceId": device["deviceId"]}, tenant.secret)
+	if revoked.Code != http.StatusOK {
+		t.Fatalf("agent secret 撤销失败: %d %s", revoked.Code, revoked.Body.String())
+	}
+	stale := api.do(http.MethodGet, "/devices", nil, tokenOf(device))
+	assertEnvelope(t, stale, http.StatusUnauthorized, "auth/invalid-token")
+
+	// 不能撤销别的 agent 的设备。
+	forbidden := api.do(http.MethodPost, "/devices/revoke",
+		map[string]any{"deviceId": otherDevice["deviceId"]}, tenant.secret)
+	assertEnvelope(t, forbidden, http.StatusForbidden, "auth/agent-mismatch")
+
+	// 无效凭据仍然是 401。
+	invalid := api.do(http.MethodPost, "/devices/revoke",
+		map[string]any{"deviceId": otherDevice["deviceId"]}, "as_invalid")
+	assertEnvelope(t, invalid, http.StatusUnauthorized, "auth/invalid-token")
 }
 
 func TestAccountStateEndpoints(t *testing.T) {

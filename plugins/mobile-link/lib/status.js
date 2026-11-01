@@ -134,7 +134,7 @@ export function statusSnapshot(agent) {
       relayLocked: Boolean(realConfiguredRelay),
       command: agent.needsEnroll ? agent.enrollHint() : null,
       hint: agent.needsEnroll
-        ? '这台电脑还没有登记到中转。在「移动端连接」面板里填入中转地址与激活码即可。'
+        ? '这台电脑还没有登记到中转。在「移动端连接」面板里确认中转地址，然后点「登记」。'
         : null,
     },
     state: agent.state,

@@ -1605,3 +1605,29 @@ test('a device-frame sessionFind with no query and no roles is refused', async (
   assert.equal(reply.ok, false)
   assert.equal(reply.error.code, 'link/query-too-short', '空查询不是搜索')
 })
+
+test('revokeDevice posts the agent secret and deviceId to the relay', async () => {
+  const { agent } = makeAgent()
+  const calls = []
+  agent.fetchImpl = async (url, init) => {
+    calls.push({ url, init })
+    return { ok: true, status: 200, json: async () => ({ ok: true, deviceId: 'dev_1' }) }
+  }
+  const result = await agent.revokeDevice('dev_1')
+  assert.deepEqual(result, { deviceId: 'dev_1' })
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].url, 'http://relay.test/devices/revoke')
+  assert.equal(calls[0].init.method, 'POST')
+  assert.equal(calls[0].init.headers.authorization, 'Bearer as_1')
+  assert.deepEqual(JSON.parse(calls[0].init.body), { deviceId: 'dev_1' })
+})
+
+test('revokeDevice surfaces relay refusals and rejects an empty id', async () => {
+  const { agent } = makeAgent()
+  await assert.rejects(() => agent.revokeDevice('  '), /deviceId is required/)
+  agent.fetchImpl = async () => ({
+    ok: false, status: 403,
+    json: async () => ({ ok: false, error: { message: 'that device belongs to another agent' } }),
+  })
+  await assert.rejects(() => agent.revokeDevice('dev_1'), /another agent/)
+})

@@ -17,17 +17,18 @@ they differ only in who runs the relay.
 
 1. **Install the app** from the TestFlight link above.
 2. **Install the connector** on your computer (step 2 above), then keep DSH running.
-3. **Register this computer from the panel.** Claim an invite code from
-   [issue #1](https://github.com/jayantTang/DSH_Mobile/issues/1) — one code enrols one computer.
-   Click **移动端连接** at the bottom of the DSH sidebar; the relay address is prefilled, type the
-   code and click **登记并连接**. The connector saves the identity and reconnects in place.
-4. **Headless installs only:** use `dsh-mobile-link enroll --invite … --relay …`, or start the host
-   with `DSH_MOBILE_LINK_INVITE` so registration and connection happen in the same boot. The panel
-   path needs neither a terminal nor a restart.
-5. **Pair the phone:** the same **移动端连接** panel now shows the QR code; scan it
-   code it shows; the relay address and the pairing code are both inside that code, so nothing has
-   to be typed. The code is persistent and can be claimed again for another phone, a reinstall or
-   a new device; click 重新生成 only when you want to revoke it. (With no GUI around,
+3. **Register this computer from the panel.** Click **移动端连接** at the bottom of the DSH
+   sidebar; the relay address is prefilled. Click **登记**. The relay may rate-limit open
+   enrollment by source; the connector shows the reason if it refuses. The connector derives the
+   computer name automatically and reconnects in place after registration.
+4. **Headless installs only:** use `dsh-mobile-link enroll --relay …` (add `--invite …` only if
+   the deployment still requires one). The command writes the identity file; if the host is
+   running, restart DSH so it reads the new identity. The panel path needs neither a terminal
+   nor a restart.
+5. **Pair the phone:** the same **移动端连接** panel shows a QR code containing both the relay address and the pairing code; scan it, so nothing has to be typed. The code is persistent and can be claimed again for another phone, a reinstall or
+   a new device; click 重新生成 only when you want to replace it. Each paired device has a
+   quiet **撤销** action; revoking one device leaves the pairing code and other devices unchanged.
+   (With no GUI around,
    `node scripts/dev/show-pair-qr.mjs` prints the same code as an image.)
 6. **Check the link:** the app's status chip turns green and the session list fills in.
 
@@ -40,7 +41,7 @@ The relay is the Go implementation in `relay-go/`. Build and install it as descr
 # on your server (root, with Caddy already installed)
 sudo systemctl enable --now dsh-relay-go
 
-# create an account and mint yourself an invite code
+# optional: create an account and mint yourself an invite code (open enrollment needs neither)
 /opt/dsh-relay-go/bin/dsh-relay admin --db /var/lib/dsh-relay/state.db \
   account-create --name "<you>"
 /opt/dsh-relay-go/bin/dsh-relay admin --db /var/lib/dsh-relay/state.db \
@@ -50,7 +51,7 @@ sudo systemctl enable --now dsh-relay-go
 The Caddy route comes from [`relay-go/deploy/Caddyfile.snippet`](../relay-go/deploy/Caddyfile.snippet),
 inserted with [`relay-go/deploy/caddy_splice.py`](../relay-go/deploy/caddy_splice.py).
 
-Then enrol the connector against your own relay address instead of the shared one. Details, including
+Then enrol the connector against your own relay address instead of the shared one. Open enrollment is the default; if you keep invite codes, add `--invite` to the CLI. Details, including
 the systemd sandbox and the operating limits, are in [`relay-go/README.md`](../relay-go/README.md).
 
 ## What you can do once paired

@@ -119,6 +119,7 @@ export function registerMobileLinkRoutes(ctx, { agent, logger, config = {}, hist
   const guard = makeGuard(ctx, logger)
   const STATUS_ROUTE = '/mobile-link/status'
   const ENROLL_ROUTE = '/mobile-link/enroll'
+  const REVOKE_ROUTE = '/mobile-link/devices/revoke'
   const PAIR_ROUTE = '/mobile-link/pair-code'
   const REGENERATE_ROUTE = '/mobile-link/pair-code/regenerate'
   const disposers = []
@@ -161,16 +162,21 @@ export function registerMobileLinkRoutes(ctx, { agent, logger, config = {}, hist
       const relayUrl = typeof body.relayUrl === 'string' ? body.relayUrl.trim() : ''
       const inviteCode = typeof body.inviteCode === 'string' ? body.inviteCode.trim() : ''
       const agentName = typeof body.agentName === 'string' ? body.agentName.trim() : ''
-      if (!relayUrl || !inviteCode) {
+      if (!relayUrl) {
         sendJson(res, 400, {
           ok: false,
           code: 'enroll/bad-request',
-          message: 'relayUrl and inviteCode are required',
+          message: 'relayUrl is required',
         })
         return
       }
       try {
-        const settled = await agent.enroll({ inviteCode, relayUrl, agentName: agentName || undefined })
+        // 开放登记：激活码可选；老的邀请码调用方仍可带。
+        const settled = await agent.enroll({
+          inviteCode: inviteCode || undefined,
+          relayUrl,
+          agentName: agentName || undefined,
+        })
         logger.info?.(`mobile-link: panel enrollment succeeded for ${settled.agentId}`)
         // Never return `agentSecret`: the browser has no use for it, and one
         // XSS in the panel would otherwise hand over the machine's credential.
@@ -193,6 +199,41 @@ export function registerMobileLinkRoutes(ctx, { agent, logger, config = {}, hist
           logger.warn?.(`mobile-link: panel enrollment failed: ${String(error?.message ?? error)}`)
         }
         sendJson(res, status, { ok: false, code, message: String(error?.message ?? error) })
+      }
+    },
+  }))
+
+  disposers.push(ctx.webServer.register({
+    kind: 'exact',
+    path: REVOKE_ROUTE,
+    handler: async (req, res) => {
+      if (guard(req, res, { requireFence: true })) return
+      if (req.method !== 'POST') {
+        res.statusCode = 405
+        res.setHeader('allow', 'POST')
+        res.end()
+        return
+      }
+      const body = await readJsonBody(req)
+      if (body === undefined) {
+        sendJson(res, 400, { ok: false, code: 'request/bad-request', message: 'invalid JSON body' })
+        return
+      }
+      const deviceId = typeof body.deviceId === 'string' ? body.deviceId.trim() : ''
+      if (!deviceId) {
+        sendJson(res, 400, { ok: false, code: 'request/device-id', message: 'deviceId is required' })
+        return
+      }
+      try {
+        const result = await agent.revokeDevice(deviceId)
+        logger.info?.(`mobile-link: revoked device ${result.deviceId}`)
+        sendJson(res, 200, { ok: true, deviceId: result.deviceId })
+      } catch (error) {
+        sendJson(res, 502, {
+          ok: false,
+          code: 'devices/revoke-failed',
+          message: String(error?.message ?? error),
+        })
       }
     },
   }))

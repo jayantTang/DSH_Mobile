@@ -52,9 +52,9 @@ Relay 只做两件事：**鉴权**与**按 `agentId` 转发**。它不解析 DLP
 | `PUT` | `/account/state` | 写账户状态（只前进不后退），成功后给同账户其他在线设备发一帧 `accountState` |
 | `POST` | `/internal/account-state/touch` | **仅回环**：信件服务已读落库后，让中转替它向同账户设备扇一声"去看看信件" |
 | `POST` | `/dsh-link/feedback/{submit,inbox,append,read,notice}` | 信件端点，由**独立信件服务**（非中转）应答，见 §2.3 |
-| `POST` | `/agents/enroll` | 用邀请码自助登记，换 `agentId` / `agentSecret` |
+| `POST` | `/agents/enroll` | 自助登记，换 `agentId` / `agentSecret`；默认开放，邀请码可选 |
 | `GET`  | `/devices` | 用 device token 列出**自己的**配对设备 |
-| `POST` | `/devices/revoke` | 用 device token 撤销自己的某台配对设备 |
+| `POST` | `/devices/revoke` | 用 device token 或 agent secret 撤销该电脑名下的某台配对设备 |
 | `OPTIONS` | `*` | CORS 预检 |
 
 `agentId` 也允许放在首帧 `hello` 中；query 参数优先。
@@ -485,12 +485,13 @@ relay 的两个开放端点（`/pair/claim`、`/agents/enroll`）都按**客户�
 
 - `/pair/claim`：按客户端标识分桶，10 次失败 / 5 分钟（阈值是产品参数，不随部署变）。桶满即
   返回 `429`，一次成功认领清空该桶。
-- `/agents/enroll`：**两个桶都在记账，但只有邀请码那个桶拦人**——按邀请码哈希一个，按客户端
-  标识一个，各 5 次失败 / 15 分钟。
+- `/agents/enroll`：**邀请码路径与开放登记路径分开计数**。
 
-  - **邀请码桶**是准入闸门：同一个码被猜错 5 次后，此后凡是再提交这个码一律 `429`，不论来源。
-  - **客户端桶**是失败来源的记录：它把这台来源的每一次失败累计下来（运维可查，用于观察谁在
-    猜），但**不否决一个有效邀请码**。
+  - **开放登记（无 `inviteCode`）**：按客户端标识 5 次 / 1 小时；成功也计数，超过即
+    `429 enroll/rate-limited`。这是公开端点唯一的前置闸门；部署还应在网关或后续配置上
+    做拒绝/封禁。
+  - **邀请码路径（带 `inviteCode`）**：按邀请码哈希一个桶、按客户端标识一个桶，各 5 次失败 /
+    15 分钟。邀请码桶是准入闸门；客户端桶只记账，**不否决一个有效邀请码**。
 
   这是 2026-09-25 owner 定下的口径：**有效邀请码是准入通过的充分条件**。邀请码是运营方主动
   决定放人的凭据，一段失败历史是「值得盯」，不是「可以推翻这个决定」；因此一个来源先失败 5 次

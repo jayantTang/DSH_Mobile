@@ -134,7 +134,10 @@ test('enrollPlan reports what a fresh install needs', async () => {
   const path = await statePath()
   const bare = await enrollPlan({ stateFile: path, env: {} })
   assert.equal(bare.needed, true)
-  assert.equal(bare.canEnroll, false, 'no invite code and no relay means it cannot enroll itself')
+  assert.equal(bare.canEnroll, false, 'no relay means it cannot enroll itself')
+
+  const open = await enrollPlan({ stateFile: path, env: {}, relayUrl: RELAY })
+  assert.equal(open.canEnroll, true, 'open enrollment needs only a relay')
 
   const withEnv = await enrollPlan({ stateFile: path, env: { [INVITE_ENV]: 'ABCD-EFGH' }, relayUrl: RELAY })
   assert.equal(withEnv.canEnroll, true)
@@ -149,6 +152,16 @@ test('inviteFrom prefers the explicit argument over the environment', () => {
   assert.equal(inviteFrom({ env: {} }), undefined)
 })
 
+test('open enrollment posts a name and no invite code', async () => {
+  const path = await statePath()
+  const { fetchImpl, calls } = relayStub({ body: OK })
+  await enrollAgent({ relayUrl: RELAY, stateFile: path, fetchImpl, name: 'Open Mac' })
+  assert.equal(calls.length, 1)
+  const sent = JSON.parse(calls[0].init.body)
+  assert.equal(sent.inviteCode, undefined)
+  assert.equal(sent.name, 'Open Mac')
+})
+
 test('the identity error explains the enrollment command', async () => {
   const path = await statePath()
   await assert.rejects(
@@ -156,7 +169,7 @@ test('the identity error explains the enrollment command', async () => {
     (error) => {
       assert.ok(error instanceof MissingIdentity, 'a missing identity must be distinguishable from a failure')
       assert.match(error.message, /dsh-mobile-link enroll/)
-      assert.match(error.message, /--invite/)
+      assert.match(error.message, /--relay/)
       return true
     },
   )

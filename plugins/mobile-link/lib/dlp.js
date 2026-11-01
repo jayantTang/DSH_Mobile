@@ -193,6 +193,11 @@ export function pairCodeRegenerateEndpoint(relayUrl) {
   return joinRelayPath(normalizeRelayUrl(relayUrl).httpBase, 'pair/code/regenerate')
 }
 
+/** Revoke one paired device for this agent (`POST /devices/revoke`, agent secret). */
+export function deviceRevokeEndpoint(relayUrl) {
+  return joinRelayPath(normalizeRelayUrl(relayUrl).httpBase, 'devices/revoke')
+}
+
 /** The relay's self-service enrollment endpoint (`POST /agents/enroll`). */
 export function enrollEndpoint(relayUrl) {
   return joinRelayPath(normalizeRelayUrl(relayUrl).httpBase, 'agents/enroll')
