@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // ===== accounts =====
@@ -217,6 +218,42 @@ func (s *Store) ListAgents(ctx context.Context, accountID string) ([]Agent, erro
 		return nil, fmt.Errorf("store: 读 agent 行: %w", err)
 	}
 	return agents, nil
+}
+
+// SetAgentMAC 给已登记的电脑补 MAC。只填空槽：首次写入后不再改写，
+// 避免换网线/Wi-Fi 把同一台电脑的索引改成另一个地址。
+func (s *Store) SetAgentMAC(ctx context.Context, agentID, macAddress string) (Agent, bool, error) {
+	if strings.TrimSpace(macAddress) == "" {
+		return Agent{}, false, fmt.Errorf("store: MAC 不能为空")
+	}
+	var agent Agent
+	updated := false
+	err := s.writeTx(ctx, func(ctx context.Context, q execQuerier) error {
+		result, err := q.ExecContext(ctx,
+			"UPDATE agents SET macAddress=?, updatedAt=? WHERE agentId=?"+
+				" AND (macAddress IS NULL OR macAddress='')",
+			strings.TrimSpace(macAddress), NowMS(), agentID)
+		if err != nil {
+			return fmt.Errorf("store: 补 agent MAC: %w", err)
+		}
+		if rows, _ := result.RowsAffected(); rows > 0 {
+			updated = true
+		}
+		row := q.QueryRowContext(ctx, "SELECT "+agentColumns+" FROM agents WHERE agentId=?", agentID)
+		current, err := scanAgent(row)
+		if errors.Is(err, sql.ErrNoRows) {
+			return newNotFound("agent %s does not exist", agentID)
+		}
+		if err != nil {
+			return fmt.Errorf("store: 读 agent %s: %w", agentID, err)
+		}
+		agent = current
+		return nil
+	})
+	if err != nil {
+		return Agent{}, false, err
+	}
+	return agent, updated, nil
 }
 
 // TouchAgent 记一次在线时间（Python touch_agent）。

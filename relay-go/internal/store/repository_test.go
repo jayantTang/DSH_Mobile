@@ -518,6 +518,23 @@ func TestEnrollOpenCreatesAccountAndAgent(t *testing.T) {
 	}
 }
 
+func TestSetAgentMACOnlyFillsAnEmptySlot(t *testing.T) {
+	s := newRepoStore(t)
+	ctx := context.Background()
+	identity, err := s.EnrollOpen(ctx, "Backfill Mac")
+	if err != nil {
+		t.Fatalf("EnrollOpen: %v", err)
+	}
+	agent, updated, err := s.SetAgentMAC(ctx, identity.AgentID, "AA:BB:CC:DD:EE:01")
+	if err != nil || !updated || agent.MacAddress == nil || *agent.MacAddress != "AA:BB:CC:DD:EE:01" {
+		t.Fatalf("首次补 MAC = %+v updated=%v err=%v", agent.MacAddress, updated, err)
+	}
+	agent, updated, err = s.SetAgentMAC(ctx, identity.AgentID, "AA:BB:CC:DD:EE:02")
+	if err != nil || updated || agent.MacAddress == nil || *agent.MacAddress != "AA:BB:CC:DD:EE:01" {
+		t.Fatalf("第二次补 MAC 不应改写 = %+v updated=%v err=%v", agent.MacAddress, updated, err)
+	}
+}
+
 func TestInviteClaimChargesFailuresAndRejectsReuse(t *testing.T) {
 	s := newRepoStore(t)
 	ctx := context.Background()

@@ -23,7 +23,7 @@ func TestStorePortMatchesDesign(t *testing.T) {
 		"AccountState", "AgentBySecret", "ClaimInvite", "ClaimPairCode",
 		"CountPairedDevices", "DeviceByID", "DeviceByToken", "DeviceHygiene",
 		"EnrollOpen", "ListDevices", "MintPairCode", "PutAccountStateBatch", "RefreshDevice",
-		"RegeneratePairCode", "RevokeDevice", "SetPush",
+		"RegeneratePairCode", "RevokeDevice", "SetAgentMAC", "SetPush",
 	}
 	port := reflect.TypeOf((*Store)(nil)).Elem()
 	got := make([]string, 0, port.NumMethod())

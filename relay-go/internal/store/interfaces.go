@@ -50,6 +50,7 @@ type AgentStore interface {
 	ListAgents(ctx context.Context, accountID string) ([]Agent, error)
 	TouchAgent(ctx context.Context, agentID string, at int64) error
 	SetAgentVersions(ctx context.Context, agentID string, connectorVersion, hostVersion *string, at int64) error
+	SetAgentMAC(ctx context.Context, agentID, macAddress string) (Agent, bool, error)
 }
 
 // PairStore 是配对码：铸造、重新生成、认领、过期清理。

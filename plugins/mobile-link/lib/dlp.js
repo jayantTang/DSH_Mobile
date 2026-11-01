@@ -203,6 +203,11 @@ export function deviceRevokeEndpoint(relayUrl) {
   return joinRelayPath(normalizeRelayUrl(relayUrl).httpBase, 'devices/revoke')
 }
 
+/** Backfill the machine MAC for an already enrolled agent (`POST /agents/machine`). */
+export function agentMachineEndpoint(relayUrl) {
+  return joinRelayPath(normalizeRelayUrl(relayUrl).httpBase, 'agents/machine')
+}
+
 /** The relay's self-service enrollment endpoint (`POST /agents/enroll`). */
 export function enrollEndpoint(relayUrl) {
   return joinRelayPath(normalizeRelayUrl(relayUrl).httpBase, 'agents/enroll')

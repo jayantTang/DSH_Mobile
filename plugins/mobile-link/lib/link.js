@@ -18,7 +18,7 @@ import { agentEndpoint, decodeFrame, deviceListEndpoint, deviceRevokeEndpoint, e
  * 挂在 `globalThis` 上是因为模块重载会把模块作用域清掉，只有进程级才留得住。
  */
 const LIVE_AGENT = Symbol.for('dsh.mobile-link.live-agent')
-import { EnrollError, enrollAgent, enrollCommand, inviteFrom } from './enroll.js'
+import { EnrollError, enrollAgent, enrollCommand, inviteFrom, reportMachineAddress } from './enroll.js'
 import { handoffFromEndpoint, writeHandoff } from './handoff.js'
 import { LinkJournal, defaultJournalPath } from './journal.js'
 import { LogSpool, defaultLogsRoot } from './logs.js'
@@ -584,6 +584,7 @@ export class MobileLinkAgent extends EventEmitter {
     const identity = await resolveIdentity(this.config)
     this.identity = identity
     this.needsEnroll = false
+    this.#backfillMachine(identity)
     this.relay = normalizeRelayUrl(identity.relayUrl)
     const url = `${agentEndpoint(identity.relayUrl)}?agentId=${encodeURIComponent(identity.agentId)}`
     const socket = await this.connectImpl(url, {
@@ -847,6 +848,27 @@ export class MobileLinkAgent extends EventEmitter {
   }
 
   // ── mux-event delegates ─────────────────────────────────────────────────
+
+  /// 老身份在登记时还没有 MAC 字段：连接成功后补一次。只填一次，失败下轮再试，
+  /// 旧中转 404 视为不支持而不是链路故障。
+  #backfillMachine(identity) {
+    if (this._machineReportedFor === identity.agentId || this._machineReporting) return
+    this._machineReporting = true
+    void reportMachineAddress({
+      relayUrl: identity.relayUrl,
+      agentSecret: identity.agentSecret,
+      fetchImpl: this.fetchImpl,
+    }).then((result) => {
+      if (result.ok || result.unsupported) this._machineReportedFor = identity.agentId
+      if (result.ok && result.updated) {
+        this.logger.info?.(`mobile-link: recorded machine MAC ${result.macAddress}`)
+      }
+    }).catch((error) => {
+      this.logger.debug?.(`mobile-link: machine MAC backfill deferred: ${messageOf(error)}`)
+    }).finally(() => {
+      this._machineReporting = false
+    })
+  }
 
   onStreamItem(muxId, value) {
     this.router.onStreamItem(muxId, value)

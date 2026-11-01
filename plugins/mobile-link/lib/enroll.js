@@ -19,7 +19,7 @@
 import { execFileSync } from 'node:child_process'
 import { hostname, networkInterfaces } from 'node:os'
 
-import { enrollEndpoint, isPlaceholderRelayUrl, normalizeRelayUrl } from './dlp.js'
+import { agentMachineEndpoint, enrollEndpoint, isPlaceholderRelayUrl, normalizeRelayUrl } from './dlp.js'
 import { DEFAULT_AGENT_NAME, INVITE_ENV, defaultStatePath, readState, writeState } from './state.js'
 
 /**
@@ -284,6 +284,43 @@ export async function enrollAgent({
     macAddress: body.macAddress || machineMac,
     relayUrl,
     stateFile: path,
+  }
+}
+
+/**
+ * Backfill the MAC for an identity enrolled before the relay stored one.
+ *
+ * Runs on every connector start, authenticated with the agent secret. The relay
+ * only fills an empty slot, so a later network/interface change cannot rewrite
+ * the machine index. An old relay answers 404: that is "not supported", not a
+ * connection failure, and startup must continue.
+ */
+export async function reportMachineAddress({
+  relayUrl, agentSecret, macAddress, fetchImpl = fetch, timeoutMs = 8000,
+} = {}) {
+  const mac = normalizeMacAddress(macAddress ?? primaryMacAddress())
+  if (!mac || !relayUrl || !agentSecret) return { ok: false, skipped: 'missing-mac-or-identity' }
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const response = await fetchImpl(agentMachineEndpoint(relayUrl), {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${agentSecret}`,
+      },
+      body: JSON.stringify({ macAddress: mac }),
+      signal: controller.signal,
+    })
+    let body
+    try { body = await response.json() } catch { body = undefined }
+    if (response.status === 404) return { ok: false, unsupported: true, macAddress: mac }
+    if (!response.ok || body?.ok !== true) {
+      throw new Error(body?.error?.message ?? `mobile-link: the relay rejected the machine MAC (HTTP ${response.status})`)
+    }
+    return { ok: true, macAddress: body.macAddress || mac, updated: body.updated === true }
+  } finally {
+    clearTimeout(timer)
   }
 }
 

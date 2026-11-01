@@ -33,7 +33,7 @@ var domainGolden = []struct {
 	{"AccountStore", []string{"CreateAccount", "GetAccount", "ListAccounts"}},
 	{"AgentStore", []string{
 		"RegisterAgent", "SetAgentDisabled", "AgentByID", "AgentBySecret",
-		"ListAgents", "TouchAgent", "SetAgentVersions",
+		"ListAgents", "TouchAgent", "SetAgentVersions", "SetAgentMAC",
 	}},
 	{"PairStore", []string{
 		"MintPairCode", "RegeneratePairCode", "ClaimPairCode", "PurgeExpired",
@@ -142,11 +142,11 @@ func TestDomainInterfacesCoverEveryMethod(t *testing.T) {
 			t.Errorf("%s 被多个领域接口声明：%v", name, claimed)
 		}
 	}
-	if domainCount != 66 {
-		t.Errorf("领域方法数 = %d，期望 66", domainCount)
+	if domainCount != 67 {
+		t.Errorf("领域方法数 = %d，期望 67", domainCount)
 	}
-	if len(exported) != 70 {
-		t.Errorf("*Store 导出方法数 = %d，期望 70（66 领域 + 4 生命周期）", len(exported))
+	if len(exported) != 71 {
+		t.Errorf("*Store 导出方法数 = %d，期望 71（67 领域 + 4 生命周期）", len(exported))
 	}
 	for _, name := range lifecycleMethods {
 		if _, ok := storeType.MethodByName(name); !ok {

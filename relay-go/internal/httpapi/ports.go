@@ -36,4 +36,5 @@ type Store interface {
 	MintPairCode(ctx context.Context, agentID string, ttlMS *int64) (store.MintedPairCode, error)
 	RegeneratePairCode(ctx context.Context, agentID string, ttlMS *int64) (store.MintedPairCode, int64, error)
 	AgentBySecret(ctx context.Context, secret string) (store.Agent, bool, error)
+	SetAgentMAC(ctx context.Context, agentID, macAddress string) (store.Agent, bool, error)
 }

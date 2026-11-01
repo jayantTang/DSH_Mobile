@@ -337,6 +337,38 @@ func TestEnrollOpenStoresNormalizedMAC(t *testing.T) {
 	assertEnvelope(t, bad, http.StatusBadRequest, "enroll/bad-request")
 }
 
+func TestAgentMachineBackfillFillsMACOnce(t *testing.T) {
+	api := newTestAPI(t)
+	rec := api.do(http.MethodPost, "/agents/enroll", map[string]any{"name": "Backfill Mac"}, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("enroll: %d %s", rec.Code, rec.Body.String())
+	}
+	enrolled := decodeJSON(t, rec)
+	secret, _ := enrolled["agentSecret"].(string)
+	agentID, _ := enrolled["agentId"].(string)
+
+	unauthorized := api.do(http.MethodPost, "/agents/machine",
+		map[string]any{"macAddress": "AA:BB:CC:DD:EE:01"}, "")
+	assertEnvelope(t, unauthorized, http.StatusUnauthorized, "auth/invalid-token")
+
+	first := api.do(http.MethodPost, "/agents/machine",
+		map[string]any{"macAddress": "aa-bb-cc-dd-ee-01"}, secret)
+	if first.Code != http.StatusOK {
+		t.Fatalf("backfill: %d %s", first.Code, first.Body.String())
+	}
+	body := decodeJSON(t, first)
+	if body["agentId"] != agentID || body["macAddress"] != "AA:BB:CC:DD:EE:01" || body["updated"] != true {
+		t.Fatalf("backfill 响应 = %v", body)
+	}
+
+	second := api.do(http.MethodPost, "/agents/machine",
+		map[string]any{"macAddress": "AA:BB:CC:DD:EE:02"}, secret)
+	body = decodeJSON(t, second)
+	if second.Code != http.StatusOK || body["macAddress"] != "AA:BB:CC:DD:EE:01" || body["updated"] != false {
+		t.Fatalf("第二次 backfill 不应改写 = %d %v", second.Code, body)
+	}
+}
+
 func TestEnrollOpenFlowAndSourceBudget(t *testing.T) {
 	api := newTestAPI(t)
 	for index := 0; index < openEnrollAttempts; index++ {

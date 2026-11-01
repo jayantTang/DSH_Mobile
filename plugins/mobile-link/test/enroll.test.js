@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
-import { EnrollError, enrollAgent, enrollPlan, inviteFrom, normalizeMacAddress, primaryMacAddress } from '../lib/enroll.js'
+import { EnrollError, enrollAgent, enrollPlan, inviteFrom, normalizeMacAddress, primaryMacAddress, reportMachineAddress } from '../lib/enroll.js'
 import { enrollEndpoint } from '../lib/dlp.js'
 import { INVITE_ENV, MissingIdentity, readState, resolveIdentity } from '../lib/state.js'
 
@@ -177,6 +177,29 @@ test('primaryMacAddress prefers the physical primary and skips virtual interface
   assert.equal(primaryMacAddress(interfaces), 'DE:AD:BE:EF:00:02')
   assert.equal(normalizeMacAddress('de-ad-be-ef-00-02'), 'DE:AD:BE:EF:00:02')
   assert.equal(normalizeMacAddress('not a mac'), '')
+})
+
+test('machine MAC backfill uses the agent secret and reports an old relay as unsupported', async () => {
+  const calls = []
+  const fetchImpl = async (url, init) => {
+    calls.push({ url, init })
+    return { ok: true, status: 200, json: async () => ({ ok: true, agentId: 'agt_1', macAddress: 'AA:BB:CC:DD:EE:01', updated: true }) }
+  }
+  const result = await reportMachineAddress({
+    relayUrl: RELAY, agentSecret: 'as_secret', macAddress: 'aa-bb-cc-dd-ee-01', fetchImpl,
+  })
+  assert.equal(result.ok, true)
+  assert.equal(result.updated, true)
+  assert.equal(calls[0].url, 'https://relay.test/dsh-link/agents/machine')
+  assert.equal(calls[0].init.method, 'POST')
+  assert.equal(calls[0].init.headers.authorization, 'Bearer as_secret')
+  assert.deepEqual(JSON.parse(calls[0].init.body), { macAddress: 'AA:BB:CC:DD:EE:01' })
+
+  const oldRelay = await reportMachineAddress({
+    relayUrl: RELAY, agentSecret: 'as_secret', macAddress: 'AA:BB:CC:DD:EE:01',
+    fetchImpl: async () => ({ ok: false, status: 404, json: async () => ({ ok: false }) }),
+  })
+  assert.equal(oldRelay.unsupported, true)
 })
 
 test('the identity error explains the enrollment command', async () => {
