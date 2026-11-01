@@ -32,6 +32,7 @@ type Agent struct {
 	ConnectorVersion *string `json:"connectorVersion"`
 	HostVersion      *string `json:"hostVersion"`
 	VersionsAt       *int64  `json:"versionsAt"`
+	MacAddress       *string `json:"macAddress"`
 }
 
 // Device 是一行 devices（列序与 Python SCHEMA 一致）。
@@ -248,6 +249,7 @@ type EnrolledIdentity struct {
 	AgentID     string
 	AgentName   string
 	AgentSecret string
+	MacAddress  string
 	InviteNote  *string
 }
 
@@ -270,6 +272,7 @@ type Enrollment struct {
 	AccountName *string `json:"accountName"`
 	AgentID     string  `json:"agentId"`
 	AgentName   string  `json:"agentName"`
+	MacAddress  *string `json:"macAddress"`
 	Devices     int     `json:"devices"`
 	LastSeenAt  *int64  `json:"lastSeenAt"`
 }
@@ -282,7 +285,7 @@ type InviteTotals struct {
 }
 
 const agentColumns = "agentId, accountId, name, secretHash, createdAt, updatedAt, disabled," +
-	" lastSeenAt, connectorVersion, hostVersion, versionsAt"
+	" lastSeenAt, connectorVersion, hostVersion, versionsAt, macAddress"
 
 const deviceColumns = "deviceId, deviceTokenHash, agentId, accountId, name, model, appVersion," +
 	" createdAt, expiresAt, lastSeenAt, revokedAt, apnsToken, apnsEnv, pushTurnEnd," +
@@ -297,11 +300,11 @@ func scanAgent(row scanner) (Agent, error) {
 	var (
 		agent                         Agent
 		lastSeen, versionsAt          sql.NullInt64
-		connectorVersion, hostVersion sql.NullString
+		connectorVersion, hostVersion, macAddress sql.NullString
 	)
 	err := row.Scan(&agent.AgentID, &agent.AccountID, &agent.Name, &agent.SecretHash,
 		&agent.CreatedAt, &agent.UpdatedAt, &agent.Disabled, &lastSeen,
-		&connectorVersion, &hostVersion, &versionsAt)
+		&connectorVersion, &hostVersion, &versionsAt, &macAddress)
 	if err != nil {
 		return Agent{}, err
 	}
@@ -309,6 +312,7 @@ func scanAgent(row scanner) (Agent, error) {
 	agent.ConnectorVersion = nullString(connectorVersion)
 	agent.HostVersion = nullString(hostVersion)
 	agent.VersionsAt = nullInt64(versionsAt)
+	agent.MacAddress = nullString(macAddress)
 	return agent, nil
 }
 

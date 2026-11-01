@@ -76,9 +76,10 @@ func (s *Store) InviteStatus(ctx context.Context, code string) (InviteStatus, er
 // 一个事务：邀请码不可能被标成已用而身份没建出来；两台机器同时兑换同一枚码时
 // 只有一个赢家。limiter 在这里被收费，位置就在读行之后、写锁之内。
 func (s *Store) ClaimInvite(ctx context.Context, code, name string,
-	limiter FailureLimiter, countKey, clientKey string) (EnrolledIdentity, error) {
+	limiter FailureLimiter, countKey, clientKey string, macAddress ...string) (EnrolledIdentity, error) {
 	normalized := normalizeInviteCode(code)
 	stamp := NowMS()
+	mac := firstMAC(macAddress)
 	var enrolled EnrolledIdentity
 
 	err := s.writeTx(ctx, func(ctx context.Context, q execQuerier) error {
@@ -125,7 +126,7 @@ func (s *Store) ClaimInvite(ctx context.Context, code, name string,
 			return &InviteRejected{Reason: reason, StoreError: StoreError{Message: message}}
 		}
 
-		created, err := insertEnrollment(ctx, q, name, stamp)
+		created, err := insertEnrollment(ctx, q, name, stamp, mac)
 		if err != nil {
 			return err
 		}
@@ -148,11 +149,12 @@ func (s *Store) ClaimInvite(ctx context.Context, code, name string,
 //
 // 与 ClaimInvite 的建身份部分共用 insertEnrollment，避免两套 SQL 漂移；差别只在
 // 不读、不标记邀请码。调用方负责按来源限流；这里不碰预算。
-func (s *Store) EnrollOpen(ctx context.Context, name string) (EnrolledIdentity, error) {
+func (s *Store) EnrollOpen(ctx context.Context, name string, macAddress ...string) (EnrolledIdentity, error) {
 	stamp := NowMS()
+	mac := firstMAC(macAddress)
 	var enrolled EnrolledIdentity
 	err := s.writeTx(ctx, func(ctx context.Context, q execQuerier) error {
-		created, err := insertEnrollment(ctx, q, name, stamp)
+		created, err := insertEnrollment(ctx, q, name, stamp, mac)
 		if err != nil {
 			return err
 		}
@@ -166,7 +168,7 @@ func (s *Store) EnrollOpen(ctx context.Context, name string) (EnrolledIdentity, 
 }
 
 // insertEnrollment 在给定事务里建账户 + 第一台电脑，返回身份（不含邀请备注）。
-func insertEnrollment(ctx context.Context, q execQuerier, name string, stamp int64) (EnrolledIdentity, error) {
+func insertEnrollment(ctx context.Context, q execQuerier, name string, stamp int64, macAddress string) (EnrolledIdentity, error) {
 	accountID := newID("acc")
 	agentID := newID("agt")
 	secret := newToken("as")
@@ -176,14 +178,20 @@ func insertEnrollment(ctx context.Context, q execQuerier, name string, stamp int
 		accountID, agentName, stamp); err != nil {
 		return EnrolledIdentity{}, fmt.Errorf("store: 建账户: %w", err)
 	}
+	mac := strings.TrimSpace(macAddress)
+	var macValue any
+	if mac != "" {
+		macValue = mac
+	}
 	if _, err := q.ExecContext(ctx,
-		"INSERT INTO agents(agentId, accountId, name, secretHash, createdAt, updatedAt)"+
-			" VALUES(?,?,?,?,?,?)",
-		agentID, accountID, agentName, SHA256Hex(secret), stamp, stamp); err != nil {
+		"INSERT INTO agents(agentId, accountId, name, secretHash, createdAt, updatedAt, macAddress)"+
+			" VALUES(?,?,?,?,?,?,?)",
+		agentID, accountID, agentName, SHA256Hex(secret), stamp, stamp, macValue); err != nil {
 		return EnrolledIdentity{}, fmt.Errorf("store: 建 agent: %w", err)
 	}
 	return EnrolledIdentity{
 		AccountID: accountID, AgentID: agentID, AgentName: agentName, AgentSecret: secret,
+		MacAddress: mac,
 	}, nil
 }
 
@@ -323,6 +331,7 @@ func (s *Store) ListEnrollments(ctx context.Context) ([]Enrollment, error) {
 		       acc.name AS accountName,
 		       a.agentId AS agentId,
 		       a.name AS agentName,
+		       a.macAddress AS macAddress,
 		       (SELECT COUNT(*) FROM devices d WHERE d.agentId = a.agentId) AS devices,
 		       (SELECT MAX(d.lastSeenAt) FROM devices d WHERE d.agentId = a.agentId) AS lastSeenAt
 		FROM invites i
@@ -342,16 +351,18 @@ func (s *Store) ListEnrollments(ctx context.Context) ([]Enrollment, error) {
 			usedAt      sql.NullInt64
 			inviteNote  sql.NullString
 			accountName sql.NullString
+			macAddress  sql.NullString
 			lastSeenAt  sql.NullInt64
 		)
 		if err := rows.Scan(&usedAt, &inviteNote, &enrollment.AccountID, &accountName,
-			&enrollment.AgentID, &enrollment.AgentName, &enrollment.Devices,
+			&enrollment.AgentID, &enrollment.AgentName, &macAddress, &enrollment.Devices,
 			&lastSeenAt); err != nil {
 			return nil, fmt.Errorf("store: 读登记记录: %w", err)
 		}
 		enrollment.UsedAt = usedAt.Int64
 		enrollment.InviteNote = nullString(inviteNote)
 		enrollment.AccountName = nullString(accountName)
+		enrollment.MacAddress = nullString(macAddress)
 		enrollment.LastSeenAt = nullInt64(lastSeenAt)
 		enrollments = append(enrollments, enrollment)
 	}
@@ -359,4 +370,12 @@ func (s *Store) ListEnrollments(ctx context.Context) ([]Enrollment, error) {
 		return nil, fmt.Errorf("store: 读登记记录: %w", err)
 	}
 	return enrollments, nil
+}
+
+// firstMAC 取可选 MAC 的第一个值；传给 store 的末尾可选参数。
+func firstMAC(values []string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(values[0])
 }

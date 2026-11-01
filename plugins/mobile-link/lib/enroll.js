@@ -16,10 +16,48 @@
  * invite code must be present, because the relay is on the public internet.
  */
 
-import { hostname } from 'node:os'
+import { hostname, networkInterfaces } from 'node:os'
 
 import { enrollEndpoint, isPlaceholderRelayUrl, normalizeRelayUrl } from './dlp.js'
 import { DEFAULT_AGENT_NAME, INVITE_ENV, defaultStatePath, readState, writeState } from './state.js'
+
+/**
+ * Normalize a MAC-48 address to uppercase colon form.
+ * Returns '' for anything that is not a MAC.
+ */
+export function normalizeMacAddress(value) {
+  const compact = String(value ?? '').trim().replace(/[-.:\s]/g, '').toUpperCase()
+  if (!/^[0-9A-F]{12}$/.test(compact)) return ''
+  return compact.match(/.{2}/g).join(':')
+}
+
+/**
+ * Pick the computer's primary physical interface MAC.
+ *
+ * This is an *identifier*, not an authenticator: a MAC can be spoofed. It is
+ * used only so the relay can associate repeat enrollments of the same machine.
+ * Virtual/VPN interfaces are skipped (they change or reflect tunnels), and
+ * common primary interface names win over the rest. If nothing is found the
+ * field is omitted rather than inventing a value.
+ */
+export function primaryMacAddress(interfaces = networkInterfaces()) {
+  const virtual = /^(lo|docker|veth|br-|virbr|vmnet|vboxnet|utun|tun|tap|wg|tailscale|zt|bridge|awdl|llw)/i
+  const preferred = /^(en0|eth0|wlan0|wi-?fi|ethernet)$/i
+  const seen = new Set()
+  const candidates = []
+  for (const [name, entries] of Object.entries(interfaces ?? {})) {
+    if (!entries || virtual.test(name)) continue
+    for (const entry of entries) {
+      if (!entry || entry.internal) continue
+      const mac = normalizeMacAddress(entry.mac)
+      if (!mac || mac === '00:00:00:00:00:00' || seen.has(mac)) continue
+      seen.add(mac)
+      candidates.push({ name, mac, preferred: preferred.test(name) ? 0 : 1 })
+    }
+  }
+  candidates.sort((a, b) => a.preferred - b.preferred || a.name.localeCompare(b.name))
+  return candidates[0]?.mac ?? ''
+}
 
 /**
  * A failed enrollment, tagged with a machine-readable code.
@@ -81,7 +119,7 @@ export async function enrollPlan({ stateFile, inviteCode, relayUrl, env = proces
  * @returns {Promise<{agentId: string, agentSecret: string, agentName: string, relayUrl: string, stateFile: string}>}
  */
 export async function enrollAgent({
-  relayUrl, inviteCode, name, stateFile, deviceName,
+  relayUrl, inviteCode, name, stateFile, deviceName, macAddress,
   fetchImpl = fetch, logger = undefined, timeoutMs = ENROLL_TIMEOUT_MS,
 } = {}) {
   const invite = typeof inviteCode === 'string' ? inviteCode.trim() : ''
@@ -104,6 +142,7 @@ export async function enrollAgent({
 
   const path = stateFile || defaultStatePath()
   const agentName = (name || deviceName || '').trim() || hostname().trim() || DEFAULT_AGENT_NAME
+  const machineMac = normalizeMacAddress(macAddress ?? primaryMacAddress())
   const waitMs = Number.isFinite(Number(timeoutMs)) && Number(timeoutMs) > 0
     ? Number(timeoutMs)
     : ENROLL_TIMEOUT_MS
@@ -136,6 +175,7 @@ export async function enrollAgent({
         body: JSON.stringify({
           ...(invite ? { inviteCode: invite } : {}),
           name: agentName,
+          ...(machineMac ? { macAddress: machineMac } : {}),
         }),
         signal: controller.signal,
       }),
@@ -186,6 +226,7 @@ export async function enrollAgent({
     agentId: body.agentId,
     agentSecret: body.agentSecret,
     agentName: body.agentName || agentName,
+    macAddress: body.macAddress || machineMac,
     relayUrl,
     stateFile: path,
   }

@@ -137,8 +137,8 @@ type UsageStore interface {
 type InviteStore interface {
 	MintInvite(ctx context.Context, ttlMS int64, note *string, code string) (MintedInvite, error)
 	InviteStatus(ctx context.Context, code string) (InviteStatus, error)
-	ClaimInvite(ctx context.Context, code, name string, limiter FailureLimiter, countKey, clientKey string) (EnrolledIdentity, error)
-	EnrollOpen(ctx context.Context, name string) (EnrolledIdentity, error)
+	ClaimInvite(ctx context.Context, code, name string, limiter FailureLimiter, countKey, clientKey string, macAddress ...string) (EnrolledIdentity, error)
+	EnrollOpen(ctx context.Context, name string, macAddress ...string) (EnrolledIdentity, error)
 	ListInvites(ctx context.Context, includeUsed bool) ([]Invite, error)
 	RevokeInvite(ctx context.Context, code string, at int64) (RevokeInviteResult, error)
 	PurgeInvites(ctx context.Context, at int64) (int64, error)

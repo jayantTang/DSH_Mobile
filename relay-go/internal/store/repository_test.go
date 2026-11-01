@@ -480,9 +480,12 @@ func TestWriteTxRollsBackOnError(t *testing.T) {
 func TestEnrollOpenCreatesAccountAndAgent(t *testing.T) {
 	s := newRepoStore(t)
 	ctx := context.Background()
-	identity, err := s.EnrollOpen(ctx, "Open Mac")
+	identity, err := s.EnrollOpen(ctx, "Open Mac", "AA:BB:CC:DD:EE:FF")
 	if err != nil {
 		t.Fatalf("EnrollOpen: %v", err)
+	}
+	if identity.MacAddress != "AA:BB:CC:DD:EE:FF" {
+		t.Fatalf("开放登记 MAC = %q", identity.MacAddress)
 	}
 	if identity.AccountID == "" || identity.AgentID == "" ||
 		!strings.HasPrefix(identity.AccountID, "acc_") || !strings.HasPrefix(identity.AgentID, "agt_") {
@@ -497,6 +500,9 @@ func TestEnrollOpenCreatesAccountAndAgent(t *testing.T) {
 	agent, found, err := s.AgentBySecret(ctx, identity.AgentSecret)
 	if err != nil || !found || agent.AgentID != identity.AgentID {
 		t.Fatalf("开放登记 secret 不可用: %+v found=%v err=%v", agent, found, err)
+	}
+	if agent.MacAddress == nil || *agent.MacAddress != "AA:BB:CC:DD:EE:FF" {
+		t.Fatalf("开放登记未保存 MAC: %+v", agent.MacAddress)
 	}
 
 	// 每次开放登记都是新账户/新电脑，不复用。

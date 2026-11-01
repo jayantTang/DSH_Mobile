@@ -102,6 +102,7 @@ type agentListEntry struct {
 	ConnectorVersion *string `json:"connectorVersion"`
 	HostVersion      *string `json:"hostVersion"`
 	VersionsAt       *int64  `json:"versionsAt"`
+	MacAddress       *string `json:"macAddress"`
 }
 
 // runAgentList 实现 agent-list [--account]。
@@ -124,7 +125,7 @@ func runAgentList(ctx context.Context, st *store.Store, args []string,
 			CreatedAt:  agent.CreatedAt, UpdatedAt: agent.UpdatedAt,
 			Disabled: agent.Disabled, LastSeenAt: agent.LastSeenAt,
 			ConnectorVersion: agent.ConnectorVersion, HostVersion: agent.HostVersion,
-			VersionsAt: agent.VersionsAt,
+			VersionsAt: agent.VersionsAt, MacAddress: agent.MacAddress,
 		})
 	}
 	return emit(stdout, rows)

@@ -40,6 +40,9 @@ notices*).
   feedback you submit and our replies to it (see below).
 - **The app reports its version and build** on connect, so a device list can show which build a phone
   is on. That is the only thing the phone volunteers about itself.
+- **The computer's name and primary MAC address are stored in plaintext** when the connector
+  enrolls, so repeat enrollments of the same computer can be associated. A MAC can be spoofed and
+  is **not an authentication credential**; it does not grant access or pairing authority.
 
 ## Feedback and notices
 

@@ -3,6 +3,7 @@ package httpapi
 import (
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/apierr"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/store"
@@ -14,6 +15,7 @@ type enrollResponse struct {
 	AgentID     string `json:"agentId"`
 	AgentSecret string `json:"agentSecret"`
 	AgentName   string `json:"agentName"`
+	MacAddress  string `json:"macAddress,omitempty"`
 	AccountID   string `json:"accountId"`
 }
 
@@ -42,6 +44,22 @@ func (s *server) handleAgentsEnroll(w http.ResponseWriter, r *http.Request) {
 	if name := trimSpace(stringValue(body["name"])); name != "" {
 		agentName = name
 	}
+	macRaw := ""
+	if value, present := body["macAddress"]; present && value != nil {
+		text, isString := value.(string)
+		if !isString {
+			writeError(w, http.StatusBadRequest, "enroll/bad-request",
+				"macAddress must be a string", nil)
+			return
+		}
+		macRaw = text
+	}
+	macAddress, macOK := normalizeMACAddress(macRaw)
+	if !macOK {
+		writeError(w, http.StatusBadRequest, "enroll/bad-request",
+			"macAddress must be a MAC-48 address", nil)
+		return
+	}
 	clientKey := ClientIdentifier(r)
 
 	// 没有邀请码走开放登记。准入控制移到中转：按来源限流，避免公开端点被无限刷。
@@ -52,7 +70,7 @@ func (s *server) handleAgentsEnroll(w http.ResponseWriter, r *http.Request) {
 				"too many open enrollments from this client; try again later", nil)
 			return
 		}
-		result, err := s.store.EnrollOpen(r.Context(), agentName)
+		result, err := s.store.EnrollOpen(r.Context(), agentName, macAddress)
 		// 成功也计数：开放登记没有"码"这道闸门，只能靠来源预算。
 		s.openEnrollLimiter.CountFailure(clientKey, true)
 		if err != nil {
@@ -69,7 +87,7 @@ func (s *server) handleAgentsEnroll(w http.ResponseWriter, r *http.Request) {
 		s.log().Info("relay: enrolled agent from open enrollment", "agentId", result.AgentID)
 		writeJSON(w, http.StatusOK, enrollResponse{
 			OK: true, AgentID: result.AgentID, AgentSecret: result.AgentSecret,
-			AgentName: result.AgentName, AccountID: result.AccountID,
+			AgentName: result.AgentName, MacAddress: result.MacAddress, AccountID: result.AccountID,
 		})
 		return
 	}
@@ -119,4 +137,29 @@ func (s *server) handleAgentsEnroll(w http.ResponseWriter, r *http.Request) {
 		OK: true, AgentID: result.AgentID, AgentSecret: result.AgentSecret,
 		AgentName: result.AgentName, AccountID: result.AccountID,
 	})
+}
+
+// normalizeMACAddress 接受 AA:BB:CC:DD:EE:FF / AA-BB-... / 12 位十六进制，
+// 统一成大写冒号形式；空值合法（老连接器不报 MAC）。非法值让登记直接失败，
+// 避免把拼错的值写进索引。
+func normalizeMACAddress(raw string) (string, bool) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", true
+	}
+	compact := strings.NewReplacer(":", "", "-", "", ".", "", " ", "").Replace(trimmed)
+	if len(compact) != 12 {
+		return "", false
+	}
+	for _, r := range compact {
+		if !(r >= '0' && r <= '9' || r >= 'a' && r <= 'f' || r >= 'A' && r <= 'F') {
+			return "", false
+		}
+	}
+	upper := strings.ToUpper(compact)
+	parts := make([]string, 0, 6)
+	for i := 0; i < 12; i += 2 {
+		parts = append(parts, upper[i:i+2])
+	}
+	return strings.Join(parts, ":"), true
 }

@@ -315,6 +315,28 @@ func TestEnrollRejectsMalformedRequests(t *testing.T) {
 	assertEnvelope(t, raw, http.StatusBadRequest, "enroll/bad-request")
 }
 
+func TestEnrollOpenStoresNormalizedMAC(t *testing.T) {
+	api := newTestAPI(t)
+	rec := api.do(http.MethodPost, "/agents/enroll",
+		map[string]any{"name": "Mac Indexed", "macAddress": "aa-bb-cc-dd-ee-ff"}, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("开放登记失败: %d %s", rec.Code, rec.Body.String())
+	}
+	body := decodeJSON(t, rec)
+	if body["macAddress"] != "AA:BB:CC:DD:EE:FF" {
+		t.Fatalf("规范化 MAC = %v", body["macAddress"])
+	}
+	secret, _ := body["agentSecret"].(string)
+	agent, found, err := api.store.AgentBySecret(t.Context(), secret)
+	if err != nil || !found || agent.MacAddress == nil || *agent.MacAddress != "AA:BB:CC:DD:EE:FF" {
+		t.Fatalf("未保存 MAC: %+v found=%v err=%v", agent.MacAddress, found, err)
+	}
+
+	bad := api.do(http.MethodPost, "/agents/enroll",
+		map[string]any{"name": "Bad", "macAddress": "not-a-mac"}, "")
+	assertEnvelope(t, bad, http.StatusBadRequest, "enroll/bad-request")
+}
+
 func TestEnrollOpenFlowAndSourceBudget(t *testing.T) {
 	api := newTestAPI(t)
 	for index := 0; index < openEnrollAttempts; index++ {

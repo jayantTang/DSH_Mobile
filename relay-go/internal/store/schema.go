@@ -36,7 +36,10 @@ CREATE TABLE IF NOT EXISTS agents (
   -- 必须是本表最后几列（迁移靠 ALTER TABLE 追加）。
   connectorVersion TEXT,
   hostVersion      TEXT,
-  versionsAt       INTEGER
+  versionsAt       INTEGER,
+  -- 用户选择的明文 MAC 索引：用于识别同一台电脑的重复登记。
+  -- 不是认证凭据（MAC 可伪造）。必须是表末列（迁移靠 ALTER TABLE 追加）。
+  macAddress       TEXT
 );
 CREATE INDEX IF NOT EXISTS agents_account ON agents(accountId);
 
@@ -176,7 +179,7 @@ CREATE TABLE IF NOT EXISTS noticeDeliveries (
 // 为什么需要：Schema 全是 CREATE TABLE IF NOT EXISTS，加表没问题，加列会静默漏掉——
 // 升级部署继续用旧库时，新列不存在，直到第一次写入才在"健康"的中转上炸掉。
 // 升版本号并在 migrations 里加一步，才会变成启动时迁移。
-const SchemaVersion = 9
+const SchemaVersion = 10
 
 // migration 是 schema 的一步迁移。每步必须幂等：部分提交后重启会重跑。
 type migration struct {
@@ -202,6 +205,7 @@ var migrations = []migration{
 	{7, migrateTo7},
 	{8, migrateTo8},
 	{9, migrateTo9},
+	{10, migrateTo10},
 }
 
 // migrateTo1 基线：早于版本号的库只盖戳，不改结构。
@@ -469,4 +473,17 @@ func columnAllowsNull(ctx context.Context, q queryer, table, column string) (boo
 	}
 	// 列不存在时按"可空"处理：调用方的重建路径会补上它。
 	return true, nil
+}
+
+// migrateTo10 电脑登记索引：agents 加明文 macAddress，并建索引。
+func migrateTo10(ctx context.Context, q queryer) error {
+	present, err := columns(ctx, q, "agents")
+	if err != nil {
+		return err
+	}
+	if err := addColumns(ctx, q, "agents", present, [][2]string{{"macAddress", "TEXT"}}); err != nil {
+		return err
+	}
+	_, err = q.ExecContext(ctx, "CREATE INDEX IF NOT EXISTS agents_mac ON agents(macAddress)")
+	return err
 }

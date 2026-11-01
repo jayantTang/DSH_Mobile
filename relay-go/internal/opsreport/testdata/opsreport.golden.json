@@ -1854,6 +1854,7 @@
           "accountName": "beta",
           "agentId": "agt_beta",
           "agentName": "beta-mac",
+          "macAddress": null,
           "devices": 1,
           "lastSeenAt": 1792888200000
         }
@@ -2801,6 +2802,7 @@
         "accountName": "beta",
         "agentId": "agt_beta",
         "agentName": "beta-mac",
+        "macAddress": null,
         "devices": 1,
         "lastSeenAt": 1792888200000
       },
@@ -2811,6 +2813,7 @@
         "accountName": "beta",
         "agentId": "agt_beta",
         "agentName": "beta-mac",
+        "macAddress": null,
         "devices": 1,
         "lastSeenAt": 1792888200000
       }

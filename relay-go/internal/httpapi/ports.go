@@ -29,8 +29,8 @@ type Store interface {
 	DeviceHygiene(ctx context.Context, agentID string) (store.Hygiene, error)
 
 	// InviteStore / PairStore / AgentStore 子集：自助登记与配对码。
-	ClaimInvite(ctx context.Context, code, name string, limiter store.FailureLimiter, countKey, clientKey string) (store.EnrolledIdentity, error)
-	EnrollOpen(ctx context.Context, name string) (store.EnrolledIdentity, error)
+	ClaimInvite(ctx context.Context, code, name string, limiter store.FailureLimiter, countKey, clientKey string, macAddress ...string) (store.EnrolledIdentity, error)
+	EnrollOpen(ctx context.Context, name string, macAddress ...string) (store.EnrolledIdentity, error)
 	ClaimPairCode(ctx context.Context, code string, params store.ClaimParams) (store.ClaimResult, error)
 	RefreshDevice(ctx context.Context, token string, ttlMS int64) (store.RefreshResult, error)
 	MintPairCode(ctx context.Context, agentID string, ttlMS *int64) (store.MintedPairCode, error)

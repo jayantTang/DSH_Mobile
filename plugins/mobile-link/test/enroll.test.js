@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
-import { EnrollError, enrollAgent, enrollPlan, inviteFrom } from '../lib/enroll.js'
+import { EnrollError, enrollAgent, enrollPlan, inviteFrom, normalizeMacAddress, primaryMacAddress } from '../lib/enroll.js'
 import { enrollEndpoint } from '../lib/dlp.js'
 import { INVITE_ENV, MissingIdentity, readState, resolveIdentity } from '../lib/state.js'
 
@@ -59,9 +59,11 @@ test('enroll writes the identity with mode 0600', async () => {
   assert.equal(calls.length, 1)
   assert.equal(calls[0].url, 'https://relay.test/dsh-link/agents/enroll')
   assert.equal(calls[0].init.method, 'POST')
-  assert.deepEqual(JSON.parse(calls[0].init.body), {
-    inviteCode: 'ABCD-EFGH-JKMN-PQRS', name: 'Sam Mac',
-  })
+  const sent = JSON.parse(calls[0].init.body)
+  assert.equal(sent.inviteCode, 'ABCD-EFGH-JKMN-PQRS')
+  assert.equal(sent.name, 'Sam Mac')
+  assert.ok(/^([0-9A-F]{2}:){5}[0-9A-F]{2}$/.test(sent.macAddress),
+    'enrollment must send the machine MAC as a normalized index')
 })
 
 test('the resolved identity is usable by the link straight afterwards', async () => {
@@ -160,6 +162,21 @@ test('open enrollment posts a name and no invite code', async () => {
   const sent = JSON.parse(calls[0].init.body)
   assert.equal(sent.inviteCode, undefined)
   assert.equal(sent.name, 'Open Mac')
+  assert.ok(/^([0-9A-F]{2}:){5}[0-9A-F]{2}$/.test(sent.macAddress),
+    'open enrollment also sends the machine MAC')
+})
+
+test('primaryMacAddress prefers the physical primary and skips virtual interfaces', () => {
+  const interfaces = {
+    lo0: [{ internal: true, mac: '00:00:00:00:00:00' }],
+    utun3: [{ internal: false, mac: 'AA:BB:CC:DD:EE:FF' }],
+    bridge0: [{ internal: false, mac: '11:22:33:44:55:66' }],
+    en1: [{ internal: false, mac: 'de:ad:be:ef:00:01' }],
+    en0: [{ internal: false, mac: 'de:ad:be:ef:00:02' }],
+  }
+  assert.equal(primaryMacAddress(interfaces), 'DE:AD:BE:EF:00:02')
+  assert.equal(normalizeMacAddress('de-ad-be-ef-00-02'), 'DE:AD:BE:EF:00:02')
+  assert.equal(normalizeMacAddress('not a mac'), '')
 })
 
 test('the identity error explains the enrollment command', async () => {
