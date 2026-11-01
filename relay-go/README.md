@@ -30,12 +30,12 @@ make soak-smoke       # 20 秒 soak 冒烟（scripts/m4b/soak.py，不进默认�
 ./bin/dsh-relay serve --host 127.0.0.1 --port 8787 --db /var/lib/dsh-relay/state.db
 curl -s http://127.0.0.1:8787/healthz
 
-# `POST /agents/enroll` 默认开放登记（无邀请码，按来源 5 次/小时）；带 inviteCode 仍走邀请码路径。
+# `POST /agents/enroll` 是开放登记，无邀请码，按来源 5 次/小时。
 
 # 管理面是同一二进制的 admin 子命令（JSON 输出固定，供脚本消费）
 ./bin/dsh-relay admin --db state.db account-create --name "Example"
 ./bin/dsh-relay admin --db state.db agent-register --account acc_x --name "MacBook Pro"
-./bin/dsh-relay admin --db state.db invite-mint --note "for Sam"   # 可选：保留邀请制时
+./bin/dsh-relay admin --db state.db invite-mint --note "for Sam"   # 历史兼容命令
 ./bin/dsh-relay admin --db state.db code-mint --agent agt_x
 ./bin/dsh-relay admin --db state.db device-list --agent agt_x
 ./bin/dsh-relay admin --db state.db device-revoke --device dev_x

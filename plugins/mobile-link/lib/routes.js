@@ -172,7 +172,7 @@ export function registerMobileLinkRoutes(ctx, { agent, logger, config = {}, hist
         return
       }
       try {
-        // 开放登记：激活码可选；老的邀请码调用方仍可带。
+        // 开放登记：不需要邀请码；旧调用方仍可带（历史兼容）。
         const settled = await agent.enroll({
           inviteCode: inviteCode || undefined,
           relayUrl,

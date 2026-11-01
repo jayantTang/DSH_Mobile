@@ -4,8 +4,8 @@
  * Scope (deliberately tiny so a DSH upgrade can never make it fatal):
  *   1. Run the DLP agent: dial the relay over WSS, serve the iOS client's
  *      session/event traffic from the local DSH instance. On a computer that has
- *      never been registered, redeem the invite code from the environment (or
- *      the config) first, so a fresh install becomes usable without the relay
+ *      never been registered, enroll with the relay address first (open
+ *      enrollment), so a fresh install becomes usable without the relay
  *      operator provisioning anything by hand.
  *   2. Two routes under `/mobile-link` behind DSH's own connection fence:
  *      GET  /status     — is the link up, which devices are attached, and is

@@ -19,17 +19,16 @@ stored on the relay — it forwards frames and keeps daily byte counters.
    <https://testflight.apple.com/join/tHKQsbCk>
    (TestFlight is the current distribution channel; builds expire after 90 days and need a manual
    update in the TestFlight app.)
-4. **A relay that accepts open enrollment.** The default deployment does; no invite code is
-   required and enrollment is rate-limited by source. A deployment that still keeps invite codes
-   can be used with `--invite`; one code enrolls one computer.
+4. **A relay address.** The default deployment accepts open enrollment; no invite code is
+   required, and enrollment is rate-limited by source.
 
 ## Register and pair
 
 Register the computer first: open **移动端连接** at the bottom of the DSH sidebar, confirm the
-prefilled relay address, and click **登记**. No invite code is needed by default and the connector
+prefilled relay address, and click **登记**. No invite code is needed and the connector
 reconnects in place. Headless installs can run
-`dsh-mobile-link enroll --relay wss://<relay>/dsh-link` instead; add `--invite <code>` only when the
-deployment requires one. A CLI registration while DSH is running needs one DSH restart.
+`dsh-mobile-link enroll --relay wss://<relay>/dsh-link` instead. A CLI registration while DSH is
+running needs one DSH restart.
 
 Once registered, the panel shows the QR code and the pairing code (it stays the same until you click 重新生成). Scan it in the app
 (**Scan QR code**); if the camera is unavailable, the same panel shows the code to type by hand.
@@ -43,7 +42,7 @@ approval or a choice.
 
 - Conversations travel phone → relay → your computer, over TLS.
 - The relay does not persist message content. It keeps registration state (accounts, computers,
-  devices, optional invite codes) and per-day byte counters (see [`relay-go/README.md`](relay-go/README.md)).
+  devices) and per-day byte counters (see [`relay-go/README.md`](relay-go/README.md)).
 - The phone keeps a local cache in `Caches` (session list metadata, the tail of sessions you have
   opened, downloaded pictures). It is not backed up, expires after 30 days, and can be cleared in
   **Settings → Cache**. Conversation *content* is stored in the clear on the device — clear it if

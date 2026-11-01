@@ -29,7 +29,7 @@ plugins/mobile-link/
 │   ├── router.js         # frames ⇄ local DSH mux streams, per-device `$events`
 │   ├── dlp.js            # DLP v1 frame codec (shared with the relay)
 │   ├── files.js          # phone → computer file transfers (`_link/file*` methods)
-│   ├── enroll.js         # open enrollment (invite optional), writes ~/.dsh/mobile-link/agent.json
+│   ├── enroll.js         # open enrollment (no invite code), writes ~/.dsh/mobile-link/agent.json
 │   ├── journal.js        # lifecycle journal: why a relay link was dropped, after the fact
 │   ├── routes.js         # status, enroll, pair-code, pair-code/regenerate, devices/revoke
 │   ├── qr.js             # dependency-free QR SVG
@@ -84,7 +84,6 @@ dsh plugin --profile web add ./plugins/mobile-link
 
    ```bash
    dsh-mobile-link enroll --relay wss://<你的站点>/dsh-link
-   # add --invite <code> only if the deployment still requires one
    ```
 
    …or register it on the relay host with `dsh-relay admin agent-register
@@ -108,7 +107,7 @@ dsh plugin --profile web add ./plugins/mobile-link
 attached, and whether this computer is registered yet. Its `enroll` block also
 carries `panel` (this connector can enroll from the DSH panel), `relayPrefill`
 and `relayLocked` (the address to prefill and whether it came from config).
-`POST /mobile-link/enroll` performs that enrollment (relay only; the invite code is optional); it returns the agent id and
+`POST /mobile-link/enroll` performs that enrollment (open enrollment; no invite code); it returns the agent id and
 name, never `agentSecret`, and is behind the same DSH request fence as pairing. `GET /mobile-link/devices` lists the full paired roster (including offline) for the panel, and
 `POST /mobile-link/devices/revoke` revokes one paired device by `deviceId` through the relay; both are behind
 the fence and authenticated with the agent secret. Its `journal` block carries

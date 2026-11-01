@@ -18,14 +18,13 @@ they differ only in who runs the relay.
 1. **Install the app** from the TestFlight link above.
 2. **Install the connector** on your computer (step 2 above), then keep DSH running.
 3. **Register this computer from the panel.** Click **移动端连接** at the bottom of the DSH
-   sidebar; the relay address is prefilled. Click **登记**. No invite code is required by default;
+   sidebar; the relay address is prefilled. Click **登记**. No invite code is required;
    the relay may rate-limit open enrollment by source and the connector shows the reason if it
    refuses. The connector derives the
    computer name automatically and reconnects in place after registration.
-4. **Headless installs only:** use `dsh-mobile-link enroll --relay …` (add `--invite …` only if
-   the deployment still requires one). The command writes the identity file; if the host is
-   running, restart DSH so it reads the new identity. The panel path needs neither a terminal
-   nor a restart.
+4. **Headless installs only:** use `dsh-mobile-link enroll --relay …`. The command writes the
+   identity file; if the host is running, restart DSH so it reads the new identity. The panel path
+   needs neither a terminal nor a restart.
 5. **Pair the phone:** the same **移动端连接** panel shows a QR code containing both the relay address and the pairing code; scan it, so nothing has to be typed. The code is persistent and can be claimed again for another phone, a reinstall or
    a new device; click 重新生成 only when you want to replace it. Each paired device has a
    quiet **撤销** action; revoking one device leaves the pairing code and other devices unchanged.
@@ -42,17 +41,13 @@ The relay is the Go implementation in `relay-go/`. Build and install it as descr
 # on your server (root, with Caddy already installed)
 sudo systemctl enable --now dsh-relay-go
 
-# optional: create an account and mint yourself an invite code (open enrollment needs neither)
-/opt/dsh-relay-go/bin/dsh-relay admin --db /var/lib/dsh-relay/state.db \
-  account-create --name "<you>"
-/opt/dsh-relay-go/bin/dsh-relay admin --db /var/lib/dsh-relay/state.db \
-  invite-mint --note "first computer" --relay wss://your.host/dsh-link
+# open enrollment: no account or invite code is required
 ```
 
 The Caddy route comes from [`relay-go/deploy/Caddyfile.snippet`](../relay-go/deploy/Caddyfile.snippet),
 inserted with [`relay-go/deploy/caddy_splice.py`](../relay-go/deploy/caddy_splice.py).
 
-Then enrol the connector against your own relay address instead of the shared one. Open enrollment is the default; if you keep invite codes, add `--invite` to the CLI. Details, including
+Then enrol the connector against your own relay address instead of the shared one. Open enrollment is the only entry point. Details, including
 the systemd sandbox and the operating limits, are in [`relay-go/README.md`](../relay-go/README.md).
 
 ## What you can do once paired

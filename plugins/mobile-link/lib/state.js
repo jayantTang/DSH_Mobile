@@ -106,9 +106,9 @@ export async function resolveIdentity({ stateFile, agentId, agentSecret, relayUr
   }
   if (!resolved.agentId || !resolved.agentSecret) {
     throw new MissingIdentity(
-      `mobile-link: this computer is not registered yet. Open the "移动端连接" panel,`
-      + ` or run "dsh-mobile-link enroll --relay <relay-url>" (an invite code is optional),`
-      + ` or set ${INVITE_ENV} and restart DSH. (Provisioning by hand is still possible:`
+      `mobile-link: this computer is not registered yet. Open the "移动端连接" panel`
+      + ` and click 登记, or run "dsh-mobile-link enroll --relay <relay-url>".`
+      + ` (Provisioning by hand is still possible:`
       + ` "dsh-relay admin agent-register --account <acc> --name <name>`
       + ` --write-config ${path}".)`,
       { stateFile: path },

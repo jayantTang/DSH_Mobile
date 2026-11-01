@@ -50,18 +50,16 @@
    - 官方桌面版（双击图标打开的应用）：用应用内的插件页，或应用自带的 `dsh` 命令装进 `desktop` 档案
      （普通 npm 版 `dsh` 会拒绝该档案，这是官方设计）。宿主形态的识别判据（双击图标启动还是敲命令启动）见
      [`docs/ONBOARDING.md`](docs/ONBOARDING.md)。
-3. 登记到中转：打开 DSH 左下角的「移动端连接」，确认预填的中转地址，点「登记」。开放登记不需要
-   邀请码；无头环境用 `dsh-mobile-link enroll --relay wss://<中转地址>/dsh-link`，只有保留邀请制的
-   部署才需要再加 `--invite <邀请码>`。
+3. 登记到中转：打开 DSH 左下角的「移动端连接」，确认预填的中转地址，点「登记」。开放登记是唯一
+   入口，不需要邀请码；无头环境用 `dsh-mobile-link enroll --relay wss://<中转地址>/dsh-link`。
 4. 面板登记成功后原地重连，不需要重启 DSH。只有命令行登记且宿主正在运行时才需要重启一次
-   （`dsh web`）；宿主未运行则下次启动生效。仅保留邀请制的部署可能用
-   `DSH_MOBILE_LINK_INVITE=<邀请码> dsh web` 预置身份。**第 2 步装插件本身不需要重启**——命令行
-   web 宿主会自己把新装的插件挂上；桌面版按应用内提示。
+   （`dsh web`）；宿主未运行则下次启动生效。**第 2 步装插件本身不需要重启**——命令行 web 宿主会
+   自己把新装的插件挂上；桌面版按应用内提示。
 5. 手机 App →「扫码配对」，扫描电脑上的二维码：点 DSH 界面**左下角的「移动端连接」**，小窗里就是
    二维码与配对码（点「重新生成」才会换；也可用 `node scripts/dev/show-pair-qr.mjs` 在没有界面的环境里出图）。
 
-开放登记是默认路径，中转按来源限流；只有保留邀请制的部署才需要邀请码。登记后确认手机顶部显示
-「已连接」，即为成功。完整步骤与故障排查见 [`docs/ONBOARDING.md`](docs/ONBOARDING.md)。
+开放登记是唯一入口，中转按来源限流。登记后确认手机顶部显示「已连接」，即为成功。完整步骤与
+故障排查见 [`docs/ONBOARDING.md`](docs/ONBOARDING.md)。
 
 ### B. 自建中转
 
@@ -74,12 +72,7 @@
 # 首次部署
 sudo systemctl enable --now dsh-relay-go
 
-# 开放登记默认可用，不需要先建账号或铸码。
-# 只有保留邀请制的部署才需要：
-# /opt/dsh-relay-go/bin/dsh-relay admin --db /var/lib/dsh-relay/state.db \
-#     account-create --name "<名称>"
-# /opt/dsh-relay-go/bin/dsh-relay admin --db /var/lib/dsh-relay/state.db \
-#     invite-mint --note "<备注>" --count 1 --relay wss://<站点>/dsh-link
+# 开放登记是唯一入口，不需要先建账号或铸码。
 ```
 
 实时负载与每设备流量：
@@ -118,7 +111,7 @@ sudo systemctl enable --now dsh-relay-go
 | 位置 | 用途 | 提供方式 |
 |---|---|---|
 | `.env.local` | 发布脚本、开发探针 | `cp .env.example .env.local`，填 `DSH_SITE` / `DSH_RELAY_URL` / `DSH_OTA_HOST` |
-| `~/.dsh/mobile-link/agent.json` | 连接器的中转地址与身份 | 面板「登记」，或 `dsh-mobile-link enroll --relay <地址>`（邀请制部署再加 `--invite <码>`） |
+| `~/.dsh/mobile-link/agent.json` | 连接器的中转地址与身份 | 面板「登记」，或 `dsh-mobile-link enroll --relay <地址>` |
 | `ios/DSHMobile/Config.local.xcconfig` | App 内预填的中转地址与更新源 | 从 `Config.xcconfig` 复制后填写 |
 
 因此直接 clone 构建出的 App 默认连不上任何中转，这是有意设计。

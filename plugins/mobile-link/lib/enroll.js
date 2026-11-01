@@ -1,19 +1,15 @@
 /**
- * First-run enrollment: turn an invite code into a durable agent identity.
+ * First-run enrollment: turn a relay address into a durable agent identity.
  *
- * Until now an identity could only be provisioned by whoever owns the relay
- * (`dsh-relay admin agent-register --write-config`). That does not distribute:
- * somebody else installs DSH plus this connector on their own computer and has
- * to be handed a credential by the operator, out of band.
- *
- * So the relay grew `POST /agents/enroll` (relay-go/internal/httpapi), which redeems a
- * one-time invite code for a fresh `agentId` / `agentSecret`. This module is the
- * connector half: one call, then the identity is written to the same
+ * An identity used to require an invite code from the relay operator. Enrollment
+ * is now open: `POST /agents/enroll` (relay-go/internal/httpapi) creates the
+ * account and computer, rate-limited by source. This module is the connector
+ * half: one call, then the identity is written to the same
  * `~/.dsh/mobile-link/agent.json` (mode 0600) that `agent-register` writes, so
  * nothing downstream can tell the two apart.
  *
- * Enrollment is deliberately *not* automatic against an open endpoint: an
- * invite code must be present, because the relay is on the public internet.
+ * The optional `inviteCode` path remains only as a compatibility shim for old
+ * deployments and old callers; new installs do not use it.
  */
 
 import { execFileSync } from 'node:child_process'

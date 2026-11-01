@@ -94,7 +94,7 @@ const PANEL_STATUS = {
     panel: true,
     relayPrefill: 'wss://relay.test/dsh-link',
     relayLocked: false,
-    command: 'dsh-mobile-link enroll --invite <邀请码> --relay wss://relay.test/dsh-link',
+    command: 'dsh-mobile-link enroll --relay wss://relay.test/dsh-link',
     hint: '先登记',
   },
 }
@@ -407,7 +407,7 @@ test('the status dot answers the three questions a user has', async () => {
     ...HEALTHY_STATUS,
     state: 'idle',
     connected: false,
-    enroll: { registered: false, needsEnroll: true, command: 'dsh-mobile-link enroll --invite <code>', hint: '先登记' },
+    enroll: { registered: false, needsEnroll: true, command: 'dsh-mobile-link enroll --relay wss://relay.test/dsh-link', hint: '先登记' },
   })
   assert.match(unregistered.props['aria-label'], /尚未登记/)
   assert.equal(unregistered.children[0].props.state, 'error')
@@ -588,7 +588,7 @@ test('an unregistered computer is told what to run instead of being shown a code
     ...HEALTHY_STATUS,
     state: 'idle',
     connected: false,
-    enroll: { registered: false, needsEnroll: true, command: 'dsh-mobile-link enroll --invite <邀请码>', hint: '这台电脑还没有登记到中转' },
+    enroll: { registered: false, needsEnroll: true, command: 'dsh-mobile-link enroll --relay wss://relay.test/dsh-link', hint: '这台电脑还没有登记到中转' },
   }
   const fetch = makeFetch({ status })
   const { api } = loadBundle({ document, fetchImpl: fetch.impl })
@@ -600,7 +600,7 @@ test('an unregistered computer is told what to run instead of being shown a code
   render(entry.component({})).props.onClick()
   await flush()
   const markup = JSON.stringify(render(panel.component({})))
-  assert.match(markup, /dsh-mobile-link enroll --invite/)
+  assert.match(markup, /dsh-mobile-link enroll --relay/)
   assert.doesNotMatch(markup, /dsh-mobile-link-qr/)
   assert.equal(fetch.calls.filter((call) => call.path.includes('pair-code')).length, 0,
     '没登记就不该向中转要码')
@@ -734,10 +734,10 @@ test('after enrollment the panel says it is connecting instead of showing an emp
     'a not-yet-connected link must not try to mint a code')
 })
 
-test('a rejected code keeps the input and explains the failure in place', async () => {
+test('a rejected enrollment keeps the input and explains the failure in place', async () => {
   const { document } = makeDom()
   const status = { ...PANEL_STATUS, enroll: { ...PANEL_STATUS.enroll } }
-  const fetch = makeFetch({ status, failEnroll: 'enroll/used' })
+  const fetch = makeFetch({ status, failEnroll: 'enroll/rate-limited' })
   const { api } = loadBundle({ document, fetchImpl: fetch.impl })
   const { ctx, state } = makeCtx()
   api.apply(ctx)
@@ -752,7 +752,7 @@ test('a rejected code keeps the input and explains the failure in place', async 
 
   tree = render(panel.component({}))
   const markup = JSON.stringify(tree)
-  assert.match(markup, /已被使用/)
+  assert.match(markup, /尝试次数过多/)
   assert.match(markup, /wss:\/\/relay\.test\/dsh-link/, '失败后中转地址要保留')
   assert.doesNotMatch(markup, /dsh-mobile-link-qr/)
 })
@@ -975,8 +975,10 @@ test('the iOS guide is reachable from the registered panel and only offers TestF
   assert.doesNotMatch(markup, /ota|OTA|OTA_URL/, '不得出现 OTA 地址')
 })
 
-test('the dialog is 500px wide and the command stays on one line', () => {
-  assert.match(SOURCE, /width:min\(500px,94vw\)/)
+test('the dialog stays inside the default window and the command stays on one line', () => {
+  assert.match(SOURCE, /width:min\(420px,94vw\)/)
+  assert.match(SOURCE, /max-height:calc\(100dvh - 2 \* max\(24px,var\(--dsh-frame-overlay-top,24px\)\)\)/)
+  assert.match(SOURCE, /overflow-y:auto/)
   assert.match(SOURCE, /white-space:nowrap;overflow-x:auto/)
 })
 

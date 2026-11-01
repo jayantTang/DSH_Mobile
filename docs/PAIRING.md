@@ -28,9 +28,9 @@
 | 设备管理 | 中转 `GET /devices`、`POST /devices/revoke` + `dsh-relay admin device-list`；App 设置页与连接器「移动端连接」面板都可撤销设备（面板用 agent secret 调同一组端点；`GET /devices` 也接受 agent secret，返回含离线设备的全量列表） |
 | 直连入口 | App 连接页**已去掉**，只保留中转配对；`dsh://direct` 仅 DEBUG 参数 |
 
-**登记入口**：`POST /agents/enroll` 默认开放登记，不需要邀请码；中转按来源做预算
-（每来源 5 次/小时），超限回 `enroll/rate-limited`。带 `inviteCode` 时仍走原邀请码路径，
-供保留邀请制的部署使用。连接器在「移动端连接」面板里点「登记」，默认中转已预填，
+**登记入口**：`POST /agents/enroll` 是开放登记，不需要邀请码；中转按来源做预算
+（每来源 5 次/小时），超限回 `enroll/rate-limited`。带 `inviteCode` 时仍走历史兼容路径，
+仅用于旧版本或旧数据。连接器在「移动端连接」面板里点「登记」，默认中转已预填，
 成功后原地重连；无头 / 自动化安装用 `dsh-mobile-link enroll --relay …`。
 运营者仍可用 `dsh-relay admin agent-register` 手工预置或轮换身份。
 
@@ -40,7 +40,7 @@
 ① 用户在电脑上装 DSH + 本项目插件
         │
 ② 首次启动，连接器向中转「登记」，拿到 agentId + agentSecret
-        │        （开放登记，按来源限流；可保留邀请码）
+        │        （开放登记，按来源限流）
         ▼
 ③ 连接器在 DSH 界面（侧栏底部「移动端连接」）显示一个二维码（含 relayUrl + 持久配对码）
         │
@@ -63,7 +63,7 @@
    建 `accounts` 与 `agents`，设备、用量与配额仍按账户归属。
 2. **来源预算**：同一来源每小时最多 5 次登记，超限回 `enroll/rate-limited`。这是最低限度的
    闸门，不替代运营侧的监控与封禁。
-3. **邀请码（可选）**：带 `inviteCode` 时仍走原来的邀请码路径，保留给需要邀请制的部署。
+3. **邀请码（历史兼容）**：带 `inviteCode` 时仍走旧路径，仅用于旧版本或旧数据；新用户不经过这里。
 4. **设备与配额**：每 agent 的设备数、单设备速率与每日字节额度继续生效。
 
 开放登记意味着公网可达的端点可以创建账户；运营侧需要监控异常来源并按需拒绝或限流。
@@ -73,12 +73,12 @@
 
 | 项 | 说明 | 状态 |
 |---|---|---|
-| 连接器自助登记 | 开放登记换 agentId/secret，邀请码可选；`dsh-relay admin agent-register` 保留为运营工具 | ✅ 已具备（`POST /agents/enroll`）|
+| 连接器自助登记 | 开放登记换 agentId/secret，不需要邀请码；`dsh-relay admin agent-register` 保留为运营工具 | ✅ 已具备（`POST /agents/enroll`）|
 | 二维码 | 连接器出图（`POST /mobile-link/pair-code` 带 `svg`），DSH 界面「移动端连接」小窗展示 | ✅ 已具备（010 起在界面里）|
 | 设备自助管理 | App 内可看已配对设备、可撤销 | ✅ 已具备 |
 | App 去掉直连入口 | 连接页只保留「中转配对」 | ✅ 已具备 |
 | 能力探测 | 连接器 `status` 回报 `capabilities`，App 据此显示/隐藏功能 | ✅ 已具备 |
-| 配额与限流 | 每 agent 设备数、单设备速率与每日字节额度；邀请码与配对码各有失败预算 | ✅ 已具备 |
+| 配额与限流 | 每 agent 设备数、单设备速率与每日字节额度；历史邀请码与配对码各有失败预算 | ✅ 已具备 |
 
 ## 兼容性备忘
 

@@ -13,8 +13,7 @@
 | DLP | DSH Link Protocol v1 | 手机、中转与连接器之间的帧协议，见 `RELAY-PROTOCOL.md` |
 | agentId | `agt_…` | 一台电脑在中转上的身份标识，配对与转发都以它为准 |
 | 设备令牌 | device token | 配对后发给单台手机凭据，可在 App 内撤销 |
-| 开放登记 | open enrollment | 不带邀请码的登记路径，默认开启，中转按来源限流 |
-| 邀请码 | invite | 可选的登记凭据，一次性、绑定单台电脑；只有保留邀请制的部署才需要 |
+| 开放登记 | open enrollment | 唯一的登记路径，不需要邀请码，中转按来源限流 |
 | 配对 | pairing | 手机扫描电脑上的二维码、取得设备令牌的过程 |
 | 会话 | session / `session-…` | DSH 里的一段对话；有工作目录、消息流与投影 |
 | 投影 | projection | 宿主随会话下发的派生状态（标题、权限、上下文占用等） |

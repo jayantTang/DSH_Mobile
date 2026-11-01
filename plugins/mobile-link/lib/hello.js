@@ -65,7 +65,7 @@ export function hostVersion() {
  * - `qr-pairing`     this connector renders the pairing QR itself (the `svg`
  *                    field of `POST /mobile-link/pair-code`), so the DSH client
  *                    needs no QR library of its own
- * - `self-enroll`    this connector can register itself with an invite code
+ * - `self-enroll`    this connector can register itself without an invite code
  * - `git`            git status / diff / log / show can be read from the work
  *                    tree on this computer (see git.js)
  * - `background-transfer`

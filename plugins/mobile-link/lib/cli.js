@@ -17,7 +17,7 @@
  * prefix-preserving URL join the live agent uses.
  *
  * `enroll` is the first-run path for someone else's computer: it redeems an
- * invite code for an identity and writes `~/.dsh/mobile-link/agent.json`, then
+ * relay address for an identity and writes `~/.dsh/mobile-link/agent.json`, then
  * exits. Everything after that is the ordinary agent.
  */
 
@@ -61,9 +61,8 @@ function parseArgs(argv) {
 async function main() {
   const args = parseArgs(process.argv.slice(2))
   if (args.help) {
-    process.stdout.write(`usage: cli.js enroll [--relay <ws url>] [--invite <code>] [--name <label>]
-  Register this computer (open enrollment; an invite code is optional) in ${defaultStatePath()}.
-  The invite may also arrive as ${INVITE_ENV}. Exits non-zero on failure.
+    process.stdout.write(`usage: cli.js enroll [--relay <ws url>] [--name <label>]
+  Register this computer with open enrollment in ${defaultStatePath()}. Exits non-zero on failure.
 
   cli.js --relay <ws url> --agent-id <id> --agent-secret <secret>
   [--state-file <path>] [--dsh-url <url>]

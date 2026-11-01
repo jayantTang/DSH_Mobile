@@ -13,7 +13,7 @@
 | | **A · 用现成中转**（推荐） | **B · 自己开中转** |
 |---|---|---|
 | 适合谁 | 只想赶紧用起来 | 想要完全自主、不依赖别人的机器 |
-| 前提 | 无需邀请码；开放登记默认开启，按来源限流（保留邀请制的部署才需要码） | 一台有公网 IP 的主机（能装 Caddy） |
+| 前提 | 无需邀请码；开放登记按来源限流 | 一台有公网 IP 的主机（能装 Caddy） |
 | 耗时 | 约 5 分钟 | 约 20 分钟 |
 | 你要做什么 | 装连接器 → 面板登记 → 扫码 | 部署中转 → 面板登记 → 扫码 |
 
@@ -173,9 +173,6 @@ dsh plugin --profile web add dsh-plugin-mobile-link
 ```bash
 # 开放登记：只给中转地址
 dsh-mobile-link enroll --relay wss://<中转地址>/dsh-link
-
-# 如果部署仍要求邀请码，再加 --invite <码>
-dsh-mobile-link enroll --invite <码> --relay wss://<中转地址>/dsh-link
 ```
 
 命令行登记写的是 `~/.dsh/mobile-link/agent.json`；宿主正在运行时，跑完要重启 DSH 让它重新读取身份；
@@ -215,16 +212,11 @@ make build-purego                           # 纯 Go 静态二进制；交叉构
 # 按 deploy/README.md §4 安装二进制、build.json 与 dsh-relay-go.service
 sudo systemctl enable --now dsh-relay-go
 
-# 开放登记默认可用，不需要先建账号或铸码。
-# 只有保留邀请制的部署才需要：
-# /opt/dsh-relay-go/bin/dsh-relay admin --db /var/lib/dsh-relay/state.db \
-#     account-create --name "<你>"
-# /opt/dsh-relay-go/bin/dsh-relay admin --db /var/lib/dsh-relay/state.db \
-#     invite-mint --note "给自己" --count 1 --relay wss://<你的站点>/dsh-link
+# 开放登记是唯一入口，不需要先建账号或铸码。
 ```
 
 然后**按 A 的第 2–5 步继续**（装连接器 → 在「移动端连接」面板点「登记」 → 扫码）。
-开放登记按来源限流；只有保留邀请制的部署才需要在登记时填码。
+开放登记按来源限流。
 
 Caddy 路由不新增 DNS 与证书：用 `python3 relay-go/deploy/caddy_splice.py insert /etc/caddy/Caddyfile
 relay-go/deploy/Caddyfile.snippet <你的站点>` 把带标记的片段插进既有站点块，写入前先 `caddy validate`，
@@ -270,7 +262,6 @@ curl -s http://127.0.0.1:8787/stats | python3 -m json.tool | head -40
 | 状态里 `state: backoff` + `4001 superseded` | 是不是有**第二个** DSH 在跑同一个身份 | 旧进程没退干净，`kill` 掉旧的 |
 | 连上但会话列表空 | 电脑上 DSH 里有没有会话 | — |
 | 手机一直「连接中」 | `agent.json` 里的 `relayUrl` 与服务端地址 | 登记时填错了中转地址 |
-| 邀请制部署报 `invite/used` | — | 一个码只能用一次，领新的；开放登记不需要码 |
 | 手机端功能缺失 | 发布页有没有新版本 | TestFlight 构建过期 |
 
 要在**不打扰**正在运行的连接器的前提下确认它能不能连上：

@@ -52,7 +52,7 @@ Relay 只做两件事：**鉴权**与**按 `agentId` 转发**。它不解析 DLP
 | `PUT` | `/account/state` | 写账户状态（只前进不后退），成功后给同账户其他在线设备发一帧 `accountState` |
 | `POST` | `/internal/account-state/touch` | **仅回环**：信件服务已读落库后，让中转替它向同账户设备扇一声"去看看信件" |
 | `POST` | `/dsh-link/feedback/{submit,inbox,append,read,notice}` | 信件端点，由**独立信件服务**（非中转）应答，见 §2.3 |
-| `POST` | `/agents/enroll` | 自助登记，换 `agentId` / `agentSecret`；默认开放，邀请码可选 |
+| `POST` | `/agents/enroll` | 自助登记，换 `agentId` / `agentSecret`；开放登记，无需邀请码 |
 | `GET`  | `/devices` | 用 device token 或 agent secret 列出**自己的**配对设备（含离线；`currentDeviceId` 仅设备令牌时有值） |
 | `POST` | `/devices/revoke` | 用 device token 或 agent secret 撤销该电脑名下的某台配对设备 |
 | `OPTIONS` | `*` | CORS 预检 |
@@ -490,10 +490,10 @@ relay 的两个开放端点（`/pair/claim`、`/agents/enroll`）都按**客户�
   - **开放登记（无 `inviteCode`）**：按客户端标识 5 次 / 1 小时；成功也计数，超过即
     `429 enroll/rate-limited`。这是公开端点唯一的前置闸门；部署还应在网关或后续配置上
     做拒绝/封禁。
-  - **邀请码路径（带 `inviteCode`）**：按邀请码哈希一个桶、按客户端标识一个桶，各 5 次失败 /
-    15 分钟。邀请码桶是准入闸门；客户端桶只记账，**不否决一个有效邀请码**。
+  - **历史兼容的邀请码路径（带 `inviteCode`）**：按邀请码哈希一个桶、按客户端标识一个桶，
+    各 5 次失败 / 15 分钟。邀请码桶是准入闸门；客户端桶只记账，**不否决一个有效邀请码**。
 
-  **开放登记是默认路径，不需要邀请码**；下面的充分条件只约束仍保留邀请制的部署。
+  **开放登记是唯一入口，不需要邀请码**；下面的充分条件只说明旧邀请码的兼容行为。
 
   这是 2026-09-25 owner 定下的口径：**有效邀请码是准入通过的充分条件**。邀请码是运营方主动
   决定放人的凭据，一段失败历史是「值得盯」，不是「可以推翻这个决定」；因此一个来源先失败 5 次
