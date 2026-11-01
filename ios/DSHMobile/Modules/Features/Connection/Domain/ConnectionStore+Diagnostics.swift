@@ -88,8 +88,16 @@ extension ConnectionStore {
             ])
             // 单次失败不判断开（FR-004）：链路抖一下不该让界面闪"重连中"。
             // "几次才算断"由监管决定（`Policy.failuresToDeclareDown`，默认 2）。
-            if verdict == .declareDown, state.isConnected {
-                state = .connecting("连接中断，正在重连…")
+            if verdict == .declareDown {
+                // A revoked device cannot be repaired by retrying the same token.
+                // Ask the relay before deciding this is a transient outage.
+                if let link = carrier as? LinkCarrier, await link.credentialRejected() {
+                    await markCredentialRejected()
+                    return
+                }
+                if state.isConnected {
+                    state = .connecting("连接中断，正在重连…")
+                }
             }
         }
     }

@@ -405,7 +405,7 @@ public final class ConnectionStore {
             } catch {
                 await carrier.close()
                 guard generation == connectGeneration else { return }
-                attemptFailed(error, repairing: isRepair)
+                await attemptFailed(error, repairing: isRepair, credentialRejected: false)
             }
 
         case .relay(let relayURL, let agentId):
@@ -434,9 +434,12 @@ public final class ConnectionStore {
                               dialStartedAt: dialStartedAt)
                 if let real = link as? LinkCarrier { observeStatus(of: real) }
             } catch {
+                // Probe before closing: the carrier's URLSession is invalidated
+                // by close, and a task on it raises NSGenericException.
+                let rejected = await (link as? LinkCarrier)?.credentialRejected() ?? false
                 await link.close()
                 guard generation == connectGeneration else { return }
-                attemptFailed(error, repairing: isRepair)
+                await attemptFailed(error, repairing: isRepair, credentialRejected: rejected)
             }
         }
     }
@@ -446,14 +449,35 @@ public final class ConnectionStore {
     /// A repair keeps the workspace and leaves the link to the watcher; only a
     /// connection that was never established has nothing to show, and that is
     /// the one case the pairing screen is for.
-    private func attemptFailed(_ error: any Error, repairing: Bool) {
+    private func attemptFailed(_ error: any Error, repairing: Bool,
+                               credentialRejected: Bool) async {
         lastError = LinkErrors.describe(error)
+        // A revocation is not a transient network drop: retrying the same token
+        // can only fail. Stop the watcher and tell the person to pair again.
+        if credentialRejected {
+            lastError = String(localized: "这个连接的凭据已失效，请重新配对")
+            stopWatching()
+            state = .failed(lastError ?? "连接失败")
+            return
+        }
         if repairing {
             state = .connecting("连接中断，正在重连…")
             startWatching()
         } else {
             state = .failed(lastError ?? "连接失败")
         }
+    }
+
+    /// The relay rejected this device credential (the device was revoked).
+    ///
+    /// This is terminal: retrying the same token cannot succeed. Stop the
+    /// reconnect watcher and show the re-pair instruction instead of an endless
+    /// "reconnecting" state.
+    func markCredentialRejected() async {
+        stopWatching()
+        lastError = String(localized: "这个连接的凭据已失效，请重新配对")
+        state = .failed(lastError ?? "连接失败")
+        await carrier?.close()
     }
 
     /// What this build is, for the per-connection handshake.

@@ -283,6 +283,30 @@ public actor LinkCarrier: DSHCarrier {
     }
 
     /// Starts connecting without waiting, so the UI can render immediately.
+    /// Asks the relay whether this device credential is still accepted.
+    ///
+    /// A revoked device cannot authenticate the WebSocket upgrade; URLSession
+    /// surfaces that as an opaque connection failure, indistinguishable from a
+    /// dead network. This probe is the distinction: only 401/403 means the
+    /// credential itself is gone. Network/server failures return false so the
+    /// caller keeps retrying.
+    public func credentialRejected() async -> Bool {
+        var components = URLComponents(url: configuration.relayURL, resolvingAgainstBaseURL: false)
+        components?.path = LinkConfiguration.appending(path: "/devices", to: configuration.relayURL)
+        guard let url = components?.url else { return false }
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 8
+        request.setValue("Bearer \(configuration.deviceToken)", forHTTPHeaderField: "Authorization")
+        do {
+            let (_, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse else { return false }
+            return http.statusCode == 401 || http.statusCode == 403
+        } catch {
+            return false
+        }
+    }
+
     public func connect() {
         guard !isClosed else { return }
         Task { try? await ensureConnected() }
