@@ -883,3 +883,14 @@ It is registered as a workspace first, so a new group appears in the desktop sid
 "打开 DSH，进入「移动端连接」；确认中转地址，点「登记」，等待状态变为「已连接」。" = "Open DSH and go to Mobile Link; confirm the relay address, click Register, and wait for Connected.";
 "回到 iPhone，点「扫码配对」，扫描连接器插件中显示的二维码；无法扫码时可手动输入配对码。" = "Return to iPhone, tap Scan to Pair, and scan the QR code shown by the connector plugin. If you cannot scan, enter the pairing code manually.";
 "安装连接器" = "Install the Connector";
+"安装并启动 DSH" = "Install and start DSH";
+"使用桌面版安装包，或在终端运行 dsh web。" = "Use the desktop installer, or run dsh web in a terminal.";
+"完成中转登记" = "Register with the relay";
+"打开「移动端连接」，确认中转地址，点「登记」，等待「已连接」。" = "Open Mobile Link, confirm the relay address, click Register, and wait for Connected.";
+"回到 iPhone 点「扫码配对」，扫描连接器插件显示的二维码。" = "Return to iPhone, tap Scan to Pair, and scan the QR code shown by the connector plugin.";
+"安装连接器插件" = "Install the connector plugin";
+"图形化" = "Graphical";
+"Plugins → Add plugin → 输入 dsh-plugin-mobile-link → Install" = "Plugins → Add plugin → enter dsh-plugin-mobile-link → Install";
+"命令行" = "Command line";
+"已复制" = "Copied";
+"复制" = "Copy";

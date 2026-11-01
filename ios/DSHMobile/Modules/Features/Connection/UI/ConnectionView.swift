@@ -5,6 +5,7 @@ import DSHDesign
 import DSHFoundation
 import DSHKit
 import SwiftUI
+import UIKit
 
 /// Onboarding and connection management.
 ///
@@ -388,36 +389,38 @@ public struct ConnectionView: View {
 /// 只从连接页「提示」第一条打开；扫码页不加入口。
 private struct ConnectorInstallGuideView: View {
     @Environment(\.dismiss) private var dismiss
+    @State private var copied = false
 
     private let command = "dsh plugin --profile \"${DSH_PROFILE:-web}\" add dsh-plugin-mobile-link"
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: DSHTheme.Spacing.section) {
-                    Text("在电脑上完成以下步骤，再回到 iPhone 扫码。")
-                        .font(DSHTheme.Typography.caption)
-                        .foregroundStyle(DSHTheme.labelSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                ReadingColumn(ReadingWidth.form) {
+                    VStack(alignment: .leading, spacing: DSHTheme.Spacing.standard) {
+                        Text("在电脑上完成以下步骤，再回到 iPhone 扫码。")
+                            .font(DSHTheme.Typography.caption)
+                            .foregroundStyle(DSHTheme.labelSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.horizontal, DSHTheme.Spacing.hairline)
 
-                    step(1, "安装并启动 DSH：使用桌面版安装包，或在终端运行 dsh web。")
-                    VStack(alignment: .leading, spacing: DSHTheme.Spacing.tight) {
-                        step(2, "安装连接器插件。图形化方式：打开 Plugins，点 Add plugin，输入 dsh-plugin-mobile-link，点 Install。")
-                        Text("命令行方式（读取当前 DSH profile）：")
-                            .font(DSHTheme.Typography.micro)
-                            .foregroundStyle(DSHTheme.labelTertiary)
-                        Text(verbatim: command)
-                            .font(.system(.caption2, design: .monospaced))
-                            .textSelection(.enabled)
-                            .padding(DSHTheme.Spacing.tight)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(DSHTheme.layer1)
-                            .clipShape(RoundedRectangle(cornerRadius: DSHTheme.Radius.medium, style: .continuous))
+                        stepCard(1, icon: "desktopcomputer",
+                                 title: "安装并启动 DSH",
+                                 detail: "使用桌面版安装包，或在终端运行 dsh web。")
+
+                        pluginCard
+
+                        stepCard(3, icon: "link",
+                                 title: "完成中转登记",
+                                 detail: "打开「移动端连接」，确认中转地址，点「登记」，等待「已连接」。")
+
+                        stepCard(4, icon: "qrcode.viewfinder",
+                                 title: "扫码配对",
+                                 detail: "回到 iPhone 点「扫码配对」，扫描连接器插件显示的二维码。")
                     }
-                    step(3, "打开 DSH，进入「移动端连接」；确认中转地址，点「登记」，等待状态变为「已连接」。")
-                    step(4, "回到 iPhone，点「扫码配对」，扫描连接器插件中显示的二维码；无法扫码时可手动输入配对码。")
+                    .padding(.horizontal, DSHTheme.Spacing.loose)
+                    .padding(.vertical, DSHTheme.Spacing.standard)
                 }
-                .padding(DSHTheme.Spacing.loose)
             }
             .background(DSHTheme.background)
             .navigationTitle("安装连接器")
@@ -428,21 +431,102 @@ private struct ConnectorInstallGuideView: View {
                 }
             }
         }
+        .presentationDragIndicator(.visible)
     }
 
-    private func step(_ number: Int, _ text: LocalizedStringKey) -> some View {
-        HStack(alignment: .top, spacing: DSHTheme.Spacing.tight) {
-            Text(String(number))
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(DSHTheme.brand)
-                .frame(width: 20, height: 20)
-                .background(DSHTheme.brand.opacity(0.12))
-                .clipShape(Circle())
-            Text(text)
+    private var pluginCard: some View {
+        VStack(alignment: .leading, spacing: DSHTheme.Spacing.standard) {
+            stepHeader(2, icon: "puzzlepiece.extension", title: "安装连接器插件")
+
+            VStack(alignment: .leading, spacing: 6) {
+                Label("图形化", systemImage: "square.grid.2x2")
+                    .font(DSHTheme.Typography.micro)
+                    .foregroundStyle(DSHTheme.labelTertiary)
+                Text("Plugins → Add plugin → 输入 dsh-plugin-mobile-link → Install")
+                    .font(DSHTheme.Typography.caption)
+                    .foregroundStyle(DSHTheme.labelPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(DSHTheme.Spacing.standard)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(DSHTheme.layer2)
+            .clipShape(RoundedRectangle(cornerRadius: DSHTheme.Radius.medium, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 7) {
+                HStack(spacing: 6) {
+                    Label("命令行", systemImage: "terminal")
+                        .font(DSHTheme.Typography.micro)
+                        .foregroundStyle(DSHTheme.labelTertiary)
+                    Spacer(minLength: 0)
+                    Button {
+                        UIPasteboard.general.string = command
+                        withAnimation(.easeInOut(duration: 0.15)) { copied = true }
+                    } label: {
+                        Label(copied ? "已复制" : "复制",
+                              systemImage: copied ? "checkmark" : "doc.on.doc")
+                            .font(DSHTheme.Typography.micro)
+                            .foregroundStyle(DSHTheme.brand)
+                    }
+                    .buttonStyle(.plain)
+                }
+                Text(verbatim: command)
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundStyle(DSHTheme.labelPrimary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(DSHTheme.Spacing.standard)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(DSHTheme.layer2)
+            .clipShape(RoundedRectangle(cornerRadius: DSHTheme.Radius.medium, style: .continuous))
+        }
+        .padding(DSHTheme.Spacing.loose)
+        .background(DSHTheme.layer1)
+        .clipShape(RoundedRectangle(cornerRadius: DSHTheme.Radius.large, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: DSHTheme.Radius.large, style: .continuous)
+                .stroke(DSHTheme.border2, lineWidth: 1)
+        )
+    }
+
+    private func stepCard(_ number: Int, icon: String,
+                          title: LocalizedStringKey, detail: LocalizedStringKey) -> some View {
+        VStack(alignment: .leading, spacing: DSHTheme.Spacing.tight) {
+            stepHeader(number, icon: icon, title: title)
+            Text(detail)
                 .font(DSHTheme.Typography.caption)
-                .foregroundStyle(DSHTheme.labelPrimary)
+                .foregroundStyle(DSHTheme.labelSecondary)
                 .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.leading, 40)
+        }
+        .padding(DSHTheme.Spacing.loose)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(DSHTheme.layer1)
+        .clipShape(RoundedRectangle(cornerRadius: DSHTheme.Radius.large, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: DSHTheme.Radius.large, style: .continuous)
+                .stroke(DSHTheme.border2, lineWidth: 1)
+        )
+    }
+
+    private func stepHeader(_ number: Int, icon: String,
+                            title: LocalizedStringKey) -> some View {
+        HStack(spacing: DSHTheme.Spacing.tight) {
+            ZStack {
+                Circle()
+                    .fill(DSHTheme.brand.opacity(0.14))
+                    .frame(width: 30, height: 30)
+                Text(String(number))
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(DSHTheme.brand)
+            }
+            Image(systemName: icon)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(DSHTheme.brand)
+            Text(title)
+                .font(DSHTheme.Typography.bodyStrong)
+                .foregroundStyle(DSHTheme.labelPrimary)
+            Spacer(minLength: 0)
         }
     }
 }
