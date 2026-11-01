@@ -425,7 +425,7 @@ test('日报分「今日」与「最近 30 天」两段，正文被转义', () =
     assert.ok(html.includes(label), `近 7 天表缺列 ${label}`)
   }
   // 留存：外部账号口径、D1/D7 与「登记后 7 天内连上」都要在页面上。
-  assert.ok(html.includes('激活码登记的外部账号 · 活跃指当天有设备连接'))
+  assert.ok(html.includes('按登记日分队列 · 活跃指当天有设备连接'))
   for (const label of ['登记后 7 天内连上', '次日留存', '7 日留存']) {
     assert.ok(html.includes(label), `留存缺 ${label}`)
   }
@@ -472,12 +472,11 @@ test('escapeHtml 覆盖五个字符', () => {
 
 test('「关注」板块把待办提到整页最上面，阈值越线才报警', () => {
   const html = renderReport(fixture())
-  // fixture 的形状：2 条待回复、邀请码剩 9（≤10）——两条 warn 必须在关注区里。
+  // fixture 的形状：2 条待回复——这条 warn 必须在关注区里（激活码余量已随开放登记删除）。
   const focus = html.indexOf('要处理的事')
   assert.ok(focus > -1 && focus < html.indexOf('今日</span>概览'), '关注区在今日板块之前')
   assert.match(html, /反馈待回复 2 条，最早一条已等 1\.0 h/)
-  assert.match(html, /激活码只剩 9 张（21\/30 已用）/)
-  assert.match(html, /2 件待办/)
+  assert.match(html, /1 件待办/)
   // d7 = 40% 不越线、推送全注册、没有背离：这三件不该出现。
   assert.ok(!html.includes('7 日留存 40%（n=10）低于'), '没越线的指标不报警')
   assert.ok(!html.includes('无法送达'), '推送全注册不报警')
@@ -492,25 +491,14 @@ test('「关注」板块把待办提到整页最上面，阈值越线才报警',
 })
 
 test('「关注」区只留要 owner 动作的待办，自动观察不再堆上去', () => {
-  // fixture 的形状：2 条待回复、邀请码剩 9（≤10）——两条 warn 必须在关注区里。
+  // fixture 的形状：2 条待回复——这条 warn 必须在关注区里（激活码余量已随开放登记删除）。
   const html = renderReport(fixture())
-  assert.match(html, /2 件待办/)
+  assert.match(html, /1 件待办/)
   // 2026-10-17 删掉的 info 级自动观察（周目标缺口、版本分裂、单日波动、背离）都不再出现。
   for (const gone of ['本周新增设备', '个 App 版本同时在用', '偏离超过', '核对重连逻辑']) {
     assert.ok(!html.includes(gone), `自动观察不该再出现在关注区：${gone}`)
   }
   assert.ok(!html.includes('<span class="chip up">提示</span>'), '关注区不再有 info 级提示条目')
-})
-
-test('公开激活码用完时，关注区说清「新人无法登记」', () => {
-  const data = fixture()
-  data.invites.usable = 0
-  data.invites.remaining = 0
-  data.invites.minted = 200
-  data.invites.used = 200
-  const html = renderReport(data)
-  assert.match(html, /公开激活码已用完（200\/200 已用），新人无法登记/)
-  assert.match(html, /可用 0 张（已用完）/)
 })
 
 test('推送注册率只算近 7 天活跃的手机（owner 2026-10-17 定）', () => {
@@ -540,12 +528,12 @@ test('待回复反馈超过 24h SLA 时文案升级', () => {
 test('同一条待办连续挂三天，文案升级为「已连续 N 天未处理」', () => {
   const data = fixture()
   const dayStartAt = data.today.dayStartAt
-  const history = { days: {}, alerts: { 'invites-low': { lastStart: dayStartAt - 86_400_000, count: 2 } } }
+  const history = { days: {}, alerts: { 'feedback-open': { lastStart: dayStartAt - 86_400_000, count: 2 } } }
   const html = renderReport(data, { history })
-  assert.match(html, /激活码只剩 9 张（21\/30 已用），该补铸一批（已连续 3 天未处理）/)
+  assert.match(html, /反馈待回复 2 条[^<]*（已连续 3 天未处理）/)
   // 同一天重复渲染不重复计数。
   const sameDay = renderReport(data, { history:
-    { days: {}, alerts: { 'invites-low': { lastStart: dayStartAt, count: 4 } } } })
+    { days: {}, alerts: { 'feedback-open': { lastStart: dayStartAt, count: 4 } } } })
   assert.match(sameDay, /已连续 4 天未处理/)
 })
 
@@ -629,19 +617,24 @@ test('updateHistory 只记过完的一整天，并累计告警连续天数', () 
   assert.equal(snap.dau, 3)
   assert.equal(snap.devicesActive, 2)
   assert.deepEqual(snap.builds, ['20261012.1056', '20260924.1925'])
-  assert.equal(first.alerts['invites-low'].count, 1, '告警第一次出现 streak=1')
+  assert.equal(first.alerts['feedback-open'].count, 1, '告警第一次出现 streak=1')
 
-  // 次日同一告警还在：streak +1。生成时刻也要跟着往后推一天，否则这天还没"过完"。
+  // 次日同一条待办还在：streak +1。生成时刻也要跟着往后推一天，否则这天还没"过完"。
   const nextDay = completedDayFixture()
   nextDay.today.day = 20261013
   nextDay.today.dayStartAt += 86_400_000
   nextDay.generatedAt += 86_400_000
-  nextDay.feedback = { new: 0, open: 0, replied: 0, threads: [] } // 这条告警次日消失了
   const second = updateHistory(nextDay, first)
-  assert.equal(second.alerts['invites-low'].count, 2)
-  assert.equal(second.alerts['invites-low'].lastStart, nextDay.today.dayStartAt)
-  // 不再出现的告警从账上清掉（下次再出现 streak 从 1 重算）。
-  assert.ok(!('feedback-open' in second.alerts), '消失的告警不保留连续天数')
+  assert.equal(second.alerts['feedback-open'].count, 2, '同一条待办连着挂，连续天数累加')
+
+  // 第三天待回复清零：这条告警消失，连续天数不保留。
+  const thirdDay = completedDayFixture()
+  thirdDay.today.day = 20261014
+  thirdDay.today.dayStartAt += 2 * 86_400_000
+  thirdDay.generatedAt += 2 * 86_400_000
+  thirdDay.feedback = { new: 0, open: 0, replied: 0, threads: [] }
+  const third = updateHistory(thirdDay, second)
+  assert.ok(!('feedback-open' in third.alerts), '消失的告警不保留连续天数')
 })
 
 test('report --full-day 落盘时把当天摘要写进 .ops-history.json', () => {
@@ -652,7 +645,7 @@ test('report --full-day 落盘时把当天摘要写进 .ops-history.json', () =>
   const history = JSON.parse(readFileSync(join(outDir, '.ops-history.json'), 'utf8'))
   assert.ok(history.days['20261012'], '过完的那一天要记账')
   assert.equal(history.days['20261012'].dau, 3)
-  assert.equal(history.alerts['invites-low'].count, 1)
+  assert.equal(history.alerts['feedback-open'].count, 1)
 
   // 半天数据（不带 --full-day 的当天报告）不写历史，免得污染 WoW 对照。
   const outDir2 = mkdtempSync(join(tmpdir(), 'feedback-history-partial-'))
@@ -671,11 +664,11 @@ test('机型代码转人话，查不到的原样保留', () => {
   assert.ok(renderReport(data).includes('iPhone 15'))
 })
 
-test('日报不再渲染激活码登记清单（登记只在关注区作为余量提醒出现）', () => {
+test('日报不再出现激活码余量/到期/作废的统计', () => {
   const html = renderReport(fixture())
-  assert.ok(!html.includes('Sam 的 MacBook'), '登记明细不再上页面')
-  assert.ok(!html.includes('Sam 的 MacBook'), '登记明细不再上页面')
-  assert.match(html, /激活码只剩 9 张（21\/30 已用）/, '余量提醒仍在关注区')
+  assert.ok(!html.includes('激活码'), '页面上不再出现「激活码」')
+  assert.ok(!html.includes('该补铸一批'), '余量提醒已随开放登记删除')
+  assert.ok(!html.includes('7 天内到期'), '不再统计到期码')
 })
 
 test('活跃时段接近一整天时写「全天有连接」', () => {
@@ -1427,37 +1420,34 @@ test('日报版本分布：只看近 48 小时活跃，网页端不冒充 App �
   assert.equal((html.match(/20261012\.1056/g) ?? []).length, 1)
 })
 
-test('激活码板块：能用/到期/过期三本账分开，最近激活按时间倒序', () => {
+test('登记板块：今日/近 7 天/近 30 天与累计，按时间倒序列最近几条', () => {
+  // 邀请码已于 2026-11-02 取消，码的三本账不再有对应事实；这里只留登记本身。
   const data = {
     ...fixture(),
     invites: {
-      minted: 30, used: 21, remaining: 12, usable: 9, expiringSoon: 2, expiredUnused: 3,
-      unused: [{ note: '给 Sam', createdAt: GENERATED_AT - 10 * 86_400_000,
-        expiresAt: GENERATED_AT + 5 * 86_400_000 }],
       enrollments: [
-        { usedAt: GENERATED_AT - 3600_000, accountName: 'Sam', agentName: 'Sam 的 MacBook',
-          inviteNote: '给 Sam' },
-        { usedAt: GENERATED_AT - 9 * 86_400_000, accountName: 'Ann', agentName: 'Ann 的 iMac',
-          inviteNote: '给 Ann' },
+        { usedAt: GENERATED_AT - 3600_000, accountName: 'Sam', agentName: 'Sam 的 MacBook' },
+        { usedAt: GENERATED_AT - 9 * 86_400_000, accountName: 'Ann', agentName: 'Ann 的 iMac' },
       ],
     },
   }
   const html = renderReport(data)
-  assert.match(html, /激活码/)
-  assert.match(html, /可用 9 张/)
-  assert.match(html, /7 天内到期 2 张/)
-  assert.match(html, /已过期未用 3 张/)
-  assert.match(html, /近 7 天激活 1/)
+  assert.match(html, /今日登记 1/)
+  assert.match(html, /近 7 天登记 1/)
+  assert.match(html, /累计登记 2/)
+  assert.match(html, /每日登记/)
   assert.match(html, /Sam 的 MacBook/)
-  assert.match(html, /每日激活/)
-  assert.match(html, /今日激活 1/)
+  assert.match(html, /Ann 的 iMac/)
+  assert.ok(!html.includes('可用'), '不再渲染激活码余量')
+  assert.ok(!html.includes('7 天内到期'), '不再渲染到期码')
 })
 
-test('激活码板块：老服务端没有 usable/unused 时退回 remaining，页面不炸', () => {
-  const html = renderReport(fixture())
-  assert.match(html, /激活码/)
-  assert.match(html, /可用 9 张/, 'remaining 就是 9')
-  assert.match(html, /MacBook/, '老服务端的 enrollments 照样列出来')
+test('老服务端没有 invites 字段：登记板块照常渲染，页面不炸', () => {
+  const data = fixture()
+  delete data.invites
+  const html = renderReport(data)
+  assert.match(html, /登记/)
+  assert.ok(!html.includes('激活码'), '页面上不再出现激活码字样')
 })
 
 test('表格列名取短、单位进表头，值只留数字', () => {
@@ -1620,7 +1610,7 @@ test('fetchGitHubStats 失败时 report 照常生成，不写这一行', () => {
   assert.doesNotMatch(html, /账号关注者/)
 })
 
-test('已过完一天的日报：激活码按覆盖日结算，不按生成时刻的次日', () => {
+test('已过完一天的日报：登记按覆盖日结算，不按生成时刻的次日', () => {
   // 00:02 生成、覆盖前一天：`今日激活` 与 14 天曲线都必须落在覆盖日。
   // 修之前 `dayEnd + 1` 会被 `localDayOf` 解析成第二天，"今日激活" 恒为 0、
   // 曲线最后一格是第二天（2026-10-19 实测日报里出现了 10-19 的格子）。
@@ -1634,7 +1624,7 @@ test('已过完一天的日报：激活码按覆盖日结算，不按生成时�
     ],
   }
   const html = renderReport(data)
-  assert.match(html, /今日激活 1/, '覆盖日 22:00 的那次登记才算今日')
+  assert.match(html, /今日登记 1/, '覆盖日 22:00 的那次登记才算今日')
   assert.doesNotMatch(html, /10-13/, '曲线与表格都不该出现覆盖日的次日')
 })
 

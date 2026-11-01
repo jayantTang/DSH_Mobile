@@ -2,7 +2,7 @@
 // 把 `admin.py ops-report --days N` 的 JSON 渲染成一页自带图表的 HTML（014 运营日报）。
 //
 // 版面分三块，各回答一个问题（2026-10-17 owner 要求精简后重排）：
-//   【关注】    今天要处理什么——只留要 owner 动作的四类：待回复反馈、激活码余量、
+//   【关注】    今天要处理什么——只留要 owner 动作的三类：待回复反馈、
 //               7 日留存越线、推送注册率不足。数据没问题就是一句「没有要处理的事」。
 //   【今日/全天】今天有没有事——头牌是**活跃账号**（有设备用量行的账号，owner 2026-10-17 定），
 //               下面四张卡：出口流量（含环比）、连接次数、新增设备、近 7 天活跃账号；
@@ -11,12 +11,12 @@
 //               外部账号留存漏斗、账号排名、设备清单，以及反馈的**计数**（不列具体线程）。
 //
 // 2026-10-17 精简掉的内容（小字与重复数字太多，owner 说"搞得很混乱"）：窗口六张 KPI 卡、
-// 每日新增设备柱状图、今日账号/版本/设备/反馈四张明细表、激活码登记清单、分周队列表、
+// 每日新增设备柱状图、今日账号/版本/设备/反馈四张明细表、分周队列表、
 // 反馈状态栈与占比 chips、留存卡片与目标/上周小字，以及 info 级的自动观察告警。
 // 2026-10-19 再精简：反馈不再列线程明细，只给新增/待回复/已回复/首次回复中位四个数；
-// GitHub 的 star/fork/关注者并进激活码那一排（两者都是"外部进来多少人"）。
+// GitHub 的 star/fork/关注者单列一行（取不到时不占位）。
 //
-// 单位只用三个词（2026-10-17 owner 对齐）：**账号** = 自然人（一次激活码兑换建立一个）；
+// 单位只用三个词（2026-10-17 owner 对齐）：**账号** = 自然人（一次登记建立一个）；
 // **主机** = 装了连接器的一台电脑（agent）；**设备** = 一次配对产生的客户端（手机/平板/网页，
 // 一台设备一行）。**活跃账号**按账号算（同一账号的多台设备只算一个），与设备行数的「活跃设备」是两个
 // 口径，页面底部那行写明了两者的关系。
@@ -29,7 +29,7 @@
 //   node scripts/dev/feedback-report.mjs report.json > report.html
 //   node scripts/dev/feedback-report.mjs < report.json > report.html
 //
-// 正文一律过 escapeHtml——反馈摘要、手机名、邀请码备注都是外部可控字符串。
+// 正文一律过 escapeHtml——反馈摘要、手机名、电脑名都是外部可控字符串。
 
 import { readFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
@@ -71,7 +71,6 @@ const LIMIT = { accounts: 6, devices: 6, recentDays: 7 }
 /// 只有 warn 级要求 owner 动作；`info` 级的自动观察（背离/波动/突增/版本分裂/目标缺口）
 /// 2026-10-17 全部删掉——那些数字在趋势图与表里已经有了，写进「关注」只是把一屏塞满。
 const THRESHOLDS = {
-  inviteLow: 10,        // 邀请码余量 ≤ 这个数提醒补铸
   d7Low: 0.2,           // 7 日留存警戒线
   d7MinCohort: 10,      // 留存样本太小不报警（百分比没意义）
   pushLow: 0.5,         // 推送注册率低于一半要提醒（「待你回应」到不了）
@@ -730,13 +729,14 @@ export function normalize(data) {
       activation: withDefaults(source.retention?.activation, { rate: null, cohort: 0, active: 0 }),
       weeks: Array.isArray(source.retention?.weeks) ? source.retention.weeks : [],
     },
-    invites: withDefaults(source.invites, { minted: 0, used: 0, remaining: 0, enrollments: [] }),
+    // 激活码已取消（2026-11-02 开放登记）：这里只留登记记录，供「登记」板块使用。
+    invites: withDefaults(source.invites, { enrollments: [] }),
   }
 }
 
 /** 「关注」板块的报警。返回 [{key, level, text, streak}]，按重要度排序。
 
-只留**要 owner 动作**的四类（2026-10-17 精简）：待回复反馈、激活码余量、7 日留存越线、
+只留**要 owner 动作**的三类（2026-10-17 精简；激活码余量已于 2026-11-02 移除）：待回复反馈、7 日留存越线、
 推送注册率不足。此前的 info 级自动观察（连接/流量背离、单日波动、新增突增、版本分裂、
 周目标缺口）已删除——那些数字在趋势图与表里已经能看到，堆在最上面只会把小字弄乱。
 
@@ -759,17 +759,6 @@ function attentionItems(report, { completed = false, generatedAt = 0, history = 
     const sla = waitedHours > THRESHOLDS.feedbackSlaHours
       ? `，超过 ${THRESHOLDS.feedbackSlaHours}h 响应 SLA` : ''
     push('warn', `反馈待回复 ${formatInt(open)} 条${waited}${sla}`, 'feedback-open')
-  }
-  // 激活码余量：码发完了新用户进不来，剩 10 张以内就提醒。
-  // 口径优先用 `usable`（未用且未过期）；老服务端没有这个字段时退回 `remaining`。
-  const inviteLeft = num(report.invites.usable ?? report.invites.remaining)
-  if (num(report.invites.minted) > 0 && inviteLeft <= THRESHOLDS.inviteLow) {
-    // 0 张单独成句：这条是"新人现在进不来"，与"快用完了"不是同一件事。
-    push('warn', inviteLeft === 0
-      ? `公开激活码已用完（${formatInt(report.invites.used)}/${formatInt(report.invites.minted)} 已用），新人无法登记`
-      : `公开激活码只剩 ${formatInt(inviteLeft)} 张`
-        + `（${formatInt(report.invites.used)}/${formatInt(report.invites.minted)} 已用），该补铸一批`,
-      'invites-low')
   }
   // 7 日留存越线：样本够才判。
   const d7 = report.retention.d7
@@ -904,27 +893,21 @@ function versionBlock(report, { limit = 6 } = {}) {
   return subheading(`版本分布（近 ${windowHours} 小时活跃）`, '与活跃账号同口径 · 设备按行') + body
 }
 
-/** 激活码情况：还剩几张能用、哪些快到期、最近谁激活了。
+/** 登记情况：每天进来多少人、最近是谁登记的。
 
-为什么单列一块：激活码是这个产品唯一的获客入口，而它有三本账容易混在一起——
-铸了多少（`minted`）、已经激活多少（`used`）、还剩多少**能用**的（`usable`）。
-老口径的 `remaining` 把过期未用的也算了进去，光看它会高估余量。
+为什么单列一块：登记是这个产品唯一的获客入口。邀请码已于 2026-11-02 取消（改为开放
+登记），所以这里不再统计码的余量、到期与作废——那些数字没有对应的事实了。
 */
-function inviteBlock(report, { generatedAt = 0, limit = 6 } = {}) {
-  const invites = report.invites ?? {}
-  const used = num(invites.used)
-  const minted = num(invites.minted)
-  const usable = num(invites.usable ?? invites.remaining)
-  const expiring = num(invites.expiringSoon)
-  const expired = num(invites.expiredUnused)
-  const enrollments = [...(invites.enrollments ?? [])]
+function enrollmentBlock(report, { generatedAt = 0, limit = 6 } = {}) {
+  const enrollments = [...((report.invites ?? {}).enrollments ?? [])]
     .filter((row) => num(row.usedAt) > 0 && num(row.usedAt) <= num(generatedAt))
     .sort((a, b) => num(b.usedAt) - num(a.usedAt))
   const weekAgo = num(generatedAt) - 7 * 86_400_000
-  const activated7d = enrollments.filter((row) => num(row.usedAt) >= weekAgo).length
+  const enrolled7d = enrollments.filter((row) => num(row.usedAt) >= weekAgo).length
+  const enrolled30d = enrollments
+    .filter((row) => num(row.usedAt) >= num(generatedAt) - 30 * 86_400_000).length
 
-  // 消耗趋势：近 14 天每日新增激活。未使用码的明细不再列——owner 2026-10-17 定：
-  // 日报要回答"每天进来多少人"，而不是把还没发出去的码抄一遍。
+  // 趋势：近 14 天每日新增登记。
   const trendDays = 14
   const dayCounts = new Map()
   for (const row of enrollments) {
@@ -936,48 +919,41 @@ function inviteBlock(report, { generatedAt = 0, limit = 6 } = {}) {
     const day = localDayOf(num(generatedAt) - (trendDays - 1 - offset) * 86_400_000)
     return { label: String(day), value: dayCounts.get(day) ?? 0 }
   })
-  const activatedToday = dayCounts.get(today) ?? 0
-  const activated30d = enrollments
-    .filter((row) => num(row.usedAt) >= num(generatedAt) - 30 * 86_400_000).length
   const chips = [
-    `<span class="chip">已激活 ${formatInt(used)}/${formatInt(minted)}</span>`,
-    `<span class="chip${usable <= THRESHOLDS.inviteLow ? ' warn' : ''}">可用 ${formatInt(usable)} 张`
-      + `${usable === 0 ? '（已用完）' : ''}</span>`,
-    expiring > 0 ? `<span class="chip open">7 天内到期 ${formatInt(expiring)} 张</span>` : '',
-    expired > 0 ? `<span class="chip down">已过期未用 ${formatInt(expired)} 张</span>` : '',
-    `<span class="chip">今日激活 ${formatInt(activatedToday)}</span>`,
-    `<span class="chip">近 7 天激活 ${formatInt(activated7d)}</span>`,
-    `<span class="chip">近 30 天激活 ${formatInt(activated30d)}</span>`,
-    // GitHub 的三个计数并进激活码这一排（owner 2026-10-19 定）：两者都是"外部进来多少人"，
-    // 单独占一行没有信息增量。取不到时就不显示，不占位。
-    ...githubChips(report.github),
-  ].filter(Boolean).join('')
+    `<span class="chip">今日登记 ${formatInt(dayCounts.get(today) ?? 0)}</span>`,
+    `<span class="chip">近 7 天登记 ${formatInt(enrolled7d)}</span>`,
+    `<span class="chip">近 30 天登记 ${formatInt(enrolled30d)}</span>`,
+    `<span class="chip">累计登记 ${formatInt(enrollments.length)}</span>`,
+  ].join('')
 
   const recent = enrollments.slice(0, limit).map((row) => ({
     account: text(row.accountName, row.accountId),
     agent: text(row.agentName, row.agentId),
     at: row.usedAt ? shortTime(row.usedAt) : '—',
-    note: text(row.inviteNote, '—'),
   }))
-  // 四列表在手机上会把「公开试用 2026-10-17 知乎」折成四行；两行清单保持同样信息。
   const recentTable = rowList(recent.map((row) => ({
     title: escapeHtml(row.account === row.agent ? row.account : `${row.account} · ${row.agent}`),
-    meta: escapeHtml(`${row.at} 激活 · ${row.note}`),
-  })), '还没有激活记录')
+    meta: escapeHtml(`${row.at} 登记`),
+  })), '还没有登记记录')
   const chart = lineChart({
-    title: '每日激活',
+    title: '每日登记',
     note: `近 ${trendDays} 天`,
     points,
     format: (value) => String(Math.round(value)),
   })
 
-  return subheading('激活码', '可用余量')
+  return subheading('登记', '开放登记 · 无需邀请码')
     + `<div class="chips">${chips}</div>`
-    + (githubChips(report.github).length
-      ? '<p class="meta">GitHub 计数取生成时刻，接口无历史快照，与覆盖日无关</p>'
-      : '')
     + `<div class="gap8"></div>${chart}`
     + `<div class="gap8"></div>${recentTable}`
+}
+
+/// GitHub 的三枚计数放在概览末尾一行：取不到时不占位。
+function githubLine(github) {
+  const chips = githubChips(github)
+  if (!chips.length) return ''
+  return `<div class="chips" style="margin-top:8px">${chips.join('')}</div>`
+    + '<p class="meta">GitHub 计数取生成时刻，接口无历史快照</p>'
 }
 
 /// GitHub 的三枚计数 chip（仓库 star、fork、账号关注者）。没有数据时返回空数组：
@@ -1089,8 +1065,8 @@ function todaySection(report, generatedAt, days, completed = false) {
   return section(word, '概览', completed
     ? `${shortDay(report.today.day)} 自然日 00:00–23:59（已过完）`
     : `自然日 00:00 起 · 截至 ${clock(generatedAt)}`,
-    hero + counts + versionBlock(report)
-    + inviteBlock(report, { generatedAt: completed ? dayEnd : generatedAt }))
+    hero + counts + versionBlock(report) + githubLine(report.github)
+    + enrollmentBlock(report, { generatedAt: completed ? dayEnd : generatedAt }))
 }
 
 
@@ -1101,7 +1077,7 @@ const percent = (ratio) => (ratio === null || ratio === undefined || !Number.isF
 /// 留存率 + 队列人数：只给一个百分比看不出可信度，分母一起写出来。
 const cohortNote = (entry) => (entry && num(entry.cohort) > 0 ? `n=${formatInt(entry.cohort)}` : '样本不足')
 
-/** 留存板块：只算用激活码登记的外部账号（口径与头牌的活跃账号一致）。
+/** 留存板块：只算走登记进来的外部账号（口径与头牌的活跃账号一致）。
     布局只有一段 登记→激活→次日→7 日 的漏斗。各段是各自的队列率（服务端按各自 cohort 算），
     棒长只表达率本身，不做"占上一段的百分之几"的连环换算——那样是把不同分母的率硬接在一起。
     2026-10-17 精简：删掉活跃量三张卡（与头牌重复）与分周队列表、以及每段右侧的目标／上周小字。 */
@@ -1152,7 +1128,7 @@ export function releaseMarkerDays(testflight) {
     `completed` 见 `renderReport`；流量图上的发版日来自 `report.testflight`（ASC 上传记录）。
 
     2026-10-17 精简：删掉窗口六张 KPI 卡（数字与概览、表重复）、每日新增设备柱状图、
-    激活码登记清单、反馈状态栈与占比 chips、以及各段右侧的"前 N 条"小字。 */
+    反馈状态栈与占比 chips、以及各段右侧的"前 N 条"小字。 */
 function rangeSection(report, days, completed = false) {
   const usage = report.usage
   const devices = report.devices
@@ -1258,7 +1234,7 @@ function rangeSection(report, days, completed = false) {
 
   const inner = subheading('趋势') + charts
     + subheading('近 7 天') + recent
-    + subheading('外部账号留存', '激活码登记的外部账号 · 活跃指当天有设备连接') + retentionBlock(report.retention)
+    + subheading('外部账号留存', '按登记日分队列 · 活跃指当天有设备连接') + retentionBlock(report.retention)
     + subheading('账号排名') + accounts
     + subheading('设备', `${formatInt(devices.paired)} 台在册 · 最近在线前 ${Math.min(LIMIT.devices, (devices.list ?? []).length)} 台`) + rowList(deviceRows, '窗口内没有设备')
     // 反馈只给数字（owner 2026-10-19 定）：哪几条、谁提的都不进日报，要看去 App 的反馈页。
@@ -1303,7 +1279,7 @@ export function renderReport(data, { now = Date.now(), history = null } = {}) {
     + ` 版本分布与活跃账号同口径，窗口 48 小时（按用量行的 lastSeenAt 卡）。`
     + ` GitHub 的 star / fork / 关注者取自公开 API（未认证），是生成时刻的值（接口没有历史快照），`
     + `本机缓存 6 小时；取不到时这一行省略。`
-    + ` 其余板块按覆盖日结算：覆盖日之后才配对的设备、才铸或用掉的邀请码、才激活的账号都不进这份报告。`
+    + ` 其余板块按覆盖日结算：覆盖日之后才配对的设备、才登记的账号都不进这份报告。`
   const stampNote = completed
     ? `全天 · ${escapeHtml(clock(generatedAt))} 生成`
     : `${escapeHtml(clock(generatedAt))} 生成`
