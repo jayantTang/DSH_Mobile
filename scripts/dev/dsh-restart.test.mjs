@@ -7,7 +7,8 @@ import {
   DEFAULT_RESUME, parseArgs, readEndpoint as readRequesterEndpoint, stateDir,
 } from './dsh-restart.mjs'
 import {
-  alive, appMainPids, clearStaleSingleton, hostFormOf, launchAppDirect, readEndpoint, resumePayload, stop, waitForNewBackend,
+  alive, appMainPids, clearStaleSingleton, desktopLaunchEnv, hostFormOf, launchAppDirect, launchAppViaOpen,
+  readEndpoint, resumePayload, stop, waitForNewBackend,
 } from './dsh-restart-worker.mjs'
 
 function fixtureHome() {
@@ -223,4 +224,40 @@ test('launchAppDirect starts the app binary with a clean environment', () => {
     delete process.env.NODE_OPTIONS
     rmSync(tmpHome, { recursive: true, force: true })
   }
+})
+
+test('desktopLaunchEnv drops the host-only variables and keeps everything else', () => {
+  const env = desktopLaunchEnv({
+    ELECTRON_RUN_AS_NODE: '1',
+    NODE_OPTIONS: '--trace-warnings',
+    ELECTRON_NO_ATTACH_CONSOLE: '1',
+    PATH: '/usr/bin:/bin',
+    DSH_HOME: '/tmp/dsh',
+  })
+  assert.equal(env.ELECTRON_RUN_AS_NODE, undefined, '留着它应用会当成普通 Node 启动')
+  assert.equal(env.NODE_OPTIONS, undefined)
+  assert.equal(env.ELECTRON_NO_ATTACH_CONSOLE, undefined)
+  assert.equal(env.PATH, '/usr/bin:/bin')
+  assert.equal(env.DSH_HOME, '/tmp/dsh')
+})
+
+test('the open -a fallback hands LaunchServices the same cleaned environment', () => {
+  const calls = []
+  const previous = process.env.ELECTRON_RUN_AS_NODE
+  process.env.ELECTRON_RUN_AS_NODE = '1'
+  try {
+    launchAppViaOpen({
+      log: () => {},
+      run: (bin, args, options) => {
+        calls.push({ bin, args, options })
+      },
+    })
+  } finally {
+    if (previous === undefined) delete process.env.ELECTRON_RUN_AS_NODE
+    else process.env.ELECTRON_RUN_AS_NODE = previous
+  }
+  assert.equal(calls[0].bin, 'open')
+  assert.deepEqual(calls[0].args, ['-a', 'DeepSeek Harness'])
+  assert.equal(calls[0].options.env.ELECTRON_RUN_AS_NODE, undefined, 'open 会把调用者环境原样传下去')
+  assert.notEqual(calls[0].options.env, process.env, '不能就地改本进程的环境')
 })

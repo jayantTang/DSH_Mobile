@@ -64,26 +64,49 @@ export function appLogPaths(home = HOME) {
 }
 
 /**
+ * 启动官方桌面版时必须从环境里摘掉的变量。
+ *
+ * 我们（重启脚本、以及任何从 DSH 宿主里发起的命令）跑在 Electron 宿主里，环境里有
+ * `ELECTRON_RUN_AS_NODE=1`。它一旦传给应用二进制——不论走直接 spawn 还是走 `open -a`
+ * ——应用就当成普通 Node 启动，解析不到 `main.js` 就**静默退出 0**：没有窗口、没有崩溃
+ * 报告、没有诊断文件，用户看到的就是"桌面版打不开"。2026-11-01 那次误以为插件把桌面版
+ * 搞崩了，实际是 `kill -9` 之后用带这个变量的 shell 重新 `open -a`，应用起来就没了。
+ */
+const HOST_ONLY_ENV = ['ELECTRON_RUN_AS_NODE', 'NODE_OPTIONS', 'ELECTRON_NO_ATTACH_CONSOLE']
+
+/** 给应用二进制的环境：本进程环境的副本，去掉宿主专用的那几个变量。 */
+export function desktopLaunchEnv(base = process.env) {
+  const env = { ...base }
+  for (const name of HOST_ONLY_ENV) delete env[name]
+  return env
+}
+
+/**
  * 直接启动应用二进制（绕开 LaunchServices）。
  *
  * 为什么要绕：`open -a` 走 LaunchServices，而应用刚退出时新实例会被 spawn 出来又在 ~60ms 内
  * 被回收（系统日志实测；重试还会把等待越拖越长，第六次 7 次请求共 93 秒）。直接起进程不经过
  * 那套节流，同时能把 stdout/stderr 和应用自己的诊断文件抓下来。
- *
- * 环境必须**清干净**：我们跑在 Electron 宿主里，环境里有 `ELECTRON_RUN_AS_NODE=1`，
- * 原样传给应用二进制会让它当成普通 Node 启动（不是应用）。
  */
 export function launchAppDirect({ log = () => {}, home = HOME, spawnFn = spawn } = {}) {
   const { appLog, diagnostic } = appLogPaths(home)
-  const env = { ...process.env, DSH_DESKTOP_DIAGNOSTIC_FILE: diagnostic }
-  delete env.ELECTRON_RUN_AS_NODE
-  delete env.NODE_OPTIONS
-  delete env.ELECTRON_NO_ATTACH_CONSOLE
+  const env = desktopLaunchEnv({ ...process.env, DSH_DESKTOP_DIAGNOSTIC_FILE: diagnostic })
   const out = openSync(appLog, 'a')
   const child = spawnFn(APP_BINARY_PATH, [], { detached: true, stdio: ['ignore', out, out], env })
   child.unref()
   log(`直接启动应用二进制 pid=${child.pid}（日志 ${appLog}，诊断 ${diagnostic}）`)
   return child.pid
+}
+
+/**
+ * 备用启动路径：让 LaunchServices 打开应用。
+ *
+ * 环境同样要清（见 {@link HOST_ONLY_ENV}）——`open` 会把调用者的环境原样交给被启动的应用，
+ * 不清就等于用 Node 起了一个"应用"，起完即退。
+ */
+export function launchAppViaOpen({ log = () => {}, run = execFileSync } = {}) {
+  run('open', ['-a', 'DeepSeek Harness'], { stdio: 'ignore', env: desktopLaunchEnv() })
+  log('经 LaunchServices 打开应用（已清理宿主环境）')
 }
 
 
@@ -242,7 +265,7 @@ async function relaunchUntilBackend({ log = () => {}, previousPid, timeoutMs = 1
         }
       } else {
         try {
-          execFileSync('open', ['-a', 'DeepSeek Harness'], { stdio: 'ignore' })
+          launchAppViaOpen({ log })
         } catch (error) {
           log(`open -a 失败：${error.message}`)
         }
