@@ -193,6 +193,11 @@ export function pairCodeRegenerateEndpoint(relayUrl) {
   return joinRelayPath(normalizeRelayUrl(relayUrl).httpBase, 'pair/code/regenerate')
 }
 
+/** List every paired device for this agent (`GET /devices`, agent secret). */
+export function deviceListEndpoint(relayUrl) {
+  return joinRelayPath(normalizeRelayUrl(relayUrl).httpBase, 'devices')
+}
+
 /** Revoke one paired device for this agent (`POST /devices/revoke`, agent secret). */
 export function deviceRevokeEndpoint(relayUrl) {
   return joinRelayPath(normalizeRelayUrl(relayUrl).httpBase, 'devices/revoke')

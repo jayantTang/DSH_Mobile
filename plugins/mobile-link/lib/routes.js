@@ -120,6 +120,7 @@ export function registerMobileLinkRoutes(ctx, { agent, logger, config = {}, hist
   const STATUS_ROUTE = '/mobile-link/status'
   const ENROLL_ROUTE = '/mobile-link/enroll'
   const REVOKE_ROUTE = '/mobile-link/devices/revoke'
+  const DEVICES_ROUTE = '/mobile-link/devices'
   const PAIR_ROUTE = '/mobile-link/pair-code'
   const REGENERATE_ROUTE = '/mobile-link/pair-code/regenerate'
   const disposers = []
@@ -199,6 +200,30 @@ export function registerMobileLinkRoutes(ctx, { agent, logger, config = {}, hist
           logger.warn?.(`mobile-link: panel enrollment failed: ${String(error?.message ?? error)}`)
         }
         sendJson(res, status, { ok: false, code, message: String(error?.message ?? error) })
+      }
+    },
+  }))
+
+  disposers.push(ctx.webServer.register({
+    kind: 'exact',
+    path: DEVICES_ROUTE,
+    handler: async (req, res) => {
+      if (guard(req, res, { requireFence: true })) return
+      if (req.method !== 'GET') {
+        res.statusCode = 405
+        res.setHeader('allow', 'GET')
+        res.end()
+        return
+      }
+      try {
+        const result = await agent.listPairedDevices()
+        sendJson(res, 200, { ok: true, ...result })
+      } catch (error) {
+        sendJson(res, 502, {
+          ok: false,
+          code: 'devices/list-failed',
+          message: String(error?.message ?? error),
+        })
       }
     },
   }))

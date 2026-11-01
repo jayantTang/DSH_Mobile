@@ -1631,3 +1631,27 @@ test('revokeDevice surfaces relay refusals and rejects an empty id', async () =>
   })
   await assert.rejects(() => agent.revokeDevice('dev_1'), /another agent/)
 })
+
+test('listPairedDevices uses the agent secret and keeps offline rows', async () => {
+  const { agent } = makeAgent()
+  const calls = []
+  agent.fetchImpl = async (url, init) => {
+    calls.push({ url, init })
+    return {
+      ok: true, status: 200,
+      json: async () => ({
+        ok: true, currentDeviceId: '', maxPairedDevices: 8, pairedDevices: 2,
+        devices: [
+          { deviceId: 'dev_1', name: 'iPhone', model: 'iPhone15,4', lastSeenAt: 1 },
+          { deviceId: 'dev_2', name: 'DSH-Test', model: 'arm64', lastSeenAt: 2 },
+        ],
+      }),
+    }
+  }
+  const result = await agent.listPairedDevices()
+  assert.equal(result.pairedDevices, 2)
+  assert.equal(result.maxPairedDevices, 8)
+  assert.deepEqual(result.devices.map((device) => device.deviceId), ['dev_1', 'dev_2'])
+  assert.equal(calls[0].url, 'http://relay.test/devices')
+  assert.equal(calls[0].init.headers.authorization, 'Bearer as_1')
+})

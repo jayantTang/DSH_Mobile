@@ -11,6 +11,7 @@
 /** 路由用相对路径：宿主把插件路由挂在同一个源上。 */
 const STATUS_ROUTE = 'mobile-link/status'
 const ENROLL_ROUTE = 'mobile-link/enroll'
+const DEVICES_ROUTE = 'mobile-link/devices'
 const REVOKE_ROUTE = 'mobile-link/devices/revoke'
 const PAIR_ROUTE = 'mobile-link/pair-code'
 const REGENERATE_ROUTE = 'mobile-link/pair-code/regenerate'
@@ -27,6 +28,8 @@ const GITHUB_URL = 'https://github.com/jayantTang/DSH_Mobile'
 const TESTFLIGHT_URL = 'https://testflight.apple.com/join/tHKQsbCk'
 /** 小窗打开时的状态轮询间隔；关闭时只为让侧栏状态点别停在旧值上。 */
 const OPEN_POLL_MS = 2500
+/** 已配对设备全量列表的刷新间隔；在线状态仍由 /status 的 2.5 秒轮询负责。 */
+const PAIRED_POLL_MS = 10000
 const IDLE_POLL_MS = 20000
 /** 剩余寿命低于这个值就换一张：只剩几秒的码，扫它失败的原因用户看不见。 */
 const CODE_FLOOR_MS = 60 * 1000
@@ -215,6 +218,33 @@ function deviceSummary(devices) {
   const online = list.filter((device) => device.offlineSince === null || device.offlineSince === undefined).length
   return online === list.length ? `${online} 台在线` : `${online} 台在线，共 ${list.length} 台`
 }
+/** 全量已配对设备 + /status 的在线标记；离线设备也要有行。 */
+function pairedRows(state) {
+  const rows = new Map()
+  for (const device of Array.isArray(state.pairedDevices) ? state.pairedDevices : []) {
+    if (device?.deviceId) rows.set(device.deviceId, { ...device })
+  }
+  for (const device of Array.isArray(state.status?.devices) ? state.status.devices : []) {
+    if (!device?.deviceId) continue
+    const existing = rows.get(device.deviceId) ?? {}
+    rows.set(device.deviceId, { ...existing, ...device })
+  }
+  const online = new Set((state.status?.devices ?? [])
+    .filter((device) => device.offlineSince === null || device.offlineSince === undefined)
+    .map((device) => device.deviceId))
+  return [...rows.values()].map((device) => ({ ...device, online: online.has(device.deviceId) }))
+}
+function pairedTotal(state) {
+  if (typeof state.pairedCount === 'number') return state.pairedCount
+  if (Array.isArray(state.pairedDevices)) return state.pairedDevices.length
+  return Array.isArray(state.status?.devices) ? state.status.devices.length : 0
+}
+function deviceSummaryOf(state) {
+  const total = pairedTotal(state)
+  if (total === 0) return '暂无已配对设备'
+  const online = pairedRows(state).filter((device) => device.online).length
+  return online === total ? `${total} 台在线` : `${online} 台在线，共 ${total} 台已配对`
+}
 function clockText(expiresAt) {
   const date = new Date(Number(expiresAt))
   const pad = (value) => String(value).padStart(2, '0')
@@ -241,6 +271,11 @@ function createPanel() {
       enrolling: false,
       enrollDraft: { relay: '', relayTouched: false },
       enrollError: null,
+      pairedDevices: null,
+      pairedMax: null,
+      pairedCount: null,
+      pairedError: null,
+      pairedBusy: false,
       revokeTarget: null,
       revoking: false,
       revokeError: null,
@@ -266,6 +301,38 @@ async function loadStatus(panel) {
     return undefined
   }
 }
+/**
+ * 读中转上的全部已配对设备（含离线）。/status 里的 devices 只含当前接上的，
+ * 单看它会把离线设备藏起来，导致“已配对 2/8”却只列出一台。二者在这里合并：
+ * 全量列表决定行与配额，/status 决定在线标记。
+ */
+async function loadPairedDevices(panel) {
+  if (panel.disposed) return
+  const status = panel.store.get().status
+  if (!status || needsEnroll(status)) {
+    panel.store.set({ pairedDevices: null, pairedCount: null, pairedMax: null, pairedError: null })
+    return
+  }
+  panel.store.set({ pairedBusy: true })
+  try {
+    const body = await requestJson(DEVICES_ROUTE, { method: 'GET' })
+    if (panel.disposed) return
+    panel.store.set({
+      pairedDevices: Array.isArray(body.devices) ? body.devices : [],
+      pairedCount: body.pairedDevices ?? null,
+      pairedMax: body.maxPairedDevices ?? null,
+      pairedError: null,
+      pairedBusy: false,
+    })
+  } catch (error) {
+    if (panel.disposed) return
+    panel.store.set({
+      pairedError: '无法读取全部已配对设备。',
+      pairedBusy: false,
+    })
+  }
+}
+
 /**
  * 取一张码。
  *
@@ -334,6 +401,13 @@ function tick(panel) {
     panel.lastStatusAt = now
     void loadStatus(panel)
   }
+  if (now - (panel.lastPairedAt ?? 0) >= PAIRED_POLL_MS
+      && !panel.store.get().pairedBusy
+      && panel.store.get().status
+      && !needsEnroll(panel.store.get().status)) {
+    panel.lastPairedAt = now
+    void loadPairedDevices(panel)
+  }
   // 持久码不因时间换码（032）：只有用户点「重新生成」才换。限时码（老中转/老调用方）
   // 仍然按原来的规则在快过期时换一张，免得把一张马上就要失效的码摆在屏幕上。
   const state = panel.store.get()
@@ -357,6 +431,7 @@ function openPanel(panel) {
   void loadStatus(panel).then((status) => {
     if (!panel.disposed && status?.connected === true && !needsEnroll(status)) {
       void refreshCode(panel)
+      void loadPairedDevices(panel)
     }
   })
 }
@@ -499,6 +574,7 @@ async function submitEnroll(panel) {
     const next = await loadStatus(panel)
     if (!panel.disposed && next?.connected === true && !needsEnroll(next)) {
       void refreshCode(panel)
+      void loadPairedDevices(panel)
     }
   } catch (error) {
     if (panel.disposed) return
@@ -536,6 +612,7 @@ async function confirmRevoke(panel) {
     if (panel.disposed) return
     panel.store.set({ revoking: false, revokeTarget: null, revokeError: null })
     await loadStatus(panel)
+    await loadPairedDevices(panel)
   } catch (error) {
     if (panel.disposed) return
     panel.store.set({
@@ -571,7 +648,7 @@ function createController() {
     toggleError: () => panel.store.set({ showError: !panel.store.get().showError }),
     enroll: () => submitEnroll(panel),
     setEnrollField: (field, value) => setEnrollField(panel, field, value),
-    reloadStatus: () => { void loadStatus(panel) },
+    reloadStatus: () => { void loadStatus(panel).then(() => loadPairedDevices(panel)) },
     requestRevoke: (device) => requestRevoke(panel, device),
     cancelRevoke: () => cancelRevoke(panel),
     confirmRevoke: () => { void confirmRevoke(panel) },
@@ -615,7 +692,7 @@ function statusSection(React, ui, state) {
       ? row(React, '中转服务器', state.status.relayUrl ?? '—', true)
       : null,
     state.status && !needsEnroll(state.status)
-      ? row(React, '设备', deviceSummary(state.status.devices))
+      ? row(React, '设备', deviceSummaryOf(state))
       : null)
 }
 /** 官方 Input 在旧宿主可能不存在；没有就用原生 input，表单不会因此消失。 */
@@ -727,7 +804,8 @@ function codeSection(React, controller, ui, state) {
       children.push(React.createElement('div', { className: 'dsh-mobile-link-count', key: 'count' },
         React.createElement('span', null,
           `长期有效直到重新生成${code.maxPairedDevices
-            ? `（已配对 ${code.pairedDevices ?? 0}/${code.maxPairedDevices}）` : ''}`)))
+            ? `（已配对 ${state.pairedCount ?? (Array.isArray(state.pairedDevices)
+              ? state.pairedDevices.length : (code.pairedDevices ?? 0))}/${code.maxPairedDevices}）` : ''}`)))
     } else {
       const remaining = Math.max(0, code.expiresAt - state.now)
       const percent = Math.max(0, Math.min(100, (remaining / (code.ttlMs || CODE_TTL_MS)) * 100))
@@ -757,8 +835,7 @@ function codeSection(React, controller, ui, state) {
   children.push(React.createElement('div', { className: 'dsh-mobile-link-actions', key: 'actions' }, buttons))
   return React.createElement('div', { className: 'dsh-mobile-link-card' }, children)
 }
-function deviceRow(React, ui, device, controller) {
-  const online = device.offlineSince === null || device.offlineSince === undefined
+function deviceRow(React, ui, device, online, controller) {
   const meta = [device.model, clientLabel(device.client)].filter(Boolean).join(' · ')
   return React.createElement('div', { className: 'dsh-mobile-link-device', key: device.deviceId ?? device.name },
     React.createElement(ui.StateDot, { state: online ? 'done' : 'idle' }),
@@ -773,14 +850,18 @@ function deviceRow(React, ui, device, controller) {
       onClick: () => controller.requestRevoke(device),
     }, '撤销'))
 }
-function devicesSection(React, ui, status, controller) {
-  const devices = Array.isArray(status?.devices) ? status.devices : []
+function devicesSection(React, ui, state, controller) {
+  const devices = pairedRows(state)
   const rows = devices.length === 0
     ? [React.createElement('div', { className: 'dsh-mobile-link-note', key: 'none' }, '暂无已配对设备。')]
-    : devices.map((device) => deviceRow(React, ui, device, controller))
+    : devices.map((device) => deviceRow(React, ui, device, device.online, controller))
   return React.createElement('div', { className: 'dsh-mobile-link-section' },
     React.createElement('div', { className: 'dsh-mobile-link-section-title' }, '已配对设备'),
-    React.createElement('div', { className: 'dsh-mobile-link-devices' }, rows))
+    React.createElement('div', { className: 'dsh-mobile-link-devices' }, rows),
+    state.pairedError
+      ? React.createElement('div', { className: 'dsh-mobile-link-note dsh-mobile-link-error' },
+        state.pairedError)
+      : null)
 }
 /** 最近一次失败：平时收起来。 */
 function errorSection(React, controller, ui, status, open) {
@@ -860,7 +941,7 @@ function panelBody(React, controller, ui, state) {
   children.push(codeSection(React, controller, ui, state))
   children.push(githubSection(React))
   children.push(iosLinkSection(React, controller))
-  children.push(devicesSection(React, ui, state.status, controller))
+  children.push(devicesSection(React, ui, state, controller))
   const error = errorSection(React, controller, ui, state.status, state.showError)
   if (error) children.push(error)
   if (state.revokeTarget) children.push(revokeOverlay(React, ui, state, controller))

@@ -582,6 +582,36 @@ func TestDevicesListAndRevoke(t *testing.T) {
 	assertEnvelope(t, missing, http.StatusBadRequest, "request/device-id")
 }
 
+func TestAgentSecretCanListOwnDevices(t *testing.T) {
+	api := newTestAPI(t)
+	tenant := api.newTenant("连接器列表")
+	first := api.pairDevice(tenant, "BLACKBOX-online", "")
+	second := api.pairDevice(tenant, "BLACKBOX-offline", "")
+
+	listed := api.do(http.MethodGet, "/devices", nil, tenant.secret)
+	if listed.Code != http.StatusOK {
+		t.Fatalf("agent secret 列表失败: %d %s", listed.Code, listed.Body.String())
+	}
+	body := decodeJSON(t, listed)
+	if body["currentDeviceId"] != "" {
+		t.Fatalf("agent secret 没有 currentDeviceId: %v", body["currentDeviceId"])
+	}
+	if body["pairedDevices"] != float64(2) {
+		t.Fatalf("pairedDevices = %v", body["pairedDevices"])
+	}
+	rows, ok := body["devices"].([]any)
+	if !ok || len(rows) != 2 {
+		t.Fatalf("devices = %v", body["devices"])
+	}
+	ids := map[string]bool{}
+	for _, raw := range rows {
+		ids[raw.(map[string]any)["deviceId"].(string)] = true
+	}
+	if !ids[first["deviceId"].(string)] || !ids[second["deviceId"].(string)] {
+		t.Fatalf("agent secret 列表缺设备: %v", ids)
+	}
+}
+
 func TestAgentSecretCanRevokeOwnDevice(t *testing.T) {
 	api := newTestAPI(t)
 	tenant := api.newTenant("连接器撤销")

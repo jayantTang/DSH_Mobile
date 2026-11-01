@@ -119,7 +119,7 @@ const HEALTHY_STATUS = {
 function makeFetch({ status = HEALTHY_STATUS, failStatus = false, failCode = false,
                      ttlMs = null, maxPairedDevices = 8, pairedDevices = 0,
                      failEnroll = null, onEnroll = null, enrollBody = {},
-                     failRevoke = false } = {}) {
+                     failRevoke = false, deviceList = null } = {}) {
   const calls = []
   let mints = 0
   const impl = async (path, init) => {
@@ -132,6 +132,12 @@ function makeFetch({ status = HEALTHY_STATUS, failStatus = false, failCode = fal
     if (String(path).includes('devices/revoke')) {
       if (failRevoke) return json({ ok: false, code: 'devices/revoke-failed', message: 'relay said no' })
       return json({ ok: true, deviceId: JSON.parse(init?.body ?? '{}').deviceId })
+    }
+    if (String(path).includes('mobile-link/devices')) {
+      const devices = deviceList ?? status.devices ?? []
+      return json({
+        ok: true, devices, maxPairedDevices, pairedDevices: devices.length,
+      })
     }
     if (String(path).includes('enroll')) {
       if (failEnroll) {
@@ -972,4 +978,38 @@ test('the iOS guide is reachable from the registered panel and only offers TestF
 test('the dialog is 500px wide and the command stays on one line', () => {
   assert.match(SOURCE, /width:min\(500px,94vw\)/)
   assert.match(SOURCE, /white-space:nowrap;overflow-x:auto/)
+})
+
+test('the panel lists offline paired devices so the count and rows agree', async () => {
+  const status = {
+    ...HEALTHY_STATUS,
+    deviceCount: 1,
+    devices: [{
+      deviceId: 'dev_1', name: 'iPhone', model: 'iPhone 15 Pro',
+      client: { label: 'DSHMobile 1.0' }, offlineSince: null,
+    }],
+  }
+  const deviceList = [
+    { deviceId: 'dev_1', name: 'iPhone', model: 'iPhone 15 Pro', lastSeenAt: 1 },
+    { deviceId: 'dev_2', name: 'DSH-Test', model: 'arm64', lastSeenAt: 2 },
+  ]
+  const { document } = makeDom()
+  const fetch = makeFetch({ status, deviceList })
+  const { api } = loadBundle({ document, fetchImpl: fetch.impl })
+  const { ctx, state } = makeCtx()
+  api.apply(ctx)
+  await flush()
+  const { entry, panel } = components(state)
+  render(entry.component({})).props.onClick()
+  await flush()
+  await flush()
+
+  const tree = render(panel.component({}))
+  const markup = JSON.stringify(tree)
+  assert.match(markup, /已配对 2\/8/)
+  assert.match(markup, /DSH-Test/, '离线设备也要有行，不能只显示在线那台')
+  assert.match(markup, /离线/)
+  const rows = findByClass(tree, 'dsh-mobile-link-devices')
+  assert.ok(rows)
+  assert.equal((JSON.stringify(rows).match(/dsh-mobile-link-device"/g) ?? []).length, 2)
 })

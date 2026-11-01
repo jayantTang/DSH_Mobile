@@ -65,25 +65,38 @@ type devicesListResponse struct {
 //
 // 用设备令牌鉴权而不是运维凭据：手机要能看和管理自己的配对，但看不到别人的。
 func (s *server) handleDevicesList(w http.ResponseWriter, r *http.Request) {
-	device, ok, err := authn.DeviceFromBearer(r.Context(), s.store, r)
+	// 设备令牌与 agent secret 都能列：手机看自己的设备，连接器面板看它名下的
+	// 全部已配对设备（包括暂时离线的）。两条凭据的归属校验沿用同一个 agentId。
+	device, deviceOK, err := authn.DeviceFromBearer(r.Context(), s.store, r)
 	if err != nil {
 		apierr.WriteStoreError(w, r, s.log(), store.IsBusy, err,
 			"internal/error", "the relay could not complete this request")
 		return
 	}
-	if !ok {
-		writeError(w, http.StatusUnauthorized, "auth/invalid-token",
-			"a valid device token is required", nil)
+	agent, agentOK, err := authn.AgentFromBearer(r.Context(), s.store, r)
+	if err != nil {
+		apierr.WriteStoreError(w, r, s.log(), store.IsBusy, err,
+			"internal/error", "the relay could not complete this request")
 		return
+	}
+	if !deviceOK && !agentOK {
+		writeError(w, http.StatusUnauthorized, "auth/invalid-token",
+			"a valid device token or agent secret is required", nil)
+		return
+	}
+	agentID, accountID := agent.AgentID, agent.AccountID
+	currentDeviceID := ""
+	if deviceOK {
+		agentID, accountID, currentDeviceID = device.AgentID, device.AccountID, device.DeviceID
 	}
 
-	devices, err := s.store.ListDevices(r.Context(), device.AgentID, false)
+	devices, err := s.store.ListDevices(r.Context(), agentID, false)
 	if err != nil {
 		apierr.WriteStoreError(w, r, s.log(), store.IsBusy, err,
 			"internal/error", "the relay could not complete this request")
 		return
 	}
-	paired, err := s.store.CountPairedDevices(r.Context(), device.AccountID)
+	paired, err := s.store.CountPairedDevices(r.Context(), accountID)
 	if err != nil {
 		apierr.WriteStoreError(w, r, s.log(), store.IsBusy, err,
 			"internal/error", "the relay could not complete this request")
@@ -99,7 +112,7 @@ func (s *server) handleDevicesList(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writeJSON(w, http.StatusOK, devicesListResponse{
-		OK: true, CurrentDeviceID: device.DeviceID,
+		OK: true, CurrentDeviceID: currentDeviceID,
 		MaxPairedDevices: s.maxPairedDevices, PairedDevices: paired, Devices: rows,
 	})
 }

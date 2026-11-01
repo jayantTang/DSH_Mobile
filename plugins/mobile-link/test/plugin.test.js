@@ -111,7 +111,7 @@ test('the plugin advertises no required services', () => {
 test('apply registers every route through ctx.inject and starts the agent', () => {
   const { ctx, routes, effects, injected } = fakeContext()
   plugin.apply(ctx, BASE_CONFIG)
-  assert.deepEqual([...routes.keys()].sort(), ['/mobile-link/devices/revoke', '/mobile-link/enroll', '/mobile-link/pair-code', '/mobile-link/pair-code/regenerate', '/mobile-link/status'])
+  assert.deepEqual([...routes.keys()].sort(), ['/mobile-link/devices', '/mobile-link/devices/revoke', '/mobile-link/enroll', '/mobile-link/pair-code', '/mobile-link/pair-code/regenerate', '/mobile-link/status'])
   // `sessionQuery` is injected **optionally**: history reads fall back to
   // `session/page` when the Host does not have the service (spec 007 FR-002).
   // `jobs` / `sessions` 同理（spec 018）：缺了活动名单回 `link/unsupported`，
@@ -211,6 +211,11 @@ test('wrong HTTP methods get a 405 with Allow', async () => {
   await routes.get('/mobile-link/devices/revoke').handler(fakeRequest('GET'), revoke)
   assert.equal(revoke.statusCode, 405)
   assert.equal(revoke.headers.allow, 'POST')
+
+  const devices = fakeResponse()
+  await routes.get('/mobile-link/devices').handler(fakeRequest('POST', {}), devices)
+  assert.equal(devices.statusCode, 405)
+  assert.equal(devices.headers.allow, 'GET')
 })
 
 // ── POST /mobile-link/pair-code ────────────────────────────────────────────
@@ -395,6 +400,36 @@ test('POST /mobile-link/enroll requires a relay but no invite code', async () =>
   assert.equal(seen.relayUrl, 'wss://relay.test/dsh-link')
 })
 
+// ── GET /mobile-link/devices ──────────────────────────────────────────────
+
+async function withDeviceList(stub, fn) {
+  const original = plugin.MobileLinkAgent.prototype.listPairedDevices
+  plugin.MobileLinkAgent.prototype.listPairedDevices = stub
+  try {
+    return await fn()
+  } finally {
+    plugin.MobileLinkAgent.prototype.listPairedDevices = original
+  }
+}
+
+test('GET /mobile-link/devices returns the full paired roster', async () => {
+  const { ctx, routes } = fakeContext()
+  plugin.apply(ctx, BASE_CONFIG)
+  const res = fakeResponse()
+  await withDeviceList(async () => ({
+    devices: [{ deviceId: 'dev_1', name: 'iPhone' }, { deviceId: 'dev_2', name: 'DSH-Test' }],
+    maxPairedDevices: 8,
+    pairedDevices: 2,
+  }), async () => {
+    await routes.get('/mobile-link/devices').handler(fakeRequest('GET'), res)
+  })
+  assert.equal(res.statusCode, 200)
+  const body = JSON.parse(res.body)
+  assert.equal(body.ok, true)
+  assert.equal(body.pairedDevices, 2)
+  assert.equal(body.devices.length, 2)
+})
+
 // ── POST /mobile-link/devices/revoke ───────────────────────────────────────
 
 async function withRevoke(stub, fn) {
@@ -479,13 +514,13 @@ test('the status snapshot carries the host form the plugin set', () => {
 test('with no connection service the routes stay registered and the privileged ones fail closed', async () => {
   const { ctx, routes } = fakeContext({ fence: 'missing' })
   assert.doesNotThrow(() => plugin.apply(ctx, BASE_CONFIG))
-  assert.equal(routes.size, 5, 'connection 缺失不该让路由消失')
+  assert.equal(routes.size, 6, 'connection 缺失不该让路由消失')
 
   const status = fakeResponse()
   await routes.get('/mobile-link/status').handler(fakeRequest('GET'), status)
   assert.equal(status.statusCode, 200, '/status 是诊断用的，栅栏缺失时仍要能读')
 
-  for (const path of ['/mobile-link/devices/revoke', '/mobile-link/enroll', '/mobile-link/pair-code', '/mobile-link/pair-code/regenerate']) {
+  for (const path of ['/mobile-link/devices', '/mobile-link/devices/revoke', '/mobile-link/enroll', '/mobile-link/pair-code', '/mobile-link/pair-code/regenerate']) {
     const pair = fakeResponse()
     await routes.get(path).handler(fakeRequest('POST', {}), pair)
     assert.equal(pair.statusCode, 403, `${path} 必须失败关闭`)

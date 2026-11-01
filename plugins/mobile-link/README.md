@@ -109,8 +109,9 @@ attached, and whether this computer is registered yet. Its `enroll` block also
 carries `panel` (this connector can enroll from the DSH panel), `relayPrefill`
 and `relayLocked` (the address to prefill and whether it came from config).
 `POST /mobile-link/enroll` performs that enrollment (relay only; the invite code is optional); it returns the agent id and
-name, never `agentSecret`, and is behind the same DSH request fence as pairing. `POST /mobile-link/devices/revoke`
-revokes one paired device by `deviceId` through the relay, also behind the fence; it returns only the id. Its `journal` block carries
+name, never `agentSecret`, and is behind the same DSH request fence as pairing. `GET /mobile-link/devices` lists the full paired roster (including offline) for the panel, and
+`POST /mobile-link/devices/revoke` revokes one paired device by `deviceId` through the relay; both are behind
+the fence and authenticated with the agent secret. Its `journal` block carries
 the current process's newest lifecycle events (link opened/closed with the reason,
 device attached/detached); the counters in it reset when the plugin hot-reloads, so
 the full history — across restarts — is the JSONL file at `journal.path`.

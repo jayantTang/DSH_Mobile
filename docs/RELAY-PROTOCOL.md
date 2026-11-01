@@ -53,7 +53,7 @@ Relay 只做两件事：**鉴权**与**按 `agentId` 转发**。它不解析 DLP
 | `POST` | `/internal/account-state/touch` | **仅回环**：信件服务已读落库后，让中转替它向同账户设备扇一声"去看看信件" |
 | `POST` | `/dsh-link/feedback/{submit,inbox,append,read,notice}` | 信件端点，由**独立信件服务**（非中转）应答，见 §2.3 |
 | `POST` | `/agents/enroll` | 自助登记，换 `agentId` / `agentSecret`；默认开放，邀请码可选 |
-| `GET`  | `/devices` | 用 device token 列出**自己的**配对设备 |
+| `GET`  | `/devices` | 用 device token 或 agent secret 列出**自己的**配对设备（含离线；`currentDeviceId` 仅设备令牌时有值） |
 | `POST` | `/devices/revoke` | 用 device token 或 agent secret 撤销该电脑名下的某台配对设备 |
 | `OPTIONS` | `*` | CORS 预检 |
 

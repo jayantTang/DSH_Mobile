@@ -25,7 +25,7 @@
 | 配对码 | 中转 `POST /pair/code` 签发；**不带 `ttlMs`（或给 `null`）是持久码**（一直有效，直到用户点「重新生成」），显式带 `ttlMs` 才是限时码（老连接器走这条）；连接器 `/mobile-link/pair-code` 取用，手机 `/pair/claim` 兑换 |
 | 二维码 | 连接器 `POST /mobile-link/pair-code` 一次返回码、payload 与图案（`dsh://pair?relay=…&code=…`）；DSH 界面左下角「移动端连接」小窗展示它，App 扫码或手输配对码。小窗**复用同一张持久码**，只有用户点「重新生成」（`POST /pair/code/regenerate`）才换码，换码不作废已配对设备（spec 010 / 032）。旧的浏览器页面 `GET /mobile-link/qr` 已删除 |
 | 设备令牌 | 已签发，按 agent 归属，长期有效并随 `/pair/refresh` 轮换 |
-| 设备管理 | 中转 `GET /devices`、`POST /devices/revoke` + `dsh-relay admin device-list`；App 设置页与连接器「移动端连接」面板都可撤销设备（面板用 agent secret 调同一个撤销端点） |
+| 设备管理 | 中转 `GET /devices`、`POST /devices/revoke` + `dsh-relay admin device-list`；App 设置页与连接器「移动端连接」面板都可撤销设备（面板用 agent secret 调同一组端点；`GET /devices` 也接受 agent secret，返回含离线设备的全量列表） |
 | 直连入口 | App 连接页**已去掉**，只保留中转配对；`dsh://direct` 仅 DEBUG 参数 |
 
 **登记入口**：`POST /agents/enroll` 默认开放登记，不需要邀请码；中转按来源做预算

@@ -7,7 +7,7 @@
 import { EventEmitter } from 'node:events'
 
 import { DshClient } from './dsh-client.js'
-import { agentEndpoint, decodeFrame, deviceRevokeEndpoint, encodeFrameChecked, isPlaceholderRelayUrl, nextBackoff, normalizeRelayUrl, pongFor } from './dlp.js'
+import { agentEndpoint, decodeFrame, deviceListEndpoint, deviceRevokeEndpoint, encodeFrameChecked, isPlaceholderRelayUrl, nextBackoff, normalizeRelayUrl, pongFor } from './dlp.js'
 
 /**
  * 进程级登记表：**同一个进程里只允许有一条到中转的 agent 连接**。
@@ -498,6 +498,39 @@ export class MobileLinkAgent extends EventEmitter {
       if (!this._loopActive && !this._stopping) this.#launch()
     }
     return settled
+  }
+
+  /**
+   * List every paired device for this agent, including ones that are offline.
+   * The router only knows attached devices; the panel needs the full roster so
+   * "已配对 N/M" and the visible rows describe the same set.
+   */
+  async listPairedDevices() {
+    const identity = this.identity ?? await resolveIdentity(this.config)
+    let response
+    try {
+      response = await this.fetchImpl(deviceListEndpoint(identity.relayUrl), {
+        method: 'GET',
+        headers: { authorization: `Bearer ${identity.agentSecret}` },
+        signal: AbortSignal.timeout?.(15_000),
+      })
+    } catch (error) {
+      throw new Error(`mobile-link: cannot reach the relay to list devices: ${messageOf(error)}`)
+    }
+    let body
+    try {
+      body = await response.json()
+    } catch {
+      throw new Error(`mobile-link: the relay answered HTTP ${response.status} to /devices`)
+    }
+    if (!response.ok || body?.ok !== true) {
+      throw new Error(body?.error?.message ?? `mobile-link: the relay rejected the device list (HTTP ${response.status})`)
+    }
+    return {
+      devices: Array.isArray(body.devices) ? body.devices : [],
+      maxPairedDevices: body.maxPairedDevices ?? null,
+      pairedDevices: body.pairedDevices ?? null,
+    }
   }
 
   /**
