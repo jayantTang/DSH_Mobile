@@ -35,7 +35,7 @@ notices*).
 - **Authentication and forwarding only.** It sees metadata for each encrypted channel (which
   computer, which device, frame types) and, as the TLS endpoint, the frames it forwards.
 - **No conversation history is kept.** What is stored is registration state: accounts, computers,
-  devices, invite codes (hashed), and per-day byte counters. The byte counters exist so an operator
+  devices, optional invite codes (hashed), and per-day byte counters. The byte counters exist so an operator
   can answer "how much did this device relay today". The only message bodies ever stored are the
   feedback you submit and our replies to it (see below).
 - **The app reports its version and build** on connect, so a device list can show which build a phone
@@ -60,7 +60,8 @@ notices*).
 
 ## Running it yourself
 
-You can use someone else's relay together with an invite code from them, or run your own:
+You can use someone else's relay with open enrollment (or an invite code if that relay still
+requires one), or run your own:
 `relay-go/` is a single Go binary installed as described in
 [`relay-go/deploy/README.md`](../relay-go/deploy/README.md), behind Caddy. Self-hosting removes the
 third party entirely.

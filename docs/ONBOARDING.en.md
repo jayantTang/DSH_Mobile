@@ -18,8 +18,9 @@ they differ only in who runs the relay.
 1. **Install the app** from the TestFlight link above.
 2. **Install the connector** on your computer (step 2 above), then keep DSH running.
 3. **Register this computer from the panel.** Click **移动端连接** at the bottom of the DSH
-   sidebar; the relay address is prefilled. Click **登记**. The relay may rate-limit open
-   enrollment by source; the connector shows the reason if it refuses. The connector derives the
+   sidebar; the relay address is prefilled. Click **登记**. No invite code is required by default;
+   the relay may rate-limit open enrollment by source and the connector shows the reason if it
+   refuses. The connector derives the
    computer name automatically and reconnects in place after registration.
 4. **Headless installs only:** use `dsh-mobile-link enroll --relay …` (add `--invite …` only if
    the deployment still requires one). The command writes the identity file; if the host is

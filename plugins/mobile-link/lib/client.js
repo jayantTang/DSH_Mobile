@@ -41,8 +41,12 @@ const COPIED_MS = 2000
 const CSS = [
   '.dsh-mobile-link-entry{display:flex;align-items:center;justify-content:flex-start;gap:8px;width:100%;font-size:13px}',
   '.dsh-mobile-link-entry-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-  '.dsh-mobile-link-dialog{width:min(500px,94vw)}',
-  '.dsh-mobile-link-body{position:relative;display:flex;flex-direction:column;gap:16px}',
+  '.dsh-mobile-link-dialog{width:min(420px,94vw);max-height:calc(100dvh - 2 * max(24px,var(--dsh-frame-overlay-top,24px)))}',
+  '.dsh-mobile-link-content{flex:1 1 auto;min-height:0}',
+  '.dsh-mobile-link-shell{position:relative;display:flex;flex-direction:column;flex:1 1 auto;min-height:0}',
+  // 官方 Modal 不限高；正文自己收进可视区。减去的 102px 是官方头部与内边距
+  // （22+24+12 的头部、20 的正文上边距、24 的底部内边距）。
+  '.dsh-mobile-link-body{position:relative;display:flex;flex-direction:column;gap:12px;max-height:calc(100dvh - 2 * max(24px,var(--dsh-frame-overlay-top,24px)) - 102px);overflow-y:auto;overscroll-behavior:contain}',
   '.dsh-mobile-link-status{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:500}',
   '.dsh-mobile-link-section-title{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--dsw-alias-label-tertiary,inherit)}',
   '.dsh-mobile-link-kv{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px 16px;font-size:13px}',
@@ -50,13 +54,15 @@ const CSS = [
   '.dsh-mobile-link-v{min-width:0;text-align:right;color:var(--dsw-alias-label-primary,inherit);overflow-wrap:anywhere}',
   '.dsh-mobile-link-mono,.dsh-mobile-link-note,.dsh-mobile-link-device-meta{font-size:12px;color:var(--dsw-alias-label-tertiary,inherit)}',
   '.dsh-mobile-link-mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}',
-  '.dsh-mobile-link-card{display:flex;flex-direction:column;align-items:center;gap:14px;padding:20px 18px;border-radius:12px;background:var(--dsw-alias-bg-module-platform,rgba(15,17,21,.04))}',
-  '.dsh-mobile-link-qr{display:block;width:248px;max-width:100%;height:auto;box-sizing:border-box;padding:10px;border-radius:10px;background:#fff}',
+  '.dsh-mobile-link-card{display:flex;align-items:center;gap:12px;padding:12px;border-radius:12px;background:var(--dsw-alias-bg-module-platform,rgba(15,17,21,.04))}',
+  '.dsh-mobile-link-qr{display:block;flex:0 0 auto;width:160px;max-width:100%;height:auto;box-sizing:border-box;padding:10px;border-radius:10px;background:#fff}',
+  '.dsh-mobile-link-card-main{display:flex;flex-direction:column;align-items:flex-start;gap:10px;flex:1 1 auto;min-width:0}',
   '.dsh-mobile-link-code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:20px;font-weight:600;letter-spacing:.16em;line-height:1;color:var(--dsw-alias-label-primary,inherit)}',
-  '.dsh-mobile-link-count{display:flex;flex-direction:column;align-items:center;gap:6px;font-size:12px;color:var(--dsw-alias-label-tertiary,inherit)}',
-  '.dsh-mobile-link-bar{width:180px;height:3px;border-radius:2px;overflow:hidden;background:var(--dsw-alias-border-secondary,rgba(15,17,21,.12))}',
+  '.dsh-mobile-link-count{display:flex;flex-direction:column;align-items:flex-start;gap:6px;width:100%;font-size:12px;color:var(--dsw-alias-label-tertiary,inherit)}',
+  '.dsh-mobile-link-count-tag{white-space:nowrap}',
+  '.dsh-mobile-link-bar{width:100%;height:3px;border-radius:2px;overflow:hidden;background:var(--dsw-alias-border-secondary,rgba(15,17,21,.12))}',
   '.dsh-mobile-link-bar i{display:block;height:100%;border-radius:2px;background:var(--dsw-alias-state-business-primary,#4176e6);transition:width .9s linear}',
-  '.dsh-mobile-link-actions{display:flex;align-items:center;gap:8px}',
+  '.dsh-mobile-link-actions{display:flex;flex-direction:column;align-items:stretch;gap:8px;width:100%}',
   '.dsh-mobile-link-section{display:flex;flex-direction:column;gap:8px}',
   '.dsh-mobile-link-devices{display:flex;flex-direction:column;gap:6px;max-height:184px;overflow:auto}',
   '.dsh-mobile-link-device{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:10px;background:var(--dsw-alias-bg-module-platform,rgba(15,17,21,.04))}',
@@ -492,9 +498,9 @@ const ENROLL_ERRORS = {
   'enroll/bad-request': '请输入中转地址。',
   'enroll/invalid-relay': '中转地址无效。',
   'enroll/placeholder-relay': '请输入有效的中转地址。',
-  'enroll/unknown': '激活码无效。',
-  'enroll/used': '激活码已被使用。',
-  'enroll/expired': '激活码已过期。',
+  'enroll/unknown': '邀请码无效。',
+  'enroll/used': '邀请码已被使用。',
+  'enroll/expired': '邀请码已过期。',
   'enroll/rate-limited': '尝试次数过多，请稍后重试。',
   'enroll/unreachable': '无法连接中转服务器，请检查地址与网络。',
   'enroll/timeout': '中转服务器未响应，请稍后重试。',
@@ -799,33 +805,31 @@ function iosLinkSection(React, controller) {
 function codeSection(React, controller, ui, state) {
   const code = state.code
   const connecting = !code && !state.codeError && state.status?.connected !== true
-  const children = []
+  const main = []
   if (code) {
-    children.push(React.createElement('div', { className: 'dsh-mobile-link-code', key: 'code' }, code.code))
-    children.push(React.createElement('img', {
-      key: 'qr', className: 'dsh-mobile-link-qr', alt: '配对二维码',
-      src: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(String(code.svg))}`,
-    }))
+    main.push(React.createElement('div', { className: 'dsh-mobile-link-code', key: 'code' }, code.code))
     if (code.persistent || code.expiresAt == null) {
-      children.push(React.createElement('div', { className: 'dsh-mobile-link-count', key: 'count' },
-        React.createElement('span', null,
-          `长期有效直到重新生成${code.maxPairedDevices
-            ? `（已配对 ${state.pairedCount ?? (Array.isArray(state.pairedDevices)
-              ? state.pairedDevices.length : (code.pairedDevices ?? 0))}/${code.maxPairedDevices}）` : ''}`)))
+      main.push(React.createElement('div', { className: 'dsh-mobile-link-count', key: 'count' },
+        React.createElement('span', null, '长期有效直到重新生成'),
+        code.maxPairedDevices
+          ? React.createElement('span', { className: 'dsh-mobile-link-count-tag' },
+            `（已配对 ${state.pairedCount ?? (Array.isArray(state.pairedDevices)
+              ? state.pairedDevices.length : (code.pairedDevices ?? 0))}/${code.maxPairedDevices}）`)
+          : null))
     } else {
       const remaining = Math.max(0, code.expiresAt - state.now)
       const percent = Math.max(0, Math.min(100, (remaining / (code.ttlMs || CODE_TTL_MS)) * 100))
-      children.push(React.createElement('div', { className: 'dsh-mobile-link-count', key: 'count' },
+      main.push(React.createElement('div', { className: 'dsh-mobile-link-count', key: 'count' },
         React.createElement('div', { className: 'dsh-mobile-link-bar' }, React.createElement('i', { style: { width: `${percent.toFixed(1)}%` } })),
         React.createElement('span', null, `有效期至 ${clockText(code.expiresAt)}（剩余 ${remainingText(remaining)}）`)))
     }
   } else if (state.codeError) {
-    children.push(React.createElement('div', { className: 'dsh-mobile-link-note dsh-mobile-link-error', key: 'err' }, state.codeError))
+    main.push(React.createElement('div', { className: 'dsh-mobile-link-note dsh-mobile-link-error', key: 'err' }, state.codeError))
   } else if (connecting) {
-    children.push(React.createElement('div', { className: 'dsh-mobile-link-note', key: 'connecting' },
+    main.push(React.createElement('div', { className: 'dsh-mobile-link-note', key: 'connecting' },
       state.enrolling ? '正在登记…' : '正在连接…'))
   } else {
-    children.push(React.createElement('div', { className: 'dsh-mobile-link-note', key: 'loading' },
+    main.push(React.createElement('div', { className: 'dsh-mobile-link-note', key: 'loading' },
       state.busy ? '正在获取…' : '暂无配对码。'))
   }
   const buttons = connecting ? [] : [React.createElement(ui.Button, {
@@ -838,7 +842,17 @@ function codeSection(React, controller, ui, state) {
       key: 'copy', variant: 'outline', type: 'button', onClick: () => controller.copy(),
     }, state.copied ? '已复制' : '复制配对码'))
   }
-  children.push(React.createElement('div', { className: 'dsh-mobile-link-actions', key: 'actions' }, buttons))
+  if (buttons.length > 0) {
+    main.push(React.createElement('div', { className: 'dsh-mobile-link-actions', key: 'actions' }, buttons))
+  }
+  const children = []
+  if (code) {
+    children.push(React.createElement('img', {
+      key: 'qr', className: 'dsh-mobile-link-qr', alt: '配对二维码',
+      src: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(String(code.svg))}`,
+    }))
+  }
+  children.push(React.createElement('div', { className: 'dsh-mobile-link-card-main', key: 'main' }, main))
   return React.createElement('div', { className: 'dsh-mobile-link-card' }, children)
 }
 function deviceRow(React, ui, device, online, controller) {
@@ -950,11 +964,12 @@ function panelBody(React, controller, ui, state) {
   children.push(devicesSection(React, ui, state, controller))
   const error = errorSection(React, controller, ui, state.status, state.showError)
   if (error) children.push(error)
-  if (state.revokeTarget) children.push(revokeOverlay(React, ui, state, controller))
-  if (state.guideOpen) children.push(guideOverlay(React, ui, controller))
   return React.createElement('div', { className: 'dsh-mobile-link-body' }, children)
 }
-/** 小窗：官方 Modal 负责遮罩、顶层 Esc 与焦点归位；内容只在打开时渲染。 */
+/**
+ * 小窗：官方 Modal 负责遮罩、顶层 Esc 与焦点归位；内容只在打开时渲染。
+ * 正文超出窗口高度时在正文区滚动；确认与安装指引放在滚动区之外，不跟着内容走。
+ */
 function makePanel(React, controller, ui) {
   return function MobileLinkPanel() {
     const state = useStore(React, controller.store)
@@ -964,7 +979,11 @@ function makePanel(React, controller, ui) {
       title: LABEL,
       closeLabel: '关闭',
       className: 'dsh-mobile-link-dialog',
-    }, panelBody(React, controller, ui, state))
+      contentClassName: 'dsh-mobile-link-content',
+    }, React.createElement('div', { className: 'dsh-mobile-link-shell' },
+      panelBody(React, controller, ui, state),
+      state.revokeTarget ? revokeOverlay(React, ui, state, controller) : null,
+      state.guideOpen ? guideOverlay(React, ui, controller) : null))
   }
 }
 
