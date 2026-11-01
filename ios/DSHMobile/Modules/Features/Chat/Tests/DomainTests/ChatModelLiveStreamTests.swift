@@ -119,6 +119,18 @@ final class ChatModelLiveStreamTests: XCTestCase {
         XCTAssertFalse(model.isBusy, "the stop control must go away when the turn ends")
     }
 
+    func test_a_snapshot_closing_the_turn_clears_a_stale_run_state() async throws {
+        try await openFollowing([
+            ChatSeam.snapshot(cursor: 1),
+            ChatSeam.eventFrame(ChatSeam.turnStart(seq: 2, turn: 1)),
+            ChatSeam.snapshot(cursor: 3, records: [ChatSeam.turnEnd(seq: 3, turn: 1)]),
+        ])
+
+        let cleared = await eventually { self.model.runningSince == nil }
+        XCTAssertTrue(cleared, "a snapshot ending in turn/end must clear the run state")
+        XCTAssertEqual(model.activity, .idle)
+    }
+
     func test_a_frame_this_build_cannot_decode_does_not_freeze_the_stream() async throws {
         // A newer host type: the kit turns it into `.unknown`, and the frames
         // after it must still arrive (a decode error that ends the stream would

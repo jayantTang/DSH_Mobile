@@ -135,6 +135,12 @@ public final class ChatModel {
     /// 运行行需要计时起点；快照到达时 `runningSince` 可能还是 nil（open 在快照之前
     /// 就跑了）。宿主的开始时间不可得，这里只判断"在跑"，起点由调用方取当下（下限）。
     static func snapshotEndsInOpenTurn(_ records: [SessionRecord]) -> Bool {
+        snapshotTurnOpen(records) == true
+    }
+
+    /// `true` = 窗口最后一条边界是 turn/start；`false` = turn/end；
+    /// `nil` = 窗口里没有边界（不能据此断言"空闲"，否则会把正在跑的轮次误清掉）。
+    static func snapshotTurnOpen(_ records: [SessionRecord]) -> Bool? {
         for record in records.reversed() {
             switch record.event.type {
             case "turn/start": return true
@@ -142,7 +148,7 @@ public final class ChatModel {
             default: continue
             }
         }
-        return false
+        return nil
     }
 
     /// 本轮开始计时的时刻。
@@ -1415,11 +1421,23 @@ public final class ChatModel {
             // 只有 20 条（本地很新时故意少要），直接替换等于把已落盘的历史截掉
             // ——用户看到的就是"切后台回来少了一部分记录"。
             mergeTail(snapshot.records)
-            // 快照里已经有一轮在跑：起点取快照里那条 `turn/start` 的时间；
-            // 拿不到就保持 nil（只写「深度求索中」），不从“现在”起算。
-            if runningSince == nil, Self.snapshotEndsInOpenTurn(snapshot.records) {
-                runningSince = snapshot.records.reversed()
-                    .first { $0.event.type == "turn/start" }?.event.date ?? Date()
+            // 快照是轮次边界的权威：窗口最后一条边界若是 turn/end，必须清掉
+            // 运行行。只"看到 start 才设置"会在漏掉 turn/end（后台/重连/事件缺口）
+            // 后让「深度求索中」永久停住——这正是 2026-11-01 的前台现象。
+            switch Self.snapshotTurnOpen(snapshot.records) {
+            case true?:
+                if runningSince == nil {
+                    // 拿不到开始时间就保持 nil（只写「深度求索中」），不从“现在”起算。
+                    runningSince = snapshot.records.reversed()
+                        .first { $0.event.type == "turn/start" }?.event.date ?? Date()
+                }
+            case false?:
+                runningSince = nil
+                isAwaitingTurnStart = false
+                awaitingTimeout?.cancel()
+                awaitingTimeout = nil
+            case nil:
+                break
             }
             persistIfDue(force: true)
 
