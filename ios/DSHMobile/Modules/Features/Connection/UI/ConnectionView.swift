@@ -56,7 +56,7 @@ public struct ConnectionView: View {
                         manualEntry
                         if let error {
                             Text(error)
-                                .font(.footnote)
+                                .font(DSHTheme.Typography.caption)
                                 .foregroundStyle(DSHTheme.danger)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
@@ -93,11 +93,11 @@ public struct ConnectionView: View {
                     .foregroundStyle(DSHTheme.brand)
                     .accessibilityHidden(true)
                 Text("DSH Mobile")
-                    .font(.headline)
+                    .font(DSHTheme.Typography.bodyStrong)
                     .foregroundStyle(DSHTheme.labelPrimary)
             }
             Text("连接电脑上的 DSH，查看会话进度、回应提问并继续工作。")
-                .font(.subheadline)
+                .font(DSHTheme.Typography.micro)
                 .foregroundStyle(DSHTheme.labelSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -118,10 +118,10 @@ public struct ConnectionView: View {
                             // 演示模式下换成占位符：这一页会被拍进 App Store 截图，
                             // 而电脑名与中转地址都是"对外信息"，不能出现在商店页里。
                             Text(DemoMode.maskedHostName(profile.name))
-                                .font(.headline)
+                                .font(DSHTheme.Typography.bodyStrong)
                                 .foregroundStyle(DSHTheme.labelPrimary)
                             Text(DemoMode.maskedEndpoint(profile.subtitle))
-                                .font(.footnote)
+                                .font(DSHTheme.Typography.micro)
                                 .foregroundStyle(DSHTheme.labelTertiary)
                                 .lineLimit(1)
                         }
@@ -169,10 +169,10 @@ public struct ConnectionView: View {
                     .font(.system(size: 22, weight: .medium))
                 VStack(alignment: .leading, spacing: 2) {
                     Text("扫码配对")
-                        .font(.headline)
+                        .font(DSHTheme.Typography.bodyStrong)
                         .foregroundStyle(DSHTheme.labelPrimary)
                     Text("扫描电脑端连接器插件「移动端连接」中的二维码。")
-                        .font(.footnote)
+                        .font(DSHTheme.Typography.micro)
                         .foregroundStyle(DSHTheme.labelTertiary)
                 }
                 Spacer(minLength: 0)
@@ -206,7 +206,7 @@ public struct ConnectionView: View {
                     Text(showsManualInput ? "收起手动输入" : "无法扫码？手动输入配对码")
                     Spacer(minLength: 0)
                 }
-                .font(.footnote)
+                .font(DSHTheme.Typography.micro)
                 .foregroundStyle(DSHTheme.labelTertiary)
                 .contentShape(Rectangle())
             }
@@ -219,7 +219,7 @@ public struct ConnectionView: View {
                         field("中转服务器", text: $relayURL, keyboard: .URL)
                         field("配对码", text: $pairCode, keyboard: .asciiCapable, autocapitalization: .characters)
                         Text("配对码在电脑端 DSH 界面的「移动端连接」里。")
-                            .font(.footnote)
+                            .font(DSHTheme.Typography.micro)
                             .foregroundStyle(DSHTheme.labelTertiary)
                             .fixedSize(horizontal: false, vertical: true)
                         primaryButton("配对并连接") { Task { await pair() } }
@@ -246,7 +246,7 @@ public struct ConnectionView: View {
                             .font(.system(size: 9, weight: .semibold))
                             .foregroundStyle(DSHTheme.labelDimmed)
                     }
-                    .font(.footnote)
+                    .font(DSHTheme.Typography.micro)
                     .foregroundStyle(DSHTheme.labelTertiary)
                     .contentShape(Rectangle())
                 }
@@ -256,7 +256,7 @@ public struct ConnectionView: View {
                 Label("中转连接需要电脑侧连接器在线，DSH 重启后会自动重连。", systemImage: "cloud")
                 Label("电脑与 iPhone/iPad 均需联网。对话内容经中转转发，不在中转服务器保存。", systemImage: "lock.shield")
             }
-            .font(.footnote)
+            .font(DSHTheme.Typography.micro)
             .foregroundStyle(DSHTheme.labelTertiary)
             .padding(.horizontal, DSHTheme.Spacing.tight)
         }
@@ -277,10 +277,10 @@ public struct ConnectionView: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(title)
-                .font(.footnote)
+                .font(DSHTheme.Typography.micro)
                 .foregroundStyle(DSHTheme.labelTertiary)
             TextField(title, text: text)
-                .font(.body)
+                .font(DSHTheme.Typography.body)
                 .textInputAutocapitalization(autocapitalization)
                 .autocorrectionDisabled()
                 .keyboardType(keyboard)
@@ -303,7 +303,7 @@ public struct ConnectionView: View {
             HStack(spacing: DSHTheme.Spacing.hairline) {
                 if isWorking { ProgressView().controlSize(.mini).tint(.white) }
                 Text(isWorking ? "连接中…" : title)
-                    .font(.headline)
+                    .font(DSHTheme.Typography.bodyStrong)
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 11)
@@ -405,7 +405,7 @@ private struct ConnectorInstallGuideView: View {
                 ReadingColumn(ReadingWidth.form) {
                     VStack(alignment: .leading, spacing: DSHTheme.Spacing.standard) {
                         Text("在电脑上完成以下步骤，再回到 iPhone 扫码。")
-                            .font(.subheadline)
+                            .font(DSHTheme.Typography.caption)
                             .foregroundStyle(DSHTheme.labelSecondary)
                             .fixedSize(horizontal: false, vertical: true)
                             .padding(.horizontal, DSHTheme.Spacing.hairline)
@@ -446,10 +446,10 @@ private struct ConnectorInstallGuideView: View {
 
             VStack(alignment: .leading, spacing: 6) {
                 Label("图形化", systemImage: "square.grid.2x2")
-                    .font(.footnote)
+                    .font(DSHTheme.Typography.micro)
                     .foregroundStyle(DSHTheme.labelTertiary)
                 Text("Plugins → Add plugin → 输入 dsh-plugin-mobile-link → Install")
-                    .font(.subheadline)
+                    .font(DSHTheme.Typography.caption)
                     .foregroundStyle(DSHTheme.labelPrimary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -461,7 +461,7 @@ private struct ConnectorInstallGuideView: View {
             VStack(alignment: .leading, spacing: 7) {
                 HStack(spacing: 6) {
                     Label("命令行", systemImage: "terminal")
-                        .font(.footnote)
+                        .font(DSHTheme.Typography.micro)
                         .foregroundStyle(DSHTheme.labelTertiary)
                     Spacer(minLength: 0)
                     Button {
@@ -470,13 +470,13 @@ private struct ConnectorInstallGuideView: View {
                     } label: {
                         Label(copied ? "已复制" : "复制",
                               systemImage: copied ? "checkmark" : "doc.on.doc")
-                            .font(.footnote)
+                            .font(DSHTheme.Typography.micro)
                             .foregroundStyle(DSHTheme.brand)
                     }
                     .buttonStyle(.plain)
                 }
                 Text(verbatim: commandDisplay)
-                    .font(.system(.footnote, design: .monospaced))
+                    .font(.system(size: 12, design: .monospaced))
                     .foregroundStyle(DSHTheme.labelPrimary)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
@@ -500,7 +500,7 @@ private struct ConnectorInstallGuideView: View {
         VStack(alignment: .leading, spacing: DSHTheme.Spacing.tight) {
             stepHeader(number, icon: icon, title: title)
             Text(detail)
-                .font(.subheadline)
+                .font(DSHTheme.Typography.caption)
                 .foregroundStyle(DSHTheme.labelSecondary)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.leading, 40)
@@ -523,14 +523,14 @@ private struct ConnectorInstallGuideView: View {
                     .fill(DSHTheme.brand.opacity(0.14))
                     .frame(width: 30, height: 30)
                 Text(String(number))
-                    .font(.footnote.weight(.semibold))
+                    .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(DSHTheme.brand)
             }
             Image(systemName: icon)
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(DSHTheme.brand)
             Text(title)
-                .font(.headline)
+                .font(DSHTheme.Typography.bodyStrong)
                 .foregroundStyle(DSHTheme.labelPrimary)
             Spacer(minLength: 0)
         }
