@@ -134,6 +134,24 @@ extension ChatTimeline {
         tail.showsTail = true
     }
 
+    /// 只并入边界，不动 `showsTail`。
+    ///
+    /// 异步重建落地时用：折叠开始抓到的种子可能已经被实时事件超过（例如折叠在跑、
+    /// `turn/end` 已到）。这里仍走合并表，过期的 open 不会把 closed 退回去。
+    public mutating func mergeTailBoundary(_ boundary: TranscriptTail.Boundary) {
+        noteBoundary(boundary)
+    }
+
+    /// 无条件替换边界，**只给"边界不属于这一会话"的修复用**。
+    ///
+    /// 正常证据一律走 `seedTail` / `mergeTailBoundary` 的合并表。缓存或落盘把别的
+    /// 会话的边界串进来时，那个轮次号会高过本会话现有轮次，合并表会把本会话所有
+    /// `turn/end` 都当成旧证据拒掉——这时只能按会话范围重置，不能等它自己收敛。
+    public mutating func resetTailBoundary(_ boundary: TranscriptTail.Boundary) {
+        tail.boundary = boundary
+        tail.showsTail = true
+    }
+
     /// v2 概要采纳边界：概要是一段**真实观测**（连接器折的），但它比实时事件弱。
     ///
     /// 判据（M1）：该概要必须是当前最新一段（轮次号不落后于已采纳的边界，

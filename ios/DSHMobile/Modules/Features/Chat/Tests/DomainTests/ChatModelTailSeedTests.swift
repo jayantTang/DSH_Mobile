@@ -91,6 +91,28 @@ final class ChatModelTailSeedTests: XCTestCase {
                        "同进程缓存来自实时事件，比磁盘旧值强")
     }
 
+    func test_a_foreign_boundary_from_another_session_is_repaired_on_open() async throws {
+        // 线上现场：会话本身只有 5 轮，缓存里的尾轮边界却带着上一个会话的 28 轮。
+        // 合并表会把本会话随后的 turn/end(5/6) 全当成旧证据拒掉，运行行永不消失。
+        let start = try JSONDecoder().decode(
+            SessionEvent.self,
+            from: JSONEncoder().encode(ChatSeam.turnStart(seq: 2, turn: 5)))
+        var cached = ChatTimeline()
+        cached.reset(with: [SessionRecord(event: start)])
+        cached.resetTailBoundary(.open(turn: 28, startedAt: nil))
+        model.transcriptCache.store(
+            TranscriptCache.Entry(timeline: cached, hasOlder: false, oldestSeq: nil,
+                                  throughSeq: 0, records: []),
+            for: sessionId)
+
+        try await open(running: false)
+
+        XCTAssertEqual(model.timeline.tail.boundary.turn, 5,
+                       "边界轮次必须落回本会话的轮次范围")
+        XCTAssertFalse(model.timeline.isTurnOpen,
+                       "别的会话的 open 不得让本会话显示运行中")
+    }
+
     func test_seed_uses_the_persisted_row_when_nothing_is_cached() async throws {
         try await layer.setTailBoundary(
             scope: scope, sessionId: sessionId,

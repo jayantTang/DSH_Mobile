@@ -131,6 +131,46 @@ final class ChatModelLiveStreamTests: XCTestCase {
         XCTAssertEqual(model.activity, .idle)
     }
 
+    func test_a_live_turn_end_closes_the_boundary_without_waiting_for_a_rebuild() async throws {
+        try await openFollowing([
+            ChatSeam.snapshot(cursor: 1),
+            ChatSeam.eventFrame(ChatSeam.turnStart(seq: 2, turn: 1)),
+        ])
+        let opened = await eventually { self.model.timeline.isTurnOpen }
+        XCTAssertTrue(opened, "turn/start should open the tail boundary")
+
+        // 管道路径下时间线由异步重建落地，turn/end 到模型时边界可能还是开的。
+        // 直接走同一条生命周期入口，证明关闭不依赖那一次重建。
+        let event = try JSONDecoder().decode(
+            SessionEvent.self,
+            from: JSONEncoder().encode(ChatSeam.turnEnd(seq: 3, turn: 1)))
+        model.reactToTurnLifecycle(event)
+
+        XCTAssertFalse(model.timeline.isTurnOpen, "a delivered turn/end must close the boundary")
+        XCTAssertFalse(model.isRunning)
+        XCTAssertNil(model.runningSince)
+    }
+
+    func test_a_stale_pipeline_rebuild_cannot_reopen_a_closed_turn() async throws {
+        try await openFollowing([
+            ChatSeam.snapshot(cursor: 1),
+            ChatSeam.eventFrame(ChatSeam.turnStart(seq: 2, turn: 1)),
+            ChatSeam.eventFrame(ChatSeam.turnEnd(seq: 3, turn: 1)),
+        ])
+        // 先等 turn/end 真正被折进来：初始边界是 unknown，单看 `!isTurnOpen` 会立刻通过。
+        let closed = await eventually {
+            self.model.completionSignal == 1 && !self.model.timeline.isTurnOpen
+        }
+        XCTAssertTrue(closed, "turn/end should close the boundary first")
+
+        // 折叠在 turn/end 之前就开始了：它的种子还是 open(1)。落地时不得覆盖更新的 closed。
+        var stale = ChatTimeline()
+        stale.seedTail(.open(turn: 1, startedAt: nil))
+        model.applyPipelineRebuild(stale, gaps: [], topExhausted: false, oldestSeq: nil)
+
+        XCTAssertFalse(model.timeline.isTurnOpen, "a stale rebuild must not reopen the closed turn")
+    }
+
     func test_a_frame_this_build_cannot_decode_does_not_freeze_the_stream() async throws {
         // A newer host type: the kit turns it into `.unknown`, and the frames
         // after it must still arrive (a decode error that ends the stream would

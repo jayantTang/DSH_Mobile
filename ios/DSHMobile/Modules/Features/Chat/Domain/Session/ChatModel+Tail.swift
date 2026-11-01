@@ -85,6 +85,36 @@ extension ChatModel {
         return tailSeed(for: summary, cached: cached, persisted: persisted)
     }
 
+    /// 尾轮边界必须落在**这一会话**的轮次范围里。
+    ///
+    /// 缓存或落盘把别的会话的边界串进来时，那个轮次号会高过本会话现有轮次；
+    /// 合并表会把它当成"更强的旧证据"，于是本会话所有 `turn/end` 都被拒掉，
+    /// 运行行与停止键永远不消失（线上 2026-11-02 00:55 的现场：会话当前 5 轮、
+    /// 边界却是上一个会话的 28 轮）。正常证据仍走合并表，这里只修这一种不可能形状：
+    /// 边界轮次高出本窗口实际轮次一档以上。
+    func repairForeignTailBoundary() {
+        guard timeline.tail.showsTail, timeline.currentTurn > 0 else { return }
+        let boundary = timeline.tail.boundary
+        guard boundary.turn > timeline.currentTurn + 1 else { return }
+        let running = visible?.summary.running == true || isAwaitingTurnStart
+        let repaired: TranscriptTail.Boundary = running
+            ? .open(turn: timeline.currentTurn,
+                    startedAt: boundary.startedAt ?? runningSince)
+            : .closed(turn: timeline.currentTurn, reason: nil)
+        timeline.resetTailBoundary(repaired)
+        DSHLog.event("tail.foreign", [
+            "session": session?.sessionId ?? "",
+            "from": TailTrace.name(boundary),
+            "turn": String(boundary.turn),
+            "current": String(timeline.currentTurn),
+            "to": TailTrace.name(repaired),
+        ])
+        if !running {
+            runningSince = nil
+            isAwaitingTurnStart = false
+        }
+    }
+
     /// 磁盘上的边界副本。读失败返回 nil **并发探针**：落 unknown 是有意的
     ///（它显示成可重试的占位行，比编一个边界诚实）。
     func persistedBoundary(scope: String, sessionId: String) async -> TranscriptTail.Boundary? {

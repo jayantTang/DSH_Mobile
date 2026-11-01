@@ -130,22 +130,24 @@ public final class ChatModel {
             summaries: timeline.foldSummaries.filter { $0.turn == timeline.currentTurn })
     }
 
-    /// 快照里最后一条轮次边界是不是 `turn/start`（这一轮还在跑）。
+    /// 窗口里最后一条轮次边界；`nil` = 窗口里没有边界。
     ///
-    /// 运行行需要计时起点；快照到达时 `runningSince` 可能还是 nil（open 在快照之前
-    /// 就跑了）。宿主的开始时间不可得，这里只判断"在跑"，起点由调用方取当下（下限）。
-    static func snapshotEndsInOpenTurn(_ records: [SessionRecord]) -> Bool {
-        snapshotTurnOpen(records) == true
-    }
-
-    /// `true` = 窗口最后一条边界是 turn/start；`false` = turn/end；
-    /// `nil` = 窗口里没有边界（不能据此断言"空闲"，否则会把正在跑的轮次误清掉）。
-    static func snapshotTurnOpen(_ records: [SessionRecord]) -> Bool? {
+    /// 不能把 `nil` 当成"空闲"：窗口是按条数切的，正在跑的一轮可能整段都在窗口里、
+    /// 一条边界都没有。反过来，有边界就按合并表落到时间线——`turn/end` 是终态，
+    /// 同一轮不会被后面的 start 重开。
+    static func snapshotLastBoundary(_ records: [SessionRecord]) -> TranscriptTail.Boundary? {
         for record in records.reversed() {
-            switch record.event.type {
-            case "turn/start": return true
-            case "turn/end": return false
-            default: continue
+            // 只解码边界记录：整窗反查时把每条消息都解一遍会平白吃掉一次快照的时间。
+            guard record.event.type == "turn/start" || record.event.type == "turn/end" else {
+                continue
+            }
+            switch ChatEventDecoder.decode(record.event) {
+            case .turnStart(let turn):
+                return .open(turn: turn, startedAt: record.event.date)
+            case .turnEnd(let turn, let reason):
+                return .closed(turn: turn, reason: reason)
+            default:
+                continue
             }
         }
         return nil
@@ -613,6 +615,8 @@ public final class ChatModel {
         // 换会话就丢掉上一个会话的标题覆盖，避免把 A 的标题带到 B。
         titleOverride = nil
         visible = VisibleSession(summary: summary, timeline: seed)
+        // 缓存/落盘可能把别的会话的边界串进来（边界轮次远高于本会话）；先按会话范围修掉。
+        repairForeignTailBoundary()
         if let cached {
             throughSeq = max(cached.throughSeq, summary.asOfSeq)
             noteWindow(oldest: cached.oldestSeq, hasMore: cached.hasOlder)
@@ -1424,21 +1428,26 @@ public final class ChatModel {
             // 快照是轮次边界的权威：窗口最后一条边界若是 turn/end，必须清掉
             // 运行行。只"看到 start 才设置"会在漏掉 turn/end（后台/重连/事件缺口）
             // 后让「深度求索中」永久停住——这正是 2026-11-01 的前台现象。
-            switch Self.snapshotTurnOpen(snapshot.records) {
-            case true?:
+            switch Self.snapshotLastBoundary(snapshot.records) {
+            case .open(let turn, let startedAt)?:
+                // 管道路径下时间线由异步重建落地；边界是独立事实，快照到了就先落，
+                // 不等那次重建（重建会以它为种子，过期的折叠盖不回去）。
+                timeline.seedTail(.open(turn: turn, startedAt: startedAt))
                 if runningSince == nil {
                     // 拿不到开始时间就保持 nil（只写「深度求索中」），不从“现在”起算。
-                    runningSince = snapshot.records.reversed()
-                        .first { $0.event.type == "turn/start" }?.event.date ?? Date()
+                    runningSince = startedAt ?? Date()
                 }
-            case false?:
+            case .closed(let turn, let reason)?:
+                timeline.seedTail(.closed(turn: turn, reason: reason))
                 runningSince = nil
                 isAwaitingTurnStart = false
                 awaitingTimeout?.cancel()
                 awaitingTimeout = nil
-            case nil:
+            case .unknown?, nil:
                 break
             }
+            // 非管道路径的 merge 也可能带进别的会话的边界；按会话范围修一次。
+            repairForeignTailBoundary()
             persistIfDue(force: true)
 
         case .event(let event):
@@ -1517,19 +1526,29 @@ public final class ChatModel {
     /// Turns the two lifecycle events into run state and a completion signal.
     ///
     /// Everything else in the journal is content; these two are state.
-    private func reactToTurnLifecycle(_ event: SessionEvent) {
+    func reactToTurnLifecycle(_ event: SessionEvent) {
         switch event.type {
         case "turn/start":
             isAwaitingTurnStart = false
             // 以这条事件自己的宿主时间为准：桥接的时间线可能是异步更新的，
             // 此刻 `openTurnStartedAt` 还停在上一条轮（新轮会把计时接在旧起点上）。
             runningSince = event.date ?? timeline.openTurnStartedAt ?? Date()
+            // 管道路径的 `timeline.apply` 不跑（事件先进异步的管道），边界不会自己更新。
+            // 这里是本轮开着的直接证据，先落边界，不等重建；重建以它为种子。
+            if case .turnStart(let turn) = ChatEventDecoder.decode(event) {
+                timeline.seedTail(.open(turn: turn, startedAt: runningSince))
+            }
             awaitingTimeout?.cancel()
             awaitingTimeout = nil
 
         case "turn/end":
             isAwaitingTurnStart = false
             runningSince = nil
+            // 同上：`turn/end` 是终态，必须先落到边界上，运行行与停止按钮才会消失；
+            // 只清计时器会让 `isTurnOpen` 停在 true（「深度求索中」没有用时的那一屏）。
+            if case .turnEnd(let turn, let reason) = ChatEventDecoder.decode(event) {
+                timeline.seedTail(.closed(turn: turn, reason: reason))
+            }
             awaitingTimeout?.cancel()
             awaitingTimeout = nil
             // 一轮结束是天然检查点：此刻把尾部写死，进程随后没了也不丢这一轮。
@@ -1669,11 +1688,16 @@ public final class ChatModel {
     ) {
         let oldFirstSeq = timeline.items.first(where: { !Self.isGapRow($0) })?.seq
         var next = folded
+        // 折叠是异步的：它开始时的种子可能已被实时事件超过（折叠在跑、turn/end 已到）。
+        // 边界按合并表并回去，过期的 open 不得把 closed 重新打开。
+        next.mergeTailBoundary(timeline.tail.boundary)
         next.record(usage: timeline.lastUsage)
         next.restoreTransient(streaming: timeline.streaming, echoes: Self.pendingEchoes(in: timeline.items))
         next.setGaps(gaps)
         let newFirstSeq = next.items.first(where: { !Self.isGapRow($0) })?.seq
         timeline = next
+        // 快照/重建落地后，边界轮次仍可能来自别的会话；按本窗口的轮次范围修一次。
+        repairForeignTailBoundary()
         // 头部变老 = 补页（prependSignal，宿主锚回视口）；其余 = 内容变化。
         if let newFirstSeq, newFirstSeq != oldFirstSeq,
            oldFirstSeq == nil || newFirstSeq < (oldFirstSeq ?? .max) {
