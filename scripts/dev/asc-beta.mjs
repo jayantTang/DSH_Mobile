@@ -38,17 +38,21 @@ const FEEDBACK_EMAIL = process.env.ASC_FEEDBACK_EMAIL || 'forwoshitjy@live.com'
 /// 两位试用者都静默过，而我们在 GitHub 上说不上话（他们没有公开联系方式）。
 const WHATS_TO_TEST = {
   'zh-Hans': `这一版更新：
-· 进入会话时过程折叠不再抖动；状态未确认时显示一行占位，可点击重试
-· 会话列表的活动标识不再随刷新丢失
-· 信件收件箱改版：两栏、未读与已读对齐、通知正文按需加载
-· 修复图片预览偶发空白全屏
+· 一轮结束后不再残留「深度求索中」和停止键（修复跨会话与异步重建导致的运行态不复位）
+· 连接页字体与间距对齐桌面版设计语言
+· iPad 全屏分栏与整页弹层适配
+· 设备被撤销后停止重连并提示重新配对
+· 失败重发复用原 requestId，避免重复消息
+· 未读全的历史提问继续从锚点补拉
 
 建议先把电脑端连接器升到 0.8.0；本构建（App 1.0）也兼容 0.7.0。遇到问题请在 TestFlight 截图反馈。`,
   'en-US': `In this build:
-· No more fold flicker when opening a session; an unresolved process state shows one retryable placeholder row.
-· Session-list activity badges no longer disappear on refresh.
-· Redesigned mail inbox: two columns, aligned read state, notice bodies loaded on demand.
-· Fixed the occasional blank full-screen image preview.
+· A finished turn no longer leaves the “Deep diving” line or the stop button behind (fixed cross-session and async-rebuild run-state leaks).
+· Connection screen typography and spacing now match the desktop design language.
+· iPad split view and full-page sheets adapted.
+· A revoked device stops reconnecting and asks to pair again.
+· Retrying a failed send reuses the original requestId, so no duplicate message.
+· Searches keep backfilling prompts from the anchor.
 
 Upgrade the desktop connector to 0.8.0 first; this build (app 1.0) also works with 0.7.0. Send feedback with a TestFlight screenshot if anything breaks.`,
 }
