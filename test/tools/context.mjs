@@ -116,7 +116,7 @@ export function ensureRunDir(runId) {
 /// Mirrors `test/screens.md`; `RootView.swift`'s `-DSHOpenScreen` switch is the
 /// other half of this contract.
 export const screens = {
-  onboarding: { root: 'text:连接你电脑上的 DSH', args: () => [] },
+  onboarding: { root: 'text:扫码配对', args: () => [] },
   sessions: { root: 'id:session.list', args: () => [] },
   transcript: { root: 'id:chat.transcript', args: (session) => ['-DSHOpenSession', session] },
   // The file browser resolves its workspace from a session, and without one it

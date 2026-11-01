@@ -5,7 +5,7 @@
 
 | 页面 | 根标识 | 启动参数 | 说明 |
 |---|---|---|---|
-| 连接页（未连接） | — （用 `text:连接你电脑上的 DSH` 判断） | 不带 `-DSHConnectURL` | 首次启动或连接失败时的落地页 |
+| 连接页（未连接） | — （用 `text:扫码配对` 判断） | 不带 `-DSHConnectURL` | 首次启动或连接失败时的落地页 |
 | 会话列表 | `session.list` | `-DSHConnectURL <url>` | 工具栏含「连接管理」「设置」「新建会话」三个入口；列表底部是**两个互不相干**的折叠区：`session.ungrouped`（未分组，来自工作区之外）与 `session.archived`（已归档，被归档收走的） |
 | 会话转写 | `chat.transcript` | `-DSHConnectURL <url> -DSHOpenSession <id>` | 需要真实会话 id，`test/tools/host.mjs` 可挑一个。**iPad 宽屏上这个钩子落到产品分栏**（左列表 + 右该会话），不再是一列；iPhone（含横屏）仍是今天那条推栈 |
 | 工作区文件 | `files.root` | `-DSHConnectURL <url> -DSHOpenScreen files` | 取会话列表里第一个会话的工作区 |

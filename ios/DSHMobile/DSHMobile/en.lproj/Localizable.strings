@@ -869,3 +869,17 @@ It is registered as a workspace first, so a new group appears in the desktop sid
 "网页" = "Web";
 "子代理" = "Subagent";
 "。；;." = "。；;.";
+"连接电脑上的 DSH，查看会话进度、回应提问并继续工作。" = "Connect to DSH on your computer to follow progress, answer questions, and keep working.";
+"扫描电脑端连接器插件「移动端连接」中的二维码。" = "Scan the QR code shown by the connector plugin, Mobile Link, on your computer.";
+"无法扫码？手动输入配对码" = "Can't scan? Enter the pairing code manually.";
+"尚未安装连接器？" = "Connector not installed?";
+"查看安装方式" = "See installation steps";
+"扫码内容是电脑端连接器插件「移动端连接」中显示的二维码。" = "The QR code comes from the connector plugin, Mobile Link, on your computer.";
+"电脑与 iPhone/iPad 均需联网。对话内容经中转转发，不在中转服务器保存。" = "The computer and iPhone/iPad both need internet access. Conversations are relayed and are not stored on the relay server.";
+"在电脑上完成以下步骤，再回到 iPhone 扫码。" = "Complete these steps on your computer, then scan with your iPhone.";
+"安装并启动 DSH：使用桌面版安装包，或在终端运行 dsh web。" = "Install and start DSH: use the desktop installer, or run dsh web in a terminal.";
+"安装连接器插件。图形化方式：打开 Plugins，点 Add plugin，输入 dsh-plugin-mobile-link，点 Install。" = "Install the connector plugin. Graphical: open Plugins, click Add plugin, enter dsh-plugin-mobile-link, and click Install.";
+"命令行方式（读取当前 DSH profile）：" = "Command line (uses the current DSH profile):";
+"打开 DSH，进入「移动端连接」；确认中转地址，点「登记」，等待状态变为「已连接」。" = "Open DSH and go to Mobile Link; confirm the relay address, click Register, and wait for Connected.";
+"回到 iPhone，点「扫码配对」，扫描连接器插件中显示的二维码；无法扫码时可手动输入配对码。" = "Return to iPhone, tap Scan to Pair, and scan the QR code shown by the connector plugin. If you cannot scan, enter the pairing code manually.";
+"安装连接器" = "Install the Connector";

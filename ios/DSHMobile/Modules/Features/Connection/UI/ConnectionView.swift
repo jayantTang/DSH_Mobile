@@ -40,6 +40,8 @@ public struct ConnectionView: View {
     @State private var isScanning = false
     /// 手输配对码默认收起来：扫码是主路径，打字是兜底。
     @State private var showsManualInput = false
+    /// 连接器安装说明；只从「提示」第一条进入。
+    @State private var isShowingConnectorGuide = false
 
     public var body: some View {
         NavigationStack {
@@ -69,6 +71,9 @@ public struct ConnectionView: View {
                     Task { await handleScanned(payload) }
                 }
             }
+            .sheet(isPresented: $isShowingConnectorGuide) {
+                ConnectorInstallGuideView()
+            }
         }
     }
 
@@ -90,7 +95,7 @@ public struct ConnectionView: View {
                     .font(DSHTheme.Typography.largeTitle)
                     .foregroundStyle(DSHTheme.labelPrimary)
             }
-            Text("连接你电脑上的 DSH，随时随地查看进度、回应提问、继续会话。")
+            Text("连接电脑上的 DSH，查看会话进度、回应提问并继续工作。")
                 .font(DSHTheme.Typography.caption)
                 .foregroundStyle(DSHTheme.labelSecondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -165,7 +170,7 @@ public struct ConnectionView: View {
                     Text("扫码配对")
                         .font(DSHTheme.Typography.bodyStrong)
                         .foregroundStyle(DSHTheme.labelPrimary)
-                    Text("扫描电脑端「移动端连接」里的二维码")
+                    Text("扫描电脑端连接器插件「移动端连接」中的二维码。")
                         .font(DSHTheme.Typography.micro)
                         .foregroundStyle(DSHTheme.labelTertiary)
                 }
@@ -197,7 +202,7 @@ public struct ConnectionView: View {
             } label: {
                 HStack(spacing: 5) {
                     Image(systemName: "keyboard")
-                    Text(showsManualInput ? "收起手动输入" : "扫不了码？手动输入配对码")
+                    Text(showsManualInput ? "收起手动输入" : "无法扫码？手动输入配对码")
                     Spacer(minLength: 0)
                 }
                 .font(DSHTheme.Typography.micro)
@@ -227,9 +232,28 @@ public struct ConnectionView: View {
     private var hint: some View {
         PanelSection(String(localized: "提示")) {
             VStack(alignment: .leading, spacing: DSHTheme.Spacing.hairline) {
-                Label("在电脑端 DSH 界面的「移动端连接」里打开二维码。", systemImage: "qrcode")
+                Button {
+                    isShowingConnectorGuide = true
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "shippingbox")
+                        Text("尚未安装连接器？")
+                        Text("查看安装方式")
+                            .foregroundStyle(DSHTheme.brand)
+                        Spacer(minLength: 0)
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(DSHTheme.labelDimmed)
+                    }
+                    .font(DSHTheme.Typography.micro)
+                    .foregroundStyle(DSHTheme.labelTertiary)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("connection.connector-guide")
+                Label("扫码内容是电脑端连接器插件「移动端连接」中显示的二维码。", systemImage: "qrcode")
                 Label("中转连接需要电脑侧连接器在线，DSH 重启后会自动重连。", systemImage: "cloud")
-                Label("电脑与手机都需联网；对话内容经中转服务转发，不在服务器落盘。", systemImage: "lock.shield")
+                Label("电脑与 iPhone/iPad 均需联网。对话内容经中转转发，不在中转服务器保存。", systemImage: "lock.shield")
             }
             .font(DSHTheme.Typography.micro)
             .foregroundStyle(DSHTheme.labelTertiary)
@@ -359,4 +383,68 @@ public struct ConnectionView: View {
         if case .failed(let message) = store.state { error = message }
     }
 }
+
+/// 连接器安装说明：四步内完成 DSH、插件、中转登记与扫码。
+/// 只从连接页「提示」第一条打开；扫码页不加入口。
+private struct ConnectorInstallGuideView: View {
+    @Environment(\.dismiss) private var dismiss
+
+    private let command = "dsh plugin --profile \"${DSH_PROFILE:-web}\" add dsh-plugin-mobile-link"
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: DSHTheme.Spacing.section) {
+                    Text("在电脑上完成以下步骤，再回到 iPhone 扫码。")
+                        .font(DSHTheme.Typography.caption)
+                        .foregroundStyle(DSHTheme.labelSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    step(1, "安装并启动 DSH：使用桌面版安装包，或在终端运行 dsh web。")
+                    VStack(alignment: .leading, spacing: DSHTheme.Spacing.tight) {
+                        step(2, "安装连接器插件。图形化方式：打开 Plugins，点 Add plugin，输入 dsh-plugin-mobile-link，点 Install。")
+                        Text("命令行方式（读取当前 DSH profile）：")
+                            .font(DSHTheme.Typography.micro)
+                            .foregroundStyle(DSHTheme.labelTertiary)
+                        Text(verbatim: command)
+                            .font(.system(.caption2, design: .monospaced))
+                            .textSelection(.enabled)
+                            .padding(DSHTheme.Spacing.tight)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(DSHTheme.layer1)
+                            .clipShape(RoundedRectangle(cornerRadius: DSHTheme.Radius.medium, style: .continuous))
+                    }
+                    step(3, "打开 DSH，进入「移动端连接」；确认中转地址，点「登记」，等待状态变为「已连接」。")
+                    step(4, "回到 iPhone，点「扫码配对」，扫描连接器插件中显示的二维码；无法扫码时可手动输入配对码。")
+                }
+                .padding(DSHTheme.Spacing.loose)
+            }
+            .background(DSHTheme.background)
+            .navigationTitle("安装连接器")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("完成") { dismiss() }
+                }
+            }
+        }
+    }
+
+    private func step(_ number: Int, _ text: LocalizedStringKey) -> some View {
+        HStack(alignment: .top, spacing: DSHTheme.Spacing.tight) {
+            Text(String(number))
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(DSHTheme.brand)
+                .frame(width: 20, height: 20)
+                .background(DSHTheme.brand.opacity(0.12))
+                .clipShape(Circle())
+            Text(text)
+                .font(DSHTheme.Typography.caption)
+                .foregroundStyle(DSHTheme.labelPrimary)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
 #endif
