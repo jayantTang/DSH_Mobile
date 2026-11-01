@@ -74,6 +74,9 @@ final class Engine: XCTestCase {
         // decide a case, and a run that stops early cannot say which steps
         // passed — so keep going and let the final assertion speak.
         continueAfterFailure = true
+        // 每轮从竖屏开始：这是今天隐含的前提，显式写下来，免得上一轮转过去的方向
+        // 漏到下一轮（M11）。
+        XCUIDevice.shared.orientation = .portrait
         try XCTSkipIf(Self.inlinePlan == nil && !FileManager.default.fileExists(atPath: Self.planPath),
                       "找不到执行计划 \(Self.planPath)；请用 test/run.sh 运行")
     }
@@ -424,6 +427,53 @@ final class Engine: XCTestCase {
         case "swipe", "scroll":
             return swipe(step)
 
+        case "rotate":
+            // 旋转到指定方向（M11）。转场动画期间拍到的是中间帧，所以转完等画面静止。
+            // 「横屏」按左横屏处理：用例只关心"变成横向"，具体哪一面由「左/右横屏」指定。
+            let wanted = step.value ?? step.target ?? "portrait"
+            let orientation: UIDeviceOrientation = switch wanted {
+            case "landscape", "landscapeLeft": .landscapeLeft
+            case "landscapeRight": .landscapeRight
+            case "portraitUpsideDown": .portraitUpsideDown
+            default: .portrait
+            }
+            XCUIDevice.shared.orientation = orientation
+            waitUntilStill(timeout: 4)
+            return Outcome(ok: true, detail: "已旋转到 \(wanted)")
+
+        case "keys":
+            // 组合键（M11）：Mac 的菜单会截走一部分 ⌘ 组合，只有从测试进程注入才拦不到。
+            // 解析不出就是失败，不静默当"没按到"。
+            let combo = step.value ?? step.target ?? ""
+            guard let parsed = keyCombo(combo) else {
+                return Outcome(ok: false,
+                               detail: "看不懂的组合键「\(combo)」——写法如 cmd+n / cmd+comma / esc")
+            }
+            app.typeKey(parsed.key, modifierFlags: parsed.flags)
+            Thread.sleep(forTimeInterval: 0.6)
+            return Outcome(ok: true, detail: "已按键 \(combo)")
+
+        case "hover":
+            // 指针悬停（M11）。仿真器是否产生悬停视觉是独立问题（U3），
+            // 这一步只负责把指针放到元素上。
+            guard let target = step.target else { return Outcome(ok: false, detail: "缺少目标") }
+            guard let hovering = element(target) else {
+                return Outcome(ok: false, detail: "找不到元素 \(target)")
+            }
+            hovering.hover()
+            Thread.sleep(forTimeInterval: 0.4)
+            return Outcome(ok: true, detail: "已悬停 \(target)")
+
+        case "context_click":
+            // 右键（M11）：指针设备的次要键。"菜单有没有出来"由下一步的断言回答。
+            guard let target = step.target else { return Outcome(ok: false, detail: "缺少目标") }
+            guard let clicking = element(target) else {
+                return Outcome(ok: false, detail: "找不到元素 \(target)")
+            }
+            clicking.rightClick()
+            Thread.sleep(forTimeInterval: 0.6)
+            return Outcome(ok: true, detail: "已右键 \(target)")
+
         case "wait":
             guard let target = step.target else { return Outcome(ok: false, detail: "缺少目标") }
             let timeout = step.timeout ?? 15
@@ -530,6 +580,38 @@ final class Engine: XCTestCase {
         default:
             return Outcome(ok: false, detail: "未知动作 \(step.action)")
         }
+    }
+
+    /// 把 `cmd+n` / `cmd+comma` / `esc` 解析成 `typeKey(_:modifierFlags:)` 的入参（M11）。
+    ///
+    /// 没有字面文本的键走 `XCUIKeyboardKey` 常量；单个字符原样交给系统。
+    /// 解析不出来返回 nil —— 那一'步'判失败，而不是猜一个键按下去。
+    private func keyCombo(_ combo: String) -> (key: String, flags: XCUIElement.KeyModifierFlags)? {
+        let parts = combo
+            .split(separator: "+")
+            .map { $0.trimmingCharacters(in: .whitespaces).lowercased() }
+        guard var last = parts.last, !last.isEmpty else { return nil }
+        var flags: XCUIElement.KeyModifierFlags = []
+        for modifier in parts.dropLast() {
+            switch modifier {
+            case "cmd", "command", "⌘": flags.insert(.command)
+            case "shift", "⇧": flags.insert(.shift)
+            case "opt", "option", "alt", "⌥": flags.insert(.option)
+            case "ctrl", "control", "⌃": flags.insert(.control)
+            default: return nil
+            }
+        }
+        switch last {
+        case "comma": last = ","
+        case "return", "enter": last = XCUIKeyboardKey.return.rawValue
+        case "esc", "escape": last = XCUIKeyboardKey.escape.rawValue
+        case "space": last = XCUIKeyboardKey.space.rawValue
+        case "tab": last = XCUIKeyboardKey.tab.rawValue
+        case "delete", "backspace": last = XCUIKeyboardKey.delete.rawValue
+        default:
+            guard last.count == 1 else { return nil }
+        }
+        return (last, flags)
     }
 
     /// Scrolls the screen, and proves that it did.

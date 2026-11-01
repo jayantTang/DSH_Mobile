@@ -220,16 +220,27 @@ public struct ChatView: View {
     }
 
     public var body: some View {
-        VStack(spacing: 0) {
-            transcript
-            if let prompts = model.pendingPrompts.first {
-                PendingPromptBanner(prompt: prompts, model: model)
+        // iPad 宽屏：整列（转写 + 待答横幅 + 排队条 + 输入区）收进阅读宽度并居中，
+        // 这样正文与输入框同列、左右留白对称。非 pad 时 `ReadingColumn` 原样返回内容，
+        // iPhone 像素与改前一致。
+        //
+        // 〔偏离 D-4，方案 §4 M6〕方案给的片段把 `.background(DSHTheme.background)` 放在
+        // `ReadingColumn` **内**，与同一段"背景留在最外层铺满"的文字相反：放里面只在 760pt
+        // 那一列上色，两侧留白露出的是宿主底色。按文字意图放在 ReadingColumn 外，
+        // 判据是 iPhone 逐像素核对 0 差异 + iPad 横屏两侧留白同色（run `20261101-162446`
+        // 与 `20261101-162054`）。
+        ReadingColumn {
+            VStack(spacing: 0) {
+                transcript
+                if let prompts = model.pendingPrompts.first {
+                    PendingPromptBanner(prompt: prompts, model: model)
+                }
+                // 排队输入：输入区上方独立条带，不进转写、不影响输入框高度。
+                QueuedInputBar(model: model)
+                Hairline()
+                Composer(model: model, isFocused: $isFocused)
+                    .probed("composer")
             }
-            // 排队输入：输入区上方独立条带，不进转写、不影响输入框高度。
-            QueuedInputBar(model: model)
-            Hairline()
-            Composer(model: model, isFocused: $isFocused)
-                .probed("composer")
         }
         .background(DSHTheme.background)
         // 018：聊天页把当前会话的轮次喂成 `timeline.isTurnOpen`（列表喂的是

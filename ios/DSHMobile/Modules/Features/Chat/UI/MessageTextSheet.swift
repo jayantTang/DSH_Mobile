@@ -35,16 +35,19 @@ struct MessageTextSheet: View {
 
     var body: some View {
         NavigationStack {
-            GeometryReader { proxy in
-                SelectableMessageText(
-                    text: message.text,
-                    isMonospaced: message.isMonospaced,
-                    fittedHeight: $fittedHeight
-                )
-                // 量到之前先铺满（可滚动），量到之后贴住文字：短消息的文本框若铺满整屏，
-                // 手指按在"中间"会落在文字下面的空白上，长按既选不中也弹不出菜单。
-                .frame(height: fittedHeight > 0 ? min(fittedHeight, proxy.size.height) : proxy.size.height)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            // iPad 宽屏收进阅读宽度（M6）：收窄后 `proxy.size.width` 就是阅读宽度。
+            ReadingColumn {
+                GeometryReader { proxy in
+                    SelectableMessageText(
+                        text: message.text,
+                        isMonospaced: message.isMonospaced,
+                        fittedHeight: $fittedHeight
+                    )
+                    // 量到之前先铺满（可滚动），量到之后贴住文字：短消息的文本框若铺满整屏，
+                    // 手指按在"中间"会落在文字下面的空白上，长按既选不中也弹不出菜单。
+                    .frame(height: fittedHeight > 0 ? min(fittedHeight, proxy.size.height) : proxy.size.height)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                }
             }
             .background(DSHTheme.background)
             .navigationTitle(message.title)

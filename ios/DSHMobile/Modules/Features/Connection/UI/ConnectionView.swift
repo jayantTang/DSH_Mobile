@@ -43,21 +43,24 @@ public struct ConnectionView: View {
 
     public var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: DSHTheme.Spacing.section) {
-                    banner
-                    if !store.profiles.isEmpty { savedConnections }
-                    scanButton
-                    manualEntry
-                    if let error {
-                        Text(error)
-                            .font(DSHTheme.Typography.caption)
-                            .foregroundStyle(DSHTheme.danger)
-                            .fixedSize(horizontal: false, vertical: true)
+            // iPad 宽屏收进表单宽度（M6）；非 pad 原样返回。
+            ReadingColumn(ReadingWidth.form) {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: DSHTheme.Spacing.section) {
+                        banner
+                        if !store.profiles.isEmpty { savedConnections }
+                        scanButton
+                        manualEntry
+                        if let error {
+                            Text(error)
+                                .font(DSHTheme.Typography.caption)
+                                .foregroundStyle(DSHTheme.danger)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        hint
                     }
-                    hint
+                    .padding(DSHTheme.Spacing.loose)
                 }
-                .padding(DSHTheme.Spacing.loose)
             }
             .background(DSHTheme.background)
             .navigationTitle("连接 DSH")

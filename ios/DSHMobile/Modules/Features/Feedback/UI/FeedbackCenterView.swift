@@ -57,18 +57,22 @@ public struct FeedbackCenterView: View {
 
     public var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
-                tabPicker
-                List {
-                    switch tab {
-                    case .inbox: inboxRows
-                    case .sent: sentRows
+            // iPad 宽屏收进阅读宽度（M6）：分段控件与列表一起收窄，
+            // 否则控件比列表宽一截。非 pad 时原样返回，iPhone 像素不变。
+            ReadingColumn {
+                VStack(spacing: 0) {
+                    tabPicker
+                    List {
+                        switch tab {
+                        case .inbox: inboxRows
+                        case .sent: sentRows
+                        }
                     }
+                    .listStyle(.insetGrouped)
+                    .scrollContentBackground(.hidden)
+                    .background(DSHTheme.background)
+                    .accessibilityIdentifier("feedback.center")
                 }
-                .listStyle(.insetGrouped)
-                .scrollContentBackground(.hidden)
-                .background(DSHTheme.background)
-                .accessibilityIdentifier("feedback.center")
             }
             .background(DSHTheme.background)
             .navigationTitle("反馈")

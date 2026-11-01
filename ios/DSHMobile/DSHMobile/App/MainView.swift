@@ -27,6 +27,14 @@ struct MainView: View {
     @Environment(SessionAlerts.self) private var alerts
     @Environment(AttachmentImages.self) private var attachmentImages
     /// Which layout this screen gets: a phone needs a stack it can drive.
+    ///
+    /// 布局判据唯一化（M2）：这里读注入的 `\.dshLayoutMode`，不再自己读尺寸类。
+    /// 下面 `commitRoute` 里那一处 `horizontalSizeClass` 是**冻结的原样代码**
+    /// （§2.3 硬清单：改了它等于改 iPhone），它与注入值同源同义，所以两处不冲突。
+    @Environment(\.dshLayoutMode) private var layoutMode
+    /// iPad 专场适配是否生效（M3）。为假时下面所有 pad 分支都不进入。
+    @Environment(\.dshPadAdaptation) private var padAdaptation
+    /// 只服务于冻结的 `commitRoute`；布局与 pad 分支都不读它。
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     /// Whether the app is in front, which decides if "already on screen" is a
     /// reason to stay quiet.
@@ -133,6 +141,15 @@ struct MainView: View {
             filesOpenPath = automationFile
             filesScope = WorkspaceFileScope(summary: session, hostHome: store.hostHome)
         }
+        .task(id: automationSessionId) {
+            // iPad 宽屏的那个钩子没有栈可推：等会话进列表，再送进详情列。
+            // 非 pad（含 iPhone 横屏）一律不进入，行为与今天一致。
+            guard padAdaptation, let wanted = automationSessionId else { return }
+            for _ in 0..<80 where listModel.session(withId: wanted) == nil {
+                try? await Task.sleep(for: .milliseconds(250))
+            }
+            openInDetail(wanted)
+        }
         .task(id: automationScreen) {
             guard let screen = automationScreen, !didApplyAutomationScreen else { return }
             didApplyAutomationScreen = true
@@ -161,7 +178,12 @@ struct MainView: View {
 
     private var bodyStageOne: some View {
         Group {
-            if let automationSessionId, let summary = listModel.session(withId: automationSessionId) {
+            if padAdaptation {
+                // iPad 宽屏：`-DSHOpenSession` 也走产品分栏（M7）。改前这条钩子
+                // 直接推一列 `NavigationStack`，iPad 上永远测不到分栏。
+                splitView
+            } else if let automationSessionId,
+                      let summary = listModel.session(withId: automationSessionId) {
                 // In compact width a split view can only show one column, and
                 // the sidebar column wins. An unattended run therefore presents
                 // the transcript directly rather than trying to steer the split
@@ -176,7 +198,7 @@ struct MainView: View {
                 splitView
             }
         }
-        .sheet(isPresented: $isShowingConnections) {
+        .dshSurface(isPresented: $isShowingConnections) {
             NavigationStack {
                 ConnectionView(onPairingChanged: { await APNSRegistrar.shared.pairingChanged() })
                     .toolbar {
@@ -186,29 +208,35 @@ struct MainView: View {
                     }
             }
         }
-        .sheet(isPresented: $isShowingSettings) {
+        .dshSurface(isPresented: $isShowingSettings) {
             SettingsSheet(store: connectionEnv)
         }
-        .sheet(item: $filesScope) { scope in
-            WorkspaceFilesView(
-                store: connectionEnv,
-                scope: scope,
-                openPath: $filesOpenPath,
-                initialPath: automationFilesDir ?? ""
-            )
+        .dshSurface(item: $filesScope) { scope in
+            // 工作区文件页自己没有导航栏（K1）：iPad 整页呈现后没有关闭入口，
+            // 所以只给它套一层外壳。外壳在 `pad == false` 时原样返回内容。
+            PadSurfaceShell("工作区文件") {
+                WorkspaceFilesView(
+                    store: connectionEnv,
+                    scope: scope,
+                    openPath: $filesOpenPath,
+                    initialPath: automationFilesDir ?? ""
+                )
+            }
         }
         #if DEBUG
-        .sheet(isPresented: $isShowingDiagnostics) {
-            ScrollView {
-                Text(AutomationDiagnostics.report())
-                    .font(.system(size: 12, design: .monospaced))
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding()
+        .dshSurface(isPresented: $isShowingDiagnostics) {
+            PadSurfaceShell("设备诊断") {
+                ScrollView {
+                    Text(AutomationDiagnostics.report())
+                        .font(.system(size: 12, design: .monospaced))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding()
+                }
             }
         }
         #endif
-        .sheet(isPresented: $isShowingWebFallback) {
+        .dshSurface(isPresented: $isShowingWebFallback) {
             // The fallback resolves its own surface from the active connection
             // and explains itself when a relay link cannot serve one.
             PluginWebFallback(store: connectionEnv)
@@ -367,13 +395,26 @@ struct MainView: View {
         }
     }
 
+    /// iPad 宽屏：把会话送进详情列。效果与窄屏 destination 的 `.task` 一致
+    /// （打开 + 标记已读 + 对齐账户状态），只是不推栈。
+    private func openInDetail(_ sessionId: String) {
+        guard let summary = listModel.session(withId: sessionId) else { return }
+        Task { await chatModel.open(summary) }
+        listModel.markViewed(sessionId)
+        AccountStateSync.shared.sessionViewed()
+    }
+
     private func chat(for summary: SessionSummary) -> some View {
         ChatView(
             model: chatModel,
             onOpenFiles: { filesScope = WorkspaceFileScope(summary: $0, hostHome: store.hostHome) },
             onOpenWeb: { _ in isShowingWebFallback = true },
             // 018：面板与 subagent 卡的「打开子会话」压入同一个导航栈。
-            onOpenSession: { paths.append($0) },
+            // iPad 宽屏没有可驱动的栈（`paths` 只在窄屏栈里生效），所以改走详情列；
+            // 其余情况仍是今天那句原文（含 iPhone 横屏的既有表现，见 §11 K2）。
+            onOpenSession: { id in
+                if padAdaptation { openInDetail(id) } else { paths.append(id) }
+            },
             sessionId: summary.sessionId
         )
     }
@@ -414,18 +455,32 @@ struct MainView: View {
 
     @ViewBuilder
     private var layout: some View {
-        if horizontalSizeClass == .compact {
+        if layoutMode == .compact {
             NavigationStack(path: $paths) {
                 sidebar
                     .navigationDestination(for: String.self, destination: sessionDestination)
             }
         } else {
             NavigationSplitView {
-                sidebar
-                    .navigationDestination(for: String.self, destination: sessionDestination)
+                padColumnWidth(
+                    sidebar
+                        .navigationDestination(for: String.self, destination: sessionDestination)
+                )
             } detail: {
                 SessionDetailView(model: chatModel)
             }
+        }
+    }
+
+    /// iPad 宽屏的侧栏宽度上下限（M8）。非 pad 不挂：iPhone 横屏的侧栏宽度会变。
+    /// 数值口径：280 = 能读出「时间 + 标题 + 状态点」的最小宽度；340 默认；
+    /// 420 = 再宽就把详情列压到 760 以下。
+    @ViewBuilder
+    private func padColumnWidth<V: View>(_ view: V) -> some View {
+        if padAdaptation {
+            view.navigationSplitViewColumnWidth(min: 280, ideal: 340, max: 420)
+        } else {
+            view
         }
     }
 

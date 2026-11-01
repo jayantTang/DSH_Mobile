@@ -148,6 +148,13 @@ const ACTIONS = [
   // A second opinion from the system browser.
   { match: /^用浏览器打开\s+(\S+)$/, to: (url) => [`open_url ${url}`] },
   { match: /^渲染 HTML\s+(.+)$/, to: (html) => [`open_html '${html}'`] },
+  // 旋转 / 按键 / 悬停 / 右键（M11）。四者的值都只记 target 或 value，
+  // 与 `pause` / `tap_at` 同组；判定由随后的断言或截图给出。
+  { match: /^旋转\s+(竖屏|横屏|左横屏|右横屏)$/, to: (direction) =>
+      [`rotate value=${{ 竖屏: 'portrait', 横屏: 'landscape', 左横屏: 'landscapeLeft', 右横屏: 'landscapeRight' }[direction]}`] },
+  { match: /^按键\s+(\S+)$/, to: (combo) => [`keys value=${combo}`] },
+  { match: /^悬停\s+(.+)$/, to: (target) => [`hover ${quote(target)}`] },
+  { match: /^右键\s+(.+)$/, to: (target) => [`context_click ${quote(target)}`] },
   { match: /^什么都不做$/, to: () => [] },
 ]
 
@@ -428,11 +435,17 @@ export function buildPlan({ casePath, caseText, stepsText, runId, bundleId, sess
         case 'wait':
         case 'probe':
         case 'long_press':
+        // M11 的四个动作：只记 target 或 value，与 pause / tap_at 同组。
+        case 'rotate':
+        case 'keys':
+        case 'hover':
+        case 'context_click':
           anchor = nextStep(verb)
           anchor.target = positional[0]
           if (verb === 'swipe') anchor.value = values.direction ?? positional[1] ?? 'up'
           if (verb === 'wait') anchor.timeout = Number(values.timeout ?? positional[1] ?? 15)
           if (verb === 'pause') anchor.timeout = Number(values.seconds ?? positional[0] ?? 1)
+          if (verb === 'rotate' || verb === 'keys') anchor.value = values.value ?? positional[0]
           if (verb === 'long_press') anchor.value = values.at ?? 'center'
           if (verb === 'long_press' && values.timeout !== undefined) {
             anchor.timeout = Number(values.timeout)

@@ -35,18 +35,22 @@ public struct SettingsView: View {
     @Environment(SessionAlertPrefs.self) private var alertPrefs
 
     public var body: some View {
-        List {
-            statusSection
-            devicesSection
-            permissionSection
-            credentialsSection
-            alertsSection
-            cacheSection
-            aboutSection
-            desktopOnlySection
+        // iPad 宽屏收进阅读宽度（M6）：`.insetGrouped` 在整屏宽上会把每行拉满，
+        // 收窄后是常规表单观感。非 pad 时 ReadingColumn 原样返回内容，iPhone 像素不变。
+        ReadingColumn {
+            List {
+                statusSection
+                devicesSection
+                permissionSection
+                credentialsSection
+                alertsSection
+                cacheSection
+                aboutSection
+                desktopOnlySection
+            }
+            .listStyle(.insetGrouped)
+            .accessibilityIdentifier("settings.root")
         }
-        .listStyle(.insetGrouped)
-        .accessibilityIdentifier("settings.root")
         .navigationTitle("设置")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {

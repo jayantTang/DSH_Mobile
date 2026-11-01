@@ -23,6 +23,7 @@
 		61B55FA169525351CFA007B5 /* RunKeepAlive.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFA758713F0F4217EFCD7A9A /* RunKeepAlive.swift */; };
 		65336B276F18FDBD4275D958 /* AccountStateSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = E81D7EA8C25588CA49E849FA /* AccountStateSync.swift */; };
 		69048FC4D444EA89F3327385 /* AppStartupCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F8959370B6279C1CDAB61E6 /* AppStartupCoordinator.swift */; };
+		6DA2BAF6B82EB89B2306C009 /* PadCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = B99EB3D5AF0C0B3332EC364E /* PadCommands.swift */; };
 		73821BF9D6FD31005CB7FB28 /* DSHSessionsDomain in Frameworks */ = {isa = PBXBuildFile; productRef = F59D0246693203AA19695964 /* DSHSessionsDomain */; };
 		76EB973FB394D2B70D657AA2 /* DSHConnectionDomain in Frameworks */ = {isa = PBXBuildFile; productRef = E537E38B1E9A4966CDE8CAD4 /* DSHConnectionDomain */; };
 		7A5DBF56A82D9E6A1E08CA4E /* DSHMobileApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFF59C8B75008DE0FF3FC446 /* DSHMobileApp.swift */; };
@@ -97,6 +98,7 @@
 		A5CB8D05D12CE4348EDCDCD4 /* AppLifecyclePlan.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLifecyclePlan.swift; sourceTree = "<group>"; };
 		AFF59C8B75008DE0FF3FC446 /* DSHMobileApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DSHMobileApp.swift; sourceTree = "<group>"; };
 		B9260874C4B5CBABBA0027B6 /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.xcconfig; sourceTree = "<group>"; };
+		B99EB3D5AF0C0B3332EC364E /* PadCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PadCommands.swift; sourceTree = "<group>"; };
 		C5443B4AC48ED16A3F9AAFF1 /* P13ResumeObserver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = P13ResumeObserver.swift; sourceTree = "<group>"; };
 		C975AD70ED569A5CA4717F6B /* APNSRegistrar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APNSRegistrar.swift; sourceTree = "<group>"; };
 		CFA758713F0F4217EFCD7A9A /* RunKeepAlive.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunKeepAlive.swift; sourceTree = "<group>"; };
@@ -259,6 +261,7 @@
 			children = (
 				AFF59C8B75008DE0FF3FC446 /* DSHMobileApp.swift */,
 				F4EF2374F99140613AB95F94 /* MainView.swift */,
+				B99EB3D5AF0C0B3332EC364E /* PadCommands.swift */,
 				1F8851C894491769E7244907 /* RootView.swift */,
 			);
 			path = App;
@@ -420,6 +423,7 @@
 				D0E3123F12FFDF65CB904400 /* NotificationProbe.swift in Sources */,
 				36D223A28FCC59DCD68A4EE2 /* P13ResumeObserver.swift in Sources */,
 				932DFAF2F6B4F7A7F0BB2FA1 /* P13ResumeProbe.swift in Sources */,
+				6DA2BAF6B82EB89B2306C009 /* PadCommands.swift in Sources */,
 				9DFBD7131CC4951047D42116 /* RootView.swift in Sources */,
 				61B55FA169525351CFA007B5 /* RunKeepAlive.swift in Sources */,
 				C62C93F00E71B302226EA516 /* ScenePhaseCoordinator.swift in Sources */,
@@ -490,7 +494,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.jayanttang.dsh;
 				PRODUCT_NAME = DSHMobile;
 				SDKROOT = iphoneos;
-				TARGETED_DEVICE_FAMILY = 1;
+				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Release;
 		};
@@ -565,7 +569,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.jayanttang.dsh;
 				PRODUCT_NAME = DSHMobile;
 				SDKROOT = iphoneos;
-				TARGETED_DEVICE_FAMILY = 1;
+				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;
 		};
@@ -818,7 +822,7 @@
 				PRODUCT_NAME = DSHMobile;
 				SDKROOT = iphoneos;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DIAGNOSTICS;
-				TARGETED_DEVICE_FAMILY = 1;
+				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = OTA;
 		};

@@ -63,6 +63,8 @@ struct RootView: View {
     @State private var lifecycle: ScenePhaseCoordinator?
 
     @Environment(\.scenePhase) private var scenePhase
+    /// 宽窄两态的唯一来源：注入一次，向下都用 `\.dshLayoutMode`（M2）。
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var lastConnected = false
     /// Once the workspace has been reached, a dropped link reconnects *inside*
     /// it. Falling back to the pairing screen made every trip to the background
@@ -87,6 +89,14 @@ struct RootView: View {
             .environment(sessionsServices)
             .environment(feedbackServices)
             .environment(attachmentImages)
+            // 两条环境判据各管一件事（M2 / M3）：
+            // - `dshLayoutMode` 只看尺寸类，决定布局（栈 vs 分栏）；
+            // - `dshPadAdaptation = iPad && wide`，决定所有 iPad 专场适配是否生效。
+            // 后者为假时下游执行的是今天那几行原文，iPhone 零变化因此是机制保证。
+            .environment(\.dshLayoutMode, DSHLayoutMode(horizontalSizeClass))
+            .environment(\.dshPadAdaptation,
+                         DSHAdaptation.isPadWide(isPad: UIDevice.current.userInterfaceIdiom == .pad,
+                                                 layout: DSHLayoutMode(horizontalSizeClass)))
             .tint(DSHTheme.brand)
             .alert("连接失败", isPresented: Binding(
                 get: { connectionError != nil },

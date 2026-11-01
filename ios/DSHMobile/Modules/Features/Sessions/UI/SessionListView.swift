@@ -37,6 +37,10 @@ public final class SessionsServices {
 
 public struct SessionListView: View {
     @Environment(\.openURL) private var openURL
+    /// iPad 专场适配是否生效（M3）：当前会话高亮、快捷键、指针都只挂在它下面。
+    @Environment(\.dshPadAdaptation) private var padAdaptation
+    /// 场景级快捷键的派发者（M9）。它只投事件，动作仍由这里执行。
+    @Environment(PadCommandRouter.self) private var padCommands
     @Environment(SessionsServices.self) private var services
     @Environment(ConnectionEnv.self) private var store
     @Environment(HostEventHub.self) private var hub
@@ -154,8 +158,14 @@ public struct SessionListView: View {
                 onOpenSession(sessionId)
             }
         }
-        .sheet(isPresented: $isShowingFeedback) {
+        .dshSurface(isPresented: $isShowingFeedback) {
             services.feedbackView()
+        }
+        // 场景命令的消费者（M9）：本轮菜单里只有 ⌘N，所以这里也只有一件事——
+        // 打开新建会话，动作与点工具栏那支笔完全一样。iPhone 上 `padAdaptation` 恒 false。
+        .onChange(of: padCommands.sequence) { _, _ in
+            guard padAdaptation else { return }
+            isCreatingSession = true
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if let archived = justArchived { archivedNotice(archived) }
@@ -428,6 +438,12 @@ public struct SessionListView: View {
     ///
     /// The disclosure is a separate tap target from the row itself, so opening
     /// the session and unfolding its subagents never fight over one gesture.
+    /// 当前会话是不是这一行（M8 §13.7）。判定只有一处：`SessionListModel.currentSessionId`
+    /// 是"现在开着哪个会话"的唯一所有者，这里不新增选中态字段。
+    private func isCurrentSession(_ session: SessionSummary) -> Bool {
+        padAdaptation && model.currentSessionId == session.sessionId
+    }
+
     private func parentRow(session: SessionSummary) -> some View {
         HStack(spacing: DSHTheme.Spacing.hairline) {
             // 用 Button 而不是 NavigationLink：List 会给 NavigationLink 自动加一个
@@ -443,7 +459,8 @@ public struct SessionListView: View {
                            localTitle: model.pendingTitle(for: session.sessionId),
                            activityOverride: activity.snapshot(sessionId: session.sessionId),
                            activityRevision: activity.revision,
-                           isFormal: model.isFormalSession(session.sessionId))
+                           isFormal: model.isFormalSession(session.sessionId),
+                           isCurrent: isCurrentSession(session))
             }
             .buttonStyle(.plain)
             // 首个会话行真的画出来了 → 记一条 `app.first-render`（一次拨号一条）。
@@ -463,6 +480,15 @@ public struct SessionListView: View {
             }
 
         }
+        // iPad 宽屏：指针悬停高亮 + 右键「归档」（M10）。走的是同一个 `archive(_:)`，
+        // 与滑动归档同一条路径。非 pad 时这个 modifier 什么都不做。
+        .dshRowPointer {
+            Button(role: .destructive) {
+                archive(session)
+            } label: {
+                Label("归档", systemImage: "archivebox")
+            }
+        }
         .listRowInsets(EdgeInsets(top: 2, leading: 10, bottom: 2, trailing: 10))
         .listRowBackground(Color.clear)
         .listRowSeparator(.hidden)
@@ -474,11 +500,13 @@ public struct SessionListView: View {
         NavigationLink(value: session.sessionId) {
             SessionRow(session: session, rowState: model.state(of: session),
                        home: store.hostHome, isChild: true,
-                       )
+                       isCurrent: isCurrentSession(session))
         }
         .buttonStyle(.plain)
         // 子会话行也是"内容画出来"的一种（同一处语义的两条渲染路径，都要覆盖）。
         .onAppear { Task { await store.noteFirstRender() } }
+        // 归档行只要悬停高亮，不要菜单（M10）。
+        .dshRowPointer { EmptyView() }
         .listRowInsets(EdgeInsets(top: 1, leading: 10, bottom: 1, trailing: 10))
         .listRowBackground(Color.clear)
         .listRowSeparator(.hidden)
@@ -497,11 +525,14 @@ public struct SessionListView: View {
                        isJustCreated: session.sessionId == model.lastCreatedSessionId,
                        activityOverride: activity.snapshot(sessionId: session.sessionId),
                        activityRevision: activity.revision,
-                       isFormal: model.isFormalSession(session.sessionId))
+                       isFormal: model.isFormalSession(session.sessionId),
+                       isCurrent: isCurrentSession(session))
         }
         .buttonStyle(.plain)
         // 子会话行也是"内容画出来"的一种（同一处语义的两条渲染路径，都要覆盖）。
         .onAppear { Task { await store.noteFirstRender() } }
+        // 子会话行只要悬停高亮，不要菜单（M10）。
+        .dshRowPointer { EmptyView() }
         .listRowInsets(EdgeInsets(top: 1, leading: 10, bottom: 1, trailing: 10))
         .listRowBackground(Color.clear)
         .listRowSeparator(.hidden)
@@ -684,6 +715,11 @@ public struct SessionRow: View {
     var activityRevision: Int = 0
     /// 非正式会话（子智能体/未分组/已归档）不显示运行/等待/任务计数。
     var isFormal: Bool = true
+    /// 是不是当前正开在详情列的那个会话（M8 §13.7）。
+    ///
+    /// 用**描边**而不是整行填色：填色已经被「该你回应」占用了（`brandSubtle` 底 + 3pt 左条），
+    /// 同一套视觉不能有两个意思。默认 false —— iPhone 不传，行为与今天一致。
+    var isCurrent: Bool = false
 
     /// 行自己读活动状态：把快照当参数传时，列表父视图不重算，行永远停在旧值
     ///（2026-10-26：面板已有后台任务、列表行没有）。读在行 body 里才会随
@@ -850,6 +886,14 @@ public struct SessionRow: View {
                     .fill(DSHTheme.brand)
                     .frame(width: 3)
                     .padding(.vertical, 7)
+            }
+        }
+        // 当前会话的标记（M8 §13.7）：1.5pt 品牌色描边，与上一种（填色 + 左条）结构不同，
+        // 不看色相也能区分。`isCurrent` 为假时这一层完全不构造。
+        .overlay {
+            if isCurrent {
+                RoundedRectangle(cornerRadius: DSHTheme.Radius.medium, style: .continuous)
+                    .stroke(DSHTheme.brand.opacity(0.55), lineWidth: 1.5)
             }
         }
         .contentShape(Rectangle())

@@ -22,6 +22,10 @@ struct DSHMobileApp: App {
     /// all three live in `APNSRegistrar`.
     @UIApplicationDelegateAdaptor(APNSRegistrar.self) private var appDelegate
 
+    /// iPad 专用快捷键的派发者（M9）：场景级命令收到按键，往这里投一条，
+    /// 由真正持有那个动作的视图去执行。它只是"事件通道"，不持有任何界面状态。
+    @State private var padCommands = PadCommandRouter()
+
     init() {
         // 探针接线（025）：模块层的 Core/Domain 不认识 App 的调试仪器 ViewportProbe，
         // 由装配层把 note 注入它们的 probeNote 钩子，行为与搬迁前一致。
@@ -174,7 +178,11 @@ struct DSHMobileApp: App {
                 Color.clear
             } else {
                 RootView()
+                    .environment(padCommands)
             }
         }
+        // 快捷键装在 scene 上（M9）：窗口级菜单命令，与第一响应者落在哪一列无关。
+        // 菜单里现在只有 ⌘N（新建会话）；不加这道 `.commands`，它在 iPad 上按下去不会有反应。
+        .commands { PadCommandMenu(router: padCommands) }
     }
 }

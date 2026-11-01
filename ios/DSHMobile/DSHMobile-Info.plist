@@ -31,6 +31,24 @@
 		     推送不会触发 App 的唤醒路径。 -->
 		<string>remote-notification</string>
 	</array>
+	<!-- 方向声明（iPad 适配 M1）。
+	     iPhone 三项 = 系统在不声明方向时的默认值，属显式化，行为不变。
+	     iPad 四项全开是多任务（分屏 / Slide Over）的标准声明：少一个方向，
+	     系统在部分并排形态下会把这一面降级掉。
+	     写进本文件而不用 `INFOPLIST_KEY_*`：这是"给 Apple 的声明"的落点。 -->
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+	<key>UISupportedInterfaceOrientations~ipad</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>

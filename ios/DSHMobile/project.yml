@@ -44,7 +44,7 @@ targets:
         PRODUCT_NAME: DSHMobile
         MARKETING_VERSION: "1.0"
         CURRENT_PROJECT_VERSION: "1"
-        TARGETED_DEVICE_FAMILY: "1"
+        TARGETED_DEVICE_FAMILY: "1,2"
         INFOPLIST_FILE: DSHMobile-Info.plist
         CODE_SIGN_ENTITLEMENTS: DSHMobile.entitlements
         GENERATE_INFOPLIST_FILE: YES

@@ -209,29 +209,32 @@ public struct FeedbackThreadView: View {
     private var thread: FeedbackThread? { center.thread(threadId) }
 
     public var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: DSHTheme.Spacing.standard) {
-                if let thread {
-                    if let letter = letter(in: thread) {
-                        letterCard(letter, in: thread)
+        // iPad 宽屏收进阅读宽度（M6）；非 pad 原样返回，iPhone 像素不变。
+        ReadingColumn {
+            ScrollView {
+                VStack(alignment: .leading, spacing: DSHTheme.Spacing.standard) {
+                    if let thread {
+                        if let letter = letter(in: thread) {
+                            letterCard(letter, in: thread)
+                        } else {
+                            Text("已提交，正在同步")
+                                .font(DSHTheme.Typography.caption)
+                                .foregroundStyle(DSHTheme.labelSecondary)
+                        }
+                        // FR-5：我这一侧是团队、且看的是收件箱时，底部给回信入口。
+                        // 团队账号自己的信（mySide == .user）没有回信入口。
+                        if side == .inbox, thread.canReply {
+                            replyBox
+                        }
                     } else {
-                        Text("已提交，正在同步")
+                        Text("这条记录在服务器上已不存在，可能已被删除。")
                             .font(DSHTheme.Typography.caption)
                             .foregroundStyle(DSHTheme.labelSecondary)
                     }
-                    // FR-5：我这一侧是团队、且看的是收件箱时，底部给回信入口。
-                    // 团队账号自己的信（mySide == .user）没有回信入口。
-                    if side == .inbox, thread.canReply {
-                        replyBox
-                    }
-                } else {
-                    Text("这条记录在服务器上已不存在，可能已被删除。")
-                        .font(DSHTheme.Typography.caption)
-                        .foregroundStyle(DSHTheme.labelSecondary)
                 }
+                .padding(DSHTheme.Spacing.loose)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(DSHTheme.Spacing.loose)
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .background(DSHTheme.background)
         .accessibilityIdentifier("feedback.thread")
