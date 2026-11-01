@@ -1013,3 +1013,30 @@ test('the panel lists offline paired devices so the count and rows agree', async
   assert.ok(rows)
   assert.equal((JSON.stringify(rows).match(/dsh-mobile-link-device"/g) ?? []).length, 2)
 })
+
+test('a revoked device left in the live router does not reappear in the full roster', async () => {
+  const status = {
+    ...HEALTHY_STATUS,
+    deviceCount: 2,
+    devices: [
+      { deviceId: 'dev_1', name: 'iPhone', model: 'iPhone 15 Pro', offlineSince: null },
+      { deviceId: 'dev_2', name: 'DSH-Runner', model: 'simulator', offlineSince: 1 },
+    ],
+  }
+  const deviceList = [{ deviceId: 'dev_1', name: 'iPhone', model: 'iPhone 15 Pro' }]
+  const { document } = makeDom()
+  const fetch = makeFetch({ status, deviceList })
+  const { api } = loadBundle({ document, fetchImpl: fetch.impl })
+  const { ctx, state } = makeCtx()
+  api.apply(ctx)
+  await flush()
+  const { entry, panel } = components(state)
+  render(entry.component({})).props.onClick()
+  await flush()
+  await flush()
+
+  const tree = render(panel.component({}))
+  const markup = JSON.stringify(tree)
+  assert.match(markup, /已配对 1\/8/)
+  assert.doesNotMatch(markup, /DSH-Runner/, '全量列表没有的设备不能从旧 router 状态补回来')
+})

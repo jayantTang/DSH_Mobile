@@ -220,16 +220,22 @@ function deviceSummary(devices) {
 }
 /** 全量已配对设备 + /status 的在线标记；离线设备也要有行。 */
 function pairedRows(state) {
+  // 全量列表是行集合的所有者；/status 只补在线标记与运行时元数据。
+  // 反过来把 status 独有项也拼进来，会把已撤销但本地 router 还留着的记录
+  // 重新显示出来（计数与行数再次不一致）。
+  const roster = Array.isArray(state.pairedDevices) ? state.pairedDevices : null
+  const base = roster ?? (Array.isArray(state.status?.devices) ? state.status.devices : [])
   const rows = new Map()
-  for (const device of Array.isArray(state.pairedDevices) ? state.pairedDevices : []) {
+  for (const device of base) {
     if (device?.deviceId) rows.set(device.deviceId, { ...device })
   }
-  for (const device of Array.isArray(state.status?.devices) ? state.status.devices : []) {
-    if (!device?.deviceId) continue
-    const existing = rows.get(device.deviceId) ?? {}
+  const statusDevices = Array.isArray(state.status?.devices) ? state.status.devices : []
+  for (const device of statusDevices) {
+    const existing = rows.get(device.deviceId)
+    if (!existing) continue
     rows.set(device.deviceId, { ...existing, ...device })
   }
-  const online = new Set((state.status?.devices ?? [])
+  const online = new Set(statusDevices
     .filter((device) => device.offlineSince === null || device.offlineSince === undefined)
     .map((device) => device.deviceId))
   return [...rows.values()].map((device) => ({ ...device, online: online.has(device.deviceId) }))
