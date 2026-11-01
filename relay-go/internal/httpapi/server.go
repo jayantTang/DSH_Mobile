@@ -197,6 +197,7 @@ func (s *server) registerRoutes(mux *http.ServeMux, prefix string) {
 	handle(http.MethodPost, "/pair/refresh", s.handlePairRefresh)
 	handle(http.MethodPost, "/pair/code", s.handlePairCode)
 	handle(http.MethodPost, "/pair/code/regenerate", s.handlePairCodeRegenerate)
+	handle(http.MethodPost, "/agents/machine", s.handleAgentsMachine)
 	handle(http.MethodGet, "/devices", s.handleDevicesList)
 	handle(http.MethodPost, "/devices/revoke", s.handleDevicesRevoke)
 	handle(http.MethodPost, "/devices/push", s.handleDevicesPush)
