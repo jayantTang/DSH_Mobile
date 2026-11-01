@@ -16,6 +16,7 @@
  * invite code must be present, because the relay is on the public internet.
  */
 
+import { execFileSync } from 'node:child_process'
 import { hostname, networkInterfaces } from 'node:os'
 
 import { enrollEndpoint, isPlaceholderRelayUrl, normalizeRelayUrl } from './dlp.js'
@@ -40,23 +41,77 @@ export function normalizeMacAddress(value) {
  * common primary interface names win over the rest. If nothing is found the
  * field is omitted rather than inventing a value.
  */
-export function primaryMacAddress(interfaces = networkInterfaces()) {
+export function primaryMacAddress(interfaces) {
+  // macOS 的 Node 经常只拿到 02:00:00:00:00:00（系统隐私/沙箱占位），
+  // 而 networksetup 仍能读到真实硬件地址；优先向它要，读不到再走接口枚举。
+  if (interfaces === undefined && process.platform === 'darwin') {
+    const mac = darwinMacAddress()
+    if (mac) return mac
+  }
   const virtual = /^(lo|docker|veth|br-|virbr|vmnet|vboxnet|utun|tun|tap|wg|tailscale|zt|bridge|awdl|llw)/i
   const preferred = /^(en0|eth0|wlan0|wi-?fi|ethernet)$/i
   const seen = new Set()
   const candidates = []
-  for (const [name, entries] of Object.entries(interfaces ?? {})) {
+  for (const [name, entries] of Object.entries(interfaces ?? networkInterfaces())) {
     if (!entries || virtual.test(name)) continue
     for (const entry of entries) {
       if (!entry || entry.internal) continue
       const mac = normalizeMacAddress(entry.mac)
-      if (!mac || mac === '00:00:00:00:00:00' || seen.has(mac)) continue
+      if (!mac || mac === '00:00:00:00:00:00' || mac === '02:00:00:00:00:00' || seen.has(mac)) continue
       seen.add(mac)
       candidates.push({ name, mac, preferred: preferred.test(name) ? 0 : 1 })
     }
   }
   candidates.sort((a, b) => a.preferred - b.preferred || a.name.localeCompare(b.name))
   return candidates[0]?.mac ?? ''
+}
+
+/// macOS 的硬件端口表是唯一能稳定拿到真实 MAC 的入口：Node 的
+/// `os.networkInterfaces()` 在部分系统上被隐私层替换成 02:00:00:00:00:00。
+function darwinMacAddress() {
+  const activeDevice = darwinDefaultInterface()
+  let output
+  try {
+    output = execFileSync('/usr/sbin/networksetup', ['-listallhardwareports'], {
+      encoding: 'utf8', timeout: 2000, stdio: ['ignore', 'pipe', 'ignore'],
+    })
+  } catch {
+    return ''
+  }
+  const blocks = []
+  let current = {}
+  const flush = () => {
+    if (current.mac) blocks.push(current)
+    current = {}
+  }
+  for (const line of output.split('\n')) {
+    const match = line.match(/^\s*(Hardware Port|Device|Ethernet Address):\s*(.+?)\s*$/)
+    if (!match) continue
+    if (match[1] === 'Hardware Port') {
+      flush()
+      current.port = match[2]
+    }
+    if (match[1] === 'Device') current.device = match[2]
+    if (match[1] === 'Ethernet Address') current.mac = normalizeMacAddress(match[2])
+  }
+  flush()
+  const active = blocks.find((block) => block.device === activeDevice)
+  if (active?.mac) return active.mac
+  const preferred = /(wi-?fi|ethernet|lan)/i
+  const chosen = blocks.find((block) => preferred.test(block.port ?? block.device ?? ''))
+  return chosen?.mac ?? blocks[0]?.mac ?? ''
+}
+
+/// 默认路由对应的接口：优先用它，避免机器同时插网线和 Wi-Fi 时选到未使用的网口。
+function darwinDefaultInterface() {
+  try {
+    const output = execFileSync('/sbin/route', ['-n', 'get', 'default'], {
+      encoding: 'utf8', timeout: 2000, stdio: ['ignore', 'pipe', 'ignore'],
+    })
+    return output.match(/^\s*interface:\s*(\S+)/m)?.[1] ?? ''
+  } catch {
+    return ''
+  }
 }
 
 /**
