@@ -10,6 +10,17 @@ import Foundation
 final class ChatSendService {
     private unowned let model: ChatModel
 
+    /// 一次失败但可能已被宿主收下的发送。重发同样内容时复用它，宿主按
+    /// requestId 去重，避免“响应丢了、用户再点一次”变成两条 prompt。
+    private struct RetryTicket {
+        let sessionId: String
+        let text: String
+        let imageIds: [UUID]
+        let mode: SessionPromptRequest.Mode
+        let requestId: String
+    }
+    private var retryTicket: RetryTicket?
+
     init(model: ChatModel) { self.model = model }
 
     private var draft: String {
@@ -84,8 +95,23 @@ final class ChatSendService {
 
         // The request id is minted here because the host stores it on the
         // durable message's source; that is what lets the transcript replace
-        // this optimistic row instead of showing the message twice.
-        let requestId = UUID().uuidString
+        // this optimistic row instead of showing the message twice. If this is
+        // the same text/images/session as a failed attempt, reuse its id: the
+        // host persists it and dedupes the retry (verified against the host on
+        // 2026-11-02). A changed draft gets a new id.
+        let imageIds = images.map(\.id)
+        let requestId: String
+        if let ticket = retryTicket,
+           ticket.sessionId == owner,
+           ticket.text == text,
+           ticket.imageIds == imageIds,
+           ticket.mode == mode {
+            requestId = ticket.requestId
+            retryTicket = nil
+        } else {
+            requestId = UUID().uuidString
+            retryTicket = nil
+        }
         enqueueOptimisticQueue(requestId: requestId, text: text, images: images, mode: mode)
         timeline.echoUserPrompt(requestId: requestId, text: text)
         scrollSignal += 1
@@ -125,6 +151,9 @@ final class ChatSendService {
             model.withdrawOptimisticQueued(rpcId: requestId)
             composer.restore(text: text, images: images, for: owner,
                              isCurrent: session.sessionId == owner)
+            retryTicket = RetryTicket(sessionId: owner, text: text,
+                                      imageIds: imageIds, mode: mode,
+                                      requestId: requestId)
             lastError = LinkErrors.describe(error)
         }
     }

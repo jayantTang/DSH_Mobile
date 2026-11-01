@@ -171,6 +171,33 @@ final class ChatModelTransportTests: XCTestCase {
         XCTAssertFalse(error.isEmpty)
     }
 
+    func test_resending_the_same_text_reuses_the_failed_request_id() async throws {
+        try await openFixtureSession()
+        carrier.unaryResponses["session/prompt"] = .failure(
+            DSHRPCFailure(code: "link/timeout", message: "the connector did not answer")
+        )
+        model.draft = "keep me"
+        await model.send()
+
+        let first = try XCTUnwrap(carrier.calls(to: "session/prompt").first)
+        let firstId = try XCTUnwrap(first.args?["request"]?["requestId"]?.stringValue)
+
+        carrier.unaryResponses["session/prompt"] = .success(.object([:]))
+        await model.send()
+
+        let calls = carrier.calls(to: "session/prompt")
+        XCTAssertEqual(calls.count, 2)
+        XCTAssertEqual(calls[1].args?["request"]?["requestId"]?.stringValue, firstId,
+                       "a retry of the same text must reuse the host-side idempotency key")
+
+        // After the retry is accepted, the ticket is spent: typing the same text
+        // again is a new submission, not a duplicate suppression.
+        model.draft = "keep me"
+        await model.send()
+        let third = try XCTUnwrap(carrier.calls(to: "session/prompt").last)
+        XCTAssertNotEqual(third.args?["request"]?["requestId"]?.stringValue, firstId)
+    }
+
     func test_steering_a_running_turn_asks_the_host_to_steer() async throws {
         carrier.streamResponses["session/follow"] = [ChatSeam.eventFrame(ChatSeam.turnStart(seq: 1, turn: 1))]
         try await openFixtureSession()
