@@ -11,63 +11,60 @@
 [![CI](https://github.com/jayantTang/DSH_Mobile/actions/workflows/ci.yml/badge.svg)](https://github.com/jayantTang/DSH_Mobile/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-把电脑上的 [DSH](https://github.com/deepseek-ai/deepseek-harness) 会话接到 iPhone 与 iPad 上：原生
-iOS 客户端、电脑侧连接器、可自建的公网中转。手机与电脑连接同一个 DSH host，看到同一批会话与同一条
-消息流；电脑上运行中的任务在锁屏后继续执行，电脑上挂起的提问可在手机上直接回答。
+把电脑上的 [DSH](https://github.com/deepseek-ai/deepseek-harness) 会话接到 iPhone 与 iPad：原生 iOS
+客户端、电脑侧连接器、可自建的公网中转。手机经中转连接电脑上的 DSH host，会话与消息流与电脑端
+一致；任务在电脑锁屏后继续运行，挂起的提问可在手机上作答。电脑无需公网 IP，也无需 VPN。
 
-电脑不需要公网 IP，也不需要 VPN。
+![App Store 宣传图：工具调用过程、扫码配对、图片预览与文件回传](docs/artifacts/demo/appstore/overview.jpg)
 
-![每一步工具调用都摊开 · 不用公网 IP 扫码就连上 · 浏览预览一键下载 · 让它把电脑上的文件发回手机](docs/artifacts/demo/appstore/overview.jpg)
-
-> 配图为 App Store 宣传图（8 张中的 4 张），出自同一套合成会话：输出是真实 agent 输出，项目为虚构，
-> `relay.example.com` 是占位符。分张素材见 [`docs/artifacts/demo/`](docs/artifacts/demo)。
+> 配图为 App Store 宣传图 4 张（共 8 张），取自同一组合成会话：agent 输出为真实输出，项目虚构，
+> `relay.example.com` 为占位域名。素材见 [`docs/artifacts/demo/`](docs/artifacts/demo)。
 
 ## 状态与兼容性
 
 | 组件 | 当前版本 | 分发方式 |
 |---|---|---|
-| iOS App | 1.0 | TestFlight（[加入](https://testflight.apple.com/join/tHKQsbCk)），构建 90 天后过期 |
+| iOS App | 1.0 | TestFlight（[加入](https://testflight.apple.com/join/tHKQsbCk)），构建 90 天过期 |
 | 连接器 `dsh-plugin-mobile-link` | 0.8.0 | npm |
 | 中转（DLP v1） | `relay-go/`（Go，`go-0.2.7`） | 自行部署 |
 
-App 1.0 要求连接器 ≥ 0.7.0；面板内登记与设备列表需要 0.8.0。版本组合与兼容性约束见
+App 1.0 要求连接器 ≥ 0.7.0；面板内登记与设备列表需 0.8.0。版本组合与兼容性约束见
 [`docs/VERSIONING.md`](docs/VERSIONING.md)。
 
 ## 前提
 
-- 电脑上已安装并可运行 DSH（`dsh web`）；连接器需要 Node.js ≥ 22。
-- 自建中转需要一台有公网 IP 的主机（macOS 或 Linux）与 Caddy。
-- 从源码构建 App 需要 macOS + Xcode 16 以上；日常使用不需要。
+- 电脑已安装并可运行 DSH（`dsh web`）；连接器需要 Node.js ≥ 22。
+- 自建中转需一台有公网 IP 的主机（macOS 或 Linux）与 Caddy。
+- 从源码构建 App 需 macOS + Xcode 16 以上；日常使用不需要。
 
 ## 快速开始
 
 ### A. 使用公共中转
 
-1. 手机上安装 App：先装 Apple 的 TestFlight，再用 <https://testflight.apple.com/join/tHKQsbCk> 加入测试。
-2. 电脑上安装连接器，装进实际在用的宿主档案（装错不会报错，只是连接器不会被加载）：
+1. 安装 App：加入 [TestFlight 公开测试](https://testflight.apple.com/join/tHKQsbCk)（需先安装 TestFlight）。
+2. 安装连接器，装进实际在用的宿主档案（装错不会报错，但连接器不会被加载）：
    - 命令行 web 版：`dsh plugin --profile web add dsh-plugin-mobile-link`
-   - 官方桌面版：用应用内的插件页，或应用自带的 `dsh` 命令装进 `desktop` 档案（普通 npm 版 `dsh`
+   - 官方桌面版：用应用内插件页，或应用自带的 `dsh` 命令装进 `desktop` 档案（普通 npm 版 `dsh`
      会拒绝该档案）。两种宿主的识别判据见 [`docs/ONBOARDING.md`](docs/ONBOARDING.md)。
-3. 登记：打开 DSH 左下角的「移动端连接」，确认预填的中转地址，点「登记」。开放登记不需要邀请码，
-   中转按来源限流；无头环境用 `dsh-mobile-link enroll --relay wss://<中转地址>/dsh-link`。
-4. 登记与装插件都不需要重启 DSH；只有命令行登记且宿主正在运行时才需重启一次。
-5. 手机 App →「扫码配对」，扫描「移动端连接」小窗里的二维码与配对码（点「重新生成」才会换）。
+3. 登记：DSH 左下角「移动端连接」→ 确认中转地址 →「登记」。开放登记，无需邀请码，按来源限流；
+   无头环境用 `dsh-mobile-link enroll --relay wss://<中转地址>/dsh-link`。
+4. 生效：安装插件与面板登记均无需重启；仅命令行登记且宿主正在运行时需重启一次。
+5. 配对：App「扫码配对」扫描面板中的二维码与配对码；配对码点「重新生成」才会更换。
 
-手机顶部显示「已连接」即为成功。完整步骤与故障排查见 [`docs/ONBOARDING.md`](docs/ONBOARDING.md)。
+顶部显示「已连接」即为成功；完整步骤与故障排查见 [`docs/ONBOARDING.md`](docs/ONBOARDING.md)。
 
 ### B. 自建中转
 
-自建用仓库内的 Go 实现（`relay-go/`）。按 [`relay-go/deploy/README.md`](relay-go/deploy/README.md) §2–§4
-构建二进制、安装 `dsh-relay-go.service`，再插入 Caddy 路由
-（[`Caddyfile.snippet`](relay-go/deploy/Caddyfile.snippet) +
-[`caddy_splice.py`](relay-go/deploy/caddy_splice.py)）。
+自建使用仓库内 Go 实现（`relay-go/`）。构建与安装见
+[`relay-go/deploy/README.md`](relay-go/deploy/README.md) §2–§4；Caddy 路由用
+[`Caddyfile.snippet`](relay-go/deploy/Caddyfile.snippet) 配合
+[`caddy_splice.py`](relay-go/deploy/caddy_splice.py) 插入站点块。
 
 ```bash
 sudo systemctl enable --now dsh-relay-go
 ```
 
-实时负载与每设备流量：
-`curl -s http://127.0.0.1:8787/stats`（仅监听回环）。限额与运维细节见
+实时负载与每设备用量：`curl -s http://127.0.0.1:8787/stats`（仅监听回环）。限额与运维细节见
 [`relay-go/README.md`](relay-go/README.md) 与 [`relay-go/deploy/README.md`](relay-go/deploy/README.md)。
 
 ## 组件与数据流
@@ -91,13 +88,13 @@ sudo systemctl enable --now dsh-relay-go
 | 中转 | 公网主机 | 鉴权与按 `agentId` 转发；**不解析会话内容** |
 | DSH host | 电脑 | 会话、agent 与工具的真实执行方 |
 
-产品上只提供经中转这一条连接方式（`dsh://direct` 是 DEBUG-only 的测试通道）。选型与边界见
+产品上只提供经中转这一条连接方式；`dsh://direct` 是 DEBUG-only 的测试通道。选型与边界见
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) 与 [`docs/PAIRING.md`](docs/PAIRING.md)。
 
 ## 配置
 
-仓库中出现的 `relay.example.com` 一律是占位符：中转地址属于部署方，不属于仓库。真值只存在于本机，
-且均被 gitignore：
+仓库中的 `relay.example.com` 一律为占位符：中转地址由部署方决定，不属于仓库。真值只存在于本机并被
+gitignore：
 
 | 位置 | 用途 | 提供方式 |
 |---|---|---|
@@ -105,7 +102,7 @@ sudo systemctl enable --now dsh-relay-go
 | `~/.dsh/mobile-link/agent.json` | 连接器的中转地址与身份 | 面板「登记」，或 `dsh-mobile-link enroll --relay <地址>` |
 | `ios/DSHMobile/Config.local.xcconfig` | App 内预填的中转地址与更新源 | 从 `Config.xcconfig` 复制后填写 |
 
-因此直接 clone 构建出的 App 默认连不上任何中转，这是有意设计。
+直接 clone 构建的 App 不含中转地址，属有意设计。
 
 ## 开发
 
@@ -121,11 +118,11 @@ cd ios/DSHMobile && xcodebuild -scheme DSHMobile \
   -destination 'platform=iOS Simulator,name=DSH-Test' build
 ```
 
-上述单测与一次「不带任何本机配置」的 Release 构建由 GitHub Actions 在干净仓库上执行。需要仿真器、
-真实中转或开发者团队 ID 的验证不在 CI 内——CI 通过不等于可以发布。
+上述单测与一次不带本机配置的 Release 构建由 GitHub Actions 执行。需要仿真器、真实中转或开发者团队
+ID 的验证不在 CI 内；CI 通过不等于可以发布。
 
-界面测试是一套独立测试台：`./test/run.sh prepare` → `run <用例>` → `report --verdict …`，口径见
-[`test/RULES.md`](test/RULES.md)，可复制的用例模板见 [`test/examples/`](test/examples)。
+界面测试为独立测试台：`./test/run.sh prepare` → `run <用例>` → `report --verdict …`；口径见
+[`test/RULES.md`](test/RULES.md)，模板见 [`test/examples/`](test/examples)。
 
 ## 文档
 
@@ -144,13 +141,13 @@ cd ios/DSHMobile && xcodebuild -scheme DSHMobile \
 | [`docs/dsh-rpc-catalog.json`](docs/dsh-rpc-catalog.json) | 某次快照：机器可读的 RPC 目录（不是持续校验的契约） |
 | [`docs/artifacts/samples/`](docs/artifacts/samples) | 从真实 DSH 抓取的响应样例（已脱敏） |
 
-参与开发见 [`CONTRIBUTING.md`](CONTRIBUTING.md)，安全问题的报告方式见 [`SECURITY.md`](SECURITY.md)，
-版本变化见 [`CHANGELOG.md`](CHANGELOG.md)。
+开发约定见 [`CONTRIBUTING.md`](CONTRIBUTING.md)，安全问题见 [`SECURITY.md`](SECURITY.md)，版本变化见
+[`CHANGELOG.md`](CHANGELOG.md)。
 
 ## 已知限制
 
-- **后台通知**：手机发出任务后把 App 退到后台，任务完成与「等待回答」会通知到手机；空闲时不耗电。
-- **不覆盖**：电脑端新开始的会话唤不起 App（需要 APNs，尚未实现）；长时间未回答的提问可能丢失。
+- **后台通知**：App 退到后台后，任务完成与待答提问仍推送至手机；无任务、无提问时不推送。
+- **不覆盖**：电脑端新开始的会话无法唤起 App（需 APNs，尚未实现）；长时间未答的提问可能丢失。
 - 文件发送仅在经中转时可用。
 
 ## 许可
