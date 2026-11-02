@@ -1,11 +1,16 @@
-"""自助登记契约（``POST /agents/enroll``）：邀请码、错误码与限流。
+"""自助登记契约（``POST /agents/enroll``）：开放登记、邀请码兼容、错误码与限流。
 
-登记是公开分发的入口：**没有有效、未用、未过期的邀请码，就没有身份**。这里钉住
-用户实际会撞到的四种拒绝（未知 / 过期 / 已用 / 缺字段），以及两道预算：
+登记是公开分发的入口：**不带邀请码（或只带空白）即开放登记**，按来源限流；带
+``inviteCode`` 时仍走历史兼容的兑换路径（未知 / 过期 / 已用各有错误码）。邀请码不再是
+准入门槛，但运营者发出的有效码仍是准入通过的充分条件。
 
+三道预算：
+
+* **开放登记按来源**：同一来源 5 次 / 1 小时，成功也计数，超过即 ``429``（门禁在
+  ``relay-go/internal/httpapi/enroll.go``，单元测试见 ``TestEnrollOpenFlowAndSourceBudget``）；
 * **码桶是闸门**：同一个码失败 5 次后被冻结，第 6 次回 429；
 * **来源桶只记账不拦人**：同一来源失败过，也不能否决运营者发出去的合法邀请码
-  （2026-09-25 owner 的决定）。两者都写成用例，免得以后把其中一个改成另一个。
+  （2026-09-25 owner 的决定）。后两条都写成用例，免得以后把其中一个改成另一个。
 """
 
 from __future__ import annotations
@@ -70,6 +75,25 @@ async def test_enroll_tolerates_retyped_codes(client: support.Client, relay) -> 
     assert response.status == 200, response.text
 
 
+@pytest.mark.parametrize("payload", [
+    {},
+    {"inviteCode": "   "},
+])
+async def test_enroll_without_a_usable_invite_code_is_open(
+        client: support.Client, payload: dict) -> None:
+    """开放登记：缺字段或空白码都按来源登记，返回的 secret 直接可用。"""
+    response = await client.post("/agents/enroll", json_body=payload)
+    assert response.status == 200, response.text
+    body = response.json()
+    assert body["ok"] is True
+    assert body["agentId"].startswith("agt_")
+    assert body["agentSecret"].startswith("as_")
+    assert body["accountId"].startswith("acc_")
+
+    minted = await client.post("/pair/code", json_body={}, token=body["agentSecret"])
+    assert minted.status == 200, minted.text
+
+
 # ── 拒绝路径 ────────────────────────────────────────────────────────────────
 
 
@@ -97,11 +121,10 @@ async def test_a_used_invite_answers_404_enroll_used(client: support.Client,
 
 
 @pytest.mark.parametrize("payload", [
-    {},
-    {"inviteCode": ""},
-    {"inviteCode": "   "},
     {"inviteCode": 5},
-    {"name": "BLACKBOX-no-code"},
+    {"inviteCode": {"bad": True}},
+    {"macAddress": "not-a-mac"},
+    {"macAddress": 5},
 ])
 async def test_enroll_rejects_malformed_requests(client: support.Client,
                                                  payload: dict) -> None:
