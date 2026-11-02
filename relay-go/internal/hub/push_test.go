@@ -141,10 +141,10 @@ func (r *fakeReporter) NoteAgentDisconnect(disconnect monitor.AgentDisconnect) {
 }
 
 // NoteControlDrop 是 IncidentReporter 的第二条方法；推送用例不关心控制帧丢弃。
-func (r *fakeReporter) NoteControlDrop(link, frameType string) {}
+func (r *fakeReporter) NoteControlDrop(drop monitor.ControlDrop) {}
 
 // NoteStreamDrop 是 IncidentReporter 的第三条方法；推送用例不关心流式帧丢弃。
-func (r *fakeReporter) NoteStreamDrop(link string, dropped int64) {}
+func (r *fakeReporter) NoteStreamDrop(drop monitor.StreamDrop) {}
 
 func (r *fakeReporter) count() int {
 	r.mu.Lock()
@@ -353,6 +353,15 @@ func TestAnAgentDisconnectIsReportedToTheMonitor(t *testing.T) {
 	agentLink, _ := f.attachAgent(owner)
 	agentLink.SetClientAddr("203.0.113.7")
 	agentLink.NoteCloseCause(1000, "reconnecting")
+	f.hub.noteAgentVersions(agentLink, dlp.Frame{
+		"t": "hostStatus",
+		"info": map[string]any{
+			"online": true, "version": "0.7.0", "hostVersion": "0.2.1-rc.2",
+		},
+	})
+	// 一次入站帧让"对端静默时长"有基准（否则永远是 0，断言就成了空断言）。
+	f.hub.RouteFromAgent(agentLink, scanWire(t, `{"t":"ping","ts":1}`))
+	time.Sleep(2 * time.Millisecond)
 	f.hub.DetachAgent(agentLink)
 	if reporter.count() != 1 {
 		t.Fatalf("断开上报次数 = %d", reporter.count())
@@ -368,6 +377,12 @@ func TestAnAgentDisconnectIsReportedToTheMonitor(t *testing.T) {
 	}
 	if call.ClientIP != "203.0.113.7" || call.CloseReason != "reconnecting" {
 		t.Fatalf("客户端地址与关闭原因没有带到告警：%+v", call)
+	}
+	if call.ConnectorVersion != "0.7.0" || call.HostVersion != "0.2.1-rc.2" {
+		t.Fatalf("版本没有带到告警：%+v", call)
+	}
+	if call.LastInboundAge <= 0 {
+		t.Fatalf("对端静默时长没有带到告警：%+v", call)
 	}
 }
 

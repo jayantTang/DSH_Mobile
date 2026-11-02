@@ -731,6 +731,7 @@ func TestAlertDispatchRendersTheDisconnectCause(t *testing.T) {
 			"中转关闭 1001 1 次），最近一次中转关闭 1001（heartbeat timeout），客户端 203.0.113.7",
 		Details: map[string]any{
 			"agentId": "agt_1", "name": "Windows-PC", "windowSeconds": 300,
+			"connectorVersion": "0.7.0", "hostVersion": "",
 			"disconnectsInWindow": 5,
 			"closeCodes":          map[string]any{"1000": 4, "1001": 1},
 			"lastCloseCode":       1001, "lastCloseReason": "heartbeat timeout",
@@ -744,11 +745,15 @@ func TestAlertDispatchRendersTheDisconnectCause(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("dry-run 退出码 = %d, stderr = %s", code, errOut)
 	}
+	if strings.Contains(out, "hostVersion=") {
+		t.Fatalf("空版本不该渲染成 hostVersion=：\n%s", out)
+	}
 	for _, want := range []string{
 		"closeCodes=1000×4、1001×1",
 		"lastCloseReason=heartbeat timeout",
 		"clientIp=203.0.113.7",
 		"lastLifetimeMs=120000",
+		"connectorVersion=0.7.0",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("正文缺 %q：\n%s", want, out)

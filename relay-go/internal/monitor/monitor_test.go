@@ -255,14 +255,16 @@ func TestFlapAlertSaysWhoClosedTheLink(t *testing.T) {
 		m.NoteAgentDisconnect(monitor.AgentDisconnect{
 			AgentID: "agt_1", Name: "Windows-PC", CloseCode: 1000,
 			CloseReason: "reconnecting", ClientIP: "203.0.113.7",
-			Lifetime: 3 * time.Second,
+			ConnectorVersion: "0.7.0", HostVersion: "0.2.1-rc.2",
+			Lifetime: 3 * time.Second, LastInboundAge: 4 * time.Second,
 		})
 		clock.advance(10)
 	}
 	m.NoteAgentDisconnect(monitor.AgentDisconnect{
 		AgentID: "agt_1", Name: "Windows-PC", CloseCode: 1001,
 		CloseReason: "heartbeat timeout", ClientIP: "203.0.113.7",
-		Lifetime: 2 * time.Minute,
+		ConnectorVersion: "0.7.0", HostVersion: "0.2.1-rc.2",
+		Lifetime: 2 * time.Minute, LastInboundAge: 75 * time.Second,
 	})
 	records := readRecords(t, dir)
 	if len(records) != 1 {
@@ -288,6 +290,12 @@ func TestFlapAlertSaysWhoClosedTheLink(t *testing.T) {
 	}
 	if details["lastLifetimeMs"] != float64(120000) {
 		t.Fatalf("lastLifetimeMs = %v", details["lastLifetimeMs"])
+	}
+	if details["lastInboundAgeMs"] != float64(75000) {
+		t.Fatalf("lastInboundAgeMs = %v", details["lastInboundAgeMs"])
+	}
+	if details["connectorVersion"] != "0.7.0" || details["hostVersion"] != "0.2.1-rc.2" {
+		t.Fatalf("版本没有进告警：%v", details)
 	}
 	summary := records[0].Summary
 	for _, want := range []string{"对端关闭 1000 4 次", "中转关闭 1001 1 次", "heartbeat timeout", "203.0.113.7"} {
@@ -325,9 +333,9 @@ func TestControlDropsAreDeduplicatedPerLinkAndFrame(t *testing.T) {
 	m := newMonitor(t, dir, clock, monitor.Options{
 		RenotifyAfter: 3600 * time.Second, MaxAlertsPerHour: 100, MaxAlertsPerDay: 100,
 	})
-	m.NoteControlDrop("agent agt_1", "pong")
-	m.NoteControlDrop("agent agt_1", "pong")
-	m.NoteControlDrop("agent agt_2", "hostStatus")
+	m.NoteControlDrop(monitor.ControlDrop{Link: "agent agt_1", FrameType: "pong"})
+	m.NoteControlDrop(monitor.ControlDrop{Link: "agent agt_1", FrameType: "pong"})
+	m.NoteControlDrop(monitor.ControlDrop{Link: "agent agt_2", FrameType: "hostStatus"})
 	records := readRecords(t, dir)
 	if len(records) != 2 {
 		t.Fatalf("期望两条（同链路同帧去重、不同 agent 各自一条），实际 %d 条", len(records))
@@ -348,9 +356,9 @@ func TestStreamDropAlertsCarryNoFrameContent(t *testing.T) {
 	m := newMonitor(t, dir, clock, monitor.Options{
 		RenotifyAfter: 3600 * time.Second, MaxAlertsPerHour: 100, MaxAlertsPerDay: 100,
 	})
-	m.NoteStreamDrop("device dev_1", 100)
-	m.NoteStreamDrop("device dev_1", 100)
-	m.NoteStreamDrop("agent agt_1", 100)
+	m.NoteStreamDrop(monitor.StreamDrop{Link: "device dev_1", DroppedInWindow: 100})
+	m.NoteStreamDrop(monitor.StreamDrop{Link: "device dev_1", DroppedInWindow: 100})
+	m.NoteStreamDrop(monitor.StreamDrop{Link: "agent agt_1", DroppedInWindow: 100})
 	records := readRecords(t, dir)
 	if len(records) != 2 {
 		t.Fatalf("期望两条（同链路去重、不同链路各自一条），实际 %d 条", len(records))
@@ -359,9 +367,20 @@ func TestStreamDropAlertsCarryNoFrameContent(t *testing.T) {
 	if first.Kind != "backpressure:stream" || first.Key != "backpressure:stream:device dev_1" {
 		t.Fatalf("记录 = %+v", first)
 	}
-	if len(first.Details) != 2 || first.Details["link"] != "device dev_1" ||
+	// 允许的诊断字段只有队列水位那一组：链路标识、窗口帧数、总量与队列状态。
+	allowed := map[string]bool{
+		"link": true, "droppedInWindow": true, "totalDropped": true,
+		"queueDepth": true, "queuedBytes": true, "byteLimit": true,
+		"lastInboundAgeMs": true,
+	}
+	for key := range first.Details {
+		if !allowed[key] {
+			t.Fatalf("details 里出现了非队列字段 %q：%v", key, first.Details)
+		}
+	}
+	if first.Details["link"] != "device dev_1" ||
 		fmt.Sprint(first.Details["droppedInWindow"]) != "100" {
-		t.Fatalf("details 只允许 link 与 droppedInWindow：%v", first.Details)
+		t.Fatalf("details = %v", first.Details)
 	}
 }
 
@@ -372,11 +391,15 @@ func TestSurrogateSamplesAreCappedPerDay(t *testing.T) {
 		SurrogateSamplesPerDay: 2, MaxAlertsPerHour: 100, MaxAlertsPerDay: 100,
 	})
 	damage := dlp.SurrogateDamage{
-		Count: 1, TotalChars: 10, FirstIndex: 9, TrailingChars: 0,
+		Count: 1, FrameBytes: 10, FirstIndex: 9, TrailingBytes: 0,
 		Kinds: "high", Context: "尾巴 ",
 	}
 	for index := 0; index < 3; index++ {
-		m.NoteUnpairedSurrogates("agt_1", "dev_1", "item", damage)
+		m.NoteUnpairedSurrogates(monitor.SurrogateEvent{
+			AgentID: "agt_1", DeviceID: "dev_1", FrameType: "item",
+			ConnectorVersion: "0.7.0", HostVersion: "0.2.1-rc.2",
+			ClientIP: "203.0.113.9", Damage: damage,
+		})
 	}
 	records := readRecords(t, dir)
 	if len(records) != 1 {
@@ -388,9 +411,49 @@ func TestSurrogateSamplesAreCappedPerDay(t *testing.T) {
 	if sample := records[0].Details["sample"]; sample != "1/2" {
 		t.Fatalf("sample = %v", sample)
 	}
-	// 单条告警里就带着定位根因的字段。
-	if trailing := records[0].Details["trailingChars"]; fmt.Sprint(trailing) != "0" {
-		t.Fatalf("trailingChars = %v", trailing)
+	// 单条告警里就带着定位根因的字段：位置、帧长、版本与来源地址。
+	for key, want := range map[string]string{
+		"frameBytes": "10", "firstIndex": "9", "trailingBytes": "0",
+		"connectorVersion": "0.7.0", "hostVersion": "0.2.1-rc.2",
+		"clientIp": "203.0.113.9",
+	} {
+		if got := fmt.Sprint(records[0].Details[key]); got != want {
+			t.Fatalf("%s = %v，期望 %s（details=%v）", key, got, want, records[0].Details)
+		}
+	}
+}
+
+// TestSurrogateSummaryPointsAtTheFrameTail 钉住摘要里的根因线索：
+// 坏字符卡在帧尾（上游按字符切分分片）与落在帧中间是两种修法，摘要要直接说出来。
+func TestSurrogateSummaryPointsAtTheFrameTail(t *testing.T) {
+	summaryFor := func(t *testing.T, damage dlp.SurrogateDamage) string {
+		t.Helper()
+		dir := t.TempDir()
+		m := newMonitor(t, dir, newClock(), monitor.Options{
+			MaxAlertsPerHour: 100, MaxAlertsPerDay: 100,
+		})
+		m.NoteUnpairedSurrogates(monitor.SurrogateEvent{
+			AgentID: "agt_1", FrameType: "item", Damage: damage,
+		})
+		records := readRecords(t, dir)
+		if len(records) != 1 {
+			t.Fatalf("记录数 = %d", len(records))
+		}
+		return records[0].Summary
+	}
+
+	tail := summaryFor(t, dlp.SurrogateDamage{
+		Count: 1, FrameBytes: 1000, FirstIndex: 990, TrailingBytes: 4, Kinds: "high",
+	})
+	if !strings.Contains(tail, "卡在帧尾") || !strings.Contains(tail, "0.4%") {
+		t.Fatalf("帧尾线索缺失：%s", tail)
+	}
+
+	middle := summaryFor(t, dlp.SurrogateDamage{
+		Count: 1, FrameBytes: 1000, FirstIndex: 100, TrailingBytes: 800, Kinds: "high",
+	})
+	if strings.Contains(middle, "卡在帧尾") {
+		t.Fatalf("帧中间不该报成帧尾：%s", middle)
 	}
 }
 
@@ -420,7 +483,9 @@ func TestDisabledMonitorIsANoOp(t *testing.T) {
 	m.NoteException(errors.New("boom"), "/x", "http")
 	m.NoteAgentDisconnect(disconnectOf("agt_1", ""))
 	m.NoteHTTPStatus("GET", "/x", "", 500)
-	m.NoteUnpairedSurrogates("agt_1", "dev_1", "item", dlp.SurrogateDamage{})
+	m.NoteUnpairedSurrogates(monitor.SurrogateEvent{
+		AgentID: "agt_1", DeviceID: "dev_1", FrameType: "item",
+	})
 	m.Flush()
 	m.SaveState()
 	entries, err := os.ReadDir(observed)

@@ -114,12 +114,57 @@ type stateFile struct {
 // 缺了这一位，"连接反复断开"只能说明抖，定位不到责任方。
 // ClientIP 是前置后面的真实客户端地址（socket 对端在部署里永远是前置的回环地址）。
 type AgentDisconnect struct {
-	AgentID     string
-	Name        string
-	CloseCode   int
-	CloseReason string
-	ClientIP    string
-	Lifetime    time.Duration
+	AgentID          string
+	Name             string
+	CloseCode        int
+	CloseReason      string
+	ConnectorVersion string
+	HostVersion      string
+	ClientIP         string
+	Lifetime         time.Duration
+	// LastInboundAge 是断开那一刻距离最后一条入站帧的时长：心跳判死的链路通常是
+	// 一两分钟，连接器主动重连的通常只有几秒——这是区分两者的第二个证据。
+	LastInboundAge time.Duration
+}
+
+// SurrogateEvent 是一次"上游送来了落单代理项"的现场。
+//
+// 定位这件事只需要回答三个问题：哪台连接器（版本）、哪类帧、坏字符卡在帧的什么位置。
+// 前两个早先只靠 agentId 猜，版本根本没进告警——2026-11 的抽样里 81% 来自一台
+// Windows 连接器，是不是某个已发布版本切坏了字符串，只有版本号能回答。
+type SurrogateEvent struct {
+	AgentID          string
+	DeviceID         string
+	FrameType        string
+	ConnectorVersion string
+	HostVersion      string
+	ClientIP         string
+	Damage           dlp.SurrogateDamage
+}
+
+// StreamDrop 是一次"流式帧背压丢弃满了一个窗口"的现场。
+//
+// 只有"丢了多少"回答不了任何事：要看队列是被字节撑满还是被条数撑满、对端多久没读、
+// 这条连接一共丢了多少。这些数字在 WARN 日志里都有，告警里没有，于是收到告警的人
+// 还得登服务器翻日志——那正是这一步要消掉的动作。
+type StreamDrop struct {
+	Link            string
+	DroppedInWindow int64
+	TotalDropped    int64
+	QueueDepth      int
+	QueuedBytes     int64
+	ByteLimit       int64
+	LastInboundAge  time.Duration
+}
+
+// ControlDrop 是一次"可丢控制帧被背压吃掉"的现场。
+type ControlDrop struct {
+	Link           string
+	FrameType      string
+	QueueDepth     int
+	QueuedBytes    int64
+	LinkDrops      int64
+	LastInboundAge time.Duration
 }
 
 // flapEvent 是窗口内的一次断开：时刻 + 关闭码。
@@ -440,6 +485,13 @@ func (m *Monitor) NoteAgentDisconnect(disconnect AgentDisconnect) {
 	if disconnect.ClientIP != "" {
 		details["clientIp"] = disconnect.ClientIP
 	}
+	if disconnect.ConnectorVersion != "" {
+		details["connectorVersion"] = disconnect.ConnectorVersion
+	}
+	if disconnect.HostVersion != "" {
+		details["hostVersion"] = disconnect.HostVersion
+	}
+	details["lastInboundAgeMs"] = disconnect.LastInboundAge.Milliseconds()
 	m.recordLocked(key, recordInput{
 		kind:  "flap",
 		title: "连接器反复断开",
@@ -523,17 +575,23 @@ func closeCodeLabel(code int) string {
 // 之后只累计。链路标识里带 agentId / deviceId，所以不同 agent 互不掩盖。
 // 这是 2026-10-23 回滚事件要补的观察点：当时控制帧丢弃只有一条 closing 日志，
 // 无法区分"丢的是 pong"还是"丢的是 deviceAttach"。
-func (m *Monitor) NoteControlDrop(link, frameType string) {
+func (m *Monitor) NoteControlDrop(drop ControlDrop) {
 	if !m.Enabled() {
 		return
 	}
 	defer m.guard("note a control drop")
-	m.record("backpressure:control:"+link+":"+frameType, recordInput{
+	m.record("backpressure:control:"+drop.Link+":"+drop.FrameType, recordInput{
 		kind:  "backpressure:control",
 		title: "控制帧因背压被丢弃",
-		summary: fmt.Sprintf("%s 的 %s 控制帧在优先队列满时被丢弃（可丢类别，连接继续）",
-			link, frameType),
-		details: map[string]any{"link": link, "frame": frameType},
+		summary: fmt.Sprintf("%s 的 %s 控制帧在优先队列满时被丢弃（可丢类别，连接继续）；"+
+			"队列 %d 帧 / %d 字节，这条连接共丢 %d 帧，该端已 %.1f 秒没有上行帧",
+			drop.Link, drop.FrameType, drop.QueueDepth, drop.QueuedBytes,
+			drop.LinkDrops, drop.LastInboundAge.Seconds()),
+		details: map[string]any{
+			"link": drop.Link, "frame": drop.FrameType, "queueDepth": drop.QueueDepth,
+			"queuedBytes": drop.QueuedBytes, "linkControlDrops": drop.LinkDrops,
+			"lastInboundAgeMs": drop.LastInboundAge.Milliseconds(),
+		},
 	})
 }
 
@@ -542,17 +600,24 @@ func (m *Monitor) NoteControlDrop(link, frameType string) {
 //
 // 类别按链路归：同一条连接只在首次（或 24 小时后）打扰一次，之后只累计。
 // 详情只带链路与窗口计数，不带任何帧内容——流式帧里装的是会话数据。
-func (m *Monitor) NoteStreamDrop(link string, dropped int64) {
+func (m *Monitor) NoteStreamDrop(drop StreamDrop) {
 	if !m.Enabled() {
 		return
 	}
 	defer m.guard("note a stream drop")
-	m.record("backpressure:stream:"+link, recordInput{
+	m.record("backpressure:stream:"+drop.Link, recordInput{
 		kind:  "backpressure:stream",
 		title: "流式帧因持续背压被批量丢弃",
-		summary: fmt.Sprintf("%s 的流式帧在队列满时被丢弃，一个窗口内累计 %d 帧（连接继续）",
-			link, dropped),
-		details: map[string]any{"link": link, "droppedInWindow": dropped},
+		summary: fmt.Sprintf("%s 的流式帧在队列满时被丢弃，一个窗口内累计 %d 帧（连接继续）；"+
+			"队列 %d 帧 / %d 字节（上限 %d），该端已 %.1f 秒没有上行帧，共丢 %d 帧",
+			drop.Link, drop.DroppedInWindow, drop.QueueDepth, drop.QueuedBytes,
+			drop.ByteLimit, drop.LastInboundAge.Seconds(), drop.TotalDropped),
+		details: map[string]any{
+			"link": drop.Link, "droppedInWindow": drop.DroppedInWindow,
+			"totalDropped": drop.TotalDropped, "queueDepth": drop.QueueDepth,
+			"queuedBytes": drop.QueuedBytes, "byteLimit": drop.ByteLimit,
+			"lastInboundAgeMs": drop.LastInboundAge.Milliseconds(),
+		},
 	})
 }
 
@@ -560,8 +625,7 @@ func (m *Monitor) NoteStreamDrop(link string, dropped int64) {
 //
 // 详情每次都写落盘日志（那本来就有），但**进告警的样本按天限量**：坏字符可能每分钟
 // 来一次，抽样够看形态，不必每条都推给人。
-func (m *Monitor) NoteUnpairedSurrogates(agentID, deviceID, frameType string,
-	damage dlp.SurrogateDamage) {
+func (m *Monitor) NoteUnpairedSurrogates(event SurrogateEvent) {
 	if !m.Enabled() {
 		return
 	}
@@ -569,14 +633,23 @@ func (m *Monitor) NoteUnpairedSurrogates(agentID, deviceID, frameType string,
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	damage := event.Damage
 	now := m.nowSeconds()
 	day := localDay(time.Unix(int64(now), 0))
 	taken := m.surrogateSamples[day]
-	shape := damage.AsDetails()
 	details := map[string]any{
-		"agentId": agentID, "deviceId": deviceID, "frameType": frameType,
+		"agentId": event.AgentID, "deviceId": event.DeviceID, "frameType": event.FrameType,
 	}
-	for key, value := range shape {
+	if event.ConnectorVersion != "" {
+		details["connectorVersion"] = event.ConnectorVersion
+	}
+	if event.HostVersion != "" {
+		details["hostVersion"] = event.HostVersion
+	}
+	if event.ClientIP != "" {
+		details["clientIp"] = event.ClientIP
+	}
+	for key, value := range damage.AsDetails() {
 		details[key] = value
 	}
 	if taken < m.surrogateSample {
@@ -584,19 +657,46 @@ func (m *Monitor) NoteUnpairedSurrogates(agentID, deviceID, frameType string,
 		details["sample"] = fmt.Sprintf("%d/%d", taken+1, m.surrogateSample)
 	} else {
 		details = map[string]any{
-			"agentId": agentID, "deviceId": deviceID, "frameType": frameType,
-			"sampled": false,
+			"agentId": event.AgentID, "deviceId": event.DeviceID,
+			"frameType": event.FrameType, "sampled": false,
 		}
 	}
 	m.recordLocked("surrogate:unpaired", recordInput{
-		kind:  "corrupt-frame",
-		title: "上游送来了带落单代理项（被切开的 emoji）的帧",
-		summary: fmt.Sprintf(
-			"来自 %s 的 %s 帧，已用 U+FFFD 修好并转发；坏字符位置 %v/%v（帧尾还剩 %v 字节）",
-			agentID, frameType, shape["firstIndex"], shape["totalChars"],
-			shape["trailingChars"]),
+		kind:    "corrupt-frame",
+		title:   "上游送来了带落单代理项（被切开的 emoji）的帧",
+		summary: surrogateSummary(event),
 		details: details,
 	}, now)
+}
+
+// surrogateSummary 把"谁、什么帧、坏在哪"写进一句话。
+//
+// 帧尾占比是根因线索：接近 0 说明坏字符卡在帧尾，典型是上游按字符切分分片；
+// 在帧中间则是字符串拼接本身出了问题。两者的修法不同，所以必须一眼看得到。
+func surrogateSummary(event SurrogateEvent) string {
+	damage := event.Damage
+	source := event.AgentID
+	if event.ConnectorVersion != "" || event.HostVersion != "" {
+		source += "（连接器 " + defaultText(event.ConnectorVersion, "未知") +
+			" / 宿主 " + defaultText(event.HostVersion, "未知") + "）"
+	}
+	tail := "帧尾还剩 " + strconv.Itoa(damage.TrailingBytes) + " 字节"
+	if damage.FrameBytes > 0 {
+		tail += fmt.Sprintf("，占 %.1f%%", float64(damage.TrailingBytes)*100/float64(damage.FrameBytes))
+	}
+	if damage.FrameBytes > 0 && damage.TrailingBytes*10 < damage.FrameBytes {
+		tail += "（卡在帧尾，像上游按字符切分分片）"
+	}
+	return fmt.Sprintf("来自 %s 的 %s 帧，已用 U+FFFD 修好并转发；坏字符位置 %d/%d 字节，%s",
+		source, event.FrameType, damage.FirstIndex, damage.FrameBytes, tail)
+}
+
+// defaultText 在缺值时回退成一句可读的占位，避免告警里出现空括号。
+func defaultText(value, fallback string) string {
+	if value == "" {
+		return fallback
+	}
+	return value
 }
 
 // ── 判定与落盘 ─────────────────────────────────────────────────────────────

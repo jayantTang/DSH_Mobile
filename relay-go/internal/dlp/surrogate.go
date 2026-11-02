@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"strconv"
 	"strings"
-	"unicode/utf8"
 )
 
 // UTF-16 代理项处理（Python 版 dlp.prepare_outbound 的对应物）。
@@ -28,13 +27,15 @@ import (
 // SurrogateDamage 描述一处（或几处）落单代理项的形态与位置，**只用于排障**。
 //
 // 字段刻意多是"位置"而不是"内容"：它进的是运维告警，不把用户正文写进日志。
-// FirstIndex / TrailingChars 在 Go 版是**字节**偏移（Python 版是字符偏移）：这里
-// 扫的是原始 JSON 字节，字节偏移对定位"是不是卡在帧尾"同样直接。
+//
+// 三个位置/长度一律用**字节**：扫的就是原始 JSON 字节。早先一版把帧长度记成字符数、
+// 把帧尾距离记成字节数，同一条告警里出现"帧尾还剩 19823 字节、帧长 19107"这种
+// 自相矛盾的数字，正好毁掉"坏字符是不是卡在帧尾"这个唯一的根因线索。
 type SurrogateDamage struct {
 	Count         int    `json:"count"`
-	TotalChars    int    `json:"totalChars"`
+	FrameBytes    int    `json:"frameBytes"`
 	FirstIndex    int    `json:"firstIndex"`
-	TrailingChars int    `json:"trailingChars"`
+	TrailingBytes int    `json:"trailingBytes"`
 	Kinds         string `json:"kinds"`
 	Context       string `json:"context"`
 }
@@ -46,14 +47,14 @@ const contextBytes = 48
 // AsDetails 把损伤形态摊成告警详情。
 //
 // 监控模块的摘要与详情都从这一份数据里取，所以两处**不可能各说各话**（Python 版
-// 同名方法的存在理由）。键名与 Python 的 `as_details()` 一致；FirstIndex /
-// TrailingChars 在 Go 版是**字节**偏移（扫的是原始 JSON 字节）。
+// 同名方法的存在理由）。键名与 Python 的 `as_details()` 不同：位置与长度统一成字节，
+// 两者才能直接比较（见 SurrogateDamage 的注释）。
 func (d SurrogateDamage) AsDetails() map[string]any {
 	return map[string]any{
 		"count":         d.Count,
-		"totalChars":    d.TotalChars,
+		"frameBytes":    d.FrameBytes,
 		"firstIndex":    d.FirstIndex,
-		"trailingChars": d.TrailingChars,
+		"trailingBytes": d.TrailingBytes,
 		"kinds":         d.Kinds,
 		"context":       d.Context,
 	}
@@ -122,9 +123,9 @@ func ScanSurrogates(raw []byte) *SurrogateDamage {
 	end := min(len(raw), firstEnd+contextBytes)
 	return &SurrogateDamage{
 		Count:         count,
-		TotalChars:    utf8.RuneCount(raw),
+		FrameBytes:    len(raw),
 		FirstIndex:    first,
-		TrailingChars: len(raw) - firstEnd,
+		TrailingBytes: len(raw) - firstEnd,
 		Kinds:         kinds,
 		Context:       strings.ToValidUTF8(string(raw[start:end]), "\ufffd"),
 	}

@@ -30,7 +30,11 @@ func (h *Hub) noteControlDrop(link *Link, frameType string) {
 		"queueDepth", link.QueueDepth(), "queuedBytes", link.QueuedBytes(),
 		"remote_ip", link.Remote(), "lastInboundAge", link.LastInboundAge().String())
 	if h.monitor != nil {
-		h.monitor.NoteControlDrop(link.Label(), frameType)
+		h.monitor.NoteControlDrop(monitor.ControlDrop{
+			Link: link.Label(), FrameType: frameType,
+			QueueDepth: link.QueueDepth(), QueuedBytes: link.QueuedBytes(),
+			LinkDrops: link.ControlDrops(), LastInboundAge: link.LastInboundAge(),
+		})
 	}
 }
 
@@ -43,7 +47,12 @@ func (h *Hub) noteStreamDrop(link *Link, dropped int64) {
 		"queueDepth", link.QueueDepth(), "queuedBytes", link.QueuedBytes(),
 		"remote_ip", link.Remote(), "lastInboundAge", link.LastInboundAge().String())
 	if h.monitor != nil {
-		h.monitor.NoteStreamDrop(link.Label(), dropped)
+		h.monitor.NoteStreamDrop(monitor.StreamDrop{
+			Link: link.Label(), DroppedInWindow: dropped,
+			TotalDropped: link.DroppedFrames(), QueueDepth: link.QueueDepth(),
+			QueuedBytes: link.QueuedBytes(), ByteLimit: link.ByteLimit(),
+			LastInboundAge: link.LastInboundAge(),
+		})
 	}
 }
 
@@ -457,7 +466,9 @@ func (h *Hub) DetachAgent(link *AgentLink) {
 		h.monitor.NoteAgentDisconnect(monitor.AgentDisconnect{
 			AgentID: link.AgentID, Name: link.Name,
 			CloseCode: closeCode, CloseReason: closeReason,
+			ConnectorVersion: connector, HostVersion: host,
 			ClientIP: link.ClientAddr(), Lifetime: link.Lifetime(),
+			LastInboundAge: link.LastInboundAge(),
 		})
 	}
 	for _, device := range h.registry.releaseDevices(link, devices) {

@@ -673,6 +673,9 @@ func (l *Link) closeCredits() {
 // QueuedBytes 是队列里还没写出去的帧字节数（/stats 与用例的诊断口）。
 func (l *Link) QueuedBytes() int64 { return l.queuedBytes.Load() }
 
+// ByteLimit 是流式帧队列的字节上限；告警要能区分"帧太大"与"对端不读"。
+func (l *Link) ByteLimit() int64 { return l.byteLimit }
+
 // RequestClose 请求以 code/reason 关闭这条连接，**立即返回**。
 //
 // 关闭请求走同一条队列，所以排在前面的帧一定先发出去（配额错误帧必须先于 4011

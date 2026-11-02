@@ -70,6 +70,9 @@ func TestAnUnpairedSurrogateInAnUpstreamFrameIsQueuedAsAnAlert(t *testing.T) {
 	agentConn := fixture.dial(fixture.agentPath(), fixture.tenant.secret)
 	defer agentConn.CloseNow()
 
+	// 先报版本：告警要能回答"哪套连接器/宿主送出来的"，没有这一步只能记 agentId。
+	sendFrame(t, agentConn, `{"t":"hostStatus","info":{"online":true,`+
+		`"version":"0.7.0","hostVersion":"0.2.1-rc.2"}}`)
 	// 一条合法的 JSON 文本帧，正文里带**落单的高代理项转义**：Go 的 encoding/json
 	// 会把它换成 U+FFFD，但原始字节里的 `\ud83d` 会被 ScanSurrogates 认出来。
 	sendFrame(t, agentConn, `{"t":"item","id":"i1","deviceId":"`+device.DeviceID+
@@ -103,5 +106,12 @@ func TestAnUnpairedSurrogateInAnUpstreamFrameIsQueuedAsAnAlert(t *testing.T) {
 		record.Details["deviceId"] != device.DeviceID ||
 		record.Details["frameType"] != "item" {
 		t.Fatalf("details = %v", record.Details)
+	}
+	if record.Details["connectorVersion"] != "0.7.0" ||
+		record.Details["hostVersion"] != "0.2.1-rc.2" {
+		t.Fatalf("版本没有进告警：%v", record.Details)
+	}
+	if record.Details["frameBytes"] == nil || record.Details["trailingBytes"] == nil {
+		t.Fatalf("位置字段缺失（字节口径）：%v", record.Details)
 	}
 }

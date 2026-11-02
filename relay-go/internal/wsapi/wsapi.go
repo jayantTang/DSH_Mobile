@@ -27,6 +27,7 @@ import (
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/authn"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/dlp"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/hub"
+	"github.com/jayantTang/DSH_Mobile/relay-go/internal/monitor"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/presence"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/reqctx"
 )
@@ -43,10 +44,11 @@ const (
 
 // SurrogateReporter 是"上游送来了落单代理项"的接收方（*monitor.Monitor 实现）。
 //
-// 用最小接口而不是 import internal/monitor：wsapi 只负责把 damaged 帧的事实交出去，
-// 告警的分类、去重与落盘不归它。
+// 接口只留一个方法：wsapi 只负责把 damaged 帧的事实交出去，告警的分类、去重与落盘
+// 不归它。事件类型借用 monitor.SurrogateEvent 是因为它已经是"要报什么"的唯一形状，
+// 再在 wsapi 里复制一份只会让两边慢慢长歪。
 type SurrogateReporter interface {
-	NoteUnpairedSurrogates(agentID, deviceID, frameType string, damage dlp.SurrogateDamage)
+	NoteUnpairedSurrogates(event monitor.SurrogateEvent)
 }
 
 // Options 是装配两条端点需要的输入。
@@ -328,7 +330,9 @@ func (h *Handlers) readDevice(ctx context.Context, conn *websocket.Conn, link *h
 				"binary frames are reserved for DLP v2", false, nil))
 		default:
 			if damage != nil {
-				h.logSurrogate(link.Label(), wire.Type(), damage)
+				// 设备侧不报版本：这条日志只用于确认"手机也送过坏字符"，
+				// 设备版本由它自己的 hello 帧另行记录。
+				h.logSurrogate(link.Label(), wire.Type(), "", "", damage)
 			}
 			if problem := dlp.ValidateFromDevice(wire); problem != "" {
 				wire.Release()
@@ -409,11 +413,13 @@ func readInto(ctx context.Context, conn *websocket.Conn, buffer *dlp.Buffer) (we
 // Go 的 encoding/json 已经在解析时把落单代理项换成了 U+FFFD（见 internal/dlp），
 // 所以这条日志**不是**"我们修好了"，而是定位上游根因的唯一线索：
 // trailingChars 接近 0 说明坏字符卡在帧尾（典型是被按字符切分的流式分片截断）。
-func (h *Handlers) logSurrogate(label, frameType string, damage *dlp.SurrogateDamage) {
+func (h *Handlers) logSurrogate(label, frameType, connector, host string,
+	damage *dlp.SurrogateDamage) {
 	h.log.Warn("relay: repaired unpaired surrogate(s) carried by an upstream frame",
 		"link", label, "frame", frameType, "count", damage.Count,
-		"firstIndex", damage.FirstIndex, "totalBytes", damage.TotalChars,
-		"trailingBytes", damage.TrailingChars, "kinds", damage.Kinds)
+		"connectorVersion", connector, "hostVersion", host,
+		"firstIndex", damage.FirstIndex, "frameBytes", damage.FrameBytes,
+		"trailingBytes", damage.TrailingBytes, "kinds", damage.Kinds)
 }
 
 // noteSurrogate 记日志，并把"转发路径修好了一个坏字符"交给监控器。
@@ -423,7 +429,8 @@ func (h *Handlers) logSurrogate(label, frameType string, damage *dlp.SurrogateDa
 func (h *Handlers) noteSurrogate(link *hub.AgentLink, wire dlp.Wire,
 	damage *dlp.SurrogateDamage) {
 	frameType := wire.Type()
-	h.logSurrogate(link.Label(), frameType, damage)
+	connector, host := link.Versions()
+	h.logSurrogate(link.Label(), frameType, connector, host, damage)
 	if h.monitor == nil || !dlp.IsAgentToDevice(frameType) {
 		return
 	}
@@ -431,7 +438,11 @@ func (h *Handlers) noteSurrogate(link *hub.AgentLink, wire dlp.Wire,
 	if deviceID == "" {
 		return
 	}
-	h.monitor.NoteUnpairedSurrogates(link.AgentID, deviceID, frameType, *damage)
+	h.monitor.NoteUnpairedSurrogates(monitor.SurrogateEvent{
+		AgentID: link.AgentID, DeviceID: deviceID, FrameType: frameType,
+		ConnectorVersion: connector, HostVersion: host,
+		ClientIP: link.ClientAddr(), Damage: *damage,
+	})
 }
 
 // noteReadCause 把"读循环为什么结束"记进链路。

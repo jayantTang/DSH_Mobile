@@ -302,8 +302,8 @@ func TestSurrogateDamageLocatesTheBreak(t *testing.T) {
 	if damage.FirstIndex <= 0 || damage.FirstIndex >= len(raw) {
 		t.Fatalf("firstIndex = %d，越界", damage.FirstIndex)
 	}
-	if damage.TrailingChars != 3 { // 后面只剩 `"}}`
-		t.Fatalf("trailingChars = %d，期望 3", damage.TrailingChars)
+	if damage.TrailingBytes != 3 { // 后面只剩 `"}}`
+		t.Fatalf("trailingBytes = %d，期望 3", damage.TrailingBytes)
 	}
 	if damage.Context == "" {
 		t.Fatal("缺上下文")

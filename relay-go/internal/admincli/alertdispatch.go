@@ -39,19 +39,24 @@ const (
 
 // alertKindLabels 是告警类别的中文名（与 Python 的 KIND_LABELS 一致）。
 var alertKindLabels = map[string]string{
-	"exception":     "未处理异常",
-	"flap":          "连接反复断开",
-	"corrupt-frame": "上游坏字符",
+	"exception":            "未处理异常",
+	"flap":                 "连接反复断开",
+	"corrupt-frame":        "上游坏字符",
+	"backpressure:stream":  "流式帧背压丢弃",
+	"backpressure:control": "控制帧背压丢弃",
 }
 
 // 告警详情的渲染顺序。Python 依赖 dict 的插入顺序；Go 的 map 无序，所以这里固定
 // 一张已知键表，未列出的键按字典序排在后面（新字段不会悄悄消失）。
 var alertDetailOrder = []string{
 	"source", "path", "place", "frames", "method", "status",
-	"agentId", "name", "windowSeconds", "disconnectsInWindow",
-	"closeCodes", "lastCloseCode", "lastCloseReason", "clientIp", "lastLifetimeMs",
-	"deviceId", "frameType", "count", "totalChars", "firstIndex", "trailingChars",
+	"agentId", "name", "connectorVersion", "hostVersion", "clientIp",
+	"windowSeconds", "disconnectsInWindow",
+	"closeCodes", "lastCloseCode", "lastCloseReason", "lastLifetimeMs", "lastInboundAgeMs",
+	"deviceId", "frameType", "count", "frameBytes", "firstIndex", "trailingBytes",
 	"kinds", "sample", "sampled",
+	"link", "droppedInWindow", "totalDropped", "queueDepth", "queuedBytes", "byteLimit",
+	"frame", "linkControlDrops",
 }
 
 // alertDispatchOptions 是命令行解析结果。
@@ -257,6 +262,9 @@ func formatAlertDetails(details map[string]any) string {
 		if key == "closeCodes" {
 			parts = append(parts, "closeCodes="+renderCloseCodes(details[key]))
 			continue
+		}
+		if text, ok := details[key].(string); ok && text == "" {
+			continue // 缺值不写空字段：`name=` 只会让正文更难读
 		}
 		parts = append(parts, fmt.Sprintf("%s=%v", key, details[key]))
 	}

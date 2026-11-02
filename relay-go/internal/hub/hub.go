@@ -31,10 +31,10 @@ type IncidentReporter interface {
 	// NoteAgentDisconnect 记录一次连接器断开；关闭码与客户端地址由 link 提供，
 	// 告警据此区分"连接器自己重连"与"中转判死链路"。
 	NoteAgentDisconnect(disconnect monitor.AgentDisconnect)
-	NoteControlDrop(link, frameType string)
+	NoteControlDrop(drop monitor.ControlDrop)
 	// NoteStreamDrop 记录一条连接的流式帧丢弃满了一个告警窗口
-	// （dropped 是这个窗口里丢的帧数；链路标识里有 agentId/deviceId）。
-	NoteStreamDrop(link string, dropped int64)
+	// （链路标识、窗口帧数、队列水位与对端静默时长都在事件里）。
+	NoteStreamDrop(drop monitor.StreamDrop)
 }
 
 // Options 是装配一个 Hub 需要的全部输入。
