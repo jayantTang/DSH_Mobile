@@ -918,6 +918,62 @@ async def test_drafts_expire_after_seven_days_and_free_the_quota(tmp_path, aioht
         store.close()
 
 
+# ── 回滚开关（MAIL_ATTACHMENT_MAX_PER_MESSAGE=0）──────────────────────────
+
+
+async def test_the_rollback_switch_closes_the_routes_but_keeps_sent_bytes(
+        tmp_path, aiohttp_client):
+    """`maxPerMessage = 0`：入口消失、三条路由 404，但历史附件仍可取（不删行不删字节）。"""
+    store = Store(str(tmp_path / "mail.db"))
+    on = await build_client(aiohttp_client, store)
+    token = register_device(on)
+    draft = await stored_draft(on, token, client_ref="ref-switch")
+    letter = await submit_ok(on, "", client_ref="ref-switch",
+                             headers=device_headers(token), deviceModel="iPhone15,4")
+    assert letter["attachmentsBound"] == 1
+    assert len(files_on_disk(on)) == 1
+
+    off = await build_client(aiohttp_client, store,
+                             attachment_limits={"maxPerMessage": 0})
+
+    # ① v2 不再下发 limits.attachments（客户端因此关闭入口）。
+    reader = register_device(off)
+    payload = await (await off.post("/feedback/inbox", json={"inboxVersion": 2},
+                                    headers=device_headers(reader))).json()
+    assert "attachments" not in payload["limits"]
+    assert payload["limits"]["textChars"] == 4000, "其余上限照常下发"
+
+    # ② begin / upload / discard 一律 404，与"附件不存在"逐字节相同。
+    missing = await fetch(off, "fa_" + "0" * 18)
+    begin_off = await begin(off, client_ref="ref-new", headers=device_headers(reader))
+    assert begin_off.status == 404
+    assert await begin_off.read() == await missing.read()
+    upload_off = await upload(off, draft["attachmentId"], ticket=letter["ticketKey"])
+    assert upload_off.status == 404
+    discard_off = await discard(off, draft["attachmentId"], "ref-switch",
+                               ticket=letter["ticketKey"])
+    assert discard_off.status == 404
+
+    # ③ 已绑定的历史附件仍可取回同样的字节。
+    fetched = await fetch(off, draft["attachmentId"], ticket=letter["ticketKey"])
+    assert fetched.status == 200, await fetched.text()
+    assert await fetched.read() == PNG
+
+    # 不删行、不删字节。
+    assert store.attachment(draft["attachmentId"])["state"] == "stored"
+    assert len(files_on_disk(off)) == 1
+
+    # ④ 恢复非 0：行为回到今天。
+    back_on = await build_client(aiohttp_client, store)
+    reader_on = register_device(back_on)
+    revived = await begin_ok(back_on, client_ref="ref-revived",
+                             headers=device_headers(reader_on))
+    assert revived["state"] == "pending"
+    payload = await (await back_on.post("/feedback/inbox", json={"inboxVersion": 2},
+                                        headers=device_headers(reader_on))).json()
+    assert payload["limits"]["attachments"]["maxPerMessage"] == 8
+
+
 # ── 装配与并发 ──────────────────────────────────────────────────────────────
 
 

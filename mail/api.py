@@ -315,6 +315,15 @@ def _attachment_limits(request: web.Request) -> dict[str, Any]:
     return request.app["attachment_limits"]
 
 
+def _attachments_enabled(request: web.Request) -> bool:
+    """附件功能是否开着：`maxPerMessage == 0` 就是运维方关停（回滚开关）。
+
+    判据只有这一处：v2 是否下发 `limits.attachments`、四条路由是否可用，
+    全都读它，不在别处再比一次数字。
+    """
+    return int(_attachment_limits(request)["maxPerMessage"]) > 0
+
+
 def _byte_budget(app: web.Application, name: str, limit: int,
                  window_s: float) -> ByteBudget:
     budget = app.get(name)
@@ -607,16 +616,21 @@ def _limits_payload(messages_per_thread: int, threads_limit: int, notices_limit:
     `attachments` 缺失 = 附件功能关闭（旧服务端 / 运维方关停）；客户端不得用编译期
     常量兜底去猜"应该支持"，只按这里下发的值显示入口与口径（设计 §3.2e）。
     """
-    return {"textChars": LIMITS["textChars"], "textBytes": LIMITS["textBytes"],
-            "subjectChars": LIMITS["subjectChars"],
-            "maxTicketPairs": LIMITS["maxTicketPairs"],
-            "messagesPerThread": messages_per_thread,
-            "threadPageSize": threads_limit, "noticePageSize": notices_limit,
-            "attachments": {
-                "maxPerMessage": int(attachment_limits["maxPerMessage"]),
-                "maxFileBytes": int(attachment_limits["maxFileBytes"]),
-                "maxTotalBytes": int(attachment_limits["maxTotalBytes"]),
-                "types": list(attachment_limits["types"])}}
+    payload: dict[str, Any] = {
+        "textChars": LIMITS["textChars"], "textBytes": LIMITS["textBytes"],
+        "subjectChars": LIMITS["subjectChars"],
+        "maxTicketPairs": LIMITS["maxTicketPairs"],
+        "messagesPerThread": messages_per_thread,
+        "threadPageSize": threads_limit, "noticePageSize": notices_limit}
+    # 回滚开关（`MAIL_ATTACHMENT_MAX_PER_MESSAGE=0`）：**整个对象不下发**，
+    # 客户端按"缺失即关闭"隐藏入口——不新增字段、不教客户端认一个新标志。
+    if int(attachment_limits["maxPerMessage"]) > 0:
+        payload["attachments"] = {
+            "maxPerMessage": int(attachment_limits["maxPerMessage"]),
+            "maxFileBytes": int(attachment_limits["maxFileBytes"]),
+            "maxTotalBytes": int(attachment_limits["maxTotalBytes"]),
+            "types": list(attachment_limits["types"])}
+    return payload
 
 
 def _team_account(request: web.Request) -> str:
@@ -1217,6 +1231,9 @@ async def feedback_attachment_begin(request: web.Request) -> web.Response:
     的调用方不能先传，"无主字节"因此不存在；回信草稿走线程三选一。
     """
     store: Store = request.app["store"]
+    if not _attachments_enabled(request):
+        # 回滚开关：不新建草稿，也不透露"附件功能存在过"。与"附件不存在"同字节。
+        return _not_found()
     body, error = await _json_body(request)
     if error is not None:
         return error
@@ -1445,6 +1462,8 @@ async def feedback_attachment_upload(request: web.Request) -> web.Response:
     row = await asyncio.to_thread(store.attachment, attachment_id)
     if not row:
         return _not_found()
+    if not _attachments_enabled(request):
+        return _not_found()          # 回滚开关：上传一律停掉（已存字节不动）
     ticket = request.headers.get("X-Feedback-Ticket") or None
     if not await _attachment_access(request, store, row, ticket, device):
         return _not_found()
@@ -1537,7 +1556,12 @@ async def feedback_attachment_fetch(request: web.Request) -> web.Response:
             return _not_found()
     elif not await _attachment_access(request, store, row, ticket, device):
         return _not_found()
-    blocked = _attachment_action_response(_attachment_action("fetch", row))
+    # 回滚开关：只放行"已绑定且已存"的行（历史信件的图还能看）；草稿一律 404。
+    if _attachments_enabled(request) or row["messageId"] is not None:
+        action = _attachment_action("fetch", row)
+    else:
+        action = "not-found"
+    blocked = _attachment_action_response(action)
     if blocked is not None:
         return blocked
     if not row["storedPath"]:
@@ -1593,6 +1617,8 @@ async def feedback_attachment_discard(request: web.Request) -> web.Response:
     row = await asyncio.to_thread(store.attachment, attachment_id)
     if not row:
         return _not_found()
+    if not _attachments_enabled(request):
+        return _not_found()          # 回滚开关：草稿回收也停（清理交给 7 天 TTL）
     # 归属判定在"是否已发出"之前：否则匿名调用方能靠 409 分出"这封信已经发出"还是
     # "仍是草稿"，等于泄漏别人的信件状态（F-V4-2）。未授权一律 404。
     if not await _attachment_access(request, store, row, ticket, device):

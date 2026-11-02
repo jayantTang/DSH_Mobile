@@ -31,6 +31,12 @@ Environment=MAIL_ATTACHMENTS_DIR=/var/lib/dsh-mail/attachments
 # 附件清扫的周期（秒）：过期 pending 行、tmp/*.part、没有行的孤儿文件。
 # 0 = 关（测试默认；生产用 1 小时，见设计 §3.3）。
 Environment=MAIL_ATTACHMENT_SWEEP_S=3600
+# 附件回滚开关 `MAIL_ATTACHMENT_MAX_PER_MESSAGE`（整数，默认 8，即不设就是 8）。
+# 设为 0 表示**关停附件**：v2 不再下发 `limits.attachments`（新 App 自动隐藏入口），
+# `begin` / `upload` / `discard` 一律 404；**已绑定的历史附件仍可 fetch**，
+# 行与字节都不删除。要回滚就把这行改成 0 再 `systemctl restart dsh-mail`。
+# 非法值（负数、非整数）会让服务启动失败并在 journal 里说明原因，不会静默回退。
+# Environment=MAIL_ATTACHMENT_MAX_PER_MESSAGE=0
 # 团队收件箱（2026-10-15）：团队账号 = owner 的开发者账号（DSH_ACCOUNT_ID）。
 # 空值 = 功能关闭。真值由部署时注入（deploy.sh 的 DSH_MAIL_TEAM_ACCOUNT），
 # 不写进仓库——与部署地址同一条约定。

@@ -82,6 +82,28 @@ def test_the_environment_variables_reach_the_parser(monkeypatch, tmp_path):
     assert args.attachment_sweep_s == 90.0
 
 
+def test_the_rollback_switch_env_reaches_the_parser(monkeypatch):
+    monkeypatch.setenv("MAIL_ATTACHMENT_MAX_PER_MESSAGE", "0")
+    args = mail_module.build_parser().parse_args([])
+    assert args.attachment_max_per_message == 0
+    monkeypatch.setenv("MAIL_ATTACHMENT_MAX_PER_MESSAGE", "5")
+    assert mail_module.build_parser().parse_args([]).attachment_max_per_message == 5
+
+
+@pytest.mark.parametrize("value", ["-1", "eight", "3.5", ""])
+def test_an_invalid_rollback_switch_fails_at_startup(monkeypatch, value):
+    """非法值不许静默回退：启动即失败并说清是哪个变量、给了什么。"""
+    monkeypatch.setenv("MAIL_ATTACHMENT_MAX_PER_MESSAGE", value)
+    with pytest.raises(SystemExit):
+        mail_module.build_parser().parse_args([])
+
+
+def test_the_switch_value_reaches_create_app(store):
+    app = app_for(store, attachment_max_per_message=0)
+    assert app["attachment_limits"]["maxPerMessage"] == 0
+    assert app_for(store, attachment_max_per_message=3)["attachment_limits"]["maxPerMessage"] == 3
+
+
 def test_the_parser_defaults_match_the_design(monkeypatch):
     """没配环境时：目录跟着库走（空串 = 用默认），清扫 3600 秒（设计 §3.3）。"""
     monkeypatch.delenv("MAIL_ATTACHMENTS_DIR", raising=False)

@@ -62,6 +62,10 @@ def deployed_version() -> str:
     return value.strip() if isinstance(value, str) and value.strip() else UNVERSIONED
 
 
+#: 附件回滚开关的环境变量名：`0` = 关停（v2 不下发 `limits.attachments`，
+#: `begin`/`upload`/`discard` 一律 404；已绑定的历史附件仍可 `fetch`）。
+ATTACHMENT_MAX_PER_MESSAGE_ENV = "MAIL_ATTACHMENT_MAX_PER_MESSAGE"
+
 #: 附件清扫的默认周期（生产 1 小时；测试传 0 = 不起后台任务，用例不泄漏任务）。
 DEFAULT_SWEEP_INTERVAL_S = 3600.0
 #: 三类残留的过期时长：`pending` 行 1 小时、`tmp/*.part` 1 小时、
@@ -73,6 +77,23 @@ DRAFT_TTL_S = 7 * 24 * 3600.0
 
 #: 清扫翻页的大小：`known` 必须覆盖**全部**已存行，不能只取一页（F4）。
 SWEEP_PAGE_SIZE = 500
+
+
+def parse_attachment_max_per_message(raw: str | int) -> int:
+    """解析附件回滚开关：必须是**非负整数**，否则启动即失败（不静默回退）。
+
+    0 = 关停附件（见 :func:`create_app`）；正整数 = 单封附件个数上限。
+    """
+    text = str(raw).strip()
+    try:
+        value = int(text)
+    except (TypeError, ValueError):
+        raise ValueError(
+            f"{ATTACHMENT_MAX_PER_MESSAGE_ENV} must be a non-negative integer, got {text!r}")
+    if value < 0:
+        raise ValueError(
+            f"{ATTACHMENT_MAX_PER_MESSAGE_ENV} must be a non-negative integer, got {value}")
+    return value
 
 
 async def sweep_attachments_once(store: Store, root: str, *, now: int | None = None,
@@ -154,6 +175,7 @@ def create_app(*, store: Store, resolve_device: ResolveDevice | None = None,
                notify_account_state: Any | None = None,
                attachments_root: str | None = None,
                attachment_limits: dict[str, Any] | None = None,
+               attachment_max_per_message: int | None = None,
                sweep_interval_s: float = 0.0) -> web.Application:
     """组装 mail 的 aiohttp 应用。
 
@@ -183,7 +205,10 @@ def create_app(*, store: Store, resolve_device: ResolveDevice | None = None,
     root = attachments_root or attachment_files.root_for(store.path)
     attachment_files.ensure_dirs(root)
     app["attachments_root"] = root
-    app["attachment_limits"] = {**LIMITS["attachments"], **(attachment_limits or {})}
+    limits = {**LIMITS["attachments"], **(attachment_limits or {})}
+    if attachment_max_per_message is not None:
+        limits["maxPerMessage"] = int(attachment_max_per_message)
+    app["attachment_limits"] = limits
     app["attachment_sweep_interval_s"] = float(sweep_interval_s)
 
     def route(method: str, path: str, handler: Any) -> None:
@@ -247,6 +272,12 @@ def build_parser() -> argparse.ArgumentParser:
                         help="optional mount prefix, e.g. /dsh-link; both forms are served")
     parser.add_argument("--attachments-dir", default=os.environ.get("MAIL_ATTACHMENTS_DIR", ""),
                         help="where attachment bytes live (default: <db dir>/attachments)")
+    parser.add_argument("--attachment-max-per-message",
+                        type=parse_attachment_max_per_message,
+                        default=os.environ.get(ATTACHMENT_MAX_PER_MESSAGE_ENV,
+                                               str(LIMITS["attachments"]["maxPerMessage"])),
+                        help="attachment rollback switch: 0 disables attachments "
+                             f"(env {ATTACHMENT_MAX_PER_MESSAGE_ENV})")
     parser.add_argument("--attachment-sweep-s", type=float,
                         default=float(os.environ.get("MAIL_ATTACHMENT_SWEEP_S", "3600")),
                         help="seconds between attachment sweeps; 0 = no sweeper")
@@ -267,10 +298,13 @@ def main(argv: list[str] | None = None) -> int:
                                                                args.relay_timeout_s),
                      base_path=args.base_path, team_account=args.team_account,
                      attachments_root=args.attachments_dir or None,
+                     attachment_max_per_message=args.attachment_max_per_message,
                      sweep_interval_s=args.attachment_sweep_s)
-    LOGGER.info("mail: serving on %s:%d (db=%s, relay=%s, team_inbox=%s)",
+    LOGGER.info("mail: serving on %s:%d (db=%s, relay=%s, team_inbox=%s, attachments=%s)",
                 args.host, args.port, args.db, args.relay_internal_url,
-                args.team_account or "off")
+                args.team_account or "off",
+                "off" if args.attachment_max_per_message == 0
+                else f"up to {args.attachment_max_per_message}/letter")
     web.run_app(app, host=args.host, port=args.port, print=None)
     store.close()
     return 0
