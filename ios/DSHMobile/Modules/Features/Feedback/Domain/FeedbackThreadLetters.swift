@@ -21,10 +21,12 @@ public extension FeedbackThread {
     /// 团队对用户来信的回信入口：只有我这一侧是团队时才有。
     var canReply: Bool { resolvedSide == .owner }
 
-    /// 我方的署名：团队侧固定「DSH Mobile 团队」；用户侧写成 `我 · <机型>`
-    /// （机型缺失只写「我」）。已发送栏的首行与详情页里我方那封的抬头共用它。
+    /// 我方的署名：团队侧固定「DSH Mobile 团队」；用户侧只写「我」。
+    ///
+    /// 用户的机型不作为**自称**：那是在把人当设备（owner 2026-11-02）。机型只用于团队侧
+    /// 区分"哪个用户的哪台设备"，体现在 ``counterpartyLine`` 里。
     var myLine: String {
-        resolvedSide == .owner ? FeedbackIdentity.team : FeedbackIdentity.me(deviceModel: source?.deviceModel)
+        resolvedSide == .owner ? FeedbackIdentity.team : FeedbackIdentity.me
     }
 
     /// **这一封的收发人**（唯一口径）：列表行、详情抬头、历史段都调它，不许三处各拼一次。
@@ -57,16 +59,11 @@ public enum FeedbackIdentity {
     /// 通知的发件人。
     public static var service: String { String(localized: "服务通知") }
 
-    /// 本机用户的署名：`我 · <机型>`，机型缺失只写「我」。
-    public static func me(deviceModel: String?) -> String {
-        let model = deviceModel?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return model.isEmpty ? String(localized: "我") : String(localized: "我 · \(model)")
-    }
+    /// 本机用户的署名：只写「我」。机型属于设备，不作为人的称呼（owner 2026-11-02）。
+    public static var me: String { String(localized: "我") }
 
     /// 通知的收发人：发件人固定「服务通知」，收件人是本机用户。
-    public static func noticeParties(deviceModel: String?) -> (from: String, to: String) {
-        (service, me(deviceModel: deviceModel))
-    }
+    public static var noticeParties: (from: String, to: String) { (service, me) }
 }
 
 /// 正文长度的双约束判定（字符 + UTF-8 字节）。

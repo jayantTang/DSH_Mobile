@@ -553,10 +553,8 @@ public struct FeedbackNoticeView: View {
                 case .ready:
                     if let notice {
                         LetterCard(
-                            sender: FeedbackIdentity.noticeParties(
-                                deviceModel: FeedbackCenter.technicalInfo.deviceModel).from,
-                            recipient: FeedbackIdentity.noticeParties(
-                                deviceModel: FeedbackCenter.technicalInfo.deviceModel).to,
+                            sender: FeedbackIdentity.noticeParties.from,
+                            recipient: FeedbackIdentity.noticeParties.to,
                             isMine: false,
                             subject: FeedbackSubject.line(subject: notice.subject, body: notice.body,
                                                           format: notice.bodyFormat),

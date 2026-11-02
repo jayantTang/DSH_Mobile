@@ -207,10 +207,8 @@ public struct FeedbackCenterView: View {
                     NavigationLink(value: FeedbackDestination.notice(notice.noticeId)) {
                         // 通知行只有"服务通知 / 标题 / 时间"：正文改成打开时按需取
                         // （设计 §M6.6），列表不再有摘要行。
-                        FeedbackMailRow(firstLine: FeedbackIdentity.noticeParties(
-                                            deviceModel: FeedbackCenter.technicalInfo.deviceModel).from,
-                                        toLine: FeedbackIdentity.noticeParties(
-                                            deviceModel: FeedbackCenter.technicalInfo.deviceModel).to,
+                        FeedbackMailRow(firstLine: FeedbackIdentity.noticeParties.from,
+                                        toLine: FeedbackIdentity.noticeParties.to,
                                         subject: FeedbackSubject.line(subject: notice.subject,
                                                                       body: notice.body,
                                                                       format: notice.bodyFormat),
