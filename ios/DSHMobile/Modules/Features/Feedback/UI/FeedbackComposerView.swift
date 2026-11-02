@@ -47,14 +47,18 @@ public struct FeedbackReplyContext: Hashable {
     public let subject: String?
     /// 正文下方灰色折叠的原信（只读，不计入正文字数）。
     public let quotedText: String
+    /// 原信的格式：`text` 走与正文同一条 markdown 渲染，`html` 仍按纯文本（不嵌第二个 WebKit）。
+    public let quotedFormat: FeedbackBodyFormat
 
     public init(threadId: String, ticketKey: String?, recipient: String,
-                subject: String?, quotedText: String) {
+                subject: String?, quotedText: String,
+                quotedFormat: FeedbackBodyFormat = .text) {
         self.threadId = threadId
         self.ticketKey = ticketKey
         self.recipient = recipient
         self.subject = subject
         self.quotedText = quotedText
+        self.quotedFormat = quotedFormat
     }
 
     /// 回信窗口的主题初值：`Re: <原主题>`，原主题为空时 `Re: 关于你的来信：<首句>`。
@@ -121,7 +125,9 @@ public struct FeedbackComposerView: View {
                     mailHead
                     editor
                     attachmentSection
-                    if reply != nil { FeedbackQuoteBlock(text: reply?.quotedText ?? "") }
+                    if let reply {
+                        FeedbackQuoteBlock(text: reply.quotedText, format: reply.quotedFormat)
+                    }
                     techInfo
                     privacy
                 }

@@ -50,7 +50,7 @@
 // 临时文件（失败也删）。
 
 import { execFileSync } from 'node:child_process'
-import { appendFileSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -92,7 +92,8 @@ const TESTFLIGHT_CACHE = join(DEFAULT_OUT, '.testflight-releases.json')
 const TESTFLIGHT_TTL_MS = 6 * 3600_000
 
 /// 子命令 → 服务：信件类打 mail，用量/报告数据打中转（拆分后的路由表）。
-const MAIL_SUBS = new Set(['list', 'show', 'template', 'reply', 'notify', 'delete', 'rebind'])
+const MAIL_SUBS = new Set(['list', 'show', 'template', 'reply', 'notify', 'delete', 'rebind',
+  'attachment-get'])
 
 const AGENT_LABEL = 'com.jayanttang.dsh-daily-report'
 const AGENT_TEMPLATE = join(HERE, 'launchd', `${AGENT_LABEL}.plist`)
@@ -115,7 +116,7 @@ const THREAD_LOOKUP_LIMIT = 500
 
 const USAGE = `用法：
   feedback.mjs list [--status open|replied|all] [--scope user|test|all] [--limit 20] [--since DAYS]
-  feedback.mjs show --thread th_x
+  feedback.mjs show --thread th_x [--attachments DIR]
   feedback.mjs template
   feedback.mjs reply --thread th_x (--body-file PATH | --body TEXT) [--subject S] [--format text|html] [--send]
                     [--owner-approved "owner 的原话"]
@@ -257,6 +258,7 @@ export function parseArgs(argv) {
       case '--full-day': opts.fullDay = true; break
       case '--date': opts.date = need(argv, ++i, flag); break
       case '--thread': opts.thread = need(argv, ++i, flag); break
+      case '--attachments': opts.attachments = need(argv, ++i, flag); break
       case '--status': opts.status = need(argv, ++i, flag); break
       case '--scope':
         opts.scope = need(argv, ++i, flag)
@@ -281,6 +283,9 @@ export function parseArgs(argv) {
     }
   }
   if (NEEDS_THREAD.has(sub) && !opts.thread) throw new UsageError(`${sub} 需要 --thread`)
+  if (opts.attachments !== undefined && sub !== 'show') {
+    throw new UsageError('--attachments 只用于 show（把这一条线程的附件下到本机）')
+  }
   if (NEEDS_BODY.has(sub) && !opts.body && !opts.bodyFile) throw new UsageError(`${sub} 需要 --body-file 或 --body`)
   // `--date` / `--full-day` 只对拉报告的 report 有意义；两个同时给说明口径没说清，直接报错，
   // 不搞"谁覆盖谁"的静默优先级。
@@ -326,6 +331,11 @@ export function adminArgs({ sub, opts, teamAccount = '' }, db) {
         ...(opts.since ? ['--since', String(opts.since)] : []),
         ...(opts.scope ? ['--scope', opts.scope] : [])]
     case 'show': return [...mailHead, 'feedback-show', '--thread', opts.thread]
+    // 附件下载的远端半边：admin 把字节写到服务器上的 --dir，再由 feedback.mjs scp 回本机
+    // （`--local` 时两边是同一台机器，直接拷）。文件名由 admin 定成 `<attachmentId>-<原名>`。
+    case 'attachment-get':
+      return [...mailHead, 'feedback-attachment-get',
+        '--attachment', opts.attachment, '--dir', opts.remoteDir]
     case 'template': return [...head, 'feedback-reply', '--template']
     case 'reply':
       // `--subject` 是回信给线程起的标题（邮件那一行）；不传就沿用用户写的那句。
@@ -390,6 +400,54 @@ export function buildInvocation({ sub, opts }, { env = {}, exists = existsSync }
   const remote = [...target.argv, ...args].map(shellQuote).join(' ')
   const ssh = ['-q', '-o', 'BatchMode=yes', ...(port ? ['-p', port] : []), sshTarget, remote]
   return { kind: 'ssh', argv: ['ssh', ...ssh], remote }
+}
+
+/// `show --attachments DIR`：把这一条线程的附件逐个下到本机 `DIR`。
+///
+/// 一个附件两跳：① 远端 `feedback-attachment-get --dir <远端临时目录>` 落一份字节；
+/// ② 把它 scp（或 `--local` 时直接拷）到本机 `DIR`，文件名沿用 `<attachmentId>-<原名>`。
+/// 单个失败**不中断**其余附件：全部跑完再报原因并以非零退出（退出码 1）。
+export function downloadThreadAttachments(rawJson, targetDir, { env, exists, run, io, opts }) {
+  let shown
+  try {
+    shown = JSON.parse(rawJson)
+  } catch (error) {
+    io.err(`读不出 feedback-show 的 JSON：${error.message}`)
+    return 1
+  }
+  const attachments = (shown.messages ?? []).flatMap((message) => message.attachments ?? [])
+  if (!attachments.length) {
+    io.out('这条线程没有附件')
+    return 0
+  }
+  mkdirSync(targetDir, { recursive: true })
+  const remoteDir = '/tmp/dsh-feedback-attachments'
+  const { target: sshTarget, port } = resolveSshTarget(env.DSH_OTA_HOST)
+  const failures = []
+  let downloaded = 0
+  for (const attachment of attachments) {
+    const parsed = { sub: 'attachment-get', opts: { ...opts, attachment: attachment.attachmentId,
+      remoteDir } }
+    try {
+      const invocation = buildInvocation(parsed, { env, exists }, 'mail')
+      const output = String(run(invocation.argv)).trim()
+      const result = JSON.parse(output)
+      if (!result.ok || !result.path) throw new Error(result.error ?? '服务端没有给出文件路径')
+      const name = basename(result.path)
+      if (opts.local) {
+        copyFileSync(result.path, join(targetDir, name))
+      } else {
+        run(['scp', '-q', ...(port ? ['-P', port] : []), `${sshTarget}:${result.path}`,
+          join(targetDir, name)])
+      }
+      downloaded += 1
+    } catch (error) {
+      failures.push(`${attachment.attachmentId}（${attachment.name ?? '未命名'}）：${failureText(error)}`)
+    }
+  }
+  io.out(`已下载 ${downloaded} 个附件到 ${targetDir}`)
+  for (const failure of failures) io.err(`下载失败：${failure}`)
+  return failures.length ? 1 : 0
 }
 
 function defaultRunner(argv) {
@@ -1151,6 +1209,10 @@ export function main(argv, deps = {}) {
     if (sub === 'reply' && ((!opts.send && !opts.yes) || opts.dryRun)) return previewReply(invocation, opts, io)
     const raw = runLetterCommand(parsed, { env, exists, run, io })
     io.out(raw.trimEnd())
+    // `show --attachments DIR`：逐个把附件字节下到本机（只读操作；不发信、不改库）。
+    if (sub === 'show' && opts.attachments) {
+      return downloadThreadAttachments(raw, opts.attachments, { env, exists, run, io, opts })
+    }
     // `--all` 的投递断言（M7 / P1-6）：投递数必须等于发送时那份清单的账号数。不等就退非零
     // 并把差额打出来——漏发在 mail 库里看不出来，只能在这里对账。
     const shortfall = sub === 'notify' && opts.expandedFromAll && opts.yes && !opts.dryRun

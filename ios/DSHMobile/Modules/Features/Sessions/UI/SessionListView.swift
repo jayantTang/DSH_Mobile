@@ -207,7 +207,7 @@ public struct SessionListView: View {
                             }
                         }
                 }
-                .accessibilityLabel("反馈")
+                .accessibilityLabel(String(localized: "信件"))
                 .accessibilityIdentifier("session.feedback")
             }
             ToolbarItem(placement: .topBarTrailing) {

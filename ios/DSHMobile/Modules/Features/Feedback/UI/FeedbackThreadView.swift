@@ -199,6 +199,8 @@ public final class FeedbackServices {
 
 public struct FeedbackThreadView: View {
 
+    @Environment(FeedbackServices.self) private var services
+
     public let threadId: String
     public let side: FeedbackThreadSide
 
@@ -271,7 +273,8 @@ public struct FeedbackThreadView: View {
             ticketKey: isTeamSide ? nil : center.ticket(for: threadId)?.ticketKey,
             recipient: recipient,
             subject: thread?.subject,
-            quotedText: thread?.incomingLetter?.body ?? ""
+            quotedText: thread?.incomingLetter?.body ?? "",
+            quotedFormat: thread?.incomingLetter?.bodyFormat ?? .text
         )
     }
 
@@ -314,10 +317,7 @@ public struct FeedbackThreadView: View {
                                 }
                                 .font(DSHTheme.Typography.micro)
                                 .foregroundStyle(DSHTheme.labelTertiary)
-                                Text(message.body)
-                                    .font(DSHTheme.Typography.caption)
-                                    .foregroundStyle(DSHTheme.labelSecondary)
-                                    .lineLimit(6)
+                                historyBody(message)
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
                             Hairline()
@@ -327,6 +327,25 @@ public struct FeedbackThreadView: View {
                 }
             }
             .padding(.top, DSHTheme.Spacing.tight)
+        }
+    }
+
+    /// 历史段正文：与当前这封走**同一条渲染路**（注入的 markdown 渲染器），不再限 6 行。
+    ///
+    /// `html` 的历史仍按纯文本显示：详情页已经有当前这封的 HTML 容器，再在一页里嵌第二个
+    /// WebKit 既慢又容易把滚动搞乱（设计 D2 的边界）。
+    @ViewBuilder
+    private func historyBody(_ message: FeedbackMessage) -> some View {
+        switch message.bodyFormat {
+        case .text:
+            services.renderMarkdown(message.body)
+                .foregroundStyle(DSHTheme.labelSecondary)
+                .accessibilityIdentifier("feedback.thread.history.body")
+        case .html:
+            Text(message.body)
+                .font(DSHTheme.Typography.caption)
+                .foregroundStyle(DSHTheme.labelSecondary)
+                .accessibilityIdentifier("feedback.thread.history.body")
         }
     }
 

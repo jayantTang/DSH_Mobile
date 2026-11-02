@@ -432,7 +432,10 @@ private struct FeedbackAttachmentFrame: ViewModifier {
 
 /// 回信里的原文引用（D10）：灰色、默认折叠、只读，不计入正文字数。
 struct FeedbackQuoteBlock: View {
+    @Environment(FeedbackServices.self) private var services
+
     let text: String
+    var format: FeedbackBodyFormat = .text
     @State private var expanded = false
 
     var body: some View {
@@ -455,9 +458,7 @@ struct FeedbackQuoteBlock: View {
             }
             .buttonStyle(.plain)
             if expanded {
-                Text(text)
-                    .font(DSHTheme.Typography.caption)
-                    .foregroundStyle(DSHTheme.labelSecondary)
+                quoteBody
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
@@ -466,6 +467,20 @@ struct FeedbackQuoteBlock: View {
         .background(DSHTheme.layer1,
                     in: RoundedRectangle(cornerRadius: DSHTheme.Radius.medium, style: .continuous))
         .accessibilityIdentifier("feedback.quote")
+    }
+
+    /// 引用正文：`text` 与当前这封正文走同一条渲染路；`html` 仍是纯文本（不嵌第二个 WebKit）。
+    @ViewBuilder
+    private var quoteBody: some View {
+        switch format {
+        case .text:
+            services.renderMarkdown(text)
+                .foregroundStyle(DSHTheme.labelSecondary)
+        case .html:
+            Text(text)
+                .font(DSHTheme.Typography.caption)
+                .foregroundStyle(DSHTheme.labelSecondary)
+        }
     }
 }
 
