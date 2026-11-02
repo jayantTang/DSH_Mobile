@@ -92,10 +92,13 @@ def unregister_device(client, token: str) -> None:
     client.app["test_devices"].pop(token, None)
 
 
-async def build_client(aiohttp_client, store: Store, *, team_account: str = TEAM_ACCOUNT):
+async def build_client(aiohttp_client, store: Store, *, team_account: str = TEAM_ACCOUNT,
+                        **app_options):
     """装一份完整的 mail 应用（与生产同一组装路径），返回 aiohttp 测试客户端。
 
     `team_account=""` 就是 `MAIL_TEAM_ACCOUNT` 为空的部署形状：团队收件箱关闭。
+    `app_options` 原样传给 `create_app`：附件上限（M6 的参数化）与附件目录走这里。
+    附件的默认目录落在 `store.path` 同级（tmp_path），用例之间互不影响。
     """
     registry: dict[str, dict] = {}
     notified: list[tuple[str | None, list[str] | None]] = []
@@ -109,7 +112,7 @@ async def build_client(aiohttp_client, store: Store, *, team_account: str = TEAM
 
     app = mail_module.create_app(store=store, resolve_device=resolve,
                                  notify_account_state=notify,
-                                 team_account=team_account)
+                                 team_account=team_account, **app_options)
     app["test_devices"] = registry
     app["test_notified"] = notified
     return await aiohttp_client(app)

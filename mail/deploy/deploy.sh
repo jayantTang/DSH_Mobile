@@ -148,10 +148,37 @@ fi
 install -d -m 0755 -o root -g root "$APP_DIR"
 install -d -m 0700 -o "$SERVICE_USER" -g "$SERVICE_USER" "$DATA_DIR"
 
+# 附件字节目录（2026-11-02，设计 M5 的自检项）：服务启动时会自己 ensure_dirs，
+# 但那要等 healthz 探活——目录写不进去时错误会晚一步暴露。所以这里先建好、再核
+# 属主与权限，不满足就当场拒部署，而不是装出一个"文件写不进附件目录"的服务。
+ATTACHMENTS_DIR="$DATA_DIR/attachments"
+install -d -m 0700 -o "$SERVICE_USER" -g "$SERVICE_USER" "$ATTACHMENTS_DIR"
+[ -d "$ATTACHMENTS_DIR" ] || die "$ATTACHMENTS_DIR is missing after install -d"
+attachments_owner="$(stat -c '%U' "$ATTACHMENTS_DIR")"
+attachments_mode="$(stat -c '%a' "$ATTACHMENTS_DIR")"
+[ "$attachments_owner" = "$SERVICE_USER" ] \
+  || die "$ATTACHMENTS_DIR is owned by $attachments_owner, expected $SERVICE_USER"
+[ "$attachments_mode" = "700" ] \
+  || die "$ATTACHMENTS_DIR has mode $attachments_mode, expected 700"
+say "attachments dir: $ATTACHMENTS_DIR ($attachments_owner $attachments_mode)"
+
 # ── 2. sources and venv ─────────────────────────────────────────────────────
 
+# 安装清单是**白名单枚举**（只装跑服务需要的模块，不装 deploy/ 与测试）。
+# 2026-11-02：`attachments.py`（信件附件的字节侧）曾经漏在这里——服务启动即
+# `ModuleNotFoundError`。所以下面除了逐个安装，还会反向核对：源码目录里的每个
+# `.py` 都必须在清单里，漏一个就当场拒部署，而不是装出一个缺模块的服务。
+MAIL_MODULES="mail.py api.py store.py internal.py admin.py attachments.py"
+for source in "$SRC_DIR"/*.py; do
+  name="$(basename "$source")"
+  case " $MAIL_MODULES " in
+    *" $name "*) ;;
+    *) die "$SRC_DIR/$name is not in MAIL_MODULES; add it to the install list first" ;;
+  esac
+done
+
 say "installing mail sources into $APP_DIR"
-for module in mail.py api.py store.py internal.py admin.py; do
+for module in $MAIL_MODULES; do
   [ -f "$SRC_DIR/$module" ] || die "$SRC_DIR/$module is missing"
   install -m 0644 -o root -g root "$SRC_DIR/$module" "$APP_DIR/$module"
 done

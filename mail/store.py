@@ -2,9 +2,10 @@
 
 信件服务的存储层（DESIGN-20261015 从旧中转拆出）。与中转库的差异：
 
-- 只有 feedbackThreads / feedbackMessages / notices / noticeDeliveries 四张表，
-  没有账号/设备/配对/用量——那些归中转，mail 只按值引用 accountId/deviceId
-  （不透明字符串，等值比较，无外键、不复制）。
+- 只有 feedbackThreads / feedbackMessages / notices / noticeDeliveries 与
+  feedbackAttachments 五张表，没有账号/设备/配对/用量——那些归中转，mail 只按值
+  引用 accountId/deviceId（不透明字符串，等值比较，无外键、不复制）。
+- 附件只存**元数据**：字节落在磁盘上（见 :mod:`attachments`），这里只记行。
 - 没有版本化迁移：这是新服务的新库；生产数据由 M3 的迁移脚本从中转
   state.db 按列拷入，列序与本文件的建表语句逐列一致（有测试钉住）。
 - 方法体沿用拆分时那份实现（只改 docstring 里的指代），
@@ -20,7 +21,7 @@ import secrets
 import sqlite3
 import threading
 import time
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 MAX_SUBJECT_CHARS = 80
 FEEDBACK_FORMATS = ("text", "html")
@@ -158,10 +159,15 @@ CREATE TABLE IF NOT EXISTS feedbackMessages (
   author     TEXT NOT NULL,
   body       TEXT NOT NULL,
   createdAt  INTEGER NOT NULL,
-  clientRef  TEXT UNIQUE,
+  -- v4：`clientRef` 是**线程内**的幂等键（同一封信的回信重试），不再是全表唯一。
+  -- 全表唯一会把"两条线程碰巧用了同一个 clientRef"变成一次错误复用（F-V4-1）。
+  clientRef  TEXT,
   format     TEXT NOT NULL DEFAULT 'text'
 );
 CREATE INDEX IF NOT EXISTS feedbackMessagesByThread ON feedbackMessages(threadId, createdAt);
+CREATE UNIQUE INDEX IF NOT EXISTS feedbackMessagesByThreadRef
+  ON feedbackMessages(threadId, clientRef)
+  WHERE clientRef IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS notices (
   noticeId   TEXT PRIMARY KEY,
@@ -180,7 +186,61 @@ CREATE TABLE IF NOT EXISTS noticeDeliveries (
   PRIMARY KEY (noticeId, accountId)
 );
 CREATE INDEX IF NOT EXISTS noticeDeliveriesByAccount ON noticeDeliveries(accountId);
+
+-- 信件附件（2026-11-02；v4 改为「先传后发、按 clientRef 绑定」）：只记元数据，
+-- 字节在 attachments/ 目录（见 mail/attachments.py）。
+--   * draftRef 是**信件级 clientRef**（同一封信的附件共用），slot 是这封信里的序号；
+--     UNIQUE(draftRef, slot) 同时承担幂等（同 slot 重试）与顺序（提交按 slot 升序）。
+--   * messageId 为 NULL = **未绑定的草稿**（不进任何列表）；提交时一次性写入，
+--     这就是"已绑定"的唯一判据。
+--   * clientRef 只留给通知侧（UNIQUE(noticeId, clientRef)）；线程附件用 draftRef + slot，
+--     同一列不承载两种语义。
+CREATE TABLE IF NOT EXISTS feedbackAttachments (
+  attachmentId    TEXT PRIMARY KEY,
+  scope           TEXT NOT NULL DEFAULT 'thread',
+  draftRef        TEXT,
+  slot            INTEGER,
+  threadId        TEXT,
+  messageId       TEXT,
+  noticeId        TEXT,
+  originDeviceId  TEXT,
+  originAccountId TEXT,
+  clientRef       TEXT,
+  fileName        TEXT NOT NULL,
+  contentType     TEXT NOT NULL,
+  byteSize        INTEGER NOT NULL,
+  sha256          TEXT NOT NULL,
+  width           INTEGER,
+  height          INTEGER,
+  state           TEXT NOT NULL DEFAULT 'pending',
+  storedPath      TEXT,
+  createdAt       INTEGER NOT NULL,
+  storedAt        INTEGER,
+  boundAt         INTEGER
+);
+CREATE UNIQUE INDEX IF NOT EXISTS feedbackAttachmentsDraftSlot
+  ON feedbackAttachments(draftRef, slot)
+  WHERE draftRef IS NOT NULL AND slot IS NOT NULL;
+CREATE INDEX IF NOT EXISTS feedbackAttachmentsByMessage
+  ON feedbackAttachments(threadId, messageId, createdAt);
+CREATE INDEX IF NOT EXISTS feedbackAttachmentsByNotice
+  ON feedbackAttachments(noticeId, createdAt);
+CREATE INDEX IF NOT EXISTS feedbackAttachmentsByState
+  ON feedbackAttachments(state, createdAt);
+CREATE INDEX IF NOT EXISTS feedbackAttachmentsByDraft
+  ON feedbackAttachments(draftRef, state);
+CREATE UNIQUE INDEX IF NOT EXISTS feedbackAttachmentsNoticeRef
+  ON feedbackAttachments(noticeId, clientRef)
+  WHERE noticeId IS NOT NULL AND clientRef IS NOT NULL;
 """
+
+
+#: 附件行的完整字段清单：读法只有这一份（投影再按 v1/v2/CLI 各自取用）。
+_ATTACHMENT_COLUMNS = ("attachmentId, scope, draftRef, slot, threadId, messageId, noticeId,"
+                       " originDeviceId, originAccountId, clientRef, fileName, contentType,"
+                       " byteSize, sha256, width, height, state, storedPath, createdAt,"
+                       " storedAt, boundAt")
+_ATTACHMENT_SELECT = f"SELECT {_ATTACHMENT_COLUMNS} FROM feedbackAttachments"
 
 
 class StoreError(Exception):
@@ -191,6 +251,33 @@ class NotFound(StoreError):
 
 class Conflict(StoreError):
     """The requested write violates a uniqueness invariant."""
+
+class EmptyLetter(StoreError):
+    """正文为空且没有任何可绑定的已存附件：这不构成一封信（`400 feedback/bad-request`）。
+
+    抛它的那次调用**不 commit**：线程/留言/绑定都不落库（"服务端不会出现空信"）。
+    """
+
+
+class SealedLetter(StoreError):
+    """这封信已经提交过（`clientRef` 已落到线程或留言上）：不再接受新的附件草稿。
+
+    owner 2026-11-02 的第 4 条裁定是"**提交即封口**"——已发出的信不许在重试里多出
+    附件。`begin` 命中它回 409 `feedback/attachment-conflict`（免得留下只能等 7 天
+    TTL 的孤儿草稿）。
+    """
+
+
+class QuotaExceeded(StoreError):
+    """附件配额不够。`reason` 只用来让调用方挑错误码：
+
+    `storage` → 507 `feedback/storage-full`（全库软上限），其余 → 413
+    `feedback/too-large`（单封条数/单封合计/单线程合计）。
+    """
+
+    def __init__(self, reason: str):
+        super().__init__(f"attachment quota exceeded: {reason}")
+        self.reason = reason
 
 
 def clean_feedback_subject(subject: Any) -> str | None:
@@ -281,38 +368,75 @@ class Store:
                                account_id: str | None = None, device_id: str | None = None,
                                app_version: str | None = None, device_model: str | None = None,
                                system_version: str | None = None, client_ref: str | None = None,
-                               subject: str | None = None, at: int | None = None) -> dict[str, Any]:
-        """建一条线程，并把用户原文作为线程里的第一条留言。
+                               subject: str | None = None, at: int | None = None,
+                               limits: dict[str, int] | None = None,
+                               usable: "Callable[[dict[str, Any]], bool] | None" = None
+                               ) -> dict[str, Any]:
+        """建一条线程，并把用户原文作为线程里的第一条留言；**同一事务内绑定附件草稿**。
+
+        `clientRef` 同时是这封信的 `draftRef`：提交时把这一封信的已存草稿（§3.1 的
+        归属谓词）一次性绑到新 `messageId`，返回 `attachmentsBound`。
 
         `clientRef` 命中唯一索引时**不新建**：返回既有那条（`created` 为 False），
-        并把 `ticketHash` 换成这一次带来的哈希——重试发生在"上一条响应丢了"之后，
-        所以重试必须拿到一把能用的凭据。同一个 `clientRef` 来自别的来源时抛
-        :class:`Conflict`，不把线程交出去。
+        并把 `ticketHash` 换成这一次带来的哈希。**重试恒 0 绑定**（owner 裁定"提交即
+        封口"）：已经发出的信不会在重试里多出附件，新草稿由 `begin` 的封口判据挡在
+        源头（:class:`SealedLetter`）。
+
+        **空信不可能**：正文为空（`text.strip()`）且这次一个附件都没绑上时抛
+        :class:`EmptyLetter`，并且**不 commit**——线程与留言都不落库，草稿保持未绑定。
+        配额不足（:class:`QuotaExceeded`）同样整笔回滚。同一个 `clientRef` 来自别的
+        来源时抛 :class:`Conflict`，不把线程交出去。
+
+        **失败路径零写入（R4）**：幂等分支里的 `ticketHash` 改写与新建分支的插入都在
+        同一段 `try/except BaseException: rollback` 里——失败时未提交事务被丢弃，不会
+        被后续任意一次 `commit()` 顺带提交（共享连接上尤其要紧）。
         """
         stamp = at or now_ms()
         with self._lock:
-            if client_ref:
-                existing = self._feedback_row_by("clientRef", client_ref)
-                if existing is not None:
-                    if not self._feedback_source_matches(existing, device_id, account_id):
-                        raise Conflict(f"clientRef {client_ref} belongs to another source")
-                    self._conn.execute("UPDATE feedbackThreads SET ticketHash=? WHERE threadId=?",
-                                       (ticket_hash, existing["threadId"]))
-                    self._conn.commit()
-                    return {"threadId": existing["threadId"], "createdAt": int(existing["createdAt"]),
-                            "lastMessageAt": int(existing["lastMessageAt"]), "created": False}
-            thread_id = new_id("th")
-            self._conn.execute(
-                "INSERT INTO feedbackThreads(threadId, ticketHash, accountId, deviceId, appVersion,"
-                " deviceModel, systemVersion, createdAt, lastMessageAt, status, clientRef, subject)"
-                " VALUES(?,?,?,?,?,?,?,?,?,'open',?,?)",
-                (thread_id, ticket_hash, account_id, device_id, app_version, device_model,
-                 system_version, stamp, stamp, client_ref, clean_feedback_subject(subject)))
-            self._conn.execute(
-                "INSERT INTO feedbackMessages(messageId, threadId, author, body, format, createdAt)"
-                " VALUES(?,?,'user',?,'text',?)", (new_id("fm"), thread_id, text, stamp))
+            try:
+                if client_ref:
+                    existing = self._feedback_row_by("clientRef", client_ref)
+                    if existing is not None:
+                        if not self._feedback_source_matches(existing, device_id, account_id):
+                            raise Conflict(f"clientRef {client_ref} belongs to another source")
+                        self._conn.execute(
+                            "UPDATE feedbackThreads SET ticketHash=? WHERE threadId=?",
+                            (ticket_hash, existing["threadId"]))
+                        first = self._conn.execute(
+                            "SELECT messageId FROM feedbackMessages WHERE threadId=?"
+                            " ORDER BY createdAt, rowid LIMIT 1",
+                            (existing["threadId"],)).fetchone()
+                        self._conn.commit()
+                        return {"threadId": existing["threadId"],
+                                "createdAt": int(existing["createdAt"]),
+                                "lastMessageAt": int(existing["lastMessageAt"]), "created": False,
+                                "messageId": first["messageId"] if first is not None else None,
+                                "attachmentsBound": 0}     # R5：重试恒 0 绑定
+                thread_id = new_id("th")
+                message_id = new_id("fm")
+                self._conn.execute(
+                    "INSERT INTO feedbackThreads(threadId, ticketHash, accountId, deviceId,"
+                    " appVersion, deviceModel, systemVersion, createdAt, lastMessageAt, status,"
+                    " clientRef, subject) VALUES(?,?,?,?,?,?,?,?,?,'open',?,?)",
+                    (thread_id, ticket_hash, account_id, device_id, app_version, device_model,
+                     system_version, stamp, stamp, client_ref,
+                     clean_feedback_subject(subject)))
+                self._conn.execute(
+                    "INSERT INTO feedbackMessages(messageId, threadId, author, body, format,"
+                    " createdAt) VALUES(?,?,'user',?,'text',?)", (message_id, thread_id, text, stamp))
+                bound = 0
+                if client_ref and limits is not None:
+                    bound = self._bind_locked(client_ref, thread_id, message_id, limits=limits,
+                                              device_id=device_id, account_id=account_id,
+                                              at=stamp, usable=usable)
+                if not text.strip() and bound == 0:
+                    raise EmptyLetter("a letter needs text or at least one stored attachment")
+            except BaseException:
+                self._conn.rollback()      # 整笔回滚：不建线程、不建留言、不动草稿
+                raise
             self._conn.commit()
-        return {"threadId": thread_id, "createdAt": stamp, "lastMessageAt": stamp, "created": True}
+        return {"threadId": thread_id, "createdAt": stamp, "lastMessageAt": stamp, "created": True,
+                "messageId": message_id, "attachmentsBound": bound}
 
     def set_feedback_subject(self, thread_id: str, subject: str | None) -> bool:
         """改一条线程的主题；线程不存在返回 False。只动这一列，不碰别的。"""
@@ -327,12 +451,23 @@ class Store:
                                 format: str = DEFAULT_FEEDBACK_FORMAT,
                                 client_ref: str | None = None, bind_device_id: str | None = None,
                                 bind_account_id: str | None = None,
-                                at: int | None = None) -> dict[str, Any] | None:
-        """线程里加一条留言；线程不存在返回 None。
+                                at: int | None = None,
+                                limits: dict[str, int] | None = None,
+                                usable: "Callable[[dict[str, Any]], bool] | None" = None
+                                ) -> dict[str, Any] | None:
+        """线程里加一条留言并**在同一事务内绑定附件草稿**；线程不存在返回 None。
 
         `author='user'`（手机补充）把线程拨回 `open`，`author='owner'`（回信）置
-        `replied`。`clientRef` 命中唯一索引时返回既有那条、不重复写。带设备时顺带
-        补上匿名线程的绑定：匿名提交后来配对了，这台设备也能找回来。
+        `replied`。`clientRef` 是**线程内**的幂等键：命中本线程的既有留言就返回它、
+        不重复写，且**重试恒 0 绑定**（owner 裁定"提交即封口"，R5）。带设备时顺带补上
+        匿名线程的绑定。
+
+        **空信不可能**：正文为空且这次一个附件都没绑上时抛 :class:`EmptyLetter`，
+        并且不 commit（留言不落库，草稿保持未绑定）。
+
+        **失败路径零写入（R4）**：设备绑定、幂等查找、跨线程冲突判据、插入与绑定全在
+        同一段 `try/except BaseException: rollback` 里——失败时（409/413）不会把
+        `deviceId`/`accountId` 留在共享连接的未提交事务里。
         """
         cleaned_format = clean_feedback_format(format)
         stamp = at or now_ms()
@@ -341,26 +476,52 @@ class Store:
                                         (thread_id,)).fetchone()
             if thread is None:
                 return None
-            if bind_device_id and thread["deviceId"] is None:
-                self._conn.execute("UPDATE feedbackThreads SET deviceId=?, accountId=? WHERE threadId=?",
-                                   (bind_device_id, bind_account_id, thread_id))
-            if client_ref:
-                existing = self._conn.execute("SELECT * FROM feedbackMessages WHERE clientRef=?",
-                                              (client_ref,)).fetchone()
-                if existing is not None:
-                    self._conn.commit()
-                    return {"messageId": existing["messageId"], "threadId": existing["threadId"],
-                            "createdAt": int(existing["createdAt"]), "created": False}
-            message_id = new_id("fm")
-            self._conn.execute(
-                "INSERT INTO feedbackMessages(messageId, threadId, author, body, format, createdAt,"
-                " clientRef) VALUES(?,?,?,?,?,?,?)",
-                (message_id, thread_id, author, body, cleaned_format, stamp, client_ref))
-            self._conn.execute(
-                "UPDATE feedbackThreads SET lastMessageAt=?, status=? WHERE threadId=?",
-                (stamp, "replied" if author == "owner" else "open", thread_id))
+            try:
+                if bind_device_id and thread["deviceId"] is None:
+                    self._conn.execute(
+                        "UPDATE feedbackThreads SET deviceId=?, accountId=? WHERE threadId=?",
+                        (bind_device_id, bind_account_id, thread_id))
+                if client_ref:
+                    # 幂等键是**线程内**的：同一 clientRef 在别的线程里存在不是"我的重试"，
+                    # 复用它会拿错 messageId（F-V4-1）。先按本线程查，再查是否在别处。
+                    existing = self._conn.execute(
+                        "SELECT * FROM feedbackMessages WHERE threadId=? AND clientRef=?",
+                        (thread_id, client_ref)).fetchone()
+                    elsewhere = self._conn.execute(
+                        "SELECT threadId FROM feedbackMessages WHERE clientRef=? AND threadId<>?",
+                        (client_ref, thread_id)).fetchone()
+                    if existing is not None:
+                        self._conn.commit()
+                        return {"messageId": existing["messageId"],
+                                "threadId": existing["threadId"],
+                                "createdAt": int(existing["createdAt"]), "created": False,
+                                "attachmentsBound": 0}     # R5：重试恒 0 绑定
+                    if elsewhere is not None:
+                        raise Conflict(
+                            f"clientRef {client_ref} already belongs to thread "
+                            f"{elsewhere['threadId']}")
+                message_id = new_id("fm")
+                self._conn.execute(
+                    "INSERT INTO feedbackMessages(messageId, threadId, author, body, format,"
+                    " createdAt, clientRef) VALUES(?,?,?,?,?,?,?)",
+                    (message_id, thread_id, author, body, cleaned_format, stamp, client_ref))
+                bound = 0
+                if client_ref and limits is not None:
+                    bound = self._bind_locked(client_ref, thread_id, message_id, limits=limits,
+                                              device_id=bind_device_id,
+                                              account_id=bind_account_id, at=stamp,
+                                              usable=usable)
+                if not body.strip() and bound == 0:
+                    raise EmptyLetter("a letter needs text or at least one stored attachment")
+                self._conn.execute(
+                    "UPDATE feedbackThreads SET lastMessageAt=?, status=? WHERE threadId=?",
+                    (stamp, "replied" if author == "owner" else "open", thread_id))
+            except BaseException:
+                self._conn.rollback()      # 整笔回滚：不追加留言、不动草稿、不动设备绑定
+                raise
             self._conn.commit()
-        return {"messageId": message_id, "threadId": thread_id, "createdAt": stamp, "created": True}
+        return {"messageId": message_id, "threadId": thread_id, "createdAt": stamp, "created": True,
+                "attachmentsBound": bound}
 
     def create_notice(self, body: str, subject: str | None, account_ids: Iterable[str], *,
                       format: str = DEFAULT_FEEDBACK_FORMAT,
@@ -568,7 +729,8 @@ class Store:
                           + " ORDER BY n.createdAt DESC, n.noticeId DESC LIMIT ?",
                           [account_id, *params, int(limit) + 1])
         page, more = take_page(rows, int(limit))
-        return [{**dict(row), "read": row["readAt"] is not None} for row in page], more
+        payloads = [{**dict(row), "read": row["readAt"] is not None} for row in page]
+        return self._with_notice_attachments(payloads), more
 
     def notice_for_account(self, account_id: str, notice_id: str) -> dict[str, Any] | None:
         """某条通知的全文——**只按 (accountId, noticeId) 授权**，没这条投递返回 None。
@@ -577,7 +739,23 @@ class Store:
         """
         row = self._row(self._NOTICE_SELECT + " WHERE d.accountId=? AND n.noticeId=?",
                         (account_id, notice_id))
-        return None if row is None else {**dict(row), "read": row["readAt"] is not None}
+        if row is None:
+            return None
+        payload = {**dict(row), "read": row["readAt"] is not None}
+        return self._with_notice_attachments([payload])[0]
+
+    def _with_notice_attachments(self, notices: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """给这一页通知各挂上它**已存**的附件（一次分组查询，不按条循环）。
+
+        v1 投影不读这个键，v2 与 `/feedback/notice` 读它——同一份事实，两种投影。
+        """
+        ids = [notice["noticeId"] for notice in notices]
+        if not ids:
+            return notices
+        grouped = self.attachments_for_notices(ids)
+        for notice in notices:
+            notice["attachments"] = grouped.get(notice["noticeId"], [])
+        return notices
 
     def unread_notice_count(self, account_id: str) -> int:
         """这个账号还没读的通知数——与任何窗口无关（角标不再随 200 条截断）。"""
@@ -682,16 +860,25 @@ class Store:
             " ORDER BY lastMessageAt DESC, threadId DESC LIMIT ?", params)
         return self.thread_payloads(rows, messages_per_thread, team=team)
 
-    def delete_feedback_thread(self, thread_id: str) -> int:
-        """连线程带它的留言一起删（响应隐私删除请求）；返回删掉的留言数。"""
+    def delete_feedback_thread(self, thread_id: str) -> dict[str, Any]:
+        """连线程、留言与**附件行**一起删；返回删掉的留言数与字节路径。
+
+        字节本身不在这里删：存储层不认识磁盘布局（见 :mod:`attachments`），所以把
+        `storedPath` 交回调用方，由它逐个 `unlink`。返回值形状：
+        `{"messages": n, "attachmentPaths": [...]}`。
+        """
         with self._lock:
             if self._conn.execute("SELECT threadId FROM feedbackThreads WHERE threadId=?",
                                   (thread_id,)).fetchone() is None:
                 raise NotFound(f"feedback thread {thread_id} does not exist")
+            paths = [row["storedPath"] for row in self._conn.execute(
+                "SELECT storedPath FROM feedbackAttachments"
+                " WHERE threadId=? AND storedPath IS NOT NULL", (thread_id,))]
+            self._conn.execute("DELETE FROM feedbackAttachments WHERE threadId=?", (thread_id,))
             cursor = self._conn.execute("DELETE FROM feedbackMessages WHERE threadId=?", (thread_id,))
             self._conn.execute("DELETE FROM feedbackThreads WHERE threadId=?", (thread_id,))
             self._conn.commit()
-            return cursor.rowcount or 0
+            return {"messages": cursor.rowcount or 0, "attachmentPaths": paths}
 
     def feedback_digest(self, thread_ids: Iterable[str], *, excerpt_chars: int = 80
                         ) -> dict[str, dict[str, Any]]:
@@ -714,6 +901,368 @@ class Store:
             if row["author"] == "owner" and entry["firstReplyAt"] is None:
                 entry["firstReplyAt"] = int(row["createdAt"])
         return digest
+
+    # ── 信件附件（v4：先传后发，按 clientRef 绑定）────────────────────────────
+    #
+    # 字节不在这里：本模块只管行。配额、幂等、状态迁移、绑定都只有这一份实现，
+    # handler 不重算（"一个事实一个所有者"）。
+    #
+    #   草稿   = messageId IS NULL 的行（不进任何列表；7 天后由清扫回收）
+    #   已绑定 = messageId 非空（提交时一次性写入；这是"已绑定"的唯一判据）
+
+    def begin_attachment(self, *, draft_ref: str | None = None, slot: int | None = None,
+                         file_name: str, content_type: str, byte_size: int, sha256: str,
+                         limits: dict[str, int], thread_id: str | None = None,
+                         notice_id: str | None = None, client_ref: str | None = None,
+                         origin_device_id: str | None = None,
+                         origin_account_id: str | None = None,
+                         width: int | None = None, height: int | None = None,
+                         at: int | None = None) -> dict[str, Any]:
+        """登记一条 **pending** 附件（草稿）；幂等键是 `(draftRef, slot)`。
+
+        - 同一 `(draftRef, slot)` 且 sha256/byteSize/contentType 一致 → 返回既有行
+          （`created=False`）；不一致 → :class:`Conflict`（同一个 slot 不许换文件）。
+        - 配额按 `draftRef` 归集（条数 → 合计），回信草稿再判单线程合计，最后判全库
+          软上限；超了抛 :class:`QuotaExceeded`（`reason` 让调用方选 413/507）。
+        """
+        scope = "thread" if notice_id is None else "notice"
+        stamp = at or now_ms()
+        with self._lock:
+            if draft_ref is not None and self._client_ref_committed(draft_ref):
+                # 这封信已经提交过：不再接受新草稿（owner 裁定"提交即封口"，R5）。
+                # 挡在源头，免得留下只能等 7 天 TTL 的孤儿草稿。
+                raise SealedLetter(f"clientRef {draft_ref} has already been sent")
+            if notice_id is not None and client_ref:
+                existing = self._conn.execute(
+                    f"{_ATTACHMENT_SELECT} WHERE noticeId=? AND clientRef=?",
+                    (notice_id, client_ref)).fetchone()
+                if existing is not None:
+                    return {**dict(existing), "created": False}
+            if draft_ref is not None and slot is not None:
+                existing = self._conn.execute(
+                    f"{_ATTACHMENT_SELECT} WHERE draftRef=? AND slot=?",
+                    (draft_ref, slot)).fetchone()
+                if existing is not None:
+                    # 别人的 slot 不是"我的幂等命中"：一律冲突，且**不回显**任何字段
+                    # （attachmentId / sha256 / byteSize 都不给，F-V4-3）。
+                    if not self._draft_owned_by(existing, thread_id, origin_device_id,
+                                                origin_account_id):
+                        raise Conflict(
+                            f"slot {slot} of draft {draft_ref} is taken by another letter")
+                    same = (existing["sha256"] == sha256
+                            and int(existing["byteSize"]) == int(byte_size)
+                            and existing["contentType"] == content_type)
+                    if not same:
+                        raise Conflict(
+                            f"slot {slot} of draft {draft_ref} already holds another file")
+                    return {**dict(existing), "created": False}
+            if draft_ref is not None:
+                stats = self._row(
+                    "SELECT COUNT(*) AS n, COALESCE(SUM(byteSize), 0) AS bytes"
+                    " FROM feedbackAttachments"
+                    " WHERE draftRef=? AND state <> 'lost'", (draft_ref,))
+                if int(stats["n"]) >= int(limits["maxPerMessage"]):
+                    raise QuotaExceeded("count")
+                if int(stats["bytes"]) + int(byte_size) > int(limits["maxTotalBytes"]):
+                    raise QuotaExceeded("message-bytes")
+            if thread_id and self._attachment_bytes("threadId", thread_id) + int(byte_size) \
+                    > int(limits["maxPerThreadBytes"]):
+                raise QuotaExceeded("thread-bytes")
+            if self.attachment_bytes_total() + int(byte_size) > int(limits["storageSoftBytes"]):
+                raise QuotaExceeded("storage")
+            attachment_id = new_id("fa")
+            self._conn.execute(
+                "INSERT INTO feedbackAttachments(attachmentId, scope, draftRef, slot, threadId,"
+                " noticeId, originDeviceId, originAccountId, clientRef, fileName, contentType,"
+                " byteSize, sha256, width, height, state, createdAt)"
+                " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending',?)",
+                (attachment_id, scope, draft_ref, slot, thread_id, notice_id,
+                 origin_device_id, origin_account_id, client_ref, file_name, content_type,
+                 int(byte_size), sha256, width, height, stamp))
+            self._conn.commit()
+            row = self._conn.execute(
+                f"{_ATTACHMENT_SELECT} WHERE attachmentId=?", (attachment_id,)).fetchone()
+        return {**dict(row), "created": True}
+
+    def bind_draft_attachments(self, draft_ref: str, thread_id: str, message_id: str, *,
+                               limits: dict[str, int], device_id: str | None = None,
+                               account_id: str | None = None,
+                               at: int | None = None,
+                               usable: "Callable[[dict[str, Any]], bool] | None" = None) -> int:
+        """把这一封信的已存草稿一次性绑到 `message_id`；返回绑定条数（幂等：第二次 0）。
+
+        归属谓词（§3.1，**唯一实现**）：
+        - 新信草稿：`threadId IS NULL` 且 origin 是本设备/本账号；
+        - 回信草稿：`threadId` 就是这次要追加的线程。
+        只动 `messageId IS NULL AND state='stored'`；绑定前在同一把锁里复核单封条数与
+        合计、单线程合计（超了抛 :class:`QuotaExceeded`，一行都不绑）。**绑定不改
+        `state` / `sha256`**。
+        """
+        with self._lock:
+            bound = self._bind_locked(draft_ref, thread_id, message_id, limits=limits,
+                                      device_id=device_id, account_id=account_id,
+                                      at=at or now_ms(), usable=usable)
+            self._conn.commit()
+            return bound
+
+    def _bind_locked(self, draft_ref: str, thread_id: str, message_id: str, *,
+                     limits: dict[str, int], device_id: str | None,
+                     account_id: str | None, at: int,
+                     usable: "Callable[[dict[str, Any]], bool] | None" = None) -> int:
+        """`bind_draft_attachments` 的事务内版本（调用方已持锁，不 commit）。
+
+        两件前置事实：
+        1. `message_id` 必须真的属于 `thread_id`：不属于就按冲突处理（一行都不绑），
+           绝不把附件挂到别的线程的留言上（F-V4-1 第 2 条）。
+        2. `usable(row)` 由调用方注入（只有 api 知道附件根）：返回 False 的行（文件不在
+           或大小与登记不符）**不得被绑定**——按 `lost` 处理，不计入绑定数。
+        """
+        owner = self._conn.execute(
+            "SELECT threadId FROM feedbackMessages WHERE messageId=?", (message_id,)).fetchone()
+        if owner is None or owner["threadId"] != thread_id:
+            raise Conflict(f"message {message_id} does not belong to thread {thread_id}")
+        candidates = [dict(row) for row in self._conn.execute(
+            _ATTACHMENT_SELECT +
+            " WHERE draftRef=? AND messageId IS NULL AND state='stored'"
+            " AND ( (threadId IS NULL AND (originDeviceId=?"
+            "        OR (originAccountId IS NOT NULL AND originAccountId=?)))"
+            "       OR threadId=?)"
+            " ORDER BY slot, createdAt",
+            (draft_ref, device_id, account_id, thread_id))]
+        if not candidates:
+            return 0
+        if usable is not None:
+            unusable = [row["attachmentId"] for row in candidates if not usable(row)]
+            if unusable:
+                self._conn.executemany(
+                    "UPDATE feedbackAttachments SET state='lost' WHERE attachmentId=?"
+                    " AND state='stored'", [(row_id,) for row_id in unusable])
+                candidates = [row for row in candidates
+                              if row["attachmentId"] not in set(unusable)]
+            if not candidates:
+                return 0
+        existing_bound = self._row(
+            "SELECT COUNT(*) AS n, COALESCE(SUM(byteSize), 0) AS bytes"
+            " FROM feedbackAttachments WHERE messageId=? AND state <> 'lost'", (message_id,))
+        candidate_bytes = sum(int(row["byteSize"]) for row in candidates)
+        if int(existing_bound["n"]) + len(candidates) > int(limits["maxPerMessage"]):
+            raise QuotaExceeded("count")
+        if int(existing_bound["bytes"]) + candidate_bytes > int(limits["maxTotalBytes"]):
+            raise QuotaExceeded("message-bytes")
+        # 线程合计：草稿行若已经挂在回信线程上，它已经被 `threadId` 统计过，先扣掉。
+        thread_bytes = self._conn.execute(
+            "SELECT COALESCE(SUM(byteSize), 0) AS bytes FROM feedbackAttachments"
+            " WHERE threadId=? AND state <> 'lost' AND NOT (messageId IS NULL AND draftRef=?)",
+            (thread_id, draft_ref)).fetchone()["bytes"]
+        if int(thread_bytes) + candidate_bytes > int(limits["maxPerThreadBytes"]):
+            raise QuotaExceeded("thread-bytes")
+        self._conn.executemany(
+            "UPDATE feedbackAttachments SET threadId=?, messageId=?, boundAt=?"
+            " WHERE attachmentId=? AND messageId IS NULL",
+            [(thread_id, message_id, at, row["attachmentId"]) for row in candidates])
+        return len(candidates)
+
+    def _client_ref_committed(self, client_ref: str) -> bool:
+        """这个 `clientRef` 是否已经落成一封信（线程或留言上出现过）——封口的判据。"""
+        row = self._row(
+            "SELECT 1 AS hit FROM feedbackThreads WHERE clientRef=?"
+            " UNION ALL SELECT 1 AS hit FROM feedbackMessages WHERE clientRef=? LIMIT 1",
+            (client_ref, client_ref))
+        return row is not None
+
+    @staticmethod
+    def _draft_owned_by(row: dict[str, Any], thread_id: str | None,
+                        device_id: str | None, account_id: str | None) -> bool:
+        """这一行草稿是不是这次调用方的：回复草稿看线程，新信草稿看 origin 设备/账号。"""
+        if row["threadId"] is not None or thread_id is not None:
+            return row["threadId"] == thread_id
+        if device_id and row["originDeviceId"] == device_id:
+            return True
+        return bool(account_id) and row["originAccountId"] == account_id
+
+    def mark_attachment_stored(self, attachment_id: str, stored_path: str,
+                               stored_at: int | None = None) -> bool:
+        """`pending` → `stored`（字节已经落盘）；已经不是 pending 返回 False。"""
+        with self._lock:
+            cursor = self._conn.execute(
+                "UPDATE feedbackAttachments SET state='stored', storedPath=?, storedAt=?"
+                " WHERE attachmentId=? AND state='pending'",
+                (stored_path, int(stored_at if stored_at is not None else now_ms()),
+                 attachment_id))
+            self._conn.commit()
+            return bool(cursor.rowcount)
+
+    def mark_attachments_lost(self, attachment_ids: Iterable[str]) -> int:
+        """把"行在、文件没了/坏了"的行标成 `lost`（清扫用）；返回被标了几行。"""
+        ids = list(dict.fromkeys(attachment_id for attachment_id in attachment_ids
+                                 if attachment_id))
+        if not ids:
+            return 0
+        marks = ",".join("?" * len(ids))
+        with self._lock:
+            cursor = self._conn.execute(
+                f"UPDATE feedbackAttachments SET state='lost'"
+                f" WHERE state='stored' AND attachmentId IN ({marks})", ids)
+            self._conn.commit()
+            return cursor.rowcount or 0
+
+    def attachment(self, attachment_id: str) -> dict[str, Any] | None:
+        """一条附件行（任何状态）；不存在返回 None。"""
+        row = self._row(f"{_ATTACHMENT_SELECT} WHERE attachmentId=?", (attachment_id,))
+        return None if row is None else dict(row)
+
+    def feedback_message(self, message_id: str) -> dict[str, Any] | None:
+        """一条留言行；附件要核"这条留言属于这条线程"时用。"""
+        row = self._row("SELECT * FROM feedbackMessages WHERE messageId=?", (message_id,))
+        return None if row is None else dict(row)
+
+    def attachments_for_messages(self, message_ids: Iterable[str], *,
+                                 states: tuple[str, ...] | None = ("stored",)
+                                 ) -> dict[str, list[dict[str, Any]]]:
+        """按留言分组取附件（只会有已绑定的行：`messageId IN (...)` 天然排除草稿）。
+
+        排序是 `slot` 升序（没有 slot 的行——通知侧——退回 `createdAt`）：这就是
+        "附件在信里的顺序"，客户端不再自己排。
+        """
+        ids = list(dict.fromkeys(value for value in message_ids if value))
+        return self._grouped_attachments("messageId", ids, states)
+
+    def attachments_for_notices(self, notice_ids: Iterable[str], *,
+                                states: tuple[str, ...] | None = ("stored",)
+                                ) -> dict[str, list[dict[str, Any]]]:
+        ids = list(dict.fromkeys(value for value in notice_ids if value))
+        return self._grouped_attachments("noticeId", ids, states)
+
+    def attachments_for_notice(self, notice_id: str, *,
+                               states: tuple[str, ...] | None = ("stored",)
+                               ) -> list[dict[str, Any]]:
+        return self.attachments_for_notices([notice_id], states=states).get(notice_id, [])
+
+    def _grouped_attachments(self, column: str, ids: list[str],
+                             states: tuple[str, ...] | None) -> dict[str, list[dict[str, Any]]]:
+        """`column` 只由本模块的字面量给出（`messageId` / `noticeId`），不是用户输入。"""
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        if not ids:
+            return grouped
+        for start in range(0, len(ids), 500):        # 参数个数上限之内分批，形状不变
+            batch = ids[start:start + 500]
+            marks = ",".join("?" * len(batch))
+            sql = f"{_ATTACHMENT_SELECT} WHERE {column} IN ({marks})"
+            params: list[Any] = list(batch)
+            if states:
+                sql += f" AND state IN ({','.join('?' * len(states))})"
+                params.extend(states)
+            sql += " ORDER BY COALESCE(slot, 2147483647), createdAt, attachmentId"
+            for row in self._rows(sql, params):
+                grouped.setdefault(row[column], []).append(dict(row))
+        return grouped
+
+    def attachment_bytes_total(self) -> int:
+        """全库附件字节（不含 lost，**含未提交草稿**）——软上限的判据。"""
+        return self._attachment_bytes(None)
+
+    def thread_attachment_bytes(self, thread_id: str) -> int:
+        """一条线程的附件字节（不含 lost；回信草稿已经挂在线上，计在内）。"""
+        return self._attachment_bytes("threadId", thread_id)
+
+    def draft_attachment_bytes(self, draft_ref: str) -> int:
+        """一封信（`draftRef`）的草稿字节（不含 lost）——配额与展示共用。"""
+        return self._attachment_bytes("draftRef", draft_ref)
+
+    def _attachment_bytes(self, column: str | None, value: str | None = None) -> int:
+        sql = ("SELECT COALESCE(SUM(byteSize), 0) AS bytes FROM feedbackAttachments"
+               " WHERE state <> 'lost'")
+        params: list[Any] = []
+        if column:
+            sql += f" AND {column}=?"
+            params.append(value)
+        return int(self._row(sql, params)["bytes"])
+
+    def message_attachment_stats(self, message_id: str) -> dict[str, int]:
+        """一条留言的附件条数与字节（不含 lost）；配额判定与展示共用。"""
+        row = self._row(
+            "SELECT COUNT(*) AS n, COALESCE(SUM(byteSize), 0) AS bytes"
+            " FROM feedbackAttachments WHERE messageId=? AND state <> 'lost'", (message_id,))
+        return {"count": int(row["n"]), "bytes": int(row["bytes"])}
+
+    def attachment_counts_by_thread(self, thread_ids: Iterable[str]) -> dict[str, int]:
+        """每条线程**已绑定且已存**的附件条数（清单里的回形针计数；草稿不算）。"""
+        ids = list(dict.fromkeys(value for value in thread_ids if value))
+        if not ids:
+            return {}
+        marks = ",".join("?" * len(ids))
+        rows = self._rows(
+            f"SELECT threadId, COUNT(*) AS n FROM feedbackAttachments"
+            f" WHERE state='stored' AND messageId IS NOT NULL AND threadId IN ({marks})"
+            f" GROUP BY threadId", ids)
+        return {row["threadId"]: int(row["n"]) for row in rows}
+
+    def expire_pending_attachments(self, older_than_ms: int) -> int:
+        """删掉过期的 `pending` 行（上传中断留下的空记录，没有字节）；返回删了几行。"""
+        with self._lock:
+            cursor = self._conn.execute(
+                "DELETE FROM feedbackAttachments WHERE state='pending' AND createdAt < ?",
+                (int(older_than_ms),))
+            self._conn.commit()
+            return cursor.rowcount or 0
+
+    def expire_draft_attachments(self, older_than_ms: int) -> list[str]:
+        """删掉过期的**已存草稿**（`messageId IS NULL`），返回它们的 `storedPath`。
+
+        字节由调用方删（存储层不认识磁盘布局）。已绑定的行永远不动。
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT attachmentId, storedPath FROM feedbackAttachments"
+                " WHERE messageId IS NULL AND state='stored' AND createdAt < ?",
+                (int(older_than_ms),)).fetchall()
+            if not rows:
+                return []
+            self._conn.execute(
+                "DELETE FROM feedbackAttachments"
+                " WHERE messageId IS NULL AND state='stored' AND createdAt < ?",
+                (int(older_than_ms),))
+            self._conn.commit()
+            return [row["storedPath"] for row in rows if row["storedPath"]]
+
+    def delete_attachment(self, attachment_id: str) -> str | None:
+        """删一行附件并返回它的 `storedPath`（`discard` 用；字节由调用方删）。
+
+        只允许删**草稿**：已绑定的行由调用方先判并把 409 交给客户端，这里返回 None
+        表示"没有可删的草稿行"。
+        """
+        with self._lock:
+            row = self._conn.execute(
+                f"{_ATTACHMENT_SELECT} WHERE attachmentId=? AND messageId IS NULL",
+                (attachment_id,)).fetchone()
+            if row is None:
+                return None
+            self._conn.execute(
+                "DELETE FROM feedbackAttachments WHERE attachmentId=? AND messageId IS NULL",
+                (attachment_id,))
+            self._conn.commit()
+            return row["storedPath"] or ""
+
+    def child_attachment_paths(self, thread_id: str) -> list[str]:
+        """一条线程里已经落盘的字节路径（删线程前取，交给调用方删文件）。"""
+        return [row["storedPath"] for row in self._rows(
+            "SELECT storedPath FROM feedbackAttachments"
+            " WHERE threadId=? AND storedPath IS NOT NULL", (thread_id,))]
+
+    def list_attachments(self, *, state: str | None = None, limit: int = 100,
+                         offset: int = 0) -> list[dict[str, Any]]:
+        """按登记顺序列附件行（清扫与 owner 统计用）；`state` 过滤是可选的一层。
+
+        `offset` 给清扫翻页用（F4）：清扫要拿到**全部**已存行，不能只取一页。
+        """
+        sql = _ATTACHMENT_SELECT
+        params: list[Any] = []
+        if state:
+            sql += " WHERE state=?"
+            params.append(state)
+        sql += " ORDER BY createdAt, attachmentId LIMIT ? OFFSET ?"
+        params.extend([int(limit), int(offset)])
+        return [dict(row) for row in self._rows(sql, params)]
 
     def _feedback_row_by(self, column: str, value: str) -> sqlite3.Row | None:
         """按线程表上的**固定列名**取一行；列名只由本模块的字面量给出，不是用户输入。"""
@@ -751,6 +1300,10 @@ class Store:
                 " ORDER BY createdAt DESC, rowid DESC LIMIT ?",
                 (thread_id, int(messages_per_thread)))
             messages = [dict(message) for message in reversed(recent)]
+            grouped = self.attachments_for_messages(
+                [message["messageId"] for message in messages], states=None)
+            for message in messages:
+                message["attachments"] = grouped.get(message["messageId"], [])
         counts = unread_counts if unread_counts is not None \
             else self.unread_counts_by_thread([thread_id]).get(thread_id, {})
         count = self._row("SELECT COUNT(*) AS n FROM feedbackMessages WHERE threadId=?", (thread_id,))

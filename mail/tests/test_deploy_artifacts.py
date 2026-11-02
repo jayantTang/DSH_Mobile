@@ -27,6 +27,7 @@ DEPLOY = MAIL_DIR / "deploy"
 SPLICER = DEPLOY / "caddy_splice.py"
 SNIPPET = DEPLOY / "Caddyfile.snippet"
 MIGRATE = DEPLOY / "migrate_from_relay.py"
+DEPLOY_SCRIPT = DEPLOY / "deploy.sh"
 
 #: 一个已经装了 relay 片段的站点块（生产形状：relay 的标记块 + handle_path）。
 CADDYFILE = """\
@@ -106,6 +107,36 @@ def test_insert_and_remove_touch_only_the_mail_block(tmp_path):
     after = caddyfile.read_text()
     assert "dsh-mail managed block" not in after
     assert "dsh-relay managed block" in after, "relay 的片段不许被动到"
+
+
+def test_the_install_list_covers_every_module_the_service_imports():
+    """安装清单是白名单枚举，漏一个模块服务就起不来（2026-11-02 的 `attachments.py`）。
+
+    反向核对写进了 `deploy.sh`（源码目录里每个 `.py` 都要在 `MAIL_MODULES` 里），
+    这里在文本层再钉一次：清单与源码目录必须一一对上。
+    """
+    script = DEPLOY_SCRIPT.read_text()
+    marker = next(line for line in script.splitlines() if line.startswith("MAIL_MODULES="))
+    listed = set(marker.split("=", 1)[1].strip().strip('"').split())
+    modules = {path.name for path in MAIL_DIR.glob("*.py")}
+    assert modules == listed, f"deploy.sh 的安装清单与源码目录不一致：{modules ^ listed}"
+    assert "attachments.py" in listed, "附件的字节侧模块必须进安装清单"
+    assert "for source in \"$SRC_DIR\"/*.py" in script, \
+        "deploy.sh 必须反向核对：源码里的每个 .py 都在安装清单里，否则拒部署"
+
+
+def test_deploy_sh_checks_the_attachments_directory():
+    """设计 M5 的自检项（F8）：附件目录存在、属主是服务用户、权限 0700，否则拒部署。
+
+    脚本本身要 root 才能真跑，所以这里在文本层钉住这三条判据都在；
+    目录的创建与权限由服务启动时的 `ensure_dirs` 再兜一层（两条都不可省）。
+    """
+    script = DEPLOY_SCRIPT.read_text()
+    assert 'ATTACHMENTS_DIR="$DATA_DIR/attachments"' in script, "附件目录的位置必须显式写出"
+    assert 'install -d -m 0700 -o "$SERVICE_USER" -g "$SERVICE_USER" "$ATTACHMENTS_DIR"' in script
+    assert "stat -c '%U'" in script and "stat -c '%a'" in script, \
+        "要校验属主与权限，不能只看目录在不在"
+    assert 'die "$ATTACHMENTS_DIR' in script, "不满足就当场拒部署"
 
 
 def _relay_shaped_db(path: pathlib.Path) -> str:

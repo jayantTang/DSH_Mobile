@@ -544,16 +544,17 @@ async def test_append_binds_the_device_after_a_later_pairing(client, provisioned
     assert [t["threadId"] for t in body["threads"]] == [ticket["threadId"]]
 
 
-@pytest.mark.parametrize("payload", [
-    {},
-    {"threadId": "th_x"},
-    {"threadId": "th_x", "ticketKey": ""},
-    {"threadId": "th_x", "ticketKey": TICKET, "text": "  "},
+@pytest.mark.parametrize("payload,status,code", [
+    ({}, 400, "feedback/bad-request"),                      # 缺 threadId
+    # v4：空正文是合法的（只发附件），所以"没写字"不再在参数层被拒，而是先撞授权。
+    ({"threadId": "th_x"}, 404, "feedback/not-found"),
+    ({"threadId": "th_x", "ticketKey": ""}, 400, "feedback/bad-request"),
+    ({"threadId": "th_x", "ticketKey": TICKET, "text": "  "}, 404, "feedback/not-found"),
 ])
-async def test_append_rejects_bad_input(client, payload):
+async def test_append_rejects_bad_input(client, payload, status, code):
     response = await client.post("/feedback/append", json=payload)
-    assert response.status == 400
-    assert (await response.json())["error"]["code"] == "feedback/bad-request"
+    assert response.status == status
+    assert (await response.json())["error"]["code"] == code
 
 
 # ── POST /feedback/read（T026）─────────────────────────────────────────────
@@ -864,13 +865,19 @@ async def test_the_v2_inbox_reports_pages_limits_and_my_side(client, store):
     assert body["threadsPage"] == {"more": False, "nextBefore": {
         "lastMessageAt": thread["lastMessageAt"], "threadId": ticket["threadId"]}}
     assert body["notices"] == [{"noticeId": notice["noticeId"], "subject": "服务通知",
-                                "format": "text", "createdAt": 5_000, "read": False}], \
+                                "format": "text", "createdAt": 5_000, "read": False,
+                                "attachments": []}], \
         "v2 列表只持有摘要，正文去 /feedback/notice 取"
     assert body["noticesPage"] == {"more": False, "nextBefore": {
         "createdAt": 5_000, "noticeId": notice["noticeId"]}}
     assert body["limits"] == {"textChars": 4000, "textBytes": 12000, "subjectChars": 80,
                               "maxTicketPairs": 200, "messagesPerThread": 6,
-                              "threadPageSize": 30, "noticePageSize": 40}
+                              "threadPageSize": 30, "noticePageSize": 40,
+                              "attachments": {"maxPerMessage": 8,
+                                              "maxFileBytes": 8 * 1024 * 1024,
+                                              "maxTotalBytes": 24 * 1024 * 1024,
+                                              "types": ["jpeg", "png", "heic", "pdf",
+                                                        "txt", "log", "csv", "json"]}}
     assert body["unreadCount"] == 1
 
 
@@ -1007,7 +1014,8 @@ async def test_the_notice_endpoint_returns_the_body_to_its_recipient(client, sto
     assert await response.json() == {
         "ok": True,
         "notice": {"noticeId": notice["noticeId"], "subject": "服务通知", "body": "通知正文",
-                   "format": "html", "createdAt": 5_000, "read": False}}
+                   "format": "html", "createdAt": 5_000, "read": False,
+                   "attachments": []}}
 
 
 async def test_the_notice_endpoint_answers_one_404_for_anonymous_missing_and_foreign(

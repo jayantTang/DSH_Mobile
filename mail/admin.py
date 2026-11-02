@@ -18,10 +18,12 @@ import asyncio
 import datetime
 import json
 import os
+import shutil
 import sys
 import time
 from typing import Any, Iterable
 
+import attachments as attachment_files
 from internal import AccountStateNotifier
 from store import DEFAULT_FEEDBACK_FORMAT, Store, StoreError
 
@@ -123,6 +125,7 @@ def _feedback_rows(store: Store, *, status: str | None, since_ms: int | None,
     rows = [row for row in store.list_feedback_threads(
         status=status, since_ms=since_ms, limit=limit, team=team) if _in_scope(row, scope)]
     digest = store.feedback_digest([row["threadId"] for row in rows])
+    attachments = store.attachment_counts_by_thread([row["threadId"] for row in rows])
     return [
         {
             "threadId": row["threadId"],
@@ -142,9 +145,58 @@ def _feedback_rows(store: Store, *, status: str | None, since_ms: int | None,
             "excerpt": digest.get(row["threadId"], {}).get("excerpt", ""),
             "format": digest.get(row["threadId"], {}).get("format", DEFAULT_FEEDBACK_FORMAT),
             "messages": int(row["messageCount"]),
+            # 回形针计数：这一眼能看出哪条信带附件（设计 M7）。
+            "attachmentCount": int(attachments.get(row["threadId"], 0)),
         }
         for row in rows
     ]
+
+
+def _attachments_root(args: argparse.Namespace) -> str:
+    """附件字节的位置：`--attachments-dir` 优先，否则与数据库同级（服务端同一条默认）。"""
+    return args.attachments_dir or attachment_files.root_for(args.db)
+
+
+def _attachment_get(store: Store, args: argparse.Namespace) -> int:
+    """把一条附件的字节拷到 `--dir`，文件名 `<attachmentId>-<原名>`。
+
+    `--dir` 是本机目录：owner 工具在服务器上跑这条命令时，`--dir` 就是待 scp 的
+    落点；在本地库上跑就是直接取回。只有 `stored` 的行才有字节——`pending`
+    （还没传完）与 `lost`（行在文件没了）都如实报错，不假装取到了。
+    """
+    row = store.attachment(args.attachment)
+    if row is None:
+        _emit({"ok": False, "error": f"attachment {args.attachment} does not exist"})
+        return 1
+    if row["messageId"] is None:
+        # 草稿不进任何 CLI 面：它还没有信，也不属于任何可以展示的线索。
+        _emit({"ok": False, "error": "attachment is a draft (not submitted yet)",
+               "attachmentId": row["attachmentId"]})
+        return 1
+    if row["state"] != "stored" or not row["storedPath"]:
+        _emit({"ok": False, "error": f"attachment is {row['state']}, not stored",
+               "attachmentId": row["attachmentId"], "state": row["state"]})
+        return 1
+    source = attachment_files.path_for(_attachments_root(args), row["storedPath"])
+    if not os.path.isfile(source):
+        _emit({"ok": False, "error": "the stored bytes are missing",
+               "attachmentId": row["attachmentId"], "storedPath": row["storedPath"]})
+        return 1
+    os.makedirs(args.dir, exist_ok=True)
+    target = os.path.join(args.dir, f"{row['attachmentId']}-{row['fileName']}")
+    shutil.copyfile(source, target)
+    os.chmod(target, attachment_files.FILE_MODE)
+    # 路径同时打到 stderr：stdout 保持一条 JSON，shell 里直接 cat 它就能拿到文件。
+    print(target, file=sys.stderr)
+    _emit({"ok": True, "attachmentId": row["attachmentId"], "path": target,
+           "byteSize": int(row["byteSize"]), "sha256": row["sha256"]})
+    return 0
+
+
+def _delete_attachment_bytes(store: Store, thread_id: str, root: str) -> int:
+    """删一条线程时把它的字节一起删掉（隐私要求：删信不能留图）。"""
+    return sum(1 for relative in store.child_attachment_paths(thread_id)
+               if attachment_files.delete(attachment_files.path_for(root, relative)))
 
 
 def _reply_template(signature: str) -> str:
@@ -256,6 +308,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--team-account", default=os.environ.get("MAIL_TEAM_ACCOUNT", ""),
                         help="the account id that acts as the DSH Mobile team inbox "
                              "(default: $MAIL_TEAM_ACCOUNT)")
+    #: 附件字节的位置：与服务端同一份默认（数据库同级的 `attachments/`），可显式覆盖。
+    parser.add_argument("--attachments-dir", default=os.environ.get("MAIL_ATTACHMENTS_DIR", ""),
+                        help="where attachment bytes live "
+                             "(default: <db dir>/attachments or $MAIL_ATTACHMENTS_DIR)")
     subs = parser.add_subparsers(dest="command", required=True)
 
     feedback_list = subs.add_parser("feedback-list", help="list feedback threads (owner inbox)")
@@ -271,6 +327,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     feedback_show = subs.add_parser("feedback-show", help="one thread with its full trail")
     feedback_show.add_argument("--thread", required=True)
+
+    attachment_get = subs.add_parser("feedback-attachment-get",
+                                     help="copy one attachment's bytes into a directory")
+    attachment_get.add_argument("--attachment", required=True,
+                                help="attachmentId (fa_…) from feedback-show")
+    attachment_get.add_argument("--dir", required=True,
+                                help="target directory; the file is named "
+                                     "<attachmentId>-<original name>")
 
     feedback_reply = subs.add_parser("feedback-reply", help="reply to a thread as the owner")
     feedback_reply.add_argument("--thread")
@@ -389,6 +453,9 @@ def _dispatch(store: Store, args: argparse.Namespace) -> int:
         _emit(store.rebind_team_account(team, dry_run=not args.yes))
         return 0
 
+    if command == "feedback-attachment-get":
+        return _attachment_get(store, args)
+
     if command == "feedback-show":
         thread = _show_thread(store, args.thread, team)
         if thread is None:
@@ -446,10 +513,18 @@ def _dispatch(store: Store, args: argparse.Namespace) -> int:
             return 1
         if not args.yes:
             _emit({"ok": True, "dryRun": True, "threadId": args.thread, "exists": True,
-                   "messages": int(thread["messageCount"])})
+                   "messages": int(thread["messageCount"]),
+                   "attachments": len(store.child_attachment_paths(args.thread))})
             return 0
         removed = store.delete_feedback_thread(args.thread)
-        _emit({"ok": True, "threadId": args.thread, "deleted": True, "messages": removed})
+        # 行已经删了，字节还在磁盘上就是隐私残留；路径来自存储层的返回值
+        # （存储层不认识磁盘布局，删除由这里做）。
+        root = _attachments_root(args)
+        deleted_files = sum(1 for relative in removed["attachmentPaths"]
+                            if attachment_files.delete(
+                                attachment_files.path_for(root, relative)))
+        _emit({"ok": True, "threadId": args.thread, "deleted": True,
+               "messages": removed["messages"], "attachments": deleted_files})
         return 0
 
     if command == "feedback-stats":

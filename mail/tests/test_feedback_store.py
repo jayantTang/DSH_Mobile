@@ -14,7 +14,10 @@ import pytest
 from store import (USER_LETTER_SQL, NotFound, Store, StoreError, is_user_letter, my_side,
                    page_thread_rows, sha256_hex)
 
-NEW_TABLES = ("feedbackThreads", "feedbackMessages", "notices", "noticeDeliveries")
+#: 迁移源（旧中转库）里存在的四张表：迁移脚本按列名整份拷。
+RELAY_TABLES = ("feedbackThreads", "feedbackMessages", "notices", "noticeDeliveries")
+#: mail 新库的全部表：迁移来的四张 + 附件表（2026-11-02，只在 mail 侧存在）。
+NEW_TABLES = (*RELAY_TABLES, "feedbackAttachments")
 
 #: 逐字照 data-model.md 的四张表（列名与顺序）。`subject` 与两个 `format` 都在最后：
 #: 与 relay 侧保持同序（那边是用 `ALTER TABLE … ADD COLUMN` 补上的，SQLite 把新列
@@ -63,12 +66,14 @@ def count(store: Store, sql: str, params: tuple = ()) -> int:
 # ── 表结构（T005）────────────────────────────────────────────────────────────
 
 
-def test_a_fresh_database_creates_exactly_the_four_mail_tables(tmp_path):
+def test_a_fresh_database_creates_exactly_the_mail_tables(tmp_path):
     path = str(tmp_path / "mail.db")
     Store(path).close()
     for table, expected in EXPECTED_COLUMNS.items():
         assert columns(path, table) == expected, table
-    # mail 是新服务的新库：只有这四张表，没有版本化迁移（user_version 保持 0）。
+    # mail 是新服务的新库：只有这几张表，没有版本化迁移（user_version 保持 0）。
+    # `feedbackAttachments`（2026-11-02）与既有四张表同库同连接，列清单在
+    # `tests/test_feedback_attachment_store.py` 里钉住。
     assert tables(path) == set(NEW_TABLES)
     assert user_version(path) == 0
 
@@ -120,7 +125,7 @@ def test_a_database_copied_from_the_relay_matches_a_fresh_one_column_for_column(
     Store(mail_side).close()
     dest = sqlite3.connect(mail_side)
     source = sqlite3.connect(relay_side)
-    for table in NEW_TABLES:
+    for table in RELAY_TABLES:      # 附件表不来自中转：它是 mail 侧自己的新表
         rows = source.execute(f"SELECT * FROM {table}").fetchall()
         if rows:
             source_columns = [d[0] for d in source.execute(f"SELECT * FROM {table}").description]
@@ -440,7 +445,8 @@ def test_delete_feedback_thread_takes_its_messages_with_it(tmp_path):
     try:
         thread = store.create_feedback_thread(ticket_hash=sha256_hex("fk_one"), text="原文")
         store.append_feedback_message(thread["threadId"], "补充", at=2_000)
-        assert store.delete_feedback_thread(thread["threadId"]) == 2
+        removed = store.delete_feedback_thread(thread["threadId"])
+        assert removed["messages"] == 2 and removed["attachmentPaths"] == []
         assert store.feedback_thread(thread["threadId"], None) is None
         assert count(store, "SELECT COUNT(*) FROM feedbackMessages") == 0
         with pytest.raises(NotFound):

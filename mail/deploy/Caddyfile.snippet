@@ -22,6 +22,10 @@
 #   * Timeouts are normal request/response values (30s), NOT the infinite ones
 #     the DLP websocket block needs — feedback is short HTTP, and a stuck
 #     client must not hold a connection forever.
+#   * 附件（2026-11-02）：`/feedback/attachment/{begin,upload,fetch}` 与信件同一个
+#     前缀，**不需要新增块**。上传体是原始字节流（不是 JSON），所以这里既不设请求体
+#     上限也不做缓冲——上限与字节桶在服务端（8 MiB / 24 MiB 那一套）。慢速上传受
+#     本块的 write_timeout 30s 约束（设计 §9-1 的待验项）。
 #   * header_up X-Real-IP / X-Forwarded-For: the mail service rate-limits by
 #     client address and only trusts these headers from a loopback peer, same
 #     rule as the relay (replaces, never appends — measured on Caddy v2.11.4).

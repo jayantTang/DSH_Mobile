@@ -24,6 +24,13 @@ Environment=MAIL_LOG_LEVEL=INFO
 # flows do not touch the relay at all.
 Environment=MAIL_RELAY_INTERNAL_URL=http://127.0.0.1:8787
 Environment=MAIL_RELAY_TIMEOUT_S=2.0
+# 附件字节（信件附件，2026-11-02）：默认落在数据库同级的 attachments/ 下
+# （/var/lib/dsh-mail/attachments/），在 ReadWritePaths 之内，不需要新的授权。
+# 目录与文件权限由服务自己定死（0700 / 0600），与下面的 UMask 同口径。
+Environment=MAIL_ATTACHMENTS_DIR=/var/lib/dsh-mail/attachments
+# 附件清扫的周期（秒）：过期 pending 行、tmp/*.part、没有行的孤儿文件。
+# 0 = 关（测试默认；生产用 1 小时，见设计 §3.3）。
+Environment=MAIL_ATTACHMENT_SWEEP_S=3600
 # 团队收件箱（2026-10-15）：团队账号 = owner 的开发者账号（DSH_ACCOUNT_ID）。
 # 空值 = 功能关闭。真值由部署时注入（deploy.sh 的 DSH_MAIL_TEAM_ACCOUNT），
 # 不写进仓库——与部署地址同一条约定。
