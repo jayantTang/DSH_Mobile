@@ -9,20 +9,45 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/dlp"
 )
 
-// transferLogBuffer 收集 JSON 日志。
+// finishLogTimeout 是等收尾日志的上限。收尾日志写在响应的 defer 里，客户端读完
+// 正文不等于服务端处理已收尾。
+const finishLogTimeout = 2 * time.Second
+
+// transferLogBuffer 收集 JSON 日志，并在收尾日志落地时通知等待方。
 type transferLogBuffer struct {
-	mu  sync.Mutex
-	buf bytes.Buffer
+	mu       sync.Mutex
+	buf      bytes.Buffer
+	once     sync.Once
+	finished chan struct{}
+}
+
+func newTransferLogBuffer() *transferLogBuffer {
+	return &transferLogBuffer{finished: make(chan struct{})}
 }
 
 func (b *transferLogBuffer) Write(payload []byte) (int, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if bytes.Contains(payload, []byte("relay: file transfer finished")) {
+		b.once.Do(func() { close(b.finished) })
+	}
 	return b.buf.Write(payload)
+}
+
+// waitFinished 等收尾日志写进缓冲。这条日志由响应处理函数的 defer 写出，与客户端
+// 读到正文之间没有先后保证；不先等它就断言，会在慢机器上偶发读不到（CI 曾红）。
+func (b *transferLogBuffer) waitFinished(t *testing.T) {
+	t.Helper()
+	select {
+	case <-b.finished:
+	case <-time.After(finishLogTimeout):
+		t.Fatalf("等不到收尾日志：%s", b.text())
+	}
 }
 
 func (b *transferLogBuffer) text() string {
@@ -59,7 +84,7 @@ func (b *transferLogBuffer) find(t *testing.T, message string) map[string]any {
 }
 
 func TestDownloadTransferLogsBidScopeStatusAndNeverThePath(t *testing.T) {
-	buffer := &transferLogBuffer{}
+	buffer := newTransferLogBuffer()
 	fx := newFileFixture(t, fixtureOptions{
 		logger: slog.New(slog.NewJSONHandler(buffer, nil)),
 	})
@@ -85,6 +110,7 @@ func TestDownloadTransferLogsBidScopeStatusAndNeverThePath(t *testing.T) {
 		t.Fatalf("started = %v", started)
 	}
 
+	buffer.waitFinished(t)
 	finished := buffer.find(t, "relay: file transfer finished")
 	if finished["status"] != float64(http.StatusOK) || finished["ok"] != true {
 		t.Fatalf("finished = %v", finished)
@@ -108,7 +134,7 @@ func TestDownloadTransferLogsBidScopeStatusAndNeverThePath(t *testing.T) {
 }
 
 func TestFailedUploadIsLoggedAsWarnWithErrorCode(t *testing.T) {
-	buffer := &transferLogBuffer{}
+	buffer := newTransferLogBuffer()
 	fx := newFileFixture(t, fixtureOptions{
 		logger: slog.New(slog.NewJSONHandler(buffer, nil)),
 	})
@@ -131,6 +157,7 @@ func TestFailedUploadIsLoggedAsWarnWithErrorCode(t *testing.T) {
 		t.Fatalf("状态码 = %d：%s", response.StatusCode, payload)
 	}
 
+	buffer.waitFinished(t)
 	finished := buffer.find(t, "relay: file transfer finished")
 	if finished["level"] != "WARN" || finished["ok"] != false {
 		t.Fatalf("失败传输日志 = %v", finished)
