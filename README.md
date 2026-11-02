@@ -11,32 +11,31 @@
 [![CI](https://github.com/jayantTang/DSH_Mobile/actions/workflows/ci.yml/badge.svg)](https://github.com/jayantTang/DSH_Mobile/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-把电脑上的 [DSH](https://github.com/deepseek-ai/deepseek-harness) 会话接到 iPhone 上：原生 iOS
-客户端、电脑侧连接器、可自建的公网中转。手机与电脑连接同一个 DSH host，看到同一批会话与同一条
+把电脑上的 [DSH](https://github.com/deepseek-ai/deepseek-harness) 会话接到 iPhone 与 iPad 上：原生
+iOS 客户端、电脑侧连接器、可自建的公网中转。手机与电脑连接同一个 DSH host，看到同一批会话与同一条
 消息流；电脑上运行中的任务在锁屏后继续执行，电脑上挂起的提问可在手机上直接回答。
 
 电脑不需要公网 IP，也不需要 VPN。
 
 ![每一步工具调用都摊开 · 不用公网 IP 扫码就连上 · 浏览预览一键下载 · 让它把电脑上的文件发回手机](docs/artifacts/demo/appstore/overview.jpg)
 
-> 配图为 App Store 宣传图（8 张中的 4 张，横版拼合），内容出自同一套合成会话：输出是真实 agent
-> 输出，项目为虚构，`relay.example.com` 是占位符。分张素材与生成方式见 [`docs/artifacts/demo/`](docs/artifacts/demo)。
+> 配图为 App Store 宣传图（8 张中的 4 张），出自同一套合成会话：输出是真实 agent 输出，项目为虚构，
+> `relay.example.com` 是占位符。分张素材见 [`docs/artifacts/demo/`](docs/artifacts/demo)。
 
 ## 状态与兼容性
 
 | 组件 | 当前版本 | 分发方式 |
 |---|---|---|
-| iOS App | 1.0 | TestFlight 公开测试（[加入](https://testflight.apple.com/join/tHKQsbCk)）；需先安装 TestFlight，构建 90 天后过期 |
-| 连接器 `dsh-plugin-mobile-link` | 0.7.0 | npm |
-| 中转（DLP v1） | 本仓库 `relay-go/`（Go，`go-0.2.3`） | 自行部署 |
+| iOS App | 1.0 | TestFlight（[加入](https://testflight.apple.com/join/tHKQsbCk)），构建 90 天后过期 |
+| 连接器 `dsh-plugin-mobile-link` | 0.8.0 | npm |
+| 中转（DLP v1） | `relay-go/`（Go，`go-0.2.7`） | 自行部署 |
 
-三者的版本组合与发布策略见 [`docs/VERSIONING.md`](docs/VERSIONING.md)。
-表中版本以 **npm 上已发布的为准**（`npm view dsh-plugin-mobile-link version`），不是仓库里 `package.json` 的值。
+App 1.0 要求连接器 ≥ 0.7.0；面板内登记与设备列表需要 0.8.0。版本组合与兼容性约束见
+[`docs/VERSIONING.md`](docs/VERSIONING.md)。
 
 ## 前提
 
-- 电脑上已安装并可运行 DSH（`dsh web`）。
-- 连接器需要 Node.js ≥ 22。
+- 电脑上已安装并可运行 DSH（`dsh web`）；连接器需要 Node.js ≥ 22。
 - 自建中转需要一台有公网 IP 的主机（macOS 或 Linux）与 Caddy。
 - 从源码构建 App 需要 macOS + Xcode 16 以上；日常使用不需要。
 
@@ -45,34 +44,26 @@
 ### A. 使用公共中转
 
 1. 手机上安装 App：先装 Apple 的 TestFlight，再用 <https://testflight.apple.com/join/tHKQsbCk> 加入测试。
-2. 电脑上安装连接器——**按宿主装**（两种宿主档案独立，装错不会报错，只是连接器不会被加载）：
-   - 命令行 web 版（终端里跑 `dsh web`）：`dsh plugin --profile web add dsh-plugin-mobile-link`
-   - 官方桌面版（双击图标打开的应用）：用应用内的插件页，或应用自带的 `dsh` 命令装进 `desktop` 档案
-     （普通 npm 版 `dsh` 会拒绝该档案，这是官方设计）。宿主形态的识别判据（双击图标启动还是敲命令启动）见
-     [`docs/ONBOARDING.md`](docs/ONBOARDING.md)。
-3. 登记到中转：打开 DSH 左下角的「移动端连接」，确认预填的中转地址，点「登记」。开放登记是唯一
-   入口，不需要邀请码；无头环境用 `dsh-mobile-link enroll --relay wss://<中转地址>/dsh-link`。
-4. 面板登记成功后原地重连，不需要重启 DSH。只有命令行登记且宿主正在运行时才需要重启一次
-   （`dsh web`）；宿主未运行则下次启动生效。**第 2 步装插件本身不需要重启**——命令行 web 宿主会
-   自己把新装的插件挂上；桌面版按应用内提示。
-5. 手机 App →「扫码配对」，扫描电脑上的二维码：点 DSH 界面**左下角的「移动端连接」**，小窗里就是
-   二维码与配对码（点「重新生成」才会换；也可用 `node scripts/dev/show-pair-qr.mjs` 在没有界面的环境里出图）。
+2. 电脑上安装连接器，装进实际在用的宿主档案（装错不会报错，只是连接器不会被加载）：
+   - 命令行 web 版：`dsh plugin --profile web add dsh-plugin-mobile-link`
+   - 官方桌面版：用应用内的插件页，或应用自带的 `dsh` 命令装进 `desktop` 档案（普通 npm 版 `dsh`
+     会拒绝该档案）。两种宿主的识别判据见 [`docs/ONBOARDING.md`](docs/ONBOARDING.md)。
+3. 登记：打开 DSH 左下角的「移动端连接」，确认预填的中转地址，点「登记」。开放登记不需要邀请码，
+   中转按来源限流；无头环境用 `dsh-mobile-link enroll --relay wss://<中转地址>/dsh-link`。
+4. 登记与装插件都不需要重启 DSH；只有命令行登记且宿主正在运行时才需重启一次。
+5. 手机 App →「扫码配对」，扫描「移动端连接」小窗里的二维码与配对码（点「重新生成」才会换）。
 
-开放登记是唯一入口，中转按来源限流。登记后确认手机顶部显示「已连接」，即为成功。完整步骤与
-故障排查见 [`docs/ONBOARDING.md`](docs/ONBOARDING.md)。
+手机顶部显示「已连接」即为成功。完整步骤与故障排查见 [`docs/ONBOARDING.md`](docs/ONBOARDING.md)。
 
 ### B. 自建中转
 
-自建使用仓库内的 Go 实现（`relay-go/`）。按 [`relay-go/deploy/README.md`](relay-go/deploy/README.md)
-§2–§3 在服务器上构建二进制、写入 `build.json` 并安装 `dsh-relay-go.service`；Caddy 路由用
-[`relay-go/deploy/Caddyfile.snippet`](relay-go/deploy/Caddyfile.snippet)，由
-[`relay-go/deploy/caddy_splice.py`](relay-go/deploy/caddy_splice.py) 插入既有站点块（§4）。
+自建用仓库内的 Go 实现（`relay-go/`）。按 [`relay-go/deploy/README.md`](relay-go/deploy/README.md) §2–§4
+构建二进制、安装 `dsh-relay-go.service`，再插入 Caddy 路由
+（[`Caddyfile.snippet`](relay-go/deploy/Caddyfile.snippet) +
+[`caddy_splice.py`](relay-go/deploy/caddy_splice.py)）。
 
 ```bash
-# 首次部署
 sudo systemctl enable --now dsh-relay-go
-
-# 开放登记是唯一入口，不需要先建账号或铸码。
 ```
 
 实时负载与每设备流量：
@@ -83,7 +74,7 @@ sudo systemctl enable --now dsh-relay-go
 
 ```
 ┌──────────────┐   WSS    ┌────────────────────┐   WSS    ┌───────────────────┐
-│  iPhone App  ├─────────►│  Relay（公网主机）  │◄─────────┤ 电脑侧连接器       │
+│  iOS App     ├─────────►│  Relay（公网主机）  │◄─────────┤ 电脑侧连接器       │
 │  SwiftUI     │          │  鉴权 + 转发        │          │ (DSH 插件)        │
 └──────────────┘          └────────────────────┘          └─────────┬─────────┘
                                                                      │ HTTP + WS
@@ -110,7 +101,7 @@ sudo systemctl enable --now dsh-relay-go
 
 | 位置 | 用途 | 提供方式 |
 |---|---|---|
-| `.env.local` | 发布脚本、开发探针 | `cp .env.example .env.local`，填 `DSH_SITE` / `DSH_RELAY_URL` / `DSH_OTA_HOST` |
+| `.env.local` | 发布脚本、开发探针 | `cp .env.example .env.local`，按模板填站点与中转地址 |
 | `~/.dsh/mobile-link/agent.json` | 连接器的中转地址与身份 | 面板「登记」，或 `dsh-mobile-link enroll --relay <地址>` |
 | `ios/DSHMobile/Config.local.xcconfig` | App 内预填的中转地址与更新源 | 从 `Config.xcconfig` 复制后填写 |
 
@@ -158,14 +149,8 @@ cd ios/DSHMobile && xcodebuild -scheme DSHMobile \
 
 ## 已知限制
 
-- **iOS 安装走 TestFlight**：需先安装 Apple 的 TestFlight；测试构建 90 天后过期，到期需安装新构建。
-  自行部署时也可以走 OTA（部署脚本会生成 `https://<站点>/ios/`）：那用 Ad Hoc 描述文件，
-  只覆盖已登记 UDID 的设备，适合自己用，不适合公开分发。
-- **后台通知覆盖这些场景**：从手机发出任务后把 App 退到后台，任务完成、以及 Agent 提问后
-  等待回答（App 列表顶部会显示一条待回应提示）这两件事，仍会通知到手机。它只在
-  「有任务在跑，或有待回答的提问」时生效，空闲时不耗电。
-- **这些场景不覆盖**：手机在后台时，电脑端**新开始**的会话唤不起 App（需要 APNs，尚未实现）；
-  长时间未回答的提问可能丢失。
+- **后台通知**：手机发出任务后把 App 退到后台，任务完成与「等待回答」会通知到手机；空闲时不耗电。
+- **不覆盖**：电脑端新开始的会话唤不起 App（需要 APNs，尚未实现）；长时间未回答的提问可能丢失。
 - 文件发送仅在经中转时可用。
 
 ## 许可

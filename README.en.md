@@ -52,9 +52,9 @@ approval or a choice.
 
 ## Status
 
-Early, and honest about it: the client is used daily by its author, a handful of testers are on
-TestFlight, and the app's interface is being translated — the main paths (connect, session list,
-transcript, settings) are in English, while longer screens are still Chinese.
+Early, and honest about it: the client is used daily by its author, and a handful of testers are on
+TestFlight. The interface ships in Chinese and English; labels that point at the computer-side panel
+(「移动端连接」, 「换一张」) are kept as-is.
 
 ## More
 
