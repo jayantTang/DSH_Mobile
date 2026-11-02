@@ -428,6 +428,18 @@ struct RootView: View {
 
     /// Opens one of the sheet surfaces on launch, so every screen can be
     /// reviewed from a screenshot without a human tap.
+    ///
+    /// 与信件截图配套的另外两条（都只在 DEBUG 构建里存在，发布版没有它们的代码）：
+    ///
+    /// * `-DSHFeedbackAttachmentsFile <绝对路径>` ——启动时从这个 JSON 文件读入附件额度
+    ///   （形状就是 `limits.attachments`：maxPerMessage / maxFileBytes / maxTotalBytes /
+    ///   types），让服务端还没下发 `limits.attachments` 时附件区也能出现。用文件而不是
+    ///   命令行里的一串数字：测试运行器把 `args=` 按逗号切开，带逗号的写法传不进去。
+    /// * `-DSHFeedbackSeedMirror <绝对路径>` ——启动时把这份 JSON 拷成
+    ///   `Caches/feedback/inbox.json`，并跳过本次启动的第一次拉取（否则会被线上
+    ///   真数据盖掉）。
+    ///
+    /// 两者都只影响 DEBUG 构建：解析与播种在 `FeedbackCenter` 的 `#if DEBUG` 段里。
     static func automationScreen() -> String? {
         let arguments = CommandLine.arguments
         guard let index = arguments.firstIndex(of: "-DSHOpenScreen"),

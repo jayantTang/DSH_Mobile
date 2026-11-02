@@ -43,7 +43,15 @@ public final class FeedbackCenter {
     public var notices: [FeedbackNotice] { mirror.displayNotices }
     /// 正文长度上限：服务端下发的值，旧服务端没有就退编译期默认。
     /// 发送窗口与回信输入框都读这一个（全 App 只有这一处兜底）。
-    public var limits: FeedbackLimits { mirror.limits ?? .fallback }
+    ///
+    /// DEBUG 下若用 `-DSHFeedbackAttachmentsFile` 注入了额度，它优先——截图时服务端
+    /// 还没部署附件能力，不注入的话附件区按设计整块不显示。发布构建里没有这一段。
+    public var limits: FeedbackLimits {
+        #if DEBUG
+        if let injectedLimits { return injectedLimits }
+        #endif
+        return mirror.limits ?? .fallback
+    }
     public private(set) var isRefreshing = false
     public private(set) var isSubmitting = false
     /// 底部"加载更早"那一次请求在飞；两栏共用同一个入口。
@@ -52,11 +60,18 @@ public final class FeedbackCenter {
     public private(set) var loadEarlierFailed = false
     /// 最近一次失败的分类；成功一次即清空。
     public private(set) var lastError: FeedbackClientError?
+    /// 附件的加载器（§5.1-8：取回后用 sha256 自校验、命中缓存不再请求）。
+    /// 它是字节缓存的唯一读口；清理走 ``clearLocalMirror()`` 那一个入口。
+    public let attachmentCache: FeedbackAttachmentCache
     public private(set) var lastRefreshedAt: Date?
 
     // MARK: - 依赖
 
     private let store: FeedbackLocalStore
+    /// 附件字节的唯一所有者（下载缓存 + 发送暂存；清理入口只有一个，见 ``clearLocalMirror()``）。
+    private let attachmentDisk: FeedbackAttachmentDisk
+    /// 待上传队列（按信件级 `clientRef` 归集，跨重启可重试、7 天过期）。
+    private let pendingUploads: FeedbackPendingUploadStore
     /// 镜像两条列表的行数上限（评审 A1 之前是两条都 300，满 300 后翻页变空操作）。
     public let rowLimits: FeedbackMirrorLimits
     private let minimumRefreshInterval: TimeInterval
@@ -69,24 +84,113 @@ public final class FeedbackCenter {
     /// 同一条草稿重试时复用的幂等键，见 ``clientRefForRetry()``。
     private var draftRef: String?
 
+    #if DEBUG
+    /// 截图钩子注入的额度（`-DSHFeedbackAttachmentsFile`）；发布构建里不存在这个属性。
+    private var injectedLimits: FeedbackLimits?
+    /// 截图钩子播过镜像之后，启动阶段的自动拉取一律跳过（否则线上真数据会把要截的
+    /// 内容盖掉）；用户主动下拉（`force`）一次才恢复。仅 DEBUG。
+    private var skipSeededRefresh = false
+    #endif
+
     init(
         store: FeedbackLocalStore = FeedbackLocalStore(),
         minimumRefreshInterval: TimeInterval = 15,
         endpointProvider: (() -> Endpoint?)? = nil,
         crashArchive: CrashReportArchive = CrashReportArchive(),
-        rowLimits: FeedbackMirrorLimits? = nil
+        rowLimits: FeedbackMirrorLimits? = nil,
+        attachmentDisk: FeedbackAttachmentDisk = FeedbackAttachmentDisk(),
+        pendingUploads: FeedbackPendingUploadStore = FeedbackPendingUploadStore()
     ) {
         self.store = store
+        self.attachmentDisk = attachmentDisk
+        self.pendingUploads = pendingUploads
         self.rowLimits = rowLimits ?? Self.automationRowLimits() ?? .default
         self.minimumRefreshInterval = minimumRefreshInterval
-        self.endpointProvider = endpointProvider ?? { FeedbackCenter.systemEndpoint() }
+        let resolvedEndpoint = endpointProvider ?? { FeedbackCenter.systemEndpoint() }
+        self.endpointProvider = resolvedEndpoint
+        self.attachmentCache = FeedbackAttachmentCache(
+            disk: attachmentDisk,
+            fetch: { attachmentId in
+                guard let endpoint = resolvedEndpoint() else {
+                    throw FeedbackClientError.network("no-relay-endpoint")
+                }
+                return try await FeedbackCenter.makeClient(endpoint)
+                    .fetchAttachment(attachmentId: attachmentId)
+            }
+        )
         self.crashArchive = crashArchive
         self.mirror = store.mirror()
         self.needsSeed = !store.mirrorExists
+        #if DEBUG
+        // 截图钩子（设计 M18）：注入附件额度 + 用给定镜像播种。两件都只在 DEBUG。
+        if let injected = Self.automationAttachmentLimits() {
+            injectedLimits = FeedbackLimits(attachments: injected)
+        }
+        if let seed = Self.automationSeedMirror(), store.seedMirror(from: seed) {
+            // 同目录下的 `attachments/<sha256>` 一并拷进下载缓存：运行器每次重装 App
+            // 都会清缓存，只播镜像的话图片会显示"附件没有取到"。
+            attachmentDisk.seedCache(
+                from: seed.deletingLastPathComponent()
+                    .appendingPathComponent("attachments", isDirectory: true))
+            mirror = store.mirror()
+            needsSeed = false
+            skipSeededRefresh = true
+        }
+        #endif
         recomputeUnread()
     }
 
     #if DEBUG
+    /// 仿真器截图钩子（设计 M18）：`-DSHFeedbackAttachmentsFile <绝对路径>` 注入附件额度。
+    ///
+    /// 文件内容就是 v2 `limits.attachments` 的形状：
+    /// `{"maxPerMessage":8,"maxFileBytes":8388608,"maxTotalBytes":25165824,
+    ///   "types":["jpeg","png","heic","pdf","txt","log","csv","json"]}`。
+    ///
+    /// 为什么是**文件**而不是命令行里的一串数字：测试运行器把 `args=` 按逗号切成多个
+    /// 启动参数，带逗号的写法一定被切碎。文件路径是单个 token，不含逗号。
+    ///
+    /// 文件不存在、读不出、JSON 形状不对——一律返回 nil（**不补默认值**，也绝不弹窗），
+    /// 只往日志里记一行。发布构建里没有这一段。
+    static func automationAttachmentLimits() -> FeedbackAttachmentLimits? {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let index = arguments.firstIndex(of: "-DSHFeedbackAttachmentsFile"),
+              index + 1 < arguments.count
+        else { return nil }
+        let path = arguments[index + 1]
+        guard path.hasPrefix("/") else { return nil }
+        do {
+            let data = try Data(contentsOf: URL(fileURLWithPath: path))
+            return try JSONDecoder().decode(FeedbackAttachmentLimits.self, from: data)
+        } catch {
+            feedbackLog("attachment limits seed unreadable: \(error)")
+            return nil
+        }
+    }
+
+    /// 仿真器截图钩子（设计 M18）：`-DSHFeedbackSeedMirror <绝对路径>`。
+    ///
+    /// 把这份 JSON 覆盖到本机镜像位置，并把它**同目录下**的 `attachments/<sha256>`
+    /// 一并拷进下载缓存（运行器每次重装 App 都会清缓存，只播镜像的话附件会显示
+    /// "附件没有取到"）。播种成功的这次启动会跳过自动拉取（见 ``refreshInbox(force:)``），
+    /// 否则线上真数据会把要展示的内容盖掉。
+    ///
+    /// 返回 nil = 没给参数、路径不是绝对路径，或镜像文件读不出来。
+    static func automationSeedMirror() -> URL? {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let index = arguments.firstIndex(of: "-DSHFeedbackSeedMirror"),
+              index + 1 < arguments.count
+        else { return nil }
+        let path = arguments[index + 1]
+        guard path.hasPrefix("/") else { return nil }
+        let url = URL(fileURLWithPath: path)
+        guard FileManager.default.fileExists(atPath: path) else {
+            feedbackLog("seed mirror missing at \(path)")
+            return nil
+        }
+        return url
+    }
+
     /// 仿真器截图钩子：`-DSHFeedbackRowLimits 5,5` 把镜像上限调小，让"触顶"的终止态
     /// 在几十条数据内可见。发布构建里这一整段被编译掉（与 `DSH_FEEDBACK_STORE_DIR`
     /// 的测试重定向同一性质）。
@@ -155,8 +259,18 @@ public final class FeedbackCenter {
     ///
     /// `subject` 是可选的标题行；空白按未填处理（服务端此刻可能还没有这个字段，
     /// 缺字段不会让解析失败）。
+    /// 提交一条反馈；带附件时**先逐个上传、全部成功后再提交**（v4 契约）。
+    ///
+    /// 四种结局都落到可见状态：成功返回票据；失败抛 ``FeedbackClientError`` 并保留
+    /// 待上传队列（同一个 `clientRef` 重试，已 `stored` 的附件不重传）；用户取消由
+    /// ``FeedbackSendJob/cancel()`` 在 job 层收尾。附件失败时**绝不自动降级**成
+    /// "只发正文"——那要用户点"只发正文"再走一次。
     @discardableResult
-    public func submit(text: String, subject: String? = nil) async throws -> FeedbackTicket {
+    public func submit(
+        text: String,
+        subject: String? = nil,
+        attachments: [FeedbackOutgoingAttachment] = []
+    ) async throws -> FeedbackTicket {
         guard let endpoint = endpointProvider() else {
             throw FeedbackClientError.network("no-relay-endpoint")
         }
@@ -165,25 +279,44 @@ public final class FeedbackCenter {
         let info = Self.technicalInfo
         let title = subject?.trimmingCharacters(in: .whitespacesAndNewlines)
         let kept = (title?.isEmpty ?? true) ? nil : title
-        let ticket = try await client(endpoint).submit(
-            text: text,
-            subject: kept,
-            appVersion: info.appVersion,
-            deviceModel: info.deviceModel,
-            systemVersion: info.systemVersion,
-            clientRef: clientRefForRetry()
+        let job = FeedbackSendJob(
+            client: client(endpoint), clientRef: clientRefForRetry(),
+            text: text, subject: kept, attachments: attachments,
+            limits: limits, disk: attachmentDisk, pendingStore: pendingUploads,
+            technical: (info.appVersion, info.deviceModel, info.systemVersion)
         )
-        draftRef = nil
-        do {
-            try store.save(ticket)
-        } catch {
-            // 凭据没进 Keychain：这条反馈已经发出去了，但重装后本机取不回来。
-            feedbackLog("ticket store failed: \(error)")
+        switch await job.run() {
+        case .sent(let receipt):
+            let ticket = FeedbackTicket(
+                threadId: receipt.threadId,
+                ticketKey: receipt.ticketKey ?? "",
+                createdAt: receipt.createdAt,
+                messageId: receipt.messageId.isEmpty ? nil : receipt.messageId,
+                attachmentsBound: receipt.attachmentsBound
+            )
+            draftRef = nil
+            if !ticket.ticketKey.isEmpty {
+                do {
+                    try store.save(ticket)
+                } catch {
+                    // 凭据没进 Keychain：这条反馈已经发出去了，但重装后本机取不回来。
+                    feedbackLog("ticket store failed: \(error)")
+                }
+            }
+            mirror.insert(threadId: ticket.threadId, subject: kept,
+                          createdAt: ticket.createdAt ?? Date())
+            persistMirror()
+            lastError = nil
+            return ticket
+        case .failed(let failure):
+            let error = FeedbackSendJob.clientError(for: failure)
+            lastError = error
+            throw error
+        case .cancelled:
+            let error = FeedbackClientError.network("send-cancelled")
+            lastError = error
+            throw error
         }
-        mirror.insert(threadId: ticket.threadId, subject: kept, createdAt: ticket.createdAt ?? Date())
-        persistMirror()
-        lastError = nil
-        return ticket
     }
 
     /// 把待投递的崩溃报告交出去（每次进前台都可以调）。
@@ -225,13 +358,29 @@ public final class FeedbackCenter {
     ///
     /// 团队账号在服务端免 `ticketKey`（授权判据是「调用方是线程的团队侧」）；
     /// 成功后刷新让该线程回到最新口径。失败按现有 ``FeedbackClientError`` 抛出。
-    public func reply(to threadId: String, text: String) async throws {
+    public func reply(to threadId: String, text: String,
+                      attachments: [FeedbackOutgoingAttachment] = []) async throws {
         guard let endpoint = endpointProvider() else {
             lastError = .network("no-relay-endpoint")
             throw FeedbackClientError.network("no-relay-endpoint")
         }
         do {
-            _ = try await client(endpoint).append(threadId: threadId, ticketKey: nil, text: text)
+            let info = Self.technicalInfo
+            let job = FeedbackSendJob(
+                client: client(endpoint), clientRef: clientRefForRetry(),
+                text: text, attachments: attachments,
+                limits: limits, disk: attachmentDisk, pendingStore: pendingUploads,
+                reply: (threadId: threadId, ticketKey: nil),
+                technical: (info.appVersion, info.deviceModel, info.systemVersion)
+            )
+            switch await job.run() {
+            case .sent:
+                break
+            case .failed(let failure):
+                throw FeedbackSendJob.clientError(for: failure)
+            case .cancelled:
+                throw FeedbackClientError.network("send-cancelled")
+            }
         } catch {
             // 用户可见文案在 Domain 层产出：界面只读 `lastError`，不必认识协议层的错误映射。
             if let classified = error as? FeedbackClientError {
@@ -255,10 +404,58 @@ public final class FeedbackCenter {
             case .network: return String(localized: "网络不通，回信没有发出去，正文已保留。")
             case .rateLimited: return String(localized: "发送太频繁，请稍后重试。")
             case .tooLong: return String(localized: "内容太长了，请精简后重试。")
+            // 附件相关的两分类本轮只落到"技术描述"，用户文案在 UI 轮补：
+            // 现在加文案会引入未成对的本地化键（`check:i18n` 会判红）。
+            case .unsupportedType, .storageFull: return LinkErrors.describe(error)
             case .decoding: return String(localized: "服务器返回了无法识别的内容，请稍后重试。")
             }
         }
         return LinkErrors.describe(error)
+    }
+
+    /// 组一次发送（界面层用它拿到可观察的 job：进度、每槽状态、失败原因）。
+    ///
+    /// 没有地址就没有 job——界面据 `nil` 直接落"网络不通"的失败态。
+    public func makeSendJob(
+        text: String,
+        subject: String? = nil,
+        attachments: [FeedbackOutgoingAttachment] = [],
+        reply: (threadId: String, ticketKey: String?)? = nil
+    ) -> FeedbackSendJob? {
+        guard let endpoint = endpointProvider() else { return nil }
+        let info = Self.technicalInfo
+        let title = subject?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return FeedbackSendJob(
+            client: client(endpoint), clientRef: clientRefForRetry(),
+            text: text, subject: (title?.isEmpty ?? true) ? nil : title,
+            attachments: attachments,
+            limits: limits, disk: attachmentDisk, pendingStore: pendingUploads,
+            reply: reply,
+            technical: (info.appVersion, info.deviceModel, info.systemVersion)
+        )
+    }
+
+    /// 发送窗口在 job 成功之后调它：记镜像、存凭据、清幂等键（一处收口）。
+    public func recordSent(_ receipt: FeedbackSendReceipt, subject: String?) {
+        draftRef = nil
+        let ticket = FeedbackTicket(
+            threadId: receipt.threadId,
+            ticketKey: receipt.ticketKey ?? "",
+            createdAt: receipt.createdAt,
+            messageId: receipt.messageId.isEmpty ? nil : receipt.messageId,
+            attachmentsBound: receipt.attachmentsBound
+        )
+        if !ticket.ticketKey.isEmpty {
+            do {
+                try store.save(ticket)
+            } catch {
+                feedbackLog("ticket store failed: \(error)")
+            }
+        }
+        mirror.insert(threadId: ticket.threadId, subject: subject,
+                      createdAt: ticket.createdAt ?? Date())
+        persistMirror()
+        lastError = nil
     }
 
     /// 重试用的幂等键。草稿在被用户放弃前（或提交成功前）保持不变；界面层不需要
@@ -281,6 +478,15 @@ public final class FeedbackCenter {
     ///
     /// - Parameter force: 忽略节流。前台恢复与打开记录页用默认值即可。
     public func refreshInbox(force: Bool = false) async {
+        #if DEBUG
+        // 截图钩子播过镜像是为了**截图**：启动阶段的自动拉取直接跳过，否则线上数据
+        // 会把要展示的那几封信盖掉；用户主动下拉（`force == true`）时才放行并恢复。
+        // 命令行参数与这一段都只在 DEBUG 构建里存在。
+        if skipSeededRefresh {
+            guard force else { return }
+            skipSeededRefresh = false
+        }
+        #endif
         guard !isRefreshing else { return }
         if !force, let last = lastRefreshedAt,
            Date().timeIntervalSince(last) < minimumRefreshInterval { return }
@@ -457,6 +663,11 @@ public final class FeedbackCenter {
         mirror.isUnread(noticeId: noticeId)
     }
 
+    /// 一条线程的取件凭据（用户侧回信要用它证明归属；团队侧没有也能回）。
+    public func ticket(for threadId: String) -> FeedbackTicket? {
+        store.ticket(for: threadId)
+    }
+
     /// 本机保存了几条取件凭据。0 表示这台手机没有历史记录可取（换机且未配对）。
     public var storedTicketCount: Int { store.tickets().count }
 
@@ -464,6 +675,10 @@ public final class FeedbackCenter {
     /// 下次拉取按服务端的已读状态补种，记录会自己回来。
     public func clearLocalMirror() {
         store.clearMirror()
+        // 附件的两份字节（下载缓存 + 发送暂存）与待上传队列一起清：这是**唯一**入口。
+        attachmentDisk.clear()
+        attachmentCache.clear()
+        pendingUploads.save(FeedbackPendingUploads())
         mirror = FeedbackMirror()
         needsSeed = true
         lastRefreshedAt = nil
@@ -521,6 +736,11 @@ public final class FeedbackCenter {
     }
 
     private func client(_ endpoint: Endpoint) -> RelayFeedbackClient {
+        Self.makeClient(endpoint)
+    }
+
+    /// 构造协议客户端只有这一处（正文与附件共用同一份地址/令牌）。
+    static func makeClient(_ endpoint: Endpoint) -> RelayFeedbackClient {
         RelayFeedbackClient(relayURL: endpoint.url, deviceToken: endpoint.deviceToken)
     }
 
@@ -539,6 +759,7 @@ public final class FeedbackCenter {
 }
 
 /// 反馈通道的日志行。与 `DSHLog.push` 同一个过滤思路，但不改那个文件。
-private func feedbackLog(_ message: String) {
+/// module 内共享：附件域（`FeedbackAttachments`/`FeedbackSendJob`）也写这一行。
+func feedbackLog(_ message: String) {
     NSLog("[DSHMobile/feedback] %@", message)
 }

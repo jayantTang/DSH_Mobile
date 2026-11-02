@@ -21,6 +21,14 @@ public extension FeedbackThread {
     /// 团队对用户来信的回信入口：只有我这一侧是团队时才有。
     var canReply: Bool { resolvedSide == .owner }
 
+    /// 我方的署名：团队侧固定「DSH Mobile 团队」；用户侧写成 `我 · <机型>`
+    /// （机型缺失只写「我」）。已发送栏的首行与详情页里我方那封的抬头共用它。
+    var myLine: String {
+        if resolvedSide == .owner { return String(localized: "DSH Mobile 团队") }
+        let model = source?.deviceModel?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return model.isEmpty ? String(localized: "我") : String(localized: "我 · \(model)")
+    }
+
     /// 两栏行首的对方称谓：我这一侧是团队时是来信人，否则是团队。
     var counterpartyLine: String {
         resolvedSide == .owner

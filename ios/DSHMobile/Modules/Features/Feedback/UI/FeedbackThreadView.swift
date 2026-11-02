@@ -73,7 +73,7 @@ public enum FeedbackSubject {
         }
         let topic = firstSentence(of: userBody)
         guard !topic.isEmpty else { return firstSentence(of: replyBody, format: replyFormat) }
-        return String(localized: "关于你的反馈：\(topic)")
+        return String(localized: "关于你的来信：\(topic)")
     }
 
     /// 列表里的摘要：跳过问候与署名那几行，取正文里第一段有内容的话。
@@ -203,9 +203,8 @@ public struct FeedbackThreadView: View {
     public let side: FeedbackThreadSide
 
     private var center: FeedbackCenter { .shared }
-    @State private var replyText = ""
-    @State private var isReplying = false
-    @State private var replyError: String?
+    @State private var isComposingReply = false
+    @State private var showsHistory = false
     private var thread: FeedbackThread? { center.thread(threadId) }
 
     public var body: some View {
@@ -214,17 +213,13 @@ public struct FeedbackThreadView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: DSHTheme.Spacing.standard) {
                     if let thread {
-                        if let letter = letter(in: thread) {
+                        if let letter = latestLetter(in: thread) {
                             letterCard(letter, in: thread)
+                            history(thread, older: olderLetters(in: thread))
                         } else {
                             Text("已提交，正在同步")
                                 .font(DSHTheme.Typography.caption)
                                 .foregroundStyle(DSHTheme.labelSecondary)
-                        }
-                        // FR-5：我这一侧是团队、且看的是收件箱时，底部给回信入口。
-                        // 团队账号自己的信（mySide == .user）没有回信入口。
-                        if side == .inbox, thread.canReply {
-                            replyBox
                         }
                     } else {
                         Text("这条记录在服务器上已不存在，可能已被删除。")
@@ -236,10 +231,23 @@ public struct FeedbackThreadView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .background(DSHTheme.background)
+        // 整页不透明：详情页既可能是 push 也可能是 sheet，透明会把记录页透出来。
+        .background(DSHTheme.background.ignoresSafeArea())
         .accessibilityIdentifier("feedback.thread")
-        .navigationTitle("反馈详情")
+        .navigationTitle("信件")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                if thread != nil {
+                    // owner 2026-11-02：每封都能回（用户侧也回团队那封），不再只看 canReply。
+                    Button(String(localized: "回复")) { isComposingReply = true }
+                        .accessibilityIdentifier("feedback.thread.reply")
+                }
+            }
+        }
+        .sheet(isPresented: $isComposingReply) {
+            FeedbackComposerView(replyTo: replyContext)
+        }
         // 看过这一条才算读过（FR-012）。已发送那一栏看的是自己写的信，不碰未读——
         // 否则点一下自己发的东西就把还没读的回信清了。
         .task {
@@ -248,98 +256,119 @@ public struct FeedbackThreadView: View {
         }
     }
 
-    /// 团队回信输入区（FR-5）：服务端团队账号免凭据，失败按现有错误分类展示。
+    /// 回信窗口的初始值（v6：回信复用写信页，只有这三处不同 + 发送路由不同）。
+    private var replyContext: FeedbackReplyContext {
+        let thread = self.thread
+        let isTeamSide = thread?.resolvedSide == .owner
+        let recipient: String
+        if isTeamSide {
+            recipient = thread?.source?.displayLine ?? String(localized: "来信用户")
+        } else {
+            recipient = String(localized: "DSH Mobile 团队")
+        }
+        return FeedbackReplyContext(
+            threadId: threadId,
+            ticketKey: isTeamSide ? nil : center.ticket(for: threadId)?.ticketKey,
+            recipient: recipient,
+            subject: thread?.subject,
+            quotedText: thread?.incomingLetter?.body ?? ""
+        )
+    }
+
+    /// 更早的信（D1/D2/D3）：灰色、默认折叠，展开后**新的在上**、只读、不显示附件。
+    /// 内容是"除了当前这一封之外的全部"：从收件箱点开时，自己后来补的那封也在里面。
     @ViewBuilder
-    private var replyBox: some View {
-        VStack(alignment: .leading, spacing: DSHTheme.Spacing.tight) {
-            Hairline()
-            TextEditor(text: $replyText)
-                .font(DSHTheme.Typography.body)
-                .scrollContentBackground(.hidden)
-                .frame(minHeight: 96)
-                .padding(DSHTheme.Spacing.tight)
-                .background(DSHTheme.layer2,
-                            in: RoundedRectangle(cornerRadius: DSHTheme.Radius.medium, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: DSHTheme.Radius.medium, style: .continuous)
-                        .strokeBorder(DSHTheme.border2)
-                }
-                .overlay(alignment: .topLeading) {
-                    if replyText.isEmpty {
-                        Text("写下你的回信…")
-                            .font(DSHTheme.Typography.body)
+    private func history(_ thread: FeedbackThread, older: [FeedbackMessage]) -> some View {
+        if !older.isEmpty {
+            VStack(alignment: .leading, spacing: DSHTheme.Spacing.hairline) {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.16)) { showsHistory.toggle() }
+                } label: {
+                    HStack(spacing: DSHTheme.Spacing.hairline) {
+                        Text(String(localized: "显示更早的 \(older.count) 封"))
+                            .font(DSHTheme.Typography.caption)
                             .foregroundStyle(DSHTheme.labelTertiary)
-                            .padding(.leading, 13)
-                            .padding(.top, 13)
-                            .allowsHitTesting(false)
+                        Spacer(minLength: 0)
+                        Text(showsHistory ? String(localized: "收起") : String(localized: "展开"))
+                            .font(DSHTheme.Typography.caption)
+                            .foregroundStyle(DSHTheme.labelTertiary)
+                        Image(systemName: showsHistory ? "chevron.up" : "chevron.down")
+                            .font(DSHTheme.Typography.micro)
+                            .foregroundStyle(DSHTheme.labelTertiary)
                     }
                 }
-                // 容器上不要再挂 id：SwiftUI 会把整块当成一个无障碍元素，子元素的 id 就找不到了
-                // （2026-10-16 实测：外层 feedback.reply.box 在时 feedback.reply.input 查不到）。
-                .accessibilityIdentifier("feedback.reply.input")
-            FeedbackLengthHint(text: replyText, limits: limits)
-            HStack {
-                if let replyError {
-                    Text(replyError)
-                        .font(DSHTheme.Typography.caption)
-                        .foregroundStyle(DSHTheme.danger)
-                }
-                Spacer()
-                Button(String(localized: "回信")) {
-                    let text = replyText
-                    isReplying = true
-                    Task {
-                        defer { isReplying = false }
-                        do {
-                            try await center.reply(to: threadId, text: text)
-                            replyText = ""
-                            replyError = nil
-                        } catch {
-                            // 文案由 Domain 产出（030）：界面不认识协议层的错误映射。
-                            replyError = center.replyFailureText(error)
+                .buttonStyle(.plain)
+                .contentShape(Rectangle())
+                .frame(minHeight: 44)
+                .accessibilityIdentifier("feedback.thread.history.toggle")
+                if showsHistory {
+                    VStack(alignment: .leading, spacing: DSHTheme.Spacing.tight) {
+                        Text(String(localized: "以下是更早的信"))
+                            .font(DSHTheme.Typography.micro)
+                            .foregroundStyle(DSHTheme.labelTertiary)
+                        ForEach(older.reversed()) { message in
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack(spacing: DSHTheme.Spacing.tight) {
+                                    Text(FeedbackTime.text(message.createdAt))
+                                    Text(authorLine(message, in: thread))
+                                }
+                                .font(DSHTheme.Typography.micro)
+                                .foregroundStyle(DSHTheme.labelTertiary)
+                                Text(message.body)
+                                    .font(DSHTheme.Typography.caption)
+                                    .foregroundStyle(DSHTheme.labelSecondary)
+                                    .lineLimit(6)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            Hairline()
                         }
                     }
+                    .accessibilityIdentifier("feedback.thread.history")
                 }
-                .buttonStyle(.borderedProminent)
-                // 与发送窗口同一套长度判定（字符 + UTF-8 字节）：超了就不许发。
-                .disabled(!FeedbackDraftLength.canSend(replyText, limits: limits) || isReplying)
-                .accessibilityIdentifier("feedback.reply.send")
             }
+            .padding(.top, DSHTheme.Spacing.tight)
         }
+    }
+
+    private func authorLine(_ message: FeedbackMessage, in thread: FeedbackThread) -> String {
+        isMine(message, in: thread) ? thread.myLine : thread.counterpartyLine
     }
 
     /// 回信输入框与发送窗口读同一个上限（服务端下发的 `limits`，缺失退编译期默认）。
     private var limits: FeedbackLimits { center.limits }
 
-    /// 这一页要呈现的那封信：**只看线程自己的 `mySide`**——收件箱是对方的来信，
-    /// 已发送是我这一侧的那封。旧数据里同一侧可能有多封，取最近的那封。
-    private func letter(in thread: FeedbackThread) -> FeedbackMessage? {
-        side == .sent ? thread.myLetter : thread.incomingLetter
+    /// 一屏只呈现**一封信**：从收件箱点开是「对侧最近一封」，从已发送点开是
+    /// 「我方最近一封」（D1）。找不到就退到时间上最后一封，不让页面空着。
+    private func latestLetter(in thread: FeedbackThread) -> FeedbackMessage? {
+        switch side {
+        case .inbox: return thread.incomingLetter ?? thread.messages.last
+        case .sent: return thread.myLetter ?? thread.messages.last
+        }
+    }
+
+    private func olderLetters(in thread: FeedbackThread) -> [FeedbackMessage] {
+        guard let latest = latestLetter(in: thread) else { return [] }
+        return thread.messages.filter { $0.messageId != latest.messageId }
+    }
+
+    /// 这一封是不是"我方写的"：只按作者判，不按从哪一栏点开（历史里两边的信混在一起）。
+    private func isMine(_ message: FeedbackMessage, in thread: FeedbackThread) -> Bool {
+        message.author.rawValue == thread.resolvedSide.author.rawValue
     }
 
     @ViewBuilder
     private func letterCard(_ message: FeedbackMessage, in thread: FeedbackThread) -> some View {
-        switch side {
-        case .inbox:
-            LetterCard(
-                sender: thread.counterpartyLine,
-                isMine: false,
-                // 与收件箱那一行用同一个函数，两处标题不会漂。
-                subject: thread.inboxSubject(for: message),
-                text: message.body,
-                format: message.bodyFormat,
-                createdAt: message.createdAt)
-        case .sent:
-            // 主题只写用户真填过的那句；没填就不写抬头行——列表里的兜底标题是列表的需要，
-            // 在这里会与正文第一句重复。
-            LetterCard(
-                sender: String(localized: "我发出的"),
-                isMine: true,
-                subject: writtenSubject(of: thread),
-                text: message.body,
-                format: message.bodyFormat,
-                createdAt: message.createdAt)
-        }
+        let mine = isMine(message, in: thread)
+        LetterCard(
+            // 抬头只按作者给署名：从收件箱点开时，历史里那封我方写的也要署「我 · 机型」。
+            sender: mine ? thread.myLine : thread.counterpartyLine,
+            isMine: mine,
+            // 主题与收件箱那一行用同一个函数（对方那封），我方那封只写用户真填过的那句。
+            subject: mine ? writtenSubject(of: thread) : thread.inboxSubject(for: message),
+            text: message.body,
+            format: message.bodyFormat,
+            createdAt: message.createdAt,
+            attachments: message.attachments)
     }
 
     private func writtenSubject(of thread: FeedbackThread) -> String? {
@@ -400,6 +429,8 @@ public struct LetterCard: View {
     /// 正文格式（FR-034）。默认 `text`：交给 App 自己的 Markdown 渲染器。
     public var format: FeedbackBodyFormat = .text
     public let createdAt: Date?
+    /// 这一封的附件（只会有已绑定的）。空数组时排版与没有附件功能之前逐像素一致。
+    public var attachments: [FeedbackAttachment] = []
 
     public var body: some View {
         VStack(alignment: .leading, spacing: DSHTheme.Spacing.tight) {
@@ -413,6 +444,9 @@ public struct LetterCard: View {
             }
             Hairline()
             bodyContent(format, services: services)
+            if !attachments.isEmpty {
+                FeedbackAttachmentGrid(attachments: attachments)
+            }
         }
         .padding(DSHTheme.Spacing.standard)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -485,7 +519,8 @@ public struct FeedbackNoticeView: View {
                                                           format: notice.bodyFormat),
                             text: notice.body ?? "",
                             format: notice.bodyFormat,
-                            createdAt: notice.createdAt
+                            createdAt: notice.createdAt,
+                            attachments: notice.attachments
                         )
                     } else {
                         gone

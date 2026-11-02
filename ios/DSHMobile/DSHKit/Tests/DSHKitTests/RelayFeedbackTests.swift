@@ -685,4 +685,189 @@ struct RelayFeedbackTests {
         // 真响应里的请求体没有被夹具夹带：这次请求仍然只声明 v2。
         #expect(try jsonBody()["inboxVersion"] as? Int == 2)
     }
+
+    // MARK: - 附件（v4：先传后发）
+
+    @Test("begin carries clientRef, slot and the declared facts, and decodes the draft")
+    func beginAttachmentRequest() async throws {
+        Stub.reset([.init(status: 200, body: Data("""
+        {"ok":true,"attachmentId":"fa_abc","state":"pending","byteSize":5,
+         "sha256":"aa11","createdAt":1760000000000}
+        """.utf8))])
+
+        let draft = try await client().beginAttachment(
+            clientRef: "ref-1", slot: 2, threadId: "th_1", ticketKey: "fk_1",
+            name: "screen.png", contentType: "image/png",
+            byteSize: 5, sha256: "aa11", width: 1179, height: 2556
+        )
+
+        #expect(draft.attachmentId == "fa_abc")
+        #expect(draft.state == "pending")
+        #expect(!draft.isStored)
+        #expect(draft.sha256 == "aa11")
+        let request = try #require(Stub.requests.first)
+        #expect(request.url?.absoluteString == "https://relay.test/dsh-link/feedback/attachment/begin")
+        let body = try jsonBody()
+        #expect(body["clientRef"] as? String == "ref-1")
+        #expect(body["slot"] as? Int == 2)
+        #expect(body["threadId"] as? String == "th_1")
+        #expect(body["ticketKey"] as? String == "fk_1")
+        #expect(body["name"] as? String == "screen.png")
+        #expect(body["contentType"] as? String == "image/png")
+        #expect(body["byteSize"] as? Int == 5)
+        #expect(body["sha256"] as? String == "aa11")
+        #expect(body["width"] as? Int == 1179)
+        #expect(body["height"] as? Int == 2556)
+        #expect(body["messageId"] == nil, "v4 删掉了按 messageId 绑定的旧顺序")
+    }
+
+    @Test("upload sends the raw bytes with octet-stream, a length and the ticket header")
+    func uploadAttachmentRequest() async throws {
+        Stub.reset([.init(status: 200, body: Data("""
+        {"ok":true,"attachmentId":"fa_abc","state":"stored","byteSize":4,
+         "sha256":"aa11","storedAt":1760000001000}
+        """.utf8))])
+
+        let bytes = Data([0x89, 0x50, 0x4E, 0x47])
+        let draft = try await client().uploadAttachment(
+            attachmentId: "fa_abc", bytes: bytes, ticketKey: "fk_1")
+
+        #expect(draft.state == "stored")
+        #expect(draft.isStored)
+        let request = try #require(Stub.requests.first)
+        #expect(request.url?.path.hasSuffix("/feedback/attachment/upload") == true)
+        #expect(request.url?.query == "attachmentId=fa_abc")
+        #expect(request.httpMethod == "POST")
+        #expect(request.value(forHTTPHeaderField: "Content-Type") == "application/octet-stream")
+        #expect(request.value(forHTTPHeaderField: "X-Feedback-Ticket") == "fk_1")
+        #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer dt_phone")
+        #expect(request.timeoutInterval == RelayFeedbackClient.uploadTimeout,
+                "上传用独立的 120 s，不与正文那条 20 s 共用")
+        #expect(try #require(Stub.bodies.first) == bytes, "请求体是原始字节，不是 JSON")
+        #expect(String(decoding: try #require(Stub.bodies.first), as: UTF8.self) != "{\"bytes\":\"\"}")
+    }
+
+    @Test("fetch answers with the raw bytes and maps a missing attachment to not-found")
+    func fetchAttachmentBytes() async throws {
+        let bytes = Data([1, 2, 3, 4])
+        Stub.reset([.init(status: 200, body: bytes)])
+        let fetched = try await client().fetchAttachment(attachmentId: "fa_abc")
+        #expect(fetched == bytes)
+        #expect(try jsonBody()["attachmentId"] as? String == "fa_abc")
+
+        Stub.reset([.init(status: 404, body: Data(#"{"ok":false,"error":{"code":"feedback/not-found"}}"#.utf8))])
+        let failure = await failure { _ = try await client().fetchAttachment(attachmentId: "fa_x") }
+        #expect(failure == .notFound)
+    }
+
+    @Test("discard names the draft ref and the attachment, and never silently succeeds on 409")
+    func discardAttachmentRequest() async throws {
+        Stub.reset([.init(status: 200, body: Data(#"{"ok":true,"attachmentId":"fa_abc","deleted":true}"#.utf8))])
+        try await client().discardAttachment(attachmentId: "fa_abc", clientRef: "ref-1",
+                                             ticketKey: "fk_1")
+        #expect(try jsonBody()["clientRef"] as? String == "ref-1")
+        #expect(try jsonBody()["attachmentId"] as? String == "fa_abc")
+        #expect(try jsonBody()["ticketKey"] as? String == "fk_1",
+                "discard 的凭据走请求体（匿名回信草稿），与 upload 的头不混用")
+
+        Stub.reset([.init(status: 409, body: Data(#"{"ok":false,"error":{"code":"feedback/attachment-conflict"}}"#.utf8))])
+        let failure = await failure {
+            try await client().discardAttachment(attachmentId: "fa_abc", clientRef: "ref-1")
+        }
+        #expect(failure == .server(status: 409, code: "feedback/attachment-conflict"))
+    }
+
+    @Test("limits.attachments is the only place attachment numbers come from")
+    func attachmentLimitsDecode() async throws {
+        Stub.reset([.init(status: 200, body: Data("""
+        {"ok":true,"inboxVersion":2,"threads":[],"notices":[],"unreadCount":0,
+         "limits":{"textChars":4000,"textBytes":12000,"subjectChars":80,
+                   "attachments":{"maxPerMessage":8,"maxFileBytes":8388608,
+                                  "maxTotalBytes":25165824,
+                                  "types":["jpeg","png","heic","pdf","txt","log","csv","json"]}}}
+        """.utf8))])
+        let inbox = try await client().inbox(tickets: [])
+        let attachmentLimits = try #require(inbox.limits?.attachments)
+        #expect(attachmentLimits.maxPerMessage == 8)
+        #expect(attachmentLimits.maxFileBytes == 8_388_608)
+        #expect(attachmentLimits.maxTotalBytes == 25_165_824)
+        #expect(attachmentLimits.types.contains("png"))
+        #expect(inbox.limits?.supportsAttachments == true)
+
+        Stub.reset([.init(status: 200, body: Data("""
+        {"ok":true,"inboxVersion":2,"threads":[],"notices":[],"unreadCount":0,
+         "limits":{"textChars":4000,"textBytes":12000,"subjectChars":80}}
+        """.utf8))])
+        let closed = try await client().inbox(tickets: [])
+        #expect(closed.limits?.attachments == nil)
+        #expect(closed.limits?.supportsAttachments == false, "缺省即关闭，不拿编译期常量兜底")
+
+        Stub.reset([.init(status: 200, body: Data("""
+        {"ok":true,"inboxVersion":2,"threads":[],"notices":[],"unreadCount":0,
+         "limits":{"textChars":4000,"attachments":{"maxPerMessage":8,"maxFileBytes":8388608}}}
+        """.utf8))])
+        let partial = try await client().inbox(tickets: [])
+        #expect(partial.limits?.attachments == nil, "字段不齐就当整份能力不可用（fail-closed）")
+    }
+
+    @Test("submit and append decode the new messageId and how many attachments were bound")
+    func submitAndAppendDecodeBound() async throws {
+        Stub.reset([.init(status: 200, body: Data("""
+        {"ok":true,"threadId":"th_9","ticketKey":"fk_9","createdAt":1760000000000,
+         "messageId":"fm_9","attachmentsBound":2}
+        """.utf8))])
+        let ticket = try await client().submit(text: "x", clientRef: "ref-1")
+        #expect(ticket.messageId == "fm_9")
+        #expect(ticket.attachmentsBound == 2)
+
+        Stub.reset([.init(status: 200, body: Data("""
+        {"ok":true,"threadId":"th_9","messageId":"fm_10","createdAt":1760000000000,
+         "attachmentsBound":1}
+        """.utf8))])
+        let appended = try await client().append(threadId: "th_9", ticketKey: "fk_9",
+                                                 text: "y", clientRef: "ref-2")
+        #expect(appended.messageId == "fm_10")
+        #expect(appended.attachmentsBound == 1)
+    }
+
+    @Test("a message without attachments decodes as an empty list, and never fails the inbox")
+    func attachmentsAreTolerant() async throws {
+        Stub.reset([.init(status: 200, body: Data("""
+        {"ok":true,"inboxVersion":2,"threads":[
+          {"threadId":"th_1","status":"open","unread":0,"createdAt":1,"lastMessageAt":2,
+           "messages":[
+             {"messageId":"m_1","author":"user","body":"x","createdAt":1,
+              "attachments":[{"attachmentId":"fa_1","name":"a.png","contentType":"image/png",
+                              "byteSize":3,"sha256":"aa","width":10,"height":20,
+                              "createdAt":1}]},
+             {"messageId":"m_2","author":"owner","body":"y","createdAt":2}]}],
+         "notices":[{"noticeId":"n_1","createdAt":3,"read":false}],"unreadCount":0}
+        """.utf8))])
+        let inbox = try await client().inbox(tickets: [])
+        let messages = try #require(inbox.threads.first?.messages)
+        #expect(messages[0].attachments.count == 1)
+        #expect(messages[0].attachments[0].name == "a.png")
+        #expect(messages[0].attachments[0].width == 10)
+        #expect(messages[1].attachments.isEmpty, "缺字段 = 没有附件，不是解码失败")
+        #expect(inbox.notices.first?.attachments.isEmpty == true)
+    }
+
+    @Test("an unsupported attachment type and a full disk are their own failures")
+    func attachmentErrorMapping() async throws {
+        Stub.reset([.init(status: 415, body: Data(#"{"ok":false,"error":{"code":"feedback/attachment-type"}}"#.utf8))])
+        let unsupported = await failure {
+            _ = try await client().beginAttachment(clientRef: "ref-1", slot: 0, name: "x",
+                                                   contentType: "video/mp4", byteSize: 1,
+                                                   sha256: "aa")
+        }
+        #expect(unsupported == .unsupportedType)
+
+        Stub.reset([.init(status: 507, body: Data(#"{"ok":false,"error":{"code":"feedback/storage-full"}}"#.utf8))])
+        let full = await failure {
+            _ = try await client().beginAttachment(clientRef: "ref-1", slot: 0, name: "x",
+                                                   contentType: "image/png", byteSize: 1,
+                                                   sha256: "aa")
+        }
+        #expect(full == .storageFull)
+    }
 }

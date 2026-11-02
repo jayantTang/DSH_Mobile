@@ -75,7 +75,7 @@ public struct FeedbackCenterView: View {
                 }
             }
             .background(DSHTheme.background)
-            .navigationTitle("反馈")
+            .navigationTitle("信件")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { toolbarContent }
             .navigationDestination(for: FeedbackDestination.self) { destination in
@@ -123,9 +123,12 @@ public struct FeedbackCenterView: View {
             Button("关闭") { dismiss() }
         }
         ToolbarItem(placement: .primaryAction) {
+            // owner 2026-11-02：入口保持**纯图标**，不得改成文字按钮；
+            // 无障碍名是「写一封信」。
             Button { isComposing = true } label: {
-                Label("发送反馈", systemImage: "square.and.pencil")
+                Image(systemName: "square.and.pencil")
             }
+            .accessibilityLabel(String(localized: "写一封信"))
             .accessibilityIdentifier("feedback.compose")
         }
     }
@@ -135,7 +138,7 @@ public struct FeedbackCenterView: View {
     private var sentRows: some View {
         Section {
             if center.threads.isEmpty {
-                Text(emptyLine("还没有发过反馈"))
+                Text(emptyLine("还没有发过信件"))
                     .font(DSHTheme.Typography.caption)
                     .foregroundStyle(DSHTheme.labelSecondary)
                     .accessibilityIdentifier("feedback.center.emptySent")
@@ -195,7 +198,8 @@ public struct FeedbackCenterView: View {
                                         snippet: FeedbackSubject.snippet(of: message.body,
                                                                          format: message.bodyFormat),
                                         createdAt: message.createdAt,
-                                        unread: center.isUnread(messageId: message.messageId))
+                                        unread: center.isUnread(messageId: message.messageId),
+                                        attachmentCount: message.attachments.count)
                     }
                     .accessibilityIdentifier("feedback.row.\(thread.threadId)")
                 case .notice(let notice):
@@ -207,7 +211,8 @@ public struct FeedbackCenterView: View {
                                                                       body: notice.body,
                                                                       format: notice.bodyFormat),
                                         createdAt: notice.createdAt,
-                                        unread: center.isUnread(noticeId: notice.noticeId))
+                                        unread: center.isUnread(noticeId: notice.noticeId),
+                                        attachmentCount: notice.attachments.count)
                     }
                     .accessibilityIdentifier("feedback.row.\(notice.noticeId)")
                 }
@@ -263,6 +268,8 @@ private struct FeedbackMailRow: View {
     public let createdAt: Date?
     /// 没传 = 这一栏没有未读这回事（已发送），只留出与收件箱对齐的空位，不画点。
     public var unread: Bool?
+    /// 这封信带几个附件（0 = 不画回形针）。数字来自镜像里的附件元数据。
+    public var attachmentCount: Int = 0
 
     private var isUnread: Bool { unread == true }
 
@@ -279,6 +286,15 @@ private struct FeedbackMailRow: View {
                         .foregroundStyle(isUnread ? DSHTheme.labelPrimary : DSHTheme.labelSecondary)
                         .lineLimit(1)
                     Spacer(minLength: 0)
+                    if attachmentCount > 0 {
+                        HStack(spacing: 2) {
+                            Image(systemName: "paperclip")
+                            Text("\(attachmentCount)")
+                        }
+                        .font(DSHTheme.Typography.micro)
+                        .foregroundStyle(DSHTheme.labelTertiary)
+                        .accessibilityIdentifier("feedback.row.attachments")
+                    }
                     Text(FeedbackTime.text(createdAt))
                         .font(DSHTheme.Typography.micro)
                         .foregroundStyle(DSHTheme.labelTertiary)
@@ -311,14 +327,19 @@ private struct FeedbackSentRow: View {
     public var body: some View {
         let letter = thread.myLetter
         FeedbackMailRow(
-            firstLine: thread.counterpartyLine,
+            // R3：已发送那一栏的首行是**我方署名**（收件箱那栏才是对方）。
+            firstLine: senderLine,
             subject: subject(letter),
             snippet: FeedbackSubject.snippet(of: letter?.body, format: letter?.bodyFormat ?? .text),
             // 发件箱里显示的是**我发信那一刻**：`lastMessageAt` 在收到回信之后会变成回信时间，
             // 挂在"我发出的"那一行上就成了错的时间（2026-10-12 owner 要求发件箱也按邮件的样子）。
-            createdAt: letter?.createdAt ?? thread.createdAt
+            createdAt: letter?.createdAt ?? thread.createdAt,
+            attachmentCount: letter?.attachments.count ?? 0
         )
     }
+
+    /// 我方署名（与详情页抬头共用 `FeedbackThread.myLine`，不再各写一份）。
+    private var senderLine: String { thread.myLine }
 
     /// 主题：用户没写就退到正文首句（与详情、收件箱同一个函数）。
     private func subject(_ letter: FeedbackMessage?) -> String {

@@ -22,6 +22,11 @@ public enum FeedbackClientError: Error, Sendable, Equatable {
     case tooLong
     /// `404 feedback/not-found`: no such thread, or the ticket does not own it.
     case notFound
+    /// `415 feedback/attachment-type`: the server refused the declared MIME
+    /// (whitelist) or the bytes did not look like what was declared.
+    case unsupportedType
+    /// `507 feedback/storage-full`: the mail service is out of attachment space.
+    case storageFull
     /// Any other non-2xx the relay answered, with its error code when it named one.
     case server(status: Int, code: String?)
     /// The relay answered, but not with the envelope this client understands.
@@ -73,22 +78,26 @@ public struct FeedbackMessage: Sendable, Hashable, Identifiable, Codable {
     /// 不会是 `nil`；只有成员逐一构造时才可能留空，那时也按 Markdown 渲染。
     public let format: String?
     public let createdAt: Date?
+    /// 这一封里的附件（只会有已绑定的）：缺字段 = 没有附件，不是解码失败。
+    public let attachments: [FeedbackAttachment]
 
     public var id: String { messageId }
 
     /// 解析后的格式：判断走哪条渲染路径时用这个，不要在界面里比字符串。
     public var bodyFormat: FeedbackBodyFormat { FeedbackBodyFormat(wire: format) }
 
-    public init(messageId: String, author: Author, body: String, format: String? = nil, createdAt: Date?) {
+    public init(messageId: String, author: Author, body: String, format: String? = nil,
+                createdAt: Date?, attachments: [FeedbackAttachment] = []) {
         self.messageId = messageId
         self.author = author
         self.body = body
         self.format = format.map { FeedbackBodyFormat(wire: $0).rawValue }
         self.createdAt = createdAt
+        self.attachments = attachments
     }
 
     private enum CodingKeys: String, CodingKey {
-        case messageId, author, body, format, createdAt
+        case messageId, author, body, format, createdAt, attachments
     }
 
     public init(from decoder: any Decoder) throws {
@@ -102,6 +111,24 @@ public struct FeedbackMessage: Sendable, Hashable, Identifiable, Codable {
         ).rawValue
         // The relay reports milliseconds since the epoch, same as `RelayDevice`.
         createdAt = RelayDevice.date(fromMilliseconds: try? container.decodeIfPresent(Int.self, forKey: .createdAt))
+        // 老服务端/老镜像没有这个键：没有附件，不是坏数据（坏行自己会退默认值）。
+        attachments = (try? container.decodeIfPresent([FeedbackAttachment].self,
+                                                      forKey: .attachments)) ?? []
+    }
+
+    /// 编码时只在非空时写出：老镜像文件与会读它的旧构建都不必认识这个键。
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(messageId, forKey: .messageId)
+        try container.encode(author, forKey: .author)
+        try container.encode(body, forKey: .body)
+        try container.encodeIfPresent(format, forKey: .format)
+        if let createdAt {
+            try container.encode(Int(createdAt.timeIntervalSince1970 * 1000), forKey: .createdAt)
+        }
+        if !attachments.isEmpty {
+            try container.encode(attachments, forKey: .attachments)
+        }
     }
 }
 
@@ -264,6 +291,8 @@ public struct FeedbackNotice: Sendable, Hashable, Identifiable, Codable {
     /// The relay's read state for *this account* (019): the same notice is read or unread
     /// for every device under the account, so one phone opening it clears the other's badge.
     public let read: Bool
+    /// 这条通知带的附件（v2 摘要与详情都带；缺字段 = 没有）。
+    public let attachments: [FeedbackAttachment]
 
     public var id: String { noticeId }
 
@@ -274,17 +303,18 @@ public struct FeedbackNotice: Sendable, Hashable, Identifiable, Codable {
     public var hasBody: Bool { body != nil }
 
     public init(noticeId: String, subject: String?, body: String?, format: String? = nil,
-                createdAt: Date?, read: Bool) {
+                createdAt: Date?, read: Bool, attachments: [FeedbackAttachment] = []) {
         self.noticeId = noticeId
         self.subject = subject
         self.body = body
         self.format = format.map { FeedbackBodyFormat(wire: $0).rawValue }
         self.createdAt = createdAt
         self.read = read
+        self.attachments = attachments
     }
 
     private enum CodingKeys: String, CodingKey {
-        case noticeId, subject, body, format, createdAt, read
+        case noticeId, subject, body, format, createdAt, read, attachments
     }
 
     public init(from decoder: any Decoder) throws {
@@ -299,6 +329,23 @@ public struct FeedbackNotice: Sendable, Hashable, Identifiable, Codable {
         ).rawValue
         createdAt = RelayDevice.date(fromMilliseconds: try? container.decodeIfPresent(Int.self, forKey: .createdAt))
         read = (try? container.decodeIfPresent(Bool.self, forKey: .read)) ?? false
+        attachments = (try? container.decodeIfPresent([FeedbackAttachment].self,
+                                                      forKey: .attachments)) ?? []
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(noticeId, forKey: .noticeId)
+        try container.encodeIfPresent(subject, forKey: .subject)
+        try container.encodeIfPresent(body, forKey: .body)
+        try container.encodeIfPresent(format, forKey: .format)
+        if let createdAt {
+            try container.encode(Int(createdAt.timeIntervalSince1970 * 1000), forKey: .createdAt)
+        }
+        try container.encode(read, forKey: .read)
+        if !attachments.isEmpty {
+            try container.encode(attachments, forKey: .attachments)
+        }
     }
 }
 
@@ -385,6 +432,126 @@ public struct FeedbackPageRequest: Sendable, Hashable, Encodable {
     }
 }
 
+/// 一条附件在 wire 上的元数据（v2 的 `attachments[]`）。
+///
+/// 只列**已绑定**的附件：草稿不会出现在任何响应里。字段全部容错解码——一个坏行
+/// 不该让整条线程解不出来（与 ``FeedbackMessage`` 对未知作者的容忍同一条理由）。
+public struct FeedbackAttachment: Sendable, Hashable, Identifiable, Codable {
+    public let attachmentId: String
+    public let name: String
+    public let contentType: String
+    public let byteSize: Int
+    /// 客户端下载后**必须**用它对字节再算一遍摘要（服务端只在写入时核）。
+    public let sha256: String
+    /// 仅图片有；UI 用来预留占位尺寸，不做可信依据。
+    public let width: Int?
+    public let height: Int?
+    public let createdAt: Date?
+
+    public var id: String { attachmentId }
+
+    public init(attachmentId: String, name: String, contentType: String, byteSize: Int,
+                sha256: String, width: Int? = nil, height: Int? = nil, createdAt: Date? = nil) {
+        self.attachmentId = attachmentId
+        self.name = name
+        self.contentType = contentType
+        self.byteSize = byteSize
+        self.sha256 = sha256
+        self.width = width
+        self.height = height
+        self.createdAt = createdAt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case attachmentId, name, contentType, byteSize, sha256, width, height, createdAt
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        attachmentId = try container.decode(String.self, forKey: .attachmentId)
+        name = (try? container.decodeIfPresent(String.self, forKey: .name)) ?? ""
+        contentType = (try? container.decodeIfPresent(String.self, forKey: .contentType)) ?? ""
+        byteSize = (try? container.decodeIfPresent(Int.self, forKey: .byteSize)) ?? 0
+        sha256 = (try? container.decodeIfPresent(String.self, forKey: .sha256)) ?? ""
+        width = try? container.decodeIfPresent(Int.self, forKey: .width)
+        height = try? container.decodeIfPresent(Int.self, forKey: .height)
+        createdAt = RelayDevice.date(fromMilliseconds: try? container.decodeIfPresent(Int.self, forKey: .createdAt))
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(attachmentId, forKey: .attachmentId)
+        try container.encode(name, forKey: .name)
+        try container.encode(contentType, forKey: .contentType)
+        try container.encode(byteSize, forKey: .byteSize)
+        try container.encode(sha256, forKey: .sha256)
+        try container.encodeIfPresent(width, forKey: .width)
+        try container.encodeIfPresent(height, forKey: .height)
+        if let createdAt {
+            try container.encode(Int(createdAt.timeIntervalSince1970 * 1000), forKey: .createdAt)
+        }
+    }
+}
+
+/// 附件能力的上限（v2 `limits.attachments`）。
+///
+/// **缺省即关闭**：这个对象不存在（旧服务端、或运维方一键关停）时客户端隐藏附件
+/// 入口，绝不拿编译期常量去猜"应该支持"。`init(from:)` 要求四个字段齐全——少一个
+/// 就当整份上限不可用（``FeedbackLimits/attachments`` 为 nil），fail-closed。
+public struct FeedbackAttachmentLimits: Sendable, Hashable, Codable {
+    public let maxPerMessage: Int
+    public let maxFileBytes: Int
+    public let maxTotalBytes: Int
+    /// 允许的类型（`jpeg` / `png` / `heic` / `pdf` / `txt` / `log` / `csv` / `json`）。
+    public let types: [String]
+
+    public init(maxPerMessage: Int, maxFileBytes: Int, maxTotalBytes: Int, types: [String]) {
+        self.maxPerMessage = maxPerMessage
+        self.maxFileBytes = maxFileBytes
+        self.maxTotalBytes = maxTotalBytes
+        self.types = types
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case maxPerMessage, maxFileBytes, maxTotalBytes, types
+    }
+
+    /// 四件缺一不可：任何一个读不出来都让整个对象解码失败（→ 客户端按"关闭"处理）。
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        maxPerMessage = try container.decode(Int.self, forKey: .maxPerMessage)
+        maxFileBytes = try container.decode(Int.self, forKey: .maxFileBytes)
+        maxTotalBytes = try container.decode(Int.self, forKey: .maxTotalBytes)
+        types = (try? container.decodeIfPresent([String].self, forKey: .types)) ?? []
+    }
+}
+
+/// 一次 `begin` / `upload` 的回答：草稿的身份证。
+///
+/// `state` 是服务端的原始字符串（`pending` / `stored`）；客户端只在"能不能直接算
+/// 已上传"这一处读它，不复制服务端的状态机。
+public struct FeedbackAttachmentDraft: Sendable, Hashable {
+    public let attachmentId: String
+    public let state: String
+    public let byteSize: Int
+    public let sha256: String
+    public let createdAt: Date?
+    public let storedAt: Date?
+
+    public init(attachmentId: String, state: String, byteSize: Int, sha256: String,
+                createdAt: Date? = nil, storedAt: Date? = nil) {
+        self.attachmentId = attachmentId
+        self.state = state
+        self.byteSize = byteSize
+        self.sha256 = sha256
+        self.createdAt = createdAt
+        self.storedAt = storedAt
+    }
+
+    /// 服务端已经有这份字节：重试不必再 `upload`（`begin` 的幂等命中就告诉了我们）。
+    public var isStored: Bool { state == "stored" }
+}
+
 /// 正文长度的上限：**服务端下发**的那一份（v2 响应的 `limits`）。
 ///
 /// 客户端不再自己写死 4000：缺字段时退到 ``fallback``（与 mail 的
@@ -394,26 +561,38 @@ public struct FeedbackLimits: Sendable, Hashable, Codable {
     public let textChars: Int
     public let textBytes: Int
     public let subjectChars: Int
+    /// 附件能力：`nil` = **这个服务端不提供附件**（旧服务端 / 运维方关停）。
+    ///
+    /// 没有兜底数字：客户端不得拿编译期常量猜"应该支持"，只按这里的值决定要不要
+    /// 显示附件入口、以及个数/单文件/合计的上限。
+    public let attachments: FeedbackAttachmentLimits?
 
-    /// 编译期兜底：旧服务端不下发 `limits` 时用它。
+    /// 编译期兜底：旧服务端不下发 `limits` 时用它。附件保持关闭（`nil`）。
     public static let fallback = FeedbackLimits()
 
-    public init(textChars: Int = 4000, textBytes: Int = 12000, subjectChars: Int = 80) {
+    public init(textChars: Int = 4000, textBytes: Int = 12000, subjectChars: Int = 80,
+                attachments: FeedbackAttachmentLimits? = nil) {
         self.textChars = textChars
         self.textBytes = textBytes
         self.subjectChars = subjectChars
+        self.attachments = attachments
     }
+
+    /// 附件能力是否可用（缺这个对象就是关闭）。
+    public var supportsAttachments: Bool { attachments != nil }
 
     private enum CodingKeys: String, CodingKey {
-        case textChars, textBytes, subjectChars
+        case textChars, textBytes, subjectChars, attachments
     }
 
-    /// 每个字段单独退默认：缺一个不影响另外两个。
+    /// 每个字段单独退默认：缺一个不影响其它；附件是 fail-closed。
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         textChars = (try? container.decodeIfPresent(Int.self, forKey: .textChars)) ?? Self.fallback.textChars
         textBytes = (try? container.decodeIfPresent(Int.self, forKey: .textBytes)) ?? Self.fallback.textBytes
         subjectChars = (try? container.decodeIfPresent(Int.self, forKey: .subjectChars)) ?? Self.fallback.subjectChars
+        // 缺省、形状不对、字段不齐 → nil（关闭附件），不猜数字。
+        attachments = try? container.decodeIfPresent(FeedbackAttachmentLimits.self, forKey: .attachments)
     }
 }
 
@@ -492,15 +671,22 @@ public struct FeedbackTicket: Sendable, Hashable, Codable {
     public let threadId: String
     public let ticketKey: String
     public let createdAt: Date?
+    /// 提交成功时服务端给的那条留言 id（v4 起下发；旧服务端没有）。
+    public let messageId: String?
+    /// 本次提交真正绑定的附件条数（客户端据此核对"本地几个、服务端绑了几个"）。
+    public let attachmentsBound: Int
 
-    public init(threadId: String, ticketKey: String, createdAt: Date? = nil) {
+    public init(threadId: String, ticketKey: String, createdAt: Date? = nil,
+                messageId: String? = nil, attachmentsBound: Int = 0) {
         self.threadId = threadId
         self.ticketKey = ticketKey
         self.createdAt = createdAt
+        self.messageId = messageId
+        self.attachmentsBound = attachmentsBound
     }
 
     private enum CodingKeys: String, CodingKey {
-        case threadId, ticketKey, createdAt
+        case threadId, ticketKey, createdAt, messageId, attachmentsBound
     }
 
     public init(from decoder: any Decoder) throws {
@@ -508,6 +694,9 @@ public struct FeedbackTicket: Sendable, Hashable, Codable {
         threadId = try container.decode(String.self, forKey: .threadId)
         ticketKey = try container.decode(String.self, forKey: .ticketKey)
         createdAt = RelayDevice.date(fromMilliseconds: try? container.decodeIfPresent(Int.self, forKey: .createdAt))
+        // v4 新增：旧服务端/旧 Keychain 记录没有这两个键，都退默认。
+        messageId = try? container.decodeIfPresent(String.self, forKey: .messageId)
+        attachmentsBound = (try? container.decodeIfPresent(Int.self, forKey: .attachmentsBound)) ?? 0
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -517,6 +706,10 @@ public struct FeedbackTicket: Sendable, Hashable, Codable {
         if let createdAt {
             try container.encode(Int(createdAt.timeIntervalSince1970 * 1000), forKey: .createdAt)
         }
+        try container.encodeIfPresent(messageId, forKey: .messageId)
+        if attachmentsBound > 0 {
+            try container.encode(attachmentsBound, forKey: .attachmentsBound)
+        }
     }
 }
 
@@ -525,11 +718,15 @@ public struct FeedbackAppendResult: Sendable, Hashable {
     public let threadId: String
     public let messageId: String
     public let createdAt: Date?
+    /// 本次回信真正绑定的附件条数（v4；旧服务端视为 0）。
+    public let attachmentsBound: Int
 
-    public init(threadId: String, messageId: String, createdAt: Date?) {
+    public init(threadId: String, messageId: String, createdAt: Date?,
+                attachmentsBound: Int = 0) {
         self.threadId = threadId
         self.messageId = messageId
         self.createdAt = createdAt
+        self.attachmentsBound = attachmentsBound
     }
 }
 
@@ -547,6 +744,9 @@ public struct RelayFeedbackClient: Sendable {
     public let deviceToken: String?
     private let session: URLSession
     private let timeout: TimeInterval
+
+    /// 上传用的独立超时：8 MiB 在 1 Mbps 上要 67 s，与正文那条 20 s 分开。
+    public static let uploadTimeout: TimeInterval = 120
 
     public init(
         relayURL: URL,
@@ -600,6 +800,8 @@ public struct RelayFeedbackClient: Sendable {
             let threadId: String?
             let ticketKey: String?
             let createdAt: Int?
+            let messageId: String?
+            let attachmentsBound: Int?
             let error: DSHRPCFailure?
         }
         let title = subject?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -613,8 +815,12 @@ public struct RelayFeedbackClient: Sendable {
         guard answer.ok == true, let threadId = answer.threadId, let ticketKey = answer.ticketKey else {
             throw Self.failure(answer.error, status: 200)
         }
-        let createdAt = RelayDevice.date(fromMilliseconds: answer.createdAt)
-        return FeedbackTicket(threadId: threadId, ticketKey: ticketKey, createdAt: createdAt)
+        return FeedbackTicket(
+            threadId: threadId, ticketKey: ticketKey,
+            createdAt: RelayDevice.date(fromMilliseconds: answer.createdAt),
+            messageId: answer.messageId,
+            attachmentsBound: answer.attachmentsBound ?? 0
+        )
     }
 
     /// Everything this phone may read: threads its tickets own, plus — with a
@@ -684,6 +890,145 @@ public struct RelayFeedbackClient: Sendable {
         )
     }
 
+    // MARK: - 附件（v4：先传后发）
+
+    /// 登记一条附件草稿（`POST /feedback/attachment/begin`）。
+    ///
+    /// 一封信 = 一个 `clientRef`，附件按**稳定序号** `slot` 归集：同一 `(clientRef, slot)`
+    /// 重来且文件相同是幂等的，换文件服务端回 `409`。
+    /// 新信草稿不给 `threadId`（必须带设备令牌，服务端拒绝匿名先传）；回信草稿给
+    /// `threadId`，凭据用取件凭据（或设备绑定 / 团队侧）。
+    ///
+    /// 不传旧的 `messageId`：v4 已把"先 submit 再按 messageId 传附件"整条删掉，
+    /// 服务端收到它会直接 400。
+    public func beginAttachment(
+        clientRef: String,
+        slot: Int,
+        threadId: String? = nil,
+        ticketKey: String? = nil,
+        name: String,
+        contentType: String,
+        byteSize: Int,
+        sha256: String,
+        width: Int? = nil,
+        height: Int? = nil
+    ) async throws -> FeedbackAttachmentDraft {
+        struct Request: Encodable {
+            let clientRef: String
+            let slot: Int
+            let threadId: String?
+            let ticketKey: String?
+            let name: String
+            let contentType: String
+            let byteSize: Int
+            let sha256: String
+            let width: Int?
+            let height: Int?
+        }
+        struct Answer: Decodable {
+            let ok: Bool?
+            let attachmentId: String?
+            let state: String?
+            let byteSize: Int?
+            let sha256: String?
+            let createdAt: Int?
+            let error: DSHRPCFailure?
+        }
+        let data = try await post("/feedback/attachment/begin", Request(
+            clientRef: clientRef, slot: slot, threadId: threadId, ticketKey: ticketKey,
+            name: name, contentType: contentType, byteSize: byteSize, sha256: sha256,
+            width: width, height: height
+        ))
+        let answer = try decode(Answer.self, from: data)
+        guard answer.ok == true, let attachmentId = answer.attachmentId,
+              let state = answer.state
+        else { throw Self.failure(answer.error, status: 200) }
+        return FeedbackAttachmentDraft(
+            attachmentId: attachmentId, state: state,
+            byteSize: answer.byteSize ?? byteSize,
+            sha256: answer.sha256 ?? sha256,
+            createdAt: RelayDevice.date(fromMilliseconds: answer.createdAt)
+        )
+    }
+
+    /// 把字节传上去（`POST /feedback/attachment/upload?attachmentId=…`，原始字节流）。
+    ///
+    /// `Content-Length` 必须等于登记时的 `byteSize`（服务端按它先判）；用
+    /// `upload(for:from:)` 让 URLSession 自己写这个头，并把超时放长到
+    /// ``RelayFeedbackClient/uploadTimeout``——8 MiB 在 1 Mbps 上要 67 s，20 s 一定不够。
+    public func uploadAttachment(
+        attachmentId: String,
+        bytes: Data,
+        ticketKey: String? = nil
+    ) async throws -> FeedbackAttachmentDraft {
+        struct Answer: Decodable {
+            let ok: Bool?
+            let attachmentId: String?
+            let state: String?
+            let byteSize: Int?
+            let sha256: String?
+            let createdAt: Int?
+            let storedAt: Int?
+            let error: DSHRPCFailure?
+        }
+        let data = try await send(
+            path: "/feedback/attachment/upload",
+            query: "attachmentId=\(attachmentId)",
+            body: bytes,
+            contentType: "application/octet-stream",
+            ticketKey: ticketKey,
+            timeout: Self.uploadTimeout
+        )
+        let answer = try decode(Answer.self, from: data)
+        guard answer.ok == true, let state = answer.state else {
+            throw Self.failure(answer.error, status: 200)
+        }
+        return FeedbackAttachmentDraft(
+            attachmentId: answer.attachmentId ?? attachmentId, state: state,
+            byteSize: answer.byteSize ?? bytes.count,
+            sha256: answer.sha256 ?? "",
+            createdAt: RelayDevice.date(fromMilliseconds: answer.createdAt),
+            storedAt: RelayDevice.date(fromMilliseconds: answer.storedAt)
+        )
+    }
+
+    /// 取一条附件的字节（`POST /feedback/attachment/fetch`）。
+    ///
+    /// 没有公开 GET、没有签名 URL：取字节也要 POST + 凭据。调用方拿到之后**必须**
+    /// 用元数据里的 `sha256` 再算一遍摘要（服务端只在写入时核）。
+    public func fetchAttachment(attachmentId: String, ticketKey: String? = nil) async throws -> Data {
+        struct Request: Encodable {
+            let attachmentId: String
+            let ticketKey: String?
+        }
+        return try await post("/feedback/attachment/fetch",
+                              Request(attachmentId: attachmentId, ticketKey: ticketKey))
+    }
+
+    /// 删一条**草稿**附件（`POST /feedback/attachment/discard`）：取消/放弃一封信时
+    /// 立刻回收字节，不把配额压在 7 天 TTL 上。已发出的信服务端会回 `409`。
+    public func discardAttachment(
+        attachmentId: String,
+        clientRef: String,
+        ticketKey: String? = nil
+    ) async throws {
+        struct Request: Encodable {
+            let attachmentId: String
+            let clientRef: String
+            let ticketKey: String?
+        }
+        struct Answer: Decodable {
+            let ok: Bool?
+            let deleted: Bool?
+            let error: DSHRPCFailure?
+        }
+        let data = try await post("/feedback/attachment/discard", Request(
+            attachmentId: attachmentId, clientRef: clientRef, ticketKey: ticketKey
+        ))
+        let answer = try decode(Answer.self, from: data)
+        guard answer.ok == true else { throw Self.failure(answer.error, status: 200) }
+    }
+
     /// 取一条通知的正文（v2，按需）：列表只带摘要，打开时才走这里。
     ///
     /// 授权只按 `(accountId, noticeId)`：匿名、不是本人的投递、不存在的 id 三者
@@ -725,6 +1070,7 @@ public struct RelayFeedbackClient: Sendable {
             let threadId: String?
             let messageId: String?
             let createdAt: Int?
+            let attachmentsBound: Int?
             let error: DSHRPCFailure?
         }
         let data = try await post("/feedback/append", Request(
@@ -737,7 +1083,8 @@ public struct RelayFeedbackClient: Sendable {
         return FeedbackAppendResult(
             threadId: answer.threadId ?? threadId,
             messageId: messageId,
-            createdAt: RelayDevice.date(fromMilliseconds: answer.createdAt)
+            createdAt: RelayDevice.date(fromMilliseconds: answer.createdAt),
+            attachmentsBound: answer.attachmentsBound ?? 0
         )
     }
 
@@ -776,6 +1123,47 @@ public struct RelayFeedbackClient: Sendable {
     }
 
     // MARK: - Transport
+
+    /// 原始字节的 POST（附件上传）：请求体不走 JSON，`Content-Type` 与超时都由调用方定。
+    private func send(
+        path: String,
+        query: String?,
+        body: Data,
+        contentType: String,
+        ticketKey: String?,
+        timeout: TimeInterval
+    ) async throws -> Data {
+        var components = URLComponents(url: relayURL, resolvingAgainstBaseURL: false)
+        components?.path = LinkConfiguration.appending(path: path, to: relayURL)
+        components?.query = query
+        guard let url = components?.url else {
+            throw FeedbackClientError.network("invalid-relay-url")
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = timeout
+        request.setValue(contentType, forHTTPHeaderField: "Content-Type")
+        if let deviceToken, !deviceToken.isEmpty {
+            request.setValue("Bearer \(deviceToken)", forHTTPHeaderField: "Authorization")
+        }
+        if let ticketKey, !ticketKey.isEmpty {
+            request.setValue(ticketKey, forHTTPHeaderField: "X-Feedback-Ticket")
+        }
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.upload(for: request, from: body)
+        } catch {
+            throw FeedbackClientError.network(String(describing: error))
+        }
+        guard let http = response as? HTTPURLResponse else {
+            throw FeedbackClientError.network("invalid-relay-response")
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            throw Self.failure(Self.errorCode(in: data), status: http.statusCode)
+        }
+        return data
+    }
 
     private func post<Body: Encodable>(_ path: String, _ body: Body) async throws -> Data {
         var components = URLComponents(url: relayURL, resolvingAgainstBaseURL: false)
@@ -850,6 +1238,10 @@ public struct RelayFeedbackClient: Sendable {
             return .tooLong
         case "feedback/not-found":
             return .notFound
+        case "feedback/attachment-type":
+            return .unsupportedType
+        case "feedback/storage-full":
+            return .storageFull
         default:
             break
         }
@@ -858,8 +1250,12 @@ public struct RelayFeedbackClient: Sendable {
             return .notFound
         case 413:
             return .tooLong
+        case 415:
+            return .unsupportedType
         case 429:
             return .rateLimited
+        case 507:
+            return .storageFull
         default:
             return .server(status: status, code: code)
         }

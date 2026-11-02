@@ -100,6 +100,24 @@ public struct FeedbackLocalStore: Sendable {
         try Self.encoder.encode(mirror).write(to: url, options: .atomic)
     }
 
+    #if DEBUG
+    /// 截图钩子（`-DSHFeedbackSeedMirror <绝对路径>`，设计 M18）：把给定的镜像 JSON
+    /// 覆盖到本机镜像位置。只在 DEBUG 构建里存在——发布版没有这条路径。
+    @discardableResult
+    func seedMirror(from source: URL) -> Bool {
+        let destination = Self.mirrorURL(root: root)
+        do {
+            try FileManager.default.createDirectory(
+                at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data(contentsOf: source).write(to: destination, options: .atomic)
+            return true
+        } catch {
+            feedbackLog("seed mirror failed: \(error)")
+            return false
+        }
+    }
+    #endif
+
     /// 清镜像与已读标记，**保留** Keychain 凭据；下次拉取会重新填充。
     public func clearMirror() {
         try? FileManager.default.removeItem(at: Self.mirrorURL(root: root))
@@ -220,6 +238,36 @@ public struct FeedbackMirror: Codable, Sendable, Equatable {
         /// 丢了它 HTML 报告就会退成 Markdown 原文（FR-034 要求两种格式离线照常渲染）。
         public var format: String? = nil
         public var createdAt: Date
+        /// 这一封的附件**元数据**（只含已绑定的；字节在 `FeedbackAttachmentDisk`）。
+        /// 老镜像没有这个键 → 空数组（不是坏数据）。放在最后由 memberwise init 的顺序决定。
+        public var attachments: [FeedbackAttachment] = []
+
+        public init(messageId: String, author: String, body: String, format: String? = nil,
+                    createdAt: Date, attachments: [FeedbackAttachment] = []) {
+            self.messageId = messageId
+            self.author = author
+            self.body = body
+            self.format = format
+            self.createdAt = createdAt
+            self.attachments = attachments
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case messageId, author, body, format, createdAt, attachments
+        }
+
+        /// 手写解码：`attachments` 是后加的键，老镜像没有它时必须照常读出这一封
+        /// （合成解码器遇到缺键会整份镜像失败——那等于把用户的本机记录清空）。
+        public init(from decoder: any Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            messageId = try container.decode(String.self, forKey: .messageId)
+            author = try container.decode(String.self, forKey: .author)
+            body = try container.decode(String.self, forKey: .body)
+            format = try? container.decodeIfPresent(String.self, forKey: .format)
+            createdAt = try container.decode(Date.self, forKey: .createdAt)
+            attachments = (try? container.decodeIfPresent([FeedbackAttachment].self,
+                                                          forKey: .attachments)) ?? []
+        }
     }
 
     public struct Notice: Codable, Sendable, Equatable {
@@ -236,15 +284,19 @@ public struct FeedbackMirror: Codable, Sendable, Equatable {
         public var createdAt: Date
         /// 这份 `body` 是不是真取到过。旧镜像（有正文、没有这个键）视为已缓存。
         public var bodyCached: Bool = true
+        /// 这条通知的附件元数据（字节在 `FeedbackAttachmentDisk`）。
+        public var attachments: [FeedbackAttachment] = []
 
         public init(noticeId: String, subject: String?, body: String, format: String? = nil,
-                    createdAt: Date, bodyCached: Bool = true) {
+                    createdAt: Date, bodyCached: Bool = true,
+                    attachments: [FeedbackAttachment] = []) {
             self.noticeId = noticeId
             self.subject = subject
             self.body = body
             self.format = format
             self.createdAt = createdAt
             self.bodyCached = bodyCached
+            self.attachments = attachments
         }
 
         public init(from decoder: any Decoder) throws {
@@ -257,6 +309,8 @@ public struct FeedbackMirror: Codable, Sendable, Equatable {
             createdAt = (try? container.decode(Date.self, forKey: .createdAt)) ?? Date(timeIntervalSince1970: 0)
             // 旧镜像只有 `body`：有内容就算取过，空串当没取过。
             bodyCached = (try? container.decodeIfPresent(Bool.self, forKey: .bodyCached)) ?? !rawBody.isEmpty
+            attachments = (try? container.decodeIfPresent([FeedbackAttachment].self,
+                                                          forKey: .attachments)) ?? []
         }
     }
 
@@ -335,7 +389,8 @@ public extension FeedbackMirror.Message {
             author: message.author.rawValue,
             body: message.body,
             format: message.bodyFormat.rawValue,
-            createdAt: message.createdAt ?? Date(timeIntervalSince1970: 0)
+            createdAt: message.createdAt ?? Date(timeIntervalSince1970: 0),
+            attachments: message.attachments
         )
     }
 }
@@ -350,7 +405,8 @@ public extension FeedbackMirror.Notice {
             body: notice.body ?? "",
             format: notice.bodyFormat.rawValue,
             createdAt: notice.createdAt ?? Date(timeIntervalSince1970: 0),
-            bodyCached: notice.body != nil
+            bodyCached: notice.body != nil,
+            attachments: notice.attachments
         )
     }
 }
@@ -527,7 +583,8 @@ public extension FeedbackMirror {
                     author: FeedbackMessage.Author(rawValue: message.author) ?? .unknown,
                     body: message.body,
                     format: message.format,
-                    createdAt: message.createdAt
+                    createdAt: message.createdAt,
+                    attachments: message.attachments
                 )
             }
             return FeedbackThread(
@@ -571,7 +628,8 @@ public extension FeedbackMirror {
                            body: stored.bodyCached ? stored.body : nil,
                            format: stored.format,
                            createdAt: stored.createdAt,
-                           read: read.contains(stored.noticeId))
+                           read: read.contains(stored.noticeId),
+                           attachments: stored.attachments)
         }
         .sorted(by: Self.noticeOrder)
     }
