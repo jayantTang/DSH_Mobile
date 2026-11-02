@@ -323,9 +323,15 @@ func (s *Store) InviteTotals(ctx context.Context) (InviteTotals, error) {
 }
 
 // ListEnrollments 列出每一次成功的登记（Python list_enrollments）。
+// ListEnrollments 列出每一次登记（一台电脑建一个身份）。
+//
+// 2026-11-02 起登记不再需要邀请码，所以**事实的来源是 `agents.createdAt`**，
+// 不是邀请码的兑换时间：再按 `usedAt` 数，开放登记进来的用户会全被漏掉（当天
+// 新增 2 台电脑、日报却写「今日登记 0」）。邀请码备注仍在时一并带出，仅供追溯。
+// `usedAt` 这个字段名沿用旧的线上形状，值就是登记时刻。
 func (s *Store) ListEnrollments(ctx context.Context) ([]Enrollment, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT i.usedAt AS usedAt,
+		SELECT a.createdAt AS usedAt,
 		       i.note AS inviteNote,
 		       a.accountId AS accountId,
 		       acc.name AS accountName,
@@ -334,11 +340,10 @@ func (s *Store) ListEnrollments(ctx context.Context) ([]Enrollment, error) {
 		       a.macAddress AS macAddress,
 		       (SELECT COUNT(*) FROM devices d WHERE d.agentId = a.agentId) AS devices,
 		       (SELECT MAX(d.lastSeenAt) FROM devices d WHERE d.agentId = a.agentId) AS lastSeenAt
-		FROM invites i
-		JOIN agents a ON a.agentId = i.usedByAgentId
+		FROM agents a
+		LEFT JOIN invites i ON i.usedByAgentId = a.agentId
 		LEFT JOIN accounts acc ON acc.accountId = a.accountId
-		WHERE i.usedAt IS NOT NULL
-		ORDER BY i.usedAt DESC`)
+		ORDER BY a.createdAt DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("store: 列登记记录: %w", err)
 	}

@@ -652,3 +652,34 @@ func TestTokensAreStoredHashed(t *testing.T) {
 		t.Fatalf("邀请码哈希 = %q", codeHash)
 	}
 }
+
+// TestListEnrollmentsCountsOpenEnrollment 钉住「登记」的口径：开放登记没有邀请码，
+// 但那是真实的一次登记——按邀请码兑换时间数会把它们全部漏掉（当天新增两台电脑、
+// 日报写「今日登记 0」）。
+func TestListEnrollmentsCountsOpenEnrollment(t *testing.T) {
+	s := newRepoStore(t)
+	ctx := context.Background()
+	opened, err := s.EnrollOpen(ctx, "Open Mac", "")
+	if err != nil {
+		t.Fatalf("EnrollOpen: %v", err)
+	}
+	rows, err := s.ListEnrollments(ctx)
+	if err != nil {
+		t.Fatalf("ListEnrollments: %v", err)
+	}
+	var found *Enrollment
+	for index := range rows {
+		if rows[index].AgentID == opened.AgentID {
+			found = &rows[index]
+		}
+	}
+	if found == nil {
+		t.Fatalf("开放登记没出现在登记列表里：%+v", rows)
+	}
+	if found.UsedAt == 0 {
+		t.Fatal("登记时刻必须有值")
+	}
+	if found.InviteNote != nil {
+		t.Fatalf("开放登记不该有邀请码备注：%v", *found.InviteNote)
+	}
+}
