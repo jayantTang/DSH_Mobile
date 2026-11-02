@@ -24,9 +24,22 @@ public extension FeedbackThread {
     /// 我方的署名：团队侧固定「DSH Mobile 团队」；用户侧写成 `我 · <机型>`
     /// （机型缺失只写「我」）。已发送栏的首行与详情页里我方那封的抬头共用它。
     var myLine: String {
-        if resolvedSide == .owner { return String(localized: "DSH Mobile 团队") }
-        let model = source?.deviceModel?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return model.isEmpty ? String(localized: "我") : String(localized: "我 · \(model)")
+        resolvedSide == .owner ? FeedbackIdentity.team : FeedbackIdentity.me(deviceModel: source?.deviceModel)
+    }
+
+    /// **这一封的收发人**（唯一口径）：列表行、详情抬头、历史段都调它，不许三处各拼一次。
+    ///
+    /// 发件人按**作者**判（我方 / 对方），收件人就是对侧；`message == nil`（线程还没有信）
+    /// 时按"我这一侧最近一封"的视角给。
+    func correspondence(for message: FeedbackMessage?) -> (from: String, to: String) {
+        let mine = message.map { $0.author.rawValue == resolvedSide.author.rawValue } ?? true
+        return mine ? (myLine, counterpartyLine) : (counterpartyLine, myLine)
+    }
+
+    /// 列表行与历史段用的一行式写法（`%@ → %@`，走插值键）。
+    func correspondenceLine(for message: FeedbackMessage?) -> String {
+        let parties = correspondence(for: message)
+        return String(localized: "\(parties.from) → \(parties.to)")
     }
 
     /// 两栏行首的对方称谓：我这一侧是团队时是来信人，否则是团队。
@@ -34,6 +47,25 @@ public extension FeedbackThread {
         resolvedSide == .owner
             ? (source?.displayLine ?? String(localized: "匿名来信"))
             : String(localized: "DSH Mobile 团队")
+    }
+}
+
+/// 收发双方的固定署名（唯一口径）：列表行、卡片抬头、历史段与通知共用。
+public enum FeedbackIdentity {
+    /// 团队侧的署名。
+    public static var team: String { String(localized: "DSH Mobile 团队") }
+    /// 通知的发件人。
+    public static var service: String { String(localized: "服务通知") }
+
+    /// 本机用户的署名：`我 · <机型>`，机型缺失只写「我」。
+    public static func me(deviceModel: String?) -> String {
+        let model = deviceModel?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return model.isEmpty ? String(localized: "我") : String(localized: "我 · \(model)")
+    }
+
+    /// 通知的收发人：发件人固定「服务通知」，收件人是本机用户。
+    public static func noticeParties(deviceModel: String?) -> (from: String, to: String) {
+        (service, me(deviceModel: deviceModel))
     }
 }
 

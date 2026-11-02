@@ -313,7 +313,7 @@ public struct FeedbackThreadView: View {
                             VStack(alignment: .leading, spacing: 2) {
                                 HStack(spacing: DSHTheme.Spacing.tight) {
                                     Text(FeedbackTime.text(message.createdAt))
-                                    Text(authorLine(message, in: thread))
+                                    Text(thread.correspondenceLine(for: message))
                                 }
                                 .font(DSHTheme.Typography.micro)
                                 .foregroundStyle(DSHTheme.labelTertiary)
@@ -378,9 +378,11 @@ public struct FeedbackThreadView: View {
     @ViewBuilder
     private func letterCard(_ message: FeedbackMessage, in thread: FeedbackThread) -> some View {
         let mine = isMine(message, in: thread)
+        let parties = thread.correspondence(for: message)
         LetterCard(
             // 抬头只按作者给署名：从收件箱点开时，历史里那封我方写的也要署「我 · 机型」。
-            sender: mine ? thread.myLine : thread.counterpartyLine,
+            sender: parties.from,
+            recipient: parties.to,
             isMine: mine,
             // 主题与收件箱那一行用同一个函数（对方那封），我方那封只写用户真填过的那句。
             subject: mine ? writtenSubject(of: thread) : thread.inboxSubject(for: message),
@@ -404,6 +406,8 @@ public struct FeedbackThreadView: View {
 private struct LetterHeader: View {
 
     public let sender: String
+    /// 收件人（与发件人成对；空 = 不画这一行）。
+    public var recipient: String = ""
     public let createdAt: Date?
     /// 我方发出的用灰头像，对方用品牌色。
     public let isMine: Bool
@@ -428,6 +432,21 @@ private struct LetterHeader: View {
                 .font(DSHTheme.Typography.micro)
                 .foregroundStyle(DSHTheme.labelTertiary)
         }
+        if !recipient.isEmpty {
+            // 第二行：`收件人` + 收件人署名（13pt；owner 2026-11-02 要求收发双方都能看）。
+            HStack(alignment: .firstTextBaseline, spacing: DSHTheme.Spacing.hairline) {
+                Text("收件人")
+                    .font(DSHTheme.Typography.caption)
+                    .foregroundStyle(DSHTheme.labelTertiary)
+                Text(recipient)
+                    .font(DSHTheme.Typography.caption)
+                    .foregroundStyle(DSHTheme.labelSecondary)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .padding(.leading, 20 + DSHTheme.Spacing.hairline)
+            .accessibilityIdentifier("feedback.letter.recipient")
+        }
     }
 }
 
@@ -439,6 +458,8 @@ public struct LetterCard: View {
     @Environment(FeedbackServices.self) private var services
 
     public let sender: String
+    /// 收件人（与发件人成对，来自 `FeedbackThread.correspondence(for:)`；空 = 不画这一行）。
+    public var recipient: String = ""
     /// 我发出的用灰头像，对方用品牌色。
     public let isMine: Bool
     /// 抬头行下面那句主题；为空就不写这一行。
@@ -453,7 +474,7 @@ public struct LetterCard: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: DSHTheme.Spacing.tight) {
-            LetterHeader(sender: sender, createdAt: createdAt, isMine: isMine)
+            LetterHeader(sender: sender, recipient: recipient, createdAt: createdAt, isMine: isMine)
             if let subject, !subject.isEmpty {
                 Text(subject)
                     .font(DSHTheme.Typography.body.weight(.semibold))
@@ -532,7 +553,10 @@ public struct FeedbackNoticeView: View {
                 case .ready:
                     if let notice {
                         LetterCard(
-                            sender: String(localized: "服务通知"),
+                            sender: FeedbackIdentity.noticeParties(
+                                deviceModel: FeedbackCenter.technicalInfo.deviceModel).from,
+                            recipient: FeedbackIdentity.noticeParties(
+                                deviceModel: FeedbackCenter.technicalInfo.deviceModel).to,
                             isMine: false,
                             subject: FeedbackSubject.line(subject: notice.subject, body: notice.body,
                                                           format: notice.bodyFormat),
