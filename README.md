@@ -17,9 +17,6 @@
 
 ![App Store 宣传图：工具调用过程、扫码配对、图片预览与文件回传](docs/artifacts/demo/appstore/overview.jpg)
 
-> 配图为 App Store 宣传图 4 张（共 8 张），取自同一组合成会话：agent 输出为真实输出，项目虚构，
-> `relay.example.com` 为占位域名。素材见 [`docs/artifacts/demo/`](docs/artifacts/demo)。
-
 ## 状态与兼容性
 
 | 组件 | 当前版本 | 分发方式 |
