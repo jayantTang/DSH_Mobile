@@ -9,6 +9,8 @@ while you are away from the desk.
 The phone talks to your computer through a small relay. Nothing about your code or conversations is
 stored on the relay — it forwards frames and keeps daily byte counters.
 
+![DSH Mobile demo: register the computer, pair by scanning a QR code, then follow the session, files, git changes and commit history](docs/artifacts/demo/dsh-mobile-demo.gif)
+
 ## What you need
 
 1. **DSH on a computer** (the desktop half of the product). Sessions live there; the phone is a

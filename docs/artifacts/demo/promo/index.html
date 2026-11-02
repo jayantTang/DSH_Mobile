@@ -1,0 +1,403 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>DSH Mobile — promo</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="stage">
+
+  <!-- backdrop -->
+  <div class="bg">
+    <div class="bg-base"></div>
+    <div class="aurora a1"></div>
+    <div class="aurora a2"></div>
+    <div class="aurora a3"></div>
+    <div class="grid"></div>
+    <div class="bg-fade"></div>
+  </div>
+
+  <!-- desktop DSH -->
+  <div id="desktop">
+    <div class="dw" id="dw">
+      <div class="dw-bar">
+        <span class="tl r"></span><span class="tl y"></span><span class="tl g"></span>
+        <span class="dw-title">DeepSeek Harness</span>
+        <span class="dw-pin">▢</span>
+      </div>
+      <div class="dw-body">
+        <aside class="dw-side">
+          <div class="dw-brand"><span class="dw-logo">◈</span><b>deepseek</b><i>HARNESS</i></div>
+          <div class="dw-new">＋ New Session</div>
+          <div class="dw-nav"><span>✦ Plugins</span><span>◷ Automation tasks</span><span>⌘ More</span></div>
+          <div class="dw-sec"><span>Workspaces</span><span class="dw-sec-r">⌕ ⧉</span></div>
+          <div class="dw-ws"><span class="f"></span>feeds</div>
+          <div class="dw-ws"><span class="f"></span>dsh-mobile-demo</div>
+          <div class="dw-ws"><span class="f"></span>relay-go</div>
+          <div class="dw-sess on"><span class="c">●</span>跑一遍测试</div>
+          <div class="dw-sess"><span class="c"></span>对齐文案</div>
+          <div class="dw-sess"><span class="c"></span>修重复行</div>
+          <div class="dw-conn" id="dwConn"><span class="dw-dot" id="dwDot"></span>移动端连接</div>
+          <div class="dw-more">⋯ More</div>
+        </aside>
+        <main class="dw-main">
+          <div class="dw-chat">
+            <div class="dw-chat-title">dsh-mobile-demo</div>
+            <div class="dw-bubble u">工作区里那份 export-2026-10.csv，帮我确认一下有没有重复行。</div>
+            <div class="dw-bubble a">好，先读文件。</div>
+            <div class="dw-bubble a dim">共 12,480 行，重复 36 行。</div>
+          </div>
+          <div class="dw-composer"><span class="dw-input">给 DSH 发消息…</span><span class="dw-chip">DeepSeek-V4.1-Flash</span><span class="dw-send">↑</span></div>
+          <div class="dw-scrim" id="dwScrim"></div>
+          <div class="dw-modal" id="dwModal">
+            <img class="panel-img" id="dwmUnreg" src="assets/panel-unreg.png" alt="">
+            <img class="panel-img reg" id="dwmReg" src="assets/panel-reg.png" alt="">
+            <div class="panel-spin" id="panelSpin"><i></i>正在登记…</div>
+            <div class="panel-hit" id="dwRegBtn"></div>
+          </div>
+        </main>
+      </div>
+    </div>
+    <svg id="cursor" width="22" height="26" viewBox="0 0 22 26"><path d="M3 2l15 11-6.6 1.2L14.8 21l-3.2 1.5-3.4-7.2L3 20z" fill="#fff" stroke="#111418" stroke-width="1.3" stroke-linejoin="round"/></svg>
+    <div id="clickring"></div>
+  </div>
+
+  <!-- phone -->
+  <div id="camera-mask">
+  <div id="camera">
+    <div id="float">
+      <div id="device">
+        <div class="side-btn l1"></div>
+        <div class="side-btn l2"></div>
+        <div class="side-btn r1"></div>
+        <div class="frame">
+          <div class="clip">
+            <div id="screen">
+
+              <!-- status bar -->
+              <div id="statusbar">
+                <div class="sb-time">9:41</div>
+                <div class="sb-right">
+                  <svg class="sb-ico" width="19" height="12" viewBox="0 0 19 12"><g fill="currentColor"><rect x="0" y="8" width="3" height="4" rx="1"/><rect x="5" y="6" width="3" height="6" rx="1"/><rect x="10" y="3.5" width="3" height="8.5" rx="1"/><rect x="15" y="1" width="3" height="11" rx="1"/></g></svg>
+                  <svg class="sb-ico" width="17" height="12" viewBox="0 0 17 12"><g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M1.2 4.1a10 10 0 0 1 14.6 0"/><path d="M4 7a6.2 6.2 0 0 1 9 0"/><path d="M6.9 9.9a2.3 2.3 0 0 1 3.2 0"/></g></svg>
+                  <svg class="sb-ico" width="26" height="13" viewBox="0 0 26 13"><rect x="0.6" y="0.6" width="21" height="11.8" rx="3.4" fill="none" stroke="currentColor" stroke-opacity=".4" stroke-width="1.2"/><rect x="2.4" y="2.4" width="16" height="8.2" rx="2" fill="#33C759"/><path d="M23.4 4.3v4.4a2.6 2.6 0 0 0 0-4.4z" fill="currentColor" fill-opacity=".45"/><path d="M17.2 3.6l-2 6.1h-1.6l2-6.1z" fill="#fff" fill-opacity=".0"/></svg>
+                </div>
+              </div>
+
+              <!-- scanner (full-bleed, above app) -->
+              <div class="scrim" id="scrim"></div>
+              <div id="scanner">
+                <div class="cam">
+                  <div class="cam-bokeh b1"></div>
+                  <div class="cam-bokeh b2"></div>
+                  <div class="cam-bokeh b3"></div>
+                  <div class="cam-laptop">
+                    <div class="cam-laptop-screen">
+                      <div class="cam-code"></div>
+                    </div>
+                  </div>
+                  <div class="cam-dim"></div>
+                </div>
+                <div class="scan-top">
+                  <div class="scan-x">✕</div>
+                  <div class="scan-title">扫码配对</div>
+                  <div class="scan-torch">☀</div>
+                </div>
+                <div class="scan-body">
+                  <div class="finder" id="finder">
+                    <div class="qr-card">
+                      <img src="assets/qr.png" alt="">
+                    </div>
+                    <div class="corner c1"></div><div class="corner c2"></div>
+                    <div class="corner c3"></div><div class="corner c4"></div>
+                    <div id="scanbeam"></div>
+                  </div>
+                  <div class="scan-caption">对准电脑屏幕上的二维码</div>
+                  <div class="scan-sub">地址与配对码会自动填入</div>
+                </div>
+                <div class="scan-flash" id="flash"></div>
+                <div class="scan-ok" id="scanok"><span class="ok-dot">✓</span>已识别 · relay.example.com</div>
+              </div>
+
+              <!-- app: pairing -->
+              <div id="view-pair" class="view">
+                <div class="pair-wrap">
+                  <div class="pair-top">
+                    <div class="pair-done">完成</div>
+                  </div>
+                  <h1 class="pair-title">连接 DSH</h1>
+
+                  <div class="brandline">
+                    <img src="assets/app-icon.png" class="brandmark">
+                    <div class="brandword">DSH Mobile</div>
+                  </div>
+                  <div class="brandsub">连接你电脑上的 DSH，随时查看进度、回应提问、继续会话。</div>
+
+                  <div class="field-label">已保存的连接</div>
+                  <div class="saved">
+                    <div class="saved-ico">
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#4D6BFE" stroke-width="1.7" stroke-linecap="round"><path d="M6.5 18a4.5 4.5 0 0 1-.6-8.96A6 6 0 0 1 17.5 8.6 4.2 4.2 0 0 1 17.8 17H17"/></svg>
+                    </div>
+                    <div class="saved-text">
+                      <div class="saved-name">My Mac</div>
+                      <div class="saved-meta">relay.example.com · 中转</div>
+                    </div>
+                    <div class="saved-act" id="savedAct">连接</div>
+                    <div class="saved-del">⌫</div>
+                  </div>
+
+                  <div class="scanbtn" id="scanbtn">
+                    <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="#0F1115" stroke-width="1.7" stroke-linecap="round"><path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2"/><path d="M4 12h16"/></svg>
+                    <span>扫码配对</span>
+                  </div>
+
+                  <div class="field-label">中转服务器</div>
+                  <div class="input" id="inputServer"><span>https://relay.example.com/dsh-link</span></div>
+
+                  <div class="field-label">配对码</div>
+                  <div class="input" id="inputCode"><span class="ph" id="codePh">配对码</span><span class="val" id="codeVal">4F7K-2M9Q</span></div>
+
+                  <div class="pair-hint">在电脑端打开 <b>/mobile-link/qr</b> 显示二维码，或用上面的「扫码配对」扫它。</div>
+
+                  <div class="primary" id="pairCta">配对并连接</div>
+                  <div class="pair-foot">中转需要电脑侧连接器在线。对话经中转转发，不在服务器落盘。</div>
+                </div>
+
+                <!-- toast -->
+                <div class="toast" id="toast">
+                  <span class="toast-dot"></span>已连接 · My Mac
+                </div>
+              </div>
+
+              <!-- app: chat -->
+              <div id="view-chat" class="view view-push">
+                <div class="navbar">
+                  <div class="nav-back">‹</div>
+                  <div class="nav-title">
+                    <div class="nav-h1">dsh-mobile-demo</div>
+                    <div class="nav-sub"><i class="dot-live"></i>已连接 · 中转</div>
+                  </div>
+                  <div class="nav-actions">
+                    <span class="nav-ico" id="chatFolder"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4D6BFE" stroke-width="1.9" stroke-linejoin="round"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5h3.2l1.8 2h8A2.5 2.5 0 0 1 21 9.5v7A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5z"/></svg></span>
+                    <span class="nav-ico">⋯</span>
+                  </div>
+                </div>
+
+                <div class="chat-body">
+                  <div class="msg user" id="m1">工作区里那份 export-2026-10.csv，帮我确认一下有没有重复行。</div>
+                  <div class="msg asst" id="m2">好，先读文件。</div>
+
+                  <div class="toolcard" id="tool1">
+                    <div class="tc-head">
+                      <span class="tc-ico">▚</span>
+                      <span class="tc-name">bash</span>
+                      <span class="tc-state" id="tcState">运行中</span>
+                      <span class="tc-spin" id="tcSpin"></span>
+                      <span class="tc-check" id="tcCheck">✓</span>
+                    </div>
+                    <div class="tc-code">wc -l export-2026-10.csv &amp;&amp; head -n 2 export-2026-10.csv</div>
+                    <div class="tc-foot" id="tcFoot"><span class="done-dot">✓</span>已完成 · 1.4s</div>
+                  </div>
+
+                  <div class="resultchip" id="resultChip">
+                    <span class="rc-ico"></span>
+                    <div class="rc-main">
+                      <div class="rc-t">export-2026-10.csv</div>
+                      <div class="rc-m">12,480 行 · 重复 36 行</div>
+                    </div>
+                    <span class="rc-check">✓</span>
+                  </div>
+
+                  <div class="msg asst" id="m3"><span id="m3text"></span><span class="caret" id="m3caret"></span></div>
+                  <div class="statusline" id="statusline"><span class="sl-line"></span><span class="sl-tag"><span class="done-dot">✓</span>已完成 · 6.2s</span><span class="sl-line"></span></div>
+                </div>
+
+                <div class="composer">
+                  <div class="comp-field">给 DSH 发消息…</div>
+                  <div class="comp-plus">＋</div>
+                  <div class="comp-send">↑</div>
+                </div>
+              </div>
+
+              <!-- app: files / git -->
+              <div id="view-files" class="view view-push">
+                <div class="navbar">
+                  <div class="nav-back">‹</div>
+                  <div class="nav-title"><div class="nav-h1">工作区文件</div></div>
+                  <div class="nav-actions"><span class="nav-ico">⟳</span></div>
+                </div>
+
+                <div class="seg" id="seg">
+                  <div class="seg-ind" id="segInd"></div>
+                  <div class="seg-item on" id="segBrowse">浏览</div>
+                  <div class="seg-item" id="segChanges">变更</div>
+                  <div class="seg-item" id="segHistory">历史</div>
+                </div>
+
+                <div class="search"><span class="mag">⌕</span><span id="searchPh">搜索当前目录</span></div>
+                <div class="crumb" id="crumb">dsh-mobile-demo</div>
+
+                <div class="pane" id="paneBrowse">
+                  <div class="row file" data-i="0">
+                    <span class="fico fold"></span><span class="fname">bin</span><span class="fsize"></span><span class="chev">›</span>
+                  </div>
+                  <div class="row file" data-i="1">
+                    <span class="fico fold"></span><span class="fname">src</span><span class="fsize"></span><span class="chev">›</span>
+                  </div>
+                  <div class="row file" data-i="2">
+                    <span class="fico fold"></span><span class="fname">test</span><span class="fsize"></span><span class="chev">›</span>
+                  </div>
+                  <div class="row file" data-i="3">
+                    <span class="fico file"></span><span class="fname">chart.png</span><span class="fsize">23.6 KB</span><span class="chev">›</span>
+                  </div>
+                  <div class="row file csv" data-i="4" id="csvRow">
+                    <span class="fico file"></span><span class="fname">export-2026-10.csv</span><span class="fsize">59.1 MB</span><span class="chev">›</span>
+                  </div>
+                  <div class="row file" data-i="5">
+                    <span class="fico file"></span><span class="fname">package.json</span><span class="fsize">129 B</span><span class="chev">›</span>
+                  </div>
+                  <div class="row file" data-i="6">
+                    <span class="fico file"></span><span class="fname">README.md</span><span class="fsize">248 B</span><span class="chev">›</span>
+                  </div>
+                </div>
+
+                <div class="pane" id="paneChanges">
+                  <div class="branch">
+                    <span class="br-ico">⑂</span><span class="br-name">main</span>
+                    <span class="br-count" id="brCount">9 处改动</span>
+                  </div>
+                  <div class="group"><span class="g-f">▸</span><span class="g-n">仓库根目录</span><span class="g-c">3</span></div>
+                  <div class="crow"><span class="st m">已修改</span><span class="cn">README.md</span><span class="chev">›</span></div>
+                  <div class="crow"><span class="st a">未跟踪</span><span class="cn">assets-dump.bin</span><span class="chev">›</span></div>
+                  <div class="crow"><span class="st m">已修改</span><span class="cn">notes.txt</span><span class="chev">›</span></div>
+                  <div class="group"><span class="g-f">▸</span><span class="g-n">docs</span><span class="g-c">1</span></div>
+                  <div class="crow"><span class="st r">已重命名</span><span class="cn">getting-started.md<span class="orig">原路径 docs/usage.md</span></span><span class="chev">›</span></div>
+                  <div class="group"><span class="g-f">▸</span><span class="g-n">src/api</span><span class="g-c">3</span></div>
+                  <div class="crow"><span class="st d">已删除</span><span class="cn">cache.js</span><span class="chev">›</span></div>
+                  <div class="crow" id="clientRow"><span class="st m">已修改</span><span class="cn">client.js</span><span class="chev">›</span></div>
+                  <div class="crow"><span class="st a">未跟踪</span><span class="cn">retry.js</span><span class="chev">›</span></div>
+                  <div class="group"><span class="g-f">▸</span><span class="g-n">src/ui</span><span class="g-c">1</span></div>
+                  <div class="crow"><span class="st m">已修改</span><span class="cn">board.js</span><span class="chev">›</span></div>
+                  <div class="group"><span class="g-f">▸</span><span class="g-n">test</span><span class="g-c">1</span></div>
+                  <div class="crow"><span class="st m">已修改</span><span class="cn">board.test.js</span><span class="chev">›</span></div>
+                </div>
+
+                <div class="pane" id="paneHistory">
+                  <div class="branch"><span class="br-ico">⑂</span><span class="br-name">main</span><span class="br-count">12 次提交</span></div>
+                  <div class="commit"><span class="ch-hash">a1c4f2e</span><div class="ch-main"><div class="ch-msg">修复导出重复行</div><div class="ch-meta">My Mac · 2 小时前</div></div><span class="chev">›</span></div>
+                  <div class="commit"><span class="ch-hash">7d9b310</span><div class="ch-main"><div class="ch-msg">过滤已读源</div><div class="ch-meta">My Mac · 昨天</div></div><span class="chev">›</span></div>
+                  <div class="commit"><span class="ch-hash">3f0c8aa</span><div class="ch-main"><div class="ch-msg">合并同标题条目</div><div class="ch-meta">My Mac · 10 月 28 日</div></div><span class="chev">›</span></div>
+                  <div class="commit"><span class="ch-hash">c92e771</span><div class="ch-main"><div class="ch-msg">初版 RSS 抓取</div><div class="ch-meta">My Mac · 10 月 24 日</div></div><span class="chev">›</span></div>
+                  <div class="commit"><span class="ch-hash">5b81d04</span><div class="ch-main"><div class="ch-msg">建立测试夹具</div><div class="ch-meta">My Mac · 10 月 21 日</div></div><span class="chev">›</span></div>
+                </div>
+
+                <!-- download sheet -->
+                <div class="sheet" id="dlSheet">
+                  <div class="grab"></div>
+                  <div class="sheet-title">export-2026-10.csv</div>
+                  <div class="sheet-sub">工作区 · 59.1 MB</div>
+                  <div class="bar"><div class="bar-fill" id="dlFill"></div></div>
+                  <div class="dl-line"><span id="dlBytes">0 MB / 59.1 MB</span><span id="dlPct">0%</span></div>
+                  <div class="dl-done" id="dlDone"><span class="done-dot">✓</span>已下载 59.1 MB · 15.2 秒</div>
+                  <div class="sheet-btn" id="dlBtn">在「文件」中打开</div>
+                </div>
+
+                <!-- diff sheet -->
+                <div class="sheet diff" id="diffSheet">
+                  <div class="grab"></div>
+                  <div class="diff-head"><span class="diff-name">client.js</span><span class="diff-tag">未暂存</span></div>
+                  <div class="diff-meta">src/api · +3 −2</div>
+                  <div class="diff-body">
+                    <div class="dline ctx">@@ -12,7 +12,9 @@</div>
+                    <div class="dline del">-  const rows = await fetchRows(since);</div>
+                    <div class="dline add">+  const rows = await fetchRows(since, { dedupe: true });</div>
+                    <div class="dline add">+  const unique = rows.filter(isUnique);</div>
+                    <div class="dline ctx">   return rows.map(toCsv);</div>
+                    <div class="dline del">-  // TODO: dedupe</div>
+                    <div class="dline add">+  return unique.map(toCsv);</div>
+                  </div>
+                  <div class="diff-foot"><span>只读预览</span><span>工作区 · main</span></div>
+                </div>
+              </div>
+
+              <!-- tap ripples -->
+              <div class="ripple" id="rip1"></div>
+              <div class="ripple" id="rip2"></div>
+              <div class="ripple" id="rip3"></div>
+              <div class="ripple" id="rip4"></div>
+
+              <div class="home-bar"></div>
+              <div class="island"></div>
+              <div class="reflect"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  </div>
+
+  <!-- act 1 header + callouts -->
+  <div id="actHead">
+    <div class="ah-eyebrow"><span>01</span>电脑端</div>
+    <div class="ah-title">先在电脑上登记</div>
+    <div class="ah-sub">点开左下角的「移动端连接」。</div>
+  </div>
+  <div id="actAnnots">
+    <div class="an" data-a="0"><span class="an-n">01</span><div><b>中转服务器</b><i>relay.example.com</i></div></div>
+    <div class="an" data-a="1"><span class="an-n">02</span><div><b>配对码</b><i>8ECW-PPC5</i></div></div>
+    <div class="an" data-a="2"><span class="an-n">03</span><div><b>二维码</b><i>手机扫码即连</i></div></div>
+  </div>
+
+  <!-- left copy -->
+  <div id="left">
+    <div class="eyebrow"><span class="ey-dot"></span>DSH MOBILE · iOS</div>
+
+    <div class="heads">
+      <div class="head" data-h="0"><span>先在电脑上</span>登记</div>
+      <div class="head" data-h="1"><span>扫一下</span><br>就连上</div>
+      <div class="head" data-h="2"><span>会话</span>在手上继续</div>
+      <div class="head" data-h="3"><span>远程文件</span><br>随手取</div>
+      <div class="head" data-h="4"><span>改动</span>一眼看清</div>
+      <div class="head" data-h="5"><span>提交</span>历史</div>
+    </div>
+
+    <div class="subs">
+      <div class="sub" data-s="0">打开左下角的「移动端连接」，点一下登记。</div>
+      <div class="sub" data-s="1">电脑不用公网 IP，也不用装 VPN。</div>
+      <div class="sub" data-s="2">电脑锁屏，任务照常跑；提问在手机上答。</div>
+      <div class="sub" data-s="3">浏览工作区，预览任意文件，一键下载。</div>
+      <div class="sub" data-s="4">未提交的修改、重命名与新增，全部列出来。</div>
+      <div class="sub" data-s="5">每次提交改了什么，顺着记录回看。</div>
+    </div>
+
+    <!-- steps -->
+    <div id="steps">
+      <div class="step" data-st="1"><span class="st-n">01</span><span class="st-t">扫码配对</span><span class="st-d">无需公网 IP</span></div>
+      <div class="step" data-st="2"><span class="st-n">02</span><span class="st-t">会话同步</span><span class="st-d">消息与工具调用</span></div>
+      <div class="step" data-st="3"><span class="st-n">03</span><span class="st-t">远程文件</span><span class="st-d">浏览、预览、下载</span></div>
+      <div class="step" data-st="4"><span class="st-n">04</span><span class="st-t">改动清单</span><span class="st-d">未提交的 git 状态</span></div>
+      <div class="step" data-st="5"><span class="st-n">05</span><span class="st-t">提交历史</span><span class="st-d">按时间回看</span></div>
+      <div class="step-line"><div class="step-fill" id="stepFill"></div></div>
+    </div>
+
+    <!-- end -->
+    <div id="endcard">
+      <div class="end-brand">
+        <img src="assets/app-icon.png" class="end-icon">
+        <div class="end-word">DSH Mobile</div>
+      </div>
+      <div class="end-tag">把电脑上的 DSH，装进 iPhone。</div>
+      <div class="end-pills"><span>iOS 17+</span><span>原生 SwiftUI</span><span>MIT</span></div>
+      <div class="end-url">github.com/jayantTang/DSH_Mobile</div>
+    </div>
+  </div>
+
+  <div id="vignette"></div>
+  <div id="fade"></div>
+</div>
+
+<script src="scene.js"></script>
+</body>
+</html>

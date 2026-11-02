@@ -1,0 +1,12 @@
+{
+  "name": "dsh-mobile-promo",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "frames": "node render.mjs --fps 24",
+    "encode": "./encode.sh"
+  },
+  "devDependencies": {
+    "playwright": "^1.63.0"
+  }
+}

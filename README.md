@@ -15,7 +15,7 @@
 客户端、电脑侧连接器、可自建的公网中转。手机经中转连接电脑上的 DSH host，会话与消息流与电脑端
 一致；任务在电脑锁屏后继续运行，挂起的提问可在手机上作答。电脑无需公网 IP，也无需 VPN。
 
-![App Store 宣传图：工具调用过程、扫码配对、图片预览与文件回传](docs/artifacts/demo/appstore/overview.jpg)
+![DSH Mobile 演示：电脑端登记、手机扫码配对，查看会话、远程文件、git 改动与提交历史](docs/artifacts/demo/dsh-mobile-demo.gif)
 
 ## 状态与兼容性
 
