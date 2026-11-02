@@ -169,8 +169,11 @@ type Link struct {
 	// remote 是 socket 对端地址（由 wsapi 在升级成功后写入；单测的桩 Sink 没有
 	// 地址，读出来是空串）。lastError 是这条连接上最后一次传输错误，回答
 	// "它为什么断了"；两者都由读/写循环写，诊断面只读。
-	remote    atomic.Pointer[string]
-	lastError atomic.Pointer[string]
+	remote atomic.Pointer[string]
+	// clientAddr 是前置后面的真实客户端地址（由 wsapi 从请求头取）；socket 对端
+	// 在部署里永远是前置的回环地址，断开告警只有这一份才能看出是哪个网络。
+	clientAddr atomic.Pointer[string]
+	lastError  atomic.Pointer[string]
 
 	// controlDrops 是这条连接被丢弃的可丢控制帧数（/debug/conns 的逐连接计数）；
 	// 进程级总数在 hub.controlDrops，两者同源：都来自 noteControlDrop。
@@ -496,6 +499,20 @@ func (l *Link) Remote() string {
 	return ""
 }
 
+// SetClientAddr 记下前置后面的真实客户端地址（取值规则只有 httpapi.ClientIdentifier 一份）。
+func (l *Link) SetClientAddr(addr string) {
+	text := strings.TrimSpace(addr)
+	l.clientAddr.Store(&text)
+}
+
+// ClientAddr 是真实客户端地址；没设置过时是空串。
+func (l *Link) ClientAddr() string {
+	if pointer := l.clientAddr.Load(); pointer != nil {
+		return *pointer
+	}
+	return ""
+}
+
 // NoteError 记下这条连接上最后一次传输错误（正常关闭不是错误，不要记）。
 func (l *Link) NoteError(err error) {
 	if err == nil {
@@ -524,6 +541,19 @@ func (l *Link) ControlDrops() int64 { return l.controlDrops.Load() }
 
 // QueueDepth 是队列里还没写出去的帧数（流式 + 控制；诊断面用）。
 func (l *Link) QueueDepth() int { return l.Pending() }
+
+// NoteCloseCause 记下"这条连接被谁、以什么原因关闭"（第一个说的算）。
+//
+// 三个写入方共用这一份：连接器送来的关闭帧、中转自己的关闭请求、心跳看门狗判死。
+// 断开告警与 /debug/conns 都从这里读，不各自猜一遍。
+func (l *Link) NoteCloseCause(code int, reason string) {
+	if code == 0 {
+		code = 1001
+	}
+	text := truncateReason(reason)
+	l.closeCode.CompareAndSwap(0, int32(code))
+	l.closeReason.CompareAndSwap(nil, &text)
+}
 
 // CloseInfo 返回这条连接被要求的关闭码与原因；还没要求关闭时是 (0, "")。
 func (l *Link) CloseInfo() (int, string) {
@@ -654,11 +684,9 @@ func (l *Link) RequestClose(code int, reason string) {
 	if code == 0 {
 		code = 1001
 	}
-	reason = truncateReason(reason)
 	// 关闭原因属于"谁先要求关闭谁说了算"：心跳超时与顶替可能同时发生，
 	// 日志要记的是先到达的那个决定，而不是最后覆盖的那个。
-	l.closeCode.CompareAndSwap(0, int32(code))
-	l.closeReason.CompareAndSwap(nil, &reason)
+	l.NoteCloseCause(code, reason)
 	if !l.closing.CompareAndSwap(false, true) {
 		return
 	}
@@ -880,6 +908,9 @@ func (l *Link) watchWebSocketHeartbeat(ctx context.Context) {
 // 这里同时取消写循环/看门狗自己的上下文，让 Done() 准时关闭，读循环随后从
 // socket 错误里收尾。
 func (l *Link) abort(code int, reason string) {
+	// 先记原因再关：读循环随后只会看到"use of closed network connection"，
+	// 真正的死因（心跳超时）只有这里知道。
+	l.NoteCloseCause(code, reason)
 	l.closing.Store(true)
 	if l.stopLoop != nil {
 		l.stopLoop()

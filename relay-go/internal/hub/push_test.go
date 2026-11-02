@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/dlp"
+	"github.com/jayantTang/DSH_Mobile/relay-go/internal/monitor"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/presence"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/push"
 )
@@ -130,18 +131,13 @@ func (f *fakePusher) setResultFor(resultFor func(push.Target) push.Result) {
 // fakeReporter 记录 agent 断开事件。
 type fakeReporter struct {
 	mu    sync.Mutex
-	calls []disconnectCall
+	calls []monitor.AgentDisconnect
 }
 
-type disconnectCall struct {
-	agentID string
-	name    string
-}
-
-func (r *fakeReporter) NoteAgentDisconnect(agentID, name string) {
+func (r *fakeReporter) NoteAgentDisconnect(disconnect monitor.AgentDisconnect) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.calls = append(r.calls, disconnectCall{agentID: agentID, name: name})
+	r.calls = append(r.calls, disconnect)
 }
 
 // NoteControlDrop 是 IncidentReporter 的第二条方法；推送用例不关心控制帧丢弃。
@@ -355,6 +351,8 @@ func TestAnAgentDisconnectIsReportedToTheMonitor(t *testing.T) {
 	f := newFixture(t, Options{Monitor: reporter})
 	owner := f.newTenant("flapper")
 	agentLink, _ := f.attachAgent(owner)
+	agentLink.SetClientAddr("203.0.113.7")
+	agentLink.NoteCloseCause(1000, "reconnecting")
 	f.hub.DetachAgent(agentLink)
 	if reporter.count() != 1 {
 		t.Fatalf("断开上报次数 = %d", reporter.count())
@@ -362,8 +360,34 @@ func TestAnAgentDisconnectIsReportedToTheMonitor(t *testing.T) {
 	reporter.mu.Lock()
 	call := reporter.calls[0]
 	reporter.mu.Unlock()
-	if call.agentID != owner.agent.AgentID || call.name != owner.agent.Name {
+	if call.AgentID != owner.agent.AgentID || call.Name != owner.agent.Name {
 		t.Fatalf("上报 = %+v", call)
+	}
+	if call.CloseCode != 1000 {
+		t.Fatalf("关闭码应保留第一个写入的原因：%+v", call)
+	}
+	if call.ClientIP != "203.0.113.7" || call.CloseReason != "reconnecting" {
+		t.Fatalf("客户端地址与关闭原因没有带到告警：%+v", call)
+	}
+}
+
+// TestADisconnectKeepsTheCauseThatWasRecordedFirst 钉住"谁先关谁说了算"：
+// 心跳判死在拆除之前已经记下原因，DetachAgent 的兜底不能把它盖成 "agent disconnected"。
+func TestADisconnectKeepsTheCauseThatWasRecordedFirst(t *testing.T) {
+	reporter := &fakeReporter{}
+	f := newFixture(t, Options{Monitor: reporter})
+	owner := f.newTenant("heartbeat")
+	agentLink, _ := f.attachAgent(owner)
+	agentLink.RequestClose(1001, "heartbeat timeout")
+	f.hub.DetachAgent(agentLink)
+	if reporter.count() != 1 {
+		t.Fatalf("上报次数 = %d", reporter.count())
+	}
+	reporter.mu.Lock()
+	call := reporter.calls[0]
+	reporter.mu.Unlock()
+	if call.CloseCode != 1001 || call.CloseReason != "heartbeat timeout" {
+		t.Fatalf("关闭原因被覆盖：%+v", call)
 	}
 }
 

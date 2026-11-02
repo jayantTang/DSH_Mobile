@@ -10,10 +10,13 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -40,7 +43,9 @@ const readTimeout = 2 * time.Second
 // 与 cmd/dsh-relay/main.go 的装配顺序一致（步骤 1.4 之后 httpapi 不再替它们 new）。
 func newHTTPHandler(st *store.Store, live *hub.Hub, logger *slog.Logger,
 	incidents *monitor.Monitor, limits hub.Limits) http.Handler {
-	wsOptions := wsapi.Options{Hub: live, Store: st, Logger: logger}
+	wsOptions := wsapi.Options{
+		Hub: live, Store: st, Logger: logger, ClientID: httpapi.ClientIdentifier,
+	}
 	if incidents != nil {
 		// 只注入非 nil，避免把 typed nil 放进接口字段。
 		wsOptions.Monitor = incidents
@@ -89,6 +94,19 @@ func newRelayWithPresence(t *testing.T, mutate func(*hub.Limits),
 func newRelayWithOptions(t *testing.T, mutate func(*hub.Limits),
 	windows presence.Options, pushSender hub.PushSender) *relayFixture {
 	t.Helper()
+	return newRelayFull(t, mutate, windows, pushSender, nil)
+}
+
+// newRelayWithMonitor 是带监控器的完整版本：断开告警写到临时目录，供端到端用例读。
+func newRelayWithMonitor(t *testing.T, incidents *monitor.Monitor) *relayFixture {
+	t.Helper()
+	return newRelayFull(t, nil, presence.Options{}, nil, incidents)
+}
+
+func newRelayFull(t *testing.T, mutate func(*hub.Limits),
+	windows presence.Options, pushSender hub.PushSender,
+	incidents *monitor.Monitor) *relayFixture {
+	t.Helper()
 	st, err := store.Open(t.TempDir() + "/state.db")
 	if err != nil {
 		t.Fatalf("打开临时库: %v", err)
@@ -103,8 +121,9 @@ func newRelayWithOptions(t *testing.T, mutate func(*hub.Limits),
 		Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Presence: windows,
 		Push:     pushSender,
+		Monitor:  incidents,
 	})
-	server := httptest.NewServer(newHTTPHandler(st, live, nil, nil, limits))
+	server := httptest.NewServer(newHTTPHandler(st, live, nil, incidents, limits))
 
 	ctx := context.Background()
 	account, err := st.CreateAccount(ctx, "WS-mac")
@@ -632,6 +651,76 @@ func TestTheDeviceLimitIsRefusedOnTheWire(t *testing.T) {
 	}
 	if code := readClose(t, refused); code != dlp.CloseDeviceLimit {
 		t.Fatalf("关闭码 = %d，期望 4012", code)
+	}
+}
+
+// TestAnAgentDisconnectAlertCarriesTheClosersCodeAndAddress 钉住端到端的那一条：
+// 连接器主动关闭（1000 + 原因）与 X-Forwarded-For 里的真实地址都要进告警。
+// 没有这两项，"连接反复断开"只能看出抖，分不清是连接器自己的重连循环还是中转判死。
+func TestAnAgentDisconnectAlertCarriesTheClosersCodeAndAddress(t *testing.T) {
+	dir := t.TempDir()
+	incidents := monitor.New(monitor.Options{
+		AlertDir: dir, FlapWindow: time.Second, FlapThreshold: 1,
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	fixture := newRelayWithMonitor(t, incidents)
+
+	header := http.Header{}
+	header.Set("Authorization", "Bearer "+fixture.tenant.secret)
+	header.Set("X-Forwarded-For", "203.0.113.7")
+	ctx, cancel := context.WithTimeout(context.Background(), readTimeout)
+	defer cancel()
+	conn, _, err := websocket.Dial(ctx, fixture.wsURL(fixture.agentPath()),
+		&websocket.DialOptions{HTTPHeader: header})
+	if err != nil {
+		t.Fatalf("拨号失败：%v", err)
+	}
+	if err := conn.Close(websocket.StatusNormalClosure, "reconnecting"); err != nil {
+		t.Fatalf("关闭失败：%v", err)
+	}
+
+	records := waitForAlerts(t, dir)
+	if len(records) != 1 || records[0].Kind != "flap" {
+		t.Fatalf("告警 = %+v", records)
+	}
+	details := records[0].Details
+	if fmt.Sprint(details["lastCloseCode"]) != "1000" {
+		t.Fatalf("lastCloseCode = %v", details["lastCloseCode"])
+	}
+	if details["lastCloseReason"] != "reconnecting" {
+		t.Fatalf("lastCloseReason = %v", details["lastCloseReason"])
+	}
+	if details["clientIp"] != "203.0.113.7" {
+		t.Fatalf("clientIp = %v", details["clientIp"])
+	}
+}
+
+// waitForAlerts 轮询告警队列，直到至少有一条记录（拆除与落盘都在 handler 里异步完成）。
+func waitForAlerts(t *testing.T, dir string) []monitor.Record {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		payload, err := os.ReadFile(filepath.Join(dir, monitor.QueueName))
+		if err == nil {
+			records := make([]monitor.Record, 0)
+			for _, line := range strings.Split(strings.TrimSpace(string(payload)), "\n") {
+				if strings.TrimSpace(line) == "" {
+					continue
+				}
+				var record monitor.Record
+				if err := json.Unmarshal([]byte(line), &record); err != nil {
+					t.Fatalf("队列行不是 JSON：%v (%s)", err, line)
+				}
+				records = append(records, record)
+			}
+			if len(records) > 0 {
+				return records
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("2 秒内没有告警落盘：%v", err)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/bridge"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/dlp"
+	"github.com/jayantTang/DSH_Mobile/relay-go/internal/monitor"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/presence"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/quota"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/store"
@@ -429,20 +430,23 @@ func (h *Hub) DetachAgent(link *AgentLink) {
 	// 自己的超时。Python 只在"真断线"路径做这件事；这里把被顶替的那条也一并
 	// 收尾（按链接身份匹配），避免它们的请求永远等不到回帧。
 	h.dropAgentBridges(link, "the PC connector disconnected")
+	// 死因要在 RequestClose 之前取：它会把没记录过原因的连接补成 1001/"agent
+	// disconnected"，那之后"连接器自己按时关了 1000"就再也看不出来了。
+	closeCode, closeReason := link.CloseInfo()
+	if closeCode == 0 {
+		closeCode, closeReason = 1006, "no close frame"
+	}
 	link.RequestClose(1001, "agent disconnected")
 	if link.superseded.Load() {
 		return
-	}
-	closeCode, closeReason := link.CloseInfo()
-	if closeCode == 0 {
-		closeCode, closeReason = 1001, "socket closed"
 	}
 	connector, host := link.Versions()
 	h.log.Info("relay: agent disconnected",
 		"agentId", link.AgentID, "name", link.Name, "generation", link.generation,
 		"duration_ms", link.Lifetime().Milliseconds(),
 		"closeCode", closeCode, "reason", closeReason,
-		"remote_ip", link.Remote(), "connectorVersion", connector, "hostVersion", host,
+		"remote_ip", link.Remote(), "client_ip", link.ClientAddr(),
+		"connectorVersion", connector, "hostVersion", host,
 		"lastInbound", link.LastInboundMS(),
 		"lastInboundAge", link.LastInboundAge().String(),
 		"lastError", link.LastError())
@@ -450,7 +454,11 @@ func (h *Hub) DetachAgent(link *AgentLink) {
 	// "反复"由监控器按窗口判定，hub 只报"断了一条"（2026-10-17 那次连接器每
 	// 分钟重连一轮，日志里 702 条 disconnected，没人注意到）。
 	if h.monitor != nil {
-		h.monitor.NoteAgentDisconnect(link.AgentID, link.Name)
+		h.monitor.NoteAgentDisconnect(monitor.AgentDisconnect{
+			AgentID: link.AgentID, Name: link.Name,
+			CloseCode: closeCode, CloseReason: closeReason,
+			ClientIP: link.ClientAddr(), Lifetime: link.Lifetime(),
+		})
 	}
 	for _, device := range h.registry.releaseDevices(link, devices) {
 		h.SendControl(device, dlp.HostStatus(false, link.AgentID, "", "", nil))

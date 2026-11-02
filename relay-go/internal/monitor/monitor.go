@@ -107,6 +107,27 @@ type stateFile struct {
 	SurrogateSamples map[string]int           `json:"surrogateSamples"`
 }
 
+// AgentDisconnect 是一次连接器断开的现场。
+//
+// 告警要回答的不是"断了吗"，而是"谁关的"：关闭码 1000 是连接器自己拆掉再重连，
+// 1001 是中转（心跳判定、顶替、撤销）主动关，1006 是没走关闭握手的异常断开。
+// 缺了这一位，"连接反复断开"只能说明抖，定位不到责任方。
+// ClientIP 是前置后面的真实客户端地址（socket 对端在部署里永远是前置的回环地址）。
+type AgentDisconnect struct {
+	AgentID     string
+	Name        string
+	CloseCode   int
+	CloseReason string
+	ClientIP    string
+	Lifetime    time.Duration
+}
+
+// flapEvent 是窗口内的一次断开：时刻 + 关闭码。
+type flapEvent struct {
+	at   float64
+	code int
+}
+
 // Monitor 是按类别去重的告警收集器。
 //
 // AlertDir 为空 = 关闭：所有方法退化成空操作，行为与没有本包时逐字一致。
@@ -126,7 +147,7 @@ type Monitor struct {
 	seen             map[string]categoryState
 	alertTimes       []float64
 	suppressed       int
-	flaps            map[string][]float64
+	flaps            map[string][]flapEvent
 	flapReported     map[string]float64
 	surrogateSamples map[int64]int
 	stateDirty       bool
@@ -177,7 +198,7 @@ func newMonitor(options Options) *Monitor {
 		flapThreshold:    maxInt(1, options.FlapThreshold),
 		surrogateSample:  maxInt(0, options.SurrogateSamplesPerDay),
 		seen:             map[string]categoryState{},
-		flaps:            map[string][]float64{},
+		flaps:            map[string][]flapEvent{},
 		flapReported:     map[string]float64{},
 		surrogateSamples: map[int64]int{},
 	}
@@ -366,7 +387,10 @@ func (m *Monitor) NoteHTTPStatus(method, path, requestID string, status int) {
 //
 // "同一窗口"由类别键带窗口序号保证：过了这个窗口再抖算一次新事件，所以要再报一次；
 // 而类别去重本身仍然管"同窗口内不重复"。
-func (m *Monitor) NoteAgentDisconnect(agentID, name string) {
+//
+// 告警里必须带关闭码：没有它，"第 5 次断开"既可能是连接器自己每 2 分钟重连一轮，
+// 也可能是中转心跳把静默链路判死，两种事要改的地方完全不同。
+func (m *Monitor) NoteAgentDisconnect(disconnect AgentDisconnect) {
 	if !m.Enabled() {
 		return
 	}
@@ -374,10 +398,11 @@ func (m *Monitor) NoteAgentDisconnect(agentID, name string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	agentID := disconnect.AgentID
 	now := m.nowSeconds()
-	window := append(m.flaps[agentID], now)
+	window := append(m.flaps[agentID], flapEvent{at: now, code: disconnect.CloseCode})
 	cutoff := now - m.flapWindow.Seconds()
-	for len(window) > 0 && window[0] < cutoff {
+	for len(window) > 0 && window[0].at < cutoff {
 		window = window[1:]
 	}
 	m.flaps[agentID] = window
@@ -397,21 +422,98 @@ func (m *Monitor) NoteAgentDisconnect(agentID, name string) {
 			delete(m.seen, known)
 		}
 	}
-	display := name
+	display := disconnect.Name
 	if display == "" {
 		display = "agent"
+	}
+	details := map[string]any{
+		"agentId": agentID, "name": disconnect.Name,
+		"windowSeconds":       int(m.flapWindow.Seconds()),
+		"disconnectsInWindow": len(window),
+		"closeCodes":          countCloseCodes(window),
+		"lastCloseCode":       disconnect.CloseCode,
+		"lastLifetimeMs":      disconnect.Lifetime.Milliseconds(),
+	}
+	if disconnect.CloseReason != "" {
+		details["lastCloseReason"] = disconnect.CloseReason
+	}
+	if disconnect.ClientIP != "" {
+		details["clientIp"] = disconnect.ClientIP
 	}
 	m.recordLocked(key, recordInput{
 		kind:  "flap",
 		title: "连接器反复断开",
-		summary: fmt.Sprintf("%s（%s）在 %d 秒内断开 %d 次", display, agentID,
-			int(m.flapWindow.Seconds()), len(window)),
-		details: map[string]any{
-			"agentId": agentID, "name": name,
-			"windowSeconds":       int(m.flapWindow.Seconds()),
-			"disconnectsInWindow": len(window),
-		},
+		summary: fmt.Sprintf("%s（%s）在 %d 秒内断开 %d 次（%s），最近一次%s",
+			display, agentID, int(m.flapWindow.Seconds()), len(window),
+			describeCloseCodes(window), describeClose(disconnect.CloseCode,
+				disconnect.CloseReason, disconnect.ClientIP)),
+		details: details,
 	}, now)
+}
+
+// countCloseCodes 把窗口内的关闭码折成"码 → 次数"（告警详情用）。
+func countCloseCodes(window []flapEvent) map[string]int {
+	counts := map[string]int{}
+	for _, event := range window {
+		counts[strconv.Itoa(event.code)]++
+	}
+	return counts
+}
+
+// describeCloseCodes 按次数从多到少写窗口内的关闭码构成：
+// "对端关闭 4 次、中转关闭 1 次"。顺序固定，告警文本才能被稳定对比。
+func describeCloseCodes(window []flapEvent) string {
+	counts := countCloseCodes(window)
+	type row struct {
+		code  int
+		count int
+	}
+	rows := make([]row, 0, len(counts))
+	for text, count := range counts {
+		code, err := strconv.Atoi(text)
+		if err != nil {
+			continue
+		}
+		rows = append(rows, row{code: code, count: count})
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].count != rows[j].count {
+			return rows[i].count > rows[j].count
+		}
+		return rows[i].code < rows[j].code
+	})
+	parts := make([]string, 0, len(rows))
+	for _, item := range rows {
+		parts = append(parts, fmt.Sprintf("%s %d 次", closeCodeLabel(item.code), item.count))
+	}
+	return strings.Join(parts, "、")
+}
+
+// describeClose 是"最近一次"那一句：关闭码 + 对端给的原因 + 客户端地址。
+func describeClose(code int, reason, clientIP string) string {
+	text := closeCodeLabel(code)
+	if reason != "" {
+		text += "（" + truncateRunes(reason, 60) + "）"
+	}
+	if clientIP != "" {
+		text += "，客户端 " + clientIP
+	}
+	return text
+}
+
+// closeCodeLabel 把关闭码翻成责任方：1000 由连接器发起，1001 由中转发起，
+// 1006 表示没收到关闭帧（异常断开）。这三种是运维实际要区分的。
+func closeCodeLabel(code int) string {
+	switch code {
+	case 1000:
+		return "对端关闭 1000"
+	case 1001:
+		return "中转关闭 1001"
+	case 1006:
+		return "异常断开 1006"
+	default:
+		return fmt.Sprintf("关闭码 %d", code)
+	}
 }
 
 // NoteControlDrop 记录一次可丢控制帧（pong/ping/hostStatus/accountState）因

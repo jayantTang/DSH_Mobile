@@ -49,6 +49,7 @@ var alertKindLabels = map[string]string{
 var alertDetailOrder = []string{
 	"source", "path", "place", "frames", "method", "status",
 	"agentId", "name", "windowSeconds", "disconnectsInWindow",
+	"closeCodes", "lastCloseCode", "lastCloseReason", "clientIp", "lastLifetimeMs",
 	"deviceId", "frameType", "count", "totalChars", "firstIndex", "trailingChars",
 	"kinds", "sample", "sampled",
 }
@@ -222,6 +223,25 @@ func buildAlertBody(records []monitor.Record, now time.Time) string {
 	return body
 }
 
+// renderCloseCodes 把"关闭码 → 次数"渲染成 1000×4、1001×1。
+// 直接打印 map 会得到 map[1000:4 1001:1]——同一条告警要能跟上一封一眼对比。
+func renderCloseCodes(value any) string {
+	counts, ok := value.(map[string]any)
+	if !ok {
+		return fmt.Sprint(value)
+	}
+	codes := make([]string, 0, len(counts))
+	for code := range counts {
+		codes = append(codes, code)
+	}
+	sort.Strings(codes)
+	parts := make([]string, 0, len(codes))
+	for _, code := range codes {
+		parts = append(parts, fmt.Sprintf("%s×%v", code, counts[code]))
+	}
+	return strings.Join(parts, "、")
+}
+
 // formatAlertDetails 渲染 details 段；context 是唯一可能与用户内容有关的一小段，
 // 单独换行放在最后（Python 同名逻辑）。
 func formatAlertDetails(details map[string]any) string {
@@ -232,6 +252,10 @@ func formatAlertDetails(details map[string]any) string {
 	parts := make([]string, 0, len(keys))
 	for _, key := range keys {
 		if key == "context" {
+			continue
+		}
+		if key == "closeCodes" {
+			parts = append(parts, "closeCodes="+renderCloseCodes(details[key]))
 			continue
 		}
 		parts = append(parts, fmt.Sprintf("%s=%v", key, details[key]))

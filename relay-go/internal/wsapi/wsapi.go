@@ -15,8 +15,10 @@ import (
 	"io"
 	"log/slog"
 	"math"
+	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/coder/websocket"
@@ -53,6 +55,9 @@ type Options struct {
 	Store   Store // 握手期鉴权与 lastSeen（见 ports.go）；nil = 任何握手都认不出人
 	Logger  *slog.Logger
 	Monitor SurrogateReporter
+	// ClientID 回答"这个请求的客户端地址是什么"（前置后面取 X-Forwarded-For）。
+	// 信任边界只有 httpapi.ClientIdentifier 一份实现，组合根注入；nil 时退回 socket 对端。
+	ClientID func(*http.Request) string
 }
 
 // Handlers 是 /link/agent 与 /link/device 的处理器。
@@ -63,6 +68,8 @@ type Handlers struct {
 	log    *slog.Logger
 	// monitor 只收"修好了一个坏字符"这一类事件；nil = 不记。
 	monitor SurrogateReporter
+	// clientID 是真实客户端地址的取值规则（见 Options.ClientID）。
+	clientID func(*http.Request) string
 	// frames 是读缓冲池：一帧的生命周期是"读循环取 → 写循环还"，
 	// 不再由 conn.Read 里的 io.ReadAll 每帧新建 512 B（M2.5 报告 §3）。
 	frames *dlp.BufferPool
@@ -81,7 +88,7 @@ func New(options Options) *Handlers {
 	}
 	return &Handlers{
 		hub: options.Hub, store: options.Store, limits: limits, log: log,
-		monitor: options.Monitor, frames: dlp.NewBufferPool(),
+		monitor: options.Monitor, clientID: options.ClientID, frames: dlp.NewBufferPool(),
 	}
 }
 
@@ -150,6 +157,7 @@ func (h *Handlers) ServeAgent(w http.ResponseWriter, r *http.Request) {
 	conn.SetReadLimit(int64(h.limits.MaxFrameBytes))
 
 	link := h.hub.AttachAgent(r.Context(), agent, &sink{conn: conn, remote: r.RemoteAddr}, ticket)
+	link.SetClientAddr(h.clientAddr(r))
 	h.touchAgent(r.Context(), agent.AgentID)
 	h.readAgent(r.Context(), conn, link)
 
@@ -276,6 +284,7 @@ func (h *Handlers) readAgent(ctx context.Context, conn *websocket.Conn, link *hu
 					"link", link.Label(), "error", err)
 				continue
 			}
+			noteReadCause(link.Link, err)
 			h.logReadEnd(link.Link, err)
 			return
 		}
@@ -308,6 +317,7 @@ func (h *Handlers) readDevice(ctx context.Context, conn *websocket.Conn, link *h
 				h.hub.SendControl(link, dlp.ErrorFrame("protocol/bad-frame", err.Error(), false, nil))
 				continue
 			}
+			noteReadCause(link.Link, err)
 			h.logReadEnd(link.Link, err)
 			return
 		}
@@ -422,6 +432,36 @@ func (h *Handlers) noteSurrogate(link *hub.AgentLink, wire dlp.Wire,
 		return
 	}
 	h.monitor.NoteUnpairedSurrogates(link.AgentID, deviceID, frameType, *damage)
+}
+
+// noteReadCause 把"读循环为什么结束"记进链路。
+//
+// 关闭帧是连接器那边唯一能直接说明"我自己要重连"的证据（1000 + 原因），读失败的
+// 其余情况一律记 1006：中转自己的关闭（心跳判死、顶替、撤销）在此之前就已经记过
+// 原因，第一个写入的说了算，不会被这里覆盖。
+func noteReadCause(link *hub.Link, err error) {
+	if status := websocket.CloseStatus(err); status != -1 {
+		var closeErr websocket.CloseError
+		reason := ""
+		if errors.As(err, &closeErr) {
+			reason = closeErr.Reason
+		}
+		link.NoteCloseCause(int(status), reason)
+		return
+	}
+	link.NoteCloseCause(1006, "read failed")
+}
+
+// clientAddr 取真实客户端地址；组合根没注入时退回 socket 对端（去端口）。
+func (h *Handlers) clientAddr(r *http.Request) string {
+	if h.clientID != nil {
+		return h.clientID(r)
+	}
+	host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr))
+	if err != nil {
+		return strings.TrimSpace(r.RemoteAddr)
+	}
+	return host
 }
 
 // logReadEnd 只把异常结束记成 info：对端正常关闭是最常见的情况。

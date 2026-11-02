@@ -159,6 +159,8 @@ func runServe(args []string, getenv func(string) string, stderr io.Writer) int {
 	// 注入的是同一个 Store；各包只看到自己声明的那几个方法。
 	wsHandlers := wsapi.New(wsapi.Options{
 		Hub: live, Store: st, Logger: logger, Monitor: incidents,
+		// 断开告警里的客户端地址与限流桶用同一个判定：信任边界只允许有一份实现。
+		ClientID: httpapi.ClientIdentifier,
 	})
 	fileHandlers := files.New(files.Options{Store: st, Hub: live, Logger: logger})
 	// 限流桶的键复用 httpapi.ClientIdentifier：信任边界只允许有一份实现。

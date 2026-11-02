@@ -720,6 +720,42 @@ func TestAlertDispatchDryRunPrintsTheBodyAndKeepsTheQueue(t *testing.T) {
 	}
 }
 
+// TestAlertDispatchRendersTheDisconnectCause 钉住通知正文里"谁关的连接"这一行：
+// closeCodes 不能渲染成 Go 的 map[1000:4 1001:1]，否则运维要在一堆符号里数次数。
+func TestAlertDispatchRendersTheDisconnectCause(t *testing.T) {
+	dir := t.TempDir()
+	writeAlertQueue(t, dir, monitor.Record{
+		TS: 1_700_000_000, Key: "flap:agt_1:1", Kind: "flap",
+		Title: "连接器反复断开",
+		Summary: "Windows-PC（agt_1）在 300 秒内断开 5 次（对端关闭 1000 4 次、" +
+			"中转关闭 1001 1 次），最近一次中转关闭 1001（heartbeat timeout），客户端 203.0.113.7",
+		Details: map[string]any{
+			"agentId": "agt_1", "name": "Windows-PC", "windowSeconds": 300,
+			"disconnectsInWindow": 5,
+			"closeCodes":          map[string]any{"1000": 4, "1001": 1},
+			"lastCloseCode":       1001, "lastCloseReason": "heartbeat timeout",
+			"clientIp": "203.0.113.7", "lastLifetimeMs": 120000,
+		},
+		Count: 5, NewCategory: true,
+	})
+	code, out, errOut := runAdmin(filepath.Join(dir, "s.db"), "alert-dispatch",
+		"--alert-dir", dir, "--account", "acc_owner", "--mail-db", "mail.db",
+		"--mail-admin", "/bin/false", "--mail-python", "/bin/sh", "--dry-run")
+	if code != 0 {
+		t.Fatalf("dry-run 退出码 = %d, stderr = %s", code, errOut)
+	}
+	for _, want := range []string{
+		"closeCodes=1000×4、1001×1",
+		"lastCloseReason=heartbeat timeout",
+		"clientIp=203.0.113.7",
+		"lastLifetimeMs=120000",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("正文缺 %q：\n%s", want, out)
+		}
+	}
+}
+
 func TestAlertDispatchDeliversAndClearsTheQueue(t *testing.T) {
 	dir := t.TempDir()
 	writeAlertQueue(t, dir, alertRecord("a"))

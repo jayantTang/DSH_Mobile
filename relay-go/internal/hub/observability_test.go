@@ -92,7 +92,9 @@ func TestAgentConnectionLifecycleLogsCarryRemoteDurationAndCloseCode(t *testing.
 		disconnected["remote_ip"] != "203.0.113.20:5555" {
 		t.Fatalf("disconnected = %v", disconnected)
 	}
-	if disconnected["closeCode"] != float64(1001) || disconnected["reason"] == "" {
+	// 这条用例直接拆链路、没有读循环：没有关闭帧就是 1006。生产路径上读循环会先
+	// 记下真实死因（连接器 1000 / 中转 1001），这里的兜底只在没有读到任何关闭证据时生效。
+	if disconnected["closeCode"] != float64(1006) || disconnected["reason"] == "" {
 		t.Fatalf("closeCode/reason = %v/%v", disconnected["closeCode"], disconnected["reason"])
 	}
 	if _, present := disconnected["duration_ms"]; !present {

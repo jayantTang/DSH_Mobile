@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/bridge"
+	"github.com/jayantTang/DSH_Mobile/relay-go/internal/monitor"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/presence"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/push"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/quota"
@@ -27,7 +28,9 @@ type PushSender interface {
 // IncidentReporter 是"一条 agent 链路断了"与"帧被丢了"的接收方
 // （*monitor.Monitor 实现）。
 type IncidentReporter interface {
-	NoteAgentDisconnect(agentID, name string)
+	// NoteAgentDisconnect 记录一次连接器断开；关闭码与客户端地址由 link 提供，
+	// 告警据此区分"连接器自己重连"与"中转判死链路"。
+	NoteAgentDisconnect(disconnect monitor.AgentDisconnect)
 	NoteControlDrop(link, frameType string)
 	// NoteStreamDrop 记录一条连接的流式帧丢弃满了一个告警窗口
 	// （dropped 是这个窗口里丢的帧数；链路标识里有 agentId/deviceId）。

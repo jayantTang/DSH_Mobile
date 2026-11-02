@@ -23,6 +23,11 @@ import (
 
 // ── 夹具 ───────────────────────────────────────────────────────────────────
 
+// disconnectOf 是"一次不带细节的断开"：多数用例只关心窗口计数。
+func disconnectOf(agentID, name string) monitor.AgentDisconnect {
+	return monitor.AgentDisconnect{AgentID: agentID, Name: name, CloseCode: 1000}
+}
+
 // testClock 是可推进的时钟（Python 用例的 `_clock`）。
 type testClock struct{ seconds int64 }
 
@@ -201,13 +206,13 @@ func TestFlappingIsReportedOncePerWindow(t *testing.T) {
 		FlapWindow: 300 * time.Second, FlapThreshold: 5,
 	})
 	for index := 0; index < 4; index++ {
-		m.NoteAgentDisconnect("agt_1", "Windows-PC")
+		m.NoteAgentDisconnect(disconnectOf("agt_1", "Windows-PC"))
 		clock.advance(10)
 	}
 	if records := readRecords(t, dir); len(records) != 0 {
 		t.Fatalf("只断 4 次不算抖：%d 条", len(records))
 	}
-	m.NoteAgentDisconnect("agt_1", "Windows-PC")
+	m.NoteAgentDisconnect(disconnectOf("agt_1", "Windows-PC"))
 	records := readRecords(t, dir)
 	if len(records) != 1 || records[0].Kind != "flap" {
 		t.Fatalf("记录 = %+v", records)
@@ -219,7 +224,7 @@ func TestFlappingIsReportedOncePerWindow(t *testing.T) {
 	// 同一个窗口里再断几次：不重复打扰。
 	for index := 0; index < 3; index++ {
 		clock.advance(10)
-		m.NoteAgentDisconnect("agt_1", "Windows-PC")
+		m.NoteAgentDisconnect(disconnectOf("agt_1", "Windows-PC"))
 	}
 	if len(readRecords(t, dir)) != 1 {
 		t.Fatal("同一窗口只报一次")
@@ -229,10 +234,86 @@ func TestFlappingIsReportedOncePerWindow(t *testing.T) {
 	clock.advance(400)
 	for index := 0; index < 5; index++ {
 		clock.advance(10)
-		m.NoteAgentDisconnect("agt_1", "Windows-PC")
+		m.NoteAgentDisconnect(disconnectOf("agt_1", "Windows-PC"))
 	}
 	if len(readRecords(t, dir)) != 2 {
 		t.Fatalf("新窗口应当再报一次：%d 条", len(readRecords(t, dir)))
+	}
+}
+
+// TestFlapAlertSaysWhoClosedTheLink 钉住"连接反复断开"必须回答谁关的连接。
+//
+// 关闭码缺失时，"第 5 次断开"既可能是连接器每 2 分钟自己重连一轮（1000），
+// 也可能是中转心跳把静默链路判死（1001）——两种事要改的地方完全不同。
+func TestFlapAlertSaysWhoClosedTheLink(t *testing.T) {
+	clock := newClock()
+	dir := t.TempDir()
+	m := newMonitor(t, dir, clock, monitor.Options{
+		FlapWindow: 300 * time.Second, FlapThreshold: 5,
+	})
+	for index := 0; index < 4; index++ {
+		m.NoteAgentDisconnect(monitor.AgentDisconnect{
+			AgentID: "agt_1", Name: "Windows-PC", CloseCode: 1000,
+			CloseReason: "reconnecting", ClientIP: "203.0.113.7",
+			Lifetime: 3 * time.Second,
+		})
+		clock.advance(10)
+	}
+	m.NoteAgentDisconnect(monitor.AgentDisconnect{
+		AgentID: "agt_1", Name: "Windows-PC", CloseCode: 1001,
+		CloseReason: "heartbeat timeout", ClientIP: "203.0.113.7",
+		Lifetime: 2 * time.Minute,
+	})
+	records := readRecords(t, dir)
+	if len(records) != 1 {
+		t.Fatalf("记录数 = %d", len(records))
+	}
+	details := records[0].Details
+
+	codes, ok := details["closeCodes"].(map[string]any)
+	if !ok {
+		t.Fatalf("closeCodes = %#v", details["closeCodes"])
+	}
+	if fmt.Sprint(codes["1000"]) != "4" || fmt.Sprint(codes["1001"]) != "1" {
+		t.Fatalf("closeCodes = %v", codes)
+	}
+	if fmt.Sprint(details["lastCloseCode"]) != "1001" {
+		t.Fatalf("lastCloseCode = %v", details["lastCloseCode"])
+	}
+	if details["lastCloseReason"] != "heartbeat timeout" {
+		t.Fatalf("lastCloseReason = %v", details["lastCloseReason"])
+	}
+	if details["clientIp"] != "203.0.113.7" {
+		t.Fatalf("clientIp = %v", details["clientIp"])
+	}
+	if details["lastLifetimeMs"] != float64(120000) {
+		t.Fatalf("lastLifetimeMs = %v", details["lastLifetimeMs"])
+	}
+	summary := records[0].Summary
+	for _, want := range []string{"对端关闭 1000 4 次", "中转关闭 1001 1 次", "heartbeat timeout", "203.0.113.7"} {
+		if !strings.Contains(summary, want) {
+			t.Fatalf("summary 缺少 %q：%s", want, summary)
+		}
+	}
+}
+
+// TestFlapAlertOmitsUnknownCloseReason：没有原因与地址时不要写出空字段。
+func TestFlapAlertOmitsUnknownCloseReason(t *testing.T) {
+	clock := newClock()
+	dir := t.TempDir()
+	m := newMonitor(t, dir, clock, monitor.Options{FlapThreshold: 5})
+	for index := 0; index < 5; index++ {
+		m.NoteAgentDisconnect(monitor.AgentDisconnect{AgentID: "agt_1"})
+	}
+	records := readRecords(t, dir)
+	if len(records) != 1 {
+		t.Fatalf("记录数 = %d", len(records))
+	}
+	if _, ok := records[0].Details["lastCloseReason"]; ok {
+		t.Fatalf("空原因不该写进详情：%v", records[0].Details)
+	}
+	if _, ok := records[0].Details["clientIp"]; ok {
+		t.Fatalf("空地址不该写进详情：%v", records[0].Details)
 	}
 }
 
@@ -337,7 +418,7 @@ func TestDisabledMonitorIsANoOp(t *testing.T) {
 		t.Fatal("AlertDir 为空应当是关闭")
 	}
 	m.NoteException(errors.New("boom"), "/x", "http")
-	m.NoteAgentDisconnect("agt_1", "")
+	m.NoteAgentDisconnect(disconnectOf("agt_1", ""))
 	m.NoteHTTPStatus("GET", "/x", "", 500)
 	m.NoteUnpairedSurrogates("agt_1", "dev_1", "item", dlp.SurrogateDamage{})
 	m.Flush()
@@ -359,7 +440,7 @@ func TestABrokenAlertDirectoryNeverPanics(t *testing.T) {
 	clock := newClock()
 	m := newMonitor(t, blocker, clock, monitor.Options{})
 	m.NoteException(errors.New("boom"), "/x", "http")
-	m.NoteAgentDisconnect("agt_1", "")
+	m.NoteAgentDisconnect(disconnectOf("agt_1", ""))
 	m.Flush()
 }
 
