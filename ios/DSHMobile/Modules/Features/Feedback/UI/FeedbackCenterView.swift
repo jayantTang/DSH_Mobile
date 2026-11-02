@@ -190,8 +190,7 @@ public struct FeedbackCenterView: View {
                 switch item {
                 case .reply(let thread, let message):
                     NavigationLink(value: FeedbackDestination.thread(thread.threadId, .inbox)) {
-                        FeedbackMailRow(firstLine: thread.correspondence(for: message).from,
-                                        toLine: thread.correspondence(for: message).to,
+                        FeedbackMailRow(firstLine: thread.counterpartyLine,
                                         // 主题优先用线程自己的 `subject`；用户看回信时没有就退到
                                         // 「关于你的反馈：<用户那句>」，团队看来信时用来信自己的
                                         // 主题（见 `FeedbackThread.inboxSubject(for:)`）。
@@ -207,8 +206,7 @@ public struct FeedbackCenterView: View {
                     NavigationLink(value: FeedbackDestination.notice(notice.noticeId)) {
                         // 通知行只有"服务通知 / 标题 / 时间"：正文改成打开时按需取
                         // （设计 §M6.6），列表不再有摘要行。
-                        FeedbackMailRow(firstLine: FeedbackIdentity.noticeParties.from,
-                                        toLine: FeedbackIdentity.noticeParties.to,
+                        FeedbackMailRow(firstLine: FeedbackIdentity.service,
                                         subject: FeedbackSubject.line(subject: notice.subject,
                                                                       body: notice.body,
                                                                       format: notice.bodyFormat),
@@ -263,9 +261,9 @@ public struct FeedbackCenterView: View {
 /// 回信与通知也共用这一行——它们都是"我们发给你的"，分开排只会让人来回找。
 private struct FeedbackMailRow: View {
 
+    /// 列表首行的**那一个人**：收件箱是发件人、已发送是收件人——两种情况都等于「对侧」
+    /// （owner 2026-11-02：列表只写一个人，收发双方一起看在详情页）。
     public let firstLine: String
-    /// 收件人（`firstLine` 是发件人）：两段合起来就是「发件人 → 收件人」。
-    public var toLine: String = ""
     public let subject: String
     /// 摘要行。通知不再有正文摘要（正文按需取），所以缺省为空 = 不画这一行。
     public var snippet: String = ""
@@ -285,26 +283,10 @@ private struct FeedbackMailRow: View {
                 .padding(.top, 6)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(alignment: .firstTextBaseline, spacing: DSHTheme.Spacing.tight) {
-                    // 首行 = 「发件人 → 收件人」：两段都用 body，发件人沿用主色/加粗规则，
-                    // 箭头与收件人用次要色（owner 2026-11-02：收发双方都要看得到）。
-                    HStack(alignment: .firstTextBaseline, spacing: 0) {
-                        Text(firstLine)
-                            .font(DSHTheme.Typography.body.weight(isUnread ? .semibold : .regular))
-                            .foregroundStyle(isUnread ? DSHTheme.labelPrimary : DSHTheme.labelSecondary)
-                            .lineLimit(1)
-                        if !toLine.isEmpty {
-                            Text(" → ")
-                                .font(DSHTheme.Typography.body)
-                                .foregroundStyle(DSHTheme.labelSecondary)
-                            Text(toLine)
-                                .font(DSHTheme.Typography.body)
-                                .foregroundStyle(DSHTheme.labelSecondary)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                        }
-                    }
-                    .accessibilityElement(children: .combine)
-                    .accessibilityLabel(String(localized: "\(firstLine) → \(toLine)"))
+                    Text(firstLine)
+                        .font(DSHTheme.Typography.body.weight(isUnread ? .semibold : .regular))
+                        .foregroundStyle(isUnread ? DSHTheme.labelPrimary : DSHTheme.labelSecondary)
+                        .lineLimit(1)
                     Spacer(minLength: 0)
                     if attachmentCount > 0 {
                         HStack(spacing: 2) {
@@ -347,9 +329,8 @@ private struct FeedbackSentRow: View {
     public var body: some View {
         let letter = thread.myLetter
         FeedbackMailRow(
-            // 已发送那一栏：`我 · 机型 → DSH Mobile 团队`。
-            firstLine: thread.correspondence(for: thread.myLetter).from,
-            toLine: thread.correspondence(for: thread.myLetter).to,
+            // 已发送那一栏：首行是**收件人**（＝对侧；用户侧是团队、团队侧是收信用户）。
+            firstLine: thread.counterpartyLine,
             subject: subject(letter),
             snippet: FeedbackSubject.snippet(of: letter?.body, format: letter?.bodyFormat ?? .text),
             // 发件箱里显示的是**我发信那一刻**：`lastMessageAt` 在收到回信之后会变成回信时间，
