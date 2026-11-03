@@ -405,19 +405,24 @@ function messagesPerAccountChart(report, generatedAt = 0) {
   const slots = today.length
   const slot = (w - left - right) / slots
   const y = (value) => h - bottom - (value / max) * (h - top - bottom)
+  // 等宽单柱 + 三段配色（2026-11-03 owner 定）：重合部分是中性灰蓝，今天超出部分
+  // 用蓝，今天不足（基准里今天没够到的部分）用琥珀。三色互不相同，缩到手机屏也能分辨。
   const bars = today.map((value, index) => {
     const center = left + slot * (index + 0.5)
     const base = Math.max(baseline[index] ?? 0, 0)
-    const baseWidth = Math.min(9, slot * 0.62)
-    const nowWidth = Math.min(4.5, slot * 0.34)
-    const baseHeight = (h - bottom) - y(base)
-    const nowHeight = (h - bottom) - y(value)
-    return `<rect x="${(center - baseWidth / 2).toFixed(1)}" y="${y(base).toFixed(1)}" `
-      + `width="${baseWidth.toFixed(1)}" height="${Math.max(baseHeight, 0).toFixed(1)}" rx="1.4" fill="#dbe2ef"/>`
-      + (value > 0
-        ? `<rect x="${(center - nowWidth / 2).toFixed(1)}" y="${y(value).toFixed(1)}" `
-          + `width="${nowWidth.toFixed(1)}" height="${Math.max(nowHeight, 0).toFixed(1)}" rx="1.2" fill="${COLORS.line}"/>`
-        : '')
+    const common = Math.min(value, base)
+    const over = Math.max(value - base, 0)
+    const under = Math.max(base - value, 0)
+    // 无间隙：每根柱占满整个 slot（多 0.5 像素压住抗锯齿接缝），相邻柱连成一排。
+    const width = slot + 0.5
+    const x = (center - width / 2).toFixed(1)
+    const bottomY = h - bottom
+    const rect = (from, to, fill) => (to - from > 0.05
+      ? `<rect x="${x}" y="${y(to).toFixed(1)}" width="${width.toFixed(1)}" `
+        + `height="${(y(from) - y(to)).toFixed(1)}" fill="${fill}"/>`
+      : '')
+    return rect(0, common, '#94a3b8') + rect(common, common + under, '#f59e0b')
+      + rect(common, common + over, COLORS.line)
   }).join('')
   const ticks = today.map((_, index) => (index % 3 === 0 || index === slots - 1
     ? `<text x="${(left + slot * (index + 0.5)).toFixed(1)}" y="${h - bottom + 12}" `
@@ -427,11 +432,15 @@ function messagesPerAccountChart(report, generatedAt = 0) {
     + gridLines(max, y, (value) => String(Math.round(value)))
     + bars + ticks + '</svg>'
   const note = `截止 ${escapeHtml(clock(num(generatedAt)))} · `
-    + `${formatInt(num(data.todayAccounts))} 个账号有连接 · 浅色为近 7 天日均`
+    + `${formatInt(num(data.todayAccounts))} 个账号有连接 · 柱高取两者较大值`
   return figure('每人发出的消息条数', note + ` · 零消息 ${formatInt(num(data.todayZero))} 个`
       + `（日均 ${num(data.baselineZero).toFixed(1)}） · 人均 ${num(data.todayMean).toFixed(1)} 条`
       + `（日均 ${num(data.baselineMean).toFixed(1)}） · 中位数 ${formatInt(num(data.todayMedian))}`
       + `（日均 ${num(data.baselineMedian).toFixed(1)}）`, svg)
+    + `<p class="meta" style="font-size:10.5px;color:#94a3b8;text-align:center;margin:3px 0 0;white-space:nowrap">`
+    + `<span style="color:#94a3b8">■</span> 与日均重合&nbsp; `
+    + `<span style="color:${COLORS.line}">■</span> 今天超出&nbsp; `
+    + `<span style="color:#f59e0b">■</span> 今天不足</p>`
     + `<p class="meta" style="font-size:11px;color:#94a3b8;text-align:right;margin:2px 0 0">`
     + `零消息 = 连上但一条消息也没发；基准为近 7 天全天日均（非同时刻）</p>`
 }

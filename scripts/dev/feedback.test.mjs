@@ -515,6 +515,10 @@ test('每人发出多少条消息：今天与近 7 天日均同图，缺数据�
   assert.match(html, /零消息 3 个（日均 4\.1）/)
   assert.match(html, /中位数 0（日均 1\.0）/)
   assert.match(html, /近 7 天全天日均（非同时刻）/)
+  // 等宽无间隙、三色：与日均重合 / 今天超出 / 今天不足。
+  assert.match(html, /与日均重合/)
+  assert.match(html, /今天超出/)
+  assert.match(html, /今天不足/)
   // 老服务端没有这个字段：不渲染该图，也不留占位。
   const legacy = fixture()
   delete legacy.messagesPerAccount
