@@ -501,29 +501,6 @@ test('「关注」区只留要 owner 动作的待办，自动观察不再堆上�
   assert.ok(!html.includes('<span class="chip up">提示</span>'), '关注区不再有 info 级提示条目')
 })
 
-test('每人发出多少条消息：今天与近 7 天日均同图，缺数据时整块省略', () => {
-  const data = fixture()
-  data.messagesPerAccount = {
-    cap: 15,
-    today: [3, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-    baseline: [4.1, 1.2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.8],
-    todayAccounts: 5, todayZero: 3, todayMean: 2.4, todayMedian: 0,
-    baselineZero: 4.1, baselineMean: 3.0, baselineMedian: 1,
-  }
-  const html = renderReport(data)
-  assert.match(html, /每人发出的消息条数/)
-  assert.match(html, /零消息 3 个（日均 4\.1）/)
-  assert.match(html, /中位数 0（日均 1\.0）/)
-  assert.match(html, /近 7 天全天日均（非同时刻）/)
-  // 等宽无间隙、三色：与日均重合 / 今天超出 / 今天不足。
-  assert.match(html, /与日均重合/)
-  assert.match(html, /今天超出/)
-  assert.match(html, /今天不足/)
-  // 老服务端没有这个字段：不渲染该图，也不留占位。
-  const legacy = fixture()
-  delete legacy.messagesPerAccount
-  assert.ok(!renderReport(legacy).includes('每人发出的消息条数'))
-})
 
 test('推送注册率只算近 7 天活跃的手机（owner 2026-10-17 定）', () => {
   // 6 台未注册推送、但一个月没上线：废弃设备不进分母，不报警。

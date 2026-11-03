@@ -387,64 +387,6 @@ function lineChart({ title, note, points, format, markers = [] }) {
   return figure(title, note, svg)
 }
 
-/** 每人发出多少条消息：今天（截至生成时刻）与近 7 天日均的分布对比。
-
-横轴是「一个人当天发出的消息条数」，0 表示连上了但一条也没发；纵轴是账号数。
-今天用实心蓝窄柱压在浅色基准柱上（2026-11-03 owner 定的重叠画法），一眼能看出
-分布重心是往左（发得少）还是往右（发得多）移了。基准是近 7 天的**全天**均值：
-库里只有按天的消息计数，没有时段，做不到「同一时刻」对照。
-*/
-function messagesPerAccountChart(report, generatedAt = 0) {
-  const data = report.messagesPerAccount ?? {}
-  const today = (data.today ?? []).map(num)
-  const baseline = (data.baseline ?? []).map(num)
-  if (!today.length) return ''
-  const cap = num(data.cap) || today.length - 1
-  const { w, h, left, right, top, bottom } = CHART
-  const max = Math.max(...today, ...baseline, 1) * 1.12
-  const slots = today.length
-  const slot = (w - left - right) / slots
-  const y = (value) => h - bottom - (value / max) * (h - top - bottom)
-  // 等宽单柱 + 三段配色（2026-11-03 owner 定）：重合部分是中性灰蓝，今天超出部分
-  // 用蓝，今天不足（基准里今天没够到的部分）用琥珀。三色互不相同，缩到手机屏也能分辨。
-  const bars = today.map((value, index) => {
-    const center = left + slot * (index + 0.5)
-    const base = Math.max(baseline[index] ?? 0, 0)
-    const common = Math.min(value, base)
-    const over = Math.max(value - base, 0)
-    const under = Math.max(base - value, 0)
-    // 无间隙：每根柱占满整个 slot（多 0.5 像素压住抗锯齿接缝），相邻柱连成一排。
-    const width = slot + 0.5
-    const x = (center - width / 2).toFixed(1)
-    const bottomY = h - bottom
-    const rect = (from, to, fill) => (to - from > 0.05
-      ? `<rect x="${x}" y="${y(to).toFixed(1)}" width="${width.toFixed(1)}" `
-        + `height="${(y(from) - y(to)).toFixed(1)}" fill="${fill}"/>`
-      : '')
-    return rect(0, common, '#94a3b8') + rect(common, common + under, '#f59e0b')
-      + rect(common, common + over, COLORS.line)
-  }).join('')
-  const ticks = today.map((_, index) => (index % 3 === 0 || index === slots - 1
-    ? `<text x="${(left + slot * (index + 0.5)).toFixed(1)}" y="${h - bottom + 12}" `
-      + `text-anchor="middle">${index === cap ? `${index}+` : index}</text>`
-    : '')).join('')
-  const svg = `<svg viewBox="0 0 ${w} ${h}" role="img" aria-label="每人发出的消息条数">`
-    + gridLines(max, y, (value) => String(Math.round(value)))
-    + bars + ticks + '</svg>'
-  const note = `截止 ${escapeHtml(clock(num(generatedAt)))} · `
-    + `${formatInt(num(data.todayAccounts))} 个账号有连接 · 柱高取两者较大值`
-  return figure('每人发出的消息条数', note + ` · 零消息 ${formatInt(num(data.todayZero))} 个`
-      + `（日均 ${num(data.baselineZero).toFixed(1)}） · 人均 ${num(data.todayMean).toFixed(1)} 条`
-      + `（日均 ${num(data.baselineMean).toFixed(1)}） · 中位数 ${formatInt(num(data.todayMedian))}`
-      + `（日均 ${num(data.baselineMedian).toFixed(1)}）`, svg)
-    + `<p class="meta" style="font-size:10.5px;color:#94a3b8;text-align:center;margin:3px 0 0;white-space:nowrap">`
-    + `<span style="color:#94a3b8">■</span> 与日均重合&nbsp; `
-    + `<span style="color:${COLORS.line}">■</span> 今天超出&nbsp; `
-    + `<span style="color:#f59e0b">■</span> 今天不足</p>`
-    + `<p class="meta" style="font-size:11px;color:#94a3b8;text-align:right;margin:2px 0 0">`
-    + `零消息 = 连上但一条消息也没发；基准为近 7 天全天日均（非同时刻）</p>`
-}
-
 /** 按天消息数：柱状总数（左轴）+ 当天活跃账号人均（右轴）。
 
 为什么用右轴：总数是量、人均是强度，两个量级差一个数量级；同轴会把人均压成
@@ -1250,7 +1192,7 @@ function rangeSection(report, days, completed = false, generatedAt = 0) {
     note: `左轴总数 · 右轴当天活跃账号人均 · 近 7 天消息活跃 ${formatInt(usage.messageActiveAccounts7d)} 个`,
     points: countPoints,
   })
-  const charts = activeChart + messageChart + messagesPerAccountChart(report, generatedAt) + lineChart({
+  const charts = activeChart + messageChart + lineChart({
     title: '每日出口流量',
     // 竖虚线的含义写在这里：图上不再逐条标「发版」，密集发版时文字会互相压住。
     note: releaseMarkers.length ? `${peakNote} · 竖虚线为 TestFlight 发版日` : peakNote,
