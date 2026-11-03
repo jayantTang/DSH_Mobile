@@ -183,6 +183,10 @@ func build(ctx context.Context, src Source, days int, stamp, generated int64,
 	if err != nil {
 		return opsReport{}, err
 	}
+	messagesSection, err := buildMessagesPerAccount(ctx, src, stamp, debugIDs, knownIDs, external)
+	if err != nil {
+		return opsReport{}, err
+	}
 	feedbackSection, err := buildFeedbackReport(ctx, src, threads, len(listed)-len(threads))
 	if err != nil {
 		return opsReport{}, err
@@ -192,6 +196,7 @@ func build(ctx context.Context, src Source, days int, stamp, generated int64,
 	report := opsReport{
 		OK: true, GeneratedAt: generated, AsOf: stamp, Days: days,
 		Versions: versions, VersionsWindowHours: reportVersionHours,
+		MessagesPerAccount: messagesSection,
 		HourlyActivity: hourlyActivity{
 			WindowDays:  reportActivityDays,
 			WindowHours: reportActivityHours,

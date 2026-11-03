@@ -387,6 +387,55 @@ function lineChart({ title, note, points, format, markers = [] }) {
   return figure(title, note, svg)
 }
 
+/** 每人发出多少条消息：今天（截至生成时刻）与近 7 天日均的分布对比。
+
+横轴是「一个人当天发出的消息条数」，0 表示连上了但一条也没发；纵轴是账号数。
+今天用实心蓝窄柱压在浅色基准柱上（2026-11-03 owner 定的重叠画法），一眼能看出
+分布重心是往左（发得少）还是往右（发得多）移了。基准是近 7 天的**全天**均值：
+库里只有按天的消息计数，没有时段，做不到「同一时刻」对照。
+*/
+function messagesPerAccountChart(report, generatedAt = 0) {
+  const data = report.messagesPerAccount ?? {}
+  const today = (data.today ?? []).map(num)
+  const baseline = (data.baseline ?? []).map(num)
+  if (!today.length) return ''
+  const cap = num(data.cap) || today.length - 1
+  const { w, h, left, right, top, bottom } = CHART
+  const max = Math.max(...today, ...baseline, 1) * 1.12
+  const slots = today.length
+  const slot = (w - left - right) / slots
+  const y = (value) => h - bottom - (value / max) * (h - top - bottom)
+  const bars = today.map((value, index) => {
+    const center = left + slot * (index + 0.5)
+    const base = Math.max(baseline[index] ?? 0, 0)
+    const baseWidth = Math.min(9, slot * 0.62)
+    const nowWidth = Math.min(4.5, slot * 0.34)
+    const baseHeight = (h - bottom) - y(base)
+    const nowHeight = (h - bottom) - y(value)
+    return `<rect x="${(center - baseWidth / 2).toFixed(1)}" y="${y(base).toFixed(1)}" `
+      + `width="${baseWidth.toFixed(1)}" height="${Math.max(baseHeight, 0).toFixed(1)}" rx="1.4" fill="#dbe2ef"/>`
+      + (value > 0
+        ? `<rect x="${(center - nowWidth / 2).toFixed(1)}" y="${y(value).toFixed(1)}" `
+          + `width="${nowWidth.toFixed(1)}" height="${Math.max(nowHeight, 0).toFixed(1)}" rx="1.2" fill="${COLORS.line}"/>`
+        : '')
+  }).join('')
+  const ticks = today.map((_, index) => (index % 3 === 0 || index === slots - 1
+    ? `<text x="${(left + slot * (index + 0.5)).toFixed(1)}" y="${h - bottom + 12}" `
+      + `text-anchor="middle">${index === cap ? `${index}+` : index}</text>`
+    : '')).join('')
+  const svg = `<svg viewBox="0 0 ${w} ${h}" role="img" aria-label="每人发出的消息条数">`
+    + gridLines(max, y, (value) => String(Math.round(value)))
+    + bars + ticks + '</svg>'
+  const note = `截止 ${escapeHtml(clock(num(generatedAt)))} · `
+    + `${formatInt(num(data.todayAccounts))} 个账号有连接 · 浅色为近 7 天日均`
+  return figure('每人发出的消息条数', note + ` · 零消息 ${formatInt(num(data.todayZero))} 个`
+      + `（日均 ${num(data.baselineZero).toFixed(1)}） · 人均 ${num(data.todayMean).toFixed(1)} 条`
+      + `（日均 ${num(data.baselineMean).toFixed(1)}） · 中位数 ${formatInt(num(data.todayMedian))}`
+      + `（日均 ${num(data.baselineMedian).toFixed(1)}）`, svg)
+    + `<p class="meta" style="font-size:11px;color:#94a3b8;text-align:right;margin:2px 0 0">`
+    + `零消息 = 连上但一条消息也没发；基准为近 7 天全天日均（非同时刻）</p>`
+}
+
 /** 按天消息数：柱状总数（左轴）+ 当天活跃账号人均（右轴）。
 
 为什么用右轴：总数是量、人均是强度，两个量级差一个数量级；同轴会把人均压成
@@ -720,6 +769,22 @@ export function normalize(data) {
     versions: Array.isArray(source.versions) ? source.versions : [],
     versionsWindowHours: num(source.versionsWindowHours) || 48,
     hourlyActivity: withDefaults(source.hourlyActivity, { windowDays: 14, windowHours: 336, buckets: null }),
+    // 每人发出多少条消息的分布（服务端 `messagesPerAccount`）；老服务端没有时整块省略。
+    messagesPerAccount: source.messagesPerAccount && typeof source.messagesPerAccount === 'object'
+      ? {
+          cap: num(source.messagesPerAccount.cap) || 15,
+          today: Array.isArray(source.messagesPerAccount.today) ? source.messagesPerAccount.today.map(num) : [],
+          baseline: Array.isArray(source.messagesPerAccount.baseline)
+            ? source.messagesPerAccount.baseline.map(num) : [],
+          todayAccounts: num(source.messagesPerAccount.todayAccounts),
+          todayZero: num(source.messagesPerAccount.todayZero),
+          todayMean: num(source.messagesPerAccount.todayMean),
+          todayMedian: num(source.messagesPerAccount.todayMedian),
+          baselineZero: num(source.messagesPerAccount.baselineZero),
+          baselineMean: num(source.messagesPerAccount.baselineMean),
+          baselineMedian: num(source.messagesPerAccount.baselineMedian),
+        }
+      : null,
     retention: {
       scope: text(source.retention?.scope, 'external'),
       users: withDefaults(source.retention?.users, { dau: 0, wau: 0, mau: 0,
@@ -1129,7 +1194,7 @@ export function releaseMarkerDays(testflight) {
 
     2026-10-17 精简：删掉窗口六张 KPI 卡（数字与概览、表重复）、每日新增设备柱状图、
     反馈状态栈与占比 chips、以及各段右侧的"前 N 条"小字。 */
-function rangeSection(report, days, completed = false) {
+function rangeSection(report, days, completed = false, generatedAt = 0) {
   const usage = report.usage
   const devices = report.devices
   const feedback = report.feedback
@@ -1176,7 +1241,7 @@ function rangeSection(report, days, completed = false) {
     note: `左轴总数 · 右轴当天活跃账号人均 · 近 7 天消息活跃 ${formatInt(usage.messageActiveAccounts7d)} 个`,
     points: countPoints,
   })
-  const charts = activeChart + messageChart + lineChart({
+  const charts = activeChart + messageChart + messagesPerAccountChart(report, generatedAt) + lineChart({
     title: '每日出口流量',
     // 竖虚线的含义写在这里：图上不再逐条标「发版」，密集发版时文字会互相压住。
     note: releaseMarkers.length ? `${peakNote} · 竖虚线为 TestFlight 发版日` : peakNote,
@@ -1264,7 +1329,7 @@ export function renderReport(data, { now = Date.now(), history = null } = {}) {
   const body = [
     attentionSection(attentionItems(report, { completed, generatedAt, history })),
     todaySection(report, generatedAt, days, completed),
-    rangeSection(report, days, completed),
+    rangeSection(report, days, completed, generatedAt),
   ].join('\n')
   // 口径说明只留会让人误读数字的几条：活跃账号/活跃设备的区别、流量与调试设备的边界、
   // 14 天矩阵与版本分布的窗口。逐项细账不写在页面底部。

@@ -10,19 +10,21 @@ import (
 // 改动字段名或顺序会改变 JSON 的字节输出，等同于改日报契约。
 
 type opsReport struct {
-	OK                  bool            `json:"ok"`
-	GeneratedAt         int64           `json:"generatedAt"`
-	AsOf                int64           `json:"asOf"`
-	Days                int             `json:"days"`
-	Versions            []versionRow    `json:"versions"`
-	VersionsWindowHours int             `json:"versionsWindowHours"`
-	HourlyActivity      hourlyActivity  `json:"hourlyActivity"`
-	Today               todayReport     `json:"today"`
-	Feedback            feedbackReport  `json:"feedback"`
-	Devices             deviceReport    `json:"devices"`
-	Usage               usageReport     `json:"usage"`
-	Retention           retentionReport `json:"retention"`
-	Invites             inviteReport    `json:"invites"`
+	OK                  bool           `json:"ok"`
+	GeneratedAt         int64          `json:"generatedAt"`
+	AsOf                int64          `json:"asOf"`
+	Days                int            `json:"days"`
+	Versions            []versionRow   `json:"versions"`
+	VersionsWindowHours int            `json:"versionsWindowHours"`
+	HourlyActivity      hourlyActivity `json:"hourlyActivity"`
+	// 每人发出多少条消息的分布（今天截至生成时刻 vs 近 7 天日均）。
+	MessagesPerAccount messagePerAccount `json:"messagesPerAccount"`
+	Today              todayReport       `json:"today"`
+	Feedback           feedbackReport    `json:"feedback"`
+	Devices            deviceReport      `json:"devices"`
+	Usage              usageReport       `json:"usage"`
+	Retention          retentionReport   `json:"retention"`
+	Invites            inviteReport      `json:"invites"`
 }
 
 type versionRow struct {

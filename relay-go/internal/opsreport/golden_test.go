@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"flag"
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -390,5 +391,46 @@ func TestUsableInvitesExcludeInternalCodes(t *testing.T) {
 	}
 	if got := len(inviteUnusedRows(rows, stamp)); got != 1 {
 		t.Fatalf("未用列表也不该列出评审码，得到 %d 行", got)
+	}
+}
+
+// TestMessagesPerAccountHistogram 钉住「每人发出多少条消息」的口径：
+// 当天有连接但零消息的账号必须落在 0 这一格（分母是连接过的账号），
+// 15 条以上并进最后一格；基准取前 7 天的日均账号数。
+func TestMessagesPerAccountHistogram(t *testing.T) {
+	stamp := at(20261103, 10, 0)
+	day := localDayOf(stamp)
+	src := &fakeSource{usage: map[int64][]store.UsageRow{
+		day: {
+			{DeviceID: "d1", AccountID: "acc_a", Prompts: 0},
+			{DeviceID: "d2", AccountID: "acc_b", Prompts: 3},
+			{DeviceID: "d3", AccountID: "acc_c", Prompts: 40},
+		},
+		dayShift(day, -1): {
+			{DeviceID: "d4", AccountID: "acc_a", Prompts: 1},
+			{DeviceID: "d5", AccountID: "acc_b", Prompts: 0},
+		},
+	}}
+	known := map[string]struct{}{"d1": {}, "d2": {}, "d3": {}, "d4": {}, "d5": {}}
+	got, err := buildMessagesPerAccount(context.Background(), src, stamp,
+		map[string]struct{}{}, known, map[string]struct{}{})
+	if err != nil {
+		t.Fatalf("buildMessagesPerAccount: %v", err)
+	}
+	if got.TodayAccounts != 3 || got.TodayZero != 1 {
+		t.Fatalf("今日账号/零消息 = %d/%d，期望 3/1", got.TodayAccounts, got.TodayZero)
+	}
+	if got.Today[0] != 1 || got.Today[3] != 1 || got.Today[15] != 1 {
+		t.Fatalf("今日直方图 = %v", got.Today)
+	}
+	if got.TodayMedian != 3 {
+		t.Fatalf("今日中位数 = %v，期望 3", got.TodayMedian)
+	}
+	if got.BaselineDays != 7 {
+		t.Fatalf("基准天数 = %d", got.BaselineDays)
+	}
+	// 只有一天有数据，均值应等于那天的分布除以 7。
+	if math.Abs(got.Baseline[0]-1.0/7) > 1e-9 || math.Abs(got.Baseline[1]-1.0/7) > 1e-9 {
+		t.Fatalf("基准分布 = %v", got.Baseline)
 	}
 }
