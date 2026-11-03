@@ -399,7 +399,9 @@ function messagesPerAccountChart(report, generatedAt = 0) {
   const baseline = (data.baseline ?? []).map(num)
   if (!today.length) return ''
   const cap = num(data.cap) || today.length - 1
-  const { w, h, left, right, top, bottom } = CHART
+  const { w, left, right, top, bottom } = CHART
+  // 比其它图高 18px：横轴名称要落在刻度下面，不能被 viewBox 裁掉。
+  const h = CHART.h + 18
   const max = Math.max(...today, ...baseline, 1) * 1.12
   const slots = today.length
   const slot = (w - left - right) / slots
@@ -424,9 +426,14 @@ function messagesPerAccountChart(report, generatedAt = 0) {
     ? `<text x="${(left + slot * (index + 0.5)).toFixed(1)}" y="${h - bottom + 12}" `
       + `text-anchor="middle">${index === cap ? `${index}+` : index}</text>`
     : '')).join('')
+  // 轴名（owner 2026-11-03）：横轴写「消息条数」，纵轴竖排写「账号数」。
+  const axisTitles = `<text x="${(left + (w - left - right) / 2).toFixed(1)}" y="${h - 4}" `
+    + `text-anchor="middle">消息条数</text>`
+    + `<text x="10" y="${((top + h - bottom) / 2).toFixed(1)}" text-anchor="middle" `
+    + `transform="rotate(-90 10 ${((top + h - bottom) / 2).toFixed(1)})">账号数</text>`
   const svg = `<svg viewBox="0 0 ${w} ${h}" role="img" aria-label="每人消息条数">`
     + gridLines(max, (value) => y(value), (value) => String(Math.round(value)))
-    + bars + ticks + '</svg>'
+    + bars + ticks + axisTitles + '</svg>'
   const swatch = (fill) => `<i style="display:inline-block;width:10px;height:8px;border-radius:2px;`
     + `margin:0 3px 0 8px;vertical-align:-1px;background:${fill}"></i>`
   const legend = '<div class="heat-legend">'
