@@ -502,6 +502,25 @@ test('「关注」区只留要 owner 动作的待办，自动观察不再堆上�
 })
 
 
+test('每人消息条数：与日报同款图表，缺数据时不渲染', () => {
+  const data = fixture()
+  data.messagesPerAccount = {
+    cap: 15, today: [3, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+    baseline: [4.1, 1.2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.8],
+    todayAccounts: 5, todayZero: 3, todayMean: 2.4, todayMedian: 0,
+    baselineZero: 4.1, baselineMean: 3, baselineMedian: 1,
+  }
+  const html = renderReport(data)
+  assert.match(html, /每人消息条数/)
+  assert.match(html, /5 个账号 · 柱高取较大值/)
+  assert.match(html, /与日均重合/)
+  assert.match(html, /今天超出/)
+  assert.match(html, /今天不足/)
+  const legacy = fixture()
+  delete legacy.messagesPerAccount
+  assert.ok(!renderReport(legacy).includes('每人消息条数'), '老服务端不渲染该图')
+})
+
 test('推送注册率只算近 7 天活跃的手机（owner 2026-10-17 定）', () => {
   // 6 台未注册推送、但一个月没上线：废弃设备不进分母，不报警。
   const quiet = fixture()

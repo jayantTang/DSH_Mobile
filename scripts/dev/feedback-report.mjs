@@ -387,6 +387,58 @@ function lineChart({ title, note, points, format, markers = [] }) {
   return figure(title, note, svg)
 }
 
+/** 每人消息条数：今天截至生成时刻的分布，压在近 7 天日均上（owner 2026-11-03 定稿）。
+
+一根柱占满一格、相邻相接；颜色分三段：与日均重合（主题蓝）、今天超出（深蓝）、
+今天不足（透明浅黄），段与段之间用 1px 白描边分开。柱高取今天与日均的较大值。
+外观沿用日报既有图表：同一套卡片、网格、字号与留白，不引入新的视觉语言。
+*/
+function messagesPerAccountChart(report, generatedAt = 0) {
+  const data = report.messagesPerAccount ?? {}
+  const today = (data.today ?? []).map(num)
+  const baseline = (data.baseline ?? []).map(num)
+  if (!today.length) return ''
+  const cap = num(data.cap) || today.length - 1
+  const { w, h, left, right, top, bottom } = CHART
+  const max = Math.max(...today, ...baseline, 1) * 1.12
+  const slots = today.length
+  const slot = (w - left - right) / slots
+  const y = (value) => h - bottom - (value / max) * (h - top - bottom)
+  const rect = (x, from, to, fill) => {
+    if (to - from <= 0.02) return ''
+    const height = Math.max(y(from) - y(to), 0.8)
+    return `<rect x="${x.toFixed(1)}" y="${y(to).toFixed(1)}" width="${(slot - 0.8).toFixed(1)}" `
+      + `height="${height.toFixed(1)}" rx="1.6" fill="${fill}" stroke="#ffffff" stroke-width="0.9"/>`
+  }
+  const bars = today.map((value, index) => {
+    const x = left + slot * index + 0.4
+    const base = Math.max(baseline[index] ?? 0, 0)
+    const common = Math.min(value, base)
+    const over = Math.max(value - base, 0)
+    const under = Math.max(base - value, 0)
+    return rect(x, 0, common, COLORS.line)
+      + rect(x, common, common + under, 'rgba(253, 230, 138, 0.55)')
+      + rect(x, common, common + over, '#1e3a8a')
+  }).join('')
+  const ticks = today.map((_, index) => (index % 3 === 0 || index === slots - 1
+    ? `<text x="${(left + slot * (index + 0.5)).toFixed(1)}" y="${h - bottom + 12}" `
+      + `text-anchor="middle">${index === cap ? `${index}+` : index}</text>`
+    : '')).join('')
+  const svg = `<svg viewBox="0 0 ${w} ${h}" role="img" aria-label="每人消息条数">`
+    + gridLines(max, (value) => y(value), (value) => String(Math.round(value)))
+    + bars + ticks + '</svg>'
+  const swatch = (fill) => `<i style="display:inline-block;width:10px;height:8px;border-radius:2px;`
+    + `margin:0 3px 0 8px;vertical-align:-1px;background:${fill}"></i>`
+  const legend = '<div class="heat-legend">'
+    + `<span>${swatch(COLORS.line)}与日均重合</span>`
+    + `<span>${swatch('#1e3a8a')}今天超出</span>`
+    + `<span>${swatch('#fde68a')}今天不足</span>`
+    + '</div>'
+  const note = `截止 ${escapeHtml(clock(num(generatedAt)))} · `
+    + `${formatInt(num(data.todayAccounts))} 个账号 · 柱高取较大值`
+  return figure('每人消息条数', note, svg + legend)
+}
+
 /** 按天消息数：柱状总数（左轴）+ 当天活跃账号人均（右轴）。
 
 为什么用右轴：总数是量、人均是强度，两个量级差一个数量级；同轴会把人均压成
@@ -1192,7 +1244,7 @@ function rangeSection(report, days, completed = false, generatedAt = 0) {
     note: `左轴总数 · 右轴当天活跃账号人均 · 近 7 天消息活跃 ${formatInt(usage.messageActiveAccounts7d)} 个`,
     points: countPoints,
   })
-  const charts = activeChart + messageChart + lineChart({
+  const charts = activeChart + messageChart + messagesPerAccountChart(report, generatedAt) + lineChart({
     title: '每日出口流量',
     // 竖虚线的含义写在这里：图上不再逐条标「发版」，密集发版时文字会互相压住。
     note: releaseMarkers.length ? `${peakNote} · 竖虚线为 TestFlight 发版日` : peakNote,
