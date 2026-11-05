@@ -19,14 +19,14 @@
 
 ## 状态与兼容性
 
-| 组件 | 当前版本 | 分发方式 |
-|---|---|---|
-| iOS App | 1.0 | TestFlight（[加入](https://testflight.apple.com/join/tHKQsbCk)），构建 90 天过期 |
-| 连接器 `dsh-plugin-mobile-link` | 0.8.0 | npm |
-| 中转（DLP v1） | `relay-go/`（Go，`go-0.2.7`） | 自行部署 |
+| 组件 | 分发方式 |
+|---|---|
+| iOS App | TestFlight（[加入](https://testflight.apple.com/join/tHKQsbCk)），构建 90 天过期 |
+| 连接器 `dsh-plugin-mobile-link` | npm |
+| 中转（DLP v1） | `relay-go/`（Go），自行部署 |
 
-App 1.0 要求连接器 ≥ 0.7.0；面板内登记与设备列表需 0.8.0。版本组合与兼容性约束见
-[`docs/VERSIONING.md`](docs/VERSIONING.md)。
+连接器与 iOS App 请保持最新版本：两者按同一份协议演进，跨版本的兼容窗口有限。
+版本组合与兼容性约束见 [`docs/VERSIONING.md`](docs/VERSIONING.md)。
 
 ## 前提
 

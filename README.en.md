@@ -24,6 +24,9 @@ stored on the relay — it forwards frames and keeps daily byte counters.
 4. **A relay address.** The default deployment accepts open enrollment; no invite code is
    required, and enrollment is rate-limited by source.
 
+Keep the connector and the app on their latest versions: both follow the same protocol, and the
+compatibility window across versions is limited.
+
 ## Register and pair
 
 Register the computer first: open **移动端连接** at the bottom of the DSH sidebar, confirm the
