@@ -222,7 +222,8 @@ jobs:
         env:
           DSH_HOME: ${{ runner.temp }}/dsh-home
         run: |
-          swift test --disable-xctest \
+          # --verbose 才会把 swift-testing 的逐条进度打出来；默认只在结束时给结论。
+          swift test --disable-xctest --verbose \
             --skip LiveIntegrationTests \
             --skip LiveDuplicateAuditTests \
             --skip LiveWorkspaceFileVersionTests \
