@@ -185,10 +185,23 @@ jobs:
 
   dshkit:
     runs-on: macos-latest
-    timeout-minutes: 30
+    # 2026-11-05：这个作业两次在测试跑完后进程不退出（xctest / swift-package 残活），
+    # 30 分钟上限只是兜底。步骤级上限按正常耗时（2–4 分钟）留足余量后收紧，卡住时
+    # 在 12 分钟内失败，日志还能落盘。
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      # SwiftPM 的产物与解析结果缓存在 runner 上：每次重编 swift-syntax 要几分钟，
+      # 网络抖动还会让解析阶段干等。
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ios/DSHMobile/DSHKit/.build
+            ~/.swiftpm
+          key: dshkit-${{ runner.os }}-${{ hashFiles('ios/DSHMobile/DSHKit/Package.resolved') }}
+          restore-keys: dshkit-${{ runner.os }}-
       - name: swift test（协议层）
+        timeout-minutes: 12
         working-directory: ios/DSHMobile/DSHKit
         env:
           DSH_HOME: ${{ runner.temp }}/dsh-home
