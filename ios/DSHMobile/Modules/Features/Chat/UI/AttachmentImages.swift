@@ -163,12 +163,11 @@ public final class AttachmentImages {
         }
         let driver = startDriver(
             attachmentId: attachmentId, variant: variant, in: sessionId, flightKey: flightKey)
-        // 行离屏 → 视图的 task 被取消 → 驱动一起停（退避的等待也停）。
-        await withTaskCancellationHandler {
-            await driver.value
-        } onCancel: {
-            driver.cancel()
-        }
+        // 驱动的寿命**不跟着视图的 task 走**：UICollectionView 回收/重配一次单元格，
+        // SwiftUI 就会取消这个 task，而取消之后没有任何东西会再把它叫起来——张张图
+        // 都会停在转圈。驱动由本对象持有：重试有上限（约两分钟），会话切换与重置
+        // （`reset` / `clearAllCached` / 手动重试）才是它的终止条件。
+        await driver.value
     }
 
     /// 用户点了「点按重试」。
@@ -333,6 +332,8 @@ public final class AttachmentImages {
         guard let client = chatHostForLoad() else { return .notReady }
         if shouldInjectFailure(for: attachmentId) { return .failure(String(localized: "注入的失败")) }
 
+        // 网络与解码都在后台：`preparingForDisplay` 对一张截图是几十毫秒到上百毫秒，
+        // 落主线程就是掉帧。
         let outcome: RemoteOutcome = await Task.detached {
             do {
                 let value = try await client.attachment(
@@ -340,7 +341,10 @@ public final class AttachmentImages {
                 guard let encoded = value["data"]?.stringValue,
                       let data = Data(base64Encoded: encoded)
                 else { return .failure(String(localized: "返回的字节无法解码")) }
-                return .data(data)
+                guard let image = Self.decode(data) else {
+                    return .failure(String(localized: "字节不是可显示的图片"))
+                }
+                return .image(image, data)
             } catch {
                 if Self.isLinkNotReady(error) { return .notReady }
                 return .failure((error as NSError).localizedDescription)
@@ -351,8 +355,7 @@ public final class AttachmentImages {
         switch outcome {
         case .notReady:
             return .notReady
-        case .data(let data):
-            guard let image = Self.decode(data) else { return .failure(String(localized: "字节不是可显示的图片")) }
+        case .image(let image, let data):
             // 下到了就留一份：下次冷启动不必再为这张图跑一趟中转。
             disk.save(data, scope: scope, attachmentId: attachmentId, variant: variant)
             return .image(image)
@@ -370,7 +373,7 @@ public final class AttachmentImages {
 
     /// 一次网络尝试的结果。`String` 不是 `Error`，所以不复用 `Result`。
     private enum RemoteOutcome {
-        case data(Data)
+        case image(UIImage, Data)
         case failure(String)
         case notReady
     }
