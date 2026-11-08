@@ -177,6 +177,15 @@ public struct ChatTimeline: Sendable {
     /// internal(set)：同模块扩展文件（Timeline+Streaming 的单行增量更新）要改行。
     public internal(set) var items: [TimelineItem] = []
 
+    /// 已经插进当前轮次的人发消息（`user-<rpcId>`）。
+    ///
+    /// 为什么要记一份：同一条排队消息在日志里会出现两次拼接——先按「排到下一轮」
+    /// 拼一次（排队条），提升为插话时再按「下一 step」拼一次。折叠是按事件逐条重放
+    /// 的，一次重建若把两条都喂进来，谁后到谁说了算；实测出现过「插话那条被更晚
+    /// 重放的排队事件改回排队中」，随后被当成排队输入从转写里隐藏（20261108-234320）。
+    /// 插进这一轮是单向事实，只增不减，所以它在这里有自己的一份。
+    private var steeringIdentities: Set<String> = []
+
     /// In-flight assistant output, rendered as a trailing bubble.
     public private(set) var streaming: StreamingAttempt?
 
@@ -236,6 +245,7 @@ public struct ChatTimeline: Sendable {
                                seeding boundary: TranscriptTail.Boundary = .unknown,
                                showsTail: Bool = true) -> Change {
         items.removeAll(keepingCapacity: true)
+        steeringIdentities.removeAll(keepingCapacity: true)
         toolIndex.removeAll(keepingCapacity: true)
         foldSummaries.removeAll(keepingCapacity: true)
         streaming = nil
@@ -679,6 +689,9 @@ public struct ChatTimeline: Sendable {
             // number instead — as this used to — is what made every message
             // sent from the phone appear twice.
             let identity = spliced.rpcId.map { "user-\($0)" } ?? "inbox-\(event.seq)"
+            // 插进这一轮是单向事实：先到后到都算数，晚到的排队重放不得把它改回去。
+            let isSteering = spliced.target == "next-step" || steeringIdentities.contains(identity)
+            if spliced.target == "next-step" { steeringIdentities.insert(identity) }
             // 概要 v2 的页里，同一条消息可能出现两次：`user/message`（落定）与
             // `agent/inbox/spliced`（本机回声）。回声只是乐观行，已落定的那一行
             // 永远是正本——晚到的回声不能把确认过的正文/图片覆盖成它自己那份
@@ -692,7 +705,7 @@ public struct ChatTimeline: Sendable {
                 kind: .userMessage(
                     text: text,
                     images: images,
-                    isSteering: spliced.target == "next-step",
+                    isSteering: isSteering,
                     isPending: true,
                     isAgentSent: Self.isAgentSent(rpcId: spliced.rpcId, images: images)
                 ),

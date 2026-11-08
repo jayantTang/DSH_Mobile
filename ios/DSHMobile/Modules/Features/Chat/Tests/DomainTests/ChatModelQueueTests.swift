@@ -65,6 +65,24 @@ final class ChatModelQueueTests: XCTestCase {
         carrier.liveStreams["session/control"]?.yield(frame)
     }
 
+
+    /// 一条 `agent/inbox/spliced`：`target` 区分"排到下一轮"与"插进这一轮"。
+    private func spliced(seq: Int, target: String, rpcId: String, text: String) -> JSONValue {
+        .object([
+            "type": .string("agent/inbox/spliced"),
+            "seq": .int(seq),
+            "data": .object([
+                "target": .string(target),
+                "inserted": .array([
+                    .object([
+                        "content": .array([.object(["type": .string("text"), "text": .string(text)])]),
+                        "source": .object(["kind": .string("user"), "rpcId": .string(rpcId)]),
+                    ]),
+                ]),
+            ]),
+        ])
+    }
+
     // MARK: - 控制帧
 
     func test_baseline_and_queue_frames_are_filtered_by_session_and_deduplicated() async throws {
@@ -89,6 +107,25 @@ final class ChatModelQueueTests: XCTestCase {
         XCTAssertEqual(model.queuedInputs.last?.placement, .steering)
     }
 
+
+    /// 运行中发出去的两种消息都要在转写里看得见：插话（`target: next-step`）已经进了
+    /// 这一轮，排队条同时也把它撤下；排队（`target: next-turn`）在等下一轮。两条都
+    /// 按 pending 行显示，宿主落定时原地转正。旧规则只画条带、不画转写，插话就彻底
+    /// 消失（实测 20261108-234320）。
+    func test_queued_and_steering_splices_are_both_visible_in_the_transcript() async throws {
+        try await open()
+        carrier.liveStreams["session/follow"]?.yield(ChatSeam.snapshot(cursor: 4, records: [
+            ChatSeam.userMessage(seq: 1, text: "第一轮", rpcId: "r-1"),
+            spliced(seq: 2, target: "next-turn", rpcId: "r-q", text: "排队的那条"),
+            spliced(seq: 3, target: "next-step", rpcId: "r-s", text: "插话的那条"),
+        ]))
+        let shown = await eventually {
+            let ids = model.rowsFor(screen: "s-1").map(\.id)
+            return ids.contains("user-r-s") && ids.contains("user-r-q")
+        }
+        XCTAssertTrue(shown, "rows: \(model.rowsFor(screen: "s-1").map(\.id))")
+    }
+
     // MARK: - 乐观入队 / 合并 / 提升
 
     func test_a_queued_send_is_optimistic_then_merged_by_rpc_id_and_promoted() async throws {
@@ -106,11 +143,12 @@ final class ChatModelQueueTests: XCTestCase {
         XCTAssertTrue(optimistic.isLocal)
         XCTAssertEqual(optimistic.text, "排队的话")
         XCTAssertNotNil(optimistic.rpcId)
-        // 排队输入不进转写：等待中的用户行被隐藏。
-        XCTAssertFalse(model.rowsFor(screen: "s-1").contains { item in
+        // 排队中的消息也进转写（owner 2026-11-08）：运行中发出去的话，转写里看不到
+        // 就等于没发出去。行带 pending 状态，宿主提升时原地转正。
+        XCTAssertTrue(model.rowsFor(screen: "s-1").contains { item in
             guard case .userMessage(_, _, _, let isPending, _) = item.kind else { return false }
             return isPending
-        })
+        }, "rows: \(model.rowsFor(screen: "s-1").map(\.id))")
 
         let rpcId = try XCTUnwrap(optimistic.rpcId)
         yieldControl(queueFrame([item("m-9", rpcId: rpcId, text: "排队的话")]))

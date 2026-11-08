@@ -539,6 +539,44 @@ final class TimelineTests: XCTestCase {
         XCTAssertFalse(isSteering, "a next-turn splice is queued, not steering")
     }
 
+
+    /// 同一条消息在日志里会拼接两次：先「排到下一轮」，提升为插话后再「下一 step」。
+    /// 折叠是按事件重放的，重建时两条都会被喂进来；插进这一轮是单向事实，晚到的
+    /// 排队重放不得把它改回排队中（否则转写按"排队中"把它藏掉，要等落定才出现）。
+    func test_steering_stays_true_when_the_queued_splice_is_folded_again() throws {
+        let queued = try event("""
+        {"type":"agent/inbox/spliced","seq":3,"time":4,
+         "data":{"target":"next-turn","start":0,
+                 "inserted":[{"content":[{"type":"text","text":"提升前"}],
+                              "source":{"kind":"user","rpcId":"r9"},"role":"user","id":"m9"}]}}
+        """)
+        let steering = try event("""
+        {"type":"agent/inbox/spliced","seq":4,"time":5,
+         "data":{"target":"next-step","start":0,
+                 "inserted":[{"content":[{"type":"text","text":"提升前"}],
+                              "source":{"kind":"user","rpcId":"r9"},"role":"user","id":"m9"}]}}
+        """)
+        let replay = try event("""
+        {"type":"agent/inbox/spliced","seq":5,"time":6,
+         "data":{"target":"next-turn","start":0,
+                 "inserted":[{"content":[{"type":"text","text":"提升前"}],
+                              "source":{"kind":"user","rpcId":"r9"},"role":"user","id":"m9"}]}}
+        """)
+        var timeline = ChatTimeline()
+        _ = timeline.apply(queued)
+        _ = timeline.apply(steering)
+        _ = timeline.apply(replay)
+        let row = try XCTUnwrap(timeline.items.first { item in
+            if case .userMessage = item.kind { return true }
+            return false
+        })
+        guard case .userMessage(let text, _, let isSteering, _, _) = row.kind else {
+            return XCTFail("expected a user row")
+        }
+        XCTAssertEqual(text, "提升前")
+        XCTAssertTrue(isSteering, "插话是单向事实，晚到的排队重放不能改回去")
+    }
+
     // MARK: - Regressions from on-device use
 
     func testQueuedSpliceAndDurableMessageCollapseIntoOneRow() throws {

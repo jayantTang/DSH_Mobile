@@ -35,13 +35,14 @@ public extension ChatModel {
         // 这行是"某些已完成的历史对话没有折叠"唯一的现场证据来源。
         FoldTrace.note(plan: plan, session: sessionId)
         var rows = TranscriptProcessFold.displayRows(plan, state: foldState)
-        // 排队输入不进转写：`isPending` 的乐观用户行由输入区上方的条带呈现
-        //（设计 `20261026-排队输入-设计.md` §3/§5）。发送失败/未确认的行仍然
-        // 留在转写里（它们要能点重试），只隐藏"还在等待"的那一种。
-        rows.removeAll { item in
-            guard case .userMessage(_, _, _, let isPending, _) = item.kind else { return false }
-            return isPending && !item.sendFailed && !item.sendUnconfirmed
-        }
+        // 排队中的消息**也进转写**（owner 2026-11-08：运行中发出去的话，转写里
+        // 看不到就等于没发出去）。行带着 pending 状态（降透明度 + 等待提示），宿主
+        // 提升成 durable `user/message` 时原地转正；底部排队条仍然保留，作为可撤回、
+        // 可插话的操作面。
+        //
+        // 旧规则（设计 `20261026-排队输入-设计.md` §3/§5）是"排队输入不进转写、
+        // 只由条带呈现"——插话（`target: next-step`）因此彻底消失：条带把它撤下了，
+        // 转写里又没有它，要等到下一个 step 落定才突然出现（实测 20261108-234320）。
         // 末尾运行行：一轮还在跑时，两个列表宿主都要看到它。
         // 它必须在行模型里（uikit 宿主只渲染 `rowsFor`），身份稳定、不参与裁剪。
         if visible.timeline.isTurnOpen {
