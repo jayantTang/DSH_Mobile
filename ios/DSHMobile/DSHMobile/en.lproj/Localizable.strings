@@ -78,6 +78,11 @@
 "正在新建…" = "Creating…";
 "给 DSH 发消息…" = "Message DSH…";
 "收起键盘" = "Dismiss keyboard";
+"正在加载图片" = "Loading picture";
+"图片加载失败，点按重试（%@）" = "Could not load the picture — tap to retry (%@)";
+"注入的失败" = "Injected failure";
+"返回的字节无法解码" = "The returned bytes could not be decoded";
+"字节不是可显示的图片" = "The bytes are not a displayable picture";
 "尚未连接" = "Not connected yet";
 "重试" = "Retry";
 "中断" = "Stop";

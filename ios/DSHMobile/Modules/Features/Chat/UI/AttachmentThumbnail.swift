@@ -82,10 +82,10 @@ struct AttachmentThumbnail: View {
         .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { width in
             if width > 0 { columnWidth = width }
         }
-        // 任务身份带上链路代数：链路重建后同一张图要重跑一次加载。只按附件 id 的话，
-        // 「客户端还没建立时渲染」的那次空结果永远不会被重试，图片就一直转圈。
-        .task(id: "\(attachment.attachmentId)#\(images.linkGeneration)") {
-            await images.load(attachment.attachmentId, variant: attachment.cacheVariant)
+        // 任务身份只按附件 id：重试由状态机自己安排，视图不再拿"链路代数"当身份。
+        // 行滚出屏幕 → 这个 task 被取消 → 驱动停止，退避的等待也不会在后台空转。
+        .task(id: attachment.attachmentId) {
+            await images.begin(attachment.attachmentId, variant: attachment.cacheVariant)
         }
         .fullScreenCover(item: $preview) { item in
             ImagePreview(image: item.image, label: item.label)
@@ -124,15 +124,19 @@ struct AttachmentThumbnail: View {
 
     /// The box the picture will occupy: a failure with a way out, or a spinner.
     ///
+    /// Which one is decided by the loader's state machine, never by the clock in
+    /// this view: a failed attempt now schedules its own retry, so the failure
+    /// tile is a state a picture *passes through*, not one it is stuck in.
+    ///
     /// Split into two top-level views rather than one container with a branch
     /// inside: an identifier on the container swallows the identifiers of what
     /// it contains (the retry button's id never reached the accessibility tree,
     /// and the case could not find it).
     @ViewBuilder
     private var placeholder: some View {
-        if images.hasFailed(attachment.attachmentId) {
+        if case .failed(let reason) = images.state(attachment.attachmentId) {
             Button {
-                Task { await images.retry(attachment.attachmentId) }
+                images.retry(attachment.attachmentId)
             } label: {
                 VStack(spacing: DSHTheme.Spacing.hairline) {
                     Image(systemName: "arrow.clockwise")
@@ -152,7 +156,8 @@ struct AttachmentThumbnail: View {
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("attachment.image.retry")
-            .accessibilityLabel("图片加载失败，点按重试")
+            // 失败原因只进无障碍标签与诊断，不铺在界面上。
+            .accessibilityLabel(String(localized: "图片加载失败，点按重试（\(reason)）"))
         } else {
             ZStack {
                 RoundedRectangle(cornerRadius: DSHTheme.Radius.medium, style: .continuous)
@@ -164,6 +169,10 @@ struct AttachmentThumbnail: View {
             // then derives the height from it, which is a feedback loop — it locked
             // the main thread and left the transcript blank.
             .frame(width: reservedSize.width, height: reservedSize.height)
+            // 显式成为一个无障碍元素：否则这层容器的标识会被里面的 `ProgressView`
+            // 吞掉，VoiceOver 与用例都拿不到"这张图正在加载"这件事。
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(String(localized: "正在加载图片"))
             .accessibilityIdentifier("attachment.image.loading")
         }
     }
