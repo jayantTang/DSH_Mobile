@@ -82,7 +82,9 @@ struct AttachmentThumbnail: View {
         .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { width in
             if width > 0 { columnWidth = width }
         }
-        .task(id: attachment.attachmentId) {
+        // 任务身份带上链路代数：链路重建后同一张图要重跑一次加载。只按附件 id 的话，
+        // 「客户端还没建立时渲染」的那次空结果永远不会被重试，图片就一直转圈。
+        .task(id: "\(attachment.attachmentId)#\(images.linkGeneration)") {
             await images.load(attachment.attachmentId, variant: attachment.cacheVariant)
         }
         .fullScreenCover(item: $preview) { item in

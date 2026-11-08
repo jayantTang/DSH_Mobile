@@ -15,7 +15,7 @@ import DSHChatDomain
 /// never showed the picture at all.
 /// 025 阶段4b：随聊天单元搬进 `DSHChatUI`。它是转写页（以及它自己的缩略图）读图片的
 /// 那一层，装配层只是建一个、放进 environment，所以类型与那四个入口（`attach` /
-/// `clearFailures` / `reset` / `clearAllCached`）是 public。
+/// `linkEstablished` / `reset` / `clearAllCached`）是 public。
 @MainActor
 @Observable
 public final class AttachmentImages {
@@ -50,6 +50,8 @@ public final class AttachmentImages {
     /// a picture that lost its race with a reconnecting socket used to stay
     /// broken for the rest of the session, with no way for anyone to ask again.
     private var failures: [String: [String: Date]] = [:]
+    /// 链路代数：每次链路重建 +1，图片行据此重跑加载（见 `linkEstablished`）。
+    private(set) var linkGeneration = 0
     /// "session|attachment" → the load in progress, so the same picture asked
     /// for twice in one session coalesces while two sessions never share one.
     private var inFlight: [String: Task<(image: UIImage?, attemptedNetwork: Bool), Never>] = [:]
@@ -106,16 +108,61 @@ public final class AttachmentImages {
         failures.removeAll()
     }
 
-    /// Forgets every failure, so the next render tries again.
+    /// 链路重建：清掉断线期间的失败记录，并让所有可见的图片重新走一次加载。
     ///
-    /// Called when the link is re-established: whatever failed during the
-    /// outage was failing because there was no connection, not because the
-    /// request was wrong.
-    public func clearFailures() {
-        guard !failures.isEmpty else { return }
-        // Every session, not just this one: what failed during the outage was
-        // failing because there was no connection.
+    /// 只清失败记录不够：加载在「客户端还没建立」时直接返回空，这个结果既不记为
+    /// 失败，也不会让 `.task(id:)` 重跑——图片行会一直停在转圈，没有失败态、也没有
+    /// 重试入口。把「链路已建立」变成一个可观察的自增量，视图拿它当 task 的身份，
+    /// 恢复后自然重跑一次；已经有缓存的图在内存里直接命中，不触网。
+    ///
+    /// 失败记录跨会话清空：断线期间的失败是「没有连接」，不是「请求有错」。
+    public func linkEstablished() {
         failures.removeAll()
+        linkGeneration &+= 1
+    }
+
+    /// 取当前可用的宿主客户端。DEBUG 钩子 `-DSHHoldAttachmentLink <秒>` 会在第一次
+    /// 取图时把「链路未就绪」固定下来，并在 N 秒后走同一条 `linkEstablished` 恢复，
+    /// 用来验证「未连接时渲染 → 链路恢复后自动重试」。Release 里没有这个分支。
+    private func chatHostForLoad() -> (any ChatHosting)? {
+        guard let client = store?.chatHost else { return nil }
+        guard Self.holdLinkSeconds > 0 else { return client }
+        if holdLinkDeadline == nil {
+            holdLinkDeadline = Date().addingTimeInterval(Self.holdLinkSeconds)
+            scheduleHoldRelease()
+        }
+        if let deadline = holdLinkDeadline, Date() < deadline { return nil }
+        return client
+    }
+
+    /// `-DSHHoldAttachmentLink <秒>`：DEBUG 钩子，把「链路未就绪」固定成 N 秒。
+    ///
+    /// 注入的只是「客户端不可用」这个条件；N 秒后走的是与真实重连相同的
+    /// `linkEstablished`，之后的重跑、缓存、下载与解码都是真实路径。Release 里恒为 0。
+    private static let holdLinkSeconds: Double = {
+        #if DEBUG
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let index = arguments.firstIndex(of: "-DSHHoldAttachmentLink"),
+              index + 1 < arguments.count,
+              let seconds = Double(arguments[index + 1])
+        else { return 0 }
+        return max(0, seconds)
+        #else
+        return 0
+        #endif
+    }()
+
+    private var holdLinkDeadline: Date?
+    private var holdLinkCountdown: Task<Void, Never>?
+
+    private func scheduleHoldRelease() {
+        holdLinkCountdown?.cancel()
+        let seconds = Self.holdLinkSeconds
+        holdLinkCountdown = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            self?.linkEstablished()
+        }
     }
 
     /// 图片的落盘层：进程一没，内存桶就空了，冷启动会把每张图都重下一遍。
@@ -139,7 +186,7 @@ public final class AttachmentImages {
         let flightKey = bucketKey(session, attachmentId)
         if let cached = cache.object(forKey: flightKey as NSString) { return cached }
         if let running = inFlight[flightKey] { return await running.value.image }
-        guard !attachmentId.isEmpty, let sessionId, let client = store?.chatHost else { return nil }
+        guard !attachmentId.isEmpty, let sessionId, let client = chatHostForLoad() else { return nil }
 
         let scope = scopeId
         let disk = diskCache
@@ -162,7 +209,9 @@ public final class AttachmentImages {
                 guard let encoded = value["data"]?.stringValue,
                       let data = Data(base64Encoded: encoded),
                       let image = Self.decode(data)
-                else { return (nil, true) }
+                else {
+                    return (nil, true)
+                }
                 // 下到了就留一份：下次冷启动不必再为这张图跑一趟中转。
                 disk.save(data, scope: scope, attachmentId: attachmentId, variant: variant)
                 return (image, true)

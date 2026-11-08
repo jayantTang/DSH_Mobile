@@ -110,7 +110,7 @@ struct RootView: View {
             // pictures that lost their race with an outage get another chance
             // without anyone tapping.
             .onChange(of: store.state.isConnected) { _, isConnected in
-                if isConnected { attachmentImages.clearFailures() }
+                if isConnected { attachmentImages.linkEstablished() }
                 // 018：断线 → 冻结本地推断并标「上次已知」；重连 → 重新问名单。
                 activity.setConnected(isConnected)
             }
