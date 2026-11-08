@@ -77,6 +77,7 @@
 "新建失败" = "Could not create";
 "正在新建…" = "Creating…";
 "给 DSH 发消息…" = "Message DSH…";
+"收起键盘" = "Dismiss keyboard";
 "尚未连接" = "Not connected yet";
 "重试" = "Retry";
 "中断" = "Stop";

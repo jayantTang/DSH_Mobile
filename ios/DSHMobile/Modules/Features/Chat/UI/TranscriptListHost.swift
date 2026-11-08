@@ -429,6 +429,11 @@ final class TranscriptListHost: UIView, UICollectionViewDelegate {
         collectionView = UICollectionView(frame: .zero, collectionViewLayout: layout)
         collectionView.translatesAutoresizingMaskIntoConstraints = false
         collectionView.alwaysBounceVertical = true
+        // 键盘跟随下滑收起。这一层是 UIKit 的 scroll view，SwiftUI 那边的
+        // `.scrollDismissesKeyboard(.interactively)` 落不到它身上（那个修饰符只作用在
+        // SwiftUI 自己的滚动容器上），所以键盘弹出后下滑手势一直无效——测试者报的
+        // 「键盘拉出来后不能关掉」有两半原因，这是其中一半。
+        collectionView.keyboardDismissMode = .interactive
         collectionView.delegate = self
         // 转写行没有"选中"这个语义：`UICollectionView` 默认允许选中，而
         // `UICollectionViewListCell` 的默认背景配置会在**按下与选中**两态给整行铺一层系统灰

@@ -259,7 +259,9 @@ public struct Composer: View {
         .lineLimit(1...8)
         .focused(isFocused)
         .accessibilityIdentifier("composer.field")
-        .padding(.horizontal, DSHTheme.Spacing.standard)
+        .padding(.leading, DSHTheme.Spacing.standard)
+        // 键盘弹出时给右端的收起键让出位置，文字不会压在它下面。
+        .padding(.trailing, isFocused.wrappedValue ? 36 : DSHTheme.Spacing.standard)
         .padding(.vertical, DSHTheme.Spacing.tight)
         .background(DSHTheme.layer2)
         .clipShape(RoundedRectangle(cornerRadius: DSHTheme.Radius.panel, style: .continuous))
@@ -267,7 +269,36 @@ public struct Composer: View {
             RoundedRectangle(cornerRadius: DSHTheme.Radius.panel, style: .continuous)
                 .stroke(DSHTheme.border2, lineWidth: 1)
         )
+        .overlay(alignment: .trailing) {
+            if isFocused.wrappedValue {
+                dismissKeyboardControl.padding(.trailing, 6)
+            }
+        }
         .onSubmit { submit() }
+    }
+
+    /// 收起键盘的那个向下箭头：键盘可见时出现在输入框右端。
+    ///
+    /// 曾经只有「下滑转写区」一条路：转写区是 UIKit 列表宿主，SwiftUI 的
+    /// `.scrollDismissesKeyboard` 落不到它的 scroll view 上（`TranscriptListHost`
+    /// 单独设了 `keyboardDismissMode`），短会话里更是连下滑都没有目标。测试者的原话
+    /// 是「输入法键盘拉出来后不能关掉」，所以这里给一个看得见、点得到的入口。
+    ///
+    /// 只是失焦：草稿、已选图片、转写区位置都不动（与发送后的行为区分开）。
+    private var dismissKeyboardControl: some View {
+        Button {
+            isFocused.wrappedValue = false
+        } label: {
+            Image(systemName: "chevron.down")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(DSHTheme.labelSecondary)
+                .frame(width: 30, height: 30)
+                .background(Circle().fill(DSHTheme.layer2))
+                .overlay(Circle().stroke(DSHTheme.border2, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("composer.dismissKeyboard")
+        .accessibilityLabel("收起键盘")
     }
 
     /// Deliberately constant.
