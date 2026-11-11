@@ -20,8 +20,127 @@ const SLOT_OVERLAY = 'shell.overlay'
 const ENTRY_ID = 'mobile-link-entry'
 const PANEL_ID = 'mobile-link-panel'
 const STYLE_ID = 'dsh-mobile-link-style'
-const LABEL = '移动端连接'
-const TITLE = '移动端连接：二维码、已配对的手机与连接状态'
+/**
+ * 界面语言：源语言是中文，其它语言按 `navigator.language` 选，缺条目的句子回落中文原文。
+ * 内联在本文件：客户端半边是手写 bundle，只 require 平台 seed 字。
+ */
+const MESSAGES = {
+  es: {
+    '移动端连接': 'Conexión móvil',
+    '移动端连接：二维码、已配对的手机与连接状态': 'Conexión móvil: código QR, teléfonos emparejados y estado',
+    '此电脑尚未登记': 'Este computador no está registrado',
+    '此电脑尚未登记。请使用命令行完成登记：': 'Este computador no está registrado. Regístralo por línea de comandos:',
+    '登记此电脑以连接中转服务器。': 'Registra este computador para conectarlo al relay.',
+    '此电脑已登记。': 'Este computador ya está registrado.',
+    '中转地址': 'Dirección del relay',
+    '中转服务器': 'Relay',
+    '已预填，可修改。': 'Viene rellenada; se puede editar.',
+    '由配置指定，不可修改。': 'Fijada por la configuración; no se puede editar.',
+    '请输入中转地址。': 'Ingresa la dirección del relay.',
+    '中转地址无效。': 'La dirección del relay no es válida.',
+    '请输入有效的中转地址。': 'Ingresa una dirección de relay válida.',
+    '尝试次数过多，请稍后重试。': 'Demasiados intentos; espera un momento.',
+    '中转服务器未响应，请稍后重试。': 'El relay no respondió; reintenta en un momento.',
+    '中转服务器登记失败，请稍后重试。': 'El relay rechazó el registro; reintenta en un momento.',
+    '中转服务器返回了无法识别的响应。': 'El relay devolvió una respuesta desconocida.',
+    '连接器正在停止，请稍后重试。': 'El conector se está deteniendo; reintenta en un momento.',
+    '连接器内部错误，请稍后重试。': 'Error interno del conector; reintenta en un momento.',
+    '登记信息未能保存到此电脑，请检查磁盘权限。': 'No se pudo guardar el registro; revisa los permisos de disco.',
+    '登记后将自动连接。': 'Al registrarlo se conecta solo.',
+    '登记失败，请重试。': 'Falló el registro; reintenta.',
+    '正在登记…': 'Registrando…',
+    '正在获取…': 'Obteniendo…',
+    '正在读取状态…': 'Leyendo estado…',
+    '正在连接…': 'Conectando…',
+    '正在连接中转': 'Conectando al relay',
+    '登记': 'Registrar',
+    '重试': 'Reintentar',
+    '无法读取连接状态。': 'No se pudo leer el estado de conexión.',
+    '无法连接中转服务器，请检查地址与网络。': 'No se pudo conectar al relay; revisa la dirección y la red.',
+    '状态未知': 'Estado desconocido',
+    '已连接': 'Conectado',
+    '在线': 'en línea',
+    '离线': 'fuera de línea',
+    '未连接，正在重新连接': 'Sin conexión; reconectando',
+    '连着但已离线': 'Conectado pero fuera de línea',
+    '连接器已停用': 'Conector desactivado',
+    '连接器已停用。': 'Conector desactivado.',
+    '连接器已停用。请在插件配置中启用后重试。': 'Conector desactivado. Actívalo en la configuración del plugin y reintenta.',
+    '配对二维码': 'Código QR de emparejamiento',
+    '获取配对码': 'Obtener código',
+    '暂无配对码。': 'Sin código por ahora.',
+    '复制配对码': 'Copiar código',
+    '已复制': 'Copiado',
+    '换一张': 'Otro código',
+    '重新生成': 'Regenerar',
+    '长期有效直到重新生成': 'Vigente hasta que lo regeneres',
+    '已配对设备': 'Dispositivos emparejados',
+    '暂无已配对设备': 'Sin dispositivos emparejados',
+    '暂无已配对设备。': 'Sin dispositivos emparejados.',
+    '无法读取全部已配对设备。': 'No se pudo leer la lista completa de dispositivos.',
+    '撤销中…': 'Revocando…',
+    '撤销失败，请稍后重试。': 'Falló la revocación; reintenta en un momento.',
+    '撤销设备': 'Revocar dispositivo',
+    '撤销这台设备': 'Revocar este dispositivo',
+    '撤销这台设备？': '¿Revocar este dispositivo?',
+    '这台设备不属于此电脑。': 'Este dispositivo no pertenece a este computador.',
+    '设备不存在或已被撤销。': 'El dispositivo no existe o ya fue revocado.',
+    '撤销': 'Revocar',
+    '这台设备': 'este dispositivo',
+    '设备': 'Dispositivo',
+    '未命名设备': 'Dispositivo sin nombre',
+    '关闭': 'Cerrar',
+    '取消': 'Cancelar',
+    '完成': 'Listo',
+    '打开': 'Abrir',
+    '安装': 'Instalar',
+    '尚未安装 iOS App？': '¿Aún no tienes la app de iOS?',
+    '安装 DSH Mobile': 'Instalar DSH Mobile',
+    '查看安装方式': 'Ver cómo instalar',
+    '打开 DSH Mobile，扫描电脑上的配对二维码。': 'Abre DSH Mobile y escanea el QR del computador.',
+    '在 iPhone 或 iPad 上通过 TestFlight 安装。': 'Instálala en iPhone o iPad con TestFlight.',
+    '从 App Store 安装 TestFlight。': 'Instala TestFlight desde el App Store.',
+    '打开 TestFlight 邀请链接，安装 DSH Mobile。': 'Abre el enlace de TestFlight e instala DSH Mobile.',
+    '需要 iOS 17、iPadOS 17 或更高版本。': 'Requiere iOS 17, iPadOS 17 o superior.',
+    '命令行登记（适用于无界面环境）': 'Registro por línea de comandos (sin interfaz)',
+    '上次错误': 'Último error',
+    'dsh-mobile-link enroll --relay <中转地址>': 'dsh-mobile-link enroll --relay <direccion-del-relay>',
+    'wss://<中转地址>/dsh-link': 'wss://<relay>/dsh-link',
+    'GitHub 仓库': 'Repositorio en GitHub',
+    '欢迎在 GitHub 上为项目加星标。': 'Si te sirve, déjale una estrella en GitHub.',
+    '官方原子组件不可用，移动端连接入口未注册': 'Los componentes oficiales no están disponibles; la entrada no se registró',
+    '连不上本机连接器：${error}': 'No se pudo conectar al conector local: ${error}',
+    '面板状态层没起来：${error}': 'No se pudo iniciar la capa de estado: ${error}',
+    '小窗没注册上：${error}': 'No se pudo registrar la ventana: ${error}',
+    '侧栏入口没注册上：${error}': 'No se pudo registrar la entrada de la barra lateral: ${error}',
+    '连接器应答 HTTP ${status}': 'El conector respondió HTTP ${status}',
+    '连接器应答无法解析（HTTP ${status}）': 'Respuesta del conector ilegible (HTTP ${status})',
+    '“${name}”将无法继续连接。需要重新扫码才能再次配对。': '“${name}” dejará de conectarse. Tendrás que escanear el QR otra vez.',
+    '${online} 台在线': '${online} en línea',
+    '${total} 台在线': '${total} en línea',
+    '${online} 台在线，共 ${total} 台': '${online} en línea de ${total}',
+    '${online} 台在线，共 ${total} 台已配对': '${online} en línea de ${total} emparejados',
+    '有效期至 ${hasta}（剩余 ${resto}）': 'Vigente hasta ${hasta} (quedan ${resto})',
+  },
+}
+
+function resolveLocale() {
+  const raw = (typeof navigator !== 'undefined'
+    && (navigator.language || (navigator.languages && navigator.languages[0]))) || 'zh'
+  return String(raw).toLowerCase().indexOf('es') === 0 ? 'es' : 'zh'
+}
+
+const LOCALE = resolveLocale()
+
+/** 取当前语言的句子；`vars` 用来填 `${name}` 占位符。 */
+function T(text, vars) {
+  const raw = (MESSAGES[LOCALE] && MESSAGES[LOCALE][text]) || text
+  if (!vars) return raw
+  return raw.replace(/\$\{(\w+)\}/g, (m, key) => (key in vars ? String(vars[key]) : m))
+}
+
+const LABEL = T('移动端连接')
+const TITLE = T('移动端连接：二维码、已配对的手机与连接状态')
 const PRIMITIVES = '@deepseek-ai/dsh-client-ui-primitives'
 /** GitHub 仓库与 iOS 公开测试链接；都只做展示，不参与准入。 */
 const GITHUB_URL = 'https://github.com/jayantTang/DSH_Mobile'
@@ -204,12 +323,12 @@ function needsEnroll(status) {
 }
 /** 状态点与状态词的唯一来源：侧栏入口与标题行共用，不会出现"点上是绿的、文字说断开"。 */
 function connectionState(state) {
-  if (state.statusError) return { dot: 'error', text: '状态未知' }
-  if (!state.status) return { dot: 'ongoing', text: '正在读取状态…' }
-  if (needsEnroll(state.status)) return { dot: 'error', text: '此电脑尚未登记' }
-  if (state.status.enabled === false) return { dot: 'idle', text: '连接器已停用' }
-  if (state.status.connected) return { dot: 'done', text: '已连接' }
-  return { dot: 'warning', text: '未连接，正在重新连接' }
+  if (state.statusError) return { dot: 'error', text: T('状态未知') }
+  if (!state.status) return { dot: 'ongoing', text: T('正在读取状态…') }
+  if (needsEnroll(state.status)) return { dot: 'error', text: T('此电脑尚未登记') }
+  if (state.status.enabled === false) return { dot: 'idle', text: T('连接器已停用') }
+  if (state.status.connected) return { dot: 'done', text: T('已连接') }
+  return { dot: 'warning', text: T('未连接，正在重新连接') }
 }
 /** 手机报上来的版本：`hello` 存的是 `{name,version,build,label}`，直接插值会渲染成 [object Object]。 */
 function clientLabel(client) {
@@ -217,12 +336,14 @@ function clientLabel(client) {
   if (typeof client === 'string') return client
   return client.label ?? [client.name, client.version].filter(Boolean).join(' ') ?? null
 }
-/** 在线/总数分开说：`deviceCount` 把"连着但已离线"的记录也算进去了。 */
+/** 在线/总数分开说：`deviceCount` 把T("连着但已离线")的记录也算进去了。 */
 function deviceSummary(devices) {
   const list = Array.isArray(devices) ? devices : []
-  if (list.length === 0) return '暂无已配对设备'
+  if (list.length === 0) return T('暂无已配对设备')
   const online = list.filter((device) => device.offlineSince === null || device.offlineSince === undefined).length
-  return online === list.length ? `${online} 台在线` : `${online} 台在线，共 ${list.length} 台`
+  return online === list.length
+      ? T('${online} 台在线', { online })
+      : T('${online} 台在线，共 ${total} 台', { online, total: list.length })
 }
 /** 全量已配对设备 + /status 的在线标记；离线设备也要有行。 */
 function pairedRows(state) {
@@ -253,9 +374,11 @@ function pairedTotal(state) {
 }
 function deviceSummaryOf(state) {
   const total = pairedTotal(state)
-  if (total === 0) return '暂无已配对设备'
+  if (total === 0) return T('暂无已配对设备')
   const online = pairedRows(state).filter((device) => device.online).length
-  return online === total ? `${total} 台在线` : `${online} 台在线，共 ${total} 台已配对`
+  return online === total
+      ? T('${total} 台在线', { total })
+      : T('${online} 台在线，共 ${total} 台已配对', { online, total })
 }
 function clockText(expiresAt) {
   const date = new Date(Number(expiresAt))
@@ -339,7 +462,7 @@ async function loadPairedDevices(panel) {
   } catch (error) {
     if (panel.disposed) return
     panel.store.set({
-      pairedError: '无法读取全部已配对设备。',
+      pairedError: T('无法读取全部已配对设备。'),
       pairedBusy: false,
     })
   }
@@ -351,7 +474,7 @@ async function loadPairedDevices(panel) {
  * 032 起默认是**持久码**：它一直有效，直到用户点「重新生成」。所以这里有两个与旧实现
  * 相反的行为，都是有意的：
  *
- * * **复用已有的那张**——旧实现每次"换一张"，因为一次性码用过就废；持久码换掉等于
+ * * **复用已有的那张**——旧实现每次T("换一张")，因为一次性码用过就废；持久码换掉等于
  *   把用户刚发给别人的那张悄悄作废。
  * * **不再因为"配过一台"就自动换码**——同一张码本来就是要给多台设备用的。
  */
@@ -362,7 +485,7 @@ async function refreshCode(panel, { regenerate = false } = {}) {
     return
   }
   // 登记成功 ≠ 已连接：链路还没起来时去取码只会失败，界面应该显示
-  // "正在连接中转"，而不是把一次连接等待误报成取码失败。
+  // T("正在连接中转")，而不是把一次连接等待误报成取码失败。
   if (panel.store.get().status?.connected !== true) {
     panel.store.set({ code: null, codeError: null })
     return
@@ -428,7 +551,7 @@ function tick(panel) {
     void refreshCode(panel)
   }
   // 连接恢复/登记完成后自动补一张码；取码失败后不自动重试（会把中转打爆，
-  // 也让"重试"按钮失去意义），由用户点按钮重试。
+  // 也让T("重试")按钮失去意义），由用户点按钮重试。
   if (state.status?.connected === true && !needsEnroll(state.status)
       && !state.code && !state.codeError && !state.busy) {
     void refreshCode(panel)
@@ -495,28 +618,28 @@ function copyCode(panel) {
 }
 /** 服务端的机器码 → 面板上的中文；原始 message 留在 details 里给排障。 */
 const ENROLL_ERRORS = {
-  'enroll/bad-request': '请输入中转地址。',
-  'enroll/invalid-relay': '中转地址无效。',
-  'enroll/placeholder-relay': '请输入有效的中转地址。',
-  'enroll/rate-limited': '尝试次数过多，请稍后重试。',
-  'enroll/unreachable': '无法连接中转服务器，请检查地址与网络。',
-  'enroll/timeout': '中转服务器未响应，请稍后重试。',
-  'enroll/bad-response': '中转服务器返回了无法识别的响应。',
-  'enroll/already-registered': '此电脑已登记。',
-  'enroll/disabled': '连接器已停用。',
-  'enroll/unavailable': '连接器正在停止，请稍后重试。',
-  'enroll/state-write': '登记信息未能保存到此电脑，请检查磁盘权限。',
-  'enroll/relay-error': '中转服务器登记失败，请稍后重试。',
-  'enroll/internal': '连接器内部错误，请稍后重试。',
+  'enroll/bad-request': T('请输入中转地址。'),
+  'enroll/invalid-relay': T('中转地址无效。'),
+  'enroll/placeholder-relay': T('请输入有效的中转地址。'),
+  'enroll/rate-limited': T('尝试次数过多，请稍后重试。'),
+  'enroll/unreachable': T('无法连接中转服务器，请检查地址与网络。'),
+  'enroll/timeout': T('中转服务器未响应，请稍后重试。'),
+  'enroll/bad-response': T('中转服务器返回了无法识别的响应。'),
+  'enroll/already-registered': T('此电脑已登记。'),
+  'enroll/disabled': T('连接器已停用。'),
+  'enroll/unavailable': T('连接器正在停止，请稍后重试。'),
+  'enroll/state-write': T('登记信息未能保存到此电脑，请检查磁盘权限。'),
+  'enroll/relay-error': T('中转服务器登记失败，请稍后重试。'),
+  'enroll/internal': T('连接器内部错误，请稍后重试。'),
 }
 function enrollMessage(error) {
-  return ENROLL_ERRORS[error?.code] ?? describe(error) ?? '登记失败，请重试。'
+  return ENROLL_ERRORS[error?.code] ?? describe(error) ?? T('登记失败，请重试。')
 }
 function revokeMessage(error) {
   const code = error?.code
-  if (code === 'request/unknown-device') return '设备不存在或已被撤销。'
-  if (code === 'auth/agent-mismatch') return '这台设备不属于此电脑。'
-  return '撤销失败，请稍后重试。'
+  if (code === 'request/unknown-device') return T('设备不存在或已被撤销。')
+  if (code === 'auth/agent-mismatch') return T('这台设备不属于此电脑。')
+  return T('撤销失败，请稍后重试。')
 }
 /** 表单字段只改草稿；不在这里写“是否已登记”之类的业务状态。 */
 function setEnrollField(panel, field, value) {
@@ -543,7 +666,7 @@ async function submitEnroll(panel) {
     : (draft.relayTouched ? draft.relay : status?.enroll?.relayPrefill) || '').trim()
   if (!relayUrl) {
     panel.store.set({
-      enrollError: { code: 'enroll/bad-request', message: '请输入中转地址。' },
+      enrollError: { code: 'enroll/bad-request', message: T('请输入中转地址。') },
     })
     return
   }
@@ -696,12 +819,12 @@ function statusSection(React, ui, state) {
       React.createElement(ui.StateDot, { state: conn.dot }),
       React.createElement('span', null, conn.text)),
     state.statusError ? React.createElement('div', { className: 'dsh-mobile-link-note dsh-mobile-link-error' },
-      '无法读取连接状态。') : null,
+      T('无法读取连接状态。')) : null,
     state.status && !needsEnroll(state.status)
-      ? row(React, '中转服务器', state.status.relayUrl ?? '—', true)
+      ? row(React, T('中转服务器'), state.status.relayUrl ?? '—', true)
       : null,
     state.status && !needsEnroll(state.status)
-      ? row(React, '设备', deviceSummaryOf(state))
+      ? row(React, T('设备'), deviceSummaryOf(state))
       : null)
 }
 /** 官方 Input 在旧宿主可能不存在；没有就用原生 input，表单不会因此消失。 */
@@ -722,9 +845,9 @@ function enrollField(React, id, labelText, children) {
 function enrollCommandSection(React, status) {
   return React.createElement('div', { className: 'dsh-mobile-link-section' },
     React.createElement('div', { className: 'dsh-mobile-link-note' },
-      '此电脑尚未登记。请使用命令行完成登记：'),
+      T('此电脑尚未登记。请使用命令行完成登记：')),
     React.createElement('div', { className: 'dsh-mobile-link-mono dsh-mobile-link-v', style: { textAlign: 'left' } },
-      status?.enroll?.command ?? 'dsh-mobile-link enroll --relay <中转地址>'))
+      status?.enroll?.command ?? T('dsh-mobile-link enroll --relay <中转地址>')))
 }
 /**
  * 未登记：开放登记。只提交中转地址；电脑名称由连接器自动获取。
@@ -736,7 +859,7 @@ function enrollSection(React, controller, ui, state) {
   if (status.enabled === false) {
     return React.createElement('div', { className: 'dsh-mobile-link-section' },
       React.createElement('div', { className: 'dsh-mobile-link-note' },
-        '连接器已停用。请在插件配置中启用后重试。'))
+        T('连接器已停用。请在插件配置中启用后重试。')))
   }
   const enroll = status.enroll
   const locked = Boolean(enroll.relayLocked)
@@ -751,20 +874,20 @@ function enrollSection(React, controller, ui, state) {
     event.preventDefault?.()
     if (!submitting) controller.enroll()
   }
-  const command = enroll.command ?? 'dsh-mobile-link enroll --relay <中转地址>'
+  const command = enroll.command ?? T('dsh-mobile-link enroll --relay <中转地址>')
 
   return React.createElement('div', { className: 'dsh-mobile-link-form' },
     React.createElement('div', { className: 'dsh-mobile-link-note', key: 'intro' },
-      '登记此电脑以连接中转服务器。'),
-    enrollField(React, 'mobile-link-relay', '中转地址',
+      T('登记此电脑以连接中转服务器。')),
+    enrollField(React, 'mobile-link-relay', T('中转地址'),
       enrollInput(React, ui, {
         id: 'mobile-link-relay', type: 'text', inputMode: 'url', value: relayValue,
-        placeholder: 'wss://<中转地址>/dsh-link', readOnly: locked, disabled: submitting,
+        placeholder: T('wss://<中转地址>/dsh-link'), readOnly: locked, disabled: submitting,
         autoComplete: 'off', spellCheck: false,
         onChange: setField('relay'), onKeyDown: submitOnEnter,
       })),
     React.createElement('div', { className: 'dsh-mobile-link-note', key: 'relay-hint' },
-      locked ? '由配置指定，不可修改。' : '已预填，可修改。'),
+      locked ? T('由配置指定，不可修改。') : T('已预填，可修改。')),
     error ? React.createElement('div', {
       className: 'dsh-mobile-link-error-inline', role: 'alert', key: 'error',
       title: error.detail ?? undefined,
@@ -772,28 +895,28 @@ function enrollSection(React, controller, ui, state) {
     React.createElement(ui.Button, {
       key: 'submit', variant: 'primary', type: 'button', disabled: submitting,
       onClick: () => controller.enroll(),
-    }, submitting ? '正在登记…' : (error ? '重试' : '登记')),
+    }, submitting ? T('正在登记…') : (error ? T('重试') : T('登记'))),
     React.createElement('div', { className: 'dsh-mobile-link-note', key: 'footnote' },
-      '登记后将自动连接。'),
+      T('登记后将自动连接。')),
     React.createElement('details', { className: 'dsh-mobile-link-cmd', key: 'cli' },
-      React.createElement('summary', null, '命令行登记（适用于无界面环境）'),
+      React.createElement('summary', null, T('命令行登记（适用于无界面环境）')),
       React.createElement('div', { className: 'dsh-mobile-link-mono' }, command)))
 }
 function githubSection(React) {
   return React.createElement('div', { className: 'dsh-mobile-link-github', key: 'github' },
     React.createElement('div', { className: 'dsh-mobile-link-github-line' },
-      React.createElement('span', { className: 'dsh-mobile-link-k' }, 'GitHub 仓库'),
+      React.createElement('span', { className: 'dsh-mobile-link-k' }, T('GitHub 仓库')),
       React.createElement('a', { href: GITHUB_URL, target: '_blank', rel: 'noreferrer' },
         'github.com/jayantTang/DSH_Mobile')),
     React.createElement('div', { className: 'dsh-mobile-link-welcome' },
-      '欢迎在 GitHub 上为项目加星标。'))
+      T('欢迎在 GitHub 上为项目加星标。')))
 }
 function iosLinkSection(React, controller) {
   return React.createElement('div', { className: 'dsh-mobile-link-ioslink', key: 'ios-link' },
-    React.createElement('span', null, '尚未安装 iOS App？'),
+    React.createElement('span', null, T('尚未安装 iOS App？')),
     React.createElement('a', {
       href: '#', onClick: (event) => { event?.preventDefault?.(); controller.openGuide() },
-    }, '查看安装方式'))
+    }, T('查看安装方式')))
 }
 /**
  * 二维码卡。默认是持久码，所以写“长期有效直到重新生成”，不再有倒计时；
@@ -807,7 +930,7 @@ function codeSection(React, controller, ui, state) {
     main.push(React.createElement('div', { className: 'dsh-mobile-link-code', key: 'code' }, code.code))
     if (code.persistent || code.expiresAt == null) {
       main.push(React.createElement('div', { className: 'dsh-mobile-link-count', key: 'count' },
-        React.createElement('span', null, '长期有效直到重新生成'),
+        React.createElement('span', null, T('长期有效直到重新生成')),
         code.maxPairedDevices
           ? React.createElement('span', { className: 'dsh-mobile-link-count-tag' },
             `（已配对 ${state.pairedCount ?? (Array.isArray(state.pairedDevices)
@@ -818,26 +941,26 @@ function codeSection(React, controller, ui, state) {
       const percent = Math.max(0, Math.min(100, (remaining / (code.ttlMs || CODE_TTL_MS)) * 100))
       main.push(React.createElement('div', { className: 'dsh-mobile-link-count', key: 'count' },
         React.createElement('div', { className: 'dsh-mobile-link-bar' }, React.createElement('i', { style: { width: `${percent.toFixed(1)}%` } })),
-        React.createElement('span', null, `有效期至 ${clockText(code.expiresAt)}（剩余 ${remainingText(remaining)}）`)))
+        React.createElement('span', null, T('有效期至 ${hasta}（剩余 ${resto}）', { hasta: clockText(code.expiresAt), resto: remainingText(remaining) }))))
     }
   } else if (state.codeError) {
     main.push(React.createElement('div', { className: 'dsh-mobile-link-note dsh-mobile-link-error', key: 'err' }, state.codeError))
   } else if (connecting) {
     main.push(React.createElement('div', { className: 'dsh-mobile-link-note', key: 'connecting' },
-      state.enrolling ? '正在登记…' : '正在连接…'))
+      state.enrolling ? T('正在登记…') : T('正在连接…')))
   } else {
     main.push(React.createElement('div', { className: 'dsh-mobile-link-note', key: 'loading' },
-      state.busy ? '正在获取…' : '暂无配对码。'))
+      state.busy ? T('正在获取…') : T('暂无配对码。')))
   }
   const buttons = connecting ? [] : [React.createElement(ui.Button, {
     key: 'swap', variant: 'primary', type: 'button', disabled: Boolean(state.busy),
     onClick: () => void controller.refreshCode({ regenerate: Boolean(state.code) }),
-  }, state.busy ? '正在获取…'
-    : (state.codeError ? '重试' : (state.code ? '重新生成' : '获取配对码')))]
+  }, state.busy ? T('正在获取…')
+    : (state.codeError ? T('重试') : (state.code ? T('重新生成') : T('获取配对码'))))]
   if (code) {
     buttons.push(React.createElement(ui.Button, {
       key: 'copy', variant: 'outline', type: 'button', onClick: () => controller.copy(),
-    }, state.copied ? '已复制' : '复制配对码'))
+    }, state.copied ? T('已复制') : T('复制配对码')))
   }
   if (buttons.length > 0) {
     main.push(React.createElement('div', { className: 'dsh-mobile-link-actions', key: 'actions' }, buttons))
@@ -845,7 +968,7 @@ function codeSection(React, controller, ui, state) {
   const children = []
   if (code) {
     children.push(React.createElement('img', {
-      key: 'qr', className: 'dsh-mobile-link-qr', alt: '配对二维码',
+      key: 'qr', className: 'dsh-mobile-link-qr', alt: T('配对二维码'),
       src: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(String(code.svg))}`,
     }))
   }
@@ -858,22 +981,22 @@ function deviceRow(React, ui, device, online, controller) {
     React.createElement(ui.StateDot, { state: online ? 'done' : 'idle' }),
     React.createElement('div', { style: { minWidth: 0 } },
       React.createElement('div', { className: 'dsh-mobile-link-device-line' },
-        React.createElement('div', { className: 'dsh-mobile-link-device-name' }, device.name ?? '未命名设备'),
+        React.createElement('div', { className: 'dsh-mobile-link-device-name' }, device.name ?? T('未命名设备')),
         React.createElement(ui.Tag, { tone: online ? 'success' : 'quiet', className: 'dsh-mobile-link-tag' },
-          online ? '在线' : '离线')),
+          online ? T('在线') : T('离线'))),
       meta ? React.createElement('div', { className: 'dsh-mobile-link-device-meta' }, meta) : null),
     React.createElement('button', {
       type: 'button', className: 'dsh-mobile-link-revoke',
       onClick: () => controller.requestRevoke(device),
-    }, '撤销'))
+    }, T('撤销')))
 }
 function devicesSection(React, ui, state, controller) {
   const devices = pairedRows(state)
   const rows = devices.length === 0
-    ? [React.createElement('div', { className: 'dsh-mobile-link-note', key: 'none' }, '暂无已配对设备。')]
+    ? [React.createElement('div', { className: 'dsh-mobile-link-note', key: 'none' }, T('暂无已配对设备。'))]
     : devices.map((device) => deviceRow(React, ui, device, device.online, controller))
   return React.createElement('div', { className: 'dsh-mobile-link-section' },
-    React.createElement('div', { className: 'dsh-mobile-link-section-title' }, '已配对设备'),
+    React.createElement('div', { className: 'dsh-mobile-link-section-title' }, T('已配对设备')),
     React.createElement('div', { className: 'dsh-mobile-link-devices' }, rows),
     state.pairedError
       ? React.createElement('div', { className: 'dsh-mobile-link-note dsh-mobile-link-error' },
@@ -884,7 +1007,7 @@ function devicesSection(React, ui, state, controller) {
 function errorSection(React, controller, ui, status, open) {
   if (!status?.lastError) return null
   return React.createElement(ui.DisclosureRow, {
-    title: '上次错误', open: Boolean(open), expandable: true,
+    title: T('上次错误'), open: Boolean(open), expandable: true,
     onToggle: () => controller.toggleError(),
   }, React.createElement('div', { className: 'dsh-mobile-link-mono dsh-mobile-link-error' }, status.lastError))
 }
@@ -892,13 +1015,13 @@ function errorSection(React, controller, ui, status, open) {
 function revokeOverlay(React, ui, state, controller) {
   const target = state.revokeTarget
   if (!target) return null
-  const name = target.name ?? '这台设备'
+  const name = target.name ?? T('这台设备')
   return React.createElement('div', { className: 'dsh-mobile-link-overlay', key: 'revoke-overlay' },
     React.createElement('div', {
       className: 'dsh-mobile-link-alert', role: 'dialog', 'aria-modal': 'true',
-      'aria-label': '撤销这台设备',
+      'aria-label': T('撤销这台设备'),
     },
-      React.createElement('div', { className: 'dsh-mobile-link-alert-title' }, '撤销这台设备？'),
+      React.createElement('div', { className: 'dsh-mobile-link-alert-title' }, T('撤销这台设备？')),
       React.createElement('div', { className: 'dsh-mobile-link-note' },
         `“${name}”将无法继续连接。需要重新扫码才能再次配对。`),
       state.revokeError ? React.createElement('div', { className: 'dsh-mobile-link-error-inline', role: 'alert' },
@@ -907,47 +1030,47 @@ function revokeOverlay(React, ui, state, controller) {
         React.createElement(ui.Button, {
           variant: 'outline', type: 'button', disabled: Boolean(state.revoking),
           onClick: () => controller.cancelRevoke(),
-        }, '取消'),
+        }, T('取消')),
         React.createElement('button', {
           type: 'button', className: 'dsh-mobile-link-danger', disabled: Boolean(state.revoking),
           onClick: () => controller.confirmRevoke(),
-        }, state.revoking ? '撤销中…' : '撤销设备'))))
+        }, state.revoking ? T('撤销中…') : T('撤销设备')))))
 }
 /** iOS 安装指引：只给 TestFlight 公开链接。 */
 function guideOverlay(React, ui, controller) {
   return React.createElement('div', { className: 'dsh-mobile-link-overlay', key: 'guide-overlay' },
     React.createElement('div', {
       className: 'dsh-mobile-link-guide', role: 'dialog', 'aria-modal': 'true',
-      'aria-label': '安装 DSH Mobile',
+      'aria-label': T('安装 DSH Mobile'),
     },
-      React.createElement('div', { className: 'dsh-mobile-link-guide-title' }, '安装 DSH Mobile'),
-      React.createElement('div', { className: 'dsh-mobile-link-note' }, '在 iPhone 或 iPad 上通过 TestFlight 安装。'),
+      React.createElement('div', { className: 'dsh-mobile-link-guide-title' }, T('安装 DSH Mobile')),
+      React.createElement('div', { className: 'dsh-mobile-link-note' }, T('在 iPhone 或 iPad 上通过 TestFlight 安装。')),
       React.createElement('div', { className: 'dsh-mobile-link-step' },
         React.createElement('span', { className: 'dsh-mobile-link-step-n' }, '1'),
-        React.createElement('span', { className: 'dsh-mobile-link-step-t' }, '从 App Store 安装 TestFlight。')),
+        React.createElement('span', { className: 'dsh-mobile-link-step-t' }, T('从 App Store 安装 TestFlight。'))),
       React.createElement('div', { className: 'dsh-mobile-link-step' },
         React.createElement('span', { className: 'dsh-mobile-link-step-n' }, '2'),
-        React.createElement('span', { className: 'dsh-mobile-link-step-t' }, '打开 TestFlight 邀请链接，安装 DSH Mobile。')),
+        React.createElement('span', { className: 'dsh-mobile-link-step-t' }, T('打开 TestFlight 邀请链接，安装 DSH Mobile。'))),
       React.createElement('div', { className: 'dsh-mobile-link-step' },
         React.createElement('span', { className: 'dsh-mobile-link-step-n' }, '3'),
-        React.createElement('span', { className: 'dsh-mobile-link-step-t' }, '打开 DSH Mobile，扫描电脑上的配对二维码。')),
+        React.createElement('span', { className: 'dsh-mobile-link-step-t' }, T('打开 DSH Mobile，扫描电脑上的配对二维码。'))),
       React.createElement('a', {
         className: 'dsh-mobile-link-testflight', href: TESTFLIGHT_URL, target: '_blank', rel: 'noreferrer',
       }, TESTFLIGHT_URL),
-      React.createElement('div', { className: 'dsh-mobile-link-note' }, '需要 iOS 17、iPadOS 17 或更高版本。'),
+      React.createElement('div', { className: 'dsh-mobile-link-note' }, T('需要 iOS 17、iPadOS 17 或更高版本。')),
       React.createElement(ui.Button, {
         variant: 'primary', type: 'button', onClick: () => controller.closeGuide(),
-      }, '完成')))
+      }, T('完成'))))
 }
 function panelBody(React, controller, ui, state) {
   const children = [statusSection(React, ui, state)]
   if (!state.status) {
     children.push(React.createElement('div', { className: 'dsh-mobile-link-note', key: 'loading' },
-      state.statusError ? '无法读取连接状态。' : '正在读取状态…'))
+      state.statusError ? T('无法读取连接状态。') : T('正在读取状态…')))
     if (state.statusError) {
       children.push(React.createElement(ui.Button, {
         key: 'retry', variant: 'outline', type: 'button', onClick: () => controller.reloadStatus(),
-      }, '重试'))
+      }, T('重试')))
     }
     return React.createElement('div', { className: 'dsh-mobile-link-body' }, children)
   }
@@ -974,7 +1097,7 @@ function makePanel(React, controller, ui) {
       open: state.open,
       onClose: () => controller.close(),
       title: LABEL,
-      closeLabel: '关闭',
+      closeLabel: T('关闭'),
       className: 'dsh-mobile-link-dialog',
       contentClassName: 'dsh-mobile-link-content',
     }, React.createElement('div', { className: 'dsh-mobile-link-shell' },
@@ -1002,7 +1125,7 @@ window.__ModuleLoader__.load({
       if (!ui?.Modal || !ui?.Button || !ui?.StateDot) {
         // 官方原子组件是平台 seed 字（宿主启动时就冻结在模块表里），正常不会缺；缺了说明
         // 宿主形态不对，此时宁可不注册，也不摆一个与官方视觉无关的入口。
-        report(ctx, '官方原子组件不可用，移动端连接入口未注册')
+        report(ctx, T('官方原子组件不可用，移动端连接入口未注册'))
         return
       }
       const controller = createController()
