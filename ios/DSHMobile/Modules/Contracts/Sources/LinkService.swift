@@ -29,6 +29,12 @@ public protocol ConnectionStatus: AnyObject {
     var showsOutdatedConnectorNotice: Bool { get }
     func dismissOutdatedConnectorNotice()
     func noteFirstRender() async
+    /// 一次取图在**自动尝试用尽后仍失败**：把"哪张图、第几次、哪类错误"落到连接器的
+    /// 设备日志（`_link/diagnostics`，kind `attachment.load`）。
+    ///
+    /// `category` 只接受稳定短码（见 `AttachmentLoadFailure.category`）；不传文件名、
+    /// URL、正文。失败当无事，绝不改变连接状态（设计 §5 B2）。
+    func noteAttachmentLoadFailure(id: String, attempt: Int, category: String) async
 }
 
 public extension ConnectionStatus {
@@ -37,6 +43,8 @@ public extension ConnectionStatus {
     var showsOutdatedConnectorNotice: Bool { false }
     func dismissOutdatedConnectorNotice() {}
     func noteFirstRender() async {}
+    /// 默认空实现：测试替身不必为了这条诊断实现新方法。
+    func noteAttachmentLoadFailure(id: String, attempt: Int, category: String) async {}
 }
 
 /// 链路门面：需要发事件应答、读 relay 身份的模型依赖这一段。

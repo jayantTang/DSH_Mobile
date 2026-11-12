@@ -949,3 +949,24 @@ It is registered as a workspace first, so a new group appears in the desktop sid
 "%lld 字节" = "%lld bytes";
 "本机留三份缓存：会话列表（标题、时间、用量这类元数据）与每个会话的对话尾部（最近 200 条，冷启动先显示再增量更新）、信件记录（我发出的与收到的）、信件附件图片（最多 50 MB）。它们都在 Caches 里、不进备份，30 天后自动失效，总占用有上限（转写 40 MB、图片 100 MB），这里可以随时一键清掉——三份一起清，下次打开重新拉取。取件凭据保留在钥匙串里，不会被这一步删除。" = "Three caches live on this device: the session list (titles, times, usage) with each session's recent transcript tail (the last 200 messages, shown while the rest reloads), the letter records (sent and received), and letter attachment images (up to 50 MB). All of them live in Caches, stay out of backups, expire after 30 days, and have a size cap (40 MB transcripts, 100 MB images); this button clears all three at once and they reload next time. Pickup credentials stay in the Keychain and are not removed by this step.";
 "%@ → %@" = "%@ → %@";
+
+/* 2026-11-12 信件附件预览/原图与会话取图诊断 */
+"%lld 个附件" = "%lld attachments";
+"含高清 %lld" = "%lld in full quality";
+"仅预览 %lld" = "%lld preview only";
+"合计 %@ MiB" = "%@ MiB total";
+"含高清" = "Full quality";
+"仅预览" = "Preview only";
+"压缩版" = "Compressed";
+"原图 %@" = "Original %@";
+"原图下载失败，点按重试" = "The original failed to download. Tap to retry.";
+"正在下载原图" = "Downloading the original";
+"这张图处理失败" = "Could not prepare this image";
+"%@ 没能转成可发送的图片" = "%@ could not be turned into a sendable image";
+"字节校验失败" = "The bytes did not match their checksum";
+"这张图打不开" = "This image cannot be opened";
+"网络不通" = "No network";
+"连接被断开" = "The connection was closed";
+"请求超时" = "The request timed out";
+"服务器返回了 %lld" = "The server answered %lld";
+"需要重新配对电脑" = "Pair with your computer again";

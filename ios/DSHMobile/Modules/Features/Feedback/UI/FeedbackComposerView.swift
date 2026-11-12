@@ -110,10 +110,22 @@ public struct FeedbackComposerView: View {
 
     private var canSend: Bool {
         FeedbackSendPolicy.canSend(text: text, subject: subject,
-                                   attachments: drafts.map(\.outgoing),
+                                   attachments: plan.flattened,
                                    limits: limits)
             && !isSending
     }
+
+    /// 这封信的附件计划：预览永远带上，原图按 24 MiB 额度与选择顺序分配。
+    ///
+    /// 它是**纯函数的即时结果**（不从 @State 里另存一份）：增删附件后自动跟上，
+    /// 不会出现"界面上的角标与真正发出去的字节不一致"。
+    private var plan: FeedbackAttachmentPlan {
+        guard let attachmentLimits else { return FeedbackAttachmentPlan() }
+        return FeedbackAttachmentAllocation.plan(drafts.map(\.prepared), limits: attachmentLimits)
+    }
+
+    /// 汇总行（附件区末尾）：`3 个附件 · 含高清 2 · 仅预览 1 · 合计 12.4 MiB`。
+    private var summary: FeedbackAttachmentSummary { FeedbackAttachmentSummary(plan: plan) }
 
     private static let uploadTimeout = RelayFeedbackClient.uploadTimeout
 
@@ -156,6 +168,10 @@ public struct FeedbackComposerView: View {
                 case .tooMany(let limit):
                     return Alert(title: Text(String(localized: "附件放不下了")),
                                  message: Text(String(localized: "最多 \(limit) 个附件")),
+                                 dismissButton: .default(Text(String(localized: "好"))))
+                case .imageFailed(let name):
+                    return Alert(title: Text(String(localized: "这张图处理失败")),
+                                 message: Text(String(localized: "\(name) 没能转成可发送的图片")),
                                  dismissButton: .default(Text(String(localized: "好"))))
                 case .fileTooLarge(let name, let limit):
                     return Alert(title: Text(String(localized: "这个文件太大了")),
@@ -304,15 +320,23 @@ public struct FeedbackComposerView: View {
                 }
                 ForEach(drafts.filter { !$0.isImage }) { draft in
                     FeedbackAttachmentFileRow(
-                        name: draft.name, bytes: draft.data.count,
-                        contentType: draft.contentType,
+                        name: draft.name, bytes: draft.byteSize,
+                        contentType: draft.primary.contentType,
                         phase: phase(of: draft),
+                        badge: badge(of: draft),
                         onRemove: { remove(draft.id) },
                         onRetry: FeedbackAttachmentStatus.isFailure(phase(of: draft))
                             ? { Task { await send() } } : nil
                     )
                 }
                 addRow
+                if !drafts.isEmpty {
+                    Text(summary.text)
+                        .font(DSHTheme.Typography.caption)
+                        .foregroundStyle(DSHTheme.labelSecondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityIdentifier("feedback.attach.summary")
+                }
             }
             .accessibilityIdentifier("feedback.attach.section")
         }
@@ -397,20 +421,26 @@ public struct FeedbackComposerView: View {
 
     // MARK: - 附件队列
 
-    /// 队列里的一项（本地草稿）。字节在点发送之后才会离开这台手机。
+    /// 队列里的一项（本地草稿）：一个逻辑附件，可能是"预览 + 原图"两份字节。
+    ///
+    /// 字节在点发送之后才会离开这台手机；`slot` 是这一封信里的稳定序号（0 起，按添加
+    /// 顺序），同一个 slot 的两份字节共享它。
     private struct DraftAttachment: Identifiable, Equatable {
         let id: UUID
+        let slot: Int
         let name: String
-        let contentType: String
-        let data: Data
-        let width: Int?
-        let height: Int?
+        /// 主对象（图片是预览；文件是本体）。角色只存在它的 `role` 上。
+        let primary: FeedbackOutgoingAttachment
+        /// 可选的另一份字节（图片原图）。
+        let original: FeedbackOutgoingAttachment?
+        /// 图片条里那一格的小图（预览字节解出来的）。
+        let thumbnail: UIImage?
 
-        var isImage: Bool { contentType.hasPrefix("image/") }
+        var isImage: Bool { primary.contentType.hasPrefix("image/") }
+        var byteSize: Int { primary.byteSize + (original?.byteSize ?? 0) }
 
-        var outgoing: FeedbackOutgoingAttachment {
-            FeedbackOutgoingAttachment(name: name, contentType: contentType, data: data,
-                                       width: width, height: height)
+        var prepared: FeedbackPreparedAttachment {
+            FeedbackPreparedAttachment(slot: slot, primary: primary, original: original)
         }
     }
 
@@ -419,10 +449,12 @@ public struct FeedbackComposerView: View {
         case fileTooLarge(name: String, limit: Int)
         case totalTooLarge(limit: Int)
         case unsupportedType(name: String)
+        case imageFailed(name: String)
         case textOnly(failed: Int)
 
         var id: String {
             switch self {
+            case .imageFailed(let name): return "image-failed-\(name)"
             case .tooMany: return "too-many"
             case .fileTooLarge(let name, _): return "file-too-large-\(name)"
             case .totalTooLarge: return "total-too-large"
@@ -433,41 +465,45 @@ public struct FeedbackComposerView: View {
     }
 
     private func phase(of draft: DraftAttachment) -> FeedbackSendJob.SlotPhase {
-        guard let index = drafts.firstIndex(where: { $0.id == draft.id }) else { return .waiting }
-        return job?.slotPhases[index] ?? .waiting
+        job?.slotPhases[draft.slot] ?? .waiting
     }
 
     private func stripItem(_ draft: DraftAttachment) -> FeedbackStripItem {
-        FeedbackStripItem(id: draft.id, name: draft.name, bytes: draft.data.count,
-                          phase: phase(of: draft),
-                          thumbnail: draft.isImage ? UIImage(data: draft.data) : nil)
+        FeedbackStripItem(id: draft.id, name: draft.name, bytes: draft.byteSize,
+                          phase: phase(of: draft), thumbnail: draft.thumbnail,
+                          badge: badge(of: draft))
+    }
+
+    /// 附件角标：含高清（这笔钱真的带了原图）/ 仅预览（有原图但被预算降级）。
+    /// 文字与判据都只在这一个函数里；`nil` = 不标（文件、单文件模式）。
+    private func badge(of draft: DraftAttachment) -> AttachmentBadge? {
+        guard let item = plan.items.first(where: { $0.slot == draft.slot }) else { return nil }
+        if item.includeOriginal { return .highDefinition }
+        if item.isPreviewOnly { return .previewOnly }
+        return nil
     }
 
     // MARK: - 选附件
 
     private func addPhotos(_ items: [PhotosPickerItem]) async {
         pickedPhotos = []
-        guard let attachmentLimits else { return }
+        guard attachmentLimits != nil else { return }
         for item in items {
-            guard drafts.count < attachmentLimits.maxPerMessage else {
-                alert = .tooMany(limit: attachmentLimits.maxPerMessage)
-                return
-            }
-            guard let data = try? await item.loadTransferable(type: Data.self),
-                  let normalized = Self.normalizeImage(data, name: "photo.png") else {
-                continue
-            }
-            add(normalized, limits: attachmentLimits)
+            guard let data = try? await item.loadTransferable(type: Data.self) else { continue }
+            // 相册给不出文件名：用稳定前缀 + 探测到的类型（转码器只认字节）。
+            await prepareAndAdd(data: data, name: "photo.jpg", contentType: "image/jpeg")
         }
     }
 
     private func handleFiles(_ result: Result<[URL], Error>) {
-        guard case .success(let urls) = result, let attachmentLimits else { return }
+        guard case .success(let urls) = result, attachmentLimits != nil else { return }
+        // **一条串行任务**处理整批：多选图片各起一个 Task 会并发解码（内存峰值不受控），
+        // 而条数检查在 await 之前，并发入列还会超过上限（评审 P1-3）。
+        Task { await addFiles(urls) }
+    }
+
+    private func addFiles(_ urls: [URL]) async {
         for url in urls {
-            guard drafts.count < attachmentLimits.maxPerMessage else {
-                alert = .tooMany(limit: attachmentLimits.maxPerMessage)
-                return
-            }
             let scoped = url.startAccessingSecurityScopedResource()
             defer { if scoped { url.stopAccessingSecurityScopedResource() } }
             guard let data = try? Data(contentsOf: url) else { continue }
@@ -476,28 +512,116 @@ public struct FeedbackComposerView: View {
                 alert = .unsupportedType(name: url.lastPathComponent)
                 continue
             }
-            add(DraftAttachment(id: UUID(), name: url.lastPathComponent,
-                                contentType: contentType, data: data,
-                                width: nil, height: nil),
-                limits: attachmentLimits)
+            if contentType.hasPrefix("image/") {
+                // **两个入口共用一条规范化**（设计 §2.2）：文件入口的图片也走转码器，
+                // 不再把原字节直接塞进草稿。
+                await prepareAndAdd(data: data, name: url.lastPathComponent,
+                                    contentType: contentType)
+            } else {
+                addFile(data: data, name: url.lastPathComponent, contentType: contentType)
+            }
         }
     }
 
-    private func add(_ draft: DraftAttachment, limits attachmentLimits: FeedbackAttachmentLimits) {
-        if draft.data.count > attachmentLimits.maxFileBytes {
-            alert = .fileTooLarge(name: draft.name, limit: attachmentLimits.maxFileBytes)
+    /// 图片的唯一入口（相册与文件两个来源都走它）：转码 → 按能力协商配对 → 入列。
+    ///
+    /// 它不再判断"文件太大了"：图片只可能因为**处理失败**（不是图片 / 编不出来）失败，
+    /// 体积由 ``FeedbackImageBudget`` 在转码时解决。
+    private func prepareAndAdd(data: Data, name: String, contentType: String) async {
+        guard let attachmentLimits else { return }
+        guard FeedbackAttachmentSlotCapacity.canAdd(
+            currentCount: drafts.count, limit: attachmentLimits.maxPerMessage) else {
+            alert = .tooMany(limit: attachmentLimits.maxPerMessage)
             return
         }
-        let total = drafts.reduce(0) { $0 + $1.data.count } + draft.data.count
-        if total > attachmentLimits.maxTotalBytes {
+        let prepared: FeedbackPreparedImage
+        do {
+            prepared = try await FeedbackImageTranscoder.prepare(
+                data: data, name: name, limits: attachmentLimits)
+        } catch {
+            alert = .imageFailed(name: name)
+            return
+        }
+        let primary: FeedbackOutgoingAttachment
+        let original: FeedbackOutgoingAttachment?
+        if attachmentLimits.supportsPairs {
+            // 配对模式：主对象是预览（列表用），原图作为同一 slot 的第二份字节。
+            primary = FeedbackOutgoingAttachment(
+                name: name, contentType: prepared.preview.contentType,
+                data: prepared.preview.data,
+                width: prepared.preview.pixelWidth, height: prepared.preview.pixelHeight,
+                role: .preview)
+            original = prepared.original.map {
+                FeedbackOutgoingAttachment(
+                    name: name, contentType: $0.contentType, data: $0.data,
+                    width: $0.pixelWidth, height: $0.pixelHeight, role: .original)
+            }
+        } else {
+            // 单文件模式（旧服务端 / 回滚开关）：只发一份，角色一律 original。
+            // 优先原图；没有原图就用预览——**不把一份可能是原图的字节标成压缩版**。
+            let chosen = prepared.original ?? prepared.preview
+            primary = FeedbackOutgoingAttachment(
+                name: name, contentType: chosen.contentType, data: chosen.data,
+                width: chosen.pixelWidth, height: chosen.pixelHeight, role: .original)
+            original = nil
+        }
+        append(DraftAttachment(id: UUID(), slot: drafts.count, name: name,
+                               primary: primary, original: original,
+                               thumbnail: UIImage(data: primary.data)),
+               limits: attachmentLimits)
+    }
+
+    /// 文件类附件（PDF / 文本族）：没有预览，仍按 8 MiB 的**单文件**判据拒收。
+    private func addFile(data: Data, name: String, contentType: String) {
+        guard let attachmentLimits else { return }
+        guard FeedbackAttachmentSlotCapacity.canAdd(
+            currentCount: drafts.count, limit: attachmentLimits.maxPerMessage) else {
+            alert = .tooMany(limit: attachmentLimits.maxPerMessage)
+            return
+        }
+        guard data.count <= attachmentLimits.maxFileBytes else {
+            alert = .fileTooLarge(name: name, limit: attachmentLimits.maxFileBytes)
+            return
+        }
+        append(DraftAttachment(id: UUID(), slot: drafts.count, name: name,
+                               primary: FeedbackOutgoingAttachment(
+                                   name: name, contentType: contentType, data: data,
+                                   role: .original),
+                               original: nil, thumbnail: nil),
+               limits: attachmentLimits)
+    }
+
+    /// 入列前用**同一份计划**判一次总量：预览永远放得下，放不下的只有"主对象都超了"。
+    private func append(_ draft: DraftAttachment, limits attachmentLimits: FeedbackAttachmentLimits) {
+        // 入列前**再查一次**条数：预检与真正入列之间隔着一次 await（转码/读盘），
+        // 期间别的入口可能已经加过附件了（评审 P1-3）。
+        guard FeedbackAttachmentSlotCapacity.canAdd(
+            currentCount: drafts.count, limit: attachmentLimits.maxPerMessage) else {
+            alert = .tooMany(limit: attachmentLimits.maxPerMessage)
+            return
+        }
+        var candidate = drafts + [draft]
+        // slot 必须连续（0…n-1）：删过附件之后再添加要重新编号，否则汇总与上传会对不上。
+        candidate = candidate.enumerated().map { index, item in
+            DraftAttachment(id: item.id, slot: index, name: item.name, primary: item.primary,
+                            original: item.original, thumbnail: item.thumbnail)
+        }
+        let prospective = FeedbackAttachmentAllocation.plan(candidate.map(\.prepared),
+                                                            limits: attachmentLimits)
+        guard prospective.totalBytes <= attachmentLimits.maxTotalBytes else {
             alert = .totalTooLarge(limit: attachmentLimits.maxTotalBytes)
             return
         }
-        drafts.append(draft)
+        drafts = candidate
     }
 
     private func remove(_ id: UUID) {
         drafts.removeAll { $0.id == id }
+        // 槽位重新连续编号：上传按 slot 幂等，空洞会让服务端的"第几个附件"与界面不一致。
+        drafts = drafts.enumerated().map { index, item in
+            DraftAttachment(id: item.id, slot: index, name: item.name, primary: item.primary,
+                            original: item.original, thumbnail: item.thumbnail)
+        }
     }
 
     private static func contentType(of url: URL) -> String {
@@ -511,35 +635,15 @@ public struct FeedbackComposerView: View {
         return contentType.hasPrefix("text/")
     }
 
-    /// 图片规范化（设计 §3.4/§M9 的最小实现）：HEIC/JPEG 解码后重编码成 JPEG（丢 EXIF/GPS），
-    /// 长边收到 2560；PNG 保留无损。超限的图在后面按服务端上限拒。
-    private static func normalizeImage(_ data: Data, name: String) -> DraftAttachment? {
-        guard let image = UIImage(data: data) else { return nil }
-        let maxEdge: CGFloat = 2560
-        let longest = max(image.size.width, image.size.height)
-        let scale = longest > maxEdge ? maxEdge / longest : 1
-        let size = CGSize(width: image.size.width * scale, height: image.size.height * scale)
-        let rendered = UIGraphicsImageRenderer(size: size).image { _ in
-            image.draw(in: CGRect(origin: .zero, size: size))
-        }
-        let isPNG = data.starts(with: [0x89, 0x50, 0x4E, 0x47])
-        let bytes = isPNG ? rendered.pngData() : rendered.jpegData(compressionQuality: 0.8)
-        guard let output = bytes else { return nil }
-        return DraftAttachment(id: UUID(), name: name,
-                               contentType: isPNG ? "image/png" : "image/jpeg",
-                               data: output,
-                               width: Int(size.width), height: Int(size.height))
-    }
-
     // MARK: - 发送（C7/C8）
 
     private func send() async {
         let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard FeedbackSendPolicy.canSend(text: body, subject: subject,
-                                          attachments: drafts.map(\.outgoing),
+                                          attachments: plan.flattened,
                                           limits: limits) else { return }
         failure = nil
-        let outgoing = drafts.map(\.outgoing)
+        let outgoing = plan.flattened
         guard let job = center.makeSendJob(
             text: body, subject: subject, attachments: outgoing,
             reply: reply.map { ($0.threadId, $0.ticketKey) }

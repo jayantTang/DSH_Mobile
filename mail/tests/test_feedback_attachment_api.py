@@ -522,11 +522,12 @@ async def test_v2_reports_only_bound_attachments_and_v1_reports_none(client):
         [(draft["attachmentId"], "一.png")]
     assert set(v2["threads"][0]["messages"][0]["attachments"][0]) == {
         "attachmentId", "name", "contentType", "byteSize", "sha256", "width",
-        "height", "createdAt"}
+        "height", "createdAt", "compressed"}
     assert v2["limits"]["attachments"] == {
         "maxPerMessage": 8, "maxFileBytes": 8 * 1024 * 1024,
         "maxTotalBytes": 24 * 1024 * 1024,
-        "types": ["jpeg", "png", "heic", "pdf", "txt", "log", "csv", "json"]}
+        "types": ["jpeg", "png", "heic", "pdf", "txt", "log", "csv", "json"],
+        "roles": ["original", "preview"]}
 
     v1 = await (await client.post("/feedback/inbox", json={},
                                   headers=device_headers(token))).json()

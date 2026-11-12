@@ -31,6 +31,11 @@ FEEDBACK_FORMATS = ("text", "html")
 TEST_DEVICE_MODELS = {"arm64", "x86_64", "deploy-check", "Node", "simulator", "test-harness"}
 DEFAULT_FEEDBACK_FORMAT = "text"
 
+#: 附件行的角色（2026-11-12）：`(draftRef, slot)` 仍表示"第几个逻辑附件"，
+#: `role` 表示这个逻辑附件的哪一份字节。名单只在这里出现一次（迁移、校验、投影都读它）。
+ATTACHMENT_ROLES = ("original", "preview")
+DEFAULT_ATTACHMENT_ROLE = "original"
+
 # ── 线程归属：「这条线程是不是写给团队的用户来信」──────────────────────────
 #
 # 归属是**派生谓词**，不是提交时的配置快照（P2-7：`teamAccountId` 在团队开关为空
@@ -190,7 +195,9 @@ CREATE INDEX IF NOT EXISTS noticeDeliveriesByAccount ON noticeDeliveries(account
 -- 信件附件（2026-11-02；v4 改为「先传后发、按 clientRef 绑定」）：只记元数据，
 -- 字节在 attachments/ 目录（见 mail/attachments.py）。
 --   * draftRef 是**信件级 clientRef**（同一封信的附件共用），slot 是这封信里的序号；
---     UNIQUE(draftRef, slot) 同时承担幂等（同 slot 重试）与顺序（提交按 slot 升序）。
+--     UNIQUE(draftRef, slot, role) 同时承担幂等（同 slot 同角色重试）与顺序
+--     （提交按 slot 升序）。slot 仍表示"第几个**逻辑**附件"，role 表示这个逻辑
+--     附件的哪一份字节：`original`（原图 / 唯一的文件）或 `preview`（图片预览）。
 --   * messageId 为 NULL = **未绑定的草稿**（不进任何列表）；提交时一次性写入，
 --     这就是"已绑定"的唯一判据。
 --   * clientRef 只留给通知侧（UNIQUE(noticeId, clientRef)）；线程附件用 draftRef + slot，
@@ -216,11 +223,13 @@ CREATE TABLE IF NOT EXISTS feedbackAttachments (
   storedPath      TEXT,
   createdAt       INTEGER NOT NULL,
   storedAt        INTEGER,
-  boundAt         INTEGER
+  boundAt         INTEGER,
+  -- 这一行是这个逻辑附件的哪一份字节（2026-11-12）。取值只有 original / preview；
+  -- 旧行由 DEFAULT 顶上 original，所以迁移不需要回填。
+  role            TEXT NOT NULL DEFAULT 'original'
 );
-CREATE UNIQUE INDEX IF NOT EXISTS feedbackAttachmentsDraftSlot
-  ON feedbackAttachments(draftRef, slot)
-  WHERE draftRef IS NOT NULL AND slot IS NOT NULL;
+-- UNIQUE(draftRef, slot, role) **不在这里建**：老库要等 `_migrate()` 补上 role 列之后
+-- 才建得出来（与 feedbackThreadsByTeam 同一条约定：随列走的索引放迁移里）。
 CREATE INDEX IF NOT EXISTS feedbackAttachmentsByMessage
   ON feedbackAttachments(threadId, messageId, createdAt);
 CREATE INDEX IF NOT EXISTS feedbackAttachmentsByNotice
@@ -239,7 +248,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS feedbackAttachmentsNoticeRef
 _ATTACHMENT_COLUMNS = ("attachmentId, scope, draftRef, slot, threadId, messageId, noticeId,"
                        " originDeviceId, originAccountId, clientRef, fileName, contentType,"
                        " byteSize, sha256, width, height, state, storedPath, createdAt,"
-                       " storedAt, boundAt")
+                       " storedAt, boundAt, role")
 _ATTACHMENT_SELECT = f"SELECT {_ATTACHMENT_COLUMNS} FROM feedbackAttachments"
 
 
@@ -347,6 +356,19 @@ class Store:
             logging.getLogger("mail.store").info("mail: added column feedbackThreads.teamAccountId")
         self._conn.execute("CREATE INDEX IF NOT EXISTS feedbackThreadsByTeam"
                            " ON feedbackThreads(teamAccountId, lastMessageAt)")
+        attachment_columns = {row[1] for row in
+                              self._conn.execute("PRAGMA table_info(feedbackAttachments)")}
+        if "role" not in attachment_columns:
+            self._conn.execute("ALTER TABLE feedbackAttachments"
+                               " ADD COLUMN role TEXT NOT NULL DEFAULT 'original'")
+            logging.getLogger("mail.store").info("mail: added column feedbackAttachments.role")
+        # 唯一键从"一个 slot 一行"改成"一个 slot 的一个角色一行"：旧索引必须先删，
+        # 否则同一个 slot 的第二份字节（预览 / 原图）根本落不进去。
+        self._conn.execute("DROP INDEX IF EXISTS feedbackAttachmentsDraftSlot")
+        self._conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS feedbackAttachmentsDraftSlotRole"
+            " ON feedbackAttachments(draftRef, slot, role)"
+            " WHERE draftRef IS NOT NULL AND slot IS NOT NULL")
 
     def close(self) -> None:
         with self._lock:
@@ -917,13 +939,16 @@ class Store:
                          origin_device_id: str | None = None,
                          origin_account_id: str | None = None,
                          width: int | None = None, height: int | None = None,
+                         role: str = DEFAULT_ATTACHMENT_ROLE,
                          at: int | None = None) -> dict[str, Any]:
-        """登记一条 **pending** 附件（草稿）；幂等键是 `(draftRef, slot)`。
+        """登记一条 **pending** 附件（草稿）；幂等键是 `(draftRef, slot, role)`。
 
-        - 同一 `(draftRef, slot)` 且 sha256/byteSize/contentType 一致 → 返回既有行
-          （`created=False`）；不一致 → :class:`Conflict`（同一个 slot 不许换文件）。
-        - 配额按 `draftRef` 归集（条数 → 合计），回信草稿再判单线程合计，最后判全库
-          软上限；超了抛 :class:`QuotaExceeded`（`reason` 让调用方选 413/507）。
+        - 同一 `(draftRef, slot, role)` 且 sha256/byteSize/contentType 一致 → 返回既有行
+          （`created=False`）；不一致 → :class:`Conflict`（同一个 slot 的同一角色不许换文件）。
+        - `role` 是这个**逻辑附件**（slot）的哪一份字节：`:data:`DEFAULT_ATTACHMENT_ROLE`
+          或 `preview`。两行共享 slot，所以每封的条数按 `slot` 去重后计。
+        - 配额按 `draftRef` 归集（**distinct slot** 条数 → 字节合计），回信草稿再判单线程
+          合计，最后判全库软上限；超了抛 :class:`QuotaExceeded`（`reason` 让调用方选 413/507）。
         """
         scope = "thread" if notice_id is None else "notice"
         stamp = at or now_ms()
@@ -940,8 +965,8 @@ class Store:
                     return {**dict(existing), "created": False}
             if draft_ref is not None and slot is not None:
                 existing = self._conn.execute(
-                    f"{_ATTACHMENT_SELECT} WHERE draftRef=? AND slot=?",
-                    (draft_ref, slot)).fetchone()
+                    f"{_ATTACHMENT_SELECT} WHERE draftRef=? AND slot=? AND role=?",
+                    (draft_ref, slot, role)).fetchone()
                 if existing is not None:
                     # 别人的 slot 不是"我的幂等命中"：一律冲突，且**不回显**任何字段
                     # （attachmentId / sha256 / byteSize 都不给，F-V4-3）。
@@ -957,10 +982,13 @@ class Store:
                             f"slot {slot} of draft {draft_ref} already holds another file")
                     return {**dict(existing), "created": False}
             if draft_ref is not None:
+                # 条数按**逻辑附件**（distinct slot）：同一 slot 的预览与原图不算两个。
+                # 这一次要落的 slot 不计入"已有"（它的另一份字节可能已经在库里）。
                 stats = self._row(
-                    "SELECT COUNT(*) AS n, COALESCE(SUM(byteSize), 0) AS bytes"
+                    "SELECT COUNT(DISTINCT slot) AS n, COALESCE(SUM(byteSize), 0) AS bytes"
                     " FROM feedbackAttachments"
-                    " WHERE draftRef=? AND state <> 'lost'", (draft_ref,))
+                    " WHERE draftRef=? AND state <> 'lost'"
+                    " AND COALESCE(slot, -1) <> ?", (draft_ref, -1 if slot is None else slot))
                 if int(stats["n"]) >= int(limits["maxPerMessage"]):
                     raise QuotaExceeded("count")
                 if int(stats["bytes"]) + int(byte_size) > int(limits["maxTotalBytes"]):
@@ -974,11 +1002,11 @@ class Store:
             self._conn.execute(
                 "INSERT INTO feedbackAttachments(attachmentId, scope, draftRef, slot, threadId,"
                 " noticeId, originDeviceId, originAccountId, clientRef, fileName, contentType,"
-                " byteSize, sha256, width, height, state, createdAt)"
-                " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending',?)",
+                " byteSize, sha256, width, height, state, createdAt, role)"
+                " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending',?,?)",
                 (attachment_id, scope, draft_ref, slot, thread_id, notice_id,
                  origin_device_id, origin_account_id, client_ref, file_name, content_type,
-                 int(byte_size), sha256, width, height, stamp))
+                 int(byte_size), sha256, width, height, stamp, role))
             self._conn.commit()
             row = self._conn.execute(
                 f"{_ATTACHMENT_SELECT} WHERE attachmentId=?", (attachment_id,)).fetchone()
@@ -1042,10 +1070,12 @@ class Store:
             if not candidates:
                 return 0
         existing_bound = self._row(
-            "SELECT COUNT(*) AS n, COALESCE(SUM(byteSize), 0) AS bytes"
+            "SELECT COUNT(DISTINCT slot) AS n, COALESCE(SUM(byteSize), 0) AS bytes"
             " FROM feedbackAttachments WHERE messageId=? AND state <> 'lost'", (message_id,))
         candidate_bytes = sum(int(row["byteSize"]) for row in candidates)
-        if int(existing_bound["n"]) + len(candidates) > int(limits["maxPerMessage"]):
+        # 单封条数按**逻辑附件**：同一个 slot 的预览与原图只占一个名额。
+        candidate_slots = {row["slot"] for row in candidates}
+        if int(existing_bound["n"]) + len(candidate_slots) > int(limits["maxPerMessage"]):
             raise QuotaExceeded("count")
         if int(existing_bound["bytes"]) + candidate_bytes > int(limits["maxTotalBytes"]):
             raise QuotaExceeded("message-bytes")
@@ -1179,9 +1209,14 @@ class Store:
         return int(self._row(sql, params)["bytes"])
 
     def message_attachment_stats(self, message_id: str) -> dict[str, int]:
-        """一条留言的附件条数与字节（不含 lost）；配额判定与展示共用。"""
+        """一条留言的**逻辑附件**条数与字节（不含 lost）；配额判定与展示共用。
+
+        `COUNT(DISTINCT COALESCE(slot, attachmentId))`：配对信件的一个 slot 有两行
+        （预览 + 原图），回形针只该数 1 个；通知附件没有 slot，退回按行数。
+        """
         row = self._row(
-            "SELECT COUNT(*) AS n, COALESCE(SUM(byteSize), 0) AS bytes"
+            "SELECT COUNT(DISTINCT COALESCE(slot, attachmentId)) AS n,"
+            " COALESCE(SUM(byteSize), 0) AS bytes"
             " FROM feedbackAttachments WHERE messageId=? AND state <> 'lost'", (message_id,))
         return {"count": int(row["n"]), "bytes": int(row["bytes"])}
 
@@ -1192,7 +1227,8 @@ class Store:
             return {}
         marks = ",".join("?" * len(ids))
         rows = self._rows(
-            f"SELECT threadId, COUNT(*) AS n FROM feedbackAttachments"
+            f"SELECT threadId, COUNT(DISTINCT COALESCE(slot, attachmentId)) AS n"
+            f" FROM feedbackAttachments"
             f" WHERE state='stored' AND messageId IS NOT NULL AND threadId IN ({marks})"
             f" GROUP BY threadId", ids)
         return {row["threadId"]: int(row["n"]) for row in rows}

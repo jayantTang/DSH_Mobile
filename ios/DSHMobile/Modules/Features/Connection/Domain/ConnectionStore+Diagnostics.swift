@@ -33,6 +33,19 @@ extension ConnectionStore {
         if let link = carrier as? LinkCarrier { await pushDiagnostics(link) }
     }
 
+    /// 取图失败（自动次数用尽）的终态：落到连接器的设备日志。
+    ///
+    /// 字段恰好三个——`attachmentId` / `attempt` / `error`（短码）。**不记用户内容**：
+    /// 没有文件名、没有 URL、没有正文（设计 §5 B2 的硬约束）。失败当无事。
+    public func noteAttachmentLoadFailure(id: String, attempt: Int, category: String) async {
+        await linkDiagnostics.record(kind: "attachment.load", detail: [
+            "attachmentId": .string(id),
+            "attempt": .int(attempt),
+            "error": .string(category),
+        ])
+        if let link = carrier as? LinkCarrier { await pushDiagnostics(link) }
+    }
+
     /// 把 App 攒下的阶段记录增量推给连接器（spec 020 的 FR-011）。
     ///
     /// 三条纪律：

@@ -877,7 +877,8 @@ async def test_the_v2_inbox_reports_pages_limits_and_my_side(client, store):
                                               "maxFileBytes": 8 * 1024 * 1024,
                                               "maxTotalBytes": 24 * 1024 * 1024,
                                               "types": ["jpeg", "png", "heic", "pdf",
-                                                        "txt", "log", "csv", "json"]}}
+                                                        "txt", "log", "csv", "json"],
+                                              "roles": ["original", "preview"]}}
     assert body["unreadCount"] == 1
 
 

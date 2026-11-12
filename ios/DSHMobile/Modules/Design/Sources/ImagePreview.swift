@@ -21,6 +21,11 @@ public struct ImagePreview: View {
     /// Prefix for the automation identifiers, so a run can tell the workspace
     /// viewer and the transcript viewer apart.
     public var identifierPrefix: String = "attachment.preview"
+    /// 工具栏里夹在 label 与 share 之间的附加控件。
+    ///
+    /// 信件附件的「原图 7.2 MB / 下载中 / 重试」按钮走这里（设计 §5 A5）：查看器本身
+    /// 只负责显示一张图，下载状态归 `FeedbackAttachmentCache`，所以这里只收一个视图。
+    public var accessory: AnyView?
 
     @Environment(\.dismiss) private var dismiss
     @State private var scale: CGFloat = 1
@@ -28,11 +33,14 @@ public struct ImagePreview: View {
     @State private var offset: CGSize = .zero
     @State private var committedOffset: CGSize = .zero
 
-    public init(image: UIImage, label: String, shareURL: URL? = nil, identifierPrefix: String = "attachment.preview") {
+    public init(image: UIImage, label: String, shareURL: URL? = nil,
+                identifierPrefix: String = "attachment.preview",
+                accessory: AnyView? = nil) {
         self.image = image
         self.label = label
         self.shareURL = shareURL
         self.identifierPrefix = identifierPrefix
+        self.accessory = accessory
     }
 
     private static let maximumScale: CGFloat = 6
@@ -68,6 +76,9 @@ public struct ImagePreview: View {
                 .foregroundStyle(.white.opacity(0.8))
                 .lineLimit(1)
             Spacer()
+            if let accessory {
+                accessory
+            }
             if let shareURL {
                 ShareLink(item: shareURL) {
                     Image(systemName: "square.and.arrow.up")

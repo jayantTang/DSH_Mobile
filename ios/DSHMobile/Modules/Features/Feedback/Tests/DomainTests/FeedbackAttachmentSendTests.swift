@@ -25,6 +25,23 @@ final class FeedbackAttachmentSendTests: FeedbackCenterTestCase {
                                    width: 10, height: 20)
     }
 
+    /// 一个逻辑附件：单文件模式（主对象就是 original，没有第二份字节）。
+    private func prepared(_ name: String = "a.png", slot: Int = 0) -> FeedbackPreparedAttachment {
+        FeedbackPreparedAttachment(slot: slot, primary: attachment(name))
+    }
+
+    /// 配对模式：预览 + 原图两份字节（原图用同样的 PNG，只为验证"两行"）。
+    private func paired(slot: Int = 0) -> FeedbackPreparedAttachment {
+        FeedbackPreparedAttachment(
+            slot: slot,
+            primary: FeedbackOutgoingAttachment(name: "a.jpg", contentType: "image/jpeg",
+                                                data: png, width: 10, height: 20,
+                                                role: .preview),
+            original: FeedbackOutgoingAttachment(name: "a.jpg", contentType: "image/jpeg",
+                                                 data: png, width: 20, height: 40,
+                                                 role: .original))
+    }
+
     private func beginJSON(_ id: String = "fa_1", state: String = "pending") -> LoopbackHTTPStub.Answer {
         .json(#"{"ok":true,"attachmentId":"\#(id)","state":"\#(state)","byteSize":8,\#(shaField)"createdAt":1000}"#)
     }
@@ -45,7 +62,7 @@ final class FeedbackAttachmentSendTests: FeedbackCenterTestCase {
         _ stub: LoopbackHTTPStub,
         root: TempFeedbackRoot,
         text: String = "body",
-        attachments: [FeedbackOutgoingAttachment]? = nil,
+        attachments: [FeedbackPreparedAttachment]? = nil,
         clientRef: String = "ref-1",
         limits: FeedbackLimits = FeedbackAttachmentSendTests.openLimits,
         reply: (threadId: String, ticketKey: String?)? = nil
@@ -53,7 +70,7 @@ final class FeedbackAttachmentSendTests: FeedbackCenterTestCase {
         FeedbackSendJob(
             client: RelayFeedbackClient(relayURL: stub.baseURL, deviceToken: "dt_test"),
             clientRef: clientRef, text: text, subject: nil,
-            attachments: attachments ?? [attachment()],
+            attachments: attachments ?? [prepared()],
             limits: limits,
             disk: FeedbackAttachmentDisk(root: root.url),
             pendingStore: FeedbackPendingUploadStore(root: root.url),
@@ -182,7 +199,8 @@ final class FeedbackAttachmentSendTests: FeedbackCenterTestCase {
             maxPerMessage: 1, maxFileBytes: 1024, maxTotalBytes: 4096, types: ["png"]))
 
         let outcome = await makeJob(stub, root: root,
-                                    attachments: [attachment("a.png"), attachment("b.png")],
+                                    attachments: [prepared("a.png", slot: 0),
+                                                  prepared("b.png", slot: 1)],
                                     limits: tight).run()
 
         XCTAssertEqual(outcome, .failed(.attachmentLimit(limit: 1, requested: 2)))
@@ -226,7 +244,7 @@ final class FeedbackAttachmentSendTests: FeedbackCenterTestCase {
         let root = makeRoot("attach-clear")
         let disk = FeedbackAttachmentDisk(root: root.url)
         let pending = FeedbackPendingUploadStore(root: root.url)
-        disk.stage(attachment(), clientRef: "ref-1", slot: 0)
+        disk.stage(attachment(), clientRef: "ref-1", slot: 0, role: .original)
         disk.storeCache(png, sha256: "cache-digest")
         var uploads = FeedbackPendingUploads()
         uploads.put(FeedbackPendingUpload(slot: 0, name: "a.png", contentType: "image/png",
@@ -240,7 +258,7 @@ final class FeedbackAttachmentSendTests: FeedbackCenterTestCase {
         }, attachmentDisk: disk, pendingUploads: pending)
         center.clearLocalMirror()
 
-        XCTAssertNil(disk.stagedBytes(clientRef: "ref-1", slot: 0))
+        XCTAssertNil(disk.stagedBytes(clientRef: "ref-1", slot: 0, role: .original))
         XCTAssertNil(disk.cachedBytes(sha256: "cache-digest"))
         XCTAssertTrue(pending.queue(for: "ref-1").isEmpty)
     }

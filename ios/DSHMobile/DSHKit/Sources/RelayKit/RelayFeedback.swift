@@ -432,10 +432,53 @@ public struct FeedbackPageRequest: Sendable, Hashable, Encodable {
     }
 }
 
+/// 一个逻辑附件的**预览**子对象（2026-11-12）：只有"原图 + 预览"配对时才有。
+///
+/// 字段比主对象少：预览没有自己的文件名与创建时间（它不是一个独立附件，而是同一
+/// 个 `slot` 的另一份字节），所以这里只列读者真正要用的四件事实 + 尺寸。
+public struct FeedbackAttachmentPreview: Sendable, Hashable, Codable {
+    public let attachmentId: String
+    public let contentType: String
+    public let byteSize: Int
+    public let sha256: String
+    public let width: Int?
+    public let height: Int?
+
+    public init(attachmentId: String, contentType: String, byteSize: Int, sha256: String,
+                width: Int? = nil, height: Int? = nil) {
+        self.attachmentId = attachmentId
+        self.contentType = contentType
+        self.byteSize = byteSize
+        self.sha256 = sha256
+        self.width = width
+        self.height = height
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case attachmentId, contentType, byteSize, sha256, width, height
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        attachmentId = (try? container.decodeIfPresent(String.self, forKey: .attachmentId)) ?? ""
+        contentType = (try? container.decodeIfPresent(String.self, forKey: .contentType)) ?? ""
+        byteSize = (try? container.decodeIfPresent(Int.self, forKey: .byteSize)) ?? 0
+        sha256 = (try? container.decodeIfPresent(String.self, forKey: .sha256)) ?? ""
+        width = try? container.decodeIfPresent(Int.self, forKey: .width)
+        height = try? container.decodeIfPresent(Int.self, forKey: .height)
+    }
+}
+
 /// 一条附件在 wire 上的元数据（v2 的 `attachments[]`）。
 ///
 /// 只列**已绑定**的附件：草稿不会出现在任何响应里。字段全部容错解码——一个坏行
 /// 不该让整条线程解不出来（与 ``FeedbackMessage`` 对未知作者的容忍同一条理由）。
+///
+/// 2026-11-12 起服务端按 `slot` 把"预览 + 原图"两行投影成**一个**对象，于是有三种读法：
+///
+/// - `preview != nil`：主对象是原图，列表读 `preview`、全屏的"原图"读主对象；
+/// - `compressed == true`：主对象就是预览（这封信只带了预览），列表与全屏都读它；
+/// - 两者都没有：旧信件，主对象是唯一那份，客户端按原图处理。
 public struct FeedbackAttachment: Sendable, Hashable, Identifiable, Codable {
     public let attachmentId: String
     public let name: String
@@ -447,11 +490,16 @@ public struct FeedbackAttachment: Sendable, Hashable, Identifiable, Codable {
     public let width: Int?
     public let height: Int?
     public let createdAt: Date?
+    /// 预览子对象：只有"原图 + 预览"配对时才有（见类型注释的三种读法）。
+    public let preview: FeedbackAttachmentPreview?
+    /// 主对象是不是预览（`true` = 这封信没有原图，只有预览那一份）。
+    public let compressed: Bool
 
     public var id: String { attachmentId }
 
     public init(attachmentId: String, name: String, contentType: String, byteSize: Int,
-                sha256: String, width: Int? = nil, height: Int? = nil, createdAt: Date? = nil) {
+                sha256: String, width: Int? = nil, height: Int? = nil, createdAt: Date? = nil,
+                preview: FeedbackAttachmentPreview? = nil, compressed: Bool = false) {
         self.attachmentId = attachmentId
         self.name = name
         self.contentType = contentType
@@ -460,10 +508,13 @@ public struct FeedbackAttachment: Sendable, Hashable, Identifiable, Codable {
         self.width = width
         self.height = height
         self.createdAt = createdAt
+        self.preview = preview
+        self.compressed = compressed
     }
 
     private enum CodingKeys: String, CodingKey {
         case attachmentId, name, contentType, byteSize, sha256, width, height, createdAt
+        case preview, compressed
     }
 
     public init(from decoder: any Decoder) throws {
@@ -476,6 +527,9 @@ public struct FeedbackAttachment: Sendable, Hashable, Identifiable, Codable {
         width = try? container.decodeIfPresent(Int.self, forKey: .width)
         height = try? container.decodeIfPresent(Int.self, forKey: .height)
         createdAt = RelayDevice.date(fromMilliseconds: try? container.decodeIfPresent(Int.self, forKey: .createdAt))
+        // 未知 / 缺字段都是 nil / false：旧服务端的形状必须照旧解出来。
+        preview = try? container.decodeIfPresent(FeedbackAttachmentPreview.self, forKey: .preview)
+        compressed = (try? container.decodeIfPresent(Bool.self, forKey: .compressed)) ?? false
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -490,8 +544,12 @@ public struct FeedbackAttachment: Sendable, Hashable, Identifiable, Codable {
         if let createdAt {
             try container.encode(Int(createdAt.timeIntervalSince1970 * 1000), forKey: .createdAt)
         }
+        try container.encodeIfPresent(preview, forKey: .preview)
+        // `compressed` 服务端**总是**下发；本地镜像也总是写（缺省值的语义与"没写"不同）。
+        try container.encode(compressed, forKey: .compressed)
     }
 }
+
 
 /// 附件能力的上限（v2 `limits.attachments`）。
 ///
@@ -504,16 +562,24 @@ public struct FeedbackAttachmentLimits: Sendable, Hashable, Codable {
     public let maxTotalBytes: Int
     /// 允许的类型（`jpeg` / `png` / `heic` / `pdf` / `txt` / `log` / `csv` / `json`）。
     public let types: [String]
+    /// 服务端认的角色（2026-11-12）：`["original", "preview"]` 才可以发配对；
+    /// 缺字段 / 空列表 = **单文件模式**（旧服务端，或回滚开关关着，见设计 §6.4）。
+    public let roles: [String]
 
-    public init(maxPerMessage: Int, maxFileBytes: Int, maxTotalBytes: Int, types: [String]) {
+    /// 能不能发"一个逻辑附件两份字节"的配对（能力协商的唯一判据）。
+    public var supportsPairs: Bool { roles.contains("preview") }
+
+    public init(maxPerMessage: Int, maxFileBytes: Int, maxTotalBytes: Int, types: [String],
+                roles: [String] = []) {
         self.maxPerMessage = maxPerMessage
         self.maxFileBytes = maxFileBytes
         self.maxTotalBytes = maxTotalBytes
         self.types = types
+        self.roles = roles
     }
 
     private enum CodingKeys: String, CodingKey {
-        case maxPerMessage, maxFileBytes, maxTotalBytes, types
+        case maxPerMessage, maxFileBytes, maxTotalBytes, types, roles
     }
 
     /// 四件缺一不可：任何一个读不出来都让整个对象解码失败（→ 客户端按"关闭"处理）。
@@ -523,6 +589,7 @@ public struct FeedbackAttachmentLimits: Sendable, Hashable, Codable {
         maxFileBytes = try container.decode(Int.self, forKey: .maxFileBytes)
         maxTotalBytes = try container.decode(Int.self, forKey: .maxTotalBytes)
         types = (try? container.decodeIfPresent([String].self, forKey: .types)) ?? []
+        roles = (try? container.decodeIfPresent([String].self, forKey: .roles)) ?? []
     }
 }
 
@@ -747,6 +814,10 @@ public struct RelayFeedbackClient: Sendable {
 
     /// 上传用的独立超时：8 MiB 在 1 Mbps 上要 67 s，与正文那条 20 s 分开。
     public static let uploadTimeout: TimeInterval = 120
+    /// 下载（原图）用同一个量级：8 MiB 下载与上传一样慢，正文那条 20 s 不够。
+    public static let downloadTimeout: TimeInterval = 120
+    /// 进度回调的粒度：每 64 KiB 报一次，够 UI 平滑，又不至于每个字节都过主线程。
+    static let progressReportBytes = 64 * 1024
 
     public init(
         relayURL: URL,
@@ -901,6 +972,10 @@ public struct RelayFeedbackClient: Sendable {
     ///
     /// 不传旧的 `messageId`：v4 已把"先 submit 再按 messageId 传附件"整条删掉，
     /// 服务端收到它会直接 400。
+    ///
+    /// `role`（2026-11-12）：同一个 `slot` 的哪一份字节。配对模式先传 `preview` 再传
+    /// `original`；单文件模式（服务端没下发 `limits.attachments.roles`）传 `nil`，
+    /// 服务端按 `original` 落一行——旧服务端收到的请求与今天逐字节相同。
     public func beginAttachment(
         clientRef: String,
         slot: Int,
@@ -911,7 +986,8 @@ public struct RelayFeedbackClient: Sendable {
         byteSize: Int,
         sha256: String,
         width: Int? = nil,
-        height: Int? = nil
+        height: Int? = nil,
+        role: String? = nil
     ) async throws -> FeedbackAttachmentDraft {
         struct Request: Encodable {
             let clientRef: String
@@ -924,6 +1000,8 @@ public struct RelayFeedbackClient: Sendable {
             let sha256: String
             let width: Int?
             let height: Int?
+            /// `original` / `preview`；`nil` = 不传（旧服务端看不懂这个键，形状不变）。
+            let role: String?
         }
         struct Answer: Decodable {
             let ok: Bool?
@@ -937,7 +1015,7 @@ public struct RelayFeedbackClient: Sendable {
         let data = try await post("/feedback/attachment/begin", Request(
             clientRef: clientRef, slot: slot, threadId: threadId, ticketKey: ticketKey,
             name: name, contentType: contentType, byteSize: byteSize, sha256: sha256,
-            width: width, height: height
+            width: width, height: height, role: role
         ))
         let answer = try decode(Answer.self, from: data)
         guard answer.ok == true, let attachmentId = answer.attachmentId,
@@ -992,17 +1070,102 @@ public struct RelayFeedbackClient: Sendable {
         )
     }
 
-    /// 取一条附件的字节（`POST /feedback/attachment/fetch`）。
+    /// 取一条附件的字节（`POST /feedback/attachment/fetch`），**流式**读完并按
+    /// `Content-Length` 报进度。
     ///
     /// 没有公开 GET、没有签名 URL：取字节也要 POST + 凭据。调用方拿到之后**必须**
     /// 用元数据里的 `sha256` 再算一遍摘要（服务端只在写入时核）。
-    public func fetchAttachment(attachmentId: String, ticketKey: String? = nil) async throws -> Data {
+    ///
+    /// 这是取字节的**唯一**通路（旧的非流式 `post` 实现已在同一次改动里删掉）：
+    /// 原图动辄数 MB，整块等完再返回既没有进度也无法取消。取消走任务取消——
+    /// `Task.cancel()` 会让下面的字节流抛出 `CancellationError`，调用方据此回到 idle。
+    ///
+    /// `onProgress(received, total)`：`total` 来自响应头，缺失就是 `nil`（不猜）。
+    public func fetchAttachment(
+        attachmentId: String,
+        ticketKey: String? = nil,
+        onProgress: (@Sendable (Int, Int?) -> Void)? = nil
+    ) async throws -> Data {
         struct Request: Encodable {
             let attachmentId: String
             let ticketKey: String?
         }
-        return try await post("/feedback/attachment/fetch",
-                              Request(attachmentId: attachmentId, ticketKey: ticketKey))
+        var components = URLComponents(url: relayURL, resolvingAgainstBaseURL: false)
+        components?.path = LinkConfiguration.appending(path: "/feedback/attachment/fetch",
+                                                       to: relayURL)
+        components?.query = nil
+        guard let url = components?.url else {
+            throw FeedbackClientError.network("invalid-relay-url")
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = Self.downloadTimeout
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if let deviceToken, !deviceToken.isEmpty {
+            request.setValue("Bearer \(deviceToken)", forHTTPHeaderField: "Authorization")
+        }
+        if let ticketKey, !ticketKey.isEmpty {
+            request.setValue(ticketKey, forHTTPHeaderField: "X-Feedback-Ticket")
+        }
+        do {
+            request.httpBody = try JSONEncoder().encode(
+                Request(attachmentId: attachmentId, ticketKey: ticketKey))
+        } catch {
+            throw FeedbackClientError.decoding("request-encode-failed: \(error)")
+        }
+
+        let bytes: URLSession.AsyncBytes
+        let response: URLResponse
+        do {
+            (bytes, response) = try await session.bytes(for: request)
+        } catch {
+            throw Self.transportFailure(error)
+        }
+        guard let http = response as? HTTPURLResponse else {
+            throw FeedbackClientError.network("invalid-relay-response")
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            // 失败体很小（一个 error 信封）；读完才能拿到错误码，读不出来就按状态码判。
+            var failure = Data()
+            do {
+                for try await byte in bytes { failure.append(byte) }
+            } catch {
+                throw Self.transportFailure(error)
+            }
+            throw Self.failure(Self.errorCode(in: failure), status: http.statusCode)
+        }
+
+        let total = http.expectedContentLength > 0 ? Int(http.expectedContentLength) : nil
+        onProgress?(0, total)
+        var data = Data()
+        if let total { data.reserveCapacity(total) }
+        var received = 0
+        var sinceReport = 0
+        do {
+            for try await byte in bytes {
+                data.append(byte)
+                received += 1
+                sinceReport += 1
+                if sinceReport >= Self.progressReportBytes {
+                    sinceReport = 0
+                    onProgress?(received, total)
+                }
+            }
+        } catch {
+            throw Self.transportFailure(error)
+        }
+        onProgress?(received, total)
+        return data
+    }
+
+    /// 传输层错误：取消要原样抛出（`CancellationError` 是调用方的结局之一，不是网络故障）。
+    private static func transportFailure(_ error: any Error) -> any Error {
+        if error is CancellationError { return error }
+        let nsError = error as NSError
+        if nsError.domain == NSURLErrorDomain, nsError.code == NSURLErrorCancelled {
+            return CancellationError()
+        }
+        return FeedbackClientError.network(String(describing: error))
     }
 
     /// 删一条**草稿**附件（`POST /feedback/attachment/discard`）：取消/放弃一封信时

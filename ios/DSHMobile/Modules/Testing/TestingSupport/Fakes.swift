@@ -60,6 +60,19 @@ public final class FakeLinkService: LinkService {
     }
 
     public func supports(_ capability: String) -> Bool { capabilities.contains(capability) }
+
+    /// 032（2026-11-12）：取图失败（自动次数用尽）的诊断记录，供用例断言。
+    public struct AttachmentLoadFailure: Sendable, Equatable {
+        public let id: String
+        public let attempt: Int
+        public let category: String
+    }
+    public var attachmentLoadFailures: [AttachmentLoadFailure] = []
+
+    public func noteAttachmentLoadFailure(id: String, attempt: Int, category: String) async {
+        attachmentLoadFailures.append(AttachmentLoadFailure(id: id, attempt: attempt,
+                                                            category: category))
+    }
     public func uploadFile(fileURL: URL, name: String, sessionId: String) async throws -> StagedFile {
         throw NSError(domain: "FakeLinkService", code: 2, userInfo: [NSLocalizedDescriptionKey: "uploadFile not stubbed"])
     }

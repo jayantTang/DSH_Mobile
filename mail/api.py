@@ -33,9 +33,10 @@ from urllib.parse import quote
 from aiohttp import web
 
 import attachments as attachment_files
-from store import (DEFAULT_FEEDBACK_FORMAT, MAX_SUBJECT_CHARS, Conflict, EmptyLetter,
-                   QuotaExceeded, SealedLetter, Store, StoreError, clean_feedback_format,
-                   is_user_letter, my_side, my_unread, page_thread_rows, sha256_hex)
+from store import (ATTACHMENT_ROLES, DEFAULT_ATTACHMENT_ROLE, DEFAULT_FEEDBACK_FORMAT,
+                   MAX_SUBJECT_CHARS, Conflict, EmptyLetter, QuotaExceeded, SealedLetter,
+                   Store, StoreError, clean_feedback_format, is_user_letter, my_side,
+                   my_unread, page_thread_rows, sha256_hex)
 
 LOGGER = logging.getLogger("mail.http")
 
@@ -66,6 +67,9 @@ LIMITS = {
         "uploadBytesPerDevice": 200 * 1024 * 1024,
         "uploadBytesPerDeviceDay": 500 * 1024 * 1024,
         "types": ["jpeg", "png", "heic", "pdf", "txt", "log", "csv", "json"],
+        # 附件角色（2026-11-12）：有 `roles` = 客户端可发"预览 + 原图"配对；
+        # 空列表（`MAIL_ATTACHMENT_ROLES=0`）= 单文件模式（回滚开关，见设计 §6.2）。
+        "roles": list(ATTACHMENT_ROLES),
     },
 }
 
@@ -102,6 +106,9 @@ ATTACHMENT_CONTENT_TYPES = {
     "text/csv": "csv",
     "application/json": "json",
 }
+#: `preview` 角色只允许图片：预览是"给列表用的一张小图"，PDF/文本没有第二份字节。
+PREVIEW_CONTENT_TYPES = ("image/jpeg", "image/png")
+
 #: 原始文件名的上限（设计 §3.1：≤120 字符，去掉路径分隔符与控制字符）。
 MAX_ATTACHMENT_NAME_CHARS = 120
 _ONE_DAY_S = 24 * 60 * 60
@@ -324,6 +331,16 @@ def _attachments_enabled(request: web.Request) -> bool:
     return int(_attachment_limits(request)["maxPerMessage"]) > 0
 
 
+def _roles_enabled(request: web.Request) -> bool:
+    """附件角色（预览/原图配对）是否开着：`limits.attachments.roles` 非空即开。
+
+    回滚开关（`MAIL_ATTACHMENT_ROLES=0`）把这份名单清空，于是：v2 不下发 `roles`
+    （客户端退单文件模式），`begin` 收到 `role != original` 回 400，**投影仍按 slot
+    分组**（已存在的配对信件不会变成重复图）。判据只有这一处。
+    """
+    return bool(_attachment_limits(request).get("roles"))
+
+
 def _byte_budget(app: web.Application, name: str, limit: int,
                  window_s: float) -> ByteBudget:
     budget = app.get(name)
@@ -416,6 +433,26 @@ def _attachment_type_of(body: dict[str, Any]) -> tuple[str | None, web.Response 
                                 "contentType must be one of: "
                                 + ", ".join(sorted(ATTACHMENT_CONTENT_TYPES)))
     return value.strip().lower(), None
+
+
+def _attachment_role_of(body: dict[str, Any], *, roles_enabled: bool
+                        ) -> tuple[str | None, web.Response | None]:
+    """这一行是逻辑附件的哪一份字节：缺省 `original`（旧客户端不带这个键）。
+
+    - 取值只允许 `ATTACHMENT_ROLES`；
+    - `roles` 关着（回滚开关）时只接受 `original`，其余回 400——不静默降级，
+      免得客户端以为自己传上了预览。
+    """
+    value = body.get("role")
+    if value is None:
+        return DEFAULT_ATTACHMENT_ROLE, None
+    if not isinstance(value, str) or value not in ATTACHMENT_ROLES:
+        return None, json_error(400, "feedback/bad-request",
+                                "role must be one of: " + ", ".join(ATTACHMENT_ROLES))
+    if value != DEFAULT_ATTACHMENT_ROLE and not roles_enabled:
+        return None, json_error(400, "feedback/bad-request",
+                                "this mail service does not take attachment roles")
+    return value, None
 
 
 def _attachment_size_of(body: dict[str, Any], limits: dict[str, Any]
@@ -630,6 +667,10 @@ def _limits_payload(messages_per_thread: int, threads_limit: int, notices_limit:
             "maxFileBytes": int(attachment_limits["maxFileBytes"]),
             "maxTotalBytes": int(attachment_limits["maxTotalBytes"]),
             "types": list(attachment_limits["types"])}
+        # `roles` 缺失 = 服务端只会落单文件（旧服务端 / 回滚开关）；客户端按能力协商
+        # 退单文件模式，不把一份可能是原图的字节误标成压缩版（设计 §6.4）。
+        if attachment_limits.get("roles"):
+            payload["attachments"]["roles"] = list(attachment_limits["roles"])
     return payload
 
 
@@ -679,17 +720,72 @@ def _public_attachment(row: dict[str, Any]) -> dict[str, Any]:
 
     只列**已存**的附件：`pending`（还没传完）与 `lost`（行在文件没了）都不上线，
     客户端不该看到"发不出去的附件"。
+
+    `compressed` 总是在（v2 起）：`true` = 主对象就是预览（这封信只带了预览）。
+    通知附件不参与配对，永远是 `false`、没有 `preview`。`preview` 子对象由
+    :func:`_project_attachments` 在按 slot 分组时补上。
     """
     return {"attachmentId": row["attachmentId"], "name": row["fileName"],
             "contentType": row["contentType"], "byteSize": int(row["byteSize"]),
             "sha256": row["sha256"], "width": row["width"], "height": row["height"],
-            "createdAt": int(row["createdAt"])}
+            "createdAt": int(row["createdAt"]), "compressed": False}
+
+
+def _preview_object(row: dict[str, Any]) -> dict[str, Any]:
+    """`preview` 子对象：预览行在 wire 上的最小事实集（没有 name / createdAt）。"""
+    return {"attachmentId": row["attachmentId"], "contentType": row["contentType"],
+            "byteSize": int(row["byteSize"]), "sha256": row["sha256"],
+            "width": row["width"], "height": row["height"]}
+
+
+def _project_attachments(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """把**行**按 `slot` 投影成**逻辑附件**（一个 slot 一个对象）。
+
+    三种形状（设计 §2.1）：
+
+    - 有原图 + 有预览：主对象是原图，带 `preview` 子对象，`compressed` 为 false；
+    - 只有预览：主对象就是预览行，`compressed` 为 true，没有 `preview`；
+    - 只有一份（旧信件 / 老客户端写的 / 通知附件）：主对象就是那一份，没有 `preview`，
+      `compressed` 为 false。
+
+    分组**不看** `roles` 开关：回滚期间已存在的配对信件仍然只显示一个对象。
+    `rows` 已按 `(slot, createdAt)` 排好（store 的读法），这里保持首次出现的顺序。
+    """
+    slots: dict[Any, dict[str, dict[str, Any]]] = {}
+    order: list[Any] = []
+    for row in rows:
+        key = row.get("slot")
+        if key is None:                      # 通知附件：无 slot，一行一个对象
+            key = ("row", row["attachmentId"])
+        if key not in slots:
+            slots[key] = {}
+            order.append(key)
+        roles = slots[key]
+        # 一般每个角色只有一行；万一有多行（历史脏数据），先出现的那行胜出。
+        roles.setdefault(row.get("role") or DEFAULT_ATTACHMENT_ROLE, row)
+
+    projected: list[dict[str, Any]] = []
+    for key in order:
+        roles = slots[key]
+        original = roles.get(DEFAULT_ATTACHMENT_ROLE)
+        preview = roles.get("preview")
+        if original is not None:
+            item = _public_attachment(original)
+            if preview is not None:
+                item["preview"] = _preview_object(preview)
+            projected.append(item)
+        elif preview is not None:
+            item = _public_attachment(preview)
+            item["compressed"] = True
+            projected.append(item)
+    return projected
 
 
 def _stored_attachments(message: dict[str, Any]) -> list[dict[str, Any]]:
-    """只列**已绑定**（`messageId` 非空）且 `stored` 的行：草稿不进任何投影。"""
-    return [_public_attachment(row) for row in message.get("attachments", [])
-            if _is_stored(row) and row.get("messageId")]
+    """只列**已绑定**（`messageId` 非空）且 `stored` 的行，再按 slot 投影。"""
+    stored = [row for row in message.get("attachments", [])
+              if _is_stored(row) and row.get("messageId")]
+    return _project_attachments(stored)
 
 
 def _public_thread(thread: dict[str, Any], *, v2: bool = False,
@@ -1268,6 +1364,12 @@ async def feedback_attachment_begin(request: web.Request) -> web.Response:
     byte_size, error = _attachment_size_of(body, limits)
     if error is not None:
         return error
+    role, error = _attachment_role_of(body, roles_enabled=_roles_enabled(request))
+    if error is not None:
+        return error
+    if role == "preview" and content_type not in PREVIEW_CONTENT_TYPES:
+        return json_error(415, "feedback/attachment-type",
+                          "a preview must be one of: " + ", ".join(PREVIEW_CONTENT_TYPES))
     digest, error = _attachment_digest_of(body)
     if error is not None:
         return error
@@ -1300,7 +1402,7 @@ async def feedback_attachment_begin(request: web.Request) -> web.Response:
         row = await asyncio.to_thread(
             store.begin_attachment, draft_ref=client_ref, slot=slot, thread_id=thread_id,
             file_name=name, content_type=content_type, byte_size=byte_size, sha256=digest,
-            width=width, height=height, limits=limits,
+            width=width, height=height, limits=limits, role=role,
             origin_device_id=None if thread_id else device["deviceId"],
             origin_account_id=None if thread_id else device.get("accountId"))
     except SealedLetter:
@@ -1318,6 +1420,7 @@ async def feedback_attachment_begin(request: web.Request) -> web.Response:
         return json_error(500, "feedback/store-error",
                           "the mail service could not store the attachment")
     return web.json_response({"ok": True, "attachmentId": row["attachmentId"],
+                              "slot": row["slot"], "role": row["role"],
                               "state": row["state"], "byteSize": int(row["byteSize"]),
                               "sha256": row["sha256"], "createdAt": int(row["createdAt"])})
 

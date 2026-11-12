@@ -149,11 +149,14 @@ public final class ConnectionStore {
     /// 为什么由 store 持有而不是每条 carrier 各建一个：修复连接时会换一个全新的 carrier，
     /// 而"上次为什么断、手机上几点发生的"必须跨 carrier 连起来看；每建一个就写一份文件
     /// 还会互相滚动覆盖。落在 App 容器的 Application Support 下（不是 `~/.dsh`）。
-    let linkDiagnostics: LinkDiagnostics = {
+    let linkDiagnostics: LinkDiagnostics
+
+    /// 默认落在 App 容器的 Application Support 下；单测注入临时目录，绝不写用户现场。
+    static func defaultDiagnostics() -> LinkDiagnostics {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
         let directory = base?.appendingPathComponent("link-diagnostics", isDirectory: true)
         return LinkDiagnostics(directory: directory)
-    }()
+    }
 
     /// 前后台切换（spec 020 的 FR-009）。用来把"App 被系统挂起"与"拨号卡住"分开。
     public enum AppScene: String, Sendable { case foreground, background }
@@ -174,8 +177,10 @@ public final class ConnectionStore {
     private let defaults: UserDefaults
 
     /// `defaults` 仅测试注入隔离域；生产默认 `.standard`，行为不变。
-    public init(defaults: UserDefaults = .standard) {
+    public init(defaults: UserDefaults = .standard,
+                diagnostics: LinkDiagnostics? = nil) {
         self.defaults = defaults
+        self.linkDiagnostics = diagnostics ?? Self.defaultDiagnostics()
         profiles = Self.loadProfiles(defaults: defaults)
     }
 

@@ -110,12 +110,21 @@ public final class FeedbackCenter {
         self.endpointProvider = resolvedEndpoint
         self.attachmentCache = FeedbackAttachmentCache(
             disk: attachmentDisk,
-            fetch: { attachmentId in
+            fetch: { attachmentId, onProgress in
+                #if DEBUG
+                // 仿真器夹具（`-DSHFeedbackAttachmentBytesDir`，仅 DEBUG）：命中就返回
+                // 那份字节，其余环节（校验 / 落缓存 / 状态）完全走真实路径。
+                if let bytes = FeedbackCenter.automationAttachmentBytes(
+                    attachmentId: attachmentId) {
+                    onProgress?(bytes.count, bytes.count)
+                    return bytes
+                }
+                #endif
                 guard let endpoint = resolvedEndpoint() else {
                     throw FeedbackClientError.network("no-relay-endpoint")
                 }
                 return try await FeedbackCenter.makeClient(endpoint)
-                    .fetchAttachment(attachmentId: attachmentId)
+                    .fetchAttachment(attachmentId: attachmentId, onProgress: onProgress)
             }
         )
         self.crashArchive = crashArchive
@@ -212,6 +221,28 @@ public final class FeedbackCenter {
         else { return nil }
         return FeedbackMirrorLimits(threads: threads, notices: notices)
     }
+    /// 仿真器夹具钩子：`-DSHFeedbackAttachmentBytesDir <绝对路径>`。
+    ///
+    /// **仅 DEBUG、用于仿真器夹具**：取某条附件的字节时，先看 `<dir>/<attachmentId>`
+    /// 是否存在——存在就返回那个文件的字节，不存在就照原路走网络。
+    ///
+    /// 它只替换**字节来源**：进度回调、sha256 复核、写缓存、状态切换全都还是真实那一套
+    /// （不绕过校验、不新增缓存层）。文件名约定是 **`attachmentId`**（不是 sha256）：
+    /// 请求本来就按 attachmentId 键，夹具要构造"原图未缓存 → 点按下载"就必须能命中它；
+    /// sha256 只用于校验产物，写成文件名反而要求夹具预知校验结果。
+    ///
+    /// 路径不是绝对路径、目录不存在、文件读不出来——一律返回 nil（不补默认值、不弹窗）。
+    static func automationAttachmentBytes(attachmentId: String,
+                                          arguments: [String] = CommandLine.arguments) -> Data? {
+        guard let index = arguments.firstIndex(of: "-DSHFeedbackAttachmentBytesDir"),
+              index + 1 < arguments.count
+        else { return nil }
+        let path = arguments[index + 1]
+        guard path.hasPrefix("/") else { return nil }
+        let file = URL(fileURLWithPath: path, isDirectory: true)
+            .appendingPathComponent(attachmentId)
+        return try? Data(contentsOf: file)
+    }
     #else
     static func automationRowLimits() -> FeedbackMirrorLimits? { nil }
     #endif
@@ -269,7 +300,7 @@ public final class FeedbackCenter {
     public func submit(
         text: String,
         subject: String? = nil,
-        attachments: [FeedbackOutgoingAttachment] = []
+        attachments: [FeedbackPreparedAttachment] = []
     ) async throws -> FeedbackTicket {
         guard let endpoint = endpointProvider() else {
             throw FeedbackClientError.network("no-relay-endpoint")
@@ -359,7 +390,7 @@ public final class FeedbackCenter {
     /// 团队账号在服务端免 `ticketKey`（授权判据是「调用方是线程的团队侧」）；
     /// 成功后刷新让该线程回到最新口径。失败按现有 ``FeedbackClientError`` 抛出。
     public func reply(to threadId: String, text: String,
-                      attachments: [FeedbackOutgoingAttachment] = []) async throws {
+                      attachments: [FeedbackPreparedAttachment] = []) async throws {
         guard let endpoint = endpointProvider() else {
             lastError = .network("no-relay-endpoint")
             throw FeedbackClientError.network("no-relay-endpoint")
@@ -419,7 +450,7 @@ public final class FeedbackCenter {
     public func makeSendJob(
         text: String,
         subject: String? = nil,
-        attachments: [FeedbackOutgoingAttachment] = [],
+        attachments: [FeedbackPreparedAttachment] = [],
         reply: (threadId: String, ticketKey: String?)? = nil
     ) -> FeedbackSendJob? {
         guard let endpoint = endpointProvider() else { return nil }

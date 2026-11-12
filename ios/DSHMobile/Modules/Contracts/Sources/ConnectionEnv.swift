@@ -43,6 +43,10 @@ public final class ConnectionEnv: ConnectionStatus, ConnectionLink, FileTransfer
 
     public func dismissOutdatedConnectorNotice() { service.dismissOutdatedConnectorNotice() }
     public func noteFirstRender() async { await service.noteFirstRender() }
+    public func noteAttachmentLoadFailure(id: String, attempt: Int,
+                                          category: String) async {
+        await service.noteAttachmentLoadFailure(id: id, attempt: attempt, category: category)
+    }
     public func supports(_ capability: String) -> Bool { service.supports(capability) }
     public func fileTransferTarget() throws -> (relayURL: URL, deviceToken: String) {
         try service.fileTransferTarget()

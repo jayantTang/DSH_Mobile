@@ -66,6 +66,11 @@ def deployed_version() -> str:
 #: `begin`/`upload`/`discard` 一律 404；已绑定的历史附件仍可 `fetch`）。
 ATTACHMENT_MAX_PER_MESSAGE_ENV = "MAIL_ATTACHMENT_MAX_PER_MESSAGE"
 
+#: 附件**角色**（预览 / 原图配对）的回滚开关：`0` = 关停（v2 不下发
+#: `limits.attachments.roles`，`begin` 收到 `role != original` 回 400；已存在的配对信件
+#: 仍按 slot 投影成一个对象，见设计 §6.2）。
+ATTACHMENT_ROLES_ENV = "MAIL_ATTACHMENT_ROLES"
+
 #: 附件清扫的默认周期（生产 1 小时；测试传 0 = 不起后台任务，用例不泄漏任务）。
 DEFAULT_SWEEP_INTERVAL_S = 3600.0
 #: 三类残留的过期时长：`pending` 行 1 小时、`tmp/*.part` 1 小时、
@@ -77,6 +82,14 @@ DRAFT_TTL_S = 7 * 24 * 3600.0
 
 #: 清扫翻页的大小：`known` 必须覆盖**全部**已存行，不能只取一页（F4）。
 SWEEP_PAGE_SIZE = 500
+
+
+def parse_attachment_roles(raw: str | int) -> bool:
+    """解析角色回滚开关：`0` = 关停，`1` = 开着；其余值启动即失败（不静默回退）。"""
+    text = str(raw).strip()
+    if text not in ("0", "1"):
+        raise ValueError(f"{ATTACHMENT_ROLES_ENV} must be 0 or 1, got {text!r}")
+    return text == "1"
 
 
 def parse_attachment_max_per_message(raw: str | int) -> int:
@@ -176,6 +189,7 @@ def create_app(*, store: Store, resolve_device: ResolveDevice | None = None,
                attachments_root: str | None = None,
                attachment_limits: dict[str, Any] | None = None,
                attachment_max_per_message: int | None = None,
+               attachment_roles: bool = True,
                sweep_interval_s: float = 0.0) -> web.Application:
     """组装 mail 的 aiohttp 应用。
 
@@ -208,6 +222,9 @@ def create_app(*, store: Store, resolve_device: ResolveDevice | None = None,
     limits = {**LIMITS["attachments"], **(attachment_limits or {})}
     if attachment_max_per_message is not None:
         limits["maxPerMessage"] = int(attachment_max_per_message)
+    if not attachment_roles:
+        # 回滚开关：不下发 `roles`，`begin` 拒绝非 original 的角色（api 只读这一份名单）。
+        limits["roles"] = []
     app["attachment_limits"] = limits
     app["attachment_sweep_interval_s"] = float(sweep_interval_s)
 
@@ -278,6 +295,10 @@ def build_parser() -> argparse.ArgumentParser:
                                                str(LIMITS["attachments"]["maxPerMessage"])),
                         help="attachment rollback switch: 0 disables attachments "
                              f"(env {ATTACHMENT_MAX_PER_MESSAGE_ENV})")
+    parser.add_argument("--attachment-roles", type=parse_attachment_roles,
+                        default=os.environ.get(ATTACHMENT_ROLES_ENV, "1"),
+                        help="attachment role rollback switch: 0 disables the "
+                             f"preview/original pairing (env {ATTACHMENT_ROLES_ENV})")
     parser.add_argument("--attachment-sweep-s", type=float,
                         default=float(os.environ.get("MAIL_ATTACHMENT_SWEEP_S", "3600")),
                         help="seconds between attachment sweeps; 0 = no sweeper")
@@ -299,6 +320,7 @@ def main(argv: list[str] | None = None) -> int:
                      base_path=args.base_path, team_account=args.team_account,
                      attachments_root=args.attachments_dir or None,
                      attachment_max_per_message=args.attachment_max_per_message,
+                     attachment_roles=args.attachment_roles,
                      sweep_interval_s=args.attachment_sweep_s)
     LOGGER.info("mail: serving on %s:%d (db=%s, relay=%s, team_inbox=%s, attachments=%s)",
                 args.host, args.port, args.db, args.relay_internal_url,

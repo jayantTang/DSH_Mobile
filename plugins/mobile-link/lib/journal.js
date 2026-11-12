@@ -65,6 +65,8 @@ export const EVENT_KINDS = Object.freeze([
   'app.first-render',
   'app.scene',
   'app.push',
+  // §3 之后追加（2026-11-12）：一次取图在自动尝试用尽后仍失败
+  'attachment.load',
   // 内部：写失败与超大条目自报（不在契约的对外表里，但同属写入侧词表）
   'journal.error',
 ])

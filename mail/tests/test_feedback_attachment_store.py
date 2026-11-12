@@ -24,8 +24,8 @@ LIMITS = {"maxPerMessage": 8, "maxFileBytes": 8 * 1024 * 1024,
 ATTACHMENT_COLUMNS = ["attachmentId", "scope", "draftRef", "slot", "threadId", "messageId",
                       "noticeId", "originDeviceId", "originAccountId", "clientRef", "fileName",
                       "contentType", "byteSize", "sha256", "width", "height", "state",
-                      "storedPath", "createdAt", "storedAt", "boundAt"]
-ATTACHMENT_INDEXES = {"feedbackAttachmentsDraftSlot", "feedbackAttachmentsByMessage",
+                      "storedPath", "createdAt", "storedAt", "boundAt", "role"]
+ATTACHMENT_INDEXES = {"feedbackAttachmentsDraftSlotRole", "feedbackAttachmentsByMessage",
                       "feedbackAttachmentsByNotice", "feedbackAttachmentsByState",
                       "feedbackAttachmentsByDraft", "feedbackAttachmentsNoticeRef"}
 
@@ -75,15 +75,15 @@ def test_a_fresh_database_also_creates_the_attachment_table(tmp_path):
     Store(path).close()
     assert columns(path, "feedbackAttachments") == ATTACHMENT_COLUMNS
     assert ATTACHMENT_INDEXES <= indexes(path, "feedbackAttachments")
-    # 唯一索引必须是**部分索引**：草稿按 (draftRef, slot)、通知按 (noticeId, clientRef)。
+    # 唯一索引必须是**部分索引**：草稿按 (draftRef, slot, role)、通知按 (noticeId, clientRef)。
     conn = sqlite3.connect(path)
     try:
         sql = {row[0]: row[1] for row in conn.execute(
             "SELECT name, sql FROM sqlite_master WHERE type='index'")}
     finally:
         conn.close()
-    assert "UNIQUE INDEX" in sql["feedbackAttachmentsDraftSlot"]
-    assert "draftRef, slot" in sql["feedbackAttachmentsDraftSlot"]
+    assert "UNIQUE INDEX" in sql["feedbackAttachmentsDraftSlotRole"]
+    assert "draftRef, slot, role" in sql["feedbackAttachmentsDraftSlotRole"]
     assert "UNIQUE INDEX" in sql["feedbackAttachmentsNoticeRef"]
 
 

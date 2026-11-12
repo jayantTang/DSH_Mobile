@@ -50,6 +50,7 @@
 | `app.first-render` | `elapsedMs`、`cached` | `bytes` | 首批内容**真的画出来**的时刻（与"状态机已连接"分开）。`cached: true` 表示画的是本地缓存、新数据还没到（实测拨号后 410 ms 就触发，而首个响应在 10 秒后）——不标它会把"有缓存"读成"加载很快" |
 | `app.scene` | `phase` | `cold` | `phase` ∈ `background` / `foreground`；`cold: true` 表示这次进前台是**冷启动**（进程刚从零起来），缺省/`false` 是热启动 |
 | `app.push` | `count`、`sentAt` | `dropped`、`skewMs` | 本设备向连接器推送的条数（对账用）；`skewMs = 连接器收到时的本机时刻 − App 上报的 sentAt`，是手机时钟对齐的唯一来源 |
+| `attachment.load` | `attachmentId`、`attempt`、`error` | — | 一次取图在**自动尝试用尽后仍失败**：`attempt` 是已用次数，`error` 是稳定短码（`not-connected` / `unreachable` / `carrier-closed` / `timed-out` / `http-<status>` / `not-authenticated` / `malformed` / `decode` / `unknown`）。**不记用户内容**：没有文件名、URL、正文 |
 | `journal.error` | `originalKind`、`bytes`、`reason` | — | **内部**：写失败或超大条目被降级时自报（它保证"丢了什么"也留痕，而不是静默消失） |
 
 **信封与耗时的命名规则**：`at`/`ms`/`kind` 是**信封字段**（`ms` = 时刻，写入侧的钟），

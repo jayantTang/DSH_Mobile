@@ -51,7 +51,7 @@ public struct FeedbackSendReceipt: Sendable, Equatable {
 /// ``FeedbackDraftLength``（不在这里重写一份）。
 public enum FeedbackSendPolicy {
     public static func canSend(text: String, subject: String = "",
-                               attachments: [FeedbackOutgoingAttachment] = [],
+                               attachments: [FeedbackPreparedAttachment] = [],
                                limits: FeedbackLimits) -> Bool {
         guard subject.count <= limits.subjectChars else { return false }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -63,17 +63,23 @@ public enum FeedbackSendPolicy {
     }
 
     /// 附件超限的原因（nil = 在范围内）。与 job 的本地校验同一套数字，没有第二份常量。
+    ///
+    /// 输入是**逻辑附件**数组（2026-11-12）：条数按 slot 去重，单文件上限逐份字节判，
+    /// 合计按两份之和判。
     public static func attachmentViolation(
-        _ attachments: [FeedbackOutgoingAttachment], limits: FeedbackLimits
+        _ attachments: [FeedbackPreparedAttachment], limits: FeedbackLimits
     ) -> FeedbackSendFailure? {
         guard !attachments.isEmpty else { return nil }
         guard let attachmentLimits = limits.attachments else { return .attachmentsUnavailable }
-        if attachments.count > attachmentLimits.maxPerMessage {
+        let slots = Set(attachments.map(\.slot))
+        if slots.count > attachmentLimits.maxPerMessage {
             return .attachmentLimit(limit: attachmentLimits.maxPerMessage,
-                                    requested: attachments.count)
+                                    requested: slots.count)
         }
-        for attachment in attachments where attachment.byteSize > attachmentLimits.maxFileBytes {
-            return .fileTooLarge(name: attachment.name, limit: attachmentLimits.maxFileBytes)
+        for item in attachments {
+            for part in item.parts where part.byteSize > attachmentLimits.maxFileBytes {
+                return .fileTooLarge(name: part.name, limit: attachmentLimits.maxFileBytes)
+            }
         }
         let total = attachments.reduce(0) { $0 + $1.byteSize }
         if total > attachmentLimits.maxTotalBytes {
@@ -116,7 +122,7 @@ public final class FeedbackSendJob {
     private let client: RelayFeedbackClient
     private let text: String
     private let subject: String?
-    private let attachments: [FeedbackOutgoingAttachment]
+    private let attachments: [FeedbackPreparedAttachment]
     private let limits: FeedbackLimits
     private let disk: FeedbackAttachmentDisk
     private let pendingStore: FeedbackPendingUploadStore
@@ -130,7 +136,7 @@ public final class FeedbackSendJob {
         clientRef: String,
         text: String,
         subject: String? = nil,
-        attachments: [FeedbackOutgoingAttachment] = [],
+        attachments: [FeedbackPreparedAttachment] = [],
         limits: FeedbackLimits,
         disk: FeedbackAttachmentDisk = FeedbackAttachmentDisk(),
         pendingStore: FeedbackPendingUploadStore = FeedbackPendingUploadStore(),
@@ -182,19 +188,24 @@ public final class FeedbackSendJob {
         guard !attachments.isEmpty else { return await submitOnly() }
 
         var queue = restoredQueue()
-        slotPhases = Dictionary(uniqueKeysWithValues: attachments.indices.map { ($0, .waiting) })
+        slotPhases = Dictionary(uniqueKeysWithValues: attachments.map { ($0.slot, .waiting) })
         failure = nil
         phase = .uploading(done: 0, total: attachments.count)
-        for (slot, attachment) in attachments.enumerated() {
+        var done = 0
+        for item in attachments {
             if cancelled { return await cancelNow(queue: queue) }
-            mark(.uploading, slot: slot)
-            if let invalid = await upload(slot: slot, attachment: attachment, queue: &queue) {
-                mark(.failed, slot: slot)
-                failure = invalid
-                return finish(.failed(invalid))
+            mark(.uploading, slot: item.slot)
+            // 一个槽位两份字节：先主对象（配对的图片就是预览），再原图。
+            for part in item.parts {
+                if let invalid = await upload(slot: item.slot, attachment: part, queue: &queue) {
+                    mark(.failed, slot: item.slot)
+                    failure = invalid
+                    return finish(.failed(invalid))
+                }
             }
-            mark(.uploaded, slot: slot)
-            phase = .uploading(done: slot + 1, total: attachments.count)
+            mark(.uploaded, slot: item.slot)
+            done += 1
+            phase = .uploading(done: done, total: attachments.count)
         }
         if cancelled { return await cancelNow(queue: queue) }
         return await submit(queue: queue)
@@ -240,24 +251,18 @@ public final class FeedbackSendJob {
 
     /// 本地能判的校验（个数 / 单文件 / 合计 / 服务端有没有附件能力）。
     private func validate() -> FeedbackSendFailure? {
-        guard !attachments.isEmpty else { return nil }
-        guard let limits = limits.attachments else { return .attachmentsUnavailable }
-        if attachments.count > limits.maxPerMessage {
-            return .attachmentLimit(limit: limits.maxPerMessage, requested: attachments.count)
-        }
-        for attachment in attachments where attachment.byteSize > limits.maxFileBytes {
-            return .fileTooLarge(name: attachment.name, limit: limits.maxFileBytes)
-        }
-        let total = attachments.reduce(0) { $0 + $1.byteSize }
-        if total > limits.maxTotalBytes {
-            return .totalTooLarge(limit: limits.maxTotalBytes)
-        }
-        return nil
+        // 判据只有一份：与发送按钮读同一个纯函数（设计 §4.3「一个事实一个所有者」）。
+        FeedbackSendPolicy.attachmentViolation(attachments, limits: limits)
     }
 
     /// 上一轮留下的队列（跨重启）：按 slot 复用 `attachmentId` 与 `state`。
     private func restoredQueue() -> [FeedbackPendingUpload] {
         pendingStore.queue(for: clientRef)
+    }
+
+    /// 用 `(slot, role)` 换掉队列里的那条记录（同一个槽位有两行，不能按 slot 覆盖）。
+    private func replace(_ queue: inout [FeedbackPendingUpload], with item: FeedbackPendingUpload) {
+        queue = queue.filter { !($0.slot == item.slot && $0.role == item.role) } + [item]
     }
 
     private func persist(_ queue: [FeedbackPendingUpload]) {
@@ -279,8 +284,9 @@ public final class FeedbackSendJob {
 
     private func upload(slot: Int, attachment: FeedbackOutgoingAttachment,
                         queue: inout [FeedbackPendingUpload]) async -> FeedbackSendFailure? {
-        var item = queue.first(where: { $0.slot == slot }) ?? FeedbackPendingUpload(
-            slot: slot, name: attachment.name, contentType: attachment.contentType,
+        let role = attachment.role
+        var item = queue.first(where: { $0.slot == slot && $0.role == role }) ?? FeedbackPendingUpload(
+            slot: slot, role: role, name: attachment.name, contentType: attachment.contentType,
             byteSize: attachment.byteSize, sha256: attachment.sha256, createdAt: Date())
         do {
             let draft = try await client.beginAttachment(
@@ -288,18 +294,20 @@ public final class FeedbackSendJob {
                 threadId: reply?.threadId, ticketKey: reply?.ticketKey,
                 name: attachment.name, contentType: attachment.contentType,
                 byteSize: attachment.byteSize, sha256: attachment.sha256,
-                width: attachment.width, height: attachment.height
+                width: attachment.width, height: attachment.height,
+                role: role.rawValue
             )
             item.attachmentId = draft.attachmentId
             item.state = draft.state
-            queue = queue.filter { $0.slot != slot } + [item]
+            replace(&queue, with: item)
             persist(queue)
             guard !draft.isStored else { return nil }   // 已在服务端：不重传（重试路径）
-            let bytes = disk.stagedBytes(clientRef: clientRef, slot: slot) ?? attachment.data
+            let bytes = disk.stagedBytes(clientRef: clientRef, slot: slot, role: role)
+                ?? attachment.data
             let uploaded = try await client.uploadAttachment(
                 attachmentId: draft.attachmentId, bytes: bytes, ticketKey: reply?.ticketKey)
             item.state = uploaded.state
-            queue = queue.filter { $0.slot != slot } + [item]
+            replace(&queue, with: item)
             persist(queue)
             return nil
         } catch let error as FeedbackClientError {
