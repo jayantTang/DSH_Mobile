@@ -172,7 +172,7 @@ function makeFetch({ status = HEALTHY_STATUS, failStatus = false, failCode = fal
   return { impl, calls, mintCount: () => mints }
 }
 
-function loadBundle({ document, fetchImpl, clock, primitivesMissing = false } = {}) {
+function loadBundle({ document, fetchImpl, clock, primitivesMissing = false, language = null } = {}) {
   const specs = []
   const timers = []
   const required = []
@@ -202,6 +202,8 @@ function loadBundle({ document, fetchImpl, clock, primitivesMissing = false } = 
     setTimeout, clearTimeout, encodeURIComponent, console, Date: FakeDate,
     Object, Symbol, JSON, String, Number, Boolean, Array, Math,
   }
+  // 默认不给 navigator：宿主以外的脚本环境（含本测试）读到的是"没有语言偏好"，落回中文。
+  if (language !== null) sandbox.navigator = { language, languages: [language] }
   vm.runInNewContext(SOURCE, sandbox, { filename: 'client.js' })
   const spec = specs[0]
   const api = spec.factory((name) => {
@@ -380,6 +382,38 @@ test('the sidebar gets one entry and the shell gets one panel', async () => {
   assert.equal(button.props.id, ENTRY_ID)
   assert.equal(button.props.variant, 'ghost')
   assert.match(button.props['aria-label'], /移动端连接/)
+})
+
+test('the panel follows the language the browser asks for, and stays Chinese otherwise', async () => {
+  const renderEntry = async (language) => {
+    const { document } = makeDom()
+    const { api } = loadBundle({ document, fetchImpl: makeFetch().impl, language })
+    const { ctx, state } = makeCtx()
+    api.apply(ctx)
+    await flush()
+    return render(components(state).entry.component({}))
+  }
+
+  const spanish = await renderEntry('es-MX')
+  assert.match(spanish.props['aria-label'], /Conexión móvil：Conectado/)
+
+  const english = await renderEntry('en-GB')
+  assert.match(english.props['aria-label'], /Mobile link：Connected/)
+
+  // 没做过的语言回落中文原文，不能变成空白或英文半成品。
+  const german = await renderEntry('de-DE')
+  assert.match(german.props['aria-label'], /移动端连接：已连接/)
+
+  const noPreference = await renderEntry(null)
+  assert.match(noPreference.props['aria-label'], /移动端连接：已连接/)
+})
+
+test('every sentence the panel prints has both an English and a Spanish entry', () => {
+  // 键就是中文原文：改文案时漏改词表不会报错，界面只会静默回落中文。这条用例负责拦住它。
+  const used = [...SOURCE.matchAll(/\bT\('((?:[^'\\]|\\.)*)'/g)].map((match) => match[1])
+  assert.ok(used.length > 80, `源码里应当有几十处 T('…')，实际只找到 ${used.length} 处`)
+  const missing = [...new Set(used)].filter((key) => SOURCE.split(`'${key}':`).length - 1 !== 2)
+  assert.deepEqual(missing, [], `这些句子在 MESSAGES 里缺 en 或 es 条目：${missing.join(' / ')}`)
 })
 
 test('the status dot answers the three questions a user has', async () => {

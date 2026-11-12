@@ -55,7 +55,6 @@ const MESSAGES = {
     '正在获取…': 'Fetching…',
     '正在读取状态…': 'Reading status…',
     '正在连接…': 'Connecting…',
-    '正在连接中转': 'Connecting to the relay',
     '登记': 'Register',
     '重试': 'Retry',
     '无法读取连接状态。': 'Could not read the link status.',
@@ -65,7 +64,6 @@ const MESSAGES = {
     '在线': 'online',
     '离线': 'offline',
     '未连接，正在重新连接': 'Not connected, reconnecting',
-    '连着但已离线': 'Linked but offline',
     '连接器已停用': 'Connector disabled',
     '连接器已停用。': 'Connector disabled.',
     '连接器已停用。请在插件配置中启用后重试。': 'Connector disabled. Enable it in the plugin configuration and retry.',
@@ -74,7 +72,6 @@ const MESSAGES = {
     '暂无配对码。': 'No pairing code yet.',
     '复制配对码': 'Copy pairing code',
     '已复制': 'Copied',
-    '换一张': 'New code',
     '重新生成': 'Regenerate',
     '长期有效直到重新生成': 'Valid until regenerated',
     '已配对设备': 'Paired devices',
@@ -95,8 +92,6 @@ const MESSAGES = {
     '关闭': 'Close',
     '取消': 'Cancel',
     '完成': 'Done',
-    '打开': 'Open',
-    '安装': 'Install',
     '尚未安装 iOS App？': 'No iOS app yet?',
     '安装 DSH Mobile': 'Install DSH Mobile',
     '查看安装方式': 'See how to install',
@@ -153,7 +148,6 @@ const MESSAGES = {
     '正在获取…': 'Obteniendo…',
     '正在读取状态…': 'Leyendo el estado…',
     '正在连接…': 'Conectando…',
-    '正在连接中转': 'Conectando al relay',
     '登记': 'Registrar',
     '重试': 'Reintentar',
     '无法读取连接状态。': 'No se pudo leer el estado de la conexión.',
@@ -163,7 +157,6 @@ const MESSAGES = {
     '在线': 'en línea',
     '离线': 'sin conexión',
     '未连接，正在重新连接': 'Sin conexión, reconectando',
-    '连着但已离线': 'Conectado pero sin conexión',
     '连接器已停用': 'Conector desactivado',
     '连接器已停用。': 'Conector desactivado.',
     '连接器已停用。请在插件配置中启用后重试。': 'Conector desactivado. Actívalo en la configuración del plugin y reintenta.',
@@ -172,7 +165,6 @@ const MESSAGES = {
     '暂无配对码。': 'Todavía no hay código de emparejamiento.',
     '复制配对码': 'Copiar código de emparejamiento',
     '已复制': 'Copiado',
-    '换一张': 'Nuevo código',
     '重新生成': 'Regenerar',
     '长期有效直到重新生成': 'Válido hasta que se regenere',
     '已配对设备': 'Dispositivos emparejados',
@@ -193,8 +185,6 @@ const MESSAGES = {
     '关闭': 'Cerrar',
     '取消': 'Cancelar',
     '完成': 'Listo',
-    '打开': 'Abrir',
-    '安装': 'Instalar',
     '尚未安装 iOS App？': '¿Todavía no tienes la app de iOS?',
     '安装 DSH Mobile': 'Instalar DSH Mobile',
     '查看安装方式': 'Ver cómo instalar',
@@ -440,7 +430,7 @@ function clientLabel(client) {
   if (typeof client === 'string') return client
   return client.label ?? [client.name, client.version].filter(Boolean).join(' ') ?? null
 }
-/** 在线/总数分开说：`deviceCount` 把T("连着但已离线")的记录也算进去了。 */
+/** 在线/总数分开说：`deviceCount` 把"连着但已离线"的记录也算进去了。 */
 function deviceSummary(devices) {
   const list = Array.isArray(devices) ? devices : []
   if (list.length === 0) return T('暂无已配对设备')
@@ -578,7 +568,7 @@ async function loadPairedDevices(panel) {
  * 032 起默认是**持久码**：它一直有效，直到用户点「重新生成」。所以这里有两个与旧实现
  * 相反的行为，都是有意的：
  *
- * * **复用已有的那张**——旧实现每次T("换一张")，因为一次性码用过就废；持久码换掉等于
+ * * **复用已有的那张**——旧实现每次"换一张"，因为一次性码用过就废；持久码换掉等于
  *   把用户刚发给别人的那张悄悄作废。
  * * **不再因为"配过一台"就自动换码**——同一张码本来就是要给多台设备用的。
  */
@@ -589,7 +579,7 @@ async function refreshCode(panel, { regenerate = false } = {}) {
     return
   }
   // 登记成功 ≠ 已连接：链路还没起来时去取码只会失败，界面应该显示
-  // T("正在连接中转")，而不是把一次连接等待误报成取码失败。
+  // "正在连接中转"，而不是把一次连接等待误报成取码失败。
   if (panel.store.get().status?.connected !== true) {
     panel.store.set({ code: null, codeError: null })
     return
@@ -655,7 +645,7 @@ function tick(panel) {
     void refreshCode(panel)
   }
   // 连接恢复/登记完成后自动补一张码；取码失败后不自动重试（会把中转打爆，
-  // 也让T("重试")按钮失去意义），由用户点按钮重试。
+  // 也让"重试"按钮失去意义），由用户点按钮重试。
   if (state.status?.connected === true && !needsEnroll(state.status)
       && !state.code && !state.codeError && !state.busy) {
     void refreshCode(panel)
