@@ -15,6 +15,17 @@ final class CompressedBadgeAccessibilityTests: XCTestCase {
     private static let threadId = "th_a11y_compressed"
     private static let attachmentId = "fa_a11y_compressed"
 
+    /// 本次运行造出来的夹具目录；用例结束即删（每跑一次一个新 UUID，不删会在 /tmp 里堆）。
+    private var fixtureDirectory: URL?
+
+    override func tearDownWithError() throws {
+        if let directory = fixtureDirectory {
+            try? FileManager.default.removeItem(at: directory)
+        }
+        fixtureDirectory = nil
+        try super.tearDownWithError()
+    }
+
     /// 1×1 的 PNG（能真的解码，缩略图路径也能走通）。
     private static let png = Data(base64Encoded:
         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
@@ -28,6 +39,7 @@ final class CompressedBadgeAccessibilityTests: XCTestCase {
     private func makeFixture() throws -> String {
         let directory = URL(fileURLWithPath: "/tmp/dsh-a11y-compressed-\(UUID().uuidString)",
                             isDirectory: true)
+        fixtureDirectory = directory
         let attachments = directory.appendingPathComponent("attachments", isDirectory: true)
         try FileManager.default.createDirectory(at: attachments, withIntermediateDirectories: true)
 
