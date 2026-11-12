@@ -9,7 +9,7 @@
 
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 export const HERE = dirname(fileURLToPath(import.meta.url))
@@ -262,9 +262,16 @@ function oldestMtime(paths) {
 }
 
 /// Every directory whose contents the built product is made of.
+///
+/// `Modules` is a **local Swift package** the app links; it is not under
+/// `DSHMobile/`, so leaving it out made a change to any `Modules/**` file look
+/// like "products are newer than sources" and every `prepare` / `run` silently
+/// reused the previous binary — the 2026-11-12 run measured the old Feedback UI
+/// after editing it. `.build` under it is derived data, skipped below.
 function sourceRoots() {
   return [
     join(PROJECT, 'DSHMobile'),
+    join(PROJECT, 'Modules'),
     join(PROJECT, 'DSHKit', 'Sources'),
     join(PROJECT, 'DSHMobileUITests'),
     join(PROJECT, 'DSHMobile.xcodeproj'),
@@ -277,6 +284,12 @@ function sourceRoots() {
 /// Bundles are walked into rather than stamped: a bundle's own directory time
 /// does not move when a file inside it is replaced, and the binary inside is
 /// what carries the change.
+///
+/// Derived-data directories (`.build`, `.swiftpm`) are outputs, not inputs:
+/// walking them is slow (the Modules package keeps a full build tree) and their
+/// timestamps would make a stale source look fresh.
+const DERIVED_DIRECTORIES = new Set(['.build', '.swiftpm', 'DerivedData'])
+
 function newestMtime(paths) {
   let newest = 0
   for (const path of paths) {
@@ -286,6 +299,7 @@ function newestMtime(paths) {
       newest = Math.max(newest, stats.mtimeMs)
       continue
     }
+    if (DERIVED_DIRECTORIES.has(basename(path))) continue
     newest = Math.max(newest, newestMtime(readdirSync(path).map((name) => join(path, name))))
   }
   return newest
