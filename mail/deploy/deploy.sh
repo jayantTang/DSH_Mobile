@@ -30,12 +30,22 @@ set -euo pipefail
 SERVICE_USER="${DSH_MAIL_USER:-dsh-mail}"
 APP_DIR="${DSH_MAIL_DIR:-/opt/dsh-mail}"
 DATA_DIR="${DSH_MAIL_DATA:-/var/lib/dsh-mail}"
-PORT="${DSH_MAIL_PORT:-8788}"
 SITE="${DSH_MAIL_SITE:-relay.example.com}"
 BASE_PATH="${DSH_MAIL_BASE_PATH:-/dsh-link}"
 PYTHON="${DSH_MAIL_PYTHON:-/usr/local/bin/python3.12}"
 CADDYFILE="${CADDYFILE:-/etc/caddy/Caddyfile}"
 UNIT_PATH="/etc/systemd/system/dsh-mail.service"
+
+# 端口：优先取显式参数，其次**沿用已装单元里的那个**，最后才落到默认值。
+# 为什么不能只写默认值：这台机器上 8788 被另一个服务占着，正式部署用的是 8799。
+# 2026-11-12 就因为脚本只认默认值，一次「更新代码」把单元和 Caddy 路由一起改到 8788，
+# 邮件服务当场绑不上、对外路由指到别人的服务上。沿用已装端口，升级就不会改变部署事实。
+installed_port() {
+  [ -f "$UNIT_PATH" ] || return 0
+  sed -nE 's/.*--port[= ]+([0-9]+).*/\1/p' "$UNIT_PATH" | head -1
+}
+PORT="${DSH_MAIL_PORT:-$(installed_port)}"
+PORT="${PORT:-8788}"
 SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SPLICER="$SRC_DIR/deploy/caddy_splice.py"
 SNIPPET="$SRC_DIR/deploy/Caddyfile.snippet"
@@ -250,11 +260,19 @@ systemctl reload caddy 2>/dev/null || systemctl restart caddy
 
 if command -v curl >/dev/null; then
   say "waiting for the mail service on 127.0.0.1:$PORT"
+  # 必须是**我们这套服务**在应答：只看 HTTP 200 会把占着同一端口的别的服务当成成功
+  # （2026-11-12 就这么误判过一次，部署看起来成功、其实邮件服务一个请求都没收到）。
+  health=""
   for _ in $(seq 1 30); do
-    curl -fsS --max-time 2 "http://127.0.0.1:$PORT/healthz" >/dev/null 2>&1 && break
+    health="$(curl -fsS --max-time 2 "http://127.0.0.1:$PORT/healthz" 2>/dev/null || true)"
+    printf '%s' "$health" | grep -Eq '"service"[[:space:]]*:[[:space:]]*"dsh-mail"' && break
+    health=""
     sleep 0.5
   done
-  curl -fsS --max-time 3 "http://127.0.0.1:$PORT/healthz" || die "the mail service is not answering on 127.0.0.1:$PORT"
+  if [ -z "$health" ]; then
+    die "127.0.0.1:$PORT is not answering as the mail service; if another service owns this port, re-run with DSH_MAIL_PORT=<the port in the installed unit>"
+  fi
+  printf '%s\n' "$health"
   # The prefixed form must work too (MAIL_BASE_PATH keeps it alive).
   curl -fsS --max-time 3 "http://127.0.0.1:$PORT$BASE_PATH/healthz" >/dev/null \
     || die "the mail service does not answer the prefixed form $BASE_PATH/healthz"
