@@ -387,7 +387,7 @@ SQL 名称。`/debug/conns` 与 `/stats` 同样只描述连接与计数。
   panic 取 recover 栈里的真实位置。
 - 新类别立刻入队；同类别后续只累计，默认 24 小时后再报；每小时 6 条、每天 40 条上限，
   被压掉的条数记在下一封的 `suppressedSinceLastAlert`。
-- agent 断开在窗口（默认 300 秒）内达到阈值（默认 5 次）算一次 flap，同一窗口只报一次。
+- agent 断开在窗口（默认 300 秒）内达到阈值（默认 5 次）算一次 flap。类别按主机归并，同一台主机默认 1 小时内只报一次（`DLP_ALERT_FLAP_RENOTIFY_HOURS`），期间每次断开都累计进「累计 N 次」，不再按窗口各报一条。
 - 上游落单代理项按天限量抽样（默认 20 条），详情只含位置/长度/片段。
 - 队列 `alerts.jsonl`、状态 `state.json`（原子替换）；投递侧用 rename 原子取走成
   `alerts.taken.jsonl`，成功才删，失败原样追加回队列。

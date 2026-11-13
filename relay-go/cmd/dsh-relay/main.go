@@ -208,7 +208,8 @@ func runServe(args []string, getenv func(string) string, stderr io.Writer) int {
 		logger.Info("relay: incident monitor enabled",
 			"alertDir", described["alertDir"], "maxPerHour", described["maxPerHour"],
 			"maxPerDay", described["maxPerDay"],
-			"flapThreshold", described["flapThreshold"])
+			"flapThreshold", described["flapThreshold"],
+			"flapRenotifyHours", described["flapRenotifyHours"])
 	}
 
 	serveErr := make(chan error, 1)

@@ -199,7 +199,7 @@ func TestTheHourlyCapSuppressesAndReportsWhatItDropped(t *testing.T) {
 	}
 }
 
-func TestFlappingIsReportedOncePerWindow(t *testing.T) {
+func TestFlappingIsReportedOncePerHourPerAgent(t *testing.T) {
 	clock := newClock()
 	dir := t.TempDir()
 	m := newMonitor(t, dir, clock, monitor.Options{
@@ -220,24 +220,65 @@ func TestFlappingIsReportedOncePerWindow(t *testing.T) {
 	if disconnects := records[0].Details["disconnectsInWindow"]; fmt.Sprint(disconnects) != "5" {
 		t.Fatalf("disconnectsInWindow = %v", disconnects)
 	}
+	// 累计次数是真实断开数，不是"第几个窗口"。
+	if records[0].Count != 5 {
+		t.Fatalf("累计次数 = %d，应为 5", records[0].Count)
+	}
 
-	// 同一个窗口里再断几次：不重复打扰。
-	for index := 0; index < 3; index++ {
-		clock.advance(10)
+	// 一小时内同一台主机继续抖：不再打扰，计数照常累计。
+	clock.advance(600)
+	for index := 0; index < 6; index++ {
 		m.NoteAgentDisconnect(disconnectOf("agt_1", "Windows-PC"))
+		clock.advance(10)
 	}
 	if len(readRecords(t, dir)) != 1 {
-		t.Fatal("同一窗口只报一次")
+		t.Fatal("一小时内同一台主机只该报一次")
 	}
 
-	// 过了窗口又重新计数。
-	clock.advance(400)
+	// 过了一小时再抖：报第二次，标"再次出现"，累计到真实总数。
+	clock.advance(3600)
 	for index := 0; index < 5; index++ {
-		clock.advance(10)
 		m.NoteAgentDisconnect(disconnectOf("agt_1", "Windows-PC"))
+		clock.advance(10)
 	}
-	if len(readRecords(t, dir)) != 2 {
-		t.Fatalf("新窗口应当再报一次：%d 条", len(readRecords(t, dir)))
+	records = readRecords(t, dir)
+	if len(records) != 2 {
+		t.Fatalf("一小时后的新抖动应当再报一次：%d 条", len(records))
+	}
+	if records[1].NewCategory {
+		t.Fatal("同一台主机的后续抖动不该标成新类别")
+	}
+	if records[1].Count != 16 {
+		t.Fatalf("累计次数 = %d，应为 5+6+5=16", records[1].Count)
+	}
+	if records[1].Key != "flap:agt_1" {
+		t.Fatalf("类别键 = %q，应为按主机的 flap:agt_1", records[1].Key)
+	}
+}
+
+// TestFlapAlertsArePerAgent：不同主机互不掩盖，各自算各自的累计。
+func TestFlapAlertsArePerAgent(t *testing.T) {
+	clock := newClock()
+	dir := t.TempDir()
+	m := newMonitor(t, dir, clock, monitor.Options{
+		FlapWindow: 300 * time.Second, FlapThreshold: 5,
+	})
+	for index := 0; index < 5; index++ {
+		m.NoteAgentDisconnect(disconnectOf("agt_1", "A"))
+		m.NoteAgentDisconnect(disconnectOf("agt_2", "B"))
+		clock.advance(10)
+	}
+	records := readRecords(t, dir)
+	if len(records) != 2 {
+		t.Fatalf("两台主机各报一次：%d 条", len(records))
+	}
+	if records[0].Key == records[1].Key {
+		t.Fatalf("两台主机共用了类别键 %q", records[0].Key)
+	}
+	for _, record := range records {
+		if record.Count != 5 || !record.NewCategory {
+			t.Fatalf("首报口径不对：%+v", record)
+		}
 	}
 }
 

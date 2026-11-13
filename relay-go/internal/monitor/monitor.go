@@ -67,11 +67,17 @@ type Options struct {
 	Logger   *slog.Logger
 	Clock    func() time.Time
 
-	RenotifyAfter          time.Duration
-	MaxAlertsPerHour       int
-	MaxAlertsPerDay        int
-	FlapWindow             time.Duration
-	FlapThreshold          int
+	RenotifyAfter    time.Duration
+	MaxAlertsPerHour int
+	MaxAlertsPerDay  int
+	FlapWindow       time.Duration
+	FlapThreshold    int
+	// FlapRenotify 是同一台主机两次抖动告警之间的最小间隔。
+	//
+	// 抖动是持续状态，不是一个个新事件：按窗口重报会把一次事故刷成几十封，
+	// 而且每封都标"新类别"（2026-11-13 实测：14 天 82 条抖动告警里 72 条来自
+	// 同一台主机）。默认一小时，与 exceptions 的 24 小时分开。
+	FlapRenotify           time.Duration
 	SurrogateSamplesPerDay int
 }
 
@@ -186,14 +192,17 @@ type Monitor struct {
 	maxPerDay       int
 	flapWindow      time.Duration
 	flapThreshold   int
+	flapRenotify    time.Duration
 	surrogateSample int
 
-	mu               sync.Mutex
-	seen             map[string]categoryState
-	alertTimes       []float64
-	suppressed       int
-	flaps            map[string][]flapEvent
-	flapReported     map[string]float64
+	mu         sync.Mutex
+	seen       map[string]categoryState
+	alertTimes []float64
+	suppressed int
+	flaps      map[string][]flapEvent
+	// flapPending 是"还没进过告警的断开次数"：每次断开都加一，进告警时取走。
+	// 累计次数必须等于真实断开数，不能等于"第几个窗口"。
+	flapPending      map[string]int
 	surrogateSamples map[int64]int
 	stateDirty       bool
 }
@@ -218,6 +227,9 @@ func New(options Options) *Monitor {
 	if options.FlapThreshold == 0 {
 		options.FlapThreshold = 5
 	}
+	if options.FlapRenotify == 0 {
+		options.FlapRenotify = time.Hour
+	}
 	if options.SurrogateSamplesPerDay == 0 {
 		options.SurrogateSamplesPerDay = 20
 	}
@@ -241,10 +253,11 @@ func newMonitor(options Options) *Monitor {
 		maxPerDay:        maxInt(1, options.MaxAlertsPerDay),
 		flapWindow:       maxDuration(time.Second, options.FlapWindow),
 		flapThreshold:    maxInt(1, options.FlapThreshold),
+		flapRenotify:     maxDuration(0, options.FlapRenotify),
 		surrogateSample:  maxInt(0, options.SurrogateSamplesPerDay),
 		seen:             map[string]categoryState{},
 		flaps:            map[string][]flapEvent{},
-		flapReported:     map[string]float64{},
+		flapPending:      map[string]int{},
 		surrogateSamples: map[int64]int{},
 	}
 	if m.enabled() {
@@ -288,6 +301,8 @@ func FromEnv(getenv func(string) string, logger *slog.Logger) *Monitor {
 			math.Max(1, number("DLP_ALERT_FLAP_WINDOW_S", 300)) * float64(time.Second)),
 		FlapThreshold: maxInt(1,
 			int(math.Trunc(number("DLP_ALERT_FLAP_THRESHOLD", 5)))),
+		FlapRenotify: time.Duration(
+			math.Max(0, number("DLP_ALERT_FLAP_RENOTIFY_HOURS", 1)) * float64(time.Hour)),
 		SurrogateSamplesPerDay: maxInt(0,
 			int(math.Trunc(number("DLP_ALERT_SURROGATE_SAMPLES", 20)))),
 	})
@@ -330,6 +345,7 @@ func (m *Monitor) Describe() map[string]any {
 		"maxPerDay":         m.maxPerDay,
 		"flapWindowSeconds": m.flapWindow.Seconds(),
 		"flapThreshold":     m.flapThreshold,
+		"flapRenotifyHours": math.RoundToEven(m.flapRenotify.Hours()*100) / 100,
 		"knownCategories":   known,
 	}
 }
@@ -427,11 +443,12 @@ func (m *Monitor) NoteHTTPStatus(method, path, requestID string, status int) {
 	})
 }
 
-// NoteAgentDisconnect 记录一条 agent 链路断了。窗口内断够次数才算"抖"，
-// 同一窗口只报一次。
+// NoteAgentDisconnect 记录一条 agent 链路断了。窗口内断够次数才算"抖"。
 //
-// "同一窗口"由类别键带窗口序号保证：过了这个窗口再抖算一次新事件，所以要再报一次；
-// 而类别去重本身仍然管"同窗口内不重复"。
+// 类别键只按主机（`flap:<agentId>`），不带窗口序号：抖动是同一台主机的持续状态，
+// 不是每个窗口一个新事件。同一台主机两次告警至少隔 flapRenotify（默认一小时），
+// 期间的断开只累计次数。这样一次持续数小时的事故是一封告警（累计 N 次），
+// 而不是几十封都写着"新类别、累计 1 次"。
 //
 // 告警里必须带关闭码：没有它，"第 5 次断开"既可能是连接器自己每 2 分钟重连一轮，
 // 也可能是中转心跳把静默链路判死，两种事要改的地方完全不同。
@@ -451,22 +468,15 @@ func (m *Monitor) NoteAgentDisconnect(disconnect AgentDisconnect) {
 		window = window[1:]
 	}
 	m.flaps[agentID] = window
+	// 每一次断开都是一次发生：这次不告警也要进累计，否则"累计 1 次"与事实不符。
+	m.flapPending[agentID]++
 	if len(window) < m.flapThreshold {
 		return
 	}
-	if reported, ok := m.flapReported[agentID]; ok && now-reported < m.flapWindow.Seconds() {
-		return
-	}
-	m.flapReported[agentID] = now
 
-	prefix := "flap:" + agentID + ":"
-	key := prefix + strconv.Itoa(int(now/m.flapWindow.Seconds()))
-	// 上一个窗口的类别键留着没有意义，顺手清掉，免得状态文件随运行时间无限增长。
-	for known := range m.seen {
-		if strings.HasPrefix(known, prefix) && known != key {
-			delete(m.seen, known)
-		}
-	}
+	key := "flap:" + agentID
+	occurrences := m.flapPending[agentID]
+	m.flapPending[agentID] = 0
 	display := disconnect.Name
 	if display == "" {
 		display = "agent"
@@ -493,8 +503,10 @@ func (m *Monitor) NoteAgentDisconnect(disconnect AgentDisconnect) {
 	}
 	details["lastInboundAgeMs"] = disconnect.LastInboundAge.Milliseconds()
 	m.recordLocked(key, recordInput{
-		kind:  "flap",
-		title: "连接器反复断开",
+		kind:        "flap",
+		occurrences: occurrences,
+		renotify:    m.flapRenotify,
+		title:       "连接器反复断开",
 		summary: fmt.Sprintf("%s（%s）在 %d 秒内断开 %d 次（%s），最近一次%s",
 			display, agentID, int(m.flapWindow.Seconds()), len(window),
 			describeCloseCodes(window), describeClose(disconnect.CloseCode,
@@ -707,6 +719,11 @@ type recordInput struct {
 	title   string
 	summary string
 	details map[string]any
+	// occurrences 是这次调用代表的发生次数（零值 = 1）。抖动按每次断开累计，
+	// 要一次补进多条，不能每调一次只加一。
+	occurrences int
+	// renotify 覆盖本类别的重报间隔（零值 = 全局 renotifyAfter）。
+	renotify time.Duration
 }
 
 // record 取到当前时刻后交给 recordLocked。
@@ -718,15 +735,24 @@ func (m *Monitor) record(key string, input recordInput) {
 
 // recordLocked 是去重、限量、入队、落盘的全部逻辑；调用方必须持有 m.mu。
 func (m *Monitor) recordLocked(key string, input recordInput, now float64) {
+	renotify := m.renotifyAfter
+	if input.renotify > 0 {
+		renotify = input.renotify
+	}
+	occurrences := input.occurrences
+	if occurrences <= 0 {
+		occurrences = 1
+	}
 	entry, exists := m.seen[key]
+	first := !exists
 	novel := false
 	if !exists {
 		entry = categoryState{FirstTS: now, LastTS: now}
 		novel = true
 	} else {
-		novel = now-entry.AlertedTS >= m.renotifyAfter.Seconds()
+		novel = now-entry.AlertedTS >= renotify.Seconds()
 	}
-	entry.Count++
+	entry.Count += occurrences
 	entry.LastTS = now
 	m.seen[key] = entry
 	m.stateDirty = true
@@ -745,7 +771,7 @@ func (m *Monitor) recordLocked(key string, input recordInput, now float64) {
 		TS: int64(now), Key: key, Kind: input.kind, Title: input.title,
 		Summary: input.summary, Details: input.details, Count: entry.Count,
 		OccurrencesInWindow: entry.Count, SuppressedSinceLastAlert: m.suppressed,
-		NewCategory: entry.Count == 1,
+		NewCategory: first,
 	})
 	m.suppressed = 0
 	m.saveStateLocked()
