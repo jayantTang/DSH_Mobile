@@ -420,6 +420,10 @@ test('a host that cannot express the browser language lets the panel fill the ga
   const spanishOnEnglishHost = await renderEntry({ language: 'es-ES', localeActive: 'en' })
   assert.match(spanishOnEnglishHost.props['aria-label'], /Conexión móvil：Conectado/)
 
+  // 宿主被显式设成中文：西语浏览器也不该把面板抢走，中文客户端就该是中文面板。
+  const chineseHostWithSpanishBrowser = await renderEntry({ language: 'es-ES', localeActive: 'zh' })
+  assert.match(chineseHostWithSpanishBrowser.props['aria-label'], /移动端连接：已连接/)
+
   // 宿主支持的语言就是浏览器要的语言：以宿主为准，尊重设置里显式选过的语言。
   const chineseOnEnglishBrowser = await renderEntry({ language: 'en-US', localeActive: 'zh' })
   assert.match(chineseOnEnglishBrowser.props['aria-label'], /移动端连接：已连接/)
