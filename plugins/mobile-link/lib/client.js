@@ -215,16 +215,39 @@ const MESSAGES = {
   },
 }
 
-function resolveLocale() {
-  const raw = (typeof navigator !== 'undefined'
-    && (navigator.language || (navigator.languages && navigator.languages[0]))) || 'zh'
-  const tag = String(raw).toLowerCase()
-  if (tag.indexOf('es') === 0) return 'es'
-  if (tag.indexOf('en') === 0) return 'en'
+/**
+ * 界面语言的所有者是宿主：取向为 `ctx.locale` 的活动语言，宿主切换语言时靠 `locale/change`
+ * 跟随。只有宿主没有 locale 服务（旧宿主、纯浏览器调试）才退回浏览器语言——面板自己判断
+ * 系统语言会造出第二个判定，宿主切语言时两边就不一致。
+ */
+function localeFrom(tag) {
+  const value = String(tag ?? '').toLowerCase()
+  if (value.indexOf('es') === 0) return 'es'
+  if (value.indexOf('en') === 0) return 'en'
   return 'zh'
 }
 
-const LOCALE = resolveLocale()
+/** 宿主的活动语言 id（`zh` / `en` / …）；拿不到时返回 null。 */
+function hostLocale(ctx) {
+  try {
+    const active = ctx?.locale?.getSnapshot?.()?.active
+    if (typeof active === 'string' && active) return active
+  } catch {
+    // 宿主没有 locale 服务：交给浏览器语言兜底。
+  }
+  return null
+}
+
+function resolveLocale(ctx) {
+  const host = hostLocale(ctx)
+  if (host) return localeFrom(host)
+  const raw = (typeof navigator !== 'undefined'
+    && (navigator.language || (navigator.languages && navigator.languages[0]))) || 'zh'
+  return localeFrom(raw)
+}
+
+/** 当前界面语言：`apply` 时按宿主取值，之后由 `locale/change` 改写。 */
+let LOCALE = resolveLocale(null)
 
 /** Current-language sentence; `vars` fills the `${name}` placeholders. */
 function T(text, vars) {
@@ -233,8 +256,15 @@ function T(text, vars) {
   return raw.replace(/\$\{(\w+)\}/g, (m, key) => (key in vars ? String(vars[key]) : m))
 }
 
-const LABEL = T('移动端连接')
-const TITLE = T('移动端连接：二维码、已配对的手机与连接状态')
+/** 入口与标题在渲染时取值，跟随语言变化；不要在模块加载时定死。 */
+function panelLabel() {
+  return T('移动端连接')
+}
+
+function panelTitle() {
+  return T('移动端连接：二维码、已配对的手机与连接状态')
+}
+
 const PRIMITIVES = '@deepseek-ai/dsh-client-ui-primitives'
 /** GitHub 仓库与 iOS 公开测试链接；都只做展示，不参与准入。 */
 const GITHUB_URL = 'https://github.com/jayantTang/DSH_Mobile'
@@ -509,6 +539,8 @@ function createPanel() {
       revoking: false,
       revokeError: null,
       guideOpen: false,
+      // 界面语言：由宿主 locale 决定，宿主切换时写入这份快照以推动重渲染。
+      locale: LOCALE,
     }),
     disposed: false,
     style: null,
@@ -710,24 +742,27 @@ function copyCode(panel) {
     done()
   }
 }
-/** 服务端的机器码 → 面板上的中文；原始 message 留在 details 里给排障。 */
-const ENROLL_ERRORS = {
-  'enroll/bad-request': T('请输入中转地址。'),
-  'enroll/invalid-relay': T('中转地址无效。'),
-  'enroll/placeholder-relay': T('请输入有效的中转地址。'),
-  'enroll/rate-limited': T('尝试次数过多，请稍后重试。'),
-  'enroll/unreachable': T('无法连接中转服务器，请检查地址与网络。'),
-  'enroll/timeout': T('中转服务器未响应，请稍后重试。'),
-  'enroll/bad-response': T('中转服务器返回了无法识别的响应。'),
-  'enroll/already-registered': T('此电脑已登记。'),
-  'enroll/disabled': T('连接器已停用。'),
-  'enroll/unavailable': T('连接器正在停止，请稍后重试。'),
-  'enroll/state-write': T('登记信息未能保存到此电脑，请检查磁盘权限。'),
-  'enroll/relay-error': T('中转服务器登记失败，请稍后重试。'),
-  'enroll/internal': T('连接器内部错误，请稍后重试。'),
+/** 服务端的机器码 → 面板文案；原始 message 留在 details 里给排障。 */
+function enrollTexts() {
+  return {
+    'enroll/bad-request': T('请输入中转地址。'),
+    'enroll/invalid-relay': T('中转地址无效。'),
+    'enroll/placeholder-relay': T('请输入有效的中转地址。'),
+    'enroll/rate-limited': T('尝试次数过多，请稍后重试。'),
+    'enroll/unreachable': T('无法连接中转服务器，请检查地址与网络。'),
+    'enroll/timeout': T('中转服务器未响应，请稍后重试。'),
+    'enroll/bad-response': T('中转服务器返回了无法识别的响应。'),
+    'enroll/already-registered': T('此电脑已登记。'),
+    'enroll/disabled': T('连接器已停用。'),
+    'enroll/unavailable': T('连接器正在停止，请稍后重试。'),
+    'enroll/state-write': T('登记信息未能保存到此电脑，请检查磁盘权限。'),
+    'enroll/relay-error': T('中转服务器登记失败，请稍后重试。'),
+    'enroll/internal': T('连接器内部错误，请稍后重试。'),
+  }
 }
 function enrollMessage(error) {
-  return ENROLL_ERRORS[error?.code] ?? describe(error) ?? T('登记失败，请重试。')
+  // 按调用时的语言现算：模块加载时定死会让宿主切换语言后错误提示停在旧语言。
+  return enrollTexts()[error?.code] ?? describe(error) ?? T('登记失败，请重试。')
 }
 function revokeMessage(error) {
   const code = error?.code
@@ -892,10 +927,10 @@ function makeEntry(React, controller, ui) {
     const conn = connectionState(state)
     return React.createElement(ui.Button, {
       variant: 'ghost', type: 'button', id: ENTRY_ID, className: 'dsh-mobile-link-entry',
-      title: `${TITLE}（${conn.text}）`, 'aria-label': `${LABEL}：${conn.text}`,
+      title: `${panelTitle()}（${conn.text}）`, 'aria-label': `${panelLabel()}：${conn.text}`,
       onClick: () => controller.open(),
     }, React.createElement(ui.StateDot, { state: conn.dot }),
-    React.createElement('span', { className: 'dsh-mobile-link-entry-label' }, LABEL))
+    React.createElement('span', { className: 'dsh-mobile-link-entry-label' }, panelLabel()))
   }
 }
 function row(React, key, value, mono = false) {
@@ -1193,7 +1228,7 @@ function makePanel(React, controller, ui) {
     return React.createElement(ui.Modal, {
       open: state.open,
       onClose: () => controller.close(),
-      title: LABEL,
+      title: panelLabel(),
       closeLabel: T('关闭'),
       className: 'dsh-mobile-link-dialog',
       contentClassName: 'dsh-mobile-link-content',
@@ -1225,7 +1260,16 @@ window.__ModuleLoader__.load({
         report(ctx, T('官方原子组件不可用，移动端连接入口未注册'))
         return
       }
+      LOCALE = resolveLocale(ctx)
       const controller = createController()
+      // 宿主切换语言时不重载面板：改写全局语言并推动一次重渲染，入口与小窗一起换。
+      ctx.on?.('locale/change', (snapshot) => {
+        const active = snapshot?.active
+        if (typeof active === 'string' && active) {
+          LOCALE = localeFrom(active)
+          controller.store.set({ locale: LOCALE })
+        }
+      })
       try {
         ctx.effect(() => controller.start(), 'mobile-link: panel state')
       } catch (error) {
@@ -1233,7 +1277,7 @@ window.__ModuleLoader__.load({
       }
       try {
         ctx.slots.inject(SLOT_ENTRY, () => ctx.slots.register(
-          { name: SLOT_ENTRY, id: ENTRY_ID, order: 20, label: () => LABEL },
+          { name: SLOT_ENTRY, id: ENTRY_ID, order: 20, label: () => panelLabel() },
           makeEntry(React, controller, ui),
         ))
       } catch (error) {

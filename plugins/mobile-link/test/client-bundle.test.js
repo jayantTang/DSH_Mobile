@@ -223,12 +223,19 @@ function loadBundle({ document, fetchImpl, clock, primitivesMissing = false, lan
 }
 
 /** 一个插件实例（fiber）的 stub：退出时按官方语义把注册与资源收回去。 */
-function makeCtx({ registerThrows = false } = {}) {
-  const state = { slots: [], slotKeys: [], cleanups: [], warnings: [] }
+function makeCtx({ registerThrows = false, localeActive = null } = {}) {
+  const state = { slots: [], slotKeys: [], cleanups: [], warnings: [], listeners: [] }
   const ctx = {
     effect: (callback) => {
       const cleanup = callback()
       if (typeof cleanup === 'function') state.cleanups.push(cleanup)
+    },
+    on: (event, listener) => {
+      state.listeners.push({ event, listener })
+      return () => {
+        const index = state.listeners.findIndex((item) => item.listener === listener)
+        if (index >= 0) state.listeners.splice(index, 1)
+      }
     },
     slots: {
       inject: (key, callback) => {
@@ -244,6 +251,19 @@ function makeCtx({ registerThrows = false } = {}) {
       },
     },
     logger: { warn: (message) => state.warnings.push(message) },
+  }
+  // 宿主 locale 服务的替身：只有显式给了语言才挂，方便区分"宿主有服务"与"旧宿主"。
+  if (localeActive !== null) {
+    let active = localeActive
+    ctx.locale = {
+      getSnapshot: () => ({ active, locales: [{ id: 'zh' }, { id: 'en' }] }),
+    }
+    state.switchLocale = (next) => {
+      active = next
+      for (const item of state.listeners.filter((entry) => entry.event === 'locale/change')) {
+        item.listener({ active: next })
+      }
+    }
   }
   state.dispose = () => {
     for (const cleanup of state.cleanups.reverse()) cleanup()
@@ -414,6 +434,26 @@ test('every sentence the panel prints has both an English and a Spanish entry', 
   assert.ok(used.length > 80, `源码里应当有几十处 T('…')，实际只找到 ${used.length} 处`)
   const missing = [...new Set(used)].filter((key) => SOURCE.split(`'${key}':`).length - 1 !== 2)
   assert.deepEqual(missing, [], `这些句子在 MESSAGES 里缺 en 或 es 条目：${missing.join(' / ')}`)
+})
+
+test('the host locale outranks the browser, and switching it re-renders the panel', async () => {
+  const { document } = makeDom()
+  // 浏览器报英文、宿主设的是中文：面板必须跟宿主，不能各说一套。
+  const { api } = loadBundle({ document, fetchImpl: makeFetch().impl, language: 'en-US' })
+  const { ctx, state } = makeCtx({ localeActive: 'zh' })
+  api.apply(ctx)
+  await flush()
+
+  const { entry, panel } = components(state)
+  const first = render(entry.component({}))
+  assert.match(first.props['aria-label'], /移动端连接：已连接/)
+  first.props.onClick()
+  assert.equal(render(panel.component({})).props.title, '移动端连接')
+
+  // 宿主切语言不需要重载面板：入口与小窗一起换。
+  state.switchLocale('en')
+  assert.equal(render(panel.component({})).props.title, 'Mobile link')
+  assert.match(render(entry.component({})).props['aria-label'], /Mobile link：Connected/)
 })
 
 test('the status dot answers the three questions a user has', async () => {
