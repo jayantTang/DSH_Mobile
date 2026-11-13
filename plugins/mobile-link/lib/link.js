@@ -5,9 +5,10 @@
  */
 
 import { EventEmitter } from 'node:events'
+import { dirname, join } from 'node:path'
 
 import { DshClient } from './dsh-client.js'
-import { agentEndpoint, decodeFrame, deviceListEndpoint, deviceRevokeEndpoint, encodeFrameChecked, isPlaceholderRelayUrl, nextBackoff, normalizeRelayUrl, pongFor } from './dlp.js'
+import { agentEndpoint, decodeFrame, deviceListEndpoint, deviceRevokeEndpoint, encodeFrameChecked, isPlaceholderRelayUrl, nextBackoff, normalizeRelayUrl, pongFor, qrPayload } from './dlp.js'
 
 /**
  * 进程级登记表：**同一个进程里只允许有一条到中转的 agent 连接**。
@@ -30,7 +31,7 @@ import {
 } from './router.js'
 import { SERVER_VERSION, SERVER_CAPABILITIES, hostVersion } from './hello.js'
 import { createJobsRoster } from './jobs-roster.js'
-import { MissingIdentity, defaultStatePath, readState, resolveIdentity } from './state.js'
+import { MissingIdentity, defaultStatePath, readState, resolveIdentity, writeState } from './state.js'
 import { connect as wsConnect } from './ws.js'
 
 const PROTOCOL_VERSION = 1
@@ -52,6 +53,55 @@ function numberFromEnv(raw, fallback) {
   if (raw === undefined || raw === null || String(raw).trim() === '') return fallback
   const value = Number(raw)
   return Number.isFinite(value) && value >= 0 ? value : fallback
+}
+
+// ── 持久码缓存 ──────────────────────────────────────────────────────────
+
+/**
+ * 上次铸出来的持久码放在身份文件旁边（0600）。
+ *
+ * 中转只存码的哈希，铸码接口不会把同一张码再给一次，所以「小窗复用同一张持久码」
+ * （docs/PAIRING.md「二维码」一行）只能由连接器自己记住：面板每次打开都会请求一次码，
+ * 没有这份缓存就变成每开一次、每重载一次都多一张永久有效的码。
+ */
+function pairCodeCachePath(config) {
+if (config?.pairCodePath) return config.pairCodePath
+return join(dirname(config?.stateFile || defaultStatePath()), 'pair-code.json')
+}
+
+async function rememberPairCode(config, minted) {
+if (!minted?.code) return
+try {
+  await writeState(pairCodeCachePath(config), {
+    code: minted.code,
+    agentId: minted.agentId,
+    relayUrl: minted.relayUrl,
+    maxPairedDevices: minted.maxPairedDevices ?? null,
+    pairedDevices: Number(minted.pairedDevices ?? 0),
+    savedAt: Date.now(),
+  })
+} catch (error) {
+  // 缓存写不进去只影响"下次还会不会换码"，不该让这次取码失败。
+  config?.logger?.warn?.(`mobile-link: could not remember the pairing code: ${messageOf(error)}`)
+}
+}
+
+async function readRememberedPairCode(config, identity) {
+const file = await readState(pairCodeCachePath(config))
+if (!file || typeof file.code !== 'string' || !file.code) return null
+// 身份变了（重新登记、换了中转）就不是同一台电脑的码，不能拿来复用。
+if (file.agentId !== identity.agentId || file.relayUrl !== identity.relayUrl) return null
+return {
+  code: file.code,
+  expiresAt: null,
+  ttlMs: null,
+  persistent: true,
+  maxPairedDevices: Number(file.maxPairedDevices ?? 0) || null,
+  pairedDevices: Number(file.pairedDevices ?? 0),
+  relayUrl: identity.relayUrl,
+  agentId: identity.agentId,
+  qrPayload: qrPayload({ relay: identity.relayUrl, code: file.code }),
+}
 }
 
 export class MobileLinkAgent extends EventEmitter {
@@ -886,7 +936,7 @@ export class MobileLinkAgent extends EventEmitter {
     this.router.onMuxDown(reason)
   }
 
-  // ── relay-side helpers ──────────────────────────────────────────────────
+// ── relay-side helpers ──────────────────────────────────────────────────
 
   /**
    * Ask the relay to mint a pairing code for this agent (relay NOTES.md §2).
@@ -895,13 +945,23 @@ export class MobileLinkAgent extends EventEmitter {
    */
   async mintPairCode({ ttlMs = null, fetchImpl = fetch } = {}) {
     const identity = this.identity ?? await resolveIdentity(this.config)
-    return mintPairCode({ identity, ttlMs, fetchImpl })
+    // 持久码：手上已经有一张就直接给它。中转那边只有哈希，重铸只会多出一张有效码。
+    if (ttlMs == null) {
+      const remembered = await readRememberedPairCode(this.config, identity)
+      if (remembered) return remembered
+    }
+    const minted = await mintPairCode({ identity, ttlMs, fetchImpl })
+    if (minted.persistent) await rememberPairCode(this.config, minted)
+    return minted
   }
 
   /** 用户点「重新生成」：作废旧码、铸新的，**不碰已配对设备**（032）。 */
   async regeneratePairCode({ fetchImpl = fetch } = {}) {
     const identity = this.identity ?? await resolveIdentity(this.config)
-    return regeneratePairCode({ identity, fetchImpl })
+    const minted = await regeneratePairCode({ identity, fetchImpl })
+    // 中转已经把旧码全部作废，这里换成新的那张。
+    await rememberPairCode(this.config, minted)
+    return minted
   }
 
   /** Snapshot for `GET /mobile-link/status`（载荷本身在 status.js，便于守住"只增不改"）。 */
