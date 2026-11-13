@@ -216,34 +216,83 @@ const MESSAGES = {
 }
 
 /**
- * 界面语言的所有者是宿主：取向为 `ctx.locale` 的活动语言，宿主切换语言时靠 `locale/change`
- * 跟随。只有宿主没有 locale 服务（旧宿主、纯浏览器调试）才退回浏览器语言——面板自己判断
- * 系统语言会造出第二个判定，宿主切语言时两边就不一致。
+ * 界面语言：宿主能表达就用宿主；宿主表达不了用户要的语言（例如宿主只有 zh / en 而浏览器报
+ * es）时，由面板补上自己有词表的那一档。宿主将来支持西语，面板会自动回到宿主，不需要再改。
+ * 宿主没有 locale 服务（旧宿主、纯浏览器调试）时完全按浏览器语言，行为与改动前一致。
  */
-function localeFrom(tag) {
-  const value = String(tag ?? '').toLowerCase()
-  if (value.indexOf('es') === 0) return 'es'
-  if (value.indexOf('en') === 0) return 'en'
-  return 'zh'
+const PANEL_LOCALES = ['zh', 'en', 'es']
+
+function baseLanguage(tag) {
+  const value = String(tag ?? '').trim().toLowerCase()
+  return value ? value.split('-')[0] : ''
 }
 
-/** 宿主的活动语言 id（`zh` / `en` / …）；拿不到时返回 null。 */
-function hostLocale(ctx) {
+/** 面板有词表的语言档；没有词表返回 null。 */
+function panelLocaleOf(tag) {
+  const base = baseLanguage(tag)
+  return PANEL_LOCALES.includes(base) ? base : null
+}
+
+/** 浏览器要的语言，按优先级排开；桌面版的这一串由宿主启动参数决定，这里只读。 */
+function browserLanguages() {
+  if (typeof navigator === 'undefined') return []
+  const list = Array.isArray(navigator.languages) && navigator.languages.length > 0
+    ? navigator.languages
+    : [navigator.language]
+  return list.filter((tag) => typeof tag === 'string' && tag)
+}
+
+/** 宿主 locale 快照；没有 locale 服务的宿主返回 null。 */
+/** 宿主自己维护的 `<html lang>`：locale 服务切换语言时会同步写它，服务取不到时用它兜底。 */
+function documentLanguage() {
+  if (typeof document === 'undefined') return null
+  const lang = document?.documentElement?.lang
+  return typeof lang === 'string' && lang ? lang : null
+}
+
+/** 宿主切换语言时会同步改写 `<html lang>`；订阅它，比"等服务挂到 ctx 上"可靠。 */
+function watchDocumentLanguage(onChange) {
+  if (typeof MutationObserver === 'undefined' || typeof document === 'undefined'
+      || !document.documentElement) return null
+  const observer = new MutationObserver(() => onChange())
+  observer.observe(document.documentElement, { attributes: true, attributeFilter: ['lang'] })
+  return () => observer.disconnect()
+}
+
+function hostSnapshot(ctx) {
   try {
-    const active = ctx?.locale?.getSnapshot?.()?.active
-    if (typeof active === 'string' && active) return active
+    // 直属性与 `get` 两种取法都试：不同宿主版本里 locale 服务挂上的时机不同。
+    const service = ctx?.locale ?? ctx?.get?.('locale')
+    const snapshot = service?.getSnapshot?.()
+    return snapshot && typeof snapshot === 'object' ? snapshot : null
   } catch {
-    // 宿主没有 locale 服务：交给浏览器语言兜底。
+    return null
   }
-  return null
 }
 
 function resolveLocale(ctx) {
-  const host = hostLocale(ctx)
-  if (host) return localeFrom(host)
-  const raw = (typeof navigator !== 'undefined'
-    && (navigator.language || (navigator.languages && navigator.languages[0]))) || 'zh'
-  return localeFrom(raw)
+  const snapshot = hostSnapshot(ctx)
+  const hostActive = (typeof snapshot?.active === 'string' && snapshot.active)
+    || documentLanguage()
+  // 语言表在不同版本里既可能是 `[{ id, label }]` 也可能是纯 id 字符串，两种都认。
+  const hostIds = new Set()
+  for (const item of Array.isArray(snapshot?.locales) ? snapshot.locales : []) {
+    const id = typeof item === 'string' ? item : item?.id
+    if (typeof id === 'string' && id) hostIds.add(id)
+  }
+  // 快照没带语言表（老宿主）时按 DSH 内置的 zh / en 兜底：把"表达不了"误判成"能表达"，
+  // 西语就会一直落到 en，面板再也拿不到西语。
+  if (hostIds.size === 0) {
+    hostIds.add('zh')
+    hostIds.add('en')
+  }
+  const wanted = browserLanguages().map(baseLanguage).find((base) => base) ?? ''
+  const hostPanel = hostActive ? panelLocaleOf(hostActive) : null
+  // 宿主的语言表里有浏览器要的语言：听宿主的——用户可能在设置里显式选过别的语言。
+  if (hostPanel && (!wanted || hostIds.has(wanted))) return hostPanel
+  // 宿主表达不了（例如西语）：面板补一档；宿主支持之后，上面那条会自动让位。
+  const browserPanel = wanted ? panelLocaleOf(wanted) : null
+  return browserPanel ?? hostPanel ?? 'zh'
 }
 
 /** 当前界面语言：`apply` 时按宿主取值，之后由 `locale/change` 改写。 */
@@ -1263,13 +1312,14 @@ window.__ModuleLoader__.load({
       LOCALE = resolveLocale(ctx)
       const controller = createController()
       // 宿主切换语言时不重载面板：改写全局语言并推动一次重渲染，入口与小窗一起换。
-      ctx.on?.('locale/change', (snapshot) => {
-        const active = snapshot?.active
-        if (typeof active === 'string' && active) {
-          LOCALE = localeFrom(active)
-          controller.store.set({ locale: LOCALE })
-        }
-      })
+      // 宿主切换语言时按同一套优先级重算，再推一次重渲染。
+      const applyLocale = () => {
+        LOCALE = resolveLocale(ctx)
+        controller.store.set({ locale: LOCALE })
+      }
+      ctx.on?.('locale/change', applyLocale)
+      const stopWatching = watchDocumentLanguage(applyLocale)
+      if (stopWatching) ctx.effect(() => stopWatching, 'mobile-link: locale watcher')
       try {
         ctx.effect(() => controller.start(), 'mobile-link: panel state')
       } catch (error) {

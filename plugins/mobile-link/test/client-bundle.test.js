@@ -28,6 +28,8 @@ function makeDom() {
   const nodes = []
   const listeners = []
   const document = {
+    // 宿主把活动语言同步写在 <html lang> 上；面板在没有 locale 服务时读它。
+    documentElement: { lang: '' },
     head: { appendChild: (node) => nodes.push(node) },
     body: { appendChild: (node) => nodes.push(node) },
     getElementById: (id) => nodes.find((node) => node.id === id) ?? null,
@@ -223,7 +225,7 @@ function loadBundle({ document, fetchImpl, clock, primitivesMissing = false, lan
 }
 
 /** 一个插件实例（fiber）的 stub：退出时按官方语义把注册与资源收回去。 */
-function makeCtx({ registerThrows = false, localeActive = null } = {}) {
+function makeCtx({ registerThrows = false, localeActive = null, localeCatalog = ['zh', 'en'] } = {}) {
   const state = { slots: [], slotKeys: [], cleanups: [], warnings: [], listeners: [] }
   const ctx = {
     effect: (callback) => {
@@ -256,7 +258,7 @@ function makeCtx({ registerThrows = false, localeActive = null } = {}) {
   if (localeActive !== null) {
     let active = localeActive
     ctx.locale = {
-      getSnapshot: () => ({ active, locales: [{ id: 'zh' }, { id: 'en' }] }),
+      getSnapshot: () => ({ active, locales: localeCatalog.map((id) => ({ id })) }),
     }
     state.switchLocale = (next) => {
       active = next
@@ -402,6 +404,46 @@ test('the sidebar gets one entry and the shell gets one panel', async () => {
   assert.equal(button.props.id, ENTRY_ID)
   assert.equal(button.props.variant, 'ghost')
   assert.match(button.props['aria-label'], /移动端连接/)
+})
+
+test('a host that cannot express the browser language lets the panel fill the gap', async () => {
+  const renderEntry = async ({ language, localeActive = null, localeCatalog }) => {
+    const { document } = makeDom()
+    const { api } = loadBundle({ document, fetchImpl: makeFetch().impl, language })
+    const { ctx, state } = makeCtx({ localeActive, localeCatalog })
+    api.apply(ctx)
+    await flush()
+    return render(components(state).entry.component({}))
+  }
+
+  // 宿主只有 zh / en、浏览器要西语：宿主会回落到 en，面板补上西语（PR 诉求）。
+  const spanishOnEnglishHost = await renderEntry({ language: 'es-ES', localeActive: 'en' })
+  assert.match(spanishOnEnglishHost.props['aria-label'], /Conexión móvil：Conectado/)
+
+  // 宿主支持的语言就是浏览器要的语言：以宿主为准，尊重设置里显式选过的语言。
+  const chineseOnEnglishBrowser = await renderEntry({ language: 'en-US', localeActive: 'zh' })
+  assert.match(chineseOnEnglishBrowser.props['aria-label'], /移动端连接：已连接/)
+
+  // 将来宿主支持西语：面板直接跟宿主，不再看浏览器。
+  const spanishHost = await renderEntry({
+    language: 'en-US', localeActive: 'es', localeCatalog: ['zh', 'en', 'es'],
+  })
+  assert.match(spanishHost.props['aria-label'], /Conexión móvil：Conectado/)
+
+  // 浏览器要的语言谁都没有：回落宿主的语言，不要变成空文案。
+  const french = await renderEntry({ language: 'fr-FR', localeActive: 'en' })
+  assert.match(french.props['aria-label'], /Mobile link：Connected/)
+})
+
+test('the host language written on <html lang> counts even without a locale service', async () => {
+  const { document } = makeDom()
+  document.documentElement.lang = 'zh-CN'
+  const { api } = loadBundle({ document, fetchImpl: makeFetch().impl, language: 'en-US' })
+  const { ctx, state } = makeCtx()
+  api.apply(ctx)
+  await flush()
+  // 宿主已经声明中文：浏览器报英文也不该把面板拉走。
+  assert.match(render(components(state).entry.component({})).props['aria-label'], /移动端连接：已连接/)
 })
 
 test('the panel follows the language the browser asks for, and stays Chinese otherwise', async () => {
