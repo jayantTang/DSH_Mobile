@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * 流程视图的数据层：读 `docs/arch/flows/*.json`，并**校验每一步指向的符号真的存在**。
+ * 流程视图的数据层：读 `scripts/arch/flows/*.json`，并**校验每一步指向的符号真的存在**。
  *
  * 为什么这层要有校验：流程图烂掉的原因从来不是画得不好，而是代码改了没人改图。
  * 只要每一步都绑定真实文件和符号，图一失效页面就会标红，维护成本才降得下来。
@@ -18,7 +18,7 @@ import { join } from 'node:path'
 
 import { ROOT } from './parse.mjs'
 
-const FLOW_DIR = join(ROOT, 'docs/arch/flows')
+const FLOW_DIR = join(ROOT, 'scripts/arch/flows')
 
 function readJson(path) {
   try {

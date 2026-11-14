@@ -44,12 +44,10 @@ test/.quarantine.json
 /runs/
 
 # AI 协作约定：写给自己用的操作手册，不随开源仓库发布
-AGENTS.md
+AGENTS.local.md
 
-# 维护者手册（上架、促销、发放邀请码、逐步操作清单）与内部用例：
-# 里面有对 agent 下的指令、以及只对部署方有意义的记录，不随开源仓库发布。
-# 公开面只留面向使用者的文档（README、docs/）与可复制的用例模板（test/examples/）。
-maintainers/
+# 开发手册：需求、流程、工程规范入库；历史与本机文件不入库。
+handbook/history/
 test/cases/*
 !test/cases/acceptance/
 !test/cases/acceptance/**
@@ -57,8 +55,8 @@ test/cases/*
 # Spec Kit（SDD 流程）的本机产物：三处都是"过程记录 + 第三方套件骨架"，不是产品。
 #   .specify/    流程骨架（官方模板/脚本/宪法/本机指针），由 `specify init` 生成
 #   .dsh/        10 个 /speckit-* 技能文件（DSH 发现项目技能的固定位置）
-#   specs/       每个变更的 spec/plan/tasks 产物
-# 结论与实现细节要发布时，落到 docs/（面向使用者）、CHANGELOG.md 或 maintainers/。
+#   specs/       每个变更的 spec/plan/tasks 产物（本机，不入库）
+# 结论与实现细节要发布时，落到 docs/（面向使用者）、CHANGELOG.md 或 handbook/。
 # 换机器/换人想再跑流程：`uv tool install specify-cli && specify init --here --force --integration dsh`。
 .specify/
 .dsh/
@@ -71,8 +69,7 @@ docs/artifacts/screenshots/
 test/fixtures/media/
 
 # 三级验证渠道（006）的运行证据：每次跑渠道都会写一份，属过程产物。
-# 结构与判定见 specs/006-verify-lanes/；契约在 scripts/verify/ 与
-# specs/006-verify-lanes/contracts/verdict.schema.json。
+# 结构与判定见 scripts/verify/README.md；契约在 scripts/verify/。
 .lanes/
 
 # 架构快照（docs/arch/）的生成产物：`npm run arch` 每次覆盖，逐版归档也只是过程记录。
@@ -106,7 +103,6 @@ id_ed25519*
 scripts/perf/results/
 
 # 架构图工作区（本机生成，按类型组织，不入库）
-docs/graph/
 
 # Go 构建缓存与产物（本机，不入库）
 relay-go/.gocache/

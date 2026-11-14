@@ -22,7 +22,7 @@ const PLIST = join(HERE, 'launchd', 'com.jayanttang.dsh-daily-report.plist')
 const HOST = 'relay.example.com'
 /// owner 自己的账号（`.env.local` 的 DSH_ACCOUNT_ID）：默认 env 里带上它，才是本机的真实形状。
 const OWNER = 'acc_owner'
-/// 写给别人的信必须带这句——审批门（AGENTS.md 硬性约束第 9 条）。
+/// 写给别人的信必须带这句——审批门（AGENTS.md「对外发信审批」）。
 const APPROVED = ['--owner-approved', '同意，发吧']
 /// 生成时间取本机时区的 2026-10-12 09:00，文件名才不随 UTC 偏移变化。
 const GENERATED_AT = new Date(2026, 9, 12, 9, 0, 0).getTime()
@@ -975,7 +975,7 @@ test('renderAgentPlist 把占位符换成绝对路径', () => {
   assert.ok(!/dev_|acc_/.test(plist), 'plist 里不该写任何设备或账号 id')
 })
 
-// ── 审批门（AGENTS.md 硬性约束第 9 条）：写给别人的信先要 owner 的批准 ────────────────
+// ── 审批门（AGENTS.md「对外发信审批」）：写给别人的信先要 owner 的批准 ────────────────
 
 test('foreignRecipients：没配 DSH_ACCOUNT_ID 时每个账号都算别人', () => {
   assert.deepEqual(foreignRecipients({ accounts: ['a', 'b'] }, 'a'), { all: false, foreign: ['b'] })

@@ -28,7 +28,7 @@
 // 强制预演。误发一条通知的代价比多点一次确认高（plan.md 11）。退出码与 admin.py 对齐：
 // 0 成功 / 1 业务失败 / 2 用法错误。
 //
-// **发给其他用户的信必须先经 owner 批准**（owner 2026-10-13 要求，AGENTS.md 硬性约束第 9 条）：
+// **发给其他用户的信必须先经 owner 批准**（owner 2026-10-13 要求，AGENTS.md「对外发信审批」）：
 // reply / notify / report --send 的收件人里只要有一个不是 owner 自己（`.env.local` 的
 // `DSH_ACCOUNT_ID`），就必须带 `--owner-approved "<owner 的原话>"`，否则拒绝发送（退出码 2）。
 // 预演（没有 --send/--yes，或带 `--dry-run`）不判；真发之前往
@@ -108,7 +108,7 @@ const FORMATS = new Set(['text', 'html'])
 /// 管理清单的口径：`user` = 命中归属谓词（能进团队收件箱）、`test` = 命不中（测试机型与
 /// 团队自己的提交，两者都永远进不了收件箱）、`all` = 全部。
 const SCOPES = new Set(['user', 'test', 'all'])
-/// 审批门（AGENTS.md 硬性约束第 9 条）：写给别人之前要 owner 的批准原话。
+/// 审批门（AGENTS.md「对外发信审批」）：写给别人之前要 owner 的批准原话。
 const OWNER_APPROVED = '--owner-approved'
 const APPROVAL_LOG = 'Library/Logs/dsh-feedback-approvals.log'
 /// 线程清单一次最多读多少条来判回信收件人（`feedback-list --limit` 没有服务端上限）。
@@ -519,7 +519,7 @@ function writeReport(raw, opts, io) {
   return { code: data?.ok === false ? 1 : 0, file }
 }
 
-/// **审批门**（owner 2026-10-13 要求，AGENTS.md 硬性约束第 9 条）：写给别人的信，先拿 owner 的批准。
+/// **审批门**（owner 2026-10-13 要求，AGENTS.md「对外发信审批」）：写给别人的信，先拿 owner 的批准。
 ///
 /// 判定只看"这次会不会真的落库"：预演（没有 --send/--yes，或带 `--dry-run`）一律不判，
 /// 因为预演在服务器上只统计收件人、不写库。真发时：

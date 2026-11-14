@@ -13,7 +13,7 @@
  * 所以读取缓存时还会拿当前声明清单核对一遍，核对不上的边标记为 stale（页面会提示）。
  *
  * 只覆盖 SPM 包（DSHKit / RelayKit）。App target 不在此列：它的语义查询需要 Xcode 的
- * 编译参数，实测 `references` 会超时，见 docs/arch/README.md。
+ * 编译参数，实测 `references` 会超时，见 handbook/engineering/architecture-snapshots.md。
  */
 
 import { spawn } from 'node:child_process'

@@ -491,7 +491,7 @@
     const flows = DATA.flows || []
     $('canvas').innerHTML = flows.length
       ? '<div id="flow-host"></div>'
-      : '<p class="muted pad">还没有流程定义。在 <code>docs/arch/flows/</code> 下放 JSON 后重新生成。</p>'
+      : '<p class="muted pad">还没有流程定义。在 <code>scripts/arch/flows/</code> 下放 JSON 后重新生成。</p>'
     if (!flows.length) { $('detail').innerHTML = ''; return }
     const host = $('flow-host')
     host.innerHTML = `<div class="flow-picker">${flows.map((flow) => {

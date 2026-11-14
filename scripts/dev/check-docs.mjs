@@ -42,7 +42,7 @@ const DOCS = [
   'docs/ARCHITECTURE.md',
   'docs/PAIRING.md',
   'docs/IMAGES.md',
-  'docs/VERSIONING.md', 'docs/arch/README.md',
+  'docs/VERSIONING.md',
   'docs/PRIVACY.md',
   'docs/PRIVACY.en.md',
   'docs/ONBOARDING.en.md',
