@@ -89,4 +89,25 @@ final class PerformanceBaselineTests: XCTestCase {
             send.tap()
         }
     }
+
+
+    /// One-time physical permission grant for APNs registration. It does not
+    /// assert delivery; the relay's device row and `push-test` do that.
+    func testGrantNotificationPermission() {
+        let app = XCUIApplication()
+        app.launch()
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let alert = springboard.alerts.firstMatch
+        if alert.waitForExistence(timeout: 5) {
+            if alert.buttons["允许"].exists {
+                alert.buttons["允许"].tap()
+            } else if alert.buttons["Allow"].exists {
+                alert.buttons["Allow"].tap()
+            } else if alert.buttons.allElementsBoundByIndex.count > 1 {
+                alert.buttons.allElementsBoundByIndex.last?.tap()
+            }
+        }
+        // Give APNs registration and the relay's SetPush a moment to land.
+        Thread.sleep(forTimeInterval: 6)
+    }
 }
