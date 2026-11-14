@@ -2,7 +2,7 @@
 
 > 由 `node test/coverage/check-test-coverage.mjs` 生成。✅ 精确测试；🔵 静态策略；✍️ 人工待验收；🟠 只是套件级映射，不得当作已完成。
 
-汇总：共 52 条 · ✅ verified 49 · 🔵 static 2 · ✍️ manual 1 · 🟡 partial 0 · 🟠 suite-only 0 · ❌ gap 0
+汇总：共 52 条 · ✅ verified 50 · 🔵 static 2 · ✍️ manual 0 · 🟡 partial 0 · 🟠 suite-only 0 · ❌ gap 0
 
 | SR | 状态 | 精确测试证据 | 负责套件 | 缺口 |
 |---|---|---|---|---|
@@ -18,7 +18,7 @@
 | SR-01.10 | ✅ verified | `relay-go/internal/wsapi/wsapi_test.go`：`TestTheDeviceLimitIs4021OnTheWire` | `requirements`、`relay-go` |  |
 | SR-01.11 | ✅ verified | `test/acceptance/11-connector-install-guide.md`：`TC-MOB-203` | `requirements`、`ui-connection`、`ui-guide` |  |
 | SR-02.01 | ✅ verified | `ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/ChatModelTransportTests.swift`：`test_open_subscribes_to_the_session_the_summary_names` | `requirements`、`ios-dshkit`、`connector`、`ui-chat` |  |
-| SR-02.02 | ✍️ manual | `test/coverage/manual/SR-02.02.md`：`状态：待验收` | `requirements`、`ui-chat` | 人工验收待填写 |
+| SR-02.02 | ✅ verified | `test/acceptance/14-background-resume.md`：`TC-MOB-206` | `requirements`、`ui-chat`、`ui-resume` |  |
 | SR-02.03 | ✅ verified | `ios/DSHMobile/Modules/Core/Tests/HostEventHubTests.swift`：`test_a_waiting_prompt_is_promoted_and_kept_by_session` | `requirements`、`ios-dshkit`、`connector`、`ui-chat` |  |
 | SR-02.04 | ✅ verified | `ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/ChatModelTransportTests.swift`：`test_send_puts_the_prompt_on_the_wire`<br>`ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/ChatModelTransportTests.swift`：`test_cancel_names_the_open_session` | `requirements`、`ios-modules`、`connector` |  |
 | SR-02.05 | ✅ verified | `ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/ChatModelQueueTests.swift`：`test_a_queued_send_is_optimistic` | `requirements`、`ios-modules` |  |

@@ -1,6 +1,6 @@
 # 验收用例子集
 
-这 11 条用例是 iOS 每次发版前必须执行的固定子集，纳入版本控制，避免落进
+这 12 条用例是 iOS 每次发版前必须执行的固定子集，纳入版本控制，避免落进
 `test/cases/` 后被本机清理或腐化。
 
 | 用例 | 覆盖 |
@@ -16,6 +16,7 @@
 | `09-ipad-layout` | iPad 分栏阅读宽度与横屏 |
 | `11-connector-install-guide` | 连接器安装指引 |
 | `13-settings-permission` | 设置页权限档位 |
+| `14-background-resume` | 手机回前台恢复 |
 
 ## 执行
 

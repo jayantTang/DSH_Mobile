@@ -13,7 +13,7 @@
 
 把电脑上的 [DSH](https://github.com/deepseek-ai/deepseek-harness) 会话接到 iPhone 与 iPad：原生 iOS
 客户端、电脑侧连接器、可自建的公网中转。手机经中转连接电脑上的 DSH host，会话与消息流与电脑端
-一致；任务在电脑锁屏后继续运行，挂起的提问可在手机上作答。电脑无需公网 IP，也无需 VPN。
+一致；手机暂时离开后回到 App 可恢复并看到最新状态，挂起的提问可在手机上作答。电脑无需公网 IP，也无需 VPN。
 
 ![DSH Mobile 演示：电脑端登记、手机扫码配对，查看会话、远程文件、git 改动与提交历史](docs/artifacts/demo/dsh-mobile-demo.gif)
 

@@ -335,9 +335,8 @@
   ],
   "SR-02.02": [
     {
-      "path": "test/coverage/manual/SR-02.02.md",
-      "contains": "状态：待验收",
-      "kind": "manual"
+      "path": "test/acceptance/14-background-resume.md",
+      "contains": "TC-MOB-206"
     }
   ],
   "SR-02.10": [

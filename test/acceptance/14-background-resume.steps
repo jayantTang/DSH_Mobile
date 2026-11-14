@@ -1,0 +1,5 @@
+# TC-MOB-206 手机端回前台后恢复
+1  do: 打开页面 sessions | want: id:session.list, text:已连接 | shot: sessions check=texts
+2  do: 切到后台 4 秒 | want: id:session.list
+3  do: 切回前台 | want: id:session.list, text:已连接 | shot: resumed check=texts
+4  do: 点击 id~:session.row., 等待 2 秒 | want: id:chat.transcript | shot: transcript check=texts

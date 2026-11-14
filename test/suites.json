@@ -486,6 +486,25 @@
       ],
       "risk": "medium",
       "budget": 300
+    },
+    {
+      "id": "ui-resume",
+      "title": "手机回前台恢复",
+      "layer": "ui",
+      "command": [
+        "./test/run.sh",
+        "run",
+        "test/acceptance/14-background-resume.md"
+      ],
+      "paths": [
+        "test/acceptance/14-background-resume.*",
+        "ios/DSHMobile/App/**"
+      ],
+      "requirements": [
+        "SR-02.02"
+      ],
+      "risk": "medium",
+      "budget": 180
     }
   ]
 }
