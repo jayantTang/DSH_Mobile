@@ -99,6 +99,7 @@ test/.venv/bin/python ios/DSHMobile/UITestHarness/test_report.py    # 每条规�
 | `RULES.md` | 判定规则，用户维护 | ✅ |
 | `REPORT-CONTRACT.md` | **报告契约**：章节、`review.md` 写法、lint 规则 | ✅ |
 | `CAPABILITY-GAPS.md` | 测试能力缺陷记录（做不到 / 测不准的地方） | ✅ |
+| `PERFORMANCE.md` | 性能基线口径：场景、起止点、采样与阈值 | ✅ |
 | `screens.md` | 可直达页面与根标识 | ✅ |
 | `cases/fixed/` | 固定用例，只增不改；每个用例两个文件：`序号-中文标题.md` + 同名 `.steps` | ✅ |
 | `cases/current/` | 本次任务的临时用例 | ✅（随任务结束清理） |
