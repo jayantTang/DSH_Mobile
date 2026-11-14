@@ -179,8 +179,10 @@ final class ChatSendService {
         }
         let ref = MessageSessionRef(scope: scope, sessionId: owner)
         let requestId = UUID()
+        let trace = PerformanceTrace.begin(.sendEcho)
         enqueueOptimisticQueue(requestId: requestId.uuidString, text: text,
                                images: [], mode: mode)
+        PerformanceTrace.end(trace)
         do {
             _ = try await layer.send(text: text, to: ref, steer: mode == .steer,
                                      requestId: requestId)

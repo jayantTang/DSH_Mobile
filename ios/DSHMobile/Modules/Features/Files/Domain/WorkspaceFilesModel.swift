@@ -1,5 +1,6 @@
 import DSHConnectionAPI
 import DSHCore
+import DSHFoundation
 import DSHKit
 import Foundation
 import Observation
@@ -259,6 +260,8 @@ public final class WorkspaceFilesModel {
 
     /// Opens `path` (workspace-relative) at its first page.
     public func openFile(path: String) async {
+        let trace = PerformanceTrace.begin(.fileFirstPage)
+        defer { PerformanceTrace.end(trace) }
         filePhase = .loading
         file = nil
         fileRefusedAsText = false

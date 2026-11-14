@@ -555,6 +555,8 @@ public final class SessionListModel {
 
     /// Loads the list, then keeps it fresh from the host event stream.
     public func start() async {
+        let trace = PerformanceTrace.begin(.sessionFirstContent)
+        defer { PerformanceTrace.end(trace) }
         await refresh()
         subscribeToHostEvents()
     }
