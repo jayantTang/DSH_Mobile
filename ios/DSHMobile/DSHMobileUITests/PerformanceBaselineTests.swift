@@ -60,4 +60,33 @@ final class PerformanceBaselineTests: XCTestCase {
             scroll.swipeLeft()
         }
     }
+
+
+    /// Send-echo latency on a physical device. The driver creates the scratch
+    /// session and removes it afterwards; this test never receives a real id.
+    func testSendEcho() {
+        guard let session = ProcessInfo.processInfo.environment["DSH_TEMP_SESSION"] else {
+            XCTFail("DSH_TEMP_SESSION missing; run via run-physical-performance.mjs")
+            return
+        }
+        let app = XCUIApplication()
+        app.launchArguments = ["-DSHOpenSession", session, "-DSHOpenScreen", "transcript"]
+        app.launch()
+        let field = app.textFields["composer.field"]
+        XCTAssertTrue(field.waitForExistence(timeout: 20), "composer missing")
+        let send = app.buttons["composer.send"]
+        XCTAssertTrue(send.waitForExistence(timeout: 5), "send button missing")
+
+        let options = XCTMeasureOptions()
+        options.iterationCount = 3
+        measure(metrics: [
+            XCTOSSignpostMetric(subsystem: "com.jayanttang.dsh",
+                                category: "performance",
+                                name: "send.echo"),
+        ], options: options) {
+            field.tap()
+            field.typeText("perf-send")
+            send.tap()
+        }
+    }
 }

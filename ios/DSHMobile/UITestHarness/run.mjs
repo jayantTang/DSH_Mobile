@@ -21,6 +21,7 @@ import { join } from 'node:path'
 
 import { buildPlan, caseMeta } from './case.mjs'
 import { claimedRelayLink, pairDevice, revokeDevice } from './relaypair.mjs'
+import { cleanupScratch, createScratchSession, hostSession } from './scratch-session.mjs'
 import {
   BUILD, BUNDLE_ID, DEFAULT_CASE, DEFAULT_SIM, DERIVED, HERE, PROJECT, ROOT, TEST_DIR,
   appBuild, appVersion, bootSimulator, build, ensureRunDir, environmentFacts, gitCommit, host,
@@ -282,103 +283,6 @@ function exportScreenshots({ resultBundle, shotsDir, manifest }) {
     entry.index = next
   }
   rmSync(target, { recursive: true, force: true })
-}
-
-/// Signs in to the host the way the app does, for the calls a run has to make
-/// outside the app: creating its scratch session, and cleaning up after.
-async function hostSession(live) {
-  const exchange = await fetch(`http://127.0.0.1:${live.port}/?token=${live.token}`, { redirect: 'manual' })
-  const cookie = (exchange.headers.getSetCookie?.() ?? [])[0]?.split(';')[0]
-  const call = async (method, args) => {
-    const response = await fetch(`http://127.0.0.1:${live.port}/api/${method}`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', cookie },
-      body: JSON.stringify({ type: 'client-request', rpcId: `run${Date.now()}`,
-                             method, payload: { args } }),
-    })
-    const body = await response.json()
-    if (!body.result?.ok) throw new Error(`${method}: ${JSON.stringify(body.result?.error)}`)
-    return body.result.value
-  }
-  return { call }
-}
-
-/// Creates the session a case works on, in its own directory.
-async function createScratchSession(live, directory) {
-  const { call } = await hostSession(live)
-  const created = await call('session/create', { request: { cwd: directory, agentPreset: 'standard' } })
-  return created?.sessionId ?? null
-}
-
-/// Deletes every session whose working directory is the scratch one, plus the
-/// workspace registration the app made for it.
-///
-/// Both the raw and the canonical spelling of the directory are matched: the
-/// host canonicalizes a path when it registers a workspace (a `/tmp` scratch
-/// directory is stored as `/private/tmp`), so a cleanup that only knew the path
-/// it was handed silently left behind exactly what the case created. The
-/// registration matters for the same reason — the desktop sidebar shows every
-/// workspace, so a leftover one is an empty group the user has to delete.
-async function cleanupScratch(live, directory) {
-  const { call } = await hostSession(live)
-  const canonical = canonicalPath(directory)
-  const wanted = new Set([directory, canonical])
-  let ids = []
-  try {
-    const list = await call('session/list', { _request: {} })
-    ids = (list.items ?? []).filter((item) => wanted.has(item.cwd ?? '')).map((item) => item.sessionId)
-  } catch { /* fall through: nothing to delete if the list cannot be read */ }
-
-  const projcache = join(homedir(), '.dsh', 'storages', 'session_projcache', 'sessions')
-  for (const id of ids) {
-    // Best effort: this host ignores the un-archive flag, so the id may stay in
-    // the archived set as a pointer to nothing. The files are what matter.
-    await call('workspace/archiveSession', { request: { sessionId: id, archived: false } }).catch(() => {})
-    for (const dir of readdirSync(join(homedir(), '.dsh', 'sessions'))) {
-      rmSync(join(homedir(), '.dsh', 'sessions', dir, id), { recursive: true, force: true })
-    }
-    rmSync(join(projcache, `${id}.json`), { force: true })
-  }
-  console.log(`    清理了 ${ids.length} 个临时会话`)
-  await deleteWorkspacesAt(call, canonical)
-}
-
-/// Removes every workspace registration covering one directory.
-///
-/// Used both after a run (a case that creates a session in an unregistered
-/// directory makes the app register it) and to take back a workspace the runner
-/// registered itself.
-async function deleteWorkspacesAt(call, path) {
-  let deleted = 0
-  for (const id of workspacesAt(path)) {
-    await call('workspace/delete', { request: { workspaceId: id } })
-      .then(() => { deleted += 1 })
-      .catch(() => {})
-  }
-  if (deleted) console.log(`    清理了 ${deleted} 个临时工作区登记`)
-}
-
-/// The workspace registrations covering one directory.
-///
-/// Read from the registry's own file rather than the Remote API: the workspace
-/// inventory is only served on a stream endpoint, and a cleanup that has to
-/// open a mux connection is not worth the ceremony — this file is the same one
-/// the projcache deletions above already touch.
-function workspacesAt(path) {
-  const file = join(homedir(), '.dsh', 'storages', 'workspace.json')
-  try {
-    const doc = JSON.parse(readFileSync(file, 'utf8'))
-    return Object.entries(doc.tables?.workspaces ?? {})
-      .filter(([, record]) => record.path === path)
-      .map(([id]) => id)
-  } catch {
-    return []
-  }
-}
-
-/// A directory path as the host would store it.
-function canonicalPath(path) {
-  try { return realpathSync(path) } catch { return path }
 }
 
 /// Runs a case, optionally over the relay channel, and always cleans up.
