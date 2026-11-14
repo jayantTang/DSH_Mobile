@@ -54,6 +54,7 @@
 		9ED9BBF2609008DFEFF36091 /* 01-s01-sessions.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 0C7BFC73574E79543D850C15 /* 01-s01-sessions.jpg */; };
 		A09E74D5EA969B99C0A165F7 /* ViewportProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 861940A3134E8682E803F451 /* ViewportProbe.swift */; };
 		B0518AF2024B3ED7A8B6D69E /* MainView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4EF2374F99140613AB95F94 /* MainView.swift */; };
+		B17BEF6DD717E1F0029F39A7 /* InfoPlist.strings in Resources */ = {isa = PBXBuildFile; fileRef = 9749FA609FB9585E2BBAE4B2 /* InfoPlist.strings */; };
 		B509D1E6470447266B74DDB1 /* 05-s13-settings-bottom.jpg in Resources */ = {isa = PBXBuildFile; fileRef = CD0B44A76225E2AFBAD5FBA2 /* 05-s13-settings-bottom.jpg */; };
 		B75FFCE70412464BE603765D /* 02-s05-transcript.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 2F85507E7B64052EB03DBD23 /* 02-s05-transcript.jpg */; };
 		B91935A77834532A12794730 /* RelayKit in Frameworks */ = {isa = PBXBuildFile; productRef = 6C425537498F50E6BEA70D2F /* RelayKit */; };
@@ -113,6 +114,7 @@
 		2558A44BDC377ED15DAC741E /* html-long.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = "html-long.html"; sourceTree = "<group>"; };
 		28E7A501E33F5EB150E93E73 /* HangDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HangDiagnostics.swift; sourceTree = "<group>"; };
 		2CB7D506F1616F7800D23383 /* DSHMobile.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = DSHMobile.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		2CF039B62444E328DF56B166 /* zh-Hans */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "zh-Hans"; path = "zh-Hans.lproj/InfoPlist.strings"; sourceTree = "<group>"; };
 		2F85507E7B64052EB03DBD23 /* 02-s05-transcript.jpg */ = {isa = PBXFileReference; lastKnownFileType = image.jpeg; path = "02-s05-transcript.jpg"; sourceTree = "<group>"; };
 		32B9BC960786462DE2001BE2 /* plain-long.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "plain-long.txt"; sourceTree = "<group>"; };
 		3AA46012EB13A751046C49B0 /* StaleFrameInjection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StaleFrameInjection.swift; sourceTree = "<group>"; };
@@ -154,6 +156,7 @@
 		DDA9BDD327889283E04042E1 /* sample.pdf */ = {isa = PBXFileReference; lastKnownFileType = image.pdf; path = sample.pdf; sourceTree = "<group>"; };
 		E5F5073D140579EEB8C1E87F /* long-line.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "long-line.txt"; sourceTree = "<group>"; };
 		E81D7EA8C25588CA49E849FA /* AccountStateSync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountStateSync.swift; sourceTree = "<group>"; };
+		EBC663B1D8DB721D29DF8B8C /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/InfoPlist.strings; sourceTree = "<group>"; };
 		F4EF2374F99140613AB95F94 /* MainView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainView.swift; sourceTree = "<group>"; };
 		F5CF8CBD7D933E73F23B1594 /* MetricKitCrashObserver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetricKitCrashObserver.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -276,6 +279,7 @@
 				44D1D85BFEDF5D6CB6A77E7F /* Coordinator */,
 				CCA541C884ED2B386A42D52E /* Debug */,
 				C55C7180066F396A7D4E2682 /* Diagnostics */,
+				9749FA609FB9585E2BBAE4B2 /* InfoPlist.strings */,
 				6D2CDF5A7074B15EA6CCA73A /* Localizable.strings */,
 				EE2371AD5E7CC7F36B1B1507 /* Support */,
 			);
@@ -539,6 +543,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				1FB45AF0B665AB85E0613141 /* Assets.xcassets in Resources */,
+				B17BEF6DD717E1F0029F39A7 /* InfoPlist.strings in Resources */,
 				871A2F72F9C7064434B2F4B3 /* Localizable.strings in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -629,6 +634,15 @@
 				981C302A6EB2B585792CA2D4 /* zh-Hans */,
 			);
 			name = Localizable.strings;
+			sourceTree = "<group>";
+		};
+		9749FA609FB9585E2BBAE4B2 /* InfoPlist.strings */ = {
+			isa = PBXVariantGroup;
+			children = (
+				EBC663B1D8DB721D29DF8B8C /* en */,
+				2CF039B62444E328DF56B166 /* zh-Hans */,
+			);
+			name = InfoPlist.strings;
 			sourceTree = "<group>";
 		};
 /* End PBXVariantGroup section */

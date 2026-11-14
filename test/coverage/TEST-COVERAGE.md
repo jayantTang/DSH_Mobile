@@ -2,7 +2,7 @@
 
 > 由 `node test/coverage/check-test-coverage.mjs` 生成。✅ 精确测试；🔵 静态策略；✍️ 人工待验收；🟠 只是套件级映射，不得当作已完成。
 
-汇总：共 52 条 · ✅ verified 50 · 🔵 static 2 · ✍️ manual 0 · 🟡 partial 0 · 🟠 suite-only 0 · ❌ gap 0
+汇总：共 57 条 · ✅ verified 49 · 🔵 static 7 · ✍️ manual 0 · 🟡 partial 0 · 🟠 suite-only 1 · ❌ gap 0
 
 | SR | 状态 | 精确测试证据 | 负责套件 | 缺口 |
 |---|---|---|---|---|
@@ -51,10 +51,15 @@
 | SR-06.05 | ✅ verified | `scripts/dev/check-diagnostics.test.mjs`：`agent-secret` | `requirements`、`ios-modules` |  |
 | SR-06.06 | ✅ verified | `ios/DSHMobile/Modules/Core/Tests/UpdateCheckerTests.swift`：`test_a_newer_published_build_raises_the_banner` | `requirements`、`ios-modules` |  |
 | SR-07.01 | ✅ verified | `test/acceptance/09-ipad-layout.md`：`TC-IPAD-09` | `requirements`、`ui-ipad`、`ios-build` |  |
-| SR-07.02 | ✅ verified | `scripts/dev/check-localization.mjs`：`hardcoded-string` | `requirements`、`static-loc` |  |
 | SR-08.01 | ✅ verified | `ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/ChatModelDisruptionTests.swift`：`test_reopening_the_same_session_folds_its_replayed_records_once`<br>`test/acceptance/07-relay-reconnect.md`：`TC-MOB` | `requirements`、`ios-modules` |  |
 | SR-08.02 | ✅ verified | `ios/DSHMobile/DSHKit/Tests/DSHKitTests/RelayFileTransferTests.swift`：`shortDownloadIsRejected`<br>`ios/DSHMobile/DSHKit/Tests/DSHKitTests/WorkspaceFileCacheTests.swift`：`testExistingDropsDebrisWhenTheSizeDisagrees` | `requirements`、`ios-dshkit`、`relay-go` |  |
 | SR-08.03 | ✅ verified | `relay-go/internal/wsapi/wsapi_test.go`：`TestRevokedDeviceTokenCannotOpenASocket` | `requirements`、`relay-go` |  |
 | SR-08.04 | ✅ verified | `relay-go/internal/hub/opacity_test.go`：`TestFramePayloadDoesNotEnterRelayLogs`<br>`scripts/dev/check-diagnostics.test.mjs`：`agent-secret`<br>`scripts/verify/check-relay-tls.mjs`：`plain` | `requirements`、`relay-go`、`scripts` |  |
 | SR-08.05 | ✅ verified | `ios/DSHMobile/DSHMobileUITests/PerformanceBaselineTests.swift`：`testLongTextScrollHitches`<br>`test/performance/check-performance.mjs`：`p95` | `requirements`、`performance` |  |
 | SR-08.06 | ✅ verified | `ios/DSHMobile/DSHMobileTests/SessionAlertsTests.swift`：`testTurnEndRequestCarriesSessionRouteAndIdentifier`<br>`relay-go/internal/wsapi/wsapi_test.go`：`TestANotifyFrameOverTheAgentSocketOnlyPushesTheOfflineDevice`<br>`scripts/verify/check-apns.mjs`：`push-test` | `requirements`、`ios-app-unit` |  |
+| SR-09.01 | 🔵 static | `test/coverage/language-policy.test.mjs`：`language matrix keeps English` | `requirements`、`policy-i18n` | 静态策略检查 |
+| SR-09.02 | 🔵 static | `test/coverage/language-policy.test.mjs`：`permission descriptions exist` | `requirements`、`policy-i18n` | 静态策略检查 |
+| SR-09.03 | 🔵 static | `test/coverage/language-policy.test.mjs`：`English UI values contain no Chinese` | `requirements`、`static-loc`、`i18n-gate` | 静态策略检查 |
+| SR-09.04 | 🟠 suite-only | — | `requirements` | 只有套件级映射，未逐测试 |
+| SR-09.05 | 🔵 static | `scripts/dev/check-localization.mjs`：`missing-key` | `requirements`、`i18n-gate` | 静态策略检查 |
+| SR-09.06 | 🔵 static | `test/coverage/language-policy.test.mjs`：`support matrix and fallback` | `requirements`、`policy-i18n` | 静态策略检查 |

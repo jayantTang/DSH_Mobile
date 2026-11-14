@@ -265,12 +265,6 @@
       "contains": "agent-secret"
     }
   ],
-  "SR-07.02": [
-    {
-      "path": "scripts/dev/check-localization.mjs",
-      "contains": "hardcoded-string"
-    }
-  ],
   "SR-01.07": [
     {
       "path": "test/acceptance/07-relay-reconnect.md",
@@ -343,6 +337,42 @@
     {
       "path": "ios/DSHMobile/DSHMobileUITests/WorkspaceHTMLPreviewTests.swift",
       "contains": "testRenderedPreviewIsPresent"
+    }
+  ],
+  "SR-09.01": [
+    {
+      "path": "test/coverage/language-policy.test.mjs",
+      "contains": "language matrix keeps English",
+      "kind": "static"
+    }
+  ],
+  "SR-09.02": [
+    {
+      "path": "test/coverage/language-policy.test.mjs",
+      "contains": "permission descriptions exist",
+      "kind": "static"
+    }
+  ],
+  "SR-09.03": [
+    {
+      "path": "test/coverage/language-policy.test.mjs",
+      "contains": "English UI values contain no Chinese",
+      "kind": "static"
+    }
+  ],
+  "SR-09.04": [],
+  "SR-09.05": [
+    {
+      "path": "scripts/dev/check-localization.mjs",
+      "contains": "missing-key",
+      "kind": "static"
+    }
+  ],
+  "SR-09.06": [
+    {
+      "path": "test/coverage/language-policy.test.mjs",
+      "contains": "support matrix and fallback",
+      "kind": "static"
     }
   ]
 }

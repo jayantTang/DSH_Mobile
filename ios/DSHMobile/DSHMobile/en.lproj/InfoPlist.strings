@@ -1,0 +1,4 @@
+/* System permission prompts. Keep these in sync with DSHMobile-Info.plist. */
+"NSLocalNetworkUsageDescription" = "Used to connect directly to DSH on your computer over the same Wi-Fi; faster than going through the relay.";
+"NSPhotoLibraryAddUsageDescription" = "Save images to your photo library.";
+"NSCameraUsageDescription" = "Scan the pairing QR code on your computer to connect without typing a code.";

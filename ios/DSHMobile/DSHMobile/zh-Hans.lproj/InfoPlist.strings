@@ -1,0 +1,4 @@
+/* 系统权限提示。与 DSHMobile-Info.plist 保持同步。 */
+"NSLocalNetworkUsageDescription" = "用于在同一 Wi-Fi 下直连你电脑上的 DSH，速度和延迟都优于经公网中转。";
+"NSPhotoLibraryAddUsageDescription" = "保存图片到相册。";
+"NSCameraUsageDescription" = "用于扫描电脑上显示的配对二维码，快速完成连接，无需手动输入。";

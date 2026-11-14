@@ -9,12 +9,12 @@
 "中转地址无效。" = "That relay address is not valid.";
 "扫码配对" = "Scan QR code";
 "配对码" = "Pairing code";
-"扫描电脑端「移动端连接」里的二维码" = "Scan the QR code in the computer's 「移动端连接」 panel";
+"扫描电脑端「移动端连接」里的二维码" = "Scan the QR code in the computer's \"Mobile link\" panel";
 "扫不了码？手动输入配对码" = "Can't scan? Type the pairing code";
 "收起手动输入" = "Hide manual entry";
 "手动输入配对码" = "Type the pairing code";
-"配对码在电脑端 DSH 界面的「移动端连接」里。" = "The pairing code is in the 「移动端连接」 panel of DSH on your computer.";
-"在电脑端 DSH 界面的「移动端连接」里打开二维码。" = "Open the QR code from the 「移动端连接」 panel in DSH on your computer.";
+"配对码在电脑端 DSH 界面的「移动端连接」里。" = "The pairing code is in the \"Mobile link\" panel of DSH on your computer.";
+"在电脑端 DSH 界面的「移动端连接」里打开二维码。" = "Open the QR code from the \"Mobile link\" panel in DSH on your computer.";
 "配对并连接" = "Pair and connect";
 "请输入配对码。" = "Enter the pairing code.";
 "无法从启动令牌换取会话凭据。" = "Could not exchange the start token for session credentials.";
@@ -637,8 +637,8 @@ It is registered as a workspace first, so a new group appears in the desktop sid
 "网络中断，可以再点一次发送" = "The network dropped. You can send it again.";
 
 /* 配对失败分三种原因（中转的 pair/used-code 等），各说清下一步 */
-"这个配对码已经用过了，请在电脑「移动端连接」里点「换一张」，再扫新出现的那张" = "That pairing code has already been used. Tap 换一张 in the computer's 「移动端连接」 panel and scan the new one.";
-"这个配对码已经过期，请在电脑「移动端连接」里点「换一张」，再扫新出现的那张" = "That pairing code has expired. Tap 换一张 in the computer's 「移动端连接」 panel and scan the new one.";
+"这个配对码已经用过了，请在电脑「移动端连接」里点「换一张」，再扫新出现的那张" = "That pairing code has already been used. Tap Regenerate in the computer's \"Mobile link\" panel and scan the new one.";
+"这个配对码已经过期，请在电脑「移动端连接」里点「换一张」，再扫新出现的那张" = "That pairing code has expired. Tap Regenerate in the computer's \"Mobile link\" panel and scan the new one.";
 "配对码不对，请核对电脑上显示的配对码" = "That pairing code is not right. Check the code shown on your computer.";
 
 /* 007：往上翻历史的三态反馈（FR-003/FR-004/FR-036） */

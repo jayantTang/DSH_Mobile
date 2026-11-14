@@ -360,7 +360,7 @@
         "ios/DSHMobile/Modules/**"
       ],
       "requirements": [
-        "SR-07.02"
+        "SR-09.03"
       ],
       "risk": "medium",
       "budget": 60
@@ -505,6 +505,48 @@
       ],
       "risk": "medium",
       "budget": 180
+    },
+    {
+      "id": "policy-i18n",
+      "title": "语言矩阵与权限说明",
+      "layer": "static",
+      "command": [
+        "node",
+        "--test",
+        "test/coverage/language-policy.test.mjs"
+      ],
+      "paths": [
+        "test/coverage/language-policy.test.mjs",
+        "handbook/requirements/details/internationalization.md",
+        "ios/DSHMobile/DSHMobile-Info.plist"
+      ],
+      "requirements": [
+        "SR-09.01",
+        "SR-09.02",
+        "SR-09.06"
+      ],
+      "risk": "medium",
+      "budget": 60
+    },
+    {
+      "id": "i18n-gate",
+      "title": "本地化静态门禁",
+      "layer": "static",
+      "command": [
+        "npm",
+        "run",
+        "check:i18n"
+      ],
+      "paths": [
+        "ios/DSHMobile/DSHMobile/*.lproj/Localizable.strings",
+        "ios/DSHMobile/Modules/**/*.swift"
+      ],
+      "requirements": [
+        "SR-09.03",
+        "SR-09.05"
+      ],
+      "risk": "high",
+      "budget": 120
     }
   ]
 }
