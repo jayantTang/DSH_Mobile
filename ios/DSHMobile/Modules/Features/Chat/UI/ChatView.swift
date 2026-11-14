@@ -471,6 +471,9 @@ public struct ChatView: View {
         )
         .scrollDismissesKeyboard(.interactively)
         .onChange(of: model.sendSignal) {
+            if let trace = model.takePendingSendVisible() {
+                PerformanceTrace.end(trace)
+            }
             isFollowing = true
             scrollToBottom(proxy, force: true)
         }

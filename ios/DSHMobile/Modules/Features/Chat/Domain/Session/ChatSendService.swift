@@ -115,7 +115,6 @@ final class ChatSendService {
         enqueueOptimisticQueue(requestId: requestId, text: text, images: images, mode: mode)
         timeline.echoUserPrompt(requestId: requestId, text: text)
         scrollSignal += 1
-        sendSignal += 1
         // 发送自己的消息一律贴底（spec 009「跟底两态」钦定例外，tasks T017）。
         noteWantsBottom()
         isAwaitingTurnStart = true
@@ -167,7 +166,6 @@ final class ChatSendService {
         draft = ""
         composer.discard(sessionId: owner)
         scrollSignal += 1
-        sendSignal += 1
         // 发送自己的消息一律贴底（spec 009「跟底两态」钦定例外，tasks T017）。
         noteWantsBottom()
         isAwaitingTurnStart = true
@@ -179,10 +177,12 @@ final class ChatSendService {
         }
         let ref = MessageSessionRef(scope: scope, sessionId: owner)
         let requestId = UUID()
-        let trace = PerformanceTrace.begin(.sendEcho)
+        let echo = PerformanceTrace.begin(.sendEcho)
         enqueueOptimisticQueue(requestId: requestId.uuidString, text: text,
                                images: [], mode: mode)
-        PerformanceTrace.end(trace)
+        PerformanceTrace.end(echo)
+        model.pendingSendVisible = PerformanceTrace.begin(.sendVisible)
+        sendSignal += 1
         do {
             _ = try await layer.send(text: text, to: ref, steer: mode == .steer,
                                      requestId: requestId)

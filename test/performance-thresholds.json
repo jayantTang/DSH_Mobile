@@ -1,0 +1,5 @@
+{
+  "session.first-content": { "p95Ms": 5335, "minSamples": 30 },
+  "file.first-page": { "p95Ms": 2938, "minSamples": 30 },
+  "send.visible": { "p95Ms": 100, "minSamples": 3 }
+}

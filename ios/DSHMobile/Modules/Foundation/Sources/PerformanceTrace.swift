@@ -10,6 +10,7 @@ public enum PerformanceTrace {
         case sessionFirstContent = "session.first-content"
         case fileFirstPage = "file.first-page"
         case sendEcho = "send.echo"
+        case sendVisible = "send.visible"
     }
 
     public struct Token {
@@ -27,6 +28,7 @@ public enum PerformanceTrace {
         case .sessionFirstContent: return "session.first-content"
         case .fileFirstPage: return "file.first-page"
         case .sendEcho: return "send.echo"
+        case .sendVisible: return "send.visible"
         }
     }
 

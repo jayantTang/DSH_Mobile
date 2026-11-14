@@ -348,6 +348,14 @@ public final class ChatModel {
     /// where the view should jump back to the bottom even if they had scrolled
     /// away: they are waiting to see their own message land.
     public internal(set) var sendSignal: Int = 0
+    /// 发送回显从入队到“本地消息现身”的待结束 token；由 ChatView 在 sendSignal 变化时收口。
+    var pendingSendVisible: PerformanceTrace.Token?
+
+    /// Takes the pending token exactly once so the view can close the interval.
+    public func takePendingSendVisible() -> PerformanceTrace.Token? {
+        defer { pendingSendVisible = nil }
+        return pendingSendVisible
+    }
 
     /// internal(set)：ChatModel+Follow 的可见性兜底要读 client（T019）。
     private(set) var store: (any LinkService)?

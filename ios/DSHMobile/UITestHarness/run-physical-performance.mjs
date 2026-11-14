@@ -61,7 +61,7 @@ try {
   ], { stdio: 'inherit' })
   if (copied.status === 0 && existsSync(copy)) {
     console.log(`\n样本：${copy}`)
-    console.log(readFileSync(copy, 'utf8').split('\n').filter((line) => line.includes('send.echo')).join('\n'))
+    console.log(readFileSync(copy, 'utf8').split('\n').filter((line) => /send\.(echo|visible)/.test(line)).join('\n'))
   }
 } finally {
   if (sessionId) {

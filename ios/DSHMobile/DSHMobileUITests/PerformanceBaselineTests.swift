@@ -82,7 +82,7 @@ final class PerformanceBaselineTests: XCTestCase {
         measure(metrics: [
             XCTOSSignpostMetric(subsystem: "com.jayanttang.dsh",
                                 category: "performance",
-                                name: "send.echo"),
+                                name: "send.visible"),
         ], options: options) {
             field.tap()
             field.typeText("perf-send")
