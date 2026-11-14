@@ -11,7 +11,7 @@
 | SR-08.03 撤销生效 | covered | `relay-go/internal/wsapi/wsapi_test.go` | 无反向验证其他设备不受影响 |
 | SR-08.04 密钥与内容边界 | covered | `scripts/dev/check-diagnostics.test.mjs`、`relay-go/internal/hub/opacity_test.go`、`relay-go/internal/hub/debugconns_test.go`、`scripts/verify/check-relay-tls.mjs` | 明文拒绝由 Caddy/TLS 承担，未做自动化端口测试 |
 | SR-08.05 关键路径性能基线 | covered | `ios/DSHMobile/DSHMobileUITests/PerformanceBaselineTests.swift`、`test/PERFORMANCE.md`、`test/check-performance.mjs` | 发送指标止于本地消息现身，不含服务端确认 |
-| SR-08.06 通知语义 | covered | `ios/DSHMobile/DSHMobileTests/SessionAlertsTests.swift`、`relay-go/internal/wsapi/wsapi_test.go`、`relay-go/internal/push/push_test.go` | 真机 APNs 投递未验；离线只允许丢失，不承诺必达 |
+| SR-08.06 通知语义 | covered | `ios/DSHMobile/DSHMobileTests/SessionAlertsTests.swift`、`relay-go/internal/wsapi/wsapi_test.go`、`relay-go/internal/push/push_test.go`、`scripts/verify/check-apns.mjs` | 真实 APNs 已由 relay 的 push-test 验证（status 200）；离线只允许丢失，不承诺必达 |
 
 ## 维护规则
 

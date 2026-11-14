@@ -48,6 +48,7 @@
     "check:coverage-all": "node test/generate-coverage-all.mjs && git diff --exit-code -- test/requirements-coverage-all.md",
     "check:performance": "node test/check-performance.mjs",
     "check:relay-tls": "node scripts/verify/check-relay-tls.mjs",
+    "check:apns": "node scripts/verify/check-apns.mjs",
     "review:requirements": "node scripts/dev/review-requirements.mjs",
     "requirements:status": "node scripts/dev/requirements-approval.mjs status",
     "approve:requirements": "node scripts/dev/requirements-approval.mjs approve",

@@ -32,7 +32,7 @@
 
 ## 发布前性能门禁
 
-发布前另跑 `npm run check:relay-tls` 验证公网中转不以明文提供 DLP；真机性能样本拷回后执行 `node test/check-performance.mjs --file /tmp/performance-device.log`。p95 超标或样本不足不得发布；模拟器与 CI 没有真机样本，因此这一步只在发布前做，不进 pre-commit。
+发布前另跑 `npm run check:relay-tls`；需要真机推送时跑 `DSH_APNS_DEVICE=<deviceId> npm run check:apns` 验证公网中转不以明文提供 DLP；真机性能样本拷回后执行 `node test/check-performance.mjs --file /tmp/performance-device.log`。p95 超标或样本不足不得发布；模拟器与 CI 没有真机样本，因此这一步只在发布前做，不进 pre-commit。
 
 ## 完成定义
 

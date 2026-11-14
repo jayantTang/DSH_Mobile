@@ -74,6 +74,7 @@
 		F7A02FF5E4936880C9A7D1F5 /* sample.zip in Resources */ = {isa = PBXBuildFile; fileRef = 95A34AC30999F770A95166D5 /* sample.zip */; };
 		FA9FDA6AB018EF6551789A60 /* Engine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1070BF66610D38AECBC868D4 /* Engine.swift */; };
 		FEAE9151F40D390C6387BBAA /* DSHPluginUI in Frameworks */ = {isa = PBXBuildFile; productRef = D932E691515AB3E150424D07 /* DSHPluginUI */; };
+		FF4FF132BA46B9A3F67FE1FC /* NotificationPermissionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 45B4FA01AD317DBCF3EA3DF2 /* NotificationPermissionTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -105,6 +106,7 @@
 		1070BF66610D38AECBC868D4 /* Engine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Engine.swift; sourceTree = "<group>"; };
 		1A75622327FDA1549409A9E8 /* DSHMobileTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = DSHMobileTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		1F8851C894491769E7244907 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
+		2232208135B87C1A5F831BFD /* NotificationProbeUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = NotificationProbeUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		2558A44BDC377ED15DAC741E /* html-long.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = "html-long.html"; sourceTree = "<group>"; };
 		28E7A501E33F5EB150E93E73 /* HangDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HangDiagnostics.swift; sourceTree = "<group>"; };
 		2CB7D506F1616F7800D23383 /* DSHMobile.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = DSHMobile.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -112,6 +114,7 @@
 		32B9BC960786462DE2001BE2 /* plain-long.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "plain-long.txt"; sourceTree = "<group>"; };
 		3AA46012EB13A751046C49B0 /* StaleFrameInjection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StaleFrameInjection.swift; sourceTree = "<group>"; };
 		3D2E6A407209D2028F58F6E9 /* AppDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDiagnostics.swift; sourceTree = "<group>"; };
+		45B4FA01AD317DBCF3EA3DF2 /* NotificationPermissionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationPermissionTests.swift; sourceTree = "<group>"; };
 		45E21401B44D32394EC4FB5F /* markdown-table.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "markdown-table.md"; sourceTree = "<group>"; };
 		472F8705A8B97119B1C84494 /* ScenePhaseCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScenePhaseCoordinator.swift; sourceTree = "<group>"; };
 		5181A227F65FF2C7077C8088 /* DSHKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = DSHKit; path = DSHKit; sourceTree = SOURCE_ROOT; };
@@ -292,8 +295,17 @@
 				2CB7D506F1616F7800D23383 /* DSHMobile.app */,
 				1A75622327FDA1549409A9E8 /* DSHMobileTests.xctest */,
 				5A1553C09C1116E41C9AF752 /* DSHMobileUITests.xctest */,
+				2232208135B87C1A5F831BFD /* NotificationProbeUITests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		A78089790B3407399B215C2D /* NotificationProbeUITests */ = {
+			isa = PBXGroup;
+			children = (
+				45B4FA01AD317DBCF3EA3DF2 /* NotificationPermissionTests.swift */,
+			);
+			path = NotificationProbeUITests;
 			sourceTree = "<group>";
 		};
 		C368C22A31C8E81DE7B35E83 = {
@@ -303,6 +315,7 @@
 				1CA1570B5E387E6E105ACB13 /* DSHMobile */,
 				365AD0F2F30B133456570156 /* DSHMobileTests */,
 				4C796F3C9DB9CFDFDA9A0642 /* DSHMobileUITests */,
+				A78089790B3407399B215C2D /* NotificationProbeUITests */,
 				30773FEA54AFCB5D2DE67A59 /* Packages */,
 				912E268989438D51A25BFCA8 /* Products */,
 			);
@@ -413,6 +426,23 @@
 			productReference = 1A75622327FDA1549409A9E8 /* DSHMobileTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
+		A40C84BF0F71AFB6186FEEE1 /* NotificationProbeUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 05F1E8EB1837F5EEE9D7F3B7 /* Build configuration list for PBXNativeTarget "NotificationProbeUITests" */;
+			buildPhases = (
+				14450B90234DA213502C1595 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = NotificationProbeUITests;
+			packageProductDependencies = (
+			);
+			productName = NotificationProbeUITests;
+			productReference = 2232208135B87C1A5F831BFD /* NotificationProbeUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 		C00E3C942A3FD798AF77F613 /* DSHMobileUITests */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = AA48A2291FB34FE724625575 /* Build configuration list for PBXNativeTarget "DSHMobileUITests" */;
@@ -468,6 +498,7 @@
 				4BB81B53D2E61171A03AB791 /* DSHMobile */,
 				63C7FC734753E44656F7AF17 /* DSHMobileTests */,
 				C00E3C942A3FD798AF77F613 /* DSHMobileUITests */,
+				A40C84BF0F71AFB6186FEEE1 /* NotificationProbeUITests */,
 			);
 		};
 /* End PBXProject section */
@@ -509,6 +540,14 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		14450B90234DA213502C1595 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				FF4FF132BA46B9A3F67FE1FC /* NotificationPermissionTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		26346BCC5928240B2B315011 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -665,6 +704,22 @@
 			};
 			name = Debug;
 		};
+		854D6042629F362AA89FC9E2 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.jayanttang.dsh.notificationprobe;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
 		99F6C1F2628C42290F832CD1 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = B9260874C4B5CBABBA0027B6 /* Config.xcconfig */;
@@ -691,6 +746,22 @@
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;
+		};
+		CB0078AC3CCD6B93994104AD /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.jayanttang.dsh.notificationprobe;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
 		};
 		D07F0CE6B6CFEAE7498ED54A /* OTA */ = {
 			isa = XCBuildConfiguration;
@@ -921,6 +992,22 @@
 			};
 			name = Debug;
 		};
+		E88F5D68B0FF0032A826F1D9 /* OTA */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.jayanttang.dsh.notificationprobe;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = OTA;
+		};
 		FE7E693A97B14E534BC770CC /* OTA */ = {
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = B9260874C4B5CBABBA0027B6 /* Config.xcconfig */;
@@ -951,6 +1038,16 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		05F1E8EB1837F5EEE9D7F3B7 /* Build configuration list for PBXNativeTarget "NotificationProbeUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				854D6042629F362AA89FC9E2 /* Debug */,
+				E88F5D68B0FF0032A826F1D9 /* OTA */,
+				CB0078AC3CCD6B93994104AD /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
 		A19ED1FDA539B2D8D1CAACB2 /* Build configuration list for PBXProject "DSHMobile" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

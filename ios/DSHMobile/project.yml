@@ -133,6 +133,16 @@ targets:
     dependencies:
       - target: DSHMobile
 
+  NotificationProbeUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: NotificationProbeUITests
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.jayanttang.dsh.notificationprobe
+
 schemes:
   DSHMobile:
     build:
@@ -149,3 +159,10 @@ schemes:
         - DSHMobileUITests
     archive:
       config: Release
+  NotificationProbe:
+    build:
+      targets:
+        NotificationProbeUITests: test
+    test:
+      targets:
+        - NotificationProbeUITests
