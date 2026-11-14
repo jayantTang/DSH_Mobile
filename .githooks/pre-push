@@ -12,7 +12,7 @@ command -v node >/dev/null 2>&1 || { echo "[pre-push] 找不到 node" >&2; exit 
 
 echo "[pre-push 1/2] 需求覆盖矩阵"
 node test/check-coverage.mjs || exit 1
-npm run check:coverage-all || exit 1
+npm run check:test-coverage || exit 1
 
 base="$(git merge-base HEAD '@{upstream}' 2>/dev/null || git merge-base HEAD origin/main 2>/dev/null || true)"
 if [ -z "$base" ]; then

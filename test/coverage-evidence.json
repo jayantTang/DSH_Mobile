@@ -1,0 +1,33 @@
+{
+  "SR-03.06": [
+    { "path": "test/acceptance/08-text-wrap.md", "contains": "TC-MOB-201" }
+  ],
+  "SR-07.01": [
+    { "path": "test/acceptance/09-ipad-layout.md", "contains": "TC-IPAD-09" }
+  ],
+  "SR-08.01": [
+    { "path": "ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/ChatModelDisruptionTests.swift", "contains": "test_reopening_the_same_session_folds_its_replayed_records_once" },
+    { "path": "test/acceptance/07-relay-reconnect.md", "contains": "TC-MOB" }
+  ],
+  "SR-08.02": [
+    { "path": "ios/DSHMobile/DSHKit/Tests/DSHKitTests/RelayFileTransferTests.swift", "contains": "shortDownloadIsRejected" },
+    { "path": "ios/DSHMobile/DSHKit/Tests/DSHKitTests/WorkspaceFileCacheTests.swift", "contains": "testExistingDropsDebrisWhenTheSizeDisagrees" }
+  ],
+  "SR-08.03": [
+    { "path": "relay-go/internal/wsapi/wsapi_test.go", "contains": "TestRevokedDeviceTokenCannotOpenASocket" }
+  ],
+  "SR-08.04": [
+    { "path": "relay-go/internal/hub/opacity_test.go", "contains": "TestFramePayloadDoesNotEnterRelayLogs" },
+    { "path": "scripts/dev/check-diagnostics.test.mjs", "contains": "agent-secret" },
+    { "path": "scripts/verify/check-relay-tls.mjs", "contains": "plain" }
+  ],
+  "SR-08.05": [
+    { "path": "ios/DSHMobile/DSHMobileUITests/PerformanceBaselineTests.swift", "contains": "testLongTextScrollHitches" },
+    { "path": "test/check-performance.mjs", "contains": "p95" }
+  ],
+  "SR-08.06": [
+    { "path": "ios/DSHMobile/DSHMobileTests/SessionAlertsTests.swift", "contains": "testTurnEndRequestCarriesSessionRouteAndIdentifier" },
+    { "path": "relay-go/internal/wsapi/wsapi_test.go", "contains": "TestANotifyFrameOverTheAgentSocketOnlyPushesTheOfflineDevice" },
+    { "path": "scripts/verify/check-apns.mjs", "contains": "push-test" }
+  ]
+}

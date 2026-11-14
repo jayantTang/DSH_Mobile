@@ -102,8 +102,9 @@ test/.venv/bin/python ios/DSHMobile/UITestHarness/test_report.py    # 每条规�
 | `PERFORMANCE.md` | 性能基线口径：场景、起止点、采样与阈值 | ✅ |
 | `check-performance.mjs` | 真机性能样本硬门禁 | ✅ |
 | `requirements-coverage.md` | IR-08 逐测试覆盖矩阵 | ✅ |
-| `requirements-coverage-all.md` | 全部 SR 的套件级覆盖矩阵（生成） | ✅ |
-| `generate-coverage-all.mjs` | 生成全量套件覆盖矩阵 | ✅ |
+| `TEST-COVERAGE.md` | **全量需求测试覆盖**：逐测试证据、套件级、缺口（生成） | ✅ |
+| `coverage-evidence.json` | 逐测试证据的机器可读映射 | ✅ |
+| `check-test-coverage.mjs` | 生成/校验全量覆盖表，支持 `--strict` | ✅ |
 | `check-coverage.mjs` | 覆盖矩阵路径与 SR 一致性检查 | ✅ |
 | `run-ipad.sh` | iPad 布局验收入口 | ✅ |
 | `screens.md` | 可直达页面与根标识 | ✅ |
