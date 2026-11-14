@@ -2,6 +2,7 @@
 import DSHDesign
 import DSHKit
 import SwiftUI
+import UIKit
 import DSHFilesDomain
 
 /// A read-only reader for one workspace file.
@@ -273,8 +274,10 @@ public struct WorkspaceFileReaderView: View {
                 }
                 .padding(.vertical, DSHTheme.Spacing.tight)
                 .frame(maxWidth: wraps ? .infinity : nil, alignment: .leading)
+                .frame(width: wraps ? nil : textContentWidth(file: file), alignment: .leading)
             }
             .background(DSHTheme.codeBackground)
+            .accessibilityIdentifier("files.reader.scroll")
             footer(file: file)
         }
     }
@@ -341,6 +344,19 @@ public struct WorkspaceFileReaderView: View {
             .padding(.vertical, DSHTheme.Spacing.hairline)
         }
         .background(DSHTheme.layer1)
+    }
+
+    /// 关闭换行时给内容一个明确的宽度。只靠 Text 的 fixedSize 时，LazyVStack 仍可能
+    /// 按 ScrollView 视口宽度布局，横向滚动器就没有可滚的内容；这里按当前页最长行量一次。
+    private func textContentWidth(file: WorkspaceFileText) -> CGFloat {
+        let font = UIFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+        var widest: CGFloat = 0
+        for line in rendered {
+            let measured = NSMutableAttributedString(attributedString: NSAttributedString(line))
+            measured.addAttribute(.font, value: font, range: NSRange(location: 0, length: measured.length))
+            widest = max(widest, measured.size().width)
+        }
+        return ceil(widest + gutterWidth(total: file.lastLine) + DSHTheme.Spacing.tight * 3 + 1)
     }
 
     private func gutterWidth(total: Int) -> CGFloat {
