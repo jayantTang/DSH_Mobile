@@ -21,6 +21,7 @@
 		39D20051F7BFB821216011AA /* ViewportAutomation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65666857828618B5B0230B7B /* ViewportAutomation.swift */; };
 		3C6C257E8B9009441EB889D5 /* AppLifecyclePlanTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77D33CFF8AF54B0B3A7015D8 /* AppLifecyclePlanTests.swift */; };
 		4BCC3AC591DDA1FC206B6953 /* DSHChatUI in Frameworks */ = {isa = PBXBuildFile; productRef = 8FFC9919C5D85B9504971544 /* DSHChatUI */; };
+		4D750ED904AB09C32AFA208D /* LocaleFormattingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E16D893834CB6F29C6359CC3 /* LocaleFormattingTests.swift */; };
 		528649FF16DB248D19D3ECE0 /* DSHDesign in Frameworks */ = {isa = PBXBuildFile; productRef = C30B2B4208944C0D7968EBDD /* DSHDesign */; };
 		5600925B1EB097B5517B5A74 /* AttachmentSelfHealingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C602C93E6FC2C38B9758D0C /* AttachmentSelfHealingTests.swift */; };
 		5826DC1A669479F692A19E57 /* 06-s16-connections.jpg in Resources */ = {isa = PBXBuildFile; fileRef = CBF51C1DC65A93F8FCAEE141 /* 06-s16-connections.jpg */; };
@@ -168,6 +169,7 @@
 		D1EB5F02211A37D06CE0F9EE /* Modules */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Modules; path = Modules; sourceTree = SOURCE_ROOT; };
 		D2814EB65E020031427D4B48 /* P13ResumeProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = P13ResumeProbe.swift; sourceTree = "<group>"; };
 		DDA9BDD327889283E04042E1 /* sample.pdf */ = {isa = PBXFileReference; lastKnownFileType = image.pdf; path = sample.pdf; sourceTree = "<group>"; };
+		E16D893834CB6F29C6359CC3 /* LocaleFormattingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocaleFormattingTests.swift; sourceTree = "<group>"; };
 		E5552F28175B9536F7D343E4 /* pt-BR */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "pt-BR"; path = "pt-BR.lproj/InfoPlist.strings"; sourceTree = "<group>"; };
 		E5F5073D140579EEB8C1E87F /* long-line.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "long-line.txt"; sourceTree = "<group>"; };
 		E81D7EA8C25588CA49E849FA /* AccountStateSync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountStateSync.swift; sourceTree = "<group>"; };
@@ -258,6 +260,7 @@
 				77D33CFF8AF54B0B3A7015D8 /* AppLifecyclePlanTests.swift */,
 				6C602C93E6FC2C38B9758D0C /* AttachmentSelfHealingTests.swift */,
 				08004ADE0CA0A0194E46BA3F /* HostSmokeTests.swift */,
+				E16D893834CB6F29C6359CC3 /* LocaleFormattingTests.swift */,
 				0C6A0DDA491A25BCA7B164C2 /* SessionAlertsTests.swift */,
 			);
 			path = DSHMobileTests;
@@ -632,6 +635,7 @@
 				3C6C257E8B9009441EB889D5 /* AppLifecyclePlanTests.swift in Sources */,
 				5600925B1EB097B5517B5A74 /* AttachmentSelfHealingTests.swift in Sources */,
 				D009A7D193647A0DB5BF4DF9 /* HostSmokeTests.swift in Sources */,
+				4D750ED904AB09C32AFA208D /* LocaleFormattingTests.swift in Sources */,
 				5F8E91A4E9CD9B38F659A925 /* SessionAlertsTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

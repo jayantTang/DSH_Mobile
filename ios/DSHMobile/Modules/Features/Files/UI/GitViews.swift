@@ -824,7 +824,9 @@ public enum GitDateText {
 
     private static let short: DateFormatter = {
         let formatter = DateFormatter()
-        formatter.dateFormat = "MM-dd HH:mm"
+        // Let the user's locale choose month/day order and the clock convention.
+        formatter.dateStyle = .short
+        formatter.timeStyle = .short
         return formatter
     }()
 

@@ -847,14 +847,13 @@ function resolveLocale(ctx) {
     hostIds.add('zh')
     hostIds.add('en')
   }
-  const wanted = browserLanguages().map(baseLanguage).find((base) => base) ?? ''
+  const wanted = browserLanguages().find((tag) => baseLanguage(tag)) ?? ''
+  const wantedBase = baseLanguage(wanted)
   const hostPanel = hostActive ? panelLocaleOf(hostActive) : null
   const browserPanel = wanted ? panelLocaleOf(wanted) : null
-  // 宿主的语言表里有浏览器要的语言：听宿主的——用户可能在设置里显式选过别的语言。
-  if (hostPanel && (!wanted || hostIds.has(wanted))) return hostPanel
-  // 只有宿主还停在默认的 en（说明没人动过语言设置）、自身又表达不了浏览器要的语言时，
-  // 才由面板补一档。宿主被显式设成中文后，中文客户端的西语浏览器也不再抢面板。
   const hostLeftDefault = baseLanguage(hostActive) === 'en'
+  // 宿主还停在默认 en 时，面板可以补浏览器明确要的语言（含 zh-Hant / pt-BR 这类带地区的档）。
+  if (hostPanel && (!wantedBase || (hostIds.has(wantedBase) && !hostLeftDefault))) return hostPanel
   if (hostPanel && !(hostLeftDefault && browserPanel)) return hostPanel
   return browserPanel ?? hostPanel ?? 'zh'
 }

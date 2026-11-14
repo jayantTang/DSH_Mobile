@@ -364,7 +364,16 @@
       "kind": "static"
     }
   ],
-  "SR-09.04": [],
+  "SR-09.04": [
+    {
+      "path": "ios/DSHMobile/DSHMobileTests/LocaleFormattingTests.swift",
+      "contains": "testGitShortDateIsNotTheOldFixedPattern"
+    },
+    {
+      "path": "ios/DSHMobile/Modules/Features/Settings/Tests/DomainTests/SettingsValueTextTests.swift",
+      "contains": "test_number_text_and_pretty_print"
+    }
+  ],
   "SR-09.05": [
     {
       "path": "scripts/dev/check-localization.mjs",

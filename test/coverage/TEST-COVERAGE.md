@@ -2,7 +2,7 @@
 
 > 由 `node test/coverage/check-test-coverage.mjs` 生成。✅ 精确测试；🔵 静态策略；✍️ 人工待验收；🟠 只是套件级映射，不得当作已完成。
 
-汇总：共 57 条 · ✅ verified 51 · 🔵 static 5 · ✍️ manual 0 · 🟡 partial 0 · 🟠 suite-only 1 · ❌ gap 0
+汇总：共 57 条 · ✅ verified 52 · 🔵 static 5 · ✍️ manual 0 · 🟡 partial 0 · 🟠 suite-only 0 · ❌ gap 0
 
 | SR | 状态 | 精确测试证据 | 负责套件 | 缺口 |
 |---|---|---|---|---|
@@ -60,6 +60,6 @@
 | SR-09.01 | ✅ verified | `ios/DSHMobile/DSHMobileUITests/LocalizationSmokeTests.swift`：`testEachShippedLocaleAppearsAtRuntime` | `requirements`、`policy-i18n`、`ui-locale-smoke` |  |
 | SR-09.02 | 🔵 static | `test/coverage/language-policy.test.mjs`：`permission descriptions exist` | `requirements`、`policy-i18n` | 静态策略检查 |
 | SR-09.03 | 🔵 static | `test/coverage/language-policy.test.mjs`：`English UI values contain no Chinese`<br>`test/coverage/locale-parity.test.mjs`：`all shipped locales have the same Localizable key set` | `requirements`、`static-loc`、`policy-i18n`、`i18n-gate` | 静态策略检查 |
-| SR-09.04 | 🟠 suite-only | — | `requirements` | 只有套件级映射，未逐测试 |
+| SR-09.04 | ✅ verified | `ios/DSHMobile/DSHMobileTests/LocaleFormattingTests.swift`：`testGitShortDateIsNotTheOldFixedPattern`<br>`ios/DSHMobile/Modules/Features/Settings/Tests/DomainTests/SettingsValueTextTests.swift`：`test_number_text_and_pretty_print` | `requirements` |  |
 | SR-09.05 | 🔵 static | `scripts/dev/check-localization.mjs`：`missing-key` | `requirements`、`i18n-gate` | 静态策略检查 |
 | SR-09.06 | ✅ verified | `ios/DSHMobile/DSHMobileUITests/LocalizationSmokeTests.swift`：`testEachShippedLocaleAppearsAtRuntime` | `requirements`、`policy-i18n`、`ui-locale-smoke` |  |

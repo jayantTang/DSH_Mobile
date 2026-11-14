@@ -25,7 +25,6 @@ final class LocalizationSmokeTests: XCTestCase {
             app.launchArguments = [
                 "-AppleLanguages", "(\(item.id))",
                 "-AppleLocale", item.locale,
-                "-DSHDemoMode",
             ]
             app.launch()
             let found = item.anchors.contains { anchor in
