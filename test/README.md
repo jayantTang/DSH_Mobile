@@ -100,6 +100,8 @@ test/.venv/bin/python ios/DSHMobile/UITestHarness/test_report.py    # 每条规�
 | `REPORT-CONTRACT.md` | **报告契约**：章节、`review.md` 写法、lint 规则 | ✅ |
 | `CAPABILITY-GAPS.md` | 测试能力缺陷记录（做不到 / 测不准的地方） | ✅ |
 | `PERFORMANCE.md` | 性能基线口径：场景、起止点、采样与阈值 | ✅ |
+| `requirements-coverage.md` | 需求—测试覆盖矩阵 | ✅ |
+| `check-coverage.mjs` | 覆盖矩阵路径与 SR 一致性检查 | ✅ |
 | `screens.md` | 可直达页面与根标识 | ✅ |
 | `cases/fixed/` | 固定用例，只增不改；每个用例两个文件：`序号-中文标题.md` + 同名 `.steps` | ✅ |
 | `cases/current/` | 本次任务的临时用例 | ✅（随任务结束清理） |

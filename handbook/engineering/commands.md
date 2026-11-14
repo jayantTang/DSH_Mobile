@@ -38,6 +38,7 @@ node scripts/dev/asc-submit.mjs status|submit # 上架收尾与提交审核
 
 # 测试选择：清单在 test/suites.json
 node test/select.mjs --req SR-03.06            # 按需求选套件
+node test/check-coverage.mjs                   # 校验需求—测试覆盖矩阵
 node test/select.mjs --affected --run          # 按改动选择并执行
 
 # 探针
