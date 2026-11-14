@@ -12,11 +12,13 @@
 6. iOS 改动必须先在仿真器实跑并截图确认后才发布；视觉改动逐屏核对。
 7. 不得删除或改写 `~/.dsh/` 下的真实会话；单测把 `DSH_HOME` 指向临时目录。
 8. 需求关键层变更先跑 `npm run review:requirements`，冲突自己修；只把通过自审的变更交 owner。owner 同意后用 `npm run approve:requirements` 记录；pre-commit 缺记录会拒绝提交。
+9. 任何产品功能或行为的修改、新增诉求，先做需求影响审查：与现有需求冲突时交 owner 决策；需求空白时先补需求并审批；需求门槛通过后才改实现。实现与需求不一致时停止并汇报，不得自行放宽。
 
 ## 路由
 
 | 任务 | 先读 |
 |---|---|
+| 任何修改或新增诉求 | 先按 `handbook/process/workflow.md` 做需求影响审查；冲突交 owner，空白先补需求 |
 | 改用户可见功能 | `handbook/requirements/requirements.md` 对应条目、`handbook/requirements/details/` |
 | 设计、实现、验证流程 | `handbook/process/workflow.md` |
 | 测试、门禁、完成判定 | `handbook/process/quality.md` |

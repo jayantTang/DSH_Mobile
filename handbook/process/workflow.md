@@ -9,12 +9,15 @@
 - 技能源文件在 `skills/<name>/SKILL.md`；`.dsh/` 不入库，克隆后执行 `./scripts/install/link-project-skills.sh` 建立项目级链接。DSH 不监视该目录，修改 skill 后按环境文档重启。
 - 改功能前先读 `handbook/requirements/` 对应条目；改测试与门禁前先读 `handbook/process/quality.md`。
 
-## 需求关键层审批
+## 需求先行与审批
 
-`handbook/requirements/` 下的 `product.md`、`requirements.md` 与 `details/*.md` 是需求关键层，变更必须经 owner 批准。
+任何产品功能或行为的修改、新增诉求，先做需求影响审查，再决定是否进入实现。
 
-1. 改完先跑 `npm run review:requirements`：程序自动校验编号、层级、AR 父级、必填字段、细节文档引用与链接。发现冲突由 agent 直接修，修完再跑，不把冲突交给 owner。
-2. 自审通过后，只把变更清单交给 owner；owner 只决定是否保存。owner 明确同意后，以 owner 原话记录：
-   `npm run approve:requirements -- --owner-approved "<owner 的原话>"`
-3. `git commit` 时 pre-commit 校验暂存区文件 hash 与审批记录；任何改动导致 hash 变化，必须重新审批。
-4. 审批台账在 `handbook/history/approvals.jsonl`（不入库）。程序只校验结构与 hash，语义冲突仍需 owner 阅读。
+1. 对照 `handbook/requirements/requirements.md` 找出相关 IR/SR/AR。
+2. **冲突**：现有需求与诉求矛盾或不允许该行为时，停止实现，列出冲突点与可选处理，交 owner 决策；未决策前不改代码。
+3. **空白**：没有对应需求时，先补 IR/SR/AR 与必要的 details；跑 `npm run review:requirements`，冲突自己修；自审通过后只把变更清单交 owner，owner 同意保存后运行 `npm run approve:requirements -- --owner-approved "<owner 的原话>"` 并提交需求。
+4. **已覆盖**：需求已允许该行为时，不改需求，按对应条目实现。
+5. 只有需求门槛通过（需求已批准保存，或确认无需改需求）后，才改实现；提交时 pre-commit 校验需求审批 hash。
+6. 实现完成后逐条对照需求验收；实现与需求不一致时停止，向 owner 汇报，由 owner 决定改需求还是改实现，不得自行放宽需求。
+
+审批台账在 `handbook/history/approvals.jsonl`（不入库）。程序只校验结构与 hash，语义冲突由 owner 决策。
