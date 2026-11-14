@@ -18,7 +18,7 @@ import Foundation
 /// 判定侧有三处，缺一不可：
 ///   * 本文件写 `switch.stale-render` 探针行（`ChatProbe.shared.probeNote`）；
 ///   * App 侧收到这一行时顺手存一张整屏现场图（`ViewportProbe.captureForAnomaly`）；
-///   * `test/tools/run.mjs` 的 `probeVerdicts` 据此判该轮 fail，用例判据里写明
+///   * `ios/DSHMobile/UITestHarness/run.mjs` 的 `probeVerdicts` 据此判该轮 fail，用例判据里写明
 ///     "本轮不得出现 `switch.stale-render`"。
 @MainActor
 enum StaleRenderWatch {

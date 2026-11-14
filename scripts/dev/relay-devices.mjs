@@ -3,7 +3,7 @@
 //
 // 为什么不是「记得手动撤销」：配对码是一次性的，谁 claim 谁才知道 device id，
 // 所以只有跑它的那一方能撤销自己。历史上每次仿真器运行都在中转上留一行
-// `DSH-Test`（见 test/tools/relaypair.mjs 的文件头），用户最后要自己去手机上删。
+// `DSH-Test`（见 ios/DSHMobile/UITestHarness/relaypair.mjs 的文件头），用户最后要自己去手机上删。
 // 这里把「清扫」做成一条命令，并挂进跑用例的前置步骤：谁留下谁负责，留不下就没人要清。
 //
 // 撤销要凭一个同属该 agent 的设备 token，所以本脚本先配一个一次性的 `DSH-Sweep`，
@@ -20,14 +20,14 @@
 // 而仿真器/探针/用例都按 dsh 侧的名字登记（DSH-Test / DSH-Probe / DSH-ListCheck …）。
 // 真实设备因此不会被误撤。
 //
-// **唯一豁免：`DSH-Test`。** owner 在仿真器上常驻这一台（`test/tools/context.mjs`
+// **唯一豁免：`DSH-Test`。** owner 在仿真器上常驻这一台（`ios/DSHMobile/UITestHarness/context.mjs`
 // 也按这个名字挑机器），每跑一次用例就把它撤掉等于每次都要重新配对。豁免按
 // **精确名字**匹配，不是 `DSH-` 前缀的放宽——`DSH-Test-2`、`DSH-TestProbe`、
 // 任何别的 `DSH-*` 都照撤不误，否则这条例外会顺着前缀长成一个洞。
 //
 // 用 `DSH_SWEEP_KEEP` 覆盖时要自己负责：名字用逗号分隔，同样按精确匹配。
 
-import { pairDevice, listDevices, revokeDevice, identity } from '../../test/tools/relaypair.mjs'
+import { pairDevice, listDevices, revokeDevice, identity } from '../../ios/DSHMobile/UITestHarness/relaypair.mjs'
 
 const SWEEP_NAME = 'DSH-Sweep'
 const DEBUG_NAME = /^DSH-/

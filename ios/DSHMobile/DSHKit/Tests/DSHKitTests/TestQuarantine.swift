@@ -2,7 +2,7 @@ import DSHKit
 import Foundation
 
 /// `test/.quarantine.json` 的读取口（与 UI 用例运行器读的是同一份名单：
-/// `test/tools/context.mjs` 的 `quarantine()`）。
+/// `ios/DSHMobile/UITestHarness/context.mjs` 的 `quarantine()`）。
 ///
 /// 为什么集成测试也要读它：本机真实数据里存在宿主**打不开**的会话（当前是 v0 格式、
 /// 宿主的 v0→v1 迁移拒收的那批）。集成测试自己挑会话时不看名单，就会一直挑中它们——

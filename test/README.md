@@ -1,7 +1,8 @@
-# test/ —— 仿真器用例测试
+# test/ —— 测试控制面
 
 > 面向：实现者 · 状态：stable · 最近核对：2026-09-20
 
+`test/` 只放执行入口、套件清单、用例列表与共享契约数据；驱动与报告代码靠近被测模块。
 用例是结构化中文，测试者（AI）按用例在仿真器里执行、看截图、给判定。
 规则见 `RULES.md`，**报告必须长什么样见 `REPORT-CONTRACT.md`**，页面清单见 `screens.md`。
 通用测试标准（用例怎么写、证据要到什么程度、四态怎么判）在全局 skill
@@ -39,7 +40,7 @@
 DSH_CONNECT=relay ./test/run.sh run test/cases/fixed/01-全部独立页面逐屏核对.md
 ```
 
-运行器自己配对、跑完自己撤销（`test/tools/relaypair.mjs`）：配对码持久且可反复认领，但**只有
+运行器自己配对、跑完自己撤销（`ios/DSHMobile/UITestHarness/relaypair.mjs`）：配对码持久且可反复认领，但**只有
 认领方拿得到 device id**，所以让 App 去领就等于没人能撤销——以前每跑一轮，用户设备列表里就多一行
 `DSH-Test`。现在用的是「先领码 → 把凭据交给 App → `finally` 里撤销」，撤销失败会红字提醒
 到手机上手删。
@@ -47,7 +48,7 @@ DSH_CONNECT=relay ./test/run.sh run test/cases/fixed/01-全部独立页面逐屏
 lint 自己也有测试——改了 `report.py` 的规则就跑一遍：
 
 ```bash
-test/.venv/bin/python test/tools/test_report.py    # 每条规则一个反例，全部通过才算可用
+test/.venv/bin/python ios/DSHMobile/UITestHarness/test_report.py    # 每条规则一个反例，全部通过才算可用
 ```
 
 ## 测试术语（四维度）与入口归属
@@ -81,7 +82,7 @@ test/.venv/bin/python test/tools/test_report.py    # 每条规则一个反例，
 | `mail` `pytest` | 邮件服务（信件线程、通知投递） | `mail/tests`、`mail/api.py`、`mail/store.py` | 信件读写、未读、团队收件箱、通知投递、部署物 |
 | 手机侧收件箱测试 | 邮件服务 × 手机 iOS | `ios/DSHMobile/Modules/Features/Feedback/Tests/DomainTests`、`ios/DSHMobile/DSHKit/Tests/DSHKitTests/RelayFeedbackTests.swift` | 信件解析、未读与已读、回信组合 |
 | `scripts/**/*.test.mjs` | 非产品组件：仓库工具链 | `scripts/dev/*.test.mjs`、`scripts/release/*.test.mjs` | 重启、档案对等、插件热更、调试设备清扫 |
-| `test/cases/**` | 手机 iOS × 中转服务 × 连接器 × DSH 本体（端到端） | `test/cases/`、`test/tools/` | 真机形态界面、手势、真实链路；同时充当 `ios-app × l1` 的逐屏核对证据 |
+| `test/cases/**` | 手机 iOS × 中转服务 × 连接器 × DSH 本体（端到端） | `test/cases/`、`ios/DSHMobile/UITestHarness/` | 真机形态界面、手势、真实链路；同时充当 `ios-app × l1` 的逐屏核对证据 |
 | `npm run lane:l1 -- run --scenario …` 的宿主场景 | DSH 本体（命令行 web 版宿主）× 连接器（插件挂载） | `plugins/mobile-link/lib/dsh-client.js`、`scripts/install/install-plugin.sh` | 起停、插件挂载、路由可达 |
 | 桌面版宿主场景（人工验收） | DSH 本体（官方桌面版宿主） | `plugins/mobile-link/lib/index.js`、`scripts/install/install-all.sh`、`scripts/dev/profile-parity*.mjs` | 安装、档案对等、安装路径；L1/L2 为 `not-applicable`，没有自动渠道 |
 | 13 个 `check:*` | 非产品组件：仓库静态规则（`check:i18n` 另涉手机 iOS 文案与翻译表） | `scripts/dev/check-*.mjs` 等 | 本地化、分层、契约、文档、结构、矩阵 |
@@ -92,18 +93,31 @@ test/.venv/bin/python test/tools/test_report.py    # 每条规则一个反例，
 
 | 路径 | 内容 | 进 git |
 |---|---|---|
+| `run.sh` | 仿真器测试唯一入口 | ✅ |
+| `suites.json` | 套件清单：层级、命令、路径、需求、预算 | ✅ |
+| `select.mjs` | 按需求或改动文件选择套件 | ✅ |
 | `RULES.md` | 判定规则，用户维护 | ✅ |
 | `REPORT-CONTRACT.md` | **报告契约**：章节、`review.md` 写法、lint 规则 | ✅ |
 | `CAPABILITY-GAPS.md` | 测试能力缺陷记录（做不到 / 测不准的地方） | ✅ |
 | `screens.md` | 可直达页面与根标识 | ✅ |
 | `cases/fixed/` | 固定用例，只增不改；每个用例两个文件：`序号-中文标题.md` + 同名 `.steps` | ✅ |
-| `fixtures/` | 用例要用到的固定输入（如报告 fixture 与它的预览图） | ✅ |
-
-`fixtures/` 里的报告是某次真实运行的副本（`report.html` 改名 + `media/` 一起拷），
-复制方法：把 `test/runs/<运行>/report.html` 与 `media/` 拷进 `test/fixtures/`，
-HTML 里的 `src='media/…'` 保持不动即可。这样做是为了让用例不绑死在某次运行的目录上。
 | `cases/current/` | 本次任务的临时用例 | ✅（随任务结束清理） |
-| `tools/` | 执行器（见下） | ✅ |
+| `acceptance/` | 验收场景列表 | ✅ |
+| `contract/` | 跨 Go/JS/Python 共享的契约向量，属数据不是代码 | ✅ |
+| `ios/DSHMobile/UITestHarness/` | 驱动、截图、报告代码 | ✅ |
+| `ios/DSHMobile/DSHMobileUITests/Fixtures/` | UI 用例夹具 | ✅ |
+
+`test/` 不再放执行器代码；原来的 `test/tools/` 已移到 `ios/DSHMobile/UITestHarness/`，
+UI 夹具已移到 `ios/DSHMobile/DSHMobileUITests/Fixtures/`。模块单测仍在各自的 `Tests/` 下。
+
+`Fixtures/` 里的报告是某次真实运行的副本（`report.html` 改名 + `media/` 一起拷），
+复制方法：把 `test/runs/<运行>/report.html` 与 `media/` 拷进 `ios/DSHMobile/DSHMobileUITests/Fixtures/`，
+HTML 里的 `src='media/…'` 保持不动即可。这样做是为了让用例不绑死在某次运行的目录上。
+
+### 运行产物
+
+| 路径 | 内容 | 进 git |
+|---|---|---|
 | `runs/<年月日-时分>/` | 每次运行 | ❌ |
 | `runs/<运行>/report.html` | **给人看的报告**（截图已内嵌，单文件可读） | ❌ |
 | `runs/<运行>/shots/` | 原图 | ❌ |
@@ -112,25 +126,33 @@ HTML 里的 `src='media/…'` 保持不动即可。这样做是为了让用例�
 | `runs/<运行>/detail/` | 中间产物：xcresult、事件流、用例翻译、像素明细 | ❌ |
 | `.venv/`、`.build/` | 标注环境与中间文件 | ❌ |
 
-> **`fixtures/media/` 与 `docs/artifacts/screenshots/` 不入库。** 那些图都是从真机会话截的，
+> **`Fixtures/media/` 与 `docs/artifacts/screenshots/` 不入库。** 那些图都是从真机会话截的，
 > 含家目录、设备名与项目名，已从仓库移除并写进 `.gitignore`，只在作者本机保留。
 > 新克隆的仓库里 fixture 报告仍可打开、文字判定照常通过，只是图片位置显示为缺图；
 > 要补齐就按上面的方法拷一份自己的 `media/` 进去。
 
+按改动选择：
+
+```bash
+node test/select.mjs --req SR-03.06
+node test/select.mjs --affected ios/DSHMobile/Modules/Features/Files/UI/WorkspaceFileReaderView.swift
+node test/select.mjs --affected --run
+```
+
 ## 怎么跑起来的
 
-1. `tools/context.mjs` 读本机 DSH 端点（`$DSH_HOME/mobile-link/endpoint.json`，由连接器写出；
+1. `ios/DSHMobile/UITestHarness/context.mjs` 读本机 DSH 端点（`$DSH_HOME/mobile-link/endpoint.json`，由连接器写出；
    自研外壳那条 `dsh-shell.log` 退路已随外壳删除），
    并在跑的时候采一份环境事实（仿真器名、设备型号、iOS 版本、Xcode、测试机）。
-2. `tools/case.mjs` 把用例翻译成计划 JSON（含 front matter 的 `通过判据`）。
+2. `ios/DSHMobile/UITestHarness/case.mjs` 把用例翻译成计划 JSON（含 front matter 的 `通过判据`）。
 3. 计划经**仿真器容器**交给 XCUITest 引擎（测试进程看不到 Mac 的文件路径）。
 4. 引擎逐步执行、逐步截图（附件形式），把每步判定写进事件流。
-5. `tools/run.mjs` 从 `.xcresult` 导出截图，按用例要的名字归档，并把
+5. `ios/DSHMobile/UITestHarness/run.mjs` 从 `.xcresult` 导出截图，按用例要的名字归档，并把
    `summary.json` 写全：判定、计数、环境、耗时、判据、同用例历史运行。
-6. `tools/verify.mjs` 做像素核对；`tools/annotate.py` 把判定画到图上。
+6. `ios/DSHMobile/UITestHarness/verify.mjs` 做像素核对；`ios/DSHMobile/UITestHarness/annotate.py` 把判定画到图上。
 7. 测试者看过截图后写 `review.md`（声明、逐步的实际现象与依据、发现、回归），
    这是报告里「实际现象／判定依据／本步结论／发现」的来源；`scaffold` 先把骨架填好。
-8. `tools/report.py` 先按 `REPORT-CONTRACT.md` 做 lint，再写成 `report.html`：
+8. `ios/DSHMobile/UITestHarness/report.py` 先按 `REPORT-CONTRACT.md` 做 lint，再写成 `report.html`：
    报告头、判定（四态＋依据＋**结论建议**合入/有条件合入/不合入＋**指标概览**）、
    **通过判据**、执行前声明＋**测试环境**、发现、逐屏核对（操作/期望/实际/依据/结论，附该步截图）、
    未覆盖与风险、上轮问题回归、产物。
@@ -242,7 +264,7 @@ title: 全部独立页面逐屏核对
 ## 加一个新的可直达页面
 
 1. App 里给这一屏的根元素加 `accessibilityIdentifier`（例如 `files.root`）。
-2. `tools/context.mjs` 的 `screens` 表加一行：根标识 + 启动参数。
+2. `ios/DSHMobile/UITestHarness/context.mjs` 的 `screens` 表加一行：根标识 + 启动参数。
 3. `screens.md` 登记。
 4. 在 `TC-UI-01` 里加一行。
 

@@ -1,5 +1,5 @@
 /**
- * `test/tools/relaypair.mjs` 的 `route` 与共享向量对表。
+ * `ios/DSHMobile/UITestHarness/relaypair.mjs` 的 `route` 与共享向量对表。
  *
  * 这是「把 relay 相对路径拼到 base 上」这条规则的**第四份**实现（另外三份：
  * iOS 的 `LinkConfiguration.appending(path:to:)`、连接器的 `dlp.js:joinRelayPath`、
@@ -19,7 +19,7 @@ import test from 'node:test'
 
 import { httpBase, route } from './relaypair.mjs'
 
-const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
+const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
 const vectors = JSON.parse(
   readFileSync(join(REPO_ROOT, 'test/contract/relay-base-path-vectors.json'), 'utf8')).cases
 

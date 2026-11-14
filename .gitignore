@@ -35,7 +35,7 @@ test/runs/
 test/.build/
 test/.venv/
 # 挑会话时要绕开的对象（本机有整目录的 v0 会话被宿主的 v0→v1 迁移拒收）。
-# 里面是真实目录路径，属本机真值；机制与格式见 test/tools/context.mjs 的 quarantine()。
+# 里面是真实目录路径，属本机真值；机制与格式见 ios/DSHMobile/UITestHarness/context.mjs 的 quarantine()。
 test/.quarantine.json
 
 # 多 agent 开发管线的运行记录（含真实会话 id、家目录、真机证据），只在本机保留。
@@ -66,7 +66,7 @@ specs/
 # 这些是从真机与真实会话截的图，只在本机保留（博客渲染、本地跑测照常可用），
 # 不进仓库。需要随仓库发布时，请用合成数据的截图替换后重新入库。
 docs/artifacts/screenshots/
-test/fixtures/media/
+ios/DSHMobile/DSHMobileUITests/Fixtures/media/
 
 # 三级验证渠道（006）的运行证据：每次跑渠道都会写一份，属过程产物。
 # 结构与判定见 scripts/verify/README.md；契约在 scripts/verify/。

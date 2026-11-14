@@ -189,7 +189,7 @@
   TC-UI-01 的 s11 因此在 20260916-230050 失败，而在更早「App 恰好连在中转上」的几轮通过——
   同一份代码两种结论，看起来像随机失败。
 - **解法**（已做）：`run.mjs` 认 `DSH_CONNECT=relay`：跑之前由**运行器**配对
-  （`test/tools/relaypair.mjs` 领码 → 认领 → 把 `dsh://relay?…` 凭据交给 App），
+  （`ios/DSHMobile/UITestHarness/relaypair.mjs` 领码 → 认领 → 把 `dsh://relay?…` 凭据交给 App），
   跑完在 `finally` 里撤销。
 
   ```bash
@@ -221,7 +221,7 @@
 - 分享面板（`ShareLink` / `UIActivityViewController`）：面板由另一个进程画，
   `app.descendants` 里既没有「保存到“文件”」这类元素，也没有能当锚点等待的元素
   （实测 `等待 text:存储到 timeout=10` 等不到，而截图里它明明在）。
-  绕法：点完用引擎新加的 `等待 N 秒`（纯等待，`test/tools/case.mjs` 的 `pause`）
+  绕法：点完用引擎新加的 `等待 N 秒`（纯等待，`ios/DSHMobile/UITestHarness/case.mjs` 的 `pause`）
   停一下再截图，判定靠目视；面板里的动作之后发生什么不覆盖。
 
 ---
@@ -359,7 +359,7 @@
 ## 判据-16 连接管理页的设备名会把表单编码的 `+` 显示出来 ✅ 已修（2026-10-14，两处）
 
 - **症状**：连接管理页的第三条连接名显示成 `Jayant+MacBook+Pro`（真实设备名是 `Jayant MacBook Pro`）。
-- **根因**：配对链接由 `URLSearchParams` 生成（`test/tools/relaypair.mjs`），空格按表单编码写成 `+`；
+- **根因**：配对链接由 `URLSearchParams` 生成（`ios/DSHMobile/UITestHarness/relaypair.mjs`），空格按表单编码写成 `+`；
   而 `ConnectLink` 用 `URLComponents.queryItems` 解析，那套只做百分号解码，`+` 会原样留下。
 - **修法**：`ConnectLink` 改成自己按表单语义解查询项——**先**把 `+` 还原成空格，**再**做百分号解码
   （顺序反了会把真正的加号 `%2B` 也变成空格）。新增 `ConnectLinkTests` 8 条覆盖两种形状、

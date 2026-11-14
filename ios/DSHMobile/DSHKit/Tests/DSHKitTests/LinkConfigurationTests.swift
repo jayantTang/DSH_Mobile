@@ -72,7 +72,7 @@ final class LinkConfigurationTests: XCTestCase {
     /// `appending(path:to:)` is one of **four** copies of the "join a
     /// relay-relative path onto a base" rule (the connector's
     /// `dlp.js:joinRelayPath`, the relay's `relay.py:normalize_base_path`, and
-    /// the test harness's `test/tools/relaypair.mjs:route`). All four read the
+    /// the test harness's `ios/DSHMobile/UITestHarness/relaypair.mjs:route`). All four read the
     /// same file, so a change to any one of them shows up here.
     ///
     /// **Depends on the repository layout**: six levels up from `#filePath` is

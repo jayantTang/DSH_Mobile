@@ -87,5 +87,5 @@ export default function releaseCheck() {
   }
 }
 
-// Also runnable on its own: `node test/tools/release-check.mjs`.
+// Also runnable on its own: `node ios/DSHMobile/UITestHarness/release-check.mjs`.
 if (import.meta.url === `file://${process.argv[1]}`) releaseCheck()

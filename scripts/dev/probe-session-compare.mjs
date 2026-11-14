@@ -10,7 +10,7 @@
  * 每条记录：响应 JSON 字节、墙钟耗时、以及中转 `/stats` 的 `egressBytes` 增量（路上真跑了多少）。
  *
  * 为什么要经真实中转：本机直连只能测到"宿主+连接器"这一段，而瓶颈在手机那一跳。
- * 用 `test/tools/relaypair.mjs` 的配对/撤销，不另写一套设备生命周期；设备名固定 `DSH-` 前缀，
+ * 用 `ios/DSHMobile/UITestHarness/relaypair.mjs` 的配对/撤销，不另写一套设备生命周期；设备名固定 `DSH-` 前缀，
  * 跑完在 `finally` 里撤销（AGENTS.md 的硬要求）。
  *
  * 用法：
@@ -21,7 +21,7 @@ import { parseArgs as parseNodeArgs } from 'node:util'
 import { inflateRawSync } from 'node:zlib'
 
 import { connect } from '../../plugins/mobile-link/lib/ws.js'
-import { pairDevice, revokeDevice, route } from '../../test/tools/relaypair.mjs'
+import { pairDevice, revokeDevice, route } from '../../ios/DSHMobile/UITestHarness/relaypair.mjs'
 
 const DEVICE_NAME = 'DSH-DigestProbe'
 const METHODS = [

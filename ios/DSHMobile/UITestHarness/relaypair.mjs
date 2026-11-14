@@ -40,7 +40,7 @@ export function identity() {
 /// rule, alongside `LinkConfiguration.appending(path:to:)` (iOS),
 /// `dlp.js:joinRelayPath` (connector) and `relay.py:normalize_base_path`.
 /// `test/contract/relay-base-path-vectors.json` records what all four do —
-/// including where they disagree — and `test/tools/relaypair.test.mjs` pins
+/// including where they disagree — and `ios/DSHMobile/UITestHarness/relaypair.test.mjs` pins
 /// this copy against it. Read that file before changing the join.
 export function httpBase(relayUrl) {
   const url = new URL(relayUrl)

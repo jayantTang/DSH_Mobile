@@ -26,7 +26,7 @@ import { connect, createServer } from 'node:net'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { identity, pairDevice, revokeDevice } from '../../test/tools/relaypair.mjs'
+import { identity, pairDevice, revokeDevice } from '../../ios/DSHMobile/UITestHarness/relaypair.mjs'
 
 const HERE = fileURLToPath(new URL('.', import.meta.url))
 const PKG = join(HERE, 'history-live-bench')

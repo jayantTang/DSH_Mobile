@@ -36,6 +36,10 @@ node scripts/dev/asc-store.mjs status|fill   # 版本页元数据与审核备注
 node scripts/dev/asc-submit.mjs status|submit # 上架收尾与提交审核
 ./scripts/release/deploy-testflight.sh       # 归档、导出、上传、提交审核
 
+# 测试选择：清单在 test/suites.json
+node test/select.mjs --req SR-03.06            # 按需求选套件
+node test/select.mjs --affected --run          # 按改动选择并执行
+
 # 探针
 node scripts/dev/dsh-probe.mjs mint-code     # 生成配对码
 node scripts/dev/dsh-probe.mjs pick-images   # 挑选包含图片的会话

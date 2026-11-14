@@ -107,10 +107,12 @@
       "title": "端到端链路（App → relay → 连接器 → 本机 DSH）",
       "globs": [
         "test/cases/**",
-        "test/tools/**",
+        "ios/DSHMobile/UITestHarness/**",
         "test/run.sh",
         "docs/PAIRING.md",
-        "docs/RELAY-PROTOCOL.md"
+        "docs/RELAY-PROTOCOL.md",
+        "ios/DSHMobile/DSHMobileUITests/**",
+        "test/acceptance/**"
       ]
     }
   ],

@@ -20,7 +20,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync, copyFileSync, readdirSy
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { pairDevice, revokeDevice, claimedRelayLink } from '../../test/tools/relaypair.mjs'
+import { pairDevice, revokeDevice, claimedRelayLink } from '../../ios/DSHMobile/UITestHarness/relaypair.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(HERE, '../..')

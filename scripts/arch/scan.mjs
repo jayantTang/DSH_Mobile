@@ -107,7 +107,7 @@ function defineGroups() {
 
   for (const name of dirsIn(join(ROOT, 'sidecars'))) add(`sidecar/${name}`, 'py', join(ROOT, 'sidecars', name))
   for (const name of dirsIn(join(ROOT, 'skills'))) add(`skill/${name}`, 'py', join(ROOT, 'skills', name))
-  add('test/tools', 'py', join(ROOT, 'test/tools'))
+  add('ios/DSHMobile/UITestHarness', 'py', join(ROOT, 'ios/DSHMobile/UITestHarness'))
 
   return groups
 }

@@ -1,0 +1,322 @@
+{
+  "version": 1,
+  "suites": [
+    {
+      "id": "requirements",
+      "title": "需求结构与审批",
+      "layer": "static",
+      "command": [
+        "npm",
+        "run",
+        "check:requirements"
+      ],
+      "paths": [
+        "handbook/requirements/**"
+      ],
+      "requirements": [
+        "IR-*",
+        "SR-*",
+        "AR-*"
+      ],
+      "risk": "high",
+      "budget": 30
+    },
+    {
+      "id": "ios-dshkit",
+      "title": "DSHKit 协议与契约",
+      "layer": "unit",
+      "command": [
+        "swift",
+        "test"
+      ],
+      "cwd": "ios/DSHMobile/DSHKit",
+      "paths": [
+        "ios/DSHMobile/DSHKit/**"
+      ],
+      "requirements": [
+        "SR-01.03",
+        "SR-01.04",
+        "SR-02.01",
+        "SR-02.03",
+        "SR-03.01",
+        "SR-03.02"
+      ],
+      "risk": "high",
+      "budget": 180
+    },
+    {
+      "id": "ios-modules",
+      "title": "iOS 功能模块单测",
+      "layer": "unit",
+      "command": [
+        "swift",
+        "test"
+      ],
+      "cwd": "ios/DSHMobile/Modules",
+      "paths": [
+        "ios/DSHMobile/Modules/**"
+      ],
+      "requirements": [
+        "SR-02.04",
+        "SR-02.05",
+        "SR-02.06",
+        "SR-02.10",
+        "SR-02.12",
+        "SR-02.13",
+        "SR-02.14",
+        "SR-02.15",
+        "SR-03.03",
+        "SR-03.04",
+        "SR-03.05",
+        "SR-05.02",
+        "SR-06.01",
+        "SR-06.02",
+        "SR-06.03",
+        "SR-06.05",
+        "SR-06.06"
+      ],
+      "risk": "medium",
+      "budget": 180
+    },
+    {
+      "id": "ios-app-unit",
+      "title": "iOS App 宿主单测",
+      "layer": "unit",
+      "command": [
+        "bash",
+        "scripts/dev/verify-app-unit.sh"
+      ],
+      "paths": [
+        "ios/DSHMobile/DSHMobile/**",
+        "ios/DSHMobile/DSHMobileTests/**"
+      ],
+      "requirements": [
+        "SR-02.08",
+        "SR-02.09",
+        "SR-06.04"
+      ],
+      "risk": "medium",
+      "budget": 120
+    },
+    {
+      "id": "connector",
+      "title": "连接器单测",
+      "layer": "unit",
+      "command": [
+        "npm",
+        "--prefix",
+        "plugins/mobile-link",
+        "test"
+      ],
+      "paths": [
+        "plugins/mobile-link/**"
+      ],
+      "requirements": [
+        "SR-01.01",
+        "SR-01.02",
+        "SR-01.03",
+        "SR-01.05",
+        "SR-02.01",
+        "SR-02.03",
+        "SR-02.04",
+        "SR-02.07",
+        "SR-03.01",
+        "SR-03.02",
+        "SR-03.05"
+      ],
+      "risk": "high",
+      "budget": 120
+    },
+    {
+      "id": "send-image",
+      "title": "图片插件单测",
+      "layer": "unit",
+      "command": [
+        "npm",
+        "--prefix",
+        "plugins/send-image",
+        "test"
+      ],
+      "paths": [
+        "plugins/send-image/**"
+      ],
+      "requirements": [
+        "SR-02.07",
+        "SR-02.11"
+      ],
+      "risk": "low",
+      "budget": 60
+    },
+    {
+      "id": "doubao-image",
+      "title": "豆包图片插件单测",
+      "layer": "unit",
+      "command": [
+        "npm",
+        "--prefix",
+        "plugins/doubao-image",
+        "test"
+      ],
+      "paths": [
+        "plugins/doubao-image/**"
+      ],
+      "requirements": [
+        "SR-02.07"
+      ],
+      "risk": "low",
+      "budget": 60
+    },
+    {
+      "id": "relay-go",
+      "title": "中转 Go 单测",
+      "layer": "unit",
+      "command": [
+        "make",
+        "-C",
+        "relay-go",
+        "test"
+      ],
+      "paths": [
+        "relay-go/**"
+      ],
+      "requirements": [
+        "SR-01.01",
+        "SR-01.03",
+        "SR-01.05",
+        "SR-01.10",
+        "SR-02.08"
+      ],
+      "risk": "high",
+      "budget": 180
+    },
+    {
+      "id": "mail",
+      "title": "邮件服务单测",
+      "layer": "unit",
+      "command": [
+        "../.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q"
+      ],
+      "cwd": "mail",
+      "paths": [
+        "mail/**"
+      ],
+      "requirements": [
+        "SR-05.01",
+        "SR-05.02",
+        "SR-05.03"
+      ],
+      "risk": "high",
+      "budget": 120
+    },
+    {
+      "id": "scripts",
+      "title": "仓库工具链单测",
+      "layer": "unit",
+      "command": [
+        "npm",
+        "run",
+        "test:scripts"
+      ],
+      "paths": [
+        "scripts/**",
+        "skills/**",
+        "test/contract/**"
+      ],
+      "requirements": [
+        "SR-04.01",
+        "SR-04.02",
+        "SR-04.03"
+      ],
+      "risk": "medium",
+      "budget": 120
+    },
+    {
+      "id": "ui-files",
+      "title": "工作区文件 UI",
+      "layer": "ui",
+      "command": [
+        "./test/run.sh",
+        "run",
+        "test/acceptance/08-text-wrap.md"
+      ],
+      "paths": [
+        "ios/DSHMobile/Modules/Features/Files/**",
+        "ios/DSHMobile/DSHMobileUITests/**",
+        "test/acceptance/08-*"
+      ],
+      "requirements": [
+        "SR-03.03",
+        "SR-03.04",
+        "SR-03.06"
+      ],
+      "risk": "medium",
+      "budget": 120
+    },
+    {
+      "id": "ui-chat",
+      "title": "会话与折叠 UI",
+      "layer": "ui",
+      "command": [
+        "./test/run.sh",
+        "run",
+        "test/acceptance/03-chat-fold.md"
+      ],
+      "paths": [
+        "ios/DSHMobile/Modules/Features/Chat/**",
+        "test/acceptance/03-*"
+      ],
+      "requirements": [
+        "SR-02.01",
+        "SR-02.02",
+        "SR-02.03",
+        "SR-02.10",
+        "SR-02.12"
+      ],
+      "risk": "medium",
+      "budget": 120
+    },
+    {
+      "id": "ui-connection",
+      "title": "连接与配对 UI",
+      "layer": "ui",
+      "command": [
+        "./test/run.sh",
+        "run",
+        "test/acceptance/07-relay-reconnect.md"
+      ],
+      "paths": [
+        "ios/DSHMobile/Modules/Features/Connection/**",
+        "test/acceptance/07-*"
+      ],
+      "requirements": [
+        "SR-01.01",
+        "SR-01.03",
+        "SR-01.08",
+        "SR-01.09",
+        "SR-01.11"
+      ],
+      "risk": "high",
+      "budget": 180
+    },
+    {
+      "id": "release-plan",
+      "title": "OTA 版本预算检查",
+      "layer": "release",
+      "command": [
+        "./scripts/release/deploy-ota.sh",
+        "--plan"
+      ],
+      "paths": [
+        "scripts/release/**"
+      ],
+      "requirements": [
+        "SR-04.02"
+      ],
+      "risk": "high",
+      "budget": 60
+    }
+  ]
+}

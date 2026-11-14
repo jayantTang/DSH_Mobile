@@ -16,4 +16,4 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-exec node "$ROOT/test/tools/dsh.mjs" "$@"
+exec node "$ROOT/ios/DSHMobile/UITestHarness/dsh.mjs" "$@"

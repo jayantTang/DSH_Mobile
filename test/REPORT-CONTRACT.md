@@ -123,11 +123,11 @@
 ## 四、lint 自己也要被测
 
 lint 是这份契约唯一的执行者，规则悄悄失效就等于契约作废。所以每条规则都有一个
-反例测试：`test/tools/test_report.py` 构造一份「只违反这一条」的评审记录，
+反例测试：`ios/DSHMobile/UITestHarness/test_report.py` 构造一份「只违反这一条」的评审记录，
 断言它确实被拦下。
 
 ```bash
-test/.venv/bin/python test/tools/test_report.py    # 全部通过才算 lint 可用
+test/.venv/bin/python ios/DSHMobile/UITestHarness/test_report.py    # 全部通过才算 lint 可用
 ```
 
 **改 `report.py` 的 lint 或改本文件第三节的规则表时，必须同时改这个测试**；

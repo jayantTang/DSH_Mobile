@@ -95,7 +95,7 @@ while IFS= read -r -d '' cache; do
     printf 'removing      %s\n' "${cache#"$ROOT"/}"
     rm -rf -- "$cache"
   fi
-done < <(find "$ROOT/mail" "$ROOT/relay-go" "$ROOT/plugins" "$ROOT/scripts" "$ROOT/test/tools" "$ROOT/maintainers" \
+done < <(find "$ROOT/mail" "$ROOT/relay-go" "$ROOT/plugins" "$ROOT/scripts" "$ROOT/ios/DSHMobile/UITestHarness" "$ROOT/maintainers" \
            \( -name .venv -o -name node_modules \) -prune -o \
            -name __pycache__ -type d -prune -print0 2>/dev/null)
 

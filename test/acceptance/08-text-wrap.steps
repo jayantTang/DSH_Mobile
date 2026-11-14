@@ -1,0 +1,4 @@
+# TC-MOB-201 文本阅读器自动换行与横向滚动
+1  do: 打开报告 ios/DSHMobile/DSHMobileUITests/Fixtures/wrap-scroll.txt（长行开始） | want: text:行尾标记, id:files.wrap.toggle | shot: wrap-on check=texts
+2  do: 点击 id:files.wrap.toggle, 等待 1 秒 | shot: wrap-off check=texts
+3  do: 滚动 left id:files.reader.scroll, 滚动 left id:files.reader.scroll, 等待 1 秒 | shot: scrolled-right check=texts

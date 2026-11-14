@@ -7,7 +7,7 @@ the "pass because the engine was green" document this contract exists to replace
 So the rules are tested the way they fail — by feeding the checker a record that
 breaks each one and asserting it notices.
 
-    test/.venv/bin/python test/tools/test_report.py
+    test/.venv/bin/python ios/DSHMobile/UITestHarness/test_report.py
 
 Self-contained: builds its own run directory from fixed inputs, calls
 `report.render`, and writes nothing outside a temporary directory.

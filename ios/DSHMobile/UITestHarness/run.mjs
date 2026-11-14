@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Runs one case and files its evidence.
 //
-//   node test/tools/run.mjs test/cases/fixed/01-全部独立页面逐屏核对.md
+//   node ios/DSHMobile/UITestHarness/run.mjs test/cases/fixed/01-全部独立页面逐屏核对.md
 //
 // One of four verbs the tester drives; see `dsh.mjs`. This one turns a case
 // into a plan, lets the UI engine execute it, then brings the screenshots back

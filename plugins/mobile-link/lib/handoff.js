@@ -2,7 +2,7 @@
  * 连接器写给**进程外**消费者的交接文件。
  *
  * 为什么需要它：跑在 DSH 宿主进程之外的脚本（`scripts/dev/dsh-probe.mjs`、`verify-simulator.sh`、
- * `test/tools/host.mjs` 等）与 iOS 的集成测试辅助都没有进程内上下文，拿不到注入的服务；
+ * `ios/DSHMobile/UITestHarness/host.mjs` 等）与 iOS 的集成测试辅助都没有进程内上下文，拿不到注入的服务；
  * 它们需要一个本机可读的"带凭据本机地址"。契约见
  * `specs/001-connector-host-compat/contracts/out-of-process-handoff.md`。
  *

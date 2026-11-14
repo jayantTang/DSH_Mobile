@@ -1058,7 +1058,7 @@ def render(run_dir, verdict, note, basis="", allow_lint_errors=False):
     out.append("<p class='note'>截图 <code>shots/</code>　标注图 <code>annotated/</code>　"
                "事件流与用例翻译 <code>detail/</code>　机器可读结论 <code>summary.json</code></p>")
     out.append("<footer>"
-               f"由 test/tools/report.py 生成　运行 {esc(run_id)}　"
+               f"由 ios/DSHMobile/UITestHarness/report.py 生成　运行 {esc(run_id)}　"
                f"报告契约见 <code>test/REPORT-CONTRACT.md</code>"
                "</footer></body></html>")
 

@@ -25,5 +25,5 @@
 调试配对的设备不得残留（2026-09-21 要求）。
 
 - 为调试而配对的设备（用例、探针、手工跨设备检查）执行完后必须撤销；名称一律以 `DSH-` 开头（`DSH-Test` / `DSH-Probe` / `DSH-Sweep` 等），真实设备不使用该前缀。
-- relay 通道用例的运行器会先执行 `sweep` 再配对，并在 `finally` 中撤销本次配对（`test/tools/run.mjs` + `scripts/dev/relay-devices.mjs`）。手工配对后，收尾执行一次 `node scripts/dev/relay-devices.mjs list`，列表中应只剩真实 iPhone。
+- relay 通道用例的运行器会先执行 `sweep` 再配对，并在 `finally` 中撤销本次配对（`ios/DSHMobile/UITestHarness/run.mjs` + `scripts/dev/relay-devices.mjs`）。手工配对后，收尾执行一次 `node scripts/dev/relay-devices.mjs list`，列表中应只剩真实 iPhone。
 - 存在残留时执行 `node scripts/dev/relay-devices.mjs sweep`，先加 `--dry-run` 确认将撤销哪些设备。

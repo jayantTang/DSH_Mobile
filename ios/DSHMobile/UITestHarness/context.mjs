@@ -13,7 +13,7 @@ import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 export const HERE = dirname(fileURLToPath(import.meta.url))
-export const ROOT = resolve(HERE, '../..')
+export const ROOT = resolve(HERE, '../../..')
 export const TEST_DIR = join(ROOT, 'test')
 export const BUILD = join(TEST_DIR, '.build')
 export const RUNS = join(TEST_DIR, 'runs')
