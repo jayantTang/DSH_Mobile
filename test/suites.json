@@ -463,6 +463,29 @@
       ],
       "risk": "medium",
       "budget": 60
+    },
+    {
+      "id": "ui-html-preview",
+      "title": "HTML 预览渲染",
+      "layer": "ui",
+      "command": [
+        "xcodebuild",
+        "test",
+        "-scheme",
+        "DSHMobile",
+        "-destination",
+        "platform=iOS Simulator,name=DSH-Test",
+        "-only-testing:DSHMobileUITests/WorkspaceHTMLPreviewTests"
+      ],
+      "paths": [
+        "ios/DSHMobile/DSHMobileUITests/WorkspaceHTMLPreviewTests.swift",
+        "ios/DSHMobile/Modules/Features/Files/UI/WorkspaceHTMLPreviewView.swift"
+      ],
+      "requirements": [
+        "SR-02.10"
+      ],
+      "risk": "medium",
+      "budget": 300
     }
   ]
 }

@@ -74,7 +74,16 @@ struct RootView: View {
 
     var body: some View {
         // 模块化后这条修饰链跨模块解析变慢，拆成两个计算属性分段推导（025）。
+        #if DEBUG
+        if let path = Self.automationHTMLPreview() {
+            HTMLPreviewSurface(url: URL(fileURLWithPath: path))
+                .ignoresSafeArea()
+        } else {
+            stageTwo
+        }
+        #else
         stageTwo
+        #endif
     }
 
     private var stageOne: some View {
@@ -341,6 +350,16 @@ struct RootView: View {
     static func automationFile() -> String? {
         let arguments = ProcessInfo.processInfo.arguments
         guard let index = arguments.firstIndex(of: "-DSHOpenFile"),
+              index + 1 < arguments.count
+        else { return nil }
+        return arguments[index + 1]
+    }
+
+    /// Renders a local HTML fixture without a host connection, for the preview
+    /// rendering test. Debug-only, like the other automation hooks.
+    static func automationHTMLPreview() -> String? {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let index = arguments.firstIndex(of: "-DSHHTMLPreview"),
               index + 1 < arguments.count
         else { return nil }
         return arguments[index + 1]

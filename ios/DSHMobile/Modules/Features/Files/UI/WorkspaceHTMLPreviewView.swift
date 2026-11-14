@@ -62,10 +62,9 @@ public struct WorkspaceHTMLPreviewView: View {
 
         case .ready(let url, _):
             ZStack(alignment: .top) {
-                WebSurface(url: url)
+                HTMLPreviewSurface(url: url)
                 if !missing.isEmpty { missingBanner }
             }
-            .accessibilityIdentifier("files.html.preview")
         }
     }
 
@@ -96,6 +95,21 @@ public struct WorkspaceHTMLPreviewView: View {
     }
 }
 
+/// A local file rendered by the same web surface used by the reader.
+/// Kept separate so a rendering test can supply a fixture without a host link.
+public struct HTMLPreviewSurface: View {
+    public let url: URL
+
+    public init(url: URL) {
+        self.url = url
+    }
+
+    public var body: some View {
+        WebSurface(url: url)
+            .accessibilityIdentifier("files.html.preview")
+    }
+}
+
 /// The web view itself, wrapped so SwiftUI treats it as a leaf.
 private struct WebSurface: UIViewRepresentable {
     public let url: URL
@@ -119,6 +133,8 @@ private struct WebSurface: UIViewRepresentable {
         web.scrollView.bounces = false
         web.allowsLinkPreview = false
         web.isMultipleTouchEnabled = false
+        web.isAccessibilityElement = true
+        web.accessibilityLabel = "HTML preview"
         web.accessibilityIdentifier = "files.html.preview"
         return web
     }

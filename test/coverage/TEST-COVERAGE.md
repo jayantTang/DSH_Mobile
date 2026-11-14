@@ -2,7 +2,7 @@
 
 > 由 `node test/coverage/check-test-coverage.mjs` 生成。✅ 精确测试；🔵 静态策略；✍️ 人工待验收；🟠 只是套件级映射，不得当作已完成。
 
-汇总：共 52 条 · ✅ verified 48 · 🔵 static 3 · ✍️ manual 1 · 🟡 partial 0 · 🟠 suite-only 0 · ❌ gap 0
+汇总：共 52 条 · ✅ verified 49 · 🔵 static 2 · ✍️ manual 1 · 🟡 partial 0 · 🟠 suite-only 0 · ❌ gap 0
 
 | SR | 状态 | 精确测试证据 | 负责套件 | 缺口 |
 |---|---|---|---|---|
@@ -26,7 +26,7 @@
 | SR-02.07 | ✅ verified | `ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/AttachmentLoadFailureTests.swift`：`AttachmentLoadFailureTests` | `requirements`、`connector`、`send-image`、`doubao-image` |  |
 | SR-02.08 | ✅ verified | `ios/DSHMobile/DSHMobileTests/SessionAlertsTests.swift`：`testTurnEndRequestCarriesSessionRouteAndIdentifier` | `requirements`、`ios-app-unit`、`relay-go` |  |
 | SR-02.09 | ✅ verified | `ios/DSHMobile/DSHMobileTests/SessionAlertsTests.swift`：`testSameEventUsesTheSameIdentifier` | `requirements`、`ios-app-unit` |  |
-| SR-02.10 | 🔵 static | `ios/DSHMobile/Modules/Features/Files/Tests/DomainTests/WorkspaceFileValueTests.swift`：`the extension is matched case-insensitively` | `requirements`、`ios-modules`、`ui-chat` | 静态策略检查 |
+| SR-02.10 | ✅ verified | `ios/DSHMobile/DSHMobileUITests/WorkspaceHTMLPreviewTests.swift`：`testRenderedPreviewIsPresent` | `requirements`、`ios-modules`、`ui-chat`、`ui-html-preview` |  |
 | SR-02.11 | ✅ verified | `ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/AttachmentLoadFailureTests.swift`：`AttachmentLoadFailureTests` | `requirements`、`send-image` |  |
 | SR-02.12 | ✅ verified | `ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/ChatModelProcessFoldTests.swift`：`test_a_completed_turn_folds_on_the_model_surface` | `requirements`、`ios-modules`、`ui-chat` |  |
 | SR-02.13 | ✅ verified | `ios/DSHMobile/Modules/Features/Sessions/Tests/DomainTests/SessionListCreateVisibilityTests.swift`：`test_created_session_is_visible_before_the_host_lists_it` | `requirements`、`ios-modules` |  |

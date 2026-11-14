@@ -342,9 +342,8 @@
   ],
   "SR-02.10": [
     {
-      "path": "ios/DSHMobile/Modules/Features/Files/Tests/DomainTests/WorkspaceFileValueTests.swift",
-      "contains": "the extension is matched case-insensitively",
-      "kind": "static"
+      "path": "ios/DSHMobile/DSHMobileUITests/WorkspaceHTMLPreviewTests.swift",
+      "contains": "testRenderedPreviewIsPresent"
     }
   ]
 }
