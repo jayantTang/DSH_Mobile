@@ -551,6 +551,30 @@
       ],
       "risk": "high",
       "budget": 120
+    },
+    {
+      "id": "ui-locale-smoke",
+      "title": "七种语言运行时切换",
+      "layer": "ui",
+      "command": [
+        "xcodebuild",
+        "test",
+        "-scheme",
+        "DSHMobile",
+        "-destination",
+        "platform=iOS Simulator,name=DSH-Test",
+        "-only-testing:DSHMobileUITests/LocalizationSmokeTests"
+      ],
+      "paths": [
+        "ios/DSHMobile/DSHMobileUITests/LocalizationSmokeTests.swift",
+        "ios/DSHMobile/DSHMobile/*.lproj/Localizable.strings"
+      ],
+      "requirements": [
+        "SR-09.01",
+        "SR-09.06"
+      ],
+      "risk": "high",
+      "budget": 300
     }
   ]
 }

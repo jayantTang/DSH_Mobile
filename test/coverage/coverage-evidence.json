@@ -341,14 +341,8 @@
   ],
   "SR-09.01": [
     {
-      "path": "test/coverage/language-policy.test.mjs",
-      "contains": "language matrix keeps English",
-      "kind": "static"
-    },
-    {
-      "path": "test/coverage/locale-parity.test.mjs",
-      "contains": "all shipped locales have the same Localizable key set",
-      "kind": "static"
+      "path": "ios/DSHMobile/DSHMobileUITests/LocalizationSmokeTests.swift",
+      "contains": "testEachShippedLocaleAppearsAtRuntime"
     }
   ],
   "SR-09.02": [
@@ -380,9 +374,8 @@
   ],
   "SR-09.06": [
     {
-      "path": "test/coverage/language-policy.test.mjs",
-      "contains": "support matrix and fallback",
-      "kind": "static"
+      "path": "ios/DSHMobile/DSHMobileUITests/LocalizationSmokeTests.swift",
+      "contains": "testEachShippedLocaleAppearsAtRuntime"
     }
   ]
 }

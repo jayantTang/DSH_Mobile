@@ -2,7 +2,7 @@
 
 > 由 `node test/coverage/check-test-coverage.mjs` 生成。✅ 精确测试；🔵 静态策略；✍️ 人工待验收；🟠 只是套件级映射，不得当作已完成。
 
-汇总：共 57 条 · ✅ verified 49 · 🔵 static 7 · ✍️ manual 0 · 🟡 partial 0 · 🟠 suite-only 1 · ❌ gap 0
+汇总：共 57 条 · ✅ verified 51 · 🔵 static 5 · ✍️ manual 0 · 🟡 partial 0 · 🟠 suite-only 1 · ❌ gap 0
 
 | SR | 状态 | 精确测试证据 | 负责套件 | 缺口 |
 |---|---|---|---|---|
@@ -57,9 +57,9 @@
 | SR-08.04 | ✅ verified | `relay-go/internal/hub/opacity_test.go`：`TestFramePayloadDoesNotEnterRelayLogs`<br>`scripts/dev/check-diagnostics.test.mjs`：`agent-secret`<br>`scripts/verify/check-relay-tls.mjs`：`plain` | `requirements`、`relay-go`、`scripts` |  |
 | SR-08.05 | ✅ verified | `ios/DSHMobile/DSHMobileUITests/PerformanceBaselineTests.swift`：`testLongTextScrollHitches`<br>`test/performance/check-performance.mjs`：`p95` | `requirements`、`performance` |  |
 | SR-08.06 | ✅ verified | `ios/DSHMobile/DSHMobileTests/SessionAlertsTests.swift`：`testTurnEndRequestCarriesSessionRouteAndIdentifier`<br>`relay-go/internal/wsapi/wsapi_test.go`：`TestANotifyFrameOverTheAgentSocketOnlyPushesTheOfflineDevice`<br>`scripts/verify/check-apns.mjs`：`push-test` | `requirements`、`ios-app-unit` |  |
-| SR-09.01 | 🔵 static | `test/coverage/language-policy.test.mjs`：`language matrix keeps English`<br>`test/coverage/locale-parity.test.mjs`：`all shipped locales have the same Localizable key set` | `requirements`、`policy-i18n` | 静态策略检查 |
+| SR-09.01 | ✅ verified | `ios/DSHMobile/DSHMobileUITests/LocalizationSmokeTests.swift`：`testEachShippedLocaleAppearsAtRuntime` | `requirements`、`policy-i18n`、`ui-locale-smoke` |  |
 | SR-09.02 | 🔵 static | `test/coverage/language-policy.test.mjs`：`permission descriptions exist` | `requirements`、`policy-i18n` | 静态策略检查 |
 | SR-09.03 | 🔵 static | `test/coverage/language-policy.test.mjs`：`English UI values contain no Chinese`<br>`test/coverage/locale-parity.test.mjs`：`all shipped locales have the same Localizable key set` | `requirements`、`static-loc`、`policy-i18n`、`i18n-gate` | 静态策略检查 |
 | SR-09.04 | 🟠 suite-only | — | `requirements` | 只有套件级映射，未逐测试 |
 | SR-09.05 | 🔵 static | `scripts/dev/check-localization.mjs`：`missing-key` | `requirements`、`i18n-gate` | 静态策略检查 |
-| SR-09.06 | 🔵 static | `test/coverage/language-policy.test.mjs`：`support matrix and fallback` | `requirements`、`policy-i18n` | 静态策略检查 |
+| SR-09.06 | ✅ verified | `ios/DSHMobile/DSHMobileUITests/LocalizationSmokeTests.swift`：`testEachShippedLocaleAppearsAtRuntime` | `requirements`、`policy-i18n`、`ui-locale-smoke` |  |
