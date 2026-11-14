@@ -65,7 +65,7 @@ final class AttachmentSelfHealingTests: XCTestCase {
 
         func count() -> Int { withLock { calls } }
 
-        func load(_ sessionId: String, _ attachmentId: String) async throws -> JSONValue {
+        func load(_ sessionId: String, _ attachment: ContentBlock.ImageAttachment) async throws -> JSONValue {
             let step: Step? = withLock {
                 calls += 1
                 return calls - 1 < steps.count ? steps[calls - 1] : nil
@@ -125,6 +125,11 @@ final class AttachmentSelfHealingTests: XCTestCase {
         .failure(DSHTransportError.timedOut(method: "session/attachment"))
     }
 
+    private func imageAttachment(_ id: String) -> ContentBlock.ImageAttachment {
+        ContentBlock.ImageAttachment(attachmentId: id, mediaType: "image/png", bytes: 68,
+                                     width: 1, height: 1, name: nil)
+    }
+
     private func makeSystem() -> (AttachmentImages, StubConnection, StubLoader) {
         let loader = StubLoader()
         let connection = StubConnection()
@@ -154,7 +159,7 @@ final class AttachmentSelfHealingTests: XCTestCase {
         let id = "at_self_heal_\(UUID().uuidString)"
         loader.script([.value(timedOut), .value(success)])
 
-        await images.begin(id)
+        await images.begin(imageAttachment(id))
         guard case .failed = images.state(id) else {
             return XCTFail("an exhausted load must end in .failed, got \(images.state(id))")
         }
@@ -176,7 +181,7 @@ final class AttachmentSelfHealingTests: XCTestCase {
         let id = "at_self_heal_\(UUID().uuidString)"
         loader.script([.value(.failure(DSHTransportError.notConnected)), .value(success)])
 
-        await images.begin(id)
+        await images.begin(imageAttachment(id))
         guard case .failed = images.state(id) else {
             return XCTFail("an exhausted load must end in .failed, got \(images.state(id))")
         }
@@ -210,7 +215,7 @@ final class AttachmentSelfHealingTests: XCTestCase {
         ])
 
         // driver1：卡在网络上（不 await begin，否则会等到第一次请求结束）。
-        let first = Task { await images.begin(id) }
+        let first = Task { await images.begin(imageAttachment(id)) }
         let started = await eventually { loader.count() == 1 }
         XCTAssertTrue(started, "the first fetch should have started")
 

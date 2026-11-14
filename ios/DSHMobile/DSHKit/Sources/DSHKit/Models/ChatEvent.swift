@@ -24,6 +24,16 @@ public enum ContentBlock: Sendable {
         public let height: Int?
         public let name: String?
 
+        public init(attachmentId: String, mediaType: String, bytes: Int? = nil,
+                    width: Int? = nil, height: Int? = nil, name: String? = nil) {
+            self.attachmentId = attachmentId
+            self.mediaType = mediaType
+            self.bytes = bytes
+            self.width = width
+            self.height = height
+            self.name = name
+        }
+
         /// What the wire tells us about this picture's *content*, for caches that
         /// must not serve an old picture under a reused id.
         public var cacheVariant: String {

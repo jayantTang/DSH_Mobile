@@ -85,7 +85,7 @@ struct AttachmentThumbnail: View {
         // 任务身份只按附件 id：重试由状态机自己安排，视图不再拿"链路代数"当身份。
         // 行滚出屏幕 → 这个 task 被取消 → 驱动停止，退避的等待也不会在后台空转。
         .task(id: attachment.attachmentId) {
-            await images.begin(attachment.attachmentId, variant: attachment.cacheVariant)
+            await images.begin(attachment)
         }
         .fullScreenCover(item: $preview) { item in
             ImagePreview(image: item.image, label: item.label)

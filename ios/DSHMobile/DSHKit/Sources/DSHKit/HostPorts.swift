@@ -30,7 +30,7 @@ public protocol ChatHosting: Sendable {
     func modelCatalog() async throws -> ModelCatalog
     func fileReferences(agentId: String, query: String) async throws -> [FileReferenceCandidate]
     func updateSettings(namespace: String, patch: JSONValue, expectedRevision: Int?) async throws
-    func attachment(sessionId: String, attachmentId: String) async throws -> JSONValue
+    func attachment(sessionId: String, attachment: ContentBlock.ImageAttachment) async throws -> JSONValue
 }
 
 /// 排队控制不可用（旧连接器没有 `session/control` / `session/updateQueue`）。

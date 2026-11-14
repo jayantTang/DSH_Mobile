@@ -34,7 +34,7 @@ public final class AttachmentImages {
     /// 生产不注入：走 `store.chatHost.attachment(...)`。单测注入一个假实现——
     /// 与 ``FeedbackAttachmentCache/Fetch`` 同一种做法（依赖从构造器进来，不是运行时开关）。
     public typealias AttachmentLoader =
-        @Sendable (_ sessionId: String, _ attachmentId: String) async throws -> JSONValue
+        @Sendable (_ sessionId: String, _ attachment: ContentBlock.ImageAttachment) async throws -> JSONValue
 
     /// 测试可以注入一个很小的自动尝试次数（生产仍是 `-DSHAttachmentAttempts` 或 8）。
     ///
@@ -47,6 +47,11 @@ public final class AttachmentImages {
 
     private let automaticAttemptLimit: Int
     private let loader: AttachmentLoader?
+
+    /// The full reference for every image this view has been asked to load.
+    /// `session/attachment` needs media type and dimensions, not just the id;
+    /// retries after the view is gone still have to send the same reference.
+    private var attachmentRefs: [String: ContentBlock.ImageAttachment] = [:]
 
     /// What the transcript should draw for one picture.
     public enum State: Equatable, Sendable {
@@ -161,7 +166,9 @@ public final class AttachmentImages {
     ///
     /// `variant` 标识这份**内容**（大小与媒体类型）：附件 id 是宿主的，若它复用
     /// 同一个 id 换了图，不同的 variant 就是不同的缓存条目，而不是永远拿旧图。
-    func begin(_ attachmentId: String, variant: String? = nil) async {
+    func begin(_ attachment: ContentBlock.ImageAttachment) async {
+        let attachmentId = attachment.attachmentId
+        let variant = attachment.cacheVariant
         guard !attachmentId.isEmpty, let sessionId else { return }
         if cached(attachmentId) != nil {
             states[sessionId, default: [:]][attachmentId] = .loaded
@@ -174,8 +181,9 @@ public final class AttachmentImages {
             await existing.value
             return
         }
+        attachmentRefs[attachmentId] = attachment
         let driver = startDriver(
-            attachmentId: attachmentId, variant: variant, in: sessionId, flightKey: flightKey)
+            attachmentId: attachmentId, attachment: attachment, variant: variant, in: sessionId, flightKey: flightKey)
         // 驱动的寿命**不跟着视图的 task 走**：UICollectionView 回收/重配一次单元格，
         // SwiftUI 就会取消这个 task，而取消之后没有任何东西会再把它叫起来——张张图
         // 都会停在转圈。驱动由本对象持有：重试有上限（约两分钟），会话切换与重置
@@ -190,15 +198,16 @@ public final class AttachmentImages {
     func retry(_ attachmentId: String) {
         guard let sessionId else { return }
         let flightKey = bucketKey(sessionId, attachmentId)
+        guard let attachment = attachmentRefs[attachmentId] else { return }
         let variant = flights.variant(id: attachmentId, session: sessionId)
         states[sessionId, default: [:]][attachmentId] = .idle
-        _ = startDriver(attachmentId: attachmentId, variant: variant, in: sessionId, flightKey: flightKey)
+        _ = startDriver(attachmentId: attachmentId, attachment: attachment, variant: variant, in: sessionId, flightKey: flightKey)
     }
 
     /// 起一条驱动：换 token、取消旧的、登记新的。
     @discardableResult
     private func startDriver(
-        attachmentId: String, variant: String?, in session: String, flightKey: String
+        attachmentId: String, attachment: ContentBlock.ImageAttachment, variant: String?, in session: String, flightKey: String
     ) -> Task<Void, Never> {
         nextToken(for: flightKey)
         drivers[flightKey]?.cancel()
@@ -207,7 +216,7 @@ public final class AttachmentImages {
         flights.register(id: attachmentId, variant: variant, session: session)
         let driver = Task { [weak self] in
             guard let self else { return }
-            await self.drive(attachmentId, variant: variant, in: session, token: token)
+            await self.drive(attachmentId, attachment: attachment, variant: variant, in: session, token: token)
         }
         drivers[flightKey] = driver
         return driver
@@ -268,7 +277,7 @@ public final class AttachmentImages {
     ///
     /// 只有这里写 `states`。失败不是终态：只要还有自动尝试次数就继续；用尽后停在
     /// `.failed`，把「点按重试」留给用户。
-    private func drive(_ attachmentId: String, variant: String?, in session: String, token: Int) async {
+    private func drive(_ attachmentId: String, attachment: ContentBlock.ImageAttachment, variant: String?, in session: String, token: Int) async {
         let flightKey = bucketKey(session, attachmentId)
         var machine = AttachmentLoadMachine(automaticAttemptLimit: automaticAttemptLimit)
 
@@ -277,7 +286,7 @@ public final class AttachmentImages {
             guard isCurrentDriver(flightKey, token: token) else { return }
             setState(.loading, for: attachmentId, in: session)
 
-            switch await fetchOnce(attachmentId, variant: variant, in: session) {
+            switch await fetchOnce(attachmentId, attachment: attachment, variant: variant, in: session) {
             case .image(let image):
                 // 旧驱动（手动重试 / 链路恢复换过 token）不许再写状态、更不许结案：
                 // 新驱动可能正在飞，结案会把它的 flight 删掉，重新变成"不自愈"。
@@ -347,7 +356,7 @@ public final class AttachmentImages {
     /// One attempt. The decode half runs off the main actor: `preparingForDisplay`
     /// is expensive and must not land on the render thread.
     private func fetchOnce(
-        _ attachmentId: String, variant: String?, in session: String
+        _ attachmentId: String, attachment: ContentBlock.ImageAttachment, variant: String?, in session: String
     ) async -> FetchOutcome {
         if let image = cached(attachmentId) { return .image(image) }
 
@@ -377,10 +386,10 @@ public final class AttachmentImages {
             do {
                 let value: JSONValue
                 if let loader {
-                    value = try await loader(session, attachmentId)
+                    value = try await loader(session, attachment)
                 } else {
                     value = try await host!.attachment(
-                        sessionId: session, attachmentId: attachmentId)
+                        sessionId: session, attachment: attachment)
                 }
                 guard let encoded = value["data"]?.stringValue,
                       let data = Data(base64Encoded: encoded)
@@ -493,6 +502,7 @@ public final class AttachmentImages {
             driver.cancel()
         }
         drivers.removeAll()
+        attachmentRefs.removeAll()
     }
 
     /// 链路恢复后重来：仍然没有图的那些重新走一遍第一次尝试。
@@ -501,8 +511,9 @@ public final class AttachmentImages {
     /// 依赖"当前会话"（旧实现跨会话重启，会把别的会话的图也拉起来）。
     private func restart(_ pending: [String: AttachmentFlights.Flight]) {
         for (flightKey, flight) in pending {
+            guard let attachment = attachmentRefs[flight.attachmentId] else { continue }
             _ = startDriver(
-                attachmentId: flight.attachmentId, variant: flight.variant,
+                attachmentId: flight.attachmentId, attachment: attachment, variant: flight.variant,
                 in: flight.session, flightKey: flightKey)
         }
     }

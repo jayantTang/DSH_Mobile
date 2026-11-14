@@ -455,11 +455,11 @@ struct DSHClient: Sendable {
     }
 
     /// Fetches an uploaded attachment (image bytes) as base64.
-    public func attachment(sessionId: String, attachmentId: String) async throws -> JSONValue {
+    public func attachment(sessionId: String, attachment: ContentBlock.ImageAttachment) async throws -> JSONValue {
         try await carrier.unary(
             method: "session/attachment",
             args: RequestArgs(
-                request: SessionAttachmentRequest(sessionId: sessionId, attachmentId: attachmentId)
+                request: SessionAttachmentRequest(sessionId: sessionId, attachment: attachment)
             ),
             as: JSONValue.self
         )
@@ -939,8 +939,32 @@ struct SessionUpdateQueueRequest: Encodable, Sendable {
 }
 
 struct SessionAttachmentRequest: Encodable, Sendable {
+    /// `session/attachment` takes the complete reference carried by the
+    /// transcript, not a bare id: the host verifies media type and dimensions
+    /// against the stored bytes before reading them.
+    struct Reference: Encodable, Sendable {
+        let attachmentId: String
+        let mediaType: String
+        let bytes: Int?
+        let width: Int?
+        let height: Int?
+        let name: String?
+    }
+
     public let sessionId: String
-    public let attachmentId: String
+    public let attachment: Reference
+
+    init(sessionId: String, attachment: ContentBlock.ImageAttachment) {
+        self.sessionId = sessionId
+        self.attachment = Reference(
+            attachmentId: attachment.attachmentId,
+            mediaType: attachment.mediaType,
+            bytes: attachment.bytes,
+            width: attachment.width,
+            height: attachment.height,
+            name: attachment.name
+        )
+    }
 }
 
 /// A queued-message mutation（`session/updateQueue` 的 `action`）。
