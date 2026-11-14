@@ -22,7 +22,9 @@ const run = flags.has('--run')
 const affected = flags.has('--affected')
 const reqIndex = args.indexOf('--req')
 const req = reqIndex >= 0 ? args[reqIndex + 1] : null
-const explicitFiles = values.filter((arg) => arg !== req && !arg.startsWith('--'))
+const layerIndex = args.indexOf('--layer')
+const layers = layerIndex >= 0 ? args[layerIndex + 1].split(',').filter(Boolean) : null
+const explicitFiles = values.filter((arg) => arg !== req && arg !== args[layerIndex + 1] && !arg.startsWith('--'))
 
 const suites = JSON.parse(readFileSync(MANIFEST, 'utf8')).suites ?? []
 
@@ -54,6 +56,7 @@ function changedFiles() {
 }
 
 let selected = suites
+if (layers) selected = selected.filter((suite) => layers.includes(suite.layer))
 if (req) {
   selected = suites.filter((suite) => matchesRequirement(req, suite.requirements ?? []))
 } else if (affected) {

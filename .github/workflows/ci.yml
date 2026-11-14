@@ -78,6 +78,8 @@ jobs:
         with:
           node-version: '22'
       - run: npm run check:docs
+      - name: 需求覆盖矩阵
+        run: npm run check:coverage
       - name: 契约守卫（DLP 向量接线 / 安装目录阶梯 / 调试钩子闸门 / 单一来源）
         run: npm run check:contracts
       - name: 脚本单测（含测试台与契约检查自身的用例）

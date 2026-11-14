@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Push gate: coverage matrix + affected unit/static suites. UI and physical
+# performance stay in the release path; they need a simulator/device.
+set -uo pipefail
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT" || exit 2
+if [ "${SKIP_LOCAL_GUARD:-0}" = "1" ]; then
+  echo "[pre-push] SKIP_LOCAL_GUARD=1，跳过"
+  exit 0
+fi
+command -v node >/dev/null 2>&1 || { echo "[pre-push] 找不到 node" >&2; exit 2; }
+
+echo "[pre-push 1/2] 需求覆盖矩阵"
+node test/check-coverage.mjs || exit 1
+
+base="$(git merge-base HEAD '@{upstream}' 2>/dev/null || git merge-base HEAD origin/main 2>/dev/null || true)"
+if [ -z "$base" ]; then
+  echo "[pre-push] 找不到上游基线，跳过受影响测试"
+  exit 0
+fi
+mapfile -t changed < <(git diff --name-only "$base"...HEAD)
+if [ "${#changed[@]}" -eq 0 ]; then
+  echo "[pre-push] 没有改动文件"
+  exit 0
+fi
+
+echo "[pre-push 2/2] 受影响 unit/static 套件"
+node test/select.mjs --affected --layer unit,static --run "${changed[@]}" || exit 1
