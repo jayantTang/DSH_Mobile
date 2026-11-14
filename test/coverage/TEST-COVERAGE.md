@@ -1,8 +1,8 @@
 # 全量需求测试覆盖
 
-> 由 `node test/coverage/check-test-coverage.mjs` 生成。只有 ✅ 代表精确测试文件与断言标记都存在；🟠 只是套件级映射，不得当作已完成。
+> 由 `node test/coverage/check-test-coverage.mjs` 生成。✅ 精确测试；🔵 静态策略；✍️ 人工待验收；🟠 只是套件级映射，不得当作已完成。
 
-汇总：共 52 条 · ✅ verified 47 · 🟡 partial 0 · 🟠 suite-only 5 · ❌ gap 0
+汇总：共 52 条 · ✅ verified 47 · 🔵 static 4 · ✍️ manual 1 · 🟡 partial 0 · 🟠 suite-only 0 · ❌ gap 0
 
 | SR | 状态 | 精确测试证据 | 负责套件 | 缺口 |
 |---|---|---|---|---|
@@ -18,7 +18,7 @@
 | SR-01.10 | ✅ verified | `relay-go/internal/wsapi/wsapi_test.go`：`TestTheDeviceLimitIs4021OnTheWire` | `requirements`、`relay-go` |  |
 | SR-01.11 | ✅ verified | `test/acceptance/11-connector-install-guide.md`：`TC-MOB-203` | `requirements`、`ui-connection`、`ui-guide` |  |
 | SR-02.01 | ✅ verified | `ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/ChatModelTransportTests.swift`：`test_open_subscribes_to_the_session_the_summary_names` | `requirements`、`ios-dshkit`、`connector`、`ui-chat` |  |
-| SR-02.02 | 🟠 suite-only | — | `requirements`、`ui-chat` | 只有套件级映射，未逐测试 |
+| SR-02.02 | ✍️ manual | `test/coverage/manual/SR-02.02.md`：`状态：待验收` | `requirements`、`ui-chat` | 人工验收待填写 |
 | SR-02.03 | ✅ verified | `ios/DSHMobile/Modules/Core/Tests/HostEventHubTests.swift`：`test_a_waiting_prompt_is_promoted_and_kept_by_session` | `requirements`、`ios-dshkit`、`connector`、`ui-chat` |  |
 | SR-02.04 | ✅ verified | `ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/ChatModelTransportTests.swift`：`test_send_puts_the_prompt_on_the_wire`<br>`ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/ChatModelTransportTests.swift`：`test_cancel_names_the_open_session` | `requirements`、`ios-modules`、`connector` |  |
 | SR-02.05 | ✅ verified | `ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/ChatModelQueueTests.swift`：`test_a_queued_send_is_optimistic` | `requirements`、`ios-modules` |  |
@@ -26,7 +26,7 @@
 | SR-02.07 | ✅ verified | `ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/AttachmentLoadFailureTests.swift`：`AttachmentLoadFailureTests` | `requirements`、`connector`、`send-image`、`doubao-image` |  |
 | SR-02.08 | ✅ verified | `ios/DSHMobile/DSHMobileTests/SessionAlertsTests.swift`：`testTurnEndRequestCarriesSessionRouteAndIdentifier` | `requirements`、`ios-app-unit`、`relay-go` |  |
 | SR-02.09 | ✅ verified | `ios/DSHMobile/DSHMobileTests/SessionAlertsTests.swift`：`testSameEventUsesTheSameIdentifier` | `requirements`、`ios-app-unit` |  |
-| SR-02.10 | 🟠 suite-only | — | `requirements`、`ios-modules`、`ui-chat` | 只有套件级映射，未逐测试 |
+| SR-02.10 | 🔵 static | `ios/DSHMobile/Modules/Features/Files/Tests/DomainTests/WorkspaceFileValueTests.swift`：`the extension is matched case-insensitively` | `requirements`、`ios-modules`、`ui-chat` | 静态策略检查 |
 | SR-02.11 | ✅ verified | `ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/AttachmentLoadFailureTests.swift`：`AttachmentLoadFailureTests` | `requirements`、`send-image` |  |
 | SR-02.12 | ✅ verified | `ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/ChatModelProcessFoldTests.swift`：`test_a_completed_turn_folds_on_the_model_surface` | `requirements`、`ios-modules`、`ui-chat` |  |
 | SR-02.13 | ✅ verified | `ios/DSHMobile/Modules/Features/Sessions/Tests/DomainTests/SessionListCreateVisibilityTests.swift`：`test_created_session_is_visible_before_the_host_lists_it` | `requirements`、`ios-modules` |  |
@@ -38,15 +38,15 @@
 | SR-03.04 | ✅ verified | `ios/DSHMobile/DSHKit/Tests/DSHKitTests/RelayFileTransferTests.swift`：`downloadLands` | `requirements`、`ios-modules`、`ui-files` |  |
 | SR-03.05 | ✅ verified | `ios/DSHMobile/DSHKit/Tests/DSHKitTests/OutgoingFilesTests.swift`：`OutgoingFilesTests` | `requirements`、`ios-modules`、`connector` |  |
 | SR-03.06 | ✅ verified | `test/acceptance/08-text-wrap.md`：`TC-MOB-201` | `requirements`、`ui-files` |  |
-| SR-04.01 | 🟠 suite-only | — | `requirements`、`scripts` | 只有套件级映射，未逐测试 |
+| SR-04.01 | 🔵 static | `test/coverage/release-policy.test.mjs`：`user-facing docs offer TestFlight` | `requirements`、`scripts`、`policy-static` | 静态策略检查 |
 | SR-04.02 | ✅ verified | `scripts/release/ota-version.test.mjs`：`构建号是北京时间` | `requirements`、`scripts`、`release-plan` |  |
-| SR-04.03 | 🟠 suite-only | — | `requirements`、`scripts` | 只有套件级映射，未逐测试 |
+| SR-04.03 | 🔵 static | `test/coverage/release-policy.test.mjs`：`TestFlight submission is the default` | `requirements`、`scripts`、`policy-static` | 静态策略检查 |
 | SR-05.01 | ✅ verified | `ios/DSHMobile/Modules/Features/Feedback/Tests/DomainTests/FeedbackDraftLengthTests.swift`：`FeedbackDraftLengthTests` | `requirements`、`mail` |  |
 | SR-05.02 | ✅ verified | `ios/DSHMobile/Modules/Features/Feedback/Tests/DomainTests/FeedbackCenterTests.swift`：`FeedbackCenterTests` | `requirements`、`ios-modules`、`mail` |  |
 | SR-05.03 | ✅ verified | `ios/DSHMobile/Modules/Features/Feedback/Tests/DomainTests/FeedbackAttachmentLoaderTests.swift`：`FeedbackAttachmentLoaderTests` | `requirements`、`mail` |  |
 | SR-06.01 | ✅ verified | `test/acceptance/13-settings-permission.md`：`TC-MOB-205` | `requirements`、`ios-modules`、`ui-settings-permission` |  |
 | SR-06.02 | ✅ verified | `ios/DSHMobile/Modules/Features/Settings/Tests/DomainTests/SettingsCredentialTests.swift`：`test_credential_writes_require_a_connected_settings_host` | `requirements`、`ios-modules` |  |
-| SR-06.03 | 🟠 suite-only | — | `requirements`、`ios-modules` | 只有套件级映射，未逐测试 |
+| SR-06.03 | 🔵 static | `test/coverage/release-policy.test.mjs`：`settings clear-cache button clears all three` | `requirements`、`ios-modules`、`policy-static` | 静态策略检查 |
 | SR-06.04 | ✅ verified | `test/acceptance/06-about.md`：`TC-UI-103` | `requirements`、`ios-app-unit` |  |
 | SR-06.05 | ✅ verified | `scripts/dev/check-diagnostics.test.mjs`：`agent-secret` | `requirements`、`ios-modules` |  |
 | SR-06.06 | ✅ verified | `ios/DSHMobile/Modules/Core/Tests/UpdateCheckerTests.swift`：`test_a_newer_published_build_raises_the_banner` | `requirements`、`ios-modules` |  |

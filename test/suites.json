@@ -442,6 +442,27 @@
       ],
       "risk": "medium",
       "budget": 120
+    },
+    {
+      "id": "policy-static",
+      "title": "发布与缓存静态策略",
+      "layer": "static",
+      "command": [
+        "node",
+        "--test",
+        "test/coverage/release-policy.test.mjs"
+      ],
+      "paths": [
+        "test/coverage/release-policy.test.mjs",
+        "scripts/release/deploy-testflight.sh"
+      ],
+      "requirements": [
+        "SR-04.01",
+        "SR-04.03",
+        "SR-06.03"
+      ],
+      "risk": "medium",
+      "budget": 60
     }
   ]
 }

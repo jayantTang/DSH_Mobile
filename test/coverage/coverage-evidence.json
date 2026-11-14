@@ -312,5 +312,40 @@
       "path": "test/acceptance/13-settings-permission.md",
       "contains": "TC-MOB-205"
     }
+  ],
+  "SR-04.01": [
+    {
+      "path": "test/coverage/release-policy.test.mjs",
+      "contains": "user-facing docs offer TestFlight",
+      "kind": "static"
+    }
+  ],
+  "SR-04.03": [
+    {
+      "path": "test/coverage/release-policy.test.mjs",
+      "contains": "TestFlight submission is the default",
+      "kind": "static"
+    }
+  ],
+  "SR-06.03": [
+    {
+      "path": "test/coverage/release-policy.test.mjs",
+      "contains": "settings clear-cache button clears all three",
+      "kind": "static"
+    }
+  ],
+  "SR-02.02": [
+    {
+      "path": "test/coverage/manual/SR-02.02.md",
+      "contains": "状态：待验收",
+      "kind": "manual"
+    }
+  ],
+  "SR-02.10": [
+    {
+      "path": "ios/DSHMobile/Modules/Features/Files/Tests/DomainTests/WorkspaceFileValueTests.swift",
+      "contains": "the extension is matched case-insensitively",
+      "kind": "static"
+    }
   ]
 }
