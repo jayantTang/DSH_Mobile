@@ -30,6 +30,10 @@
 - 用例名与断言要表达需求口径，不得复制实现细节。
 - TDD 适用范围：`relay-go/`、`mail/`、DSHKit 纯函数与连接器协议层走 RED-GREEN-REFACTOR；iOS 视图与仿真器交互不用 TDD，改用截图与测试报告；无测试底座的旧模块先补最小失败用例再修改。
 
+## 发布前性能门禁
+
+真机性能样本拷回后执行 `node test/check-performance.mjs --file /tmp/performance-device.log`。p95 超标或样本不足不得发布；模拟器与 CI 没有真机样本，因此这一步只在发布前做，不进 pre-commit。
+
 ## 完成定义
 
 执行完用例不算完成，必须写出报告并给出判定。顺序固定为 `run` → 逐张查看标注图 → `scaffold` → 填写 `review.md` → `report --verdict …`。未写评审、被 lint 判为「报告不完整」，或只执行未判定，均不得汇报为「测试通过」。汇报测试结果只给三项：四态判定、报告路径、待用户决定的事项。
