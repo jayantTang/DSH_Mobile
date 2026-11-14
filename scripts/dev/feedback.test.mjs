@@ -349,9 +349,9 @@ test('report 把 JSON 渲染成 HTML 并打印落盘路径', () => {
   assert.match(readFileSync(out, 'utf8'), /<svg /)
 })
 
-test('report 默认落 maintainers/reports/YYYY-MM-DD.html', () => {
+test('report 默认落 handbook/history/reports/YYYY-MM-DD.html', () => {
   assert.equal(reportPath({ generatedAt: GENERATED_AT }),
-    join(ROOT, 'maintainers', 'reports', '2026-10-12.html'))
+    join(ROOT, 'handbook', 'history', 'reports', '2026-10-12.html'))
 })
 
 test('用法错误一律退出码 2（且不调用 runner）', () => {

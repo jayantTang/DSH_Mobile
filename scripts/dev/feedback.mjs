@@ -19,7 +19,7 @@
 //                                  [--format text|html] [--all] [--partial] [--yes] [--owner-approved "…"]
 //   node scripts/dev/feedback.mjs delete --thread th_x [--yes]
 //   node scripts/dev/feedback.mjs report [--days 30] [--date today|yesterday|YYYY-MM-DD]
-//                                  [--full-day] [--out maintainers/reports]
+//                                  [--full-day] [--out handbook/history/reports]
 //   node scripts/dev/feedback.mjs report --send --account acc_a [--account acc_b] [--subject S]
 //   node scripts/dev/feedback.mjs report-data [--days 30]
 //   node scripts/dev/feedback.mjs report --install-agent | --uninstall-agent
@@ -76,7 +76,7 @@ const LOCAL_MAIL_ADMIN = join(ROOT, 'mail', 'admin.py')
 const LOCAL_PYTHON = join(ROOT, '.venv', 'bin', 'python')
 const LOCAL_DB = join(ROOT, 'relay-go', '.local', 'state.db')
 const LOCAL_MAIL_DB = join(ROOT, 'mail', '.local', 'mail.db')
-const DEFAULT_OUT = join(ROOT, 'maintainers', 'reports')
+const DEFAULT_OUT = join(ROOT, 'handbook', 'history', 'reports')
 
 /// 日报里的 GitHub 计数（仓库 star/fork、账号关注者）取自公开 API，只存数字。
 /// 缓存落在报告目录（已 gitignore），6 小时内不重复请求：未认证配额 60 次/小时，
@@ -485,7 +485,7 @@ export function reportPath({ outDir = DEFAULT_OUT, generatedAt, day = 0, now = D
   return join(outDir, `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}.html`)
 }
 
-/// 历史摘要文件：与报告同目录（maintainers/reports/ 已 gitignore），给 WoW 对照、
+/// 历史摘要文件：与报告同目录（handbook/history/reports/ 已 gitignore），给 WoW 对照、
 /// 告警连续天数与发版标注供数。只存聚合数字，不含任何用户文本。
 const HISTORY_FILE = '.ops-history.json'
 

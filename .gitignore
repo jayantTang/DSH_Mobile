@@ -108,3 +108,6 @@ scripts/perf/results/
 relay-go/.gocache/
 relay-go/bin/
 /relay-go/dsh-relay
+
+# 已废弃：报告/运维产物统一放 handbook/history
+maintainers/
