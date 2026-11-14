@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # 本地提交防线（无 Docker）：
+#   第零步 · 需求关键层自审与 owner 审批（handbook/requirements）
 #   第一步 · 靶向测试（≤30s，只跑受影响文件的用例）
 #   第二步 · Diff 审查（规则 + 本机模型，≤5s）
 # 跳过：SKIP_LOCAL_GUARD=1 git commit …，或 git commit --no-verify
@@ -18,7 +19,21 @@ if ! command -v python3 >/dev/null 2>&1; then
   exit 2
 fi
 
-echo "[local-guard 1/2] 靶向测试"
+if ! command -v node >/dev/null 2>&1; then
+  echo "[local-guard] 找不到 node，无法执行需求审批校验" >&2
+  exit 2
+fi
+
+echo "[local-guard 0/3] 需求自审与审批"
+node scripts/dev/check-requirements.mjs --staged
+req_status=$?
+if [ "$req_status" -ne 0 ]; then
+  echo "[local-guard] 需求自审或审批未通过，提交已拦截。" >&2
+  echo "  先修冲突；再让 owner 批准并运行 npm run approve:requirements -- --owner-approved \"<原话>\"。" >&2
+  exit 1
+fi
+
+echo "[local-guard 1/3] 靶向测试"
 python3 scripts/targeted_tests.py --staged
 test_status=$?
 if [ "$test_status" -ne 0 ]; then
@@ -27,7 +42,7 @@ if [ "$test_status" -ne 0 ]; then
   exit 1
 fi
 
-echo "[local-guard 2/2] Diff 审查"
+echo "[local-guard 2/3] Diff 审查"
 python3 scripts/local_ai_review.py --mode staged
 review_status=$?
 case "$review_status" in
