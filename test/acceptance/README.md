@@ -22,7 +22,7 @@ DSH_CONNECT=relay npm run test:acceptance
 ```
 
 运行器只从本机真实宿主/中转取证据；没有宿主时不得伪造通过。每条都按
-`test/REPORT-CONTRACT.md` 出 `review.md` 与 `report.html`。
+`test/rules/REPORT-CONTRACT.md` 出 `review.md` 与 `report.html`。
 
 ## 失败分诊
 

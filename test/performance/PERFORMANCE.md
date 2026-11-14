@@ -49,7 +49,7 @@
 | 发送回显 p95 | 40 ms | 30 |
 
 ```bash
-node test/check-performance.mjs --file /tmp/performance-device.log
+node test/performance/check-performance.mjs --file /tmp/performance-device.log
 ```
 
 这是发布前门禁，不进 pre-commit：它需要真机样本文件，模拟器与 CI 没有该文件。阈值取最近 30 次样本的 p95 +20%；当前样本通过。

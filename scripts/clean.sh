@@ -50,7 +50,7 @@ TARGETS=(
 
 if [ "$EVIDENCE" -eq 1 ]; then
   # 三级验证渠道与仿真器用例台的历史运行记录。两者都是本机数据，见
-  # test/RULES.md 与 scripts/verify/README.md。
+  # test/rules/RULES.md 与 scripts/verify/README.md。
   TARGETS+=("$ROOT/test/runs" "$ROOT/.lanes/runs")
 fi
 

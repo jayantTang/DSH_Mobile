@@ -40,7 +40,7 @@ sh scripts/verify/l2-vm-setup.sh  # 补镜像源 + 修 VM 的 resolv.conf，然�
 docker pull node:22-bookworm-slim # 确认拉得动（本机直连 Docker Hub 超时，必须走镜像源）
 ```
 
-两个坑写在 `test/CAPABILITY-GAPS.md` 的「环境-8」：colima 每次启动会重写
+两个坑写在 `test/rules/CAPABILITY-GAPS.md` 的「环境-8」：colima 每次启动会重写
 `/etc/docker/daemon.json`（它不支持 `registry-mirrors` 键），而镜像里的 `/etc/resolv.conf`
 是悬空链接、dockerd 会去问 `[::1]:53`。所以这两件事每次都靠上面那条脚本补，
 doctor 则以 `docker info` 自报为准（不看配置文件，免得得到假结论）。

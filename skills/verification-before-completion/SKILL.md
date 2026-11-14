@@ -8,7 +8,7 @@ whenToUse: 当你要给 owner 汇报完成、提交改动、发版、或说“�
 
 没有证据就说没验证；没验证不得写成通过。
 
-改写自 obra/superpowers 的 `verification-before-completion`（MIT），判定口径以本仓库 `scripts/verify/lanes.json`、`test/RULES.md` 与 `test/REPORT-CONTRACT.md` 为准。
+改写自 obra/superpowers 的 `verification-before-completion`（MIT），判定口径以本仓库 `scripts/verify/lanes.json`、`test/rules/RULES.md` 与 `test/rules/REPORT-CONTRACT.md` 为准。
 
 ## 一、先定该跑哪几级
 

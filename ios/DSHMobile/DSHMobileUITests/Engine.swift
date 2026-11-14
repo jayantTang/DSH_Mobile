@@ -340,7 +340,7 @@ final class Engine: XCTestCase {
         case "long_press":
             // Aimed, never a coordinate: a hand-rolled drag once archived a real
             // session when its target had already left the tree (see
-            // test/CAPABILITY-GAPS.md 交互-7), and that rule covers presses too.
+            // test/rules/CAPABILITY-GAPS.md 交互-7), and that rule covers presses too.
             guard let target = step.target else { return Outcome(ok: false, detail: "缺少目标") }
             // 转写的行会被流式输出顶出屏幕、也会被整批重建；按下之前先把它滚回来。
             // 这里自己查元素而不是走 `element(_:)`：那个助手会对每个候选直接问

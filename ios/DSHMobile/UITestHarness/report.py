@@ -11,7 +11,7 @@ Two rules carry the honesty of the thing:
   * the four fields a reviewer reads (期望 / 实际 / 依据 / 结论) all come from the
     tester, and `实际` has to say something the expectation did not;
   * the report is only produced when the record is complete enough to mean
-    something — see `test/REPORT-CONTRACT.md`.
+    something — see `test/rules/REPORT-CONTRACT.md`.
 
 Usage:
   report.py --run-dir test/runs/<id> --verdict 通过 --note "一句话结论"
@@ -1059,7 +1059,7 @@ def render(run_dir, verdict, note, basis="", allow_lint_errors=False):
                "事件流与用例翻译 <code>detail/</code>　机器可读结论 <code>summary.json</code></p>")
     out.append("<footer>"
                f"由 ios/DSHMobile/UITestHarness/report.py 生成　运行 {esc(run_id)}　"
-               f"报告契约见 <code>test/REPORT-CONTRACT.md</code>"
+               f"报告契约见 <code>test/rules/REPORT-CONTRACT.md</code>"
                "</footer></body></html>")
 
     path = os.path.join(run_dir, "report.html")
@@ -1089,7 +1089,7 @@ def render(run_dir, verdict, note, basis="", allow_lint_errors=False):
 SCAFFOLD_HEADER = """# 评审：{case} {title}
 
 用例 `{case}`（版本 {version}），运行 `{run}`，代码版本 `{commit}`。
-按 `test/REPORT-CONTRACT.md` 填：**声明**必须先写（跑之前就想清楚），
+按 `test/rules/REPORT-CONTRACT.md` 填：**声明**必须先写（跑之前就想清楚），
 每步的 `实际` 要写观察到的事实，`依据` 写凭什么这么判，不能复述期望。
 """
 

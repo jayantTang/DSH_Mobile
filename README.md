@@ -113,7 +113,7 @@ cd ios/DSHMobile && xcodebuild -scheme DSHMobile \
 ID 的验证不在 CI 内；CI 通过不等于可以发布。
 
 界面测试为独立测试台：`./test/run.sh prepare` → `run <用例>` → `report --verdict …`；口径见
-[`test/RULES.md`](test/RULES.md)，模板见 [`test/examples/`](test/examples)。
+[`test/rules/RULES.md`](test/rules/RULES.md)，模板见 [`test/examples/`](test/examples)。
 
 ## 文档
 

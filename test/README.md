@@ -4,7 +4,7 @@
 
 `test/` 只放执行入口、套件清单、用例列表与共享契约数据；驱动与报告代码靠近被测模块。
 用例是结构化中文，测试者（AI）按用例在仿真器里执行、看截图、给判定。
-规则见 `RULES.md`，**报告必须长什么样见 `REPORT-CONTRACT.md`**，页面清单见 `screens.md`。
+规则见 `rules/RULES.md`，**报告必须长什么样见 `rules/REPORT-CONTRACT.md`**，页面清单见 `rules/screens.md`。
 通用测试标准（用例怎么写、证据要到什么程度、四态怎么判）在全局 skill
 `agent-testing` 里；这台机器上怎么驱动仿真器在 `ios-sim-testing` 里。
 
@@ -96,16 +96,10 @@ test/.venv/bin/python ios/DSHMobile/UITestHarness/test_report.py    # 每条规�
 | `run.sh` | 仿真器测试唯一入口 | ✅ |
 | `suites.json` | 套件清单：层级、命令、路径、需求、预算 | ✅ |
 | `select.mjs` | 按需求或改动文件选择套件 | ✅ |
-| `RULES.md` | 判定规则，用户维护 | ✅ |
-| `REPORT-CONTRACT.md` | **报告契约**：章节、`review.md` 写法、lint 规则 | ✅ |
-| `CAPABILITY-GAPS.md` | 测试能力缺陷记录（做不到 / 测不准的地方） | ✅ |
-| `PERFORMANCE.md` | 性能基线口径：场景、起止点、采样与阈值 | ✅ |
-| `check-performance.mjs` | 真机性能样本硬门禁 | ✅ |
-| `TEST-COVERAGE.md` | **全量需求测试覆盖**：逐测试证据、套件级、缺口（生成） | ✅ |
-| `coverage-evidence.json` | 逐测试证据的机器可读映射 | ✅ |
-| `check-test-coverage.mjs` | 生成/校验全量覆盖表，支持 `--strict` | ✅ |
+| `rules/` | `RULES.md`、`REPORT-CONTRACT.md`、`CAPABILITY-GAPS.md`、`screens.md` | ✅ |
+| `coverage/` | `TEST-COVERAGE.md`（生成）、`coverage-evidence.json`、校验器 | ✅ |
+| `performance/` | `PERFORMANCE.md`、阈值、性能门禁 | ✅ |
 | `run-ipad.sh` | iPad 布局验收入口 | ✅ |
-| `screens.md` | 可直达页面与根标识 | ✅ |
 | `cases/fixed/` | 固定用例，只增不改；每个用例两个文件：`序号-中文标题.md` + 同名 `.steps` | ✅ |
 | `cases/current/` | 本次任务的临时用例 | ✅（随任务结束清理） |
 | `acceptance/` | 验收场景列表 | ✅ |
@@ -158,7 +152,7 @@ node test/select.mjs --affected --run
 6. `ios/DSHMobile/UITestHarness/verify.mjs` 做像素核对；`ios/DSHMobile/UITestHarness/annotate.py` 把判定画到图上。
 7. 测试者看过截图后写 `review.md`（声明、逐步的实际现象与依据、发现、回归），
    这是报告里「实际现象／判定依据／本步结论／发现」的来源；`scaffold` 先把骨架填好。
-8. `ios/DSHMobile/UITestHarness/report.py` 先按 `REPORT-CONTRACT.md` 做 lint，再写成 `report.html`：
+8. `ios/DSHMobile/UITestHarness/report.py` 先按 `rules/REPORT-CONTRACT.md` 做 lint，再写成 `report.html`：
    报告头、判定（四态＋依据＋**结论建议**合入/有条件合入/不合入＋**指标概览**）、
    **通过判据**、执行前声明＋**测试环境**、发现、逐屏核对（操作/期望/实际/依据/结论，附该步截图）、
    未覆盖与风险、上轮问题回归、产物。
@@ -170,7 +164,7 @@ node test/select.mjs --affected --run
 
 先 `./test/run.sh scaffold` 生成骨架（每一步的 id、操作、期望都填好了），再补三项：
 **声明**（跑之前写）、每步的 **实际现象 + 判定依据 + 结论**、有缺陷时写 **发现**。
-字段与 lint 规则见 `REPORT-CONTRACT.md`，一句话要求：
+字段与 lint 规则见 `rules/REPORT-CONTRACT.md`，一句话要求：
 
 - `实际` 写观察到的事实——条数、位置、耗时、报错原文——**不许复述期望**；
 - `依据` 写凭什么这么判（截图编号、事件流 id、像素核对结论）；
@@ -246,7 +240,7 @@ title: 全部独立页面逐屏核对
 
 | 指令 | 作用 |
 |---|---|
-| `launch connect=auto\|none [screen=…]` | 启动 App；`screen` 取 `screens.md` 的名字，可逗号并列 |
+| `launch connect=auto\|none [screen=…]` | 启动 App；`screen` 取 `rules/screens.md` 的名字，可逗号并列 |
 | `tap id:x` / `tap "label:文字"` / `tap "text:文字"` | 点按 |
 | `type "text:要输入的字" text=…` | 输入 |
 | `swipe direction=up\|down\|left\|right [on=…]` | 滚动；不指定目标时找最大可滚动容器，并校验真的滚了（报位移量） |
@@ -271,7 +265,7 @@ title: 全部独立页面逐屏核对
 
 1. App 里给这一屏的根元素加 `accessibilityIdentifier`（例如 `files.root`）。
 2. `ios/DSHMobile/UITestHarness/context.mjs` 的 `screens` 表加一行：根标识 + 启动参数。
-3. `screens.md` 登记。
+3. `rules/screens.md` 登记。
 4. 在 `TC-UI-01` 里加一行。
 
 ## 临时会话（造数据）
@@ -316,12 +310,12 @@ title: 全部独立页面逐屏核对
 `.html` 默认进「渲染查看」（WKWebView，与 Mac 同一套 CSS），工具条上可切「源码」。
 验证用例：`test/cases/current/01-手机上阅读测试报告.md`。
 
-两条已知限制（见 `CAPABILITY-GAPS.md`）：渲染/源码的切换按钮在 Web 视图工具栏里、
+两条已知限制（见 `rules/CAPABILITY-GAPS.md`）：渲染/源码的切换按钮在 Web 视图工具栏里、
 自动化点不中；报告正文的滚动在自动化里不稳定。
 
 ## 遇到测不了的情况
 
-先查 `CAPABILITY-GAPS.md`：那里记着已知做不到或测不准的地方、原因和绕法。
+先查 `rules/CAPABILITY-GAPS.md`：那里记着已知做不到或测不准的地方、原因和绕法。
 新发现的能力缺陷按同样格式追加一条（症状 / 原因 / 解法 / 状态）。
 
 ## 已踩过的坑

@@ -24,7 +24,7 @@ tag 与 Release 不得出现 OTA 地址；分发策略见 `handbook/requirements
 
 ## 性能门禁
 
-TestFlight 的导出、上传与提审会先执行 `node test/check-performance.mjs --file ${DSH_PERF_LOG:-/tmp/performance-device.log}`；样本不足或 p95 超标直接拒绝。`--archive-only` 只编译，不受此门禁影响。样本由真机性能驱动生成，不能用模拟器文件替代。
+TestFlight 的导出、上传与提审会先执行 `node test/performance/check-performance.mjs --file ${DSH_PERF_LOG:-/tmp/performance-device.log}`；样本不足或 p95 超标直接拒绝。`--archive-only` 只编译，不受此门禁影响。样本由真机性能驱动生成，不能用模拟器文件替代。
 
 ## 签名
 

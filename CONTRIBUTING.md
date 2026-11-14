@@ -42,7 +42,7 @@ npm run check:docs                           # 文档结构、口吻与链接
 ```
 
 单测通过不构成发布许可。涉及 App 界面、连接链路或中转行为的改动，必须在仿真器或真机上按
-[`test/RULES.md`](test/RULES.md) 跑对应用例并出报告；CI 只覆盖「干净机器上无配置也能跑」的部分。
+[`test/rules/RULES.md`](test/rules/RULES.md) 跑对应用例并出报告；CI 只覆盖「干净机器上无配置也能跑」的部分。
 
 ## 提交
 

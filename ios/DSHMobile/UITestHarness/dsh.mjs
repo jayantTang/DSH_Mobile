@@ -31,7 +31,7 @@ const USAGE = `用法：
   dsh.mjs ls                              列出运行记录
   dsh.mjs release                         用 Release / 真机配置编译（发布前必跑）
 
-报告规范见 test/REPORT-CONTRACT.md：缺声明、缺步骤、实际复述期望都会被判为
+报告规范见 test/rules/REPORT-CONTRACT.md：缺声明、缺步骤、实际复述期望都会被判为
 「报告不完整」并在报告顶部列出，补齐 review.md 后重跑 report 即可。
 
 公共选项：--run <id> 指定或复用某次运行目录；--sim <udid> 换仿真器。`

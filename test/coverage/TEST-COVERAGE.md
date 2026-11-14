@@ -1,6 +1,6 @@
 # 全量需求测试覆盖
 
-> 由 `node test/check-test-coverage.mjs` 生成。只有 ✅ 代表精确测试文件与断言标记都存在；🟠 只是套件级映射，不得当作已完成。
+> 由 `node test/coverage/check-test-coverage.mjs` 生成。只有 ✅ 代表精确测试文件与断言标记都存在；🟠 只是套件级映射，不得当作已完成。
 
 汇总：共 52 条 · ✅ verified 8 · 🟡 partial 0 · 🟠 suite-only 44 · ❌ gap 0
 
@@ -56,5 +56,5 @@
 | SR-08.02 | ✅ verified | `ios/DSHMobile/DSHKit/Tests/DSHKitTests/RelayFileTransferTests.swift`：`shortDownloadIsRejected`<br>`ios/DSHMobile/DSHKit/Tests/DSHKitTests/WorkspaceFileCacheTests.swift`：`testExistingDropsDebrisWhenTheSizeDisagrees` | `requirements`、`ios-dshkit`、`relay-go` |  |
 | SR-08.03 | ✅ verified | `relay-go/internal/wsapi/wsapi_test.go`：`TestRevokedDeviceTokenCannotOpenASocket` | `requirements`、`relay-go` |  |
 | SR-08.04 | ✅ verified | `relay-go/internal/hub/opacity_test.go`：`TestFramePayloadDoesNotEnterRelayLogs`<br>`scripts/dev/check-diagnostics.test.mjs`：`agent-secret`<br>`scripts/verify/check-relay-tls.mjs`：`plain` | `requirements`、`relay-go`、`scripts` |  |
-| SR-08.05 | ✅ verified | `ios/DSHMobile/DSHMobileUITests/PerformanceBaselineTests.swift`：`testLongTextScrollHitches`<br>`test/check-performance.mjs`：`p95` | `requirements`、`performance` |  |
+| SR-08.05 | ✅ verified | `ios/DSHMobile/DSHMobileUITests/PerformanceBaselineTests.swift`：`testLongTextScrollHitches`<br>`test/performance/check-performance.mjs`：`p95` | `requirements`、`performance` |  |
 | SR-08.06 | ✅ verified | `ios/DSHMobile/DSHMobileTests/SessionAlertsTests.swift`：`testTurnEndRequestCarriesSessionRouteAndIdentifier`<br>`relay-go/internal/wsapi/wsapi_test.go`：`TestANotifyFrameOverTheAgentSocketOnlyPushesTheOfflineDevice`<br>`scripts/verify/check-apns.mjs`：`push-test` | `requirements`、`ios-app-unit` |  |

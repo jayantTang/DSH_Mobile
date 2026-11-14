@@ -23,7 +23,7 @@
 
 **通用规范在全局 skill 里**，本文件只写本项目的特殊约定：
 `agent-testing`（测试标准：用例怎么写、证据要到什么程度、四态怎么判、报告必须有什么）
-与 `ios-sim-testing`（这台机器上怎么驱动仿真器）。两者与 `test/REPORT-CONTRACT.md`
+与 `ios-sim-testing`（这台机器上怎么驱动仿真器）。两者与 `test/rules/REPORT-CONTRACT.md`
 冲突时，以 `REPORT-CONTRACT.md` 为准——它是被 `report.py` 强制执行的那一份。
 
 ## 二、用例从哪来
@@ -96,7 +96,7 @@
   `detail/`（xcresult、事件流、用例翻译、像素明细）。
 - 每个要核对的步骤至少一张图，命名 `序号-步骤-名字.png`，序号即报告里的顺序。
 - 标注图带用例号、步骤、核对说明和判定，可单独发给人看。
-- **报告的章节、`review.md` 的写法、lint 规则见 `test/REPORT-CONTRACT.md`**，
+- **报告的章节、`review.md` 的写法、lint 规则见 `test/rules/REPORT-CONTRACT.md`**，
   那是唯一权威；`report` 会按它校验，不合格不出正式判定。
 - `test/runs/` 不进 git：它是本机数据，任何时候可以用同样的用例重跑出来。
 

@@ -117,7 +117,7 @@ Web 客户端**没有注册表，用构建号 `yyyyMMdd.HHmm`（北京时间）�
 ```
 1. 改代码（仓库内）
 2. 跑单测：DSHKit (swift test) + plugins/* (npm test) + relay-go (make test) + mail (pytest)
-3. 仿真器里按 `test/RULES.md` 跑对应用例、看截图并出报告
+3. 仿真器里按 `test/rules/RULES.md` 跑对应用例、看截图并出报告
 4. 按需部署：
    - 只改了 App      → ./scripts/release/deploy-ota.sh（开发版）/ deploy-testflight.sh（对外）
    - 改了连接器/插件 → 保存即热更（`plugins/*/lib/*.js`）；替换同名包（升级）或卸载重装才需要重启

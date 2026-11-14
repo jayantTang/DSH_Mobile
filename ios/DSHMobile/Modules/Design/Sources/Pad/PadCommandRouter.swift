@@ -25,7 +25,7 @@ import SwiftUI
 public final class PadCommandRouter {
     /// 本轮只有 ⌘N 一条（owner 2026-11-01 裁定）。⌘F / ⌘⏎ / Esc 已从菜单与消费者里
     /// 一起删掉，不留"永远不触发"的分支；三者的现场记录见
-    /// `test/CAPABILITY-GAPS.md`「iPad 键盘快捷键只有 ⌘N 生效」。
+    /// `test/rules/CAPABILITY-GAPS.md`「iPad 键盘快捷键只有 ⌘N 生效」。
     public enum Command: Equatable {
         case newSession
     }

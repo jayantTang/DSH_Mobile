@@ -113,7 +113,7 @@ export function ensureRunDir(runId) {
 // ---------------------------------------------------------------- pages
 
 /// Pages the app can be launched straight into, and the arguments that do it.
-/// Mirrors `test/screens.md`; `RootView.swift`'s `-DSHOpenScreen` switch is the
+/// Mirrors `test/rules/screens.md`; `RootView.swift`'s `-DSHOpenScreen` switch is the
 /// other half of this contract.
 export const screens = {
   onboarding: { root: 'text:扫码配对', args: () => [] },

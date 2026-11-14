@@ -1,7 +1,7 @@
 /**
  * 三级验证渠道的证据包（`.lanes/runs/<lane>/<run-id>/verdict.json`）。
  *
- * 判定只有四态，与 `test/RULES.md` 一致：pass / fail / blocked / not-run。
+ * 判定只有四态，与 `test/rules/RULES.md` 一致：pass / fail / blocked / not-run。
  * `blocked`（渠道不可用）与 `fail`（结论为否）必须分开——把"跑不起来"写成"失败"
  * 或反之，都会让人做出错误决定。
  *

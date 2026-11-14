@@ -57,8 +57,8 @@ const DOCS = [
   'plugins/send-image/README.md',
   'plugins/doubao-image/README.md',
   'test/README.md',
-  'test/RULES.md',
-  'test/REPORT-CONTRACT.md',
+  'test/rules/RULES.md',
+  'test/rules/REPORT-CONTRACT.md',
 ]
 
 /// 文档开头那行读者与状态说明（`> 面向：… · 状态：… · 最近核对：…`）。

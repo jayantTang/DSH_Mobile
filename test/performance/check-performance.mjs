@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Hard gate for the physical performance log copied from the device.
-// Usage: node test/check-performance.mjs [--file /tmp/performance-device.log]
+// Usage: node test/performance/check-performance.mjs [--file /tmp/performance-device.log]
 
 import { existsSync, readFileSync } from 'node:fs'
 
@@ -11,7 +11,7 @@ if (!existsSync(file)) {
   console.error(`缺少性能样本：${file}（先跑真机基线并拷回）`)
   process.exit(2)
 }
-const thresholds = JSON.parse(readFileSync('test/performance-thresholds.json', 'utf8'))
+const thresholds = JSON.parse(readFileSync('test/performance/performance-thresholds.json', 'utf8'))
 const samples = new Map()
 for (const line of readFileSync(file, 'utf8').split('\n')) {
   const match = line.match(/^(\S+)\s+(\d+)$/)

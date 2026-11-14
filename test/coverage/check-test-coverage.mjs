@@ -5,8 +5,8 @@
 //   suite-only only a suite claims the requirement; no exact test assertion
 //   gap        neither exact evidence nor a suite
 //
-// Usage: node test/check-test-coverage.mjs [--check]
-// Default writes test/TEST-COVERAGE.md. --check fails if the generated file drifts.
+// Usage: node test/coverage/check-test-coverage.mjs [--check]
+// Default writes test/coverage/TEST-COVERAGE.md. --check fails if the generated file drifts.
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 
@@ -15,7 +15,7 @@ const STRICT = process.argv.includes('--strict')
 const requirements = readFileSync('handbook/requirements/requirements.md', 'utf8')
 const srs = [...requirements.matchAll(/^  - \*\*(SR-\d{2}\.\d{2})\b/gm)].map((m) => m[1])
 const suites = JSON.parse(readFileSync('test/suites.json', 'utf8')).suites
-const evidence = JSON.parse(readFileSync('test/coverage-evidence.json', 'utf8'))
+const evidence = JSON.parse(readFileSync('test/coverage/coverage-evidence.json', 'utf8'))
 const wildcard = (pattern) => new RegExp(`^${pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replaceAll('*', '[^/]*')}$`)
 
 const rows = srs.map((sr) => {
@@ -42,7 +42,7 @@ const gapText = (row) => row.state === 'verified' ? '' : row.state === 'partial'
 const lines = [
   '# 全量需求测试覆盖',
   '',
-  '> 由 `node test/check-test-coverage.mjs` 生成。只有 ✅ 代表精确测试文件与断言标记都存在；🟠 只是套件级映射，不得当作已完成。',
+  '> 由 `node test/coverage/check-test-coverage.mjs` 生成。只有 ✅ 代表精确测试文件与断言标记都存在；🟠 只是套件级映射，不得当作已完成。',
   '',
   `汇总：共 ${rows.length} 条 · ✅ verified ${counts.verified ?? 0} · 🟡 partial ${counts.partial ?? 0} · 🟠 suite-only ${counts['suite-only'] ?? 0} · ❌ gap ${counts.gap ?? 0}`,
   '',
@@ -53,9 +53,9 @@ const lines = [
 ]
 const generated = lines.join('\n')
 if (CHECK) {
-  const current = existsSync('test/TEST-COVERAGE.md') ? readFileSync('test/TEST-COVERAGE.md', 'utf8') : ''
+  const current = existsSync('test/coverage/TEST-COVERAGE.md') ? readFileSync('test/coverage/TEST-COVERAGE.md', 'utf8') : ''
   if (current !== generated) {
-    console.error('test/TEST-COVERAGE.md 与生成结果不一致；重跑 node test/check-test-coverage.mjs')
+    console.error('test/coverage/TEST-COVERAGE.md 与生成结果不一致；重跑 node test/coverage/check-test-coverage.mjs')
     process.exit(1)
   }
   if (STRICT && (counts.verified ?? 0) !== rows.length) {
@@ -65,5 +65,5 @@ if (CHECK) {
   console.log(`ok   ${rows.length} 条 SR；${counts.verified ?? 0} verified，其余 ${rows.length - (counts.verified ?? 0)} 未逐测试`)
   process.exit(0)
 }
-writeFileSync('test/TEST-COVERAGE.md', generated)
-console.log(`wrote test/TEST-COVERAGE.md: ${rows.length} SR; verified ${counts.verified ?? 0}, partial ${counts.partial ?? 0}, suite-only ${counts['suite-only'] ?? 0}, gap ${counts.gap ?? 0}`)
+writeFileSync('test/coverage/TEST-COVERAGE.md', generated)
+console.log(`wrote test/coverage/TEST-COVERAGE.md: ${rows.length} SR; verified ${counts.verified ?? 0}, partial ${counts.partial ?? 0}, suite-only ${counts['suite-only'] ?? 0}, gap ${counts.gap ?? 0}`)

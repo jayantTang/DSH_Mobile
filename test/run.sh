@@ -10,7 +10,7 @@
 #   ./test/run.sh ls                     列出运行记录
 #
 # 报告产物：test/runs/<运行>/report.html
-# 规则见 test/RULES.md，报告契约见 test/REPORT-CONTRACT.md，
+# 规则见 test/rules/RULES.md，报告契约见 test/rules/REPORT-CONTRACT.md，
 # 用例写法与目录布局见 test/README.md。
 # ============================================================
 set -euo pipefail

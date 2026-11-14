@@ -333,11 +333,11 @@
       "layer": "release",
       "command": [
         "node",
-        "test/check-performance.mjs"
+        "test/performance/check-performance.mjs"
       ],
       "paths": [
-        "test/PERFORMANCE.md",
-        "test/check-performance.mjs",
+        "test/performance/PERFORMANCE.md",
+        "test/performance/check-performance.mjs",
         "ios/DSHMobile/DSHMobileUITests/PerformanceBaselineTests.swift"
       ],
       "requirements": [

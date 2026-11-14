@@ -386,7 +386,7 @@ export function buildPlan({ casePath, caseText, stepsText, runId, bundleId, sess
         const keys = values.screen ? String(values.screen).split(',') : []
         for (const key of keys) {
           const entry = screens[key]
-          if (!entry) throw new Error(`未知页面「${key}」：先在 test/screens.md 与 context.mjs 的 screens 表里登记`)
+          if (!entry) throw new Error(`未知页面「${key}」：先在 test/rules/screens.md 与 context.mjs 的 screens 表里登记`)
           args.push(...entry.args(sessionId))
         }
         if (values.args) {

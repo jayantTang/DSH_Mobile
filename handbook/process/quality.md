@@ -10,7 +10,7 @@
 - 两级渠道的前提与补救见 `scripts/verify/README.md`。某级不可用时必须如实报告 blocked（原因与下一步），不得静默跳过。
 - L2 仅对 host-web 必跑（owner 2026-10-31 调整）。plugin 与 mail 的单测由 CI 的 Ubuntu 作业覆盖，本机 L2 对这两类改为可选复核。host-web 的 L2 证据绑定 `plugin-install-hot` 场景，不得用 `mail-tests` 等其它场景的判定充当证据。
 - L3 已废除（owner 2026-10-31）：桌面宿主与从零启用改为发布前人工验收，不得写成自动化通过。
-- 证据保存在 `.lanes/runs/`（已 gitignore），判定为 pass / fail / blocked / not-run 四态，与 `test/RULES.md` 一致。
+- 证据保存在 `.lanes/runs/`（已 gitignore），判定为 pass / fail / blocked / not-run 四态，与 `test/rules/RULES.md` 一致。
 - 验证渠道不改变检查次序：快速检查仍先于完整验证；两级渠道只回答「在哪一级环境取得证据」。
 
 ## 全量测试
@@ -32,10 +32,10 @@
 
 ## 发布前性能门禁
 
-发布前另跑 `npm run check:relay-tls`；需要真机推送时跑 `DSH_APNS_DEVICE=<deviceId> npm run check:apns` 验证公网中转不以明文提供 DLP；真机性能样本拷回后执行 `node test/check-performance.mjs --file /tmp/performance-device.log`。p95 超标或样本不足不得发布；模拟器与 CI 没有真机样本，因此这一步只在发布前做，不进 pre-commit。
+发布前另跑 `npm run check:relay-tls`；需要真机推送时跑 `DSH_APNS_DEVICE=<deviceId> npm run check:apns` 验证公网中转不以明文提供 DLP；真机性能样本拷回后执行 `node test/performance/check-performance.mjs --file /tmp/performance-device.log`。p95 超标或样本不足不得发布；模拟器与 CI 没有真机样本，因此这一步只在发布前做，不进 pre-commit。
 
 ## 完成定义
 
 执行完用例不算完成，必须写出报告并给出判定。顺序固定为 `run` → 逐张查看标注图 → `scaffold` → 填写 `review.md` → `report --verdict …`。未写评审、被 lint 判为「报告不完整」，或只执行未判定，均不得汇报为「测试通过」。汇报测试结果只给三项：四态判定、报告路径、待用户决定的事项。
 
-用例与报告口径以 `test/RULES.md`、`test/REPORT-CONTRACT.md` 为准。
+用例与报告口径以 `test/rules/RULES.md`、`test/rules/REPORT-CONTRACT.md` 为准。

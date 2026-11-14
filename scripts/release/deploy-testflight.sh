@@ -74,7 +74,7 @@ done
 # 性能硬门禁：TestFlight 的导出/上传/提审都必须先有真机样本并通过 p95 阈值。
 # --archive-only 只编译，不在此列；样本默认 /tmp/performance-device.log，可用 DSH_PERF_LOG 覆盖。
 if [ "$ARCHIVE_ONLY" = 0 ]; then
-  node "$ROOT/test/check-performance.mjs" --file "${DSH_PERF_LOG:-/tmp/performance-device.log}" \
+  node "$ROOT/test/performance/check-performance.mjs" --file "${DSH_PERF_LOG:-/tmp/performance-device.log}" \
     || die "真机性能门禁未通过（样本 ${DSH_PERF_LOG:-/tmp/performance-device.log}）"
 fi
 

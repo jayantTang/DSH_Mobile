@@ -23,7 +23,7 @@
   ],
   "SR-08.05": [
     { "path": "ios/DSHMobile/DSHMobileUITests/PerformanceBaselineTests.swift", "contains": "testLongTextScrollHitches" },
-    { "path": "test/check-performance.mjs", "contains": "p95" }
+    { "path": "test/performance/check-performance.mjs", "contains": "p95" }
   ],
   "SR-08.06": [
     { "path": "ios/DSHMobile/DSHMobileTests/SessionAlertsTests.swift", "contains": "testTurnEndRequestCarriesSessionRouteAndIdentifier" },
