@@ -1,0 +1,4 @@
+1  do: 打开页面 transcript     | shot: ipad-reading-portrait
+2  do: 什么都不做              | want: id:chat.transcript | id:session.list
+3  do: 旋转 横屏               | shot: ipad-reading-landscape after
+4  do: 什么都不做              | want: id:chat.transcript

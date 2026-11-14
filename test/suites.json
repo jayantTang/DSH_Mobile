@@ -364,6 +364,24 @@
       ],
       "risk": "medium",
       "budget": 60
+    },
+    {
+      "id": "ui-ipad",
+      "title": "iPad 阅读宽度与横屏",
+      "layer": "ui",
+      "command": [
+        "./test/run-ipad.sh"
+      ],
+      "paths": [
+        "test/acceptance/09-ipad-layout.*",
+        "ios/DSHMobile/DSHMobile/App/**",
+        "ios/DSHMobile/Modules/Features/Chat/UI/**"
+      ],
+      "requirements": [
+        "SR-07.01"
+      ],
+      "risk": "medium",
+      "budget": 300
     }
   ]
 }

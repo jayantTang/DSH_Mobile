@@ -105,6 +105,7 @@ test/.venv/bin/python ios/DSHMobile/UITestHarness/test_report.py    # 每条规�
 | `requirements-coverage-all.md` | 全部 SR 的套件级覆盖矩阵（生成） | ✅ |
 | `generate-coverage-all.mjs` | 生成全量套件覆盖矩阵 | ✅ |
 | `check-coverage.mjs` | 覆盖矩阵路径与 SR 一致性检查 | ✅ |
+| `run-ipad.sh` | iPad 布局验收入口 | ✅ |
 | `screens.md` | 可直达页面与根标识 | ✅ |
 | `cases/fixed/` | 固定用例，只增不改；每个用例两个文件：`序号-中文标题.md` + 同名 `.steps` | ✅ |
 | `cases/current/` | 本次任务的临时用例 | ✅（随任务结束清理） |

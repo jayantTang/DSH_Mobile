@@ -48,7 +48,7 @@
 | SR-06.04 | ok | `requirements`、`ios-app-unit` |
 | SR-06.05 | ok | `requirements`、`ios-modules` |
 | SR-06.06 | ok | `requirements`、`ios-modules` |
-| SR-07.01 | weak | `requirements` |
+| SR-07.01 | ok | `requirements`、`ui-ipad` |
 | SR-07.02 | ok | `requirements`、`static-loc` |
 | SR-08.01 | ok | `requirements`、`ios-modules` |
 | SR-08.02 | ok | `requirements`、`ios-dshkit`、`relay-go` |
@@ -57,4 +57,4 @@
 | SR-08.05 | ok | `requirements`、`performance` |
 | SR-08.06 | ok | `requirements`、`ios-app-unit` |
 
-共 52 条 SR；无套件覆盖 0 条；只有需求自审、没有功能套件 1 条。
+共 52 条 SR；无套件覆盖 0 条；只有需求自审、没有功能套件 0 条。
