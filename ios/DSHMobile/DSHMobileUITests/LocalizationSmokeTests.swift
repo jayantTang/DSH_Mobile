@@ -33,6 +33,10 @@ final class LocalizationSmokeTests: XCTestCase {
                     || app.buttons[anchor].waitForExistence(timeout: 1)
             }
             XCTAssertTrue(found, "\(item.id) stayed on another language; anchors=\(item.anchors)")
+            let shot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+            shot.name = item.id
+            shot.lifetime = .keepAlways
+            add(shot)
             app.terminate()
         }
     }

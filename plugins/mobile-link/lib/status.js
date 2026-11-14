@@ -8,6 +8,9 @@
 
 import { isPlaceholderRelayUrl } from './dlp.js'
 import { SERVER_CAPABILITIES, SERVER_VERSION, hostVersion } from './hello.js'
+import { T, setLanguage } from './i18n.js'
+
+if (process.env.DSH_LANG) setLanguage(process.env.DSH_LANG)
 
 const PROTOCOL_VERSION = 1
 
@@ -17,10 +20,10 @@ const PROTOCOL_VERSION = 1
  * 锚点标题与 `docs/ONBOARDING.md` 里的小节标题**逐字一致**，这样"锚点存在"可以机械核对。
  */
 export const DSH_HINTS = {
-  config: { hint: '你手工配置的本机地址不对或已失效', docAnchor: '手工指定本机地址' },
-  'host-service': { hint: '当前宿主没有把本机访问方式交给插件（多为插件没装进正在运行的宿主）', docAnchor: '装在哪里：档案与插件入口' },
-  DSH_WEB_URL: { hint: '环境变量里的本机地址已过期', docAnchor: '手工指定本机地址' },
-  unreachable: { hint: '本机 DSH 不可达；请确认宿主正在运行', docAnchor: '排查：连不上时看这里' },
+  config: { hint: '你手工配置的本机地址不对或已失效', i18n: 'status.config', docAnchor: '手工指定本机地址' },
+  'host-service': { hint: '当前宿主没有把本机访问方式交给插件（多为插件没装进正在运行的宿主）', i18n: 'status.hostService', docAnchor: '装在哪里：档案与插件入口' },
+  DSH_WEB_URL: { hint: '环境变量里的本机地址已过期', i18n: 'status.dshWebUrl', docAnchor: '手工指定本机地址' },
+  unreachable: { hint: '本机 DSH 不可达；请确认宿主正在运行', i18n: 'status.unreachable', docAnchor: '排查：连不上时看这里' },
 }
 
 /**
@@ -29,9 +32,9 @@ export const DSH_HINTS = {
  * 锚点标题与 `docs/ONBOARDING.md` 的小节标题逐字一致，`test/status.test.js` 会核对。
  */
 export const HOST_HINTS = {
-  desktop: { hint: '你正在用官方桌面版（连接器已装进它的档案）', docAnchor: '安装：官方桌面版' },
-  web: { hint: '你正在用命令行 web 版', docAnchor: '安装：命令行 web 版' },
-  unknown: { hint: '无法识别当前宿主；若连不上，请按"排查"一节处理', docAnchor: '排查：连不上时看这里' },
+  desktop: { hint: '你正在用官方桌面版（连接器已装进它的档案）', i18n: 'status.desktop', docAnchor: '安装：官方桌面版' },
+  web: { hint: '你正在用命令行 web 版', i18n: 'status.web', docAnchor: '安装：命令行 web 版' },
+  unknown: { hint: '无法识别当前宿主；若连不上，请按"排查"一节处理', i18n: 'status.unknown', docAnchor: '排查：连不上时看这里' },
 }
 
 /** 本机 DSH 侧的诊断块（老字段一个不少，新字段只增）。 */function dshBlock(agent) {
@@ -46,7 +49,7 @@ export const HOST_HINTS = {
     error: agent.dshError ?? null,
     // 新增（只增不改）：失败分类 + 用户可读的一句话 + 文档锚点。
     errorKind,
-    hint: entry?.hint ?? null,
+    hint: entry?.i18n ? T(entry.i18n) : entry?.hint ?? null,
     docAnchor: entry?.docAnchor ?? null,
   }
 }
@@ -108,7 +111,7 @@ export function statusSnapshot(agent) {
     // 新增（只增不改）：宿主形态 + 它对应的一句话与文档锚点，
     // 决定用户该按哪条说明安装/排障（FR-012）。
     host: agent.hostForm,
-    hostHint: hostEntry.hint,
+    hostHint: hostEntry.i18n ? T(hostEntry.i18n) : hostEntry.hint,
     hostDocAnchor: hostEntry.docAnchor,
     protocolVersion: PROTOCOL_VERSION,
     // Same facts as `_link/hello`, which is the channel the app actually uses:
@@ -134,7 +137,7 @@ export function statusSnapshot(agent) {
       relayLocked: Boolean(realConfiguredRelay),
       command: agent.needsEnroll ? agent.enrollHint() : null,
       hint: agent.needsEnroll
-        ? '这台电脑还没有登记到中转。在「移动端连接」面板里确认中转地址，然后点「登记」。'
+        ? T('status.unregistered')
         : null,
     },
     state: agent.state,

@@ -28,6 +28,7 @@ import { MobileLinkAgent } from './link.js'
 import { mintPairCode } from './pairing.js'
 import { qrTerminal } from './qr.js'
 import { INVITE_ENV, defaultStatePath, resolveIdentity } from './state.js'
+import { T, setLanguage } from './i18n.js'
 
 /** Atomic status snapshot so readers never observe a half-written file. */
 async function writeJsonAtomic(path, value) {
@@ -60,6 +61,8 @@ function parseArgs(argv) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2))
+  if (args.lang) setLanguage(args.lang)
+  else if (process.env.DSH_LANG) setLanguage(process.env.DSH_LANG)
   if (args.help) {
     process.stdout.write(`usage: cli.js enroll [--relay <ws url>] [--name <label>]
   Register this computer with open enrollment in ${defaultStatePath()}. Exits non-zero on failure.
@@ -67,6 +70,7 @@ async function main() {
   cli.js --relay <ws url> --agent-id <id> --agent-secret <secret>
   [--state-file <path>] [--dsh-url <url>]
   [--status-file <path>] [--heartbeat-ms <n>] [--log-level debug|info|warn]
+  [--lang en|zh-Hans|zh-Hant|ja|ko|es|pt-BR|fr|de]
 
   Note: run this inside a DSH host (plugin) when you can. A standalone process has no
   in-process context, so on the official desktop app it cannot learn the local address by
@@ -100,21 +104,16 @@ async function main() {
     // 反正人已经坐在终端前、手机就在手边，索性把配对码也申请出来、画成终端二维码：
     // 扫这一屏等于在 App 里填「中转服务器 + 配对码」，少一次开页面找端口的往返。
     // 申请失败不算失败——登记本身已经成功，退回到"去界面里的连接入口取"的说法。
-    process.stdout.write('这台电脑已登记。接下来还有两步：\n'
-      + '  1. 重启 DSH，让连接器用上这个身份；\n'
-      + '  2. 手机 App 的「扫码配对」扫下面的二维码（与 DSH 界面左下角「移动端连接」里那张等价）。\n')
+    process.stdout.write(`${T('cli.registered')}\n  ${T('cli.step1')}\n  ${T('cli.step2')}\n`)
     try {
       const identity = await resolveIdentity({ stateFile: settled.stateFile })
       const minted = await mintPairCode({ identity, ttlMs: 10 * 60 * 1000 })
       const minutes = Math.round((minted.expiresAt - Date.now()) / 60000)
       process.stdout.write('\n' + qrTerminal(minted.qrPayload) + '\n')
-      process.stdout.write(`配对码 ${minted.code}（约 ${minutes} 分钟有效，一次性）\n`)
-      process.stdout.write('也可以在这台电脑上点 DSH 界面左下角的「移动端连接」取新码；\n'
-        + '连接器还会把带令牌地址写进 ~/.dsh/mobile-link/endpoint.json。\n')
+      process.stdout.write(`${T('cli.code', { code: minted.code, minutes })}\n`)
+      process.stdout.write(`${T('cli.hint')}\n`)
     } catch (error) {
-      process.stdout.write('（这次没能预先申请配对码：' + (error?.message ?? error) + '）\n'
-        + '重启 DSH 后，在这台电脑的 DSH 界面左下角点「移动端连接」，'
-        + '用手机 App 的「扫码配对」扫里面的二维码。\n')
+      process.stdout.write(`${T('cli.prefetchFailed', { error: error?.message ?? error })}\n${T('cli.prefetchHint')}\n`)
     }
     return 0
   }
