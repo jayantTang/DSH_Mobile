@@ -2,12 +2,12 @@
 
 > 由 `node test/coverage/check-test-coverage.mjs` 生成。只有 ✅ 代表精确测试文件与断言标记都存在；🟠 只是套件级映射，不得当作已完成。
 
-汇总：共 52 条 · ✅ verified 44 · 🟡 partial 0 · 🟠 suite-only 8 · ❌ gap 0
+汇总：共 52 条 · ✅ verified 47 · 🟡 partial 0 · 🟠 suite-only 5 · ❌ gap 0
 
 | SR | 状态 | 精确测试证据 | 负责套件 | 缺口 |
 |---|---|---|---|---|
 | SR-01.01 | ✅ verified | `plugins/mobile-link/test/cli-enroll.test.js`：`open enrollment works without an invite code` | `requirements`、`connector`、`relay-go`、`ui-connection` |  |
-| SR-01.02 | 🟠 suite-only | — | `requirements`、`connector` | 只有套件级映射，未逐测试 |
+| SR-01.02 | ✅ verified | `plugins/mobile-link/test/cli-enroll.test.js`：`legacy invite codes are still accepted` | `requirements`、`connector` |  |
 | SR-01.03 | ✅ verified | `plugins/mobile-link/test/state.test.js`：`mintPairCode posts to the prefixed relay` | `requirements`、`ios-dshkit`、`connector`、`relay-go`、`ui-connection` |  |
 | SR-01.04 | ✅ verified | `ios/DSHMobile/DSHKit/Tests/DSHKitTests/LinkCarrierSocketLifecycleTests.swift`：`socket 自己断了` | `requirements`、`ios-dshkit` |  |
 | SR-01.05 | ✅ verified | `plugins/mobile-link/test/plugin.test.js`：`GET /mobile-link/devices returns the full paired roster` | `requirements`、`connector`、`relay-go` |  |
@@ -16,7 +16,7 @@
 | SR-01.08 | ✅ verified | `ios/DSHMobile/Modules/Features/Connection/Tests/DomainTests/ConnectionDomainStoreTests.swift`：`test_saved_profiles_round_trip_through_a_defaults_domain` | `requirements`、`ui-connection` |  |
 | SR-01.09 | ✅ verified | `ios/DSHMobile/Modules/Features/Connection/Tests/DomainTests/ConnectionProfileTests.swift`：`test_the_state_flags_are_mutually_exclusive` | `requirements`、`ui-connection` |  |
 | SR-01.10 | ✅ verified | `relay-go/internal/wsapi/wsapi_test.go`：`TestTheDeviceLimitIs4021OnTheWire` | `requirements`、`relay-go` |  |
-| SR-01.11 | 🟠 suite-only | — | `requirements`、`ui-connection` | 只有套件级映射，未逐测试 |
+| SR-01.11 | ✅ verified | `test/acceptance/11-connector-install-guide.md`：`TC-MOB-203` | `requirements`、`ui-connection`、`ui-guide` |  |
 | SR-02.01 | ✅ verified | `ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/ChatModelTransportTests.swift`：`test_open_subscribes_to_the_session_the_summary_names` | `requirements`、`ios-dshkit`、`connector`、`ui-chat` |  |
 | SR-02.02 | 🟠 suite-only | — | `requirements`、`ui-chat` | 只有套件级映射，未逐测试 |
 | SR-02.03 | ✅ verified | `ios/DSHMobile/Modules/Core/Tests/HostEventHubTests.swift`：`test_a_waiting_prompt_is_promoted_and_kept_by_session` | `requirements`、`ios-dshkit`、`connector`、`ui-chat` |  |
@@ -44,7 +44,7 @@
 | SR-05.01 | ✅ verified | `ios/DSHMobile/Modules/Features/Feedback/Tests/DomainTests/FeedbackDraftLengthTests.swift`：`FeedbackDraftLengthTests` | `requirements`、`mail` |  |
 | SR-05.02 | ✅ verified | `ios/DSHMobile/Modules/Features/Feedback/Tests/DomainTests/FeedbackCenterTests.swift`：`FeedbackCenterTests` | `requirements`、`ios-modules`、`mail` |  |
 | SR-05.03 | ✅ verified | `ios/DSHMobile/Modules/Features/Feedback/Tests/DomainTests/FeedbackAttachmentLoaderTests.swift`：`FeedbackAttachmentLoaderTests` | `requirements`、`mail` |  |
-| SR-06.01 | 🟠 suite-only | — | `requirements`、`ios-modules` | 只有套件级映射，未逐测试 |
+| SR-06.01 | ✅ verified | `test/acceptance/13-settings-permission.md`：`TC-MOB-205` | `requirements`、`ios-modules`、`ui-settings-permission` |  |
 | SR-06.02 | ✅ verified | `ios/DSHMobile/Modules/Features/Settings/Tests/DomainTests/SettingsCredentialTests.swift`：`test_credential_writes_require_a_connected_settings_host` | `requirements`、`ios-modules` |  |
 | SR-06.03 | 🟠 suite-only | — | `requirements`、`ios-modules` | 只有套件级映射，未逐测试 |
 | SR-06.04 | ✅ verified | `test/acceptance/06-about.md`：`TC-UI-103` | `requirements`、`ios-app-unit` |  |

@@ -126,3 +126,11 @@ test('open enrollment works without an invite code', async () => {
   assert.equal(typeof body.name, 'string')
   assert.ok(body.name.length > 0)
 })
+
+test('legacy invite codes are still accepted and sent to the relay', async () => {
+  const { stdout, seen } = await enrollAgainst()
+  assert.match(stdout, /这台电脑已登记/)
+  const enroll = seen.find((item) => item.url.endsWith('/agents/enroll'))
+  assert.ok(enroll)
+  assert.equal(JSON.parse(enroll.body).inviteCode, 'AAAA-BBBB-CCCC-DDDD')
+})

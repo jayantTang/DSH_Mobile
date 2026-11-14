@@ -1,0 +1,2 @@
+# TC-MOB-205 设置页权限档位显示
+1  do: 打开页面 settings | want: id:settings.root, id:settings.permission.read-only | shot: settings-permission check=texts

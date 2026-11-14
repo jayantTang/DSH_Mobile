@@ -1,0 +1,3 @@
+# TC-MOB-203 连接器安装指引
+1  do: 打开页面 connections | want: text:查看安装方式 | shot: connections check=texts
+2  do: 点击 text:查看安装方式, 等待 1 秒 | want: text:安装连接器, text:Plugins | shot: guide check=texts

@@ -294,5 +294,23 @@
       "path": "ios/DSHMobile/Modules/Core/Tests/UpdateCheckerTests.swift",
       "contains": "test_a_newer_published_build_raises_the_banner"
     }
+  ],
+  "SR-01.02": [
+    {
+      "path": "plugins/mobile-link/test/cli-enroll.test.js",
+      "contains": "legacy invite codes are still accepted"
+    }
+  ],
+  "SR-01.11": [
+    {
+      "path": "test/acceptance/11-connector-install-guide.md",
+      "contains": "TC-MOB-203"
+    }
+  ],
+  "SR-06.01": [
+    {
+      "path": "test/acceptance/13-settings-permission.md",
+      "contains": "TC-MOB-205"
+    }
   ]
 }

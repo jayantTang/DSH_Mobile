@@ -404,6 +404,44 @@
       "risk": "high",
       "budget": 600,
       "cwd": "ios/DSHMobile"
+    },
+    {
+      "id": "ui-guide",
+      "title": "连接器安装指引",
+      "layer": "ui",
+      "command": [
+        "./test/run.sh",
+        "run",
+        "test/acceptance/11-connector-install-guide.md"
+      ],
+      "paths": [
+        "test/acceptance/11-connector-install-guide.*",
+        "ios/DSHMobile/Modules/Features/Connection/UI/**"
+      ],
+      "requirements": [
+        "SR-01.11"
+      ],
+      "risk": "medium",
+      "budget": 120
+    },
+    {
+      "id": "ui-settings-permission",
+      "title": "设置权限显示",
+      "layer": "ui",
+      "command": [
+        "./test/run.sh",
+        "run",
+        "test/acceptance/13-settings-permission.md"
+      ],
+      "paths": [
+        "test/acceptance/13-settings-permission.*",
+        "ios/DSHMobile/Modules/Features/Settings/UI/**"
+      ],
+      "requirements": [
+        "SR-06.01"
+      ],
+      "risk": "medium",
+      "budget": 120
     }
   ]
 }
