@@ -41,7 +41,7 @@ final class PerformanceBaselineTests: XCTestCase {
     func testLongTextScrollHitches() {
         let app = XCUIApplication()
         app.launchArguments = [
-            "-DSHOpenFile", "ios/DSHMobile/DSHMobileUITests/Fixtures/plain-long.txt",
+            "-DSHOpenFile", "ios/DSHMobile/DSHMobileUITests/Fixtures/long-line.txt",
         ]
         app.launch()
         let toggle = app.buttons["files.wrap.toggle"]
@@ -50,11 +50,14 @@ final class PerformanceBaselineTests: XCTestCase {
         let scroll = app.descendants(matching: .any)["files.reader.scroll"]
         XCTAssertTrue(scroll.waitForExistence(timeout: 5), "reader scroll view missing")
 
+        let options = XCTMeasureOptions()
+        // 200k 字符一行，一次滑动已经足够暴露 hitch/内存；多轮会变成设备热噪声。
+        options.iterationCount = 2
         measure(metrics: [
             XCTHitchMetric(application: app),
             XCTMemoryMetric(application: app),
-        ]) {
-            for _ in 0..<3 { scroll.swipeLeft() }
+        ], options: options) {
+            scroll.swipeLeft()
         }
     }
 }

@@ -74,10 +74,10 @@ iPhone 15（iPhone15,4），iOS 27.0.1，公共中转，Debug 构建；测试通
 
 开发者设置里的卡顿/帧率 HUD 用来现场判断，不进入基线：它没有稳定采样口径，也不产出 p50/p95。自动化改用 Xcode 自带的 `XCTHitchMetric` 与 `XCTMemoryMetric`，直接进测试结果。
 
-`PerformanceBaselineTests.testLongTextScrollHitches` 在 iPhone 15、iOS 27.0.1 上对长文本横向滚动测 5 次：
+`PerformanceBaselineTests.testLongTextScrollHitches` 在 iPhone 15、iOS 27.0.1 上打开 200k 字符单行夹具，做 2 次横向滑动：
 
 - Hitches：0 次，hitch 总时长 0。
-- 峰值物理内存：平均约 121,319 kB，样本范围约 105–136 MB。
-- 常驻物理内存：约 105,187 kB，标准差 0.68%。
+- 峰值物理内存：平均约 81,955 kB（样本 86,510 / 77,400 kB）。
+- 常驻物理内存：约 77,171 kB，标准差 0.04%。
 
-这组只覆盖短夹具的横向滚动，不代表 200k 字符长行；它证明原生 hitch/memory 指标可稳定接入，后续用它替代自造帧率采样。
+200k 单行没有出现 hitch，说明当前布局与滚动路径没有可测的卡顿；这组仍只覆盖 Debug 构建、单机与一次短滑动，不能替代 30 次基线。
