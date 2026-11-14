@@ -10,6 +10,8 @@ final class LocalizationSmokeTests: XCTestCase {
     }
 
     private let cases = [
+        LocaleCase(id: "zh-Hans", locale: "zh_CN", anchors: ["连接 DSH", "会话", "设置"]),
+        LocaleCase(id: "en", locale: "en_US", anchors: ["Connect to DSH", "Sessions", "Settings"]),
         LocaleCase(id: "zh-Hant", locale: "zh_TW", anchors: ["連線到 DSH", "工作階段", "設定"]),
         LocaleCase(id: "ja", locale: "ja_JP", anchors: ["DSH に接続", "セッション", "設定"]),
         LocaleCase(id: "ko", locale: "ko_KR", anchors: ["DSH에 연결", "세션", "설정"]),
