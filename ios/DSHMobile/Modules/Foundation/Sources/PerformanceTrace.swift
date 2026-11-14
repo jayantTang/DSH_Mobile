@@ -41,5 +41,25 @@ public enum PerformanceTrace {
         let milliseconds = Int((CFAbsoluteTimeGetCurrent() - token.started) * 1000)
         signposter.endInterval(label(token.name), token.state)
         logger.notice("perf.end \(token.name.rawValue, privacy: .public) ms=\(milliseconds, privacy: .public)")
+        #if DEBUG
+        // UI 测试无法直接读真机的统一日志；DEBUG 构建把样本同时追加到 App 容器，
+        // 由 devicectl 拷回 Mac。Release/OTA 不写文件。
+        guard let url = debugLogURL,
+              let data = "\(token.name.rawValue) \(milliseconds)\n".data(using: .utf8)
+        else { return }
+        if !FileManager.default.fileExists(atPath: url.path) {
+            try? data.write(to: url)
+        } else if let handle = try? FileHandle(forWritingTo: url) {
+            defer { try? handle.close() }
+            try? handle.seekToEnd()
+            try? handle.write(contentsOf: data)
+        }
+        #endif
     }
+
+    #if DEBUG
+    private static let debugLogURL: URL? = FileManager.default
+        .urls(for: .documentDirectory, in: .userDomainMask).first?
+        .appendingPathComponent("performance.log")
+    #endif
 }

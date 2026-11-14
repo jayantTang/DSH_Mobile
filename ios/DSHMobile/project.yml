@@ -117,6 +117,7 @@ targets:
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.jayanttang.dsh.tests
     dependencies:
       - target: DSHMobile
 
@@ -128,6 +129,7 @@ targets:
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.jayanttang.dsh.uitests
     dependencies:
       - target: DSHMobile
 

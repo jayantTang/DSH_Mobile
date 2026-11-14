@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		099853A8558490874310E248 /* AppLifecyclePlan.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5CB8D05D12CE4348EDCDCD4 /* AppLifecyclePlan.swift */; };
+		0FA58AC07AC1AD0098578E27 /* PerformanceBaselineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B59A3E7BEAE23BC25B65282E /* PerformanceBaselineTests.swift */; };
 		15D2AF1DCD818FBE336D63E5 /* DSHFilesUI in Frameworks */ = {isa = PBXBuildFile; productRef = A9DDDA67B2AA12154208575E /* DSHFilesUI */; };
 		1A13BA7FC42785A2C927EBA2 /* DSHSettingsUI in Frameworks */ = {isa = PBXBuildFile; productRef = 13BE688B63426B14637AB2F4 /* DSHSettingsUI */; };
 		1EB986CF804DF26C21619F30 /* 04-s09-settings.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 746591D12E4B8A73C9246EEF /* 04-s09-settings.jpg */; };
@@ -132,6 +133,7 @@
 		9AAC6CB6EB250F570CE6471A /* AppAutomation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppAutomation.swift; sourceTree = "<group>"; };
 		A5CB8D05D12CE4348EDCDCD4 /* AppLifecyclePlan.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLifecyclePlan.swift; sourceTree = "<group>"; };
 		AFF59C8B75008DE0FF3FC446 /* DSHMobileApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DSHMobileApp.swift; sourceTree = "<group>"; };
+		B59A3E7BEAE23BC25B65282E /* PerformanceBaselineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PerformanceBaselineTests.swift; sourceTree = "<group>"; };
 		B9260874C4B5CBABBA0027B6 /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.xcconfig; sourceTree = "<group>"; };
 		B99EB3D5AF0C0B3332EC364E /* PadCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PadCommands.swift; sourceTree = "<group>"; };
 		C5443B4AC48ED16A3F9AAFF1 /* P13ResumeObserver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = P13ResumeObserver.swift; sourceTree = "<group>"; };
@@ -251,6 +253,7 @@
 			children = (
 				0662B33E1469AC9A482D5971 /* CompressedBadgeAccessibilityTests.swift */,
 				1070BF66610D38AECBC868D4 /* Engine.swift */,
+				B59A3E7BEAE23BC25B65282E /* PerformanceBaselineTests.swift */,
 				16E4974F35B6234FB4DFBDD5 /* Fixtures */,
 			);
 			path = DSHMobileUITests;
@@ -512,6 +515,7 @@
 			files = (
 				7FB3F93C3387C6BA4B1082F0 /* CompressedBadgeAccessibilityTests.swift in Sources */,
 				FA9FDA6AB018EF6551789A60 /* Engine.swift in Sources */,
+				0FA58AC07AC1AD0098578E27 /* PerformanceBaselineTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -620,6 +624,7 @@
 					"@executable_path/Frameworks",
 					"@loader_path/Frameworks",
 				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.jayanttang.dsh.uitests;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_TARGET_NAME = DSHMobile;
@@ -636,6 +641,7 @@
 					"@executable_path/Frameworks",
 					"@loader_path/Frameworks",
 				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.jayanttang.dsh.tests;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/DSHMobile.app/DSHMobile";
@@ -652,6 +658,7 @@
 					"@executable_path/Frameworks",
 					"@loader_path/Frameworks",
 				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.jayanttang.dsh.uitests;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_TARGET_NAME = DSHMobile;
@@ -873,6 +880,7 @@
 					"@executable_path/Frameworks",
 					"@loader_path/Frameworks",
 				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.jayanttang.dsh.uitests;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_TARGET_NAME = DSHMobile;
@@ -889,6 +897,7 @@
 					"@executable_path/Frameworks",
 					"@loader_path/Frameworks",
 				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.jayanttang.dsh.tests;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/DSHMobile.app/DSHMobile";
@@ -905,6 +914,7 @@
 					"@executable_path/Frameworks",
 					"@loader_path/Frameworks",
 				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.jayanttang.dsh.tests;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/DSHMobile.app/DSHMobile";
