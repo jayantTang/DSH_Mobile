@@ -513,17 +513,21 @@
       "command": [
         "node",
         "--test",
-        "test/coverage/language-policy.test.mjs"
+        "test/coverage/language-policy.test.mjs",
+        "test/coverage/locale-parity.test.mjs"
       ],
       "paths": [
-        "test/coverage/language-policy.test.mjs",
         "handbook/requirements/details/internationalization.md",
-        "ios/DSHMobile/DSHMobile-Info.plist"
+        "ios/DSHMobile/DSHMobile-Info.plist",
+        "ios/DSHMobile/DSHMobile/*.lproj/Localizable.strings",
+        "test/coverage/language-policy.test.mjs",
+        "test/coverage/locale-parity.test.mjs"
       ],
       "requirements": [
         "SR-09.01",
         "SR-09.02",
-        "SR-09.06"
+        "SR-09.06",
+        "SR-09.03"
       ],
       "risk": "medium",
       "budget": 60

@@ -1,0 +1,4 @@
+/* System permission prompts (ja); machine-translated from English. Review before release. */
+"NSLocalNetworkUsageDescription" = "同じWi-Fiネットワーク上のコンピューターのDSHに直接接続するために使用します。中継を経由するより高速です。";
+"NSPhotoLibraryAddUsageDescription" = "画像をフォトライブラリに保存します。";
+"NSCameraUsageDescription" = "コードを入力せずに接続するため、コンピューターに表示されるペアリング用QRコードをスキャンします。";

@@ -434,9 +434,13 @@ test('a host that cannot express the browser language lets the panel fill the ga
   })
   assert.match(spanishHost.props['aria-label'], /Conexión móvil：Conectado/)
 
-  // 浏览器要的语言谁都没有：回落宿主的语言，不要变成空文案。
+  // 浏览器要的语言现在有词表：面板直接用该语言。
   const french = await renderEntry({ language: 'fr-FR', localeActive: 'en' })
-  assert.match(french.props['aria-label'], /Mobile link：Connected/)
+  assert.match(french.props['aria-label'], /Lien mobile：Connecté/)
+
+  // 浏览器要的语言谁都没有：回落宿主的语言，不要变成空文案。
+  const dutch = await renderEntry({ language: 'nl-NL', localeActive: 'en' })
+  assert.match(dutch.props['aria-label'], /Mobile link：Connected/)
 })
 
 test('the host language written on <html lang> counts even without a locale service', async () => {
@@ -466,20 +470,35 @@ test('the panel follows the language the browser asks for, and stays Chinese oth
   const english = await renderEntry('en-GB')
   assert.match(english.props['aria-label'], /Mobile link：Connected/)
 
-  // 没做过的语言回落中文原文，不能变成空白或英文半成品。
+  // 新词表语言直接生效，不能回落到中文。
   const german = await renderEntry('de-DE')
-  assert.match(german.props['aria-label'], /移动端连接：已连接/)
+  assert.match(german.props['aria-label'], /Mobile Verbindung：Verbunden/)
 
   const noPreference = await renderEntry(null)
   assert.match(noPreference.props['aria-label'], /移动端连接：已连接/)
 })
 
-test('every sentence the panel prints has both an English and a Spanish entry', () => {
+test('every sentence the panel prints has an English and a Spanish entry', () => {
   // 键就是中文原文：改文案时漏改词表不会报错，界面只会静默回落中文。这条用例负责拦住它。
   const used = [...SOURCE.matchAll(/\bT\('((?:[^'\\]|\\.)*)'/g)].map((match) => match[1])
   assert.ok(used.length > 80, `源码里应当有几十处 T('…')，实际只找到 ${used.length} 处`)
-  const missing = [...new Set(used)].filter((key) => SOURCE.split(`'${key}':`).length - 1 !== 2)
+  const en = SOURCE.match(/ en: \{([\s\S]*?)\n  \},/)[1]
+  const es = SOURCE.match(/ es: \{([\s\S]*?)\n  \},/)[1]
+  const missing = [...new Set(used)].filter((key) => !en.includes(`'${key}':`) || !es.includes(`'${key}':`))
   assert.deepEqual(missing, [], `这些句子在 MESSAGES 里缺 en 或 es 条目：${missing.join(' / ')}`)
+})
+
+test('all shipped locales cover every panel sentence', () => {
+  const used = [...SOURCE.matchAll(/\bT\('((?:[^'\\\\]|\\\\.)*)'/g)].map((match) => match[1])
+  const locales = ['en', 'es', 'ja', 'ko', 'zh-Hant', 'pt-BR', 'fr', 'de']
+  for (const locale of locales) {
+    const marker = locale.includes('-') ? `'${locale}': {` : ` ${locale}: {`
+    const at = SOURCE.indexOf(marker)
+    assert.ok(at >= 0, `${locale} table missing`)
+    const block = SOURCE.slice(at, SOURCE.indexOf('\n  },', at))
+    const missing = [...new Set(used)].filter((key) => !block.includes(`'${key}':`))
+    assert.deepEqual(missing, [], `${locale} missing: ${missing.join(' / ')}`)
+  }
 })
 
 test('the host locale outranks the browser, and switching it re-renders the panel', async () => {

@@ -1,0 +1,4 @@
+/* System permission prompts (zh-Hant); machine-translated from English. Review before release. */
+"NSLocalNetworkUsageDescription" = "用於在同一 Wi-Fi 下直接連接到您電腦上的 DSH；比透過中繼更快。";
+"NSPhotoLibraryAddUsageDescription" = "將影像儲存到您的照片圖庫。";
+"NSCameraUsageDescription" = "掃描您電腦上的配對 QR code，即可連線，無需輸入代碼。";

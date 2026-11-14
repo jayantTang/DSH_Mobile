@@ -344,6 +344,11 @@
       "path": "test/coverage/language-policy.test.mjs",
       "contains": "language matrix keeps English",
       "kind": "static"
+    },
+    {
+      "path": "test/coverage/locale-parity.test.mjs",
+      "contains": "all shipped locales have the same Localizable key set",
+      "kind": "static"
     }
   ],
   "SR-09.02": [
@@ -357,6 +362,11 @@
     {
       "path": "test/coverage/language-policy.test.mjs",
       "contains": "English UI values contain no Chinese",
+      "kind": "static"
+    },
+    {
+      "path": "test/coverage/locale-parity.test.mjs",
+      "contains": "all shipped locales have the same Localizable key set",
       "kind": "static"
     }
   ],

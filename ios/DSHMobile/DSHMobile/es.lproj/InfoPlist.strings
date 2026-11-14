@@ -1,0 +1,4 @@
+/* System permission prompts (es); machine-translated from English. Review before release. */
+"NSLocalNetworkUsageDescription" = "Se usa para conectarse directamente a DSH en tu computadora a través de la misma Wi-Fi; más rápido que pasar por el relé.";
+"NSPhotoLibraryAddUsageDescription" = "Guardar imágenes en tu biblioteca de fotos.";
+"NSCameraUsageDescription" = "Escanea el código QR de emparejamiento en tu computadora para conectarte sin escribir un código.";
