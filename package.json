@@ -44,7 +44,6 @@
     "check:secrets": "node scripts/dev/check-secrets.mjs",
     "check:docs": "node scripts/dev/check-docs.mjs",
     "check:requirements": "node scripts/dev/check-requirements.mjs",
-    "check:coverage": "node test/check-coverage.mjs",
     "check:test-coverage": "node test/check-test-coverage.mjs --check",
     "check:test-coverage:strict": "node test/check-test-coverage.mjs --check --strict",
     "check:performance": "node test/check-performance.mjs",

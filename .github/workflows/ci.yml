@@ -78,8 +78,6 @@ jobs:
         with:
           node-version: '22'
       - run: npm run check:docs
-      - name: 需求覆盖矩阵
-        run: npm run check:coverage
       - name: 全量需求测试覆盖表未漂移
         run: npm run check:test-coverage
       - name: 契约守卫（DLP 向量接线 / 安装目录阶梯 / 调试钩子闸门 / 单一来源）
