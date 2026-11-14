@@ -288,5 +288,11 @@
       "path": "test/acceptance/06-about.md",
       "contains": "TC-UI-103"
     }
+  ],
+  "SR-06.06": [
+    {
+      "path": "ios/DSHMobile/Modules/Core/Tests/UpdateCheckerTests.swift",
+      "contains": "test_a_newer_published_build_raises_the_banner"
+    }
   ]
 }

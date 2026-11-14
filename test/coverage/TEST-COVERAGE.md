@@ -2,7 +2,7 @@
 
 > 由 `node test/coverage/check-test-coverage.mjs` 生成。只有 ✅ 代表精确测试文件与断言标记都存在；🟠 只是套件级映射，不得当作已完成。
 
-汇总：共 52 条 · ✅ verified 43 · 🟡 partial 0 · 🟠 suite-only 9 · ❌ gap 0
+汇总：共 52 条 · ✅ verified 44 · 🟡 partial 0 · 🟠 suite-only 8 · ❌ gap 0
 
 | SR | 状态 | 精确测试证据 | 负责套件 | 缺口 |
 |---|---|---|---|---|
@@ -49,7 +49,7 @@
 | SR-06.03 | 🟠 suite-only | — | `requirements`、`ios-modules` | 只有套件级映射，未逐测试 |
 | SR-06.04 | ✅ verified | `test/acceptance/06-about.md`：`TC-UI-103` | `requirements`、`ios-app-unit` |  |
 | SR-06.05 | ✅ verified | `scripts/dev/check-diagnostics.test.mjs`：`agent-secret` | `requirements`、`ios-modules` |  |
-| SR-06.06 | 🟠 suite-only | — | `requirements`、`ios-modules` | 只有套件级映射，未逐测试 |
+| SR-06.06 | ✅ verified | `ios/DSHMobile/Modules/Core/Tests/UpdateCheckerTests.swift`：`test_a_newer_published_build_raises_the_banner` | `requirements`、`ios-modules` |  |
 | SR-07.01 | ✅ verified | `test/acceptance/09-ipad-layout.md`：`TC-IPAD-09` | `requirements`、`ui-ipad`、`ios-build` |  |
 | SR-07.02 | ✅ verified | `scripts/dev/check-localization.mjs`：`hardcoded-string` | `requirements`、`static-loc` |  |
 | SR-08.01 | ✅ verified | `ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/ChatModelDisruptionTests.swift`：`test_reopening_the_same_session_folds_its_replayed_records_once`<br>`test/acceptance/07-relay-reconnect.md`：`TC-MOB` | `requirements`、`ios-modules` |  |
