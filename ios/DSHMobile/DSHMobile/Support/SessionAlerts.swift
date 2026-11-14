@@ -57,6 +57,24 @@ final class SessionAlerts: NSObject, UNUserNotificationCenterDelegate {
         static let askVersionTrusted = 1
     }
 
+    /// 通知身份只由「事件类型 + 会话」决定：同一事件重复到达时替换同一条通知，
+    /// 而不是在锁屏上叠两条。离线推送是否到达不改变这个身份。
+    enum AlertKind {
+        case turnEnd
+        case attention
+
+        var prefix: String {
+            switch self {
+            case .turnEnd: return "turn-end"
+            case .attention: return "attention"
+            }
+        }
+    }
+
+    static func identifier(for kind: AlertKind, sessionId: String) -> String {
+        "\(kind.prefix)-\(sessionId)"
+    }
+
     init(prefs: SessionAlertPrefs = .shared) {
         self.prefs = prefs
         super.init()
@@ -156,7 +174,7 @@ final class SessionAlerts: NSObject, UNUserNotificationCenterDelegate {
     func turnFinished(sessionId: String, title: String) {
         guard notifyOnTurnEnd else { return }
         post(
-            identifier: "turn-end-\(sessionId)",
+            identifier: Self.identifier(for: .turnEnd, sessionId: sessionId),
             title: String(localized: "运行结束"),
             body: title,
             sessionId: sessionId
@@ -167,7 +185,7 @@ final class SessionAlerts: NSObject, UNUserNotificationCenterDelegate {
     func needsAttention(sessionId: String, title: String, detail: String) {
         guard notifyOnAttention else { return }
         post(
-            identifier: "attention-\(sessionId)",
+            identifier: Self.identifier(for: .attention, sessionId: sessionId),
             title: String(localized: "需要你确认"),
             body: detail.isEmpty ? title : "\(title)：\(detail)",
             sessionId: sessionId

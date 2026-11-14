@@ -562,6 +562,24 @@ struct RelayFileTransferTests {
         #expect(FileManager.default.fileExists(atPath: destination.path))
     }
 
+    /// A transfer that arrives short of the host's declared size must be rejected,
+    /// not published as a complete file. This is the integrity half of SR-08.02.
+    @Test("a download shorter than the declared size is rejected and not published")
+    func shortDownloadIsRejected() async throws {
+        let payload = Data(repeating: 0x43, count: 200)
+        Stub.reset([.init(status: 200, body: payload)])
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("relay-download-\(UUID().uuidString)", isDirectory: true)
+        let destination = directory.appendingPathComponent("short.bin")
+
+        await #expect(throws: (any Error).self) {
+            _ = try await transfer().download(
+                scopeId: "s", path: "short.bin", to: destination, version: "v1",
+                expectedBytes: payload.count + 1)
+        }
+        #expect(!FileManager.default.fileExists(atPath: destination.path))
+    }
+
     /// **The download is a delegate task, not `session.download(for:)`.**
     ///
     /// Same trap as the upload, and it shipped: the async convenience is a
