@@ -11,7 +11,7 @@
 5. 修复问题不得打补丁。先定状态归属，禁止用特例、开关、缓存或多条通路绕过症状。
 6. iOS 改动必须先在仿真器实跑并截图确认后才发布；视觉改动逐屏核对。
 7. 不得删除或改写 `~/.dsh/` 下的真实会话；单测把 `DSH_HOME` 指向临时目录。
-8. 需求关键层变更先跑 `npm run check:requirements`，经 owner 批准后用 `npm run approve:requirements` 记录；pre-commit 缺记录会拒绝提交。
+8. 需求关键层变更先跑 `npm run review:requirements`，冲突自己修；只把通过自审的变更交 owner。owner 同意后用 `npm run approve:requirements` 记录；pre-commit 缺记录会拒绝提交。
 
 ## 路由
 

@@ -13,8 +13,8 @@
 
 `handbook/requirements/` 下的 `product.md`、`requirements.md` 与 `details/*.md` 是需求关键层，变更必须经 owner 批准。
 
-1. 改完先跑 `npm run check:requirements`：校验编号、层级、AR 父级、必填字段、细节文档引用与链接。有冲突先修，不提交给 owner。
-2. 把改动 diff 与自审输出交给 owner；owner 明确同意后，以 owner 原话记录：
+1. 改完先跑 `npm run review:requirements`：程序自动校验编号、层级、AR 父级、必填字段、细节文档引用与链接。发现冲突由 agent 直接修，修完再跑，不把冲突交给 owner。
+2. 自审通过后，只把变更清单交给 owner；owner 只决定是否保存。owner 明确同意后，以 owner 原话记录：
    `npm run approve:requirements -- --owner-approved "<owner 的原话>"`
 3. `git commit` 时 pre-commit 校验暂存区文件 hash 与审批记录；任何改动导致 hash 变化，必须重新审批。
 4. 审批台账在 `handbook/history/approvals.jsonl`（不入库）。程序只校验结构与 hash，语义冲突仍需 owner 阅读。
