@@ -34,12 +34,14 @@ for (const [name, rule] of Object.entries(thresholds)) {
     failed += 1
     continue
   }
-  const p95 = Math.round(percentile(values, 95))
+  // 只取最近 minSamples 次，避免历史热噪声把当前基线拖宽。
+  const recent = values.slice(-rule.minSamples)
+  const p95 = Math.round(percentile(recent, 95))
   if (p95 > rule.p95Ms) {
     console.error(`FAIL ${name}: p95 ${p95} ms > ${rule.p95Ms} ms`)
     failed += 1
   } else {
-    console.log(`ok   ${name}: ${values.length} 样本，p95 ${p95} ms ≤ ${rule.p95Ms} ms`)
+    console.log(`ok   ${name}: ${values.length} 样本（最近 ${recent.length}），p95 ${p95} ms ≤ ${rule.p95Ms} ms`)
   }
 }
 process.exit(failed ? 1 : 0)

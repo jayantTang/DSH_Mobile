@@ -48,7 +48,7 @@
 | SR-06.04 | ok | `requirements`、`ios-app-unit` |
 | SR-06.05 | ok | `requirements`、`ios-modules` |
 | SR-06.06 | ok | `requirements`、`ios-modules` |
-| SR-07.01 | ok | `requirements`、`ui-ipad` |
+| SR-07.01 | ok | `requirements`、`ui-ipad`、`ios-build` |
 | SR-07.02 | ok | `requirements`、`static-loc` |
 | SR-08.01 | ok | `requirements`、`ios-modules` |
 | SR-08.02 | ok | `requirements`、`ios-dshkit`、`relay-go` |

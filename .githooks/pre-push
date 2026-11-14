@@ -26,4 +26,4 @@ if [ "${#changed[@]}" -eq 0 ]; then
 fi
 
 echo "[pre-push 2/2] 受影响 unit/static 套件"
-node test/select.mjs --affected --layer unit,static --run "${changed[@]}" || exit 1
+node test/select.mjs --affected --layer unit,static,compile --run "${changed[@]}" || exit 1

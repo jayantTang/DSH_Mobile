@@ -382,6 +382,27 @@
       ],
       "risk": "medium",
       "budget": 300
+    },
+    {
+      "id": "ios-build",
+      "title": "iOS 编译（模拟器通用目标）",
+      "layer": "compile",
+      "command": [
+        "xcodebuild",
+        "-scheme",
+        "DSHMobile",
+        "-destination",
+        "generic/platform=iOS Simulator",
+        "build"
+      ],
+      "paths": [
+        "ios/DSHMobile/**"
+      ],
+      "requirements": [
+        "SR-07.01"
+      ],
+      "risk": "high",
+      "budget": 600
     }
   ]
 }
