@@ -105,6 +105,29 @@ enum ProcessFoldFixtures {
          ])]
     }
 
+    static func imageToolResult(seq: Int, callId: String = "", turn: Int = 1,
+                               step: Int = 1) -> [String: JSONValue] {
+        ["type": .string("tool/result"), "seq": .int(seq),
+         "data": .object([
+            "turn": .int(turn), "step": .int(step),
+            "message": .object([
+                "toolCallId": .string(callId),
+                "content": .array([
+                    .object([
+                        "type": .string("image"),
+                        "attachment": .object([
+                            "attachmentId": .string("att-tool-image"),
+                            "mediaType": .string("image/png"),
+                            "bytes": .int(4096),
+                            "width": .int(800),
+                            "height": .int(600),
+                        ]),
+                    ]),
+                ]),
+            ]),
+         ])]
+    }
+
     static func notice(seq: Int, text: String, isError: Bool = false) -> [String: JSONValue] {
         ["type": .string(isError ? "agent/error" : "compaction/end"),
          "seq": .int(seq),

@@ -450,3 +450,39 @@ test('其他 fold 取值不改变老语义（只有 true 与 "summary" 有含义
   ])
   assert.equal(unknown.value.folds, undefined)
 })
+
+test('工具结果里的图片在概要页保留，且不内联字节', async () => {
+  const image = {
+    type: 'image',
+    attachment: {
+      attachmentId: 'sha256:tool-image',
+      mediaType: 'image/png',
+      bytes: 4096,
+      width: 800,
+      height: 600,
+      data: 'C'.repeat(100_000),
+    },
+  }
+  const log = [
+    { seq: 0, type: 'turn/start', time: 1_000, data: { turn: 1 } },
+    { seq: 1, type: 'tool/call', time: 1_010, data: { turn: 1, callId: 'img', name: 'send_image', arguments: '{}' } },
+    {
+      seq: 2, type: 'tool/result', time: 1_020,
+      data: { turn: 1, message: { toolCallId: 'img', content: [image] } },
+    },
+    { seq: 3, type: 'turn/end', time: 1_030, data: { turn: 1, reason: { kind: 'completed' } } },
+  ]
+  const { service } = serviceFor(log, { withReadSession: false })
+  const result = await service.handle(WINDOW_METHOD, {
+    address: ADDRESS, before: log.length, limit: 60, maxBytes: SMALL_BYTES, fold: 'summary',
+  })
+  assert.equal(result.ok, true)
+  const toolResult = result.value.records.find((row) => row.event.type === 'tool/result')?.event
+  assert.ok(toolResult, 'image tool result must survive the summary')
+  assert.equal(toolResult.data.message.toolCallId, 'img')
+  const block = toolResult.data.message.content[0]
+  assert.equal(block.type, 'image')
+  assert.equal(block.attachment.attachmentId, 'sha256:tool-image')
+  assert.equal(block.attachment.data, undefined, 'inline image bytes must not be sent')
+  assert.equal(result.value.records.filter((row) => row.event.type === 'tool/result').length, 1)
+})

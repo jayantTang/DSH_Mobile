@@ -595,10 +595,14 @@ public struct ChatTimeline: Sendable {
                 // the same collapsed card every other tool result gets, keyed by
                 // its call id so a real call merges into it if a page loads it.
                 let text = Self.joinedText(result.content)
-                guard !text.isEmpty else { return .none }
+                let hasImage = result.content.contains { block in
+                    if case .image = block { return true }
+                    return false
+                }
+                guard !text.isEmpty || hasImage else { return .none }
                 let invocation = ToolInvocation(
                     callId: result.callId,
-                    name: Self.orphanToolName(result),
+                    name: hasImage ? "send_image" : Self.orphanToolName(result),
                     arguments: "",
                     summary: result.metaLabel ?? text.split(separator: "\n").first.map(String.init) ?? "",
                     resultBlocks: result.content,

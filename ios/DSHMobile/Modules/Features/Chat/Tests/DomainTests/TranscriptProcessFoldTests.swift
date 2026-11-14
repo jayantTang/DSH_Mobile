@@ -111,6 +111,27 @@ final class TranscriptProcessFoldTests: XCTestCase {
         }, "send_image 的卡片收起时也必须可见：\(rows.map(\.id))")
     }
 
+    func test_an_orphan_tool_image_survives_the_summary_projection() throws {
+        // A v2 summary has no tool/call events. The image result must still
+        // become a visible tool card instead of being dropped for empty text.
+        let timeline = try ProcessFoldFixtures.timeline([
+            ProcessFoldFixtures.turnStart(seq: 1, turn: 1),
+            ProcessFoldFixtures.imageToolResult(seq: 2),
+            ProcessFoldFixtures.turnEnd(seq: 3, turn: 1),
+        ])
+        let row = try XCTUnwrap(timeline.items.first { item in
+            guard case .toolCall = item.kind else { return false }
+            return true
+        })
+        guard case .toolCall(let invocation) = row.kind else { return XCTFail("not a tool card") }
+        XCTAssertEqual(invocation.name, "send_image")
+        XCTAssertEqual(invocation.resultBlocks.count, 1)
+        guard case .image(let attachment) = invocation.resultBlocks[0] else {
+            return XCTFail("image block missing")
+        }
+        XCTAssertEqual(attachment.attachmentId, "att-tool-image")
+    }
+
     func test_the_turn_divider_is_never_projected() throws {
         // 收起、展开、失败、中断四种情况都不再输出分隔行：轮次行底部的 0.5pt 线
         // 承担边界职责，屏幕上不再有第二条「已完成」。

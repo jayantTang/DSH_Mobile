@@ -445,6 +445,26 @@ export function projectTurnUnit(events) {
         step.resultSeq = event.seq
         if (text !== '') step.bytes = Buffer.byteLength(text, 'utf8')
         group.endSeq = event.seq
+        // A tool can deliver a picture (send_image, read_image). The process
+        // summary deliberately drops tool-result text, but dropping the image
+        // would erase the only user-visible deliverable of that turn. Keep a
+        // metadata-only result record; the client renders its image card.
+        const images = blocksOf(event).filter((block) => block?.type === 'image')
+        if (images.length > 0) {
+          out.push(record({
+            type: 'tool/result',
+            seq: event.seq,
+            time: event.time,
+            data: {
+              ...(Number.isInteger(event?.data?.turn) ? { turn: event.data.turn } : {}),
+              ...(Number.isInteger(event?.data?.step) ? { step: event.data.step } : {}),
+              message: {
+                toolCallId: callId,
+                content: images.map(attachmentBlockForWire),
+              },
+            },
+          }))
+        }
         break
       }
       default: {
