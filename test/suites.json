@@ -402,7 +402,8 @@
         "SR-07.01"
       ],
       "risk": "high",
-      "budget": 600
+      "budget": 600,
+      "cwd": "ios/DSHMobile"
     }
   ]
 }
