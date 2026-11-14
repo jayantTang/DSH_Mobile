@@ -970,3 +970,6 @@ It is registered as a workspace first, so a new group appears in the desktop sid
 "请求超时" = "The request timed out";
 "服务器返回了 %lld" = "The server answered %lld";
 "需要重新配对电脑" = "Pair with your computer again";
+"自动换行" = "Wrap lines";
+"已开启" = "On";
+"已关闭" = "Off";

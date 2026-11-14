@@ -61,6 +61,8 @@ public struct WorkspaceFileReaderView: View {
     }
 
     @State private var mode: Mode = Self.automationMode() ?? .source
+    /// 文本阅读器的自动换行开关；默认开启，保持既有换行行为。
+    @State private var wraps = true
     /// Whether a read has already been asked for: asking twice restarts it.
     @State private var readRequested = false
 
@@ -136,7 +138,10 @@ public struct WorkspaceFileReaderView: View {
                         )
                     }
                 }
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    if presentation == .text {
+                        wrapButton
+                    }
                     shareButton
                 }
                 ToolbarItem(placement: .confirmationAction) {
@@ -157,6 +162,18 @@ public struct WorkspaceFileReaderView: View {
     }
 
     // MARK: - Getting the file out
+
+    /// 文本阅读器的自动换行开关。关闭后文本不按窗口折行，横向滚动查看长行。
+    private var wrapButton: some View {
+        Button {
+            wraps.toggle()
+        } label: {
+            Image(systemName: wraps ? "text.alignleft" : "arrow.left.and.right")
+        }
+        .accessibilityLabel("自动换行")
+        .accessibilityValue(wraps ? "已开启" : "已关闭")
+        .accessibilityIdentifier("files.wrap.toggle")
+    }
 
     /// One control for both halves of "get this file onto my phone": the first
     /// tap fetches it and says how many bytes arrived, every tap after that hands
@@ -243,18 +260,19 @@ public struct WorkspaceFileReaderView: View {
         VStack(spacing: 0) {
             header(file: file)
             Hairline()
-            ScrollView {
+            ScrollView(wraps ? .vertical : [.horizontal, .vertical]) {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     ForEach(Array(rendered.enumerated()), id: \.offset) { index, line in
                         CodeLineRow(
                             attributed: line,
                             number: file.offset + index,
-                            gutter: gutterWidth(total: file.lastLine)
+                            gutter: gutterWidth(total: file.lastLine),
+                            wraps: wraps
                         )
                     }
                 }
                 .padding(.vertical, DSHTheme.Spacing.tight)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(maxWidth: wraps ? .infinity : nil, alignment: .leading)
             }
             .background(DSHTheme.codeBackground)
             footer(file: file)
@@ -351,6 +369,7 @@ public struct CodeLineRow: View {
     public let attributed: AttributedString
     public let number: Int
     public let gutter: CGFloat
+    public let wraps: Bool
 
     public var body: some View {
         HStack(alignment: .top, spacing: DSHTheme.Spacing.tight) {
@@ -361,7 +380,9 @@ public struct CodeLineRow: View {
             Text(attributed)
                 .font(DSHTheme.Typography.code)
                 .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .lineLimit(wraps ? nil : 1)
+                .fixedSize(horizontal: !wraps, vertical: false)
+                .frame(maxWidth: wraps ? .infinity : nil, alignment: .leading)
         }
         .padding(.horizontal, DSHTheme.Spacing.tight)
         .padding(.vertical, 0.5)

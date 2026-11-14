@@ -719,7 +719,7 @@ public struct GitFileReaderView: View {
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 0) {
                             ForEach(Array(rendered.enumerated()), id: \.offset) { index, line in
-                                CodeLineRow(attributed: line, number: index + 1, gutter: gutter)
+                                CodeLineRow(attributed: line, number: index + 1, gutter: gutter, wraps: true)
                             }
                         }
                         .padding(.vertical, DSHTheme.Spacing.tight)
