@@ -173,51 +173,37 @@ final class SessionAlerts: NSObject, UNUserNotificationCenterDelegate {
     /// A run in `session` has ended.
     func turnFinished(sessionId: String, title: String) {
         guard notifyOnTurnEnd else { return }
-        post(
-            identifier: Self.identifier(for: .turnEnd, sessionId: sessionId),
-            title: String(localized: "运行结束"),
-            body: title,
-            sessionId: sessionId
-        )
+        post(kind: .turnEnd, title: String(localized: "运行结束"), body: title, sessionId: sessionId)
     }
 
     /// `session` cannot continue until the user answers something.
     func needsAttention(sessionId: String, title: String, detail: String) {
         guard notifyOnAttention else { return }
-        post(
-            identifier: Self.identifier(for: .attention, sessionId: sessionId),
-            title: String(localized: "需要你确认"),
-            body: detail.isEmpty ? title : "\(title)：\(detail)",
-            sessionId: sessionId
-        )
+        post(kind: .attention, title: String(localized: "需要你确认"),
+             body: detail.isEmpty ? title : "\(title)：\(detail)", sessionId: sessionId)
     }
 
-    private func post(
-        identifier: String,
-        title: String,
-        body: String,
-        sessionId: String
-    ) {
+    /// 通知请求的纯构造：身份、正文与路由字段可测，无需真的碰系统通知中心。
+    static func request(kind: AlertKind, sessionId: String, title: String, body: String) -> UNNotificationRequest {
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
-        // `.defaultCritical` was used here for prompts, which is silent without
-        // Apple's Critical Alerts entitlement — an alert nobody hears is worse
-        // than an ordinary one, so the sound is the ordinary one.
         content.sound = .default
         content.userInfo = ["sessionId": sessionId]
         // Grouping by session keeps a busy workspace from flooding the lock
         // screen with one alert per turn.
         content.threadIdentifier = sessionId
-
-        let request = UNNotificationRequest(
-            identifier: identifier,
+        return UNNotificationRequest(
+            identifier: identifier(for: kind, sessionId: sessionId),
             content: content,
             // A second of delay is enough for the system to treat it as a
             // delivered notification rather than a same-instant replacement.
             trigger: UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
         )
-        center.add(request)
+    }
+
+    private func post(kind: AlertKind, title: String, body: String, sessionId: String) {
+        center.add(Self.request(kind: kind, sessionId: sessionId, title: title, body: body))
     }
 
     // MARK: - UNUserNotificationCenterDelegate

@@ -23,3 +23,23 @@ final class SessionAlertsTests: XCTestCase {
     }
 }
 #endif
+
+extension SessionAlertsTests {
+    func testTurnEndRequestCarriesSessionRouteAndIdentifier() {
+        let request = SessionAlerts.request(kind: .turnEnd, sessionId: "s-1",
+                                            title: "Run finished", body: "Build done")
+        XCTAssertEqual(request.identifier, "turn-end-s-1")
+        XCTAssertEqual(request.content.title, "Run finished")
+        XCTAssertEqual(request.content.body, "Build done")
+        XCTAssertEqual(request.content.userInfo["sessionId"] as? String, "s-1")
+        XCTAssertEqual(request.content.threadIdentifier, "s-1")
+        XCTAssertEqual(request.content.sound, .default)
+    }
+
+    func testAttentionRequestKeepsTheDetailInTheBody() {
+        let request = SessionAlerts.request(kind: .attention, sessionId: "s-2",
+                                            title: "Needs confirmation", body: "Allow write?")
+        XCTAssertEqual(request.identifier, "attention-s-2")
+        XCTAssertEqual(request.content.body, "Allow write?")
+    }
+}

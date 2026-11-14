@@ -11,7 +11,7 @@
 | SR-08.03 撤销生效 | covered | `relay-go/internal/wsapi/wsapi_test.go` | 无反向验证其他设备不受影响 |
 | SR-08.04 密钥与内容边界 | partial | `scripts/dev/check-diagnostics.test.mjs` | 中转不解析内容、明文拒绝缺少端到端证据 |
 | SR-08.05 关键路径性能基线 | partial | `ios/DSHMobile/DSHMobileUITests/PerformanceBaselineTests.swift`、`test/PERFORMANCE.md` | 无阈值、发送回显未采、样本未达 30 |
-| SR-08.06 通知语义 | partial | `ios/DSHMobile/DSHMobileTests/SessionAlertsTests.swift` | 未验证实际投递、离线丢失与不重复弹窗 |
+| SR-08.06 通知语义 | covered | `ios/DSHMobile/DSHMobileTests/SessionAlertsTests.swift`、`relay-go/internal/wsapi/wsapi_test.go`、`relay-go/internal/push/push_test.go` | 真机 APNs 投递未验；离线只允许丢失，不承诺必达 |
 
 ## 维护规则
 
