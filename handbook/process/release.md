@@ -22,6 +22,10 @@ tag 与 Release 不得出现 OTA 地址；分发策略见 `handbook/requirements
 
 `scripts/release/deploy-testflight.sh` 会执行归档、导出、上传、等待处理、加入分组并提交审核；只需上传、不提交审核时使用 `--no-submit`。版本号按 `handbook/requirements/requirements.md` 的 SR-04.02 执行。同步口径见 `handbook/history/上架流程.md`。
 
+## 性能门禁
+
+TestFlight 的导出、上传与提审会先执行 `node test/check-performance.mjs --file ${DSH_PERF_LOG:-/tmp/performance-device.log}`；样本不足或 p95 超标直接拒绝。`--archive-only` 只编译，不受此门禁影响。样本由真机性能驱动生成，不能用模拟器文件替代。
+
 ## 签名
 
 分发签名使用本机手工流程：云签名被 Apple 拒绝（`Cloud signing permission error`），脚本优先使用 `~/Library/Keychains/dshbuild.keychain-db` 中的 Apple Distribution 证书与 `ios/DSHMobile/ExportOptions-manual.plist` 导出；证书与描述文件由 `node scripts/release/asc-dist-signing.mjs cert|profile` 准备。
