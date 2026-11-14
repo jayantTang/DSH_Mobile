@@ -323,6 +323,12 @@
       "file": "ios/DSHMobile/Modules/**/Tests/**",
       "reason": "单元测试里的中文是断言期望值（与 ProcessFoldText 等纯函数产出的文案逐字比对），不是用户可见文案；与 DSHKit/Tests、DSHMobileUITests 同一口径",
       "backlog": "i18n-backlog-module-tests"
+    },
+    {
+      "rule": "hardcoded-string",
+      "file": "ios/DSHMobile/NotificationProbeUITests/**",
+      "reason": "通知授权测试点击的是系统弹窗按钮「允许」，不是产品界面文案；该 target 不产出用户可见文案",
+      "backlog": "i18n-test-expectations"
     }
   ]
 }
