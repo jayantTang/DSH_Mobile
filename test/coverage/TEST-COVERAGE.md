@@ -2,7 +2,7 @@
 
 > 由 `node test/coverage/check-test-coverage.mjs` 生成。✅ 精确测试；🔵 静态策略；✍️ 人工待验收；🟠 只是套件级映射，不得当作已完成。
 
-汇总：共 52 条 · ✅ verified 47 · 🔵 static 4 · ✍️ manual 1 · 🟡 partial 0 · 🟠 suite-only 0 · ❌ gap 0
+汇总：共 52 条 · ✅ verified 48 · 🔵 static 3 · ✍️ manual 1 · 🟡 partial 0 · 🟠 suite-only 0 · ❌ gap 0
 
 | SR | 状态 | 精确测试证据 | 负责套件 | 缺口 |
 |---|---|---|---|---|
@@ -46,7 +46,7 @@
 | SR-05.03 | ✅ verified | `ios/DSHMobile/Modules/Features/Feedback/Tests/DomainTests/FeedbackAttachmentLoaderTests.swift`：`FeedbackAttachmentLoaderTests` | `requirements`、`mail` |  |
 | SR-06.01 | ✅ verified | `test/acceptance/13-settings-permission.md`：`TC-MOB-205` | `requirements`、`ios-modules`、`ui-settings-permission` |  |
 | SR-06.02 | ✅ verified | `ios/DSHMobile/Modules/Features/Settings/Tests/DomainTests/SettingsCredentialTests.swift`：`test_credential_writes_require_a_connected_settings_host` | `requirements`、`ios-modules` |  |
-| SR-06.03 | 🔵 static | `test/coverage/release-policy.test.mjs`：`settings clear-cache button clears all three` | `requirements`、`ios-modules`、`policy-static` | 静态策略检查 |
+| SR-06.03 | ✅ verified | `ios/DSHMobile/DSHMobileUITests/SettingsCacheClearTests.swift`：`testClearCacheShowsTheClearedState` | `requirements`、`ios-modules`、`policy-static` |  |
 | SR-06.04 | ✅ verified | `test/acceptance/06-about.md`：`TC-UI-103` | `requirements`、`ios-app-unit` |  |
 | SR-06.05 | ✅ verified | `scripts/dev/check-diagnostics.test.mjs`：`agent-secret` | `requirements`、`ios-modules` |  |
 | SR-06.06 | ✅ verified | `ios/DSHMobile/Modules/Core/Tests/UpdateCheckerTests.swift`：`test_a_newer_published_build_raises_the_banner` | `requirements`、`ios-modules` |  |

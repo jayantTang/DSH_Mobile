@@ -329,9 +329,8 @@
   ],
   "SR-06.03": [
     {
-      "path": "test/coverage/release-policy.test.mjs",
-      "contains": "settings clear-cache button clears all three",
-      "kind": "static"
+      "path": "ios/DSHMobile/DSHMobileUITests/SettingsCacheClearTests.swift",
+      "contains": "testClearCacheShowsTheClearedState"
     }
   ],
   "SR-02.02": [

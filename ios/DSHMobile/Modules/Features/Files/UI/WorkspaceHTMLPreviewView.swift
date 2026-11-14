@@ -65,6 +65,7 @@ public struct WorkspaceHTMLPreviewView: View {
                 WebSurface(url: url)
                 if !missing.isEmpty { missingBanner }
             }
+            .accessibilityIdentifier("files.html.preview")
         }
     }
 
@@ -118,6 +119,7 @@ private struct WebSurface: UIViewRepresentable {
         web.scrollView.bounces = false
         web.allowsLinkPreview = false
         web.isMultipleTouchEnabled = false
+        web.accessibilityIdentifier = "files.html.preview"
         return web
     }
 
