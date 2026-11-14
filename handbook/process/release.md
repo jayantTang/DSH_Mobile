@@ -1,6 +1,6 @@
 # 发布
 
-用户可见的版本策略与 TestFlight 定义见 `handbook/requirements/` 4.1 至 4.3；本文件写发布操作与工程约束。
+用户可见的版本策略与 TestFlight 定义见 `handbook/requirements/` 的 SR-04.01 至 SR-04.03；本文件写发布操作与工程约束。
 
 ## 打 tag 与 Release
 
@@ -10,7 +10,7 @@
 
 顺序固定：打 tag → 写 Release → 通知用户安装。缺 tag 或缺 Release 的发布视为未完成。
 
-tag 与 Release 不得出现 OTA 地址；分发策略见 `handbook/requirements/requirements.md` 4.1。
+tag 与 Release 不得出现 OTA 地址；分发策略见 `handbook/requirements/requirements.md` 的 SR-04.01。
 
 ## 开发版 OTA
 
@@ -20,7 +20,7 @@ tag 与 Release 不得出现 OTA 地址；分发策略见 `handbook/requirements
 
 「发布 TestFlight」指上传、加入 Public beta 组、提交外部测试审核；审核通过后外部测试者可通过公开链接下载。只上传不提交审核不算发布。
 
-`scripts/release/deploy-testflight.sh` 会执行归档、导出、上传、等待处理、加入分组并提交审核；只需上传、不提交审核时使用 `--no-submit`。版本号按 `handbook/requirements/requirements.md` 4.2 执行。同步口径见 `handbook/history/上架流程.md`。
+`scripts/release/deploy-testflight.sh` 会执行归档、导出、上传、等待处理、加入分组并提交审核；只需上传、不提交审核时使用 `--no-submit`。版本号按 `handbook/requirements/requirements.md` 的 SR-04.02 执行。同步口径见 `handbook/history/上架流程.md`。
 
 ## 签名
 
