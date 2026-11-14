@@ -45,6 +45,7 @@
     "check:docs": "node scripts/dev/check-docs.mjs",
     "check:requirements": "node scripts/dev/check-requirements.mjs",
     "check:coverage": "node test/check-coverage.mjs",
+    "check:coverage-all": "node test/generate-coverage-all.mjs && git diff --exit-code -- test/requirements-coverage-all.md",
     "check:performance": "node test/check-performance.mjs",
     "review:requirements": "node scripts/dev/review-requirements.mjs",
     "requirements:status": "node scripts/dev/requirements-approval.mjs status",

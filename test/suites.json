@@ -39,7 +39,8 @@
         "SR-02.01",
         "SR-02.03",
         "SR-03.01",
-        "SR-03.02"
+        "SR-03.02",
+        "SR-08.02"
       ],
       "risk": "high",
       "budget": 180
@@ -73,7 +74,8 @@
         "SR-06.02",
         "SR-06.03",
         "SR-06.05",
-        "SR-06.06"
+        "SR-06.06",
+        "SR-08.01"
       ],
       "risk": "medium",
       "budget": 180
@@ -93,7 +95,8 @@
       "requirements": [
         "SR-02.08",
         "SR-02.09",
-        "SR-06.04"
+        "SR-06.04",
+        "SR-08.06"
       ],
       "risk": "medium",
       "budget": 120
@@ -184,7 +187,10 @@
         "SR-01.03",
         "SR-01.05",
         "SR-01.10",
-        "SR-02.08"
+        "SR-02.08",
+        "SR-08.02",
+        "SR-08.03",
+        "SR-08.04"
       ],
       "risk": "high",
       "budget": 180
@@ -228,7 +234,8 @@
       "requirements": [
         "SR-04.01",
         "SR-04.02",
-        "SR-04.03"
+        "SR-04.03",
+        "SR-08.04"
       ],
       "risk": "medium",
       "budget": 120
@@ -296,7 +303,9 @@
         "SR-01.03",
         "SR-01.08",
         "SR-01.09",
-        "SR-01.11"
+        "SR-01.11",
+        "SR-01.06",
+        "SR-01.07"
       ],
       "risk": "high",
       "budget": 180
@@ -316,6 +325,44 @@
         "SR-04.02"
       ],
       "risk": "high",
+      "budget": 60
+    },
+    {
+      "id": "performance",
+      "title": "真机性能硬门禁",
+      "layer": "release",
+      "command": [
+        "node",
+        "test/check-performance.mjs"
+      ],
+      "paths": [
+        "test/PERFORMANCE.md",
+        "test/check-performance.mjs",
+        "ios/DSHMobile/DSHMobileUITests/PerformanceBaselineTests.swift"
+      ],
+      "requirements": [
+        "SR-08.05"
+      ],
+      "risk": "high",
+      "budget": 30
+    },
+    {
+      "id": "static-loc",
+      "title": "本地化静态检查",
+      "layer": "static",
+      "command": [
+        "npm",
+        "run",
+        "check:i18n"
+      ],
+      "paths": [
+        "ios/DSHMobile/DSHMobile/**",
+        "ios/DSHMobile/Modules/**"
+      ],
+      "requirements": [
+        "SR-07.02"
+      ],
+      "risk": "medium",
       "budget": 60
     }
   ]
