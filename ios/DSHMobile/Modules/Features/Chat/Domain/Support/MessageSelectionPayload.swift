@@ -1,4 +1,5 @@
 import DSHKit
+import Foundation
 
 /// What a transcript row can hand to the "read this message on its own" page.
 ///
@@ -21,6 +22,12 @@ public extension TimelineItem {
             let body = Self.plainText(of: invocation)
             guard !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
             return ("工具 · \(invocation.name)", body, true)
+
+        case .questionRecord:
+            guard let body = questionRecordCopyText,
+                  !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            else { return nil }
+            return (String(localized: "问题与回答"), body, false)
 
         case .reasoning, .notice, .turnDivider, .unknown, .gap, .processHeader,
              .processStep, .runningLine, .processPlaceholder:

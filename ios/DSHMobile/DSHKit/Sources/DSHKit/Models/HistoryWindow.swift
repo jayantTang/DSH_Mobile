@@ -133,7 +133,7 @@ public struct HistoryWindowValue: Sendable, Codable {
     public let scanBoundary: Int?
     /// 本页被折掉的轮次摘要（能力 `history-fold-summary`）。没有这个字段 = 连接器
     /// 没折（老连接器，或本页没有可折的完成轮次）。
-    public let folds: [HistoryFoldSummary]?
+    let folds: [HistoryFoldSummary]?
     /// 本窗口内确认无内容的号段（能力 `history-coverage`）。没有 = 老连接器。
     public let knownEmpty: [[Int]]?
     /// 覆盖版本；与客户端当前版本不一致时整段丢弃。
@@ -141,7 +141,6 @@ public struct HistoryWindowValue: Sendable, Codable {
 
     public init(records: [SessionRecord], startSeq: Int?, endSeq: Int?, hasMore: Bool,
                 truncatedBy: String? = nil, clamped: Bool? = nil, scanBoundary: Int? = nil,
-                folds: [HistoryFoldSummary]? = nil,
                 knownEmpty: [[Int]]? = nil, revision: String? = nil) {
         self.records = records
         self.startSeq = startSeq
@@ -150,7 +149,7 @@ public struct HistoryWindowValue: Sendable, Codable {
         self.truncatedBy = truncatedBy
         self.clamped = clamped
         self.scanBoundary = scanBoundary
-        self.folds = folds
+        self.folds = nil
         self.knownEmpty = knownEmpty
         self.revision = revision
     }
@@ -173,23 +172,26 @@ public struct HistoryWindowValue: Sendable, Codable {
 /// 字段与 `TimelineProcessHeader` 一一对应；客户端收到后直接插一行过程节点，
 /// 点开时按 `startSeq...endSeq` 回取详情。`isPartial` 恒为 false：连接器只折
 /// 完整落在本页里的轮次。
-public struct HistoryFoldSummary: Sendable, Codable, Equatable {
-    public let turn: Int
-    public let startSeq: Int
-    public let endSeq: Int
-    public let finalSeq: Int?
-    public let dividerSeq: Int?
-    public let toolCount: Int
-    public let reasoningCount: Int
-    public let messageCount: Int
-    public let subagentCount: Int
-    public let endReason: String?
-    public let durationMs: Double?
-    public let foldedCount: Int
+///
+/// 只给 DSHKit 与测试用：App 侧处理的是回包 `records` 里的 `+link/fold` 事件，
+/// 没有任何外部读者；`check:public-api` 的预算要求先把这类旧 API 迁出导出面。
+struct HistoryFoldSummary: Sendable, Codable, Equatable {
+    let turn: Int
+    let startSeq: Int
+    let endSeq: Int
+    let finalSeq: Int?
+    let dividerSeq: Int?
+    let toolCount: Int
+    let reasoningCount: Int
+    let messageCount: Int
+    let subagentCount: Int
+    let endReason: String?
+    let durationMs: Double?
+    let foldedCount: Int
 
     /// 展开这一轮时要发的那一次请求：精确覆盖摘要的 seq 段，**不带 fold**
     /// （要的就是被折掉的原事件），压缩按当前连接能力带。
-    public func detailRequest(address: SessionAddress, encoding: String? = nil) -> HistoryWindowRequest {
+    func detailRequest(address: SessionAddress, encoding: String? = nil) -> HistoryWindowRequest {
         HistoryWindowRequest(
             address: address,
             before: endSeq + 1,

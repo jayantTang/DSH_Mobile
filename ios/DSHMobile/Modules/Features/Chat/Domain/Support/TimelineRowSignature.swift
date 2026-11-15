@@ -52,6 +52,9 @@ public enum TimelineRowSignature {
         case .runningLine(let line):
             // 文案由行视图按开始时刻自己走表；开始时刻变了（新的一轮）要重载。
             return "\(item.id)|run:\(line.since?.timeIntervalSince1970 ?? -1)"
+        case .questionRecord:
+            // 问题文字可能随补拉/折叠页记录补全，答案批次可能合并：内容键进签名。
+            return "\(item.id)|q:\(item.questionRecordContentKey ?? "")"
         default:
             return base
         }

@@ -277,7 +277,7 @@ public enum TranscriptProcessFold {
                     current?.end = index
                 }
 
-            case .toolCall, .reasoning, .assistantText:
+            case .toolCall, .reasoning, .assistantText, .questionRecord:
                 // A history page can start mid-turn. Those rows still form a
                 // segment; only notices and gaps before a turn are loose.
                 if current == nil { current = Segment(start: index, end: index) }
@@ -434,6 +434,9 @@ public enum TranscriptProcessFold {
             for index in leadingEnd..<answerEnd where !answerIndexes.contains(index) {
                 if suppressedBySummary(items[index]) { continue }
                 if isDeliveryRow(items[index]) { continue }
+                // 作答记录是读者自己的输入，不是过程步骤：它不参与折叠、不计数，
+                // 收起态也照常显示（SR-02.16）。
+                if case .questionRecord = items[index].kind { continue }
                 processIndexes.append(index)
             }
 

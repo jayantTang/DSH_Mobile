@@ -108,6 +108,9 @@ extension TranscriptProcessFold {
                     // 中途输入的 user 消息是读者的内容，不是过程细节：折叠只能收
                     // 过程行，不能把读者自己说的话收进去。
                     out.append(plan.rows[index])
+                } else if case .questionRecord = plan.rows[index].kind {
+                    // 作答记录同样是读者的输入：收起轮次后仍要能看到自己选了什么。
+                    out.append(plan.rows[index])
                 } else if case .toolCall(let invocation) = plan.rows[index].kind,
                           TranscriptProcessFold.isDeliveryToolName(invocation.name) {
                     // 交付类工具（send_image）的图片是成品，收起态也必须可见。
@@ -169,7 +172,7 @@ extension TranscriptProcessFold {
             if Self.isSuppressedBySummary(item, turn: turn) { continue }
             let visible: Bool
             switch item.kind {
-            case .userMessage, .gap:
+            case .userMessage, .questionRecord, .gap:
                 visible = true
             case .toolCall(let invocation)
                 where TranscriptProcessFold.isDeliveryToolName(invocation.name):
@@ -265,8 +268,12 @@ extension TranscriptProcessFold {
                 continue
             }
             if case .turnDivider = plan.rows[index].kind { continue }
-            // 读者插入的提问永远不进折叠组：它是新的阅读分段点，不能被组收起带走。
+            // 读者插入的提问与作答记录永远不进折叠组：它们是阅读内容，不能被组收起带走。
             if case .userMessage = plan.rows[index].kind {
+                out.append(plan.rows[index])
+                continue
+            }
+            if case .questionRecord = plan.rows[index].kind {
                 out.append(plan.rows[index])
                 continue
             }

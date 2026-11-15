@@ -122,6 +122,10 @@ public enum TranscriptSearch {
             let parts = [invocation.name, invocation.summary, invocation.resultText]
                 .filter { !$0.isEmpty }
             return parts.isEmpty ? nil : (.tool, parts.joined(separator: "\n"))
+        case .questionRecord(_, let questions, let answers):
+            // 用户自己给出的答案属于「我」的内容（SR-02.16 的记录也是可复制的正文）。
+            let text = (questions + answers).filter { !$0.isEmpty }.joined(separator: "\n")
+            return text.isEmpty ? nil : (.me, text)
         case .reasoning, .notice, .turnDivider, .unknown, .gap, .processHeader, .processStep,
              .runningLine, .processPlaceholder:
             // 占位行是显示态（「过程区状态未确认」），不是会话内容：搜它没有意义，

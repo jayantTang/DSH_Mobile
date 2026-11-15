@@ -38,12 +38,12 @@
       },
       "v1": {
         "capability": "history-fold-summary",
-        "records": "过程段换成一条 +link/fold（v1 摘要），其余原始事件照旧",
+        "records": "过程段换成一条 +link/fold（v1 摘要），其余原始事件照旧；已作答的 ask_user_question 另发一条 +link/question（问题与答案），不随摘要丢弃",
         "limit": "记录条数"
       },
       "summary": {
         "capability": "history-fold-summary-v2",
-        "records": "人类 user/message、assistant/message 的 text 与 image/file 块（attachment 只留元数据：id/url/mime/字节数/宽高/名字，绝不内联 base64）、agent 代发图片的 agent/inbox/spliced、turn/start、turn/end、压缩与错误通知；每个过程段一条 +link/fold（v:2，含 activities 与 groups[].steps[]）",
+        "records": "人类 user/message、assistant/message 的 text 与 image/file 块（attachment 只留元数据：id/url/mime/字节数/宽高/名字，绝不内联 base64）、agent 代发图片的 agent/inbox/spliced、turn/start、turn/end、压缩与错误通知；每个过程段一条 +link/fold（v:2，含 activities 与 groups[].steps[]）；已作答的 ask_user_question 另发一条 +link/question（问题与答案，SR-02.16）",
         "limit": "轮数（不是记录条数）；maxBytes 才是主约束",
         "paging": "按整轮切页：startSeq 落在 turn/start、endSeq 落在 turn/end（运行中的轮次给到最新事件），下一页用 before=startSeq；页首/页尾不出现半轮，也不出现孤立摘要",
         "excludes": [

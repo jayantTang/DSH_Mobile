@@ -28,6 +28,9 @@
 
 import { FOLD_RECORD_TYPE, isHumanMessage } from './fold.js'
 import { bytesOf, trimRecordForWire } from './records.js'
+import {
+  isQuestionTool, questionRecordFor, resultTextOf,
+} from './question-record.js'
 import { truncateSafe } from '../unicode.js'
 
 /// `_link/hello` 声明的新能力位。老客户端不认识它，继续用 `fold: true`。
@@ -198,19 +201,7 @@ export function previewOf(args) {
   return truncateSafe(flat, SUMMARY_PREVIEW_CHARS)
 }
 
-/// 工具结果里的**正文**（与搜索的 `docText` 同一组键）。只用来量字节数，不下发。
-function resultTextOf(data) {
-  const parts = []
-  const blocks = [data?.message?.content, data?.content].find((value) => Array.isArray(value)) ?? []
-  for (const block of blocks) {
-    if (typeof block?.text === 'string' && block.text.length > 0) parts.push(block.text)
-  }
-  for (const key of ['output', 'result', 'stdout', 'stderr', 'text']) {
-    if (typeof data?.[key] === 'string' && data[key].length > 0) parts.push(data[key])
-  }
-  return parts.join('\n')
-}
-
+/// 工具结果是否失败。正文只用来量字节数（`resultTextOf`，与作答记录共用），不下发。
 function isErrorResult(data) {
   if (data?.message?.isError === true || data?.isError === true) return true
   const error = data?.error ?? data?.message?.error
@@ -307,36 +298,54 @@ export function projectTurnUnit(events) {
   const out = []
   const summaries = []
   let group = null
+  /// 本轮的提问调用（callId → 调用信息）。跨分组保留：调用与结果之间可能夹着
+  /// 一条中间讲话，按组记账会丢掉配对。
+  const questionCalls = new Map()
+  /// 已结算、等摘要落位后再下发的记录（作答记录与图片结果，seq 升序）。
+  /// 它们都产生在过程段内部：摘要的 seq 是段起点，必须排在它们之前，
+  /// 否则一页记录会倒序。
+  let pendingRecords = []
 
   const openGroup = (event) => {
     if (group !== null) return
     group = { startSeq: event.seq, endSeq: event.seq, time: event.time, steps: [], calls: new Map() }
   }
 
+  /// 段内产生的可见记录排在它所属的过程摘要**之后**（摘要的 seq 是段起点，
+  /// 记录的是结果 seq），所以分组还开着时先攒着，flush 时一次放出。
+  const emitPending = () => {
+    if (pendingRecords.length === 0) return
+    pendingRecords.sort((lhs, rhs) => lhs.seq - rhs.seq)
+    for (const pending of pendingRecords) out.push(record(pending))
+    pendingRecords = []
+  }
+
   const flush = () => {
     const current = group
     group = null
-    if (current === null || current.steps.length === 0) return
-    const activities = countActivities(current.steps)
-    const summary = {
-      v: SUMMARY_FOLD_VERSION,
-      turn,
-      startSeq: current.startSeq,
-      endSeq: current.endSeq,
-      startedAt,
-      durationMs,
-      endReason,
-      activities,
-      groups: [{
+    if (current !== null && current.steps.length > 0) {
+      const activities = countActivities(current.steps)
+      const summary = {
+        v: SUMMARY_FOLD_VERSION,
+        turn,
         startSeq: current.startSeq,
         endSeq: current.endSeq,
-        activities: { ...activities },
-        toolCount: current.steps.filter((step) => step.kind === 'tools').length,
-        steps: current.steps,
-      }],
+        startedAt,
+        durationMs,
+        endReason,
+        activities,
+        groups: [{
+          startSeq: current.startSeq,
+          endSeq: current.endSeq,
+          activities: { ...activities },
+          toolCount: current.steps.filter((step) => step.kind === 'tools').length,
+          steps: current.steps,
+        }],
+      }
+      summaries.push(summary)
+      out.push(record({ type: FOLD_RECORD_TYPE, seq: current.startSeq, time: current.time, data: summary }))
     }
-    summaries.push(summary)
-    out.push(record({ type: FOLD_RECORD_TYPE, seq: current.startSeq, time: current.time, data: summary }))
+    emitPending()
   }
 
   for (const event of input) {
@@ -431,12 +440,36 @@ export function projectTurnUnit(events) {
         }
         group.steps.push(step)
         const callId = event?.data?.callId
-        if (typeof callId === 'string') group.calls.set(callId, step)
+        if (typeof callId === 'string') {
+          group.calls.set(callId, step)
+          if (isQuestionTool(event?.data?.name)) {
+            questionCalls.set(callId, {
+              callId,
+              name: event.data.name,
+              arguments: event.data.arguments,
+            })
+          }
+        }
         group.endSeq = event.seq
         break
       }
       case 'tool/result': {
         const callId = event?.data?.message?.toolCallId ?? event?.data?.toolCallId ?? event?.data?.callId
+        // 作答记录先取：即使结果在摘要里找不到对应步骤（调用在上一段/上一页），
+        // 已经结算的答案仍然要下发（SR-02.16）。
+        const call = questionCalls.get(callId)
+        if (call !== undefined) {
+          const question = questionRecordFor({
+            call,
+            resultText: resultTextOf(event?.data),
+            seq: event.seq,
+            time: event.time,
+          })
+          if (question !== null) {
+            if (group === null) out.push(record(question))
+            else pendingRecords.push(question)
+          }
+        }
         const step = group?.calls.get(callId)
         // 结果找不到对应调用（日志被裁剪、旧格式）就丢掉：摘要里不凭空造一步。
         if (step === undefined) break
@@ -451,7 +484,7 @@ export function projectTurnUnit(events) {
         // metadata-only result record; the client renders its image card.
         const images = blocksOf(event).filter((block) => block?.type === 'image')
         if (images.length > 0) {
-          out.push(record({
+          pendingRecords.push({
             type: 'tool/result',
             seq: event.seq,
             time: event.time,
@@ -463,7 +496,7 @@ export function projectTurnUnit(events) {
                 content: images.map(attachmentBlockForWire),
               },
             },
-          }))
+          })
         }
         break
       }

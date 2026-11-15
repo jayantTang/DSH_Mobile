@@ -14,6 +14,15 @@ public struct TimelineItem: Identifiable, Sendable {
             isPending: Bool,
             isAgentSent: Bool
         )
+        /// 一批已作答的问题与答案（SR-02.16）。
+        ///
+        /// 它不是工具卡：答案来自 `ask_user_question` 的结果，但那是通道；用户的选择
+        /// 属于读者自己的输入。过程折叠收起时它必须留在转写里，所以单独一种行。
+        ///
+        /// 三份数组同下标：标题 / 问题 / 答案。答案为空串表示该题被跳过；问题文字
+        /// 为空串表示只拿到了答案。用平行数组而不是模型，是因为导出面预算（`check:public-api`）
+        /// 不允许为一个显示行再加一棵公开类型树。
+        case questionRecord(headers: [String], questions: [String], answers: [String])
         /// Assistant prose.
         case assistantText(text: String)
         /// The model's thinking, rendered collapsed.
@@ -459,8 +468,24 @@ public struct ChatTimeline: Sendable {
             }
             return applyFoldSummary(event)
         }
+        // 连接器在折叠页里单独下发的作答记录（SR-02.16）：过程正文没下发，
+        // 问题与答案只在这条里。
+        if event.type == QuestionRecordProjection.recordType {
+            guard let record = QuestionRecordProjection.decode(event.data) else { return .none }
+            return appendQuestionRecord(record, seq: event.seq, at: event.date)
+        }
         switch ChatEventDecoder.decode(event) {
         case .userMessage(let message):
+            // 计时提问超时后补交的答复：它以 `user-question-reply` 来源的用户消息
+            // 到达，正文是模型可读的 JSON。它不是"人打的字"，但确实是用户的选择；
+            // 显示成作答记录，不显示原始 JSON（SR-02.16）。
+            if message.sourceKind == "user-question-reply" {
+                let callId = event.data["source"]?["callId"]?.stringValue ?? ""
+                let text = Self.joinedText(message.content)
+                guard let record = QuestionRecordProjection.fromLateReply(callId: callId, text: text)
+                else { return .none }
+                return appendQuestionRecord(record, seq: event.seq, at: event.date)
+            }
             // The host journals plugin and runtime-context messages under the
             // same event type. Only what the human typed belongs in a chat.
             guard message.isFromHuman else { return .none }
@@ -622,7 +647,19 @@ public struct ChatTimeline: Sendable {
             invocation.resultBlocks = result.content
             invocation.isError = result.isError
             invocation.isRunning = false
+            // 实时结果的答案批次：同一份事件路径里直接产出作答记录（SR-02.16）。
+            let answered = QuestionRecordProjection.isQuestionTool(invocation.name)
+                ? QuestionRecordProjection.fromToolResult(
+                    callId: invocation.callId,
+                    arguments: invocation.arguments,
+                    resultText: Self.joinedText(result.content))
+                : nil
             items[index].kind = .toolCall(invocation)
+            if let answered {
+                let change = appendQuestionRecord(answered, seq: event.seq, at: event.date)
+                if case .none = change { return .updated(index) }
+                return change
+            }
             return .updated(index)
 
         case .turnStart(let turn):
@@ -729,6 +766,34 @@ public struct ChatTimeline: Sendable {
             }
             return .none
         }
+    }
+
+    /// 作答记录的落点：同一调用只有一行（身份 `question-<callId>`）。
+    ///
+    /// 实时结果、折叠页记录与迟到回复可能先后到达，内容不完全相同（折叠页的问题
+    /// 文字可能被长度上限截断），所以重复到达时合并成更完整的一份，而不是覆盖。
+    private mutating func appendQuestionRecord(
+        _ record: QuestionRecordProjection, seq: Int, at: Date?
+    ) -> Change {
+        let identity = "question-\(record.callId)"
+        if let index = items.firstIndex(where: { $0.id == identity }),
+           case .questionRecord(let headers, let questions, let answers) = items[index].kind {
+            let existing = QuestionRecordProjection(
+                callId: record.callId, headers: headers, questions: questions, answers: answers)
+            let merged = existing.merging(record)
+            guard merged != existing else { return .none }
+            items[index].kind = .questionRecord(
+                headers: merged.headers, questions: merged.questions, answers: merged.answers)
+            if items[index].at == nil { items[index].at = at }
+            return .updated(index)
+        }
+        return append(
+            kind: .questionRecord(headers: record.headers,
+                                  questions: record.questions,
+                                  answers: record.answers),
+            seq: seq,
+            identity: identity,
+            at: at)
     }
 
     private mutating func append(

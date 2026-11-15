@@ -877,3 +877,7 @@
 "相册权限未开启，无法保存图片。可在系统设置里允许访问相册。" = "Der Fotozugriff ist deaktiviert, das Bild kann nicht gespeichert werden. Erlaube den Zugriff in den Einstellungen.";
 "图片是空的" = "Das Bild ist leer";
 "下载原文件" = "Originaldatei herunterladen";
+
+/* 2026-11-15 作答记录（SR-02.16）：跳过的题与可复制正文的标题 */
+"已跳过" = "Übersprungen";
+"问题与回答" = "Fragen und Antworten";

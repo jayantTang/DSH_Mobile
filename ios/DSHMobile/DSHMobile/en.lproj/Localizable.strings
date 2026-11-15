@@ -985,3 +985,7 @@ It is registered as a workspace first, so a new group appears in the desktop sid
 "相册权限未开启，无法保存图片。可在系统设置里允许访问相册。" = "Photo access is off, so the image cannot be saved. Allow photo access in Settings.";
 "图片是空的" = "The image is empty";
 "下载原文件" = "Download original file";
+
+/* 2026-11-15 作答记录（SR-02.16）：跳过的题与可复制正文的标题 */
+"已跳过" = "Skipped";
+"问题与回答" = "Questions and answers";

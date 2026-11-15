@@ -77,6 +77,10 @@ public struct TranscriptRowPayload {
         case .toolCall(let invocation):
             return invocation.arguments.utf8.count + invocation.resultText.utf8.count
         case .notice(let text, _): return text.utf8.count
+        case .questionRecord:
+            // 显示行：内容来自 `+link/question` 或实时工具结果，日志里没有一条
+            // 可单独水合的记录；按 0 计，避免回收后无法恢复（与过程行同列）。
+            return 0
         case .processHeader, .processStep, .runningLine, .processPlaceholder: return 0
         default: return 0
         }
@@ -88,7 +92,7 @@ public struct TranscriptRowPayload {
         switch item.kind {
         // 显示行（过程节点 / 步骤 / 运行行 / 占位行）没有磁盘记录可水合：
         // 回收只会把"行还在但内容没了"变成永久状态。
-        case .processHeader, .processStep, .runningLine, .processPlaceholder: return
+        case .processHeader, .processStep, .runningLine, .processPlaceholder, .questionRecord: return
         default: break
         }
         state = .reclaimed(seq: item.seq, kind: Self.kind(of: item), height: height ?? 0)
@@ -112,6 +116,9 @@ public struct TranscriptRowPayload {
         case .processStep: return .processStep
         case .runningLine: return .runningLine
         case .processPlaceholder: return .processPlaceholder
+        // 作答记录不会被回收（见 `reclaim()`），这里只是让 switch 覆盖全部行；
+        // 真要回收时按用户内容处理，至少占位高度与原来一致。
+        case .questionRecord: return .userMessage
         default: return .notice
         }
     }

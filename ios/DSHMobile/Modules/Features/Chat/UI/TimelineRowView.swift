@@ -29,6 +29,7 @@ struct TimelineRowView: View {
     private var identifier: String {
         switch item.kind {
         case .userMessage: return "row.user"
+        case .questionRecord: return "row.questionRecord"
         case .assistantText: return "row.assistant"
         case .reasoning: return "row.reasoning"
         case .toolCall: return "row.tool"
@@ -88,6 +89,10 @@ struct TimelineRowView: View {
                 onResend: item.sendFailed ? { onSendRetry?(item.id) } : nil,
                 onVerify: item.sendUnconfirmed ? { onSendVerify?(item.id) } : nil
             )
+
+        case .questionRecord(let headers, let questions, let answers):
+            QuestionRecordRow(headers: headers, questions: questions, answers: answers,
+                              time: item.at, copyText: item.questionRecordCopyText)
 
         case .assistantText(let text):
             // 流式行（isStreaming）整块按纯文本渲染，结束后一次完整解析
@@ -328,6 +333,85 @@ private struct UserMessageRow: View {
                 }
             }
             if isAgentSent { Spacer(minLength: 40) }
+        }
+    }
+}
+
+// MARK: - Question record
+
+/// 一批已作答的问题与答案：与用户消息同侧、同一种气泡（SR-02.16）。
+///
+/// 不折叠、不进工具卡：这是读者自己的输入。问题文字缺失时只显示答案；
+/// 没有答案项的题显示「已跳过」。
+private struct QuestionRecordRow: View {
+    let headers: [String]
+    let questions: [String]
+    let answers: [String]
+    let time: Date?
+    /// 领域层拼好的可复制正文（含「已跳过」的本地化文案）。
+    let copyText: String?
+    @State private var copied = false
+
+    var body: some View {
+        HStack {
+            Spacer(minLength: 40)
+            VStack(alignment: .trailing, spacing: DSHTheme.Spacing.hairline) {
+                VStack(alignment: .leading, spacing: DSHTheme.Spacing.tight) {
+                    ForEach(answers.indices, id: \.self) { index in
+                        let header = headers.indices.contains(index) ? headers[index] : ""
+                        let question = questions.indices.contains(index) ? questions[index] : ""
+                        let answer = answers[index]
+                        VStack(alignment: .leading, spacing: 2) {
+                            if !question.isEmpty {
+                                if !header.isEmpty, header != question {
+                                    Text(header)
+                                        .font(DSHTheme.Typography.micro)
+                                        .foregroundStyle(DSHTheme.labelTertiary)
+                                }
+                                Text(question)
+                                    .font(DSHTheme.Typography.caption)
+                                    .foregroundStyle(DSHTheme.labelSecondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            Text(answer.isEmpty ? String(localized: "已跳过") : answer)
+                                .font(DSHTheme.Typography.body)
+                                .foregroundStyle(answer.isEmpty ? DSHTheme.labelTertiary : DSHTheme.labelPrimary)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .textSelection(.enabled)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+                .padding(.horizontal, DSHTheme.Spacing.standard)
+                .padding(.vertical, DSHTheme.Spacing.tight)
+                .background(
+                    RoundedRectangle(cornerRadius: DSHTheme.Radius.large, style: .continuous)
+                        .fill(DSHTheme.brandSubtle)
+                )
+                HStack(spacing: DSHTheme.Spacing.hairline) {
+                    if let time {
+                        Text(time, format: .dateTime.hour().minute())
+                            .font(.system(size: 11))
+                            .foregroundStyle(DSHTheme.labelDimmed)
+                            .accessibilityLabel(time.formatted(date: .omitted, time: .shortened))
+                    }
+                    Button {
+                        UIPasteboard.general.string = copyText
+                        copied = true
+                        Task { @MainActor in
+                            try? await Task.sleep(for: .seconds(1.5))
+                            copied = false
+                        }
+                    } label: {
+                        Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                            .font(.system(size: 11))
+                            .foregroundStyle(DSHTheme.labelTertiary)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(String(localized: "复制"))
+                    .accessibilityIdentifier("question.record.copy")
+                }
+            }
         }
     }
 }

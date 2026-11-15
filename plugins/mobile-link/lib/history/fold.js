@@ -17,6 +17,8 @@
  * （现有 `_link/sessionWindow`），取回原事件即可，不需要新端点。
  */
 
+import { questionRecordsOfEvents } from './question-record.js'
+
 /// 客户端按这个类型画过程节点；以 `+` 开头，不会与宿主事件类型相撞。
 export const FOLD_RECORD_TYPE = '+link/fold'
 
@@ -177,8 +179,16 @@ export function foldProcessRuns(records) {
   }
   flush()
 
+  // 作答记录是用户自己的输入，不是过程：折叠把它的调用与结果收进摘要后，
+  // 单独把它放回页里（SR-02.16）。按 seq 合并不是"重排页面"，而是让摘要
+  // （起点 seq）与记录（结果 seq）落在原来的先后关系上；稳定排序保证同 seq 的
+  // 两类记录不互换。
+  const merged = out
+    .concat(questionRecordsOfEvents(events).map((entry) => entry.record))
+    .sort((lhs, rhs) => lhs.seq - rhs.seq)
+
   return {
-    records: out.map((event) => ({ type: 'event', event })),
+    records: merged.map((event) => ({ type: 'event', event })),
     folds,
   }
 }

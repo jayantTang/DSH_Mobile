@@ -118,9 +118,10 @@ test('apply registers every route through ctx.inject and starts the agent', () =
   // 手机整块不显示，链路本身照跑。
   // `attachments` / `fileUploads` 同理（SR-02.11 / SR-02.07）：两个都在才回答
   // `_link/image*`；缺了手机显示"原图不可用"，预览仍走原有内联路径。
+  // `sessions` + `workspaceRegistry`（SR-02.08）：两个都在才把提醒限定为正式会话。
   assert.deepEqual(injected, [
     ['webServer'], ['webServer', 'connection'], ['sessionQuery'], ['jobs', 'sessions'],
-    ['attachments', 'fileUploads'],
+    ['sessions', 'workspaceRegistry'], ['attachments', 'fileUploads'],
   ])
   assert.ok(effects.some(([label]) => label.includes('DLP agent')))
   assert.ok(effects.some(([label]) => label.includes('jobs roster')), '宿主服务卸载时要摘掉任务订阅')
