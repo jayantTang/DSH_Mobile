@@ -28,6 +28,21 @@ const budgets = {
   types: 286,
 };
 
+/// 在 .build 下找 symbol graph：SwiftPM 的输出目录随版本变化，不能只看一个路径。
+function findSymbolGraph(dir, name) {
+  if (!existsSync(dir)) return null;
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      const found = findSymbolGraph(full, name);
+      if (found) return found;
+    } else if (entry.name === name) {
+      return full;
+    }
+  }
+  return null;
+}
+
 function rawCount() {
   const dir = join(dshkit, 'Sources/DSHKit');
   let declarations = 0;
@@ -47,24 +62,31 @@ function rawCount() {
   return { declarations, types };
 }
 
-const useSymbolGraph = spawnSync('swift', ['--version'], { encoding: 'utf8' }).status === 0;
-if (useSymbolGraph) {
+const hasSwift = spawnSync('swift', ['--version'], { encoding: 'utf8' }).status === 0;
+if (hasSwift) {
   const dump = spawnSync('swift', ['package', 'dump-symbol-graph', '--minimum-access-level', 'public'], {
     cwd: dshkit,
     encoding: 'utf8',
     timeout: 180_000,
   });
-  if (dump.status === 0 && existsSync(out)) {
-    const graph = JSON.parse(readFileSync(out, 'utf8'));
-    const count = graph.symbols?.length ?? 0;
-    if (count > budgets.symbols) {
-      console.error(`✗ DSHKit 导出面超预算：${count} 个 symbol / 预算 ${budgets.symbols}`);
-      console.error('  先迁出等价旧 API，再考虑调高预算；不要只为本需求加公开面。');
-      process.exit(1);
-    }
-    console.log(`✓ DSHKit symbol surface ${count}/${budgets.symbols} exported symbols`);
-    process.exit(0);
+  // 有 Swift 就必须用 symbol graph：这条口径与真实可 import 的符号一致。
+  // 生成失败时不再悄悄退回关键字粗筛——那会把口径问题伪装成预算超支。
+  const graphPath = existsSync(out) ? out : findSymbolGraph(join(dshkit, '.build'), 'DSHKit.symbols.json');
+  if (dump.status !== 0 || !graphPath) {
+    console.error(`✗ 无法生成 symbol graph（exit ${dump.status}）`);
+    console.error((dump.stderr || dump.error?.message || '').trim().slice(0, 2000));
+    console.error('  先确认 `swift package dump-symbol-graph --minimum-access-level public` 能在本机跑通。');
+    process.exit(1);
   }
+  const graph = JSON.parse(readFileSync(graphPath, 'utf8'));
+  const count = graph.symbols?.length ?? 0;
+  if (count > budgets.symbols) {
+    console.error(`✗ DSHKit 导出面超预算：${count} 个 symbol / 预算 ${budgets.symbols}`);
+    console.error('  先迁出等价旧 API，再考虑调高预算；不要只为本需求加公开面。');
+    process.exit(1);
+  }
+  console.log(`✓ DSHKit symbol surface ${count}/${budgets.symbols} exported symbols`);
+  process.exit(0);
 }
 
 const raw = rawCount();
