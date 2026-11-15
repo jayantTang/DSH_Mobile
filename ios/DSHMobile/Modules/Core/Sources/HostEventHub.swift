@@ -30,6 +30,24 @@ public final class HostEventHub {
     public private(set) var hostHome: String?
     /// 待答集合：waterfall 推进来、cancelled 拿掉（判定在 DSHKit，可在秒级单测里钉住）。
     public private(set) var pending = PendingPrompts()
+
+    #if DEBUG
+    /// 夹具：把一条会话直接标成待答，不依赖模型真的调用提问工具（TC-MOB-35）。
+    ///
+    /// 只影响本机调试构建；生产构建里没有这个方法。重复调用同一条会话不会叠加。
+    public func injectProbePending(sessionId: String) {
+        let id = "probe-waiting-\(sessionId)"
+        guard !pending.contains(where: { $0.id == id }) else { return }
+        pending = PendingPrompts(items: pending.items + [PendingPrompts.Item(
+            id: id,
+            event: "user-questions/request",
+            agentId: sessionId,
+            request: .null,
+            arrivedAt: Date()
+        )])
+    }
+    #endif
+
     public private(set) var isLive = false
 
     private var clientId: String?

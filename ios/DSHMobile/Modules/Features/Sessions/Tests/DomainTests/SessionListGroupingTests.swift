@@ -110,4 +110,43 @@ final class SessionListGroupingTests: SessionsDomainTestCase {
         XCTAssertTrue(model.loose.isEmpty, "fallback mode must not double-render rows into the loose bucket")
         XCTAssertEqual(model.ungroupedRunningCount, 0)
     }
+
+    /// SR-02.15：顶部「等你回应」只算正式会话；未分组的待答留在折叠桶头部。
+    func testHeadlineWaitingCountExcludesLooseSessions() async throws {
+        stubSessions([
+            Wire.session("s1", updatedAt: 3_000, running: true, cwd: "/Users/me/proj", asOfSeq: 100),
+            Wire.session("s2", updatedAt: 2_000, running: true, cwd: "/tmp/scratch"),
+        ])
+        stubWorkspaces([
+            Wire.workspace("w1", path: "/Users/me/proj", title: "proj", sessions: ["s1"]),
+        ])
+        model.waitingSessionIds = ["s1", "s2"]
+        await model.refresh()
+
+        XCTAssertEqual(model.waitingCount, 1)
+        XCTAssertEqual(model.ungroupedWaitingCount, 1)
+        XCTAssertEqual(model.headlineWaitingCount, 1,
+                       "列表顶部只统计正式会话；未分组待答不会把顶部的数放大")
+    }
+
+    /// SR-02.08 / SR-02.15：正式会话 = 属于工作区、未归档、非子会话。
+    func testFormalSessionExcludesLooseSubagentAndArchived() async throws {
+        stubSessions([
+            Wire.session("s1", updatedAt: 4_000, cwd: "/Users/me/proj", asOfSeq: 100),
+            Wire.session("s2", updatedAt: 3_000, cwd: "/tmp/scratch"),
+            Wire.session("s3", updatedAt: 2_000, cwd: "/Users/me/other", asOfSeq: 90),
+            Wire.session("s6", updatedAt: 1_000, cwd: "/Users/me/proj", origin: "subagent", parent: "s1"),
+        ])
+        stubWorkspaces([
+            Wire.workspace("w1", path: "/Users/me/proj", title: "proj", sessions: ["s1"]),
+            Wire.workspace("w2", path: "/Users/me/other", title: "other", sessions: ["s3"]),
+        ], archived: ["s3"])
+        await model.refresh()
+
+        XCTAssertTrue(model.isFormalSession("s1"))
+        XCTAssertFalse(model.isFormalSession("s2"), "未分组不是正式会话")
+        XCTAssertFalse(model.isFormalSession("s3"), "已归档不是正式会话")
+        XCTAssertFalse(model.isFormalSession("s6"), "子会话不是正式会话")
+        XCTAssertFalse(model.isFormalSession("missing"), "读不到的会话不能当成正式会话")
+    }
 }

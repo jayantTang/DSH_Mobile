@@ -20,6 +20,7 @@ import { isImageVariantMethod } from './image-variants.js'
 import { isHistoryMethod } from './history.js'
 import { trimRecordsForWire } from './history/records.js'
 import { isJobsMethod } from './jobs-roster.js'
+import { createSessionScope } from './session-scope.js'
 
 /**
  * 后台大文件上传的桥接帧（relay → 连接器），名字见 `docs/relay-contract.json`
@@ -177,6 +178,12 @@ export class DeviceRouter {
     // 「跑完了 / 待你回应」这类事件到了就报一声（见 `notifyFor`）。默认空函数，
     // 测试与不关心提醒的调用方可以不管它。帧由 link.js 发（router 不发帧）。
     this.notify = notify
+    /**
+     * 提醒口径（SR-02.08）：只报正式会话。`undefined` = 宿主服务还没绑上，按旧行为
+     * 全报；绑上之后由 `session-scope.js` 判定。列表顶部的待答计数在 App 侧另算，
+     * 走同一份「正式会话」定义。
+     */
+    this.sessionScope = undefined
     // 生命周期事件（设备 attach/detach 等）的去处，由 link.js 接到流水（journal.js）。
     // 默认空函数，所以 router 单独用时（单测、本地脚本）不需要日志设施。
     this.onEvent = onEvent
@@ -226,6 +233,21 @@ export class DeviceRouter {
     this.jobsRoster = roster
     if (roster === undefined) return
     for (const deviceId of this.devices.keys()) roster.addDevice(deviceId)
+  }
+
+  /**
+   * 挂上提醒口径所需的宿主账本（`ctx.sessions` / `ctx.workspaceRegistry`）。
+   *
+   * 传 `undefined` 摘掉：宿主换代或插件卸载后不能拿着失效服务对象去判定。
+   */
+  bindSessionScope(services) {
+    this.sessionScope = services === undefined ? undefined : createSessionScope(services)
+  }
+
+  /** 这条会话是否值得报一声（只看正式会话；服务未绑上时保持旧行为）。 */
+  #shouldNotify(sessionId) {
+    if (typeof sessionId !== 'string' || sessionId === '') return false
+    return this.sessionScope === undefined || this.sessionScope.isFormal(sessionId)
   }
 
   #changed() {
@@ -1052,6 +1074,9 @@ export class DeviceRouter {
    * `api-session/error`（`:3150`）**有意不推**：它不一定是"跑完了"（也可能是一轮中途
    * 报错后继续），拿它当"跑完了"会发出一堆噪音提醒。这是决定，不是漏做。
    *
+   * **只报正式会话**（SR-02.08）：未分组、子会话与已归档的运行结束和待确认不报。
+   * 这就是 `#shouldNotify` 的唯一判据来源；主机服务绑上之前维持旧行为。
+   *
    * 不做去抖、不做队列、不做重试：一轮才一条，发失败（中转断了）就丢。`turnEnd` 丢一条
    * 不值得为它做重试；`attention` 丢不了，它同时被记账，手机回来会补发。
    */
@@ -1059,11 +1084,13 @@ export class DeviceRouter {
     if (!value || typeof value !== 'object') return
     if (value.type === 'emit' && value.event === 'api-session/status' && value.args?.[1] === false) {
       const sid = String(value.args[0] ?? '')
-      if (sid) this.notify({ kind: 'turnEnd', sid })
+      if (this.#shouldNotify(sid)) this.notify({ kind: 'turnEnd', sid })
       return
     }
     if (value.type === 'waterfall') {
-      this.notify({ kind: 'attention', sid: value.agentId, eid: value.eventId })
+      if (this.#shouldNotify(value.agentId)) {
+        this.notify({ kind: 'attention', sid: value.agentId, eid: value.eventId })
+      }
     }
   }
 

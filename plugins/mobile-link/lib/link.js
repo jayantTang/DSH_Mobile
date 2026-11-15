@@ -200,6 +200,9 @@ export class MobileLinkAgent extends EventEmitter {
     })
     this.router.bindJobsRoster(this.jobsRoster)
     this.setJobsServices = (services) => this.jobsRoster.bindServices(services)
+    /// 提醒口径（SR-02.08）：只报正式会话。宿主 `ctx.sessions` / `ctx.workspaceRegistry`
+    /// 由插件在 `wireSessionScope` 里挂上；缺一个就维持旧行为（全报）。
+    this.setSessionScopeServices = (services) => this.router.bindSessionScope(services)
     this.relay = undefined
     this.socket = undefined
     this.state = 'idle'

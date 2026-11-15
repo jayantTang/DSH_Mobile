@@ -242,11 +242,12 @@ public struct SessionListView: View {
             }
             Spacer(minLength: 0)
             HStack(spacing: DSHTheme.Spacing.hairline) {
-                // 待答的总数包含折叠桶里的：那个桶默认收着，不把它算进来的话，
-                // 一条"在等你回答"的会话可以在里面烂着而列表顶部毫无提示
-                // （2026-09-22 验收时就撞上了：probe 夹具会话全落在未分组里）。
-                if model.waitingCount + model.ungroupedWaitingCount > 0 {
-                    Badge(text: String(localized: "\(model.waitingCount + model.ungroupedWaitingCount) 等你回应"), tone: .attention)
+                // 顶部只统计正式会话（SR-02.15）：未分组会话的待答留在折叠桶头部，
+                // 不把列表顶部的数放大。子会话与已归档本就不在 `waitingCount` 里。
+                if model.headlineWaitingCount > 0 {
+                    Badge(text: String(localized: "\(model.headlineWaitingCount) 等你回应"), tone: .attention)
+                        // 用例断言「未分组待答不进顶部」时要有稳定标识。
+                        .accessibilityIdentifier("session.list.waiting")
                 }
                 if model.runningCount > 0 {
                     Badge(text: String(localized: "\(model.runningCount) 运行中"), tone: .brand)

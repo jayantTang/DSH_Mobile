@@ -253,6 +253,27 @@ function wireJobsServices(ctx, agent, logger) {
 }
 
 /**
+ * 把「哪些会话值得提醒」的宿主账本交给路由（SR-02.08）。
+ *
+ * 两个服务都到位才启用过滤：`ctx.sessions` 判子会话、`ctx.workspaceRegistry` 判归档与
+ * 工作区归属。缺一个就维持旧行为（全报）——拿不到账本时把提醒全吞掉，比多报几条更难发现。
+ */
+function wireSessionScope(ctx, agent, logger) {
+  try {
+    ctx.inject(['sessions', 'workspaceRegistry'], (scope) => {
+      agent.setSessionScopeServices?.({
+        sessions: scope.sessions,
+        workspaces: scope.workspaceRegistry,
+      })
+      scope.effect?.(() => () => agent.setSessionScopeServices?.(undefined), 'mobile-link: session scope')
+      logger.info?.('mobile-link: reminders limited to formal sessions')
+    })
+  } catch (error) {
+    logger.warn?.(`mobile-link: session scope unavailable (reminders keep legacy scope): ${error}`)
+  }
+}
+
+/**
  * @param {import('@deepseek-ai/cordis').Context} ctx
  * @param {Record<string, unknown>} rawConfig
  */
@@ -268,6 +289,7 @@ export function apply(ctx, rawConfig) {
   wireEndpointResolver(ctx, agent, logger)
   wireSessionQuery(ctx, history, logger)
   wireJobsServices(ctx, agent, logger)
+  wireSessionScope(ctx, agent, logger)
   wireImageVariants(ctx, agent, logger)
   logger.info?.(`mobile-link: ready (relay ${config.relayUrl})`)
 }

@@ -271,6 +271,16 @@ extension HostEventHubTests {
         XCTAssertEqual(reported, ["event-2"], "a second tap must not report again")
     }
 
+    #if DEBUG
+    /// TC-MOB-35 的夹具：重复调用同一条会话不叠加，且只进待答集合。
+    func test_probe_pending_is_idempotent() {
+        hub.injectProbePending(sessionId: "session-1")
+        hub.injectProbePending(sessionId: "session-1")
+        XCTAssertEqual(hub.pending.count, 1)
+        XCTAssertEqual(hub.pending.first?.sessionId, "session-1")
+    }
+    #endif
+
     private func settle() async {
         try? await Task.sleep(for: .milliseconds(60))
     }

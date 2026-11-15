@@ -53,6 +53,18 @@ struct MainView: View {
     /// run can land on a report's folder instead of walking there.
     var automationFilesDir: String?
 
+    #if DEBUG
+    /// `-DSHProbeListWaiting <sid>`：列表徽标用例用的待答夹具（见 body 里的 task）。
+    private var listWaitingProbeSessionId: String? {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let index = arguments.firstIndex(of: "-DSHProbeListWaiting"),
+              index + 1 < arguments.count
+        else { return nil }
+        let sessionId = arguments[index + 1]
+        return sessionId.isEmpty ? nil : sessionId
+    }
+    #endif
+
     @State private var isShowingConnections = false
     @State private var isShowingSettings = false
     @State private var isShowingWebFallback = false
@@ -149,6 +161,28 @@ struct MainView: View {
                 try? await Task.sleep(for: .milliseconds(250))
             }
             openInDetail(wanted)
+        }
+        .task(id: listModel.allSessions.count) {
+            #if DEBUG
+            // 夹具：`-DSHProbeListWaiting <sid>` 把指定会话标成待答，让列表徽标
+            // 用例不依赖模型真的调用提问工具（模型忙时那条路会卡住）。
+            // 标成当前会话只是为了空白会话也能出现在未分组桶里。
+            guard let sid = listWaitingProbeSessionId else { return }
+            for _ in 0..<80 where listModel.session(withId: sid) == nil {
+                try? await Task.sleep(for: .milliseconds(250))
+            }
+            guard listModel.session(withId: sid) != nil else { return }
+            // 等事件流真的立起来：建连过程中 `stop()` 会清空 pending，太早注入会被吃掉。
+            for _ in 0..<80 where !hub.isLive {
+                try? await Task.sleep(for: .milliseconds(250))
+            }
+            try? await Task.sleep(for: .seconds(2))
+            listModel.currentSessionId = sid
+            hub.injectProbePending(sessionId: sid)
+            ViewportProbe.note("listwaitingprobe.applied",
+                               ["session": sid, "live": hub.isLive ? "1" : "0",
+                                "pending": String(hub.pending.count)], force: true)
+            #endif
         }
         .task(id: automationScreen) {
             guard let screen = automationScreen, !didApplyAutomationScreen else { return }

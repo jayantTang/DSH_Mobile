@@ -361,6 +361,35 @@ test('在线时两条也都报一声（推不推由中转判，见 C-06）', asy
   assert.ok(socket.frames('event').some((f) => f.value?.eventId === 'wf_on'))
 })
 
+test('非正式会话不报一声：未分组 / 子会话 / 已归档', async () => {
+  const { agent, socket } = makeAgent()
+  // 宿主账本：formal 在工作区；loose 不在；sub 是子会话；arch 已归档。
+  agent.setSessionScopeServices({
+    sessions: {
+      get: (id) => ({ header: { id, ...(id === 'sub' ? { origin: 'subagent' } : {}) } }),
+    },
+    workspaces: {
+      archivedSessionIds: ['arch'],
+      list: () => [{ sessionIds: ['formal'] }],
+    },
+  })
+  await agent.handleRelayFrame(attach('dev_1'))
+  agent.onStreamItem('ev:dev_1', ready('c1'))
+
+  agent.onStreamItem('ev:dev_1', { type: 'emit', event: 'api-session/status', args: ['formal', false] })
+  agent.onStreamItem('ev:dev_1', { type: 'emit', event: 'api-session/status', args: ['loose', false] })
+  agent.onStreamItem('ev:dev_1', {
+    type: 'waterfall', event: 'approval/request', eventId: 'wf_sub', agentId: 'sub', request: {},
+  })
+  agent.onStreamItem('ev:dev_1', {
+    type: 'waterfall', event: 'user-questions/request', eventId: 'wf_arch', agentId: 'arch', request: {},
+  })
+
+  assert.deepEqual(socket.frames('notify').map((f) => [f.kind, f.sid]), [
+    ['turnEnd', 'formal'],
+  ], '只有正式会话的运行结束与待答值得提醒')
+})
+
 test('an answered question is not replayed again', async () => {
   const { agent, dsh, socket } = makeAgent()
   await agent.handleRelayFrame(attach('dev_1'))

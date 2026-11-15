@@ -339,6 +339,12 @@ public final class SessionListModel {
         groups.reduce(0) { $0 + $1.sessions.filter { waitingSessionIds.contains($0.sessionId) }.count }
     }
 
+    /// 列表顶部「等你回应」的计数：只含正式会话（SR-02.15）。
+    ///
+    /// 未分组会话的待答仍在折叠桶头部显示（`ungroupedWaitingCount`），但不进顶部：
+    /// 手机顶部只回答「工作区里有什么在等我」，未分组的临时会话不该让这个数变大。
+    public var headlineWaitingCount: Int { waitingCount }
+
     /// Running, and not one of the ones actually waiting for an answer.
     ///
     /// The host keeps `running` true while a question waits, so counting them
