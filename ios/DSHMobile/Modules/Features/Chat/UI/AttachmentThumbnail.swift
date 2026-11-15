@@ -207,6 +207,18 @@ private struct AttachmentPreviewScreen: View {
 
     private var shown: UIImage { originalImage ?? preview }
 
+    /// 「原图 4288×2848」：切换是否真的发生，用像素尺寸说清楚。
+    ///
+    /// 预览上限 2560/400 万像素，手机在 1 倍时原本就看不出差别；尺寸是唯一
+    /// 不靠放大就能核对的证据（也顺手回答了"我保存的是哪一份"）。
+    private var caption: String? {
+        guard let cg = originalImage?.cgImage else { return nil }
+        // 尺寸先拼成文本再走既有的「原图 %@」键：数字不进格式化串，既不会按
+        // 本地化规则插千位分隔符（用户要对照的是原图真实像素），也复用现有文案键。
+        let pixels = "\(cg.width)×\(cg.height)"
+        return String(localized: "原图 \(pixels)")
+    }
+
     var body: some View {
         ImagePreview(
             image: shown,
@@ -219,7 +231,8 @@ private struct AttachmentPreviewScreen: View {
                 },
                 onCancel: {},
                 data: { images.originalData(attachment.attachmentId) }
-            )
+            ),
+            caption: caption
         )
         .task {
             // 只在用户真的打开全屏时查一次；列表滚动与首帧都不走到这里。

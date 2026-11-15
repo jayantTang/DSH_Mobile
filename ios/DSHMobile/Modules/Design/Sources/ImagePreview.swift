@@ -26,6 +26,12 @@ public struct ImagePreview: View {
     /// 工作区图片给它「下载原文件」：那里的 `shareURL` 就是电脑上的原文件，
     /// 分享面板拿到的字节与文件一致，不经过任何重编码。
     public var shareTitle: String?
+    /// 图片下方的说明（例如「原图 4288×2848」）。
+    ///
+    /// 为什么需要它：预览上限是 2560/400 万像素，手机屏幕在 1 倍时两者看起来
+    /// **一样清楚**——原图的差别只有放大以后才看得到。没有这行字，用户点完
+    /// 「查看原图」无法确认自己看的到底是哪一份；有了像素尺寸，切换是可见的。
+    public var caption: String?
     /// 会话图片的「查看原图 / 保存原图」入口（可缺省）。
     ///
     /// 预览与原图是两份字节：查看器默认拿到的 `image` 永远是预览，原图按需下载，
@@ -49,7 +55,8 @@ public struct ImagePreview: View {
                 identifierPrefix: String = "attachment.preview",
                 shareTitle: String? = nil,
                 accessory: AnyView? = nil,
-                original: ImagePreviewOriginal? = nil) {
+                original: ImagePreviewOriginal? = nil,
+                caption: String? = nil) {
         self.image = image
         self.label = label
         self.shareURL = shareURL
@@ -57,6 +64,7 @@ public struct ImagePreview: View {
         self.shareTitle = shareTitle
         self.accessory = accessory
         self.original = original
+        self.caption = caption
     }
 
     private static let maximumScale: CGFloat = 6
@@ -78,6 +86,18 @@ public struct ImagePreview: View {
         }
         .overlay(alignment: .top) {
             toolbar
+        }
+        .overlay(alignment: .bottom) {
+            if let caption {
+                Text(caption)
+                    .font(DSHTheme.Typography.micro)
+                    .foregroundStyle(.white.opacity(0.75))
+                    .padding(.horizontal, DSHTheme.Spacing.tight)
+                    .padding(.vertical, 2)
+                    .background(.black.opacity(0.35), in: Capsule())
+                    .padding(.bottom, DSHTheme.Spacing.loose)
+                    .accessibilityIdentifier("\(identifierPrefix).caption")
+            }
         }
         .overlay(alignment: .bottom) {
             if let saveMessage {

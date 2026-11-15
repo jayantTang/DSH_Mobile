@@ -6,13 +6,14 @@
 # prompt 用 receipt、消息里的图片、按需取回原图。
 # 相册写入权限预先授权。
 
-1  do: 打开页面 transcript args=-DSHStageImage=/tmp/dsh-composer-image.png  | want: id:composer.photo.strip
+1  do: 打开页面 transcript args=-DSHStageImage=/tmp/dsh-composer-image.jpg  | want: id:composer.photo.strip
 2  do: 点击 id:composer.send, 等待 id:attachment.image timeout=60  | want: id:attachment.image
 3  do: 点击 id:attachment.image
 4  do: 等待 3 秒  | want: id:attachment.preview
 5  do: 什么都不做  | want: id:attachment.preview.original
 6  do: 什么都不做  | shot: 01-sent-image-original-button check=content
 7  do: 点击 id:attachment.preview.original, 等待 id:attachment.preview.original.ready timeout=60  | want: id:attachment.preview.original.ready
-8  do: 什么都不做  | shot: 02-original-ready check=content
-9  do: 点击 id:attachment.preview.done, 等待 id:chat.transcript timeout=10  | want: id:chat.transcript
-10 do: 什么都不做  | shot: 03-back check=content
+8  do: 什么都不做  | want: id:attachment.preview.caption
+9  do: 什么都不做  | shot: 02-original-ready check=content
+10 do: 点击 id:attachment.preview.done, 等待 id:chat.transcript timeout=10  | want: id:chat.transcript
+11 do: 什么都不做  | shot: 03-back check=content
