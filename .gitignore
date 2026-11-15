@@ -43,7 +43,10 @@ test/.quarantine.json
 # 误按「仓库根 runs/<run-id>/」写下来的那一份——它不在 sidecars 的规则覆盖内。
 /runs/
 
-# AI 协作约定：写给自己用的操作手册，不随开源仓库发布
+# AI 协作约定：写给自己用的操作手册，不随开源仓库发布。
+# AGENTS.md 与本机路径、审批口径、发布流程绑定（对应 ~/.dsh/AGENTS.md 的全局约定），
+# 属于本机真值，只留在工作区、不入库；CI 的 hygiene 会拒绝被跟踪的这一份。
+AGENTS.md
 AGENTS.local.md
 
 # 开发手册：需求、流程、工程规范入库；历史与本机文件不入库。
