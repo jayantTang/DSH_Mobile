@@ -37,25 +37,21 @@ const FEEDBACK_EMAIL = process.env.ASC_FEEDBACK_EMAIL || 'forwoshitjy@live.com'
 /// 的触点（他们更新时必然经过这一屏）。所以除了本版改了什么，末尾要留一句反馈邀请——
 /// 两位试用者都静默过，而我们在 GitHub 上说不上话（他们没有公开联系方式）。
 const WHATS_TO_TEST = {
-  'zh-Hans': `这一版更新：
-· 一轮结束后不再残留「深度求索中」和停止键（修复跨会话与异步重建导致的运行态不复位）
-· 连接页字体与间距对齐桌面版设计语言
-· iPad 全屏分栏与整页弹层适配
-· 设备被撤销后停止重连并提示重新配对
-· 失败重发复用原 requestId，避免重复消息
-· 未读全的历史提问继续从锚点补拉
+  'zh-Hans': `这一版相比上一版：
+1. 回答 agent 的提问后，问题与所选选项作为一条独立的作答记录留在会话里，不随过程折叠收起；重进会话或重启 App 后仍在。
+2. 修复会话中图片概率性加载失败的问题。
 
-建议先把电脑端连接器升到 0.8.0；本构建（App 1.0）也兼容 0.7.0。遇到问题请在 TestFlight 截图反馈。`,
-  'en-US': `In this build:
-· A finished turn no longer leaves the “Deep diving” line or the stop button behind (fixed cross-session and async-rebuild run-state leaks).
-· Connection screen typography and spacing now match the desktop design language.
-· iPad split view and full-page sheets adapted.
-· A revoked device stops reconnecting and asks to pair again.
-· Retrying a failed send reuses the original requestId, so no duplicate message.
-· Searches keep backfilling prompts from the anchor.
+需连接器升级到 0.8.1 及以上。`,
+  'en-US': `Compared with the previous build:
+1. After you answer an agent's question, the question and your choices stay in the conversation as their own record, outside the folded process — still there after reopening the session or relaunching the app.
+2. Fixed intermittent image loading failures in conversations.
 
-Upgrade the desktop connector to 0.8.0 first; this build (app 1.0) also works with 0.7.0. Send feedback with a TestFlight screenshot if anything breaks.`,
+Requires connector 0.8.1 or later.`,
 }
+/// `WHATS_TO_TEST` 写的是哪一版。每次发版必须同时改这个常量与上面的文案：
+/// 更新说明改了才是给测试者看的，不改就是上一版的旧话（2026-11-15 就是这样漏了三版）。
+/// 走 prepare/submit 时构建号对不上直接拒绝，避免旧文案被推到新构建上。
+const WHATS_TO_TEST_BUILD = '20261115.2057'
 /// 审核联系电话。Apple 要求填，且只在审核需要时使用；可以从环境变量覆盖。
 const CONTACT_PHONE_NOTE = 'ASC_CONTACT_PHONE 可覆盖（默认是个占位号，第一次提交后建议改成真号）'
 
@@ -151,7 +147,11 @@ async function latestBuild(appId) {
 }
 
 /// 写入/更新这一版构建的「测试内容」（ASC 里这个字段叫 `whatsNew`）：中英各一条，缺哪条建哪条。
-async function setWhatsToTest(buildId) {
+async function setWhatsToTest(buildId, buildVersion) {
+  if (buildVersion !== WHATS_TO_TEST_BUILD) {
+    throw new Error(`更新说明还是 ${WHATS_TO_TEST_BUILD} 那版，构建是 ${buildVersion}：` +
+      '先改写 WHATS_TO_TEST 并同步 WHATS_TO_TEST_BUILD，经 owner 审批后再刷新')
+  }
   const existing = await call('GET', `/v1/betaBuildLocalizations?filter[build]=${buildId}&limit=50`)
   const rows = existing.data ?? []
   for (const [locale, text] of Object.entries(WHATS_TO_TEST)) {
@@ -302,7 +302,7 @@ async function prepare() {
 
   // 2.5 「测试内容 / What to test」：挂在**构建**上（与上面的 App 级说明不同），
   //     测试者每次更新都会看到这一屏，所以反馈邀请写在这里。
-  await setWhatsToTest(build.id)
+  await setWhatsToTest(build.id, build.attributes?.version)
 
   // 3. 外部测试组 + 把构建挂进去。
   let group = existing.find((item) => item.attributes.name === GROUP_NAME)

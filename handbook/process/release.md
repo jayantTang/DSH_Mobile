@@ -37,6 +37,15 @@ tag 与 Release 不得出现 OTA 地址；分发策略见 `handbook/requirements
 
 `scripts/release/deploy-testflight.sh` 会执行归档、导出、上传、等待处理、加入分组并提交审核；只需上传、不提交审核时使用 `--no-submit`。版本号按 `handbook/requirements/requirements.md` 的 SR-04.02 执行。同步口径见 `handbook/history/上架流程.md`。
 
+## TestFlight 更新说明（每次必做）
+
+测试者更新时看到的「更新说明」（ASC 的 `whatsNew`，即 `scripts/dev/asc-beta.mjs` 的 `WHATS_TO_TEST`）每次发版都要改写，属发布的一部分；不改就是上一版的旧话（2026-11-15 连漏三版）。
+
+- 只写**与上一个 TestFlight 构建相比用户能感知的变化**，用编号列出；内部重构、测试、文档不写。末尾写一条组件版本要求（如连接器升到 0.8.1 及以上）。
+- 文案先交 owner 审批，同意后才刷新；不得先刷新后补报。
+- 刷新后回读确认两语言都为「已是最新」，再提交外部测试审核。
+- `WHATS_TO_TEST_BUILD` 与本次构建号必须一致；不一致时 `prepare` / `submit` 直接报错，防止旧文案被推到新构建上。
+
 ## 性能样本（不是门禁）
 
 owner 2026-11-15 决定：发布级基线尚未建立，`test/performance/check-performance.mjs` 不再作为 TestFlight 的发布门禁，`deploy-testflight.sh` 不调用它。SR-08.05 本身要求「基线未建立前不得设置硬门禁」，此前把绝对阈值当硬门禁与需求冲突。
