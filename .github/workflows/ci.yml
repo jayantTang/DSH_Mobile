@@ -100,9 +100,6 @@ jobs:
       # C8 Domain 禁实现层类型、C9 生产 target 必须 Swift 6。纯文本扫描。
       - name: Modules 层与接口闸门（check-module-boundaries）
         run: npm run check:module-boundaries
-      # DSHKit 导出面预算：优先 symbol graph（2,200 符号）；无 Swift 时退回 1,665/283 粗筛。
-      - name: DSHKit 公开面预算（check:public-api）
-        run: npm run check:public-api
 
   node:
     runs-on: ubuntu-latest
@@ -202,6 +199,10 @@ jobs:
             ~/.swiftpm
           key: dshkit-${{ runner.os }}-${{ hashFiles('ios/DSHMobile/DSHKit/Package.resolved') }}
           restore-keys: dshkit-${{ runner.os }}-
+      # DSHKit 导出面预算跑在有 Swift 的作业里：symbol graph 才是权威口径（2,412 符号）；
+      # ubuntu 上没有 Swift，只能退回 public 关键字粗筛，那套预算与实测早已脱节。
+      - name: DSHKit 公开面预算（check:public-api）
+        run: npm run check:public-api
       # 两套测试框架分开跑（owner 2026-11-05 定位挂起）：
       # 2026-11-05 两次都在 XCTest 的 `LinkConfigurationTests` 之后没有输出、进程不退出。
       # XCTest 的输出是逐条打印的，swift-testing 的用例在结束前不打印进度——把两者拆开，

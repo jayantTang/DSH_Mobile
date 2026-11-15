@@ -38,7 +38,7 @@
 | SR-03.03 | ✅ verified | `ios/DSHMobile/Modules/Features/Files/Tests/DomainTests/WorkspaceFilesModelTests.swift`：`test_a_file_reads_page_by_page` | `requirements`、`ios-modules`、`ui-files` |  |
 | SR-03.04 | ✅ verified | `ios/DSHMobile/DSHKit/Tests/DSHKitTests/RelayFileTransferTests.swift`：`downloadLands` | `requirements`、`ios-modules`、`ui-files` |  |
 | SR-03.05 | ✅ verified | `ios/DSHMobile/DSHKit/Tests/DSHKitTests/OutgoingFilesTests.swift`：`OutgoingFilesTests` | `requirements`、`ios-modules`、`connector` |  |
-| SR-03.06 | ✅ verified | `test/acceptance/08-text-wrap.md`：`TC-MOB-201` | `requirements`、`ui-files` |  |
+| SR-03.06 | ✅ verified | `test/acceptance/08-text-wrap.md`：`TC-MOB-204` | `requirements`、`ui-files` |  |
 | SR-04.01 | 🔵 static | `test/coverage/release-policy.test.mjs`：`user-facing docs offer TestFlight` | `requirements`、`scripts`、`policy-static` | 静态策略检查 |
 | SR-04.02 | ✅ verified | `scripts/release/ota-version.test.mjs`：`构建号是北京时间` | `requirements`、`scripts`、`release-plan` |  |
 | SR-04.03 | 🔵 static | `test/coverage/release-policy.test.mjs`：`TestFlight submission is the default` | `requirements`、`scripts`、`policy-static` | 静态策略检查 |

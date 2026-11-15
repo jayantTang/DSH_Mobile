@@ -2,7 +2,7 @@
 #
 # 基线：这张图是功能上线前发的，Host 侧没有原图关联。点开全屏后必须**明说**
 # 「原图不可用」，不弹错误、不转圈、不自动重试；预览照常可看、可关闭。
-# 夹具：session-6091515c-cda6-488d-9728-5063e25d1135（只有一条带图片的消息）。
+# 夹具：image-scratch-session 生成（只有一条带图片的消息，不登记原图）。
 
 1  do: 打开页面 transcript  | want: id:chat.transcript
 2  do: 点击 id:attachment.image

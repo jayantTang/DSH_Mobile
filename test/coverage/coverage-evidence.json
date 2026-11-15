@@ -282,7 +282,7 @@
   "SR-03.06": [
     {
       "path": "test/acceptance/08-text-wrap.md",
-      "contains": "TC-MOB-201"
+      "contains": "TC-MOB-204"
     }
   ],
   "SR-04.01": [
