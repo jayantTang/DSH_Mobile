@@ -86,20 +86,11 @@ log "archived $prev_version -> $archive"
 # 3. 数据库先 checkpoint 再备份；升级不换库，备份只用于回滚与取证。
 install -d -m 0750 "$BACKUP_ROOT"
 db_backup="$BACKUP_ROOT/state-$(date -u +%Y%m%dT%H%M%SZ).db"
-python3 - "$db_backup" <<'PY'
-import sqlite3
-import sys
-
-source = "/var/lib/dsh-relay/state.db"
-target = sys.argv[1]
-con = sqlite3.connect(source)
-print("checkpoint", con.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone())
-destination = sqlite3.connect(target)
-con.backup(destination)
-destination.close()
-con.close()
-print("backup", target)
-PY
+# 目标机 Python 3.6 没有 sqlite3.Connection.backup；用 sqlite3 CLI 的 .backup。
+sudo -u dsh-relay sqlite3 /var/lib/dsh-relay/state.db \
+  "PRAGMA wal_checkpoint(TRUNCATE);" >/dev/null || die "database checkpoint failed"
+sudo -u dsh-relay sqlite3 /var/lib/dsh-relay/state.db \
+  ".backup '$db_backup'" || die "database backup failed"
 chown dsh-relay:dsh-relay "$db_backup" 2>/dev/null || true
 log "db backup -> $db_backup"
 

@@ -88,7 +88,7 @@ if [[ "$status" == 0 ]]; then
   step "完成：$VERSION 已上线并通过观察期"
   printf '   健康检查：https://%s/dsh-link/healthz\n' "$HOST"
 else
-  step "升级未成功（退出码 $status）；见上方 ROLLBACK 记录"
+  step "升级未成功（退出码 ${status}）；见上方 ROLLBACK 记录"
   printf '   上一版本已自动恢复则服务继续可用；若为 ROLLBACK-FAILED，按 README §5 手工恢复。\n'
 fi
 exit "$status"
