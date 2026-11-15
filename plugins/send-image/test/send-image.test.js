@@ -517,7 +517,8 @@ test('discardPrepared removes a capture and keeps a real file', () => {
   }
 })
 
-test('execute prepares the image and publishes it, with no session involved', async () => {
+test('execute prepares the image and publishes it, with no session involved',
+  { skip: process.platform !== 'darwin' && 'sips is macOS-only' }, async () => {
   // The old version refused without a session id and then submitted a prompt
   // with it. Neither is needed now: the picture becomes an attachment and rides
   // on the tool result.

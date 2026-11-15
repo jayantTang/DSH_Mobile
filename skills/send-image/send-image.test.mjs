@@ -138,7 +138,8 @@ test('不超上限的图只复制原文件，不交给 sips 重编码', () => {
   }
 })
 
-test('超过 2560 的图用 sips 缩到最长边 2560 的 JPEG', () => {
+test('超过 2560 的图用 sips 缩到最长边 2560 的 JPEG',
+  { skip: process.platform !== 'darwin' && 'sips 只在 macOS 上可用' }, () => {
   const directory = mkdtempSync(join(tmpdir(), 'dsh-send-image-preview-'))
   const pixel = join(directory, 'pixel.png')
   const large = join(directory, 'large.png')

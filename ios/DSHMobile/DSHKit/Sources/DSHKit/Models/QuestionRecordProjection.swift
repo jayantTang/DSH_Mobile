@@ -68,7 +68,7 @@ struct QuestionRecordProjection: Sendable, Equatable {
         guard let value = jsonValue(resultText) else { return nil }
         guard value["pending"]?.boolValue != true else { return nil }
         guard let answers = answers(value["answers"]), !answers.isEmpty else { return nil }
-        let questions = jsonValue(arguments).flatMap { questions($0["questions"]) } ?? []
+        let questions = jsonValue(arguments).flatMap { Self.questions($0["questions"]) } ?? []
         return make(callId: callId, questions: questions, answers: answers)
     }
 
