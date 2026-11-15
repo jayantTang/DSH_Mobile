@@ -973,3 +973,15 @@ It is registered as a workspace first, so a new group appears in the desktop sid
 "自动换行" = "Wrap lines";
 "已开启" = "On";
 "已关闭" = "Off";
+
+/* 2026-11-15 图片原图变体（SR-02.11）：查看/保存原图与权限提示 */
+"原图" = "Original";
+"保存预览" = "Save preview";
+"保存原图" = "Save original";
+"原图已加载" = "Original loaded";
+"原图不可用" = "Original unavailable";
+"无法保存图片" = "Can't save the image";
+"打开设置" = "Open Settings";
+"相册权限未开启，无法保存图片。可在系统设置里允许访问相册。" = "Photo access is off, so the image cannot be saved. Allow photo access in Settings.";
+"图片是空的" = "The image is empty";
+"下载原文件" = "Download original file";

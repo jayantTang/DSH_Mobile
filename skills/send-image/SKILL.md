@@ -37,8 +37,10 @@ Host 的附件服务**可写**（`ctx.attachments.saveImage`），而工具结�
 ## 脚本（`send-image.mjs`）的定位
 
 脚本仍然负责**采集与校验**：`screencapture` / `pngpaste` 的坑、屏幕录制权限的提示、
-格式与大小检查都写在它里面；`send_image` 工具会调用它、拿到一行 JSON 描述符
-（`{path, name, mediaType, bytes, temporary}`），再自己去做附件与渲染。
+格式与大小检查都写在它里面；默认 prepare 模式还会用 macOS 自带的 `sips` 生成预览
+（最长边 2560、JPEG），`send_image` 工具会调用它、拿到一行 JSON 描述符
+（`{path, name, mediaType, bytes, temporary, previewPath?, previewBytes?}`），再自己去做附件与渲染。
+预览生成失败时描述符里给 `previewError`，原图字段仍然有效，工具会回退到原图归一化。
 
 ```bash
 S=~/.dsh/skills/send-image/send-image.mjs

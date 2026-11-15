@@ -1,0 +1,21 @@
+# TC-MOB-144 的执行指令（会话图片的「查看原图」按需下载）
+#
+# 基线：列表/首帧只画预览；点开全屏后才有「原图 <大小>」按钮；点它才下载原图，
+# 下载完成换成原图并给出完成标记；保存入口同时提供「保存预览 / 保存原图」。
+# 夹具：DSH-image-orig-* 会话（send_image 工具发出的那张图：预览 587 KB / 原图 894,228 字节，
+#       Host 侧已有 image-originals.jsonl 关联），相册写入权限已预先授权。
+#
+# 跑法：DSH_CONNECT=relay ./test/run.sh run test/cases/current/144-会话图片原图按需下载.md
+
+1  do: 打开页面 transcript  | want: id:chat.transcript
+2  do: 点击 id:attachment.image
+3  do: 等待 3 秒  | want: id:attachment.preview
+4  do: 什么都不做  | shot: 01-preview-with-original-button check=content
+5  do: 什么都不做  | want: id:attachment.preview.original
+6  do: 点击 id:attachment.preview.original, 等待 id:attachment.preview.original.ready timeout=45  | want: id:attachment.preview.original.ready
+7  do: 什么都不做  | shot: 02-original-ready check=content
+8  do: 点击 id:attachment.preview.save, 等待 2 秒  | shot: 03-save-menu
+9  do: 什么都不做  | want: text:保存原图
+10 do: 点击 text:保存原图, 等待 3 秒  | shot: 04-saved
+11 do: 点击 id:attachment.preview.done, 等待 id:chat.transcript timeout=10  | want: id:chat.transcript
+12 do: 什么都不做  | shot: 05-back-to-transcript check=content

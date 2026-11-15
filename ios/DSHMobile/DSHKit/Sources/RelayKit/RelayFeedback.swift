@@ -1135,7 +1135,9 @@ public struct RelayFeedbackClient: Sendable {
             throw Self.failure(Self.errorCode(in: failure), status: http.statusCode)
         }
 
-        let total = http.expectedContentLength > 0 ? Int(http.expectedContentLength) : nil
+        // `clamping:`：`expectedContentLength` 是 Int64，超过 Int 范围时直接 `Int(...)` 会 trap。
+        // 进度总量只用于显示与 `reserveCapacity`，夹到 Int 边界不会改变行为。
+        let total = http.expectedContentLength > 0 ? Int(clamping: http.expectedContentLength) : nil
         onProgress?(0, total)
         var data = Data()
         if let total { data.reserveCapacity(total) }

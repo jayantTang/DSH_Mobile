@@ -865,3 +865,15 @@
 "自动换行" = "Retour à la ligne";
 "已开启" = "Activé";
 "已关闭" = "Désactivé";
+
+/* 2026-11-15 图片原图变体（SR-02.11）：查看/保存原图与权限提示 */
+"原图" = "Original";
+"保存预览" = "Enregistrer l'aperçu";
+"保存原图" = "Enregistrer l'original";
+"原图已加载" = "Original chargé";
+"原图不可用" = "Original indisponible";
+"无法保存图片" = "Impossible d'enregistrer l'image";
+"打开设置" = "Ouvrir les réglages";
+"相册权限未开启，无法保存图片。可在系统设置里允许访问相册。" = "L'accès aux photos est désactivé, impossible d'enregistrer. Autorisez l'accès dans les réglages.";
+"图片是空的" = "L'image est vide";
+"下载原文件" = "Télécharger le fichier original";

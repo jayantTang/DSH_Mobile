@@ -29,6 +29,18 @@
     {
       "path": "ios/DSHMobile/DSHKit/Tests/DSHKitTests/WorkspaceFileCacheTests.swift",
       "contains": "testExistingDropsDebrisWhenTheSizeDisagrees"
+    },
+    {
+      "path": "ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/AttachmentImageVariantsTests.swift",
+      "contains": "testHashMismatchFailsWithoutBecomingReadyOrWritingTheCache"
+    },
+    {
+      "path": "ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/AttachmentImageVariantsTests.swift",
+      "contains": "testTruncatedOriginalIsRejectedEvenWhenTheChunkSaysEOF"
+    },
+    {
+      "path": "ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/AttachmentImageVariantsTests.swift",
+      "contains": "testChunkRequestsAreKeyedByThePreviewAttachmentId"
     }
   ],
   "SR-08.03": [
@@ -155,6 +167,22 @@
     {
       "path": "ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/AttachmentLoadFailureTests.swift",
       "contains": "AttachmentLoadFailureTests"
+    },
+    {
+      "path": "ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/ComposerImagePolicyTests.swift",
+      "contains": "testOverPixelBudgetIsScaledUntilBothLimitsFit"
+    },
+    {
+      "path": "ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/ChatModelImageSendTests.swift",
+      "contains": "testSendUploadsPreviewAndOriginalThenPromptsWithReceiptsInOrder"
+    },
+    {
+      "path": "ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/ChatModelImageSendTests.swift",
+      "contains": "testSendAsFileAppendsTheFileReceiptAfterThePreview"
+    },
+    {
+      "path": "test/acceptance/15-会话图片原图按需下载.md",
+      "contains": "TC-MOB-144"
     }
   ],
   "SR-02.08": [
@@ -173,12 +201,44 @@
     {
       "path": "ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/AttachmentLoadFailureTests.swift",
       "contains": "AttachmentLoadFailureTests"
+    },
+    {
+      "path": "ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/AttachmentImageVariantsTests.swift",
+      "contains": "testAvailableLookupBecomesReadyWithoutDownloadingBytes"
+    },
+    {
+      "path": "ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/AttachmentImageVariantsTests.swift",
+      "contains": "testMissingCleanedAndUnsupportedAllBecomeUnavailableAndAreNotRetried"
+    },
+    {
+      "path": "ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/AttachmentImageVariantsTests.swift",
+      "contains": "testNothingIsRequestedUntilTheUserAsks"
+    },
+    {
+      "path": "plugins/mobile-link/test/image-variants.test.js",
+      "contains": "原图元数据：有 / 没有 / 对象被清理 三态分明"
+    },
+    {
+      "path": "test/acceptance/15-会话图片原图按需下载.md",
+      "contains": "TC-MOB-144"
+    },
+    {
+      "path": "test/acceptance/16-旧图片显示原图不可用.md",
+      "contains": "TC-MOB-145"
+    },
+    {
+      "path": "test/acceptance/17-相册未授权保存提示.md",
+      "contains": "TC-MOB-146"
     }
   ],
   "SR-02.12": [
     {
       "path": "ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/ChatModelProcessFoldTests.swift",
       "contains": "test_a_completed_turn_folds_on_the_model_surface"
+    },
+    {
+      "path": "plugins/mobile-link/test/fold-summary.test.js",
+      "contains": "assistant 图文回答"
     }
   ],
   "SR-02.13": [

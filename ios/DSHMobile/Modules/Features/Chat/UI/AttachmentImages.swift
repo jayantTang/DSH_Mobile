@@ -39,14 +39,32 @@ public final class AttachmentImages {
     /// 测试可以注入一个很小的自动尝试次数（生产仍是 `-DSHAttachmentAttempts` 或 8）。
     ///
     /// 它不是运行时开关：不读环境、不改退避表，只改"允许自动重试几次"这一个数字。
+    ///
+    /// 原图的两个 loader 同样只在测试里注入：生产走 `store.chatHost.imageOriginal*`。
+    /// 它们与预览的 `loader` **分开**，所以"只加载预览"可以用"原图 loader 零调用"证明。
     public init(automaticAttemptLimit: Int = AttachmentImages.productionAttemptLimit,
-                loader: AttachmentLoader? = nil) {
+                loader: AttachmentLoader? = nil,
+                originalLookupLoader: AttachmentImageVariants.LookupLoader? = nil,
+                originalChunkLoader: AttachmentImageVariants.ChunkLoader? = nil) {
         self.automaticAttemptLimit = max(1, automaticAttemptLimit)
         self.loader = loader
+        self.originalVariants = AttachmentImageVariants(
+            lookupLoader: originalLookupLoader,
+            chunkLoader: originalChunkLoader
+        )
     }
 
     private let automaticAttemptLimit: Int
     private let loader: AttachmentLoader?
+
+    /// 原图状态机（查元数据 / 分片下载 / SHA-256 校验 / 独立磁盘 variant）。
+    ///
+    /// 放在这里而不是本类里：它不碰 UIKit，`swift test` 在 macOS 上能直接用真实
+    /// 字节验证状态迁移；本类只做预览取图与解码，**从不**因为 `begin()` 去调用它。
+    private let originalVariants: AttachmentImageVariants
+
+    /// 原图状态（给界面的投影；与预览的 `State` 完全独立）。
+    public typealias OriginalState = AttachmentImageVariants.State
 
     /// The full reference for every image this view has been asked to load.
     /// `session/attachment` needs media type and dimensions, not just the id;
@@ -118,6 +136,7 @@ public final class AttachmentImages {
 
     public func attach(store: any ConnectionStatus) {
         self.store = store
+        originalVariants.attach(store: store)
     }
 
     /// The decoded image, when it has already been loaded.
@@ -145,6 +164,7 @@ public final class AttachmentImages {
         dimensions.clearAll()
         states.removeAll()
         flights.removeAll()
+        originalVariants.clearMemory()
     }
 
     /// 链路重建：断线期间的失败不算数，正在退避的尝试也不必等计时器。
@@ -450,6 +470,43 @@ public final class AttachmentImages {
         cache.removeAllObjects()
         states.removeAll()
         flights.removeAll()
+        originalVariants.reset()
+    }
+
+    // MARK: - 原图（按需，绝不自动）
+
+    /// 这张图当前能不能看原图。**不触发任何请求**，只读状态机。
+    public func originalState(_ attachmentId: String) -> OriginalState {
+        originalVariants.state(sessionId: sessionId, attachmentId: attachmentId)
+    }
+
+    /// 已查到的原图元数据（大小、名字），给「查看原图（12.3 MB）」用。
+    public func originalMetadata(_ attachmentId: String) -> ImageOriginalMetadata? {
+        originalVariants.originalMetadata(sessionId: sessionId, attachmentId: attachmentId)
+    }
+
+    /// 只查元数据，不读字节。用户打开全屏查看器时调用一次；不可用会落成
+    /// `.unavailable(reason:)` 并停在终态。
+    public func lookupOriginal(_ attachment: ContentBlock.ImageAttachment) async {
+        await originalVariants.lookupOriginal(sessionId: sessionId, attachment: attachment)
+    }
+
+    /// 按需下载完整原图（512 KiB 分片、SHA-256 校验）。失败保留预览，用户可再点一次。
+    public func downloadOriginal(_ attachment: ContentBlock.ImageAttachment) async {
+        await originalVariants.downloadOriginal(sessionId: sessionId, attachment: attachment)
+    }
+
+    /// 只读**已校验**的原始字节（保存原图用；不要重新编码）。
+    public func originalData(_ attachmentId: String) -> Data? {
+        originalVariants.originalData(sessionId: sessionId, attachmentId: attachmentId)
+    }
+
+    /// 只读**已校验**的磁盘缓存；没下载成功就是 nil，绝不返回部分字节。
+    public func originalImage(_ attachmentId: String) -> UIImage? {
+        guard let data = originalVariants.originalData(
+            sessionId: sessionId, attachmentId: attachmentId
+        ) else { return nil }
+        return Self.decode(data)
     }
 
     // MARK: - State bookkeeping

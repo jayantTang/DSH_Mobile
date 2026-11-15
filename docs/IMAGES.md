@@ -1,6 +1,6 @@
 # 图片能力
 
-> 面向：实现者 · 状态：stable · 最近核对：2026-09-20
+> 面向：实现者 · 状态：stable · 最近核对：2026-11-15
 
 让 agent 能把图片送进对话、让用户在客户端（含 iOS）里看到并放大查看。
 
@@ -16,10 +16,13 @@
 
 也就是说 agent **无法自己输出图片**。`ImageBlock` 在 assistant 侧可用只是为将来留的口子。
 
-**2. 附件服务是只读的。** 客户端只有 `session/attachment`（按 id 读字节），
-**没有任何写入或注册端点**。谁都不能直接往附件库里塞图。
+**2. 客户端只能读图像附件。** `session/attachment` 按 id 读**归一化图像**；
+没有按文件引用读回字节的 RPC。原图因此由连接器在电脑上读（它同时是 DSH 插件，
+能拿到 `ctx.attachments`），不走 Host 的对外 RPC——见下面「预览与原图」。
 
-**3. 图片进入会话的唯一通道是 prompt。** `PromptContentPart` 允许内联图片：
+**3. 图片进入会话的唯一通道是 prompt。** `PromptContentPart` 允许内联图片，
+或引用一次已上传的 receipt（`{type:'file', receiptId}`；图像 receipt 进入消息时
+就是那个图像）。连接器用后一种方式在发送前就知道预览的 `attachmentId`：
 
 ```ts
 { type: 'image', mediaType: 'image/png', data: '<base64>', name?: string }
@@ -55,15 +58,46 @@ Host 归一化 ──── 转码（png/jpeg → webp，当更省字节时）
 关键点：**中转传输的永远是归一化后的大小，不是源文件大小**。
 发送 15.7 MB 的高熵 JPEG，实际存储和传输的是 2.8 MB。
 
+## 预览与原图（两张附件，一份逻辑图片）
+
+自 2026-11 起，一张会话图片最多对应**两份**附件：
+
+| 变体 | 谁生成 | 存储 | 用途 |
+|---|---|---|---|
+| 预览 | Host 归一化（`fileUploads.uploadImageStream` → `attachments.saveImage`） | `ImageAttachmentRef`（内容哈希） | 列表、首次全屏、模型输入 |
+| 原图（可选） | 手机/工具脚本的原始字节，**逐字节**保存（`attachments.saveFile`） | `FileAttachmentRef`（原始字节 sha256） | 用户点「查看原图/保存原图」时按需取回 |
+
+口径：预览最长边 ≤ 2560、总像素 ≤ 4,000,000、JPEG/WebP；原图单张 ≤ 20 MB。
+超过 20 MB、格式无法解码或无法安全保存时**按文件发送/下载**，绝不用预览冒充原图。
+
+**关联登记在电脑上**：`$DSH_HOME/mobile-link/image-originals.jsonl`，一行一条
+`{v, previewId, original:{attachmentId,name,bytes,mediaType}, savedAt, source}`。
+键是预览的 `attachmentId`（内容哈希），所以不需要会话信息，也不需要客户端缓存：
+重装 App、重新配对、换设备后，会话历史里的预览仍从 Host 取，原图仍按需取回。
+
+连接器新增三个保留方法（`_link/`，不转发 Host）：
+
+| 方法 | 作用 |
+|---|---|
+| `_link/imageCommit` | 把手机暂存的预览/原图交给 Host：预览拿 receipt，原图存 file 并登记；超限原图改为返回 file receipt |
+| `_link/imageOriginal` | 按预览 id 查原图元数据：`available` / `missing` / `cleaned` / `unsupported` |
+| `_link/imageOriginalChunk` | 按区间读原图字节（默认 512 KiB，上限 1 MiB），手机拼完用 sha256 校验 |
+
+`send_image` 工具走同一份索引（`source:'tool'`）：`saveImage(预览)` + `saveFile(原图)`；
+工具结果里 `attachment` 仍是预览，新增的可选 `original` 只是元数据。
+
 ## 客户端（iOS）
 
 | 组件 | 职责 |
 |---|---|
-| `AttachmentImages` | 按 `attachmentId` 拉字节、解码、LRU 缓存（24 张）、飞行中去重、失败不重试 |
-| `AttachmentThumbnail` | 按原图宽高比占位（避免加载完成时布局跳动），最长边限高 |
-| `ImagePreview` | 全屏查看：捏合缩放 1–6x、双击 2.5x、拖拽平移、保存到相册 |
+| `AttachmentImages` | 按 `attachmentId` 拉**预览**字节、解码、LRU 缓存、飞行中去重、失败不重试 |
+| `AttachmentImageVariants` | 原图的元数据与分片下载状态机：按需查、按需下、sha256 校验、失败不污染预览；`missing/cleaned/unsupported` 是终态，不重试 |
+| `AttachmentThumbnail` | 按宽高比占位（避免加载完成时布局跳动），最长边限高；**打开全屏时才查原图** |
+| `ImagePreview` | 全屏查看：捏合缩放 1–6x、双击 2.5x、拖拽平移；有原图时显示「原图 12.3 MB」/进度/重试，保存分「保存预览」「保存原图」；相册权限未授权时提示去设置 |
+| `WorkspaceImagePreviewView` | 工作区图片：列表缩略图，全屏读**原文件**字节，提供下载/分享，不重编码 |
 
 **含图片的工具卡片默认展开**——截图是那条消息的重点，藏在折叠面板后面等于没有。
+**列表滚动不会自动拉原图**：原图请求只由全屏里的显式点按触发。
 
 ## 发送方（两种形态）
 

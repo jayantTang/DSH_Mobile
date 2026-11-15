@@ -15,8 +15,15 @@ const out = join(dshkit, '.build/out/symbolgraph/DSHKit.symbols.json');
 // public 签名"的类型降级，公开面从 2425/1827/301 收到 2360/1785/286；剩下那批被
 // public 协议签名或测试直接引用，降级要改签名，属单独的重构任务。
 // 口径不变：只减不增，下次加公开面前先迁旧。
+//
+// 2026-11-15 owner 批准的唯一一次上调：图片原图变体（SR-02.11 / SR-02.07）新增
+// `ImageOriginalMetadata` / `ImageOriginalLookup` / `ImageOriginalChunk` /
+// `ImageCommitValue` / `ImageVariantUpload` 与 3 个 `ChatHosting` 方法，公开面
+// 从 2360 增至 2412（+52）。这几件都是 `ChatHosting` 的签名依赖，迁不走；换成
+// JSONValue 会破坏这一层的类型契约。`declarations` / `types` 两项未动，口径仍是
+// 只减不增：下一次要加公开面，先迁出等价的旧 API。
 const budgets = {
-  symbols: 2360,
+  symbols: 2412,
   declarations: 1785,
   types: 286,
 };

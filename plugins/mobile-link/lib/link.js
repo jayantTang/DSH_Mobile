@@ -188,6 +188,9 @@ export class MobileLinkAgent extends EventEmitter {
     /// 历史读取（spec 007）：宿主 `sessionQuery` 就绪后由插件挂上；没挂上时
     /// 路由回 `link/unsupported`，手机继续走 `session/page`。
     this.setHistoryService = (service) => { this.router.history = service }
+    /// 图片两变体（预览 + 可选原图）：宿主 `attachments` / `fileUploads` 就绪后由插件挂上；
+    /// 没挂上时三个 `_link/image*` 方法回 `link/unsupported`（手机显示"原图不可用"）。
+    this.setImageVariants = (service) => { this.router.bindImageVariants(service) }
     /// 活动名单与 `link/jobs` 推帧（spec 018）：帧由 router 广播给在线设备，
     /// 订阅与去抖都在 roster 里。宿主服务由 `setJobsServices` 挂上。
     this.jobsRoster = createJobsRoster({

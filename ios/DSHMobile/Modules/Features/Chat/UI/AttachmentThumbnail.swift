@@ -88,7 +88,9 @@ struct AttachmentThumbnail: View {
             await images.begin(attachment)
         }
         .fullScreenCover(item: $preview) { item in
-            ImagePreview(image: item.image, label: item.label)
+            AttachmentPreviewScreen(attachment: attachment,
+                                    preview: item.image,
+                                    label: item.label)
         }
     }
 
@@ -178,8 +180,76 @@ struct AttachmentThumbnail: View {
     }
 }
 
-/// The image on its own, zoomable, dismissible.
+/// 全屏查看这一张附件：预览已到手，原图**按需**。
 ///
-/// Reads as a photo viewer rather than a sheet of controls: pinch or double tap
-/// to zoom, drag to pan, and a single tap on the backdrop to close.
+/// 为什么单独一层而不是在缩略图里直接放 `ImagePreview`：查看器要能随着原图下载
+/// 完成把画面从预览切成原图，还要把「原图 12.3 MB / 进度 / 重试」的状态接到
+/// `AttachmentImages` 上。呈现项（`PresentedImage`）只带预览字节，下载状态归
+/// `AttachmentImages` 所有，所以查看器必须自己观察它，而不是在打开时快照一次。
+///
+/// **查询只发生一次**：打开全屏时查一次元数据；不可用（旧数据、Host 已清理、
+/// 旧连接器）落在终态，不再重试；下载失败停在可重试，绝不自动重来。
+private struct AttachmentPreviewScreen: View {
+    let attachment: ContentBlock.ImageAttachment
+    let preview: UIImage
+    let label: String
+
+    @Environment(AttachmentImages.self) private var images
+
+    private var state: AttachmentImages.OriginalState {
+        images.originalState(attachment.attachmentId)
+    }
+
+    /// 已经下载并校验过的原图；没有就继续显示预览。
+    private var originalImage: UIImage? {
+        images.originalImage(attachment.attachmentId)
+    }
+
+    private var shown: UIImage { originalImage ?? preview }
+
+    var body: some View {
+        ImagePreview(
+            image: shown,
+            label: label,
+            original: ImagePreviewOriginal(
+                phase: phase,
+                bytes: bytes,
+                onRequest: {
+                    Task { await images.downloadOriginal(attachment) }
+                },
+                onCancel: {},
+                data: { images.originalData(attachment.attachmentId) }
+            )
+        )
+        .task {
+            // 只在用户真的打开全屏时查一次；列表滚动与首帧都不走到这里。
+            await images.lookupOriginal(attachment)
+        }
+    }
+
+    /// 状态机 → 查看器：`.ready` 只在字节已经到手时才是「在看原图」，
+    /// 元数据已知但还没下载仍然是「查看原图」按钮。
+    private var phase: ImagePreviewOriginal.Phase {
+        if originalImage != nil { return .ready }
+        switch state {
+        case .idle:
+            return .idle
+        case .ready:
+            return .idle
+        case .loading(let progress):
+            let total = bytes
+            let received = total.map { Int(Double($0) * max(0, min(1, progress))) }
+            return .downloading(received: received ?? 0, total: total)
+        case .failed:
+            return .failed
+        case .unavailable:
+            return .unavailable
+        }
+    }
+
+    private var bytes: Int? {
+        if case .ready(let metadata) = state { return metadata.bytes }
+        return nil
+    }
+}
 #endif

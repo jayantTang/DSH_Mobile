@@ -73,8 +73,26 @@ public final class FakeLinkService: LinkService {
         attachmentLoadFailures.append(AttachmentLoadFailure(id: id, attempt: attempt,
                                                             category: category))
     }
+    /// 一次文件上传的调用记录（发送图片的用例要断言"上传的是哪份字节"）。
+    public struct UploadCall: Sendable, Equatable {
+        public let path: String
+        public let name: String
+        public let sessionId: String
+    }
+
+    /// 测试可注入的上传实现；nil 时保持原来的"未打桩即抛错"。
+    ///
+    /// 图片发送路径会先 `uploadFile` 再 `_link/imageCommit`，所以用例必须能同时
+    /// 控制两段：这里给上传，`FakeCarrier.unaryResponses["_link/imageCommit"]` 给提交。
+    public var uploadFileStub: ((URL, String, String) async throws -> StagedFile)?
+    public private(set) var uploadFileCalls: [UploadCall] = []
+
     public func uploadFile(fileURL: URL, name: String, sessionId: String) async throws -> StagedFile {
-        throw NSError(domain: "FakeLinkService", code: 2, userInfo: [NSLocalizedDescriptionKey: "uploadFile not stubbed"])
+        uploadFileCalls.append(UploadCall(path: fileURL.path, name: name, sessionId: sessionId))
+        guard let uploadFileStub else {
+            throw NSError(domain: "FakeLinkService", code: 2, userInfo: [NSLocalizedDescriptionKey: "uploadFile not stubbed"])
+        }
+        return try await uploadFileStub(fileURL, name, sessionId)
     }
     /// 测试可注入的文件传输目标；nil 时模拟“没有中转目标”。
     public var transferTarget: (relayURL: URL, deviceToken: String)?

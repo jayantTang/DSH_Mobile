@@ -1,0 +1,13 @@
+# TC-MOB-145 的执行指令（旧数据只有一份图片 → 原图不可用）
+#
+# 基线：这张图是功能上线前发的，Host 侧没有原图关联。点开全屏后必须**明说**
+# 「原图不可用」，不弹错误、不转圈、不自动重试；预览照常可看、可关闭。
+# 夹具：session-6091515c-cda6-488d-9728-5063e25d1135（只有一条带图片的消息）。
+
+1  do: 打开页面 transcript  | want: id:chat.transcript
+2  do: 点击 id:attachment.image
+3  do: 等待 3 秒  | want: id:attachment.preview
+4  do: 什么都不做  | want: id:attachment.preview.original.unavailable
+5  do: 什么都不做  | shot: 01-original-unavailable check=content
+6  do: 点击 id:attachment.preview.done, 等待 id:chat.transcript timeout=10  | want: id:chat.transcript
+7  do: 什么都不做  | shot: 02-back check=content

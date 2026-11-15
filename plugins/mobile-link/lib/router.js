@@ -16,6 +16,7 @@ import { FileInbox, FILE_BEGIN, FILE_CHUNK, FILE_END, isFileMethod } from './fil
 import { FileFetcher, FSGET_CANCEL } from './files-out.js'
 import { GitBridge, isGitMethod } from './git.js'
 import { isHelloMethod, helloPayload, parseClientInfo } from './hello.js'
+import { isImageVariantMethod } from './image-variants.js'
 import { isHistoryMethod } from './history.js'
 import { trimRecordsForWire } from './history/records.js'
 import { isJobsMethod } from './jobs-roster.js'
@@ -204,6 +205,15 @@ export class DeviceRouter {
     // 活动名单与 `link/jobs` 推帧（spec 018）。订阅与去抖都在 roster 里，router 只负责
     // 转交设备生命周期与把帧广播出去。
     this.jobsRoster = undefined
+    // 图片的两变体能力（预览 + 可选原图）：由 index.js 注入宿主 `attachments` /
+    // `fileUploads` 后挂上。没挂上时三个保留方法回 `link/unsupported`，
+    // 手机显示"原图不可用"，预览照旧。
+    this.imageVariants = undefined
+  }
+
+  /** 挂上图片变体能力；`undefined` 表示宿主服务缺失（如实报不支持）。 */
+  bindImageVariants(service) {
+    this.imageVariants = service
   }
 
   /**
@@ -750,6 +760,30 @@ export class DeviceRouter {
         result = { ok: true, value: this.fileInbox.handle(frame.method, frame.args ?? {}) }
       } catch (error) {
         result = { ok: false, error: errorObject('file/rejected', messageOf(error)) }
+      }
+      this.send(deviceId, resultFrame(frame.id, result, deviceId))
+      return
+    }
+
+    // 图片变体（预览 + 原图）：手机先经 `_link/file*` 把字节落进收件箱，再来这里
+    // 让连接器把它们交给 Host 附件服务并登记关联。自己回答而不是转发：Host
+    // 没有对应的 RPC，而这正是保留方法存在的理由。
+    if (isImageVariantMethod(frame.method)) {
+      let result
+      try {
+        if (this.imageVariants === undefined) {
+          result = {
+            ok: false,
+            error: errorObject('link/unsupported', 'image variants are unavailable on this connector'),
+          }
+        } else {
+          result = { ok: true, value: await this.imageVariants.handle(frame.method, frame.args ?? {}) }
+        }
+      } catch (error) {
+        result = {
+          ok: false,
+          error: errorObject(error?.code ?? 'link/failed', messageOf(error), error?.details ?? {}),
+        }
       }
       this.send(deviceId, resultFrame(frame.id, result, deviceId))
       return

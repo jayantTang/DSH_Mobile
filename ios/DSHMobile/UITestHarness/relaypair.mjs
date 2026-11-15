@@ -19,7 +19,10 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 const IDENTITY = join(homedir(), '.dsh', 'mobile-link', 'agent.json')
-const CLI = join(import.meta.dirname, '..', '..', 'plugins', 'mobile-link', 'lib', 'cli.js')
+// 仓库根在三级之上：ios/DSHMobile/UITestHarness → ios/DSHMobile → ios → <repo>。
+// （025 模块化把 harness 从 ios/ 下移到 ios/DSHMobile/ 时，这一行少了一级，
+// 结果是任何 `DSH_CONNECT=relay` 的用例都在配对这一步 ENOENT。）
+const CLI = join(import.meta.dirname, '..', '..', '..', 'plugins', 'mobile-link', 'lib', 'cli.js')
 
 /// The connector's own relay identity and address.
 export function identity() {

@@ -32,6 +32,7 @@
 import { MobileLinkAgent } from './link.js'
 import { registerMobileLinkRoutes } from './routes.js'
 import { createHistoryService } from './history.js'
+import { ImageVariants } from './image-variants.js'
 
 /** Cordis function-plugin name (the loader row id is separate). */
 export const name = 'mobile-link'
@@ -206,6 +207,32 @@ function wireSessionQuery(ctx, history, logger) {
 }
 
 /**
+ * 把宿主的附件与上传服务交给图片变体能力（**可选注入**）。
+ *
+ * 两个服务都到位才回答 `_link/image*`：预览要经 `fileUploads` 拿 prompt receipt，
+ * 原图要经 `attachments` 逐字节保存并读回。缺一个就保持"不支持"，手机显示
+ * "原图不可用"——这是如实降级，不是错误；预览仍走原有内联路径。
+ *
+ * 服务卸载（宿主换代 / 插件禁用）时把绑定摘掉，避免路由拿着失效的服务对象。
+ */
+function wireImageVariants(ctx, agent, logger) {
+  try {
+    ctx.inject(['attachments', 'fileUploads'], (scope) => {
+      const variants = new ImageVariants({
+        attachments: scope.attachments,
+        fileUploads: scope.fileUploads,
+        logger,
+      })
+      agent.setImageVariants?.(variants)
+      scope.effect?.(() => () => agent.setImageVariants?.(undefined), 'mobile-link: image variants')
+      logger.info?.('mobile-link: image variants bound to ctx.attachments / ctx.fileUploads')
+    })
+  } catch (error) {
+    logger.warn?.(`mobile-link: image variants unavailable (preview-only): ${error}`)
+  }
+}
+
+/**
  * 把宿主的任务与活会话服务交给活动名单（**可选注入**，spec 018）。
  *
  * 两个服务都到位才回答 `_link/jobRoster`；缺一个就保持"不支持"，手机整块不显示
@@ -241,6 +268,7 @@ export function apply(ctx, rawConfig) {
   wireEndpointResolver(ctx, agent, logger)
   wireSessionQuery(ctx, history, logger)
   wireJobsServices(ctx, agent, logger)
+  wireImageVariants(ctx, agent, logger)
   logger.info?.(`mobile-link: ready (relay ${config.relayUrl})`)
 }
 

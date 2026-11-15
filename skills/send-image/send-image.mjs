@@ -16,7 +16,7 @@
  * render tool-result images; it is opt-in for exactly that reason.
  *
  * Usage:
- *   send-image.mjs --file <path>        # print {path, mediaType, bytes, name}
+ *   send-image.mjs --file <path>        # print {path, mediaType, bytes, name, previewPath?}
  *   send-image.mjs --screenshot
  *   send-image.mjs --clipboard
  *   send-image.mjs --file <path> --via-prompt [--caption "..."]
@@ -27,7 +27,7 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { readFileSync, statSync, unlinkSync } from 'node:fs'
+import { copyFileSync, readFileSync, statSync, unlinkSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { extname, join, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -61,6 +61,20 @@ const MEDIA_TYPES = {
  */
 const MAX_BYTES = 20 * 1024 * 1024
 
+/**
+ * 预览的上限：最长边 2560、总像素 400 万，JPEG 质量 85。
+ *
+ * 与 iOS 侧生成预览的口径一致（契约 §2.2）：手机和电脑各生成一次预览时，
+ * 同一个原图不应因平台不同而得到两种清晰度。超过上限的图若原样交给 Host，
+ * 归一化也会降采样，但会先整份上传；这里先在本地缩到该口径，减少手机下载量。
+ */
+const PREVIEW_MAX_EDGE = 2560
+const PREVIEW_MAX_PIXELS = 4_000_000
+const PREVIEW_JPEG_QUALITY = 85
+
+/** 默认依赖：测试可替换，CLI 行为不变。 */
+const PREVIEW_DEPS = { execFileSync, statSync, copyFileSync, unlinkSync }
+
 function parseArgs(argv) {
   const args = { caption: '', screenshots: 0 }
   for (let i = 0; i < argv.length; i += 1) {
@@ -90,8 +104,9 @@ function usage() {
   --via-prompt      直接把图片作为 prompt 提交（旧路径：它会以「用户消息」的身份
                     出现并触发新一轮回答，只在客户端无法渲染工具结果图片时使用）
 
-默认输出一行 JSON：{path, name, mediaType, bytes, temporary}，
-调用方（send_image 工具）据此把图片存成附件、放进工具结果。`)
+默认输出一行 JSON：{path, name, mediaType, bytes, temporary, previewPath?, previewBytes?}，
+调用方（send_image 工具）据此把预览与原图存成附件、放进工具结果。
+预览不可生成时给出 previewError，原图描述符仍然有效（调用方回退到原图或按文件发送）。`)
 }
 
 /**
@@ -215,6 +230,152 @@ function loadImage(args) {
   return { path: resolve(args.file), temporary: false }
 }
 
+/**
+ * 从 `sips -g pixelWidth -g pixelHeight` 的输出里取尺寸。
+ *
+ * sips 会先打印文件路径再逐行打印属性；只认这两个键，别解析整段文本，
+ * 路径里出现 "pixelWidth" 也不会误读。解析不出就返回 null，由调用方给
+ * previewError，而不是猜一个尺寸去缩放。
+ */
+export function parsePixelSize(stdout) {
+  const text = String(stdout ?? '')
+  const width = /(?:^|\s)pixelWidth:\s*(\d+)/.exec(text)?.[1]
+  const height = /(?:^|\s)pixelHeight:\s*(\d+)/.exec(text)?.[1]
+  if (!width || !height) return null
+  const parsed = { width: Number(width), height: Number(height) }
+  if (!Number.isFinite(parsed.width) || !Number.isFinite(parsed.height)) return null
+  if (parsed.width <= 0 || parsed.height <= 0) return null
+  return parsed
+}
+
+/** 是否需要交给 sips 缩到预览口径；小图不缩放，避免无谓的重编码。 */
+export function needsPreviewResize({ width, height }) {
+  return Math.max(width, height) > previewTargetEdge({ width, height })
+}
+
+/**
+ * 预览的目标最长边：同时满足「最长边 ≤ 2560」与「总像素 ≤ 400 万」。
+ *
+ * 为什么不能只写 `-Z 2560`：那一条只约束最长边，4:3 的 4000×3000 会得到
+ * 2560×1920（约 490 万像素），超过预览的像素上限。等比例缩放下
+ * `像素 = 长边² / 长宽比`，反解长边上限后与 2560 取小，才是两个上限同时成立的值。
+ */
+export function previewTargetEdge({ width, height }) {
+  const long = Math.max(width, height)
+  const short = Math.min(width, height)
+  if (long <= 0 || short <= 0) return 1
+  const aspect = long / short
+  const pixelEdge = Math.floor(Math.sqrt(PREVIEW_MAX_PIXELS * aspect))
+  return Math.max(1, Math.min(PREVIEW_MAX_EDGE, pixelEdge))
+}
+
+/**
+ * 生成预览文件，返回 `{ok:true, path, bytes, mediaType, temporary}` 或
+ * `{ok:false, error}`；**从不抛错**，因为预览只是附加能力，不能拖垮整次 prepare。
+ *
+ * 两条分支：
+ *   - 需要缩放：`sips -Z 2560 -s format jpeg`，输出 JPEG；
+ *   - 不需要缩放：原样复制一份（不重编码），媒体类型沿用原图（必须是 Host 接受的
+ *     png/jpeg/webp/gif；其它格式直接判为不可预览）。
+ *
+ * 依赖通过 `deps` 注入，单测可以伪造 sips 与文件系统；CLI 不传，行为不变。
+ */
+export function generatePreview(path, mediaType, deps = {}) {
+  const run = deps.execFileSync ?? PREVIEW_DEPS.execFileSync
+  const stat = deps.statSync ?? PREVIEW_DEPS.statSync
+  const copy = deps.copyFileSync ?? PREVIEW_DEPS.copyFileSync
+  const remove = deps.unlinkSync ?? PREVIEW_DEPS.unlinkSync
+  const accepted = Object.values(MEDIA_TYPES)
+
+  if (!mediaType || !accepted.includes(mediaType)) {
+    return {
+      ok: false,
+      error: `无法生成预览：不支持的图片格式 ${extname(path) || '(无扩展名)'}；请按文件发送。`,
+    }
+  }
+
+  let dimensions
+  try {
+    const stdout = run(
+      'sips',
+      ['-g', 'pixelWidth', '-g', 'pixelHeight', path],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+    )
+    dimensions = parsePixelSize(stdout)
+  } catch (error) {
+    return { ok: false, error: `无法生成预览：${sipsReason(error)}` }
+  }
+  if (!dimensions) {
+    return { ok: false, error: '无法生成预览：读不到图片尺寸（sips 未返回 pixelWidth/pixelHeight）' }
+  }
+
+  if (needsPreviewResize(dimensions)) {
+    const preview = join(tmpdir(), `dsh-image-preview-${randomUUID()}.jpg`)
+    try {
+      // `-Z` 按最长边等比缩放；目标边长同时满足边上限与像素上限（见 previewTargetEdge）。
+      run(
+        'sips',
+        [
+          '-Z', String(previewTargetEdge(dimensions)),
+          '-s', 'format', 'jpeg',
+          '-s', 'formatOptions', String(PREVIEW_JPEG_QUALITY),
+          path,
+          '--out', preview,
+        ],
+        { stdio: ['ignore', 'ignore', 'pipe'] },
+      )
+      const size = stat(preview).size
+      if (!Number.isFinite(size) || size <= 0) throw new Error('sips 没有写出预览文件')
+      return { ok: true, path: preview, bytes: size, mediaType: 'image/jpeg', temporary: true }
+    } catch (error) {
+      try { remove(preview) } catch { /* 半截文件，删不掉也不影响结果 */ }
+      return { ok: false, error: `无法生成预览：${sipsReason(error)}` }
+    }
+  }
+
+  const preview = join(
+    tmpdir(),
+    `dsh-image-preview-${randomUUID()}${extname(path).toLowerCase() || '.img'}`,
+  )
+  try {
+    copy(path, preview)
+    const size = stat(preview).size
+    if (!Number.isFinite(size) || size <= 0) throw new Error('复制的预览文件是空的')
+    return { ok: true, path: preview, bytes: size, mediaType, temporary: true }
+  } catch (error) {
+    try { remove(preview) } catch { /* 同上 */ }
+    return { ok: false, error: `无法生成预览：${sipsReason(error)}` }
+  }
+}
+
+/** 把 sips / 文件系统的错误压成一句能放进 previewError 的原因。 */
+function sipsReason(error) {
+  const stderr = String(error?.stderr ?? '').trim()
+  return stderr || error?.message || String(error)
+}
+
+/** 默认 prepare 的 JSON 描述符：既有字段不动，预览成功才附加预览字段。 */
+export function describePrepared({ path, name, mediaType, bytes, temporary, preview }) {
+  const descriptor = {
+    path,
+    name,
+    mediaType,
+    bytes,
+    temporary: temporary === true,
+  }
+  if (mediaType === undefined) delete descriptor.mediaType
+  if (preview?.ok) {
+    descriptor.previewPath = preview.path
+    descriptor.previewBytes = preview.bytes
+    descriptor.previewMediaType = preview.mediaType
+    // 预览总是临时文件，由调用方（send_image 工具）在用完后清理。
+    descriptor.previewTemporary = preview.temporary === true
+  } else {
+    descriptor.previewError = preview?.error ?? '无法生成预览：未知原因'
+  }
+  return descriptor
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2))
   if (args.help) return usage()
@@ -230,15 +391,25 @@ async function main() {
   }
 
   const mediaType = MEDIA_TYPES[extname(path).toLowerCase()]
-  if (!mediaType) throw new Error(`不支持的图片格式: ${extname(path) || '(无扩展名)'}`)
-
   const name = path.split('/').pop()
 
   // Default: hand the caller everything it needs to publish the picture itself.
   if (!args.viaPrompt) {
-    console.log(JSON.stringify({ path, name, mediaType, bytes: bytes.length, temporary: temporary === true }))
+    // 预览失败不阻断：描述符仍带原图路径与类型，调用方回退到原图归一化或按文件发送。
+    const preview = generatePreview(path, mediaType)
+    console.log(JSON.stringify(describePrepared({
+      path,
+      name,
+      mediaType,
+      bytes: bytes.length,
+      temporary,
+      preview,
+    })))
     return
   }
+
+  // 旧路径仍然只认支持的图片类型：prompt 的 image 块必须声明 mediaType。
+  if (!mediaType) throw new Error(`不支持的图片格式: ${extname(path) || '(无扩展名)'}`)
 
   const sessionId = process.env.DSH_SESSION_ID
   if (!sessionId) {

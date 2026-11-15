@@ -97,6 +97,7 @@ public struct Composer: View {
                             .scaledToFill()
                             .frame(width: 56, height: 56)
                             .clipShape(RoundedRectangle(cornerRadius: DSHTheme.Radius.small, style: .continuous))
+                            .overlay { uploadStateOverlay(image.uploadState) }
                             .overlay(alignment: .topTrailing) {
                                 Button {
                                     model.removeDraftImage(id: image.id)
@@ -118,6 +119,33 @@ public struct Composer: View {
         .accessibilityIdentifier("composer.photo.strip")
     }
 
+    /// 上传阶段的一层薄提示：进行中转圈，失败给一个可辨认的标记（详情由错误条讲）。
+    ///
+    /// 进度值来自发送路径的真实阶段（写暂存文件 / 已落盘 / 已提交），不是动画。
+    @ViewBuilder
+    private func uploadStateOverlay(_ state: ComposerDraftImage.UploadState) -> some View {
+        switch state {
+        case .pending:
+            EmptyView()
+        case .uploading:
+            ZStack {
+                Color.black.opacity(0.35)
+                ProgressView()
+                    .controlSize(.mini)
+                    .tint(.white)
+            }
+            .accessibilityLabel("正在上传")
+        case .failed(let message):
+            ZStack {
+                Color.black.opacity(0.35)
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.white)
+            }
+            .accessibilityLabel(message)
+        }
+    }
+
     /// Reads the picked items into memory for the next prompt.
     ///
     /// Images and videos take **different** routes, and the difference is the
@@ -135,7 +163,9 @@ public struct Composer: View {
     /// `loadTransferable` copy has to happen before the picker's access ends, so
     /// the file handle is not held past the scope.
     private func load(_ items: [PhotosPickerItem]) async {
-        var images: [UIImage] = []
+        // 原图字节必须和位图一起交出去：这里以前 `loadTransferable(type: Data.self)`
+        // 之后只留 UIImage、把 Data 丢掉，原图变体因此根本无从谈起。
+        var sources: [ChatModel.DraftImageSource] = []
         var names: [String] = []
         for (index, item) in items.enumerated() {
             if let movie = item.supportedContentTypes.first(where: { $0.conforms(to: .movie) })
@@ -149,13 +179,16 @@ public struct Composer: View {
                 }
                 continue
             }
-            guard let data = try? await item.loadTransferable(type: Data.self),
-                  let image = UIImage(data: data)
-            else { continue }
-            images.append(image)
+            guard let data = try? await item.loadTransferable(type: Data.self) else { continue }
+            guard let image = UIImage(data: data) else {
+                // 解不开的图片不生成预览，但原图字节还在：按文件发送，不静默丢掉。
+                await model.sendFile(named: "photo-\(index + 1)", data: data)
+                continue
+            }
+            sources.append(ChatModel.DraftImageSource(data: data, image: image))
             names.append("photo-\(index + 1).jpg")
         }
-        model.addDraftImages(images, names: names)
+        model.addDraftImages(sources, names: names)
         pickedPhotos = []
     }
 
@@ -202,7 +235,9 @@ public struct Composer: View {
     /// The copy happens inside the security scope, which is why the scope is not
     /// closed until the file has been copied.
     private func load(_ urls: [URL]) async {
-        var images: [UIImage] = []
+        // 图片同样把原图字节一起交出去（同 PhotosPicker 路径）：预览只用于发送与
+        // 缩略图，原图要交给连接器存成变体。其它文件仍复制进容器后走文件上传。
+        var sources: [ChatModel.DraftImageSource] = []
         var names: [String] = []
         for url in urls {
             // Files outside the sandbox need an explicit scope.
@@ -212,7 +247,7 @@ public struct Composer: View {
             // Images stay in memory: they are bounded (the prompt downsamples
             // them) and they have to travel *with* the prompt, not as a file.
             if let data = try? Data(contentsOf: url), let image = UIImage(data: data) {
-                images.append(image)
+                sources.append(ChatModel.DraftImageSource(data: data, image: image))
                 names.append(url.lastPathComponent)
                 continue
             }
@@ -222,7 +257,7 @@ public struct Composer: View {
             }
             await model.sendFile(named: url.lastPathComponent, fileURL: copy)
         }
-        model.addDraftImages(images, names: names)
+        model.addDraftImages(sources, names: names)
     }
 
     /// Copies one picked file into the app's own container.

@@ -351,11 +351,15 @@ public struct WorkspaceImagePreviewView: View {
     @ViewBuilder
     private var content: some View {
         if let image, let url = model.localCopy(for: path) {
+            // 全屏画的是**电脑上的原文件**（`freshCopy` 落到本机的完整字节，
+            // 由 `UIImage(contentsOfFile:)` 解码），分享/下载拿的也是同一个 URL：
+            // 两边都不重编码，字节与源文件一致（SR-03.03 / SR-03.04）。
             ImagePreview(
                 image: image,
-                label: title,
+                label: "\(title) · \(WorkspaceImagePreviewView.fileSizeText(url))",
                 shareURL: url,
-                identifierPrefix: "files.preview"
+                identifierPrefix: "files.preview",
+                shareTitle: String(localized: "下载原文件")
             )
         } else if let failure {
             VStack(spacing: DSHTheme.Spacing.standard) {
@@ -436,6 +440,15 @@ public struct WorkspaceImagePreviewView: View {
 
     private struct DecodedImage: @unchecked Sendable {
         let image: UIImage?
+    }
+
+    /// 原文件的字节数（读文件属性，不解码）。
+    ///
+    /// 放在标签里而不是另起一行：用户要确认「这份就是原文件」时，字节数是唯一
+    /// 能对上的读数；下载进度条结束后它仍然留在屏幕上。
+    static func fileSizeText(_ url: URL) -> String {
+        let bytes = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+        return ByteFormat.compact(bytes)
     }
 }
 

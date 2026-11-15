@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -22,28 +22,55 @@ function fixturePng() {
 }
 
 /** The host context the tool is applied to, with a recording attachments service. */
-function host({ failWith } = {}) {
+function host({ failWith, withSaveFile = false, failSaveFile } = {}) {
   const saved = []
+  const savedFiles = []
+  const attachments = {
+    async saveImage(input) {
+      if (failWith) throw new Error(failWith)
+      saved.push(input)
+      return {
+        type: 'image',
+        attachmentId: 'att_test',
+        mediaType: input.mediaType,
+        bytes: input.data.length,
+        width: 1,
+        height: 1,
+        name: input.name,
+      }
+    },
+  }
+  // 旧 Host 没有 `saveFile`：只有用例显式要求时才挂上，保证能力探测分支也被真实覆盖。
+  if (withSaveFile) {
+    attachments.saveFile = async (input) => {
+      if (failSaveFile) throw new Error(failSaveFile)
+      savedFiles.push(input)
+      return {
+        attachmentId: 'file_test',
+        name: input.name,
+        bytes: input.data.length,
+      }
+    }
+  }
   const ctx = {
     tools: { register: (definition) => { ctx.tool = definition } },
-    attachments: {
-      async saveImage(input) {
-        if (failWith) throw new Error(failWith)
-        saved.push(input)
-        return {
-          type: 'image',
-          attachmentId: 'att_test',
-          mediaType: input.mediaType,
-          bytes: input.data.length,
-          width: 1,
-          height: 1,
-          name: input.name,
-        }
-      },
-    },
+    attachments,
     saved,
+    savedFiles,
   }
   return ctx
+}
+
+/** 一份原图 + 一份内容不同的预览，用来区分"存的是哪一份字节"。 */
+function fixturePreview() {
+  const directory = mkdtempSync(join(tmpdir(), 'dsh-send-image-'))
+  const originalPath = join(directory, 'photo.png')
+  const previewPath = join(directory, 'preview.jpg')
+  const original = Buffer.from(`original-${'x'.repeat(64)}`)
+  const preview = Buffer.from('preview-jpeg-bytes')
+  writeFileSync(originalPath, original)
+  writeFileSync(previewPath, preview)
+  return { directory, originalPath, previewPath, original, preview }
 }
 
 /** Applies the plugin and returns the registered tool and its context. */
@@ -82,7 +109,7 @@ test('declares an output schema, which the registry refuses to load without', ()
   assert.deepEqual(tool.output.schema.required, ['ok'])
   assert.deepEqual(
     Object.keys(tool.output.schema.properties).sort(),
-    ['attachment', 'bytes', 'detail', 'error', 'ok', 'path'],
+    ['attachment', 'bytes', 'detail', 'error', 'ok', 'original', 'originalError', 'path'],
   )
   assert.equal(typeof tool.output.render, 'function')
 })
@@ -219,6 +246,263 @@ test('publish refuses a prepared descriptor it cannot use', async () => {
   })
   assert.equal(missing.ok, false)
   assert.match(missing.error, /读不到准备好的图片/)
+})
+
+test('publish saves the preview bytes as the image and the original bytes as a file', async () => {
+  const { directory, originalPath, previewPath, original, preview } = fixturePreview()
+  const ctx = host({ withSaveFile: true })
+  const home = join(directory, 'home-that-does-not-exist')
+  try {
+    const value = await publish({
+      attachments: ctx.attachments,
+      prepared: {
+        path: originalPath,
+        name: 'photo.png',
+        mediaType: 'image/png',
+        bytes: original.length,
+        temporary: false,
+        previewPath,
+        previewBytes: preview.length,
+        previewMediaType: 'image/jpeg',
+        previewTemporary: true,
+      },
+      caption: '原图与预览',
+      home,
+      logger: { warn() {} },
+    })
+
+    assert.equal(value.ok, true, value.error)
+    // 两处字节不能串：预览给 saveImage，原图给 saveFile。
+    assert.deepEqual(ctx.saved[0].data, preview)
+    assert.equal(ctx.saved[0].mediaType, 'image/jpeg')
+    assert.equal(ctx.saved[0].name, 'photo.png')
+    assert.deepEqual(ctx.savedFiles[0].data, original)
+    assert.equal(ctx.savedFiles[0].name, 'photo.png')
+    assert.equal(value.original.attachmentId, 'file_test')
+    assert.match(value.detail, /原图已保存/)
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('publish appends one contract-shaped index line and creates the directory', async () => {
+  const { directory, originalPath, previewPath, original, preview } = fixturePreview()
+  const ctx = host({ withSaveFile: true })
+  const home = join(directory, 'fresh-home')
+  try {
+    const value = await publish({
+      attachments: ctx.attachments,
+      prepared: {
+        path: originalPath,
+        name: 'photo.png',
+        mediaType: 'image/png',
+        bytes: original.length,
+        previewPath,
+        previewBytes: preview.length,
+        previewMediaType: 'image/jpeg',
+        previewTemporary: true,
+      },
+      home,
+      logger: { warn() {} },
+    })
+    assert.equal(value.ok, true, value.error)
+
+    const file = join(home, 'mobile-link', 'image-originals.jsonl')
+    assert.ok(existsSync(file), '目录不存在时必须由写入端创建')
+    const lines = readFileSync(file, 'utf8').trim().split('\n')
+    assert.equal(lines.length, 1)
+    const entry = JSON.parse(lines[0])
+    const { savedAt, ...rest } = entry
+    assert.deepEqual(rest, {
+      v: 1,
+      previewId: 'att_test',
+      original: {
+        attachmentId: 'file_test',
+        name: 'photo.png',
+        bytes: original.length,
+        mediaType: 'image/png',
+      },
+      source: 'tool',
+    })
+    assert.equal(new Date(savedAt).toISOString(), savedAt, 'savedAt 必须是 ISO-8601')
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('a saveFile failure still returns the preview and says the original is unavailable', async () => {
+  const { directory, originalPath, previewPath, original, preview } = fixturePreview()
+  const ctx = host({ withSaveFile: true, failSaveFile: 'disk full' })
+  const home = join(directory, 'home')
+  try {
+    const value = await publish({
+      attachments: ctx.attachments,
+      prepared: {
+        path: originalPath,
+        name: 'photo.png',
+        mediaType: 'image/png',
+        bytes: original.length,
+        previewPath,
+        previewBytes: preview.length,
+        previewMediaType: 'image/jpeg',
+        previewTemporary: true,
+      },
+      home,
+      logger: { warn() {} },
+    })
+
+    assert.equal(value.ok, true)
+    assert.deepEqual(ctx.saved[0].data, preview, '原图存不进去也不能影响预览')
+    assert.equal(value.original, undefined, '没有原图引用时不得伪造一个')
+    assert.match(value.originalError, /disk full/)
+    assert.match(value.detail, /原图不可用/)
+    assert.equal(existsSync(join(home, 'mobile-link', 'image-originals.jsonl')), false,
+      '没有原图可关联时不应写索引')
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('an old host without saveFile still gets the preview and an explicit original error', async () => {
+  const { directory, originalPath, previewPath, original, preview } = fixturePreview()
+  const ctx = host()
+  try {
+    const value = await publish({
+      attachments: ctx.attachments,
+      prepared: {
+        path: originalPath,
+        name: 'photo.png',
+        mediaType: 'image/png',
+        bytes: original.length,
+        previewPath,
+        previewBytes: preview.length,
+        previewMediaType: 'image/jpeg',
+      },
+    })
+    assert.equal(value.ok, true)
+    assert.equal(value.original, undefined)
+    assert.match(value.originalError, /不支持保存原图/)
+    assert.match(value.detail, /原图不可用/)
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('an index write failure never changes a successful send', async () => {
+  const { directory, originalPath, previewPath, original, preview } = fixturePreview()
+  const ctx = host({ withSaveFile: true })
+  const home = join(directory, 'blocked-home')
+  mkdirSync(home)
+  // 把 `mobile-link` 做成普通文件，真实制造 mkdir/open 失败，而不是 mock 一个异常。
+  writeFileSync(join(home, 'mobile-link'), 'not a directory')
+  const warnings = []
+  try {
+    const value = await publish({
+      attachments: ctx.attachments,
+      prepared: {
+        path: originalPath,
+        name: 'photo.png',
+        mediaType: 'image/png',
+        bytes: original.length,
+        previewPath,
+        previewBytes: preview.length,
+        previewMediaType: 'image/jpeg',
+      },
+      home,
+      logger: { warn: (message) => warnings.push(message) },
+    })
+    assert.equal(value.ok, true)
+    assert.equal(value.original.attachmentId, 'file_test')
+    assert.equal(warnings.length, 1)
+    assert.match(warnings[0], /image-originals append failed/)
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('a missing preview is refused instead of passing the original off as the preview', async () => {
+  const { directory, originalPath, original } = fixturePreview()
+  const ctx = host()
+  try {
+    const value = await publish({
+      attachments: ctx.attachments,
+      prepared: {
+        path: originalPath,
+        name: 'photo.png',
+        mediaType: 'image/png',
+        bytes: original.length,
+        previewError: '无法生成预览：sips 失败',
+      },
+    })
+    // 需求 SR-02.07 / SR-02.11：预览有明确口径（≤2560、≤400 万像素），
+    // 生成不了就不能拿原图顶替；工具结果里也没有文件块形态，只能给可行动的错误。
+    assert.equal(value.ok, false)
+    assert.match(value.error, /无法预览这张图片/)
+    assert.match(value.error, /请改用文件发送/)
+    assert.equal(ctx.saved.length, 0, '一份附件都不该写')
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('a legacy descriptor without preview fields still sends, with the old script named', async () => {
+  const { directory, originalPath, original } = fixturePreview()
+  const ctx = host()
+  try {
+    const value = await publish({
+      attachments: ctx.attachments,
+      prepared: {
+        path: originalPath,
+        name: 'photo.png',
+        mediaType: 'image/png',
+        bytes: original.length,
+      },
+    })
+    // 旧描述符（没有 previewPath / previewError）：仍按旧行为把原图交给 Host 归一化，
+    // 否则用户重装 skill 之前整条能力会失效；但文案必须说明脚本是旧的。
+    assert.equal(value.ok, true, value.error)
+    assert.deepEqual(ctx.saved[0].data, original)
+    assert.match(value.detail, /旧版/)
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('a missing preview for an unsupported original is a readable file-send error', async () => {
+  const { directory, originalPath, original } = fixturePreview()
+  const ctx = host()
+  try {
+    const value = await publish({
+      attachments: ctx.attachments,
+      prepared: {
+        path: originalPath,
+        name: 'photo.bmp',
+        bytes: original.length,
+        previewError: '无法生成预览：不支持的图片格式 .bmp',
+      },
+    })
+    assert.equal(value.ok, false)
+    assert.match(value.error, /文件发送/)
+    assert.equal(ctx.saved.length, 0)
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('discardPrepared removes a temporary preview and keeps a --file source', () => {
+  const { directory, originalPath, previewPath } = fixturePreview()
+  try {
+    discardPrepared({
+      path: originalPath,
+      temporary: false,
+      previewPath,
+      previewTemporary: true,
+    })
+    assert.doesNotThrow(() => readFileSync(originalPath), '源文件必须保留')
+    assert.throws(() => readFileSync(previewPath), '临时预览应当清理')
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
 })
 
 test('discardPrepared removes a capture and keeps a real file', () => {

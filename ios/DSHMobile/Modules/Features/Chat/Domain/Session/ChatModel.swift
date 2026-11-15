@@ -1907,11 +1907,37 @@ public final class ChatModel {
     }
 
     /// The prompt body: the words, then one part per picture.
+    ///
+    /// 没有变体回执（旧路径 / 旧连接器）时退回内联预览：这是今天的行为，
+    /// 也是连接器不支持 `_link/imageCommit` 时的兜底——不能因为拿不到收据就不发图。
     static func promptContent(text: String, images: [DraftImage]) -> [PromptContentPart] {
+        promptContent(text: text, images: images, commits: [])
+    }
+
+    /// 按提交结果组装 prompt。
+    ///
+    /// 顺序就是用户看到的顺序，每个图片占一拍：
+    /// - 预览收据：`.file(receiptId:)`（Host 会把它显示成图片块）；
+    /// - `sendAsFile` 的原图：紧接着再追加一个 `.file(receiptId: fileReceiptId)`；
+    /// - 回退（旧连接器）：仍然用 `.image(...)` 内联预览。
+    ///
+    /// 文字永远是第一段（契约 §2.3）。
+    static func promptContent(text: String, images: [DraftImage],
+                              commits: [ComposerImageCommit]) -> [PromptContentPart] {
         var content: [PromptContentPart] = []
         if !text.isEmpty { content.append(.text(text)) }
         for image in images {
-            content.append(.image(mediaType: image.mediaType, data: image.base64, name: image.name))
+            guard let commit = commits.first(where: { $0.imageId == image.id }),
+                  !commit.usedInlineFallback,
+                  let receiptId = commit.previewReceiptId
+            else {
+                content.append(.image(mediaType: image.mediaType, data: image.base64, name: image.name))
+                continue
+            }
+            content.append(.file(receiptId: receiptId))
+            if let fileReceiptId = commit.fileReceiptId {
+                content.append(.file(receiptId: fileReceiptId))
+            }
         }
         return content
     }

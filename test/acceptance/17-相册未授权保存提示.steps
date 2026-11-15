@@ -1,0 +1,15 @@
+# TC-MOB-146 的执行指令（相册未授权时保存图片）
+#
+# 基线：没有相册写入权限时，保存**不能假装成功**，也不能只打印一行日志；
+# 必须弹出说明并给「打开设置」的出口。运行前已撤销 photos-add 权限。
+# 夹具：DSH-image-orig-* 会话（原图已存 Host，点一下就能拿到）。
+
+1  do: 打开页面 transcript  | want: id:chat.transcript
+2  do: 点击 id:attachment.image
+3  do: 等待 3 秒  | want: id:attachment.preview
+4  do: 点击 id:attachment.preview.original, 等待 id:attachment.preview.original.ready timeout=45  | want: id:attachment.preview.original.ready
+5  do: 点击 id:attachment.preview.save, 等待 2 秒  | want: text:保存预览
+6  do: 点击 text:保存预览, 等待 2 秒  | want: text:打开设置
+7  do: 什么都不做  | shot: 01-permission-alert check=texts
+8  do: 点击 text:取消, 等待 1 秒  | want: id:attachment.preview.done
+9  do: 什么都不做  | shot: 02-after-cancel check=content

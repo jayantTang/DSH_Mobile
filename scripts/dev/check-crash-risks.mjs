@@ -15,13 +15,13 @@ const ALLOW = [
   { file: 'Modules/Testing/', reason: '测试支撑' },
   { file: '/Tests/', reason: '测试' },
   { file: 'CodeHighlighting.swift:88', reason: '关键字字符串，不是 unowned 捕获' },
-  { file: 'ChatPagingService.swift:7', reason: 'service 由 model 持有，生命周期嵌套' },
-  { file: 'ChatSendService.swift:11', reason: 'service 由 model 持有，生命周期嵌套' },
+  { file: 'ChatPagingService.swift:8', reason: 'service 由 model 持有，生命周期嵌套' },
+  { file: 'ChatSendService.swift:12', reason: 'service 由 model 持有，生命周期嵌套' },
   { file: 'RPC.swift:23', reason: '泛型已判 Value == DSHEmpty，分支内安全' },
   { file: 'SessionPipeline.swift:691', reason: '非空 pageRecords 分支内' },
   { file: 'ProcessFoldFixture.swift', reason: 'DEBUG 夹具，固定 JSON' },
   { file: 'TranscriptListSpikeView.swift', reason: 'spike 调试视图' },
-  { file: 'TranscriptListHost.swift:403', reason: 'UIView coder 初始化不可达' },
+  { file: 'TranscriptListHost.swift:415', reason: 'UIView coder 初始化不可达' },
   { file: 'Fakes.swift', reason: '测试替身' },
 ]
 const RULES = [

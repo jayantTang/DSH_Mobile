@@ -4,9 +4,8 @@
 
 `test/` 只放执行入口、套件清单、用例列表与共享契约数据；驱动与报告代码靠近被测模块。
 用例是结构化中文，测试者（AI）按用例在仿真器里执行、看截图、给判定。
-规则见 `rules/RULES.md`，**报告必须长什么样见 `rules/REPORT-CONTRACT.md`**，页面清单见 `rules/screens.md`。
-通用测试标准（用例怎么写、证据要到什么程度、四态怎么判）在全局 skill
-`agent-testing` 里；这台机器上怎么驱动仿真器在 `ios-sim-testing` 里。
+规则见 `rules/RULES.md`，**报告必须长什么样见 `rules/REPORT-CONTRACT.md`**。
+通用测试标准在全局 skill `agent-testing`；这台机器上怎么驱动仿真器在 `ios-sim-testing`。
 
 ## 五个动作
 

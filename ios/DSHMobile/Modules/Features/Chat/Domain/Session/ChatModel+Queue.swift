@@ -150,6 +150,28 @@ public extension ChatModel {
         optimisticQueue.removeAll { $0.rpcId == rpcId }
     }
 
+    /// 发送过程中更新一张待发图片的上传状态。
+    ///
+    /// 两个可能的读者：输入区条带（草稿还没被清掉时）与排队条带（本次发送的
+    /// 乐观回显）。两处都按 id 改，不改身份、不重排。
+    @MainActor
+    func updateDraftImageUploadState(_ imageId: UUID, state: ComposerDraftImage.UploadState,
+                                     rpcId: String) {
+        if let index = composer.images.firstIndex(where: { $0.id == imageId }) {
+            composer.images[index].uploadState = state
+        }
+        guard let index = optimisticQueue.firstIndex(where: { $0.rpcId == rpcId }),
+              let imageIndex = optimisticQueue[index].draftImages.firstIndex(where: { $0.id == imageId })
+        else { return }
+        var images = optimisticQueue[index].draftImages
+        images[imageIndex].uploadState = state
+        let entry = optimisticQueue[index]
+        optimisticQueue[index] = OptimisticQueuedInput(
+            rpcId: entry.rpcId, placement: entry.placement,
+            text: entry.text, draftImages: images
+        )
+    }
+
     // MARK: - 动作（steer / remove）
 
     /// 立即插入当前轮次。返回是否已受理（失败会写错误条）。

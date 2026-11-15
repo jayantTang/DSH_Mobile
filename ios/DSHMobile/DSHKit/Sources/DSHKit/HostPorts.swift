@@ -31,6 +31,23 @@ public protocol ChatHosting: Sendable {
     func fileReferences(agentId: String, query: String) async throws -> [FileReferenceCandidate]
     func updateSettings(namespace: String, patch: JSONValue, expectedRevision: Int?) async throws
     func attachment(sessionId: String, attachment: ContentBlock.ImageAttachment) async throws -> JSONValue
+
+    // MARK: - 图片原图变体（契约 §2.1）
+
+    /// 提交一份预览（与可选原图）：预览交给 Host 归一化，原图按索引保存或转成文件。
+    ///
+    /// 旧连接器没有这个方法，默认实现抛 ``ImageVariantsUnsupported``，发送路径据此
+    /// 回退到内联预览（今天的行为），所以升级 iOS 不会让旧连接器发不出图。
+    func commitImage(sessionId: String, preview: ImageVariantUpload?,
+                     original: ImageVariantUpload?,
+                     sendOriginalAsFile: Bool) async throws -> ImageCommitValue
+
+    /// 只查预览对应原图的元数据，不读字节。
+    func imageOriginal(attachmentId: String) async throws -> ImageOriginalLookup
+
+    /// 按区间取原图字节（`length` 由调用方给，连接器上限 1 MiB）。
+    func imageOriginalChunk(attachmentId: String, offset: Int,
+                            length: Int) async throws -> ImageOriginalChunk
 }
 
 /// 排队控制不可用（旧连接器没有 `session/control` / `session/updateQueue`）。
@@ -66,6 +83,24 @@ public extension ChatHosting {
 
     func updateSettings(namespace: String, patch: JSONValue) async throws {
         try await updateSettings(namespace: namespace, patch: patch, expectedRevision: nil)
+    }
+
+    // MARK: 图片原图变体的默认实现（旧连接器）
+
+    /// 旧连接器不认识图片变体：明确报不支持，而不是假装成功或拖到超时。
+    func commitImage(sessionId: String, preview: ImageVariantUpload?,
+                     original: ImageVariantUpload?,
+                     sendOriginalAsFile: Bool) async throws -> ImageCommitValue {
+        throw ImageVariantsUnsupported()
+    }
+
+    func imageOriginal(attachmentId: String) async throws -> ImageOriginalLookup {
+        throw ImageVariantsUnsupported()
+    }
+
+    func imageOriginalChunk(attachmentId: String, offset: Int,
+                            length: Int) async throws -> ImageOriginalChunk {
+        throw ImageVariantsUnsupported()
     }
 }
 

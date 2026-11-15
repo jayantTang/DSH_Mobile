@@ -3,6 +3,7 @@ import DSHCore
 import DSHFoundation
 import DSHKit
 import Foundation
+import RelayKit
 
 /// 上行发送服务：文本走管道或旧 echo 路径，文件走中转上传。
 /// 只持 ChatModel 的弱引用，状态仍归 ChatModel 所有。
@@ -73,7 +74,11 @@ final class ChatSendService {
     func send() async {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         let images = draftImages
-        guard !text.isEmpty || !images.isEmpty, let client = store?.chatHost, let session else { return }
+        guard !text.isEmpty || !images.isEmpty,
+              let link = store,
+              let client = link.chatHost,
+              let session
+        else { return }
         let owner = session.sessionId
 
         let mode: SessionPromptRequest.Mode = (steerNext && isRunning) ? .steer : .queue
@@ -133,16 +138,24 @@ final class ChatSendService {
         draftImages.removeAll()
 
         do {
+            // 图片先经现有文件上传通道落到电脑（`StagedFile.path`），再让连接器
+            // 把预览交给 Host、把原图存成变体。旧连接器在任一步回 `unsupported`
+            // 时整批退回内联预览——发得出去比走新路更重要。
+            let content = try await uploadedPromptContent(
+                text: text, images: images, owner: owner,
+                requestId: requestId, client: client, link: link
+            )
             try await client.prompt(
                 SessionPromptRequest(
                     requestId: requestId,
                     sessionId: session.sessionId,
                     mode: mode,
-                    content: ChatModel.promptContent(text: text, images: images)
+                    content: content
                 )
             )
         } catch {
             isAwaitingTurnStart = false
+            isUploadingFile = nil
             // Back to the conversation it was typed in — visible if the user is
             // still there, waiting quietly if they have moved on.
             // `session` was captured by the guard at the top of this function,
@@ -155,6 +168,159 @@ final class ChatSendService {
                                       requestId: requestId)
             lastError = LinkErrors.describe(error)
         }
+    }
+
+    // MARK: - 图片变体上行
+
+    /// 把每张图上传到电脑并提交，返回 prompt 内容的全部段落。
+    ///
+    /// 每张图逐阶段写 `uploadState`（写暂存文件 → 已落盘 → 已提交），所以排队条带
+    /// 与输入区的进度来自真实阶段。任何一张失败都抛出：由 `send()` 恢复草稿，
+    /// 已上传的暂存文件由每张图自己的 `defer` 删掉。
+    private func uploadedPromptContent(
+        text: String,
+        images: [ComposerDraftImage],
+        owner: String,
+        requestId: String,
+        client: any ChatHosting,
+        link: any LinkService
+    ) async throws -> [PromptContentPart] {
+        guard !images.isEmpty else {
+            return ChatModel.promptContent(text: text, images: images)
+        }
+        isUploadingFile = images.count == 1
+            ? images[0].name
+            : "\(images.count) 张图片"
+        defer { isUploadingFile = nil }
+
+        var commits: [ComposerImageCommit] = []
+        // 旧连接器一旦说不支持，后续图片不再逐张上传尝试（上传本身也会失败）。
+        var variantsUnsupported = false
+        for image in images {
+            if variantsUnsupported {
+                commits.append(.inline(image.id))
+                continue
+            }
+            do {
+                commits.append(
+                    try await commitImage(image, owner: owner, requestId: requestId,
+                                          client: client, link: link)
+                )
+            } catch {
+                guard Self.canFallBackToInline(error) else {
+                    updateUploadState(image.id,
+                                      .failed(message: LinkErrors.describe(error)),
+                                      requestId: requestId)
+                    throw error
+                }
+                variantsUnsupported = true
+                commits.append(.inline(image.id))
+            }
+        }
+        return ChatModel.promptContent(text: text, images: images, commits: commits)
+    }
+
+    /// 一张图的提交：预览 + 可选原图先落电脑暂存区，再 `_link/imageCommit`。
+    private func commitImage(
+        _ image: ComposerDraftImage,
+        owner: String,
+        requestId: String,
+        client: any ChatHosting,
+        link: any LinkService
+    ) async throws -> ComposerImageCommit {
+        // 预览生成失败但原图可用的那张图：按**文件**发送（SR-02.07「预览失败但原图可用」）。
+        // 没有预览就不提交预览——拿原图顶替预览会绕开 2560/4MP 口径。
+        let previewData = image.previewData
+        let fileOnly = (previewData?.isEmpty ?? true)
+        guard !fileOnly || image.originalData != nil else {
+            throw ComposerImageUploadError.previewMissing(name: image.name)
+        }
+        // 本次提交自己建一个暂存子目录：两张同名图（都叫 photo-1.jpg）不会互相覆盖，
+        // 删也只删自己这一个目录（曾经在失败分支删掉整个暂存根目录）。
+        let scratch = OutgoingFiles.directory()
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: scratch) }
+
+        updateUploadState(image.id, .uploading(progress: 0.1), requestId: requestId)
+        var stagedPreview: StagedFile?
+        if let previewData, !previewData.isEmpty {
+            let previewURL = try writeScratch(previewData, name: image.name, in: scratch)
+            stagedPreview = try await link.uploadFile(
+                fileURL: previewURL, name: image.name, sessionId: owner
+            )
+        }
+        updateUploadState(image.id, .uploading(progress: 0.45), requestId: requestId)
+
+        var originalUpload: ImageVariantUpload?
+        var sendAsFile = false
+        if let originalData = image.originalData,
+           !originalData.isEmpty,
+           image.originalDisposition != .unavailable {
+            let originalName = image.originalName ?? image.name
+            let originalURL = try writeScratch(originalData, name: originalName, in: scratch)
+            let stagedOriginal = try await link.uploadFile(
+                fileURL: originalURL, name: originalName, sessionId: owner
+            )
+            originalUpload = ImageVariantUpload(
+                path: stagedOriginal.path,
+                mediaType: image.originalMediaType ?? image.mediaType,
+                name: originalName
+            )
+            // 超限/不可解码（以及没有预览）的原图按普通文件走，绝不冒充原图变体。
+            sendAsFile = image.originalDisposition == .sendAsFile || fileOnly
+        }
+        updateUploadState(image.id, .uploading(progress: 0.75), requestId: requestId)
+
+        let previewUpload = stagedPreview.map {
+            ImageVariantUpload(path: $0.path, mediaType: image.mediaType, name: image.name)
+        }
+        let value = try await client.commitImage(
+            sessionId: owner,
+            preview: previewUpload,
+            original: originalUpload,
+            sendOriginalAsFile: sendAsFile
+        )
+        updateUploadState(image.id, .uploading(progress: 1), requestId: requestId)
+        return ComposerImageCommit(
+            imageId: image.id,
+            previewReceiptId: value.preview?.receiptId,
+            fileReceiptId: value.fileReceiptId,
+            usedInlineFallback: false
+        )
+    }
+
+    /// 把一份字节写进本次提交自己的暂存子目录（`Caches/outgoing-files/<uuid>/`）。
+    private func writeScratch(_ data: Data, name: String, in directory: URL) throws -> URL {
+        let fileName = name.isEmpty ? "image" : name
+        let url = directory.appendingPathComponent(fileName)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try data.write(to: url, options: .atomic)
+        return url
+    }
+
+    private func updateUploadState(_ imageId: UUID,
+                                   _ state: ComposerDraftImage.UploadState,
+                                   requestId: String) {
+        model.updateDraftImageUploadState(imageId, state: state, rpcId: requestId)
+    }
+
+    /// 这次失败是不是"旧连接器没有图片变体/文件桥"——只有能力缺失才回退内联。
+    ///
+    /// 网络失败**不**回退：内联同样发不出去，回退只会把一张图变成两条失败记录。
+    private static func canFallBackToInline(_ error: any Error) -> Bool {
+        if error is ImageVariantsUnsupported { return true }
+        if let failure = error as? DSHRPCFailure {
+            return failure.code == "link/unsupported" || failure.code == "file/unsupported"
+        }
+        if let unavailable = error as? RelayFileTransfer.Unavailable {
+            switch unavailable {
+            case .connectorTooOld, .noRelay:
+                return true
+            default:
+                return false
+            }
+        }
+        return false
     }
 
     /// T022 管道发送（纯文本、渲染数据源已切 009 时）：乐观插入由管道快照流
@@ -273,6 +439,24 @@ final class ChatSendService {
             // 不再把内部错误原文丢出去（"中转没有返回落盘路径"就是反面样本）。
             lastError = String(
                 localized: "文件「\(name)」没发出去：\(LinkErrors.describe(error))。可以再点一次发送。"
+            )
+        }
+    }
+}
+
+/// 图片上行在自己这一侧就失败（不是连接器拒绝）。
+enum ComposerImageUploadError: LocalizedError {
+    /// 草稿里没有预览字节（预览生成失败且没有可发的图）：不能静默丢图。
+    case previewMissing(name: String)
+
+    var errorDescription: String? {
+        switch self {
+        case .previewMissing(let name):
+            // 复用现有文案键（"文件「%@」没发出去：%@。可以再点一次发送。"）：
+            // 说清是哪张、为什么、能做什么，不新增本地化资源。
+            let reason = String(localized: "图片加载失败")
+            return String(
+                localized: "文件「\(name)」没发出去：\(reason)。可以再点一次发送。"
             )
         }
     }
