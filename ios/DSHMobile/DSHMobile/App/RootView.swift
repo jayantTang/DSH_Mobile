@@ -144,6 +144,15 @@ struct RootView: View {
                 // 给的路径，**不经过**暂存，验不到"发完把自己那份删掉"这件事；
                 // 系统文件选择器是跨进程的、XCUITest 点不到（见 19a 用例的备注）。
                 // 这条钩子是唯一能自动验到 P-3 改的那段代码的入口。
+                // 相册选图无法用 XCUITest 驱动（跨进程系统选择器），这条钩子把同一份
+                // 「原图 Data + 解码位图」直接放进草稿；发送仍由用例点发送按钮触发。
+                if let path = Self.automationStageImage() {
+                    for _ in 0..<40 where chatModel.session == nil {
+                        try? await Task.sleep(for: .milliseconds(250))
+                    }
+                    Composer.stageImageForAutomation(path, into: chatModel)
+                    return
+                }
                 if let path = Self.automationStageFile() {
                     for _ in 0..<40 where chatModel.session == nil {
                         try? await Task.sleep(for: .milliseconds(250))
@@ -402,6 +411,19 @@ struct RootView: View {
         return arguments[index + 1]
     }
 
+    /// `-DSHStageImage <路径>`：自动化入口，把图片放进草稿（见 `Composer.stageImageForAutomation`）。
+    static func automationStageImage() -> String? {
+        let arguments = ProcessInfo.processInfo.arguments
+        // 也认 `-DSHStageImage=<路径>`：用例的 `args=` 只能带**一个** token。
+        if let joined = arguments.first(where: { $0.hasPrefix("-DSHStageImage=") }) {
+            return String(joined.dropFirst("-DSHStageImage=".count))
+        }
+        guard let index = arguments.firstIndex(of: "-DSHStageImage"),
+              index + 1 < arguments.count
+        else { return nil }
+        return arguments[index + 1]
+    }
+
     /// 走**暂存**那条路发一个文件（P-3 尾巴的复现钩子）。
     ///
     /// 与 `-DSHUploadFilePath` 的差别就是这条用例要问的那件事：那个钩子把调用方给的
@@ -495,6 +517,7 @@ struct RootView: View {
     static func automationFile() -> String? { nil }
     static func automationFilesDir() -> String? { nil }
     static func automationDropLinkAfter() -> Double? { nil }
+    static func automationStageImage() -> String? { nil }
     static func automationStageFile() -> String? { nil }
     static func stageAndSend(path: String, model: ChatModel) async {}
     #endif

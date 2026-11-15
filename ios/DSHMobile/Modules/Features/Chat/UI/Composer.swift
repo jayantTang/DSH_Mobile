@@ -276,6 +276,22 @@ public struct Composer: View {
     }
 
     #if DEBUG
+    /// `-DSHStageImage <绝对路径>`：把一张图放进待发队列（等价于相册选图）。
+    ///
+    /// 为什么需要：系统相册选择器是跨进程 UI，XCUITest 点不到。这条钩子交给
+    /// `ChatModel.addDraftImages(_:names:)` 的输入与 `load(_ items:)` 完全一样
+    /// （原图 `Data` + 解码后的 `UIImage`），之后的预览生成、上传、提交、prompt
+    /// 都是产品代码。**只放草稿、不自动发送**：发送由用例点 `composer.send` 触发。
+    public static func stageImageForAutomation(_ path: String, into model: ChatModel) {
+        guard let data = FileManager.default.contents(atPath: path),
+              let image = UIImage(data: data)
+        else { return }
+        model.addDraftImages(
+            [ChatModel.DraftImageSource(data: data, image: image)],
+            names: [(path as NSString).lastPathComponent]
+        )
+    }
+
     /// The same staging the attachment menu does, for the automation hook.
     ///
     /// Exposed rather than duplicated: a case that re-implemented the copy would

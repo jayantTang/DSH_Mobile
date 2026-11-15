@@ -148,12 +148,20 @@ final class ChatModelImageSendTests: XCTestCase {
         XCTAssertEqual(uploadedBytes.first?.data, preview)
         XCTAssertEqual(uploadedBytes.last?.data, original,
                        "原图字节必须原样上传，不能被预览替换")
-        XCTAssertEqual(link.uploadFileCalls.first?.name, "photo-1.jpg")
+        // 暂存名必须互不相同：预览与原图的显示名常常相同（都叫 photo-1.jpg），
+        // 用显示名暂存会落成同一个路径，后传的原图覆盖预览，连接器读到的字节
+        // 就与声明的媒体类型不符（Host 直接拒收）。
+        XCTAssertNotEqual(link.uploadFileCalls[0].name, link.uploadFileCalls[1].name,
+                          "预览与原图的暂存名不能相同")
+        XCTAssertTrue(link.uploadFileCalls[0].name.hasPrefix("preview-"))
+        XCTAssertTrue(link.uploadFileCalls[1].name.hasPrefix("original-"))
 
         // 提交：暂存路径来自上传回包，原图作为变体（不是文件）。
         let commit = try XCTUnwrap(carrier.calls(to: "_link/imageCommit").first)
         XCTAssertEqual(commit.args?["sessionId"]?.stringValue, "s-1")
         XCTAssertEqual(commit.args?["preview"]?["path"]?.stringValue, stagedPaths.first)
+        XCTAssertEqual(commit.args?["preview"]?["name"]?.stringValue, "photo-1.jpg",
+                       "显示名仍是用户看到的那个名字，与暂存文件名无关")
         XCTAssertEqual(commit.args?["original"]?["path"]?.stringValue, stagedPaths.last)
         XCTAssertNil(commit.args?["sendOriginalAsFile"])
 

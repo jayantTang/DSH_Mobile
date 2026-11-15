@@ -244,9 +244,14 @@ final class ChatSendService {
         updateUploadState(image.id, .uploading(progress: 0.1), requestId: requestId)
         var stagedPreview: StagedFile?
         if let previewData, !previewData.isEmpty {
-            let previewURL = try writeScratch(previewData, name: image.name, in: scratch)
+            // 暂存文件**不能**用显示名：预览与原图的显示名通常相同（都叫 photo.png），
+            // 同名会落成同一个路径，后传的原图把预览覆盖掉 —— 连接器读到的就是原图
+            // 字节配着预览的声明类型（Host 会拒："Declared image type does not match
+            // its bytes"，2026-11-15 仿真器实测）。显示名仍走 `ImageVariantUpload.name`。
+            let stagedName = "preview-\(UUID().uuidString).\(Self.uploadExtension(image.mediaType))"
+            let previewURL = try writeScratch(previewData, name: stagedName, in: scratch)
             stagedPreview = try await link.uploadFile(
-                fileURL: previewURL, name: image.name, sessionId: owner
+                fileURL: previewURL, name: stagedName, sessionId: owner
             )
         }
         updateUploadState(image.id, .uploading(progress: 0.45), requestId: requestId)
@@ -257,9 +262,11 @@ final class ChatSendService {
            !originalData.isEmpty,
            image.originalDisposition != .unavailable {
             let originalName = image.originalName ?? image.name
-            let originalURL = try writeScratch(originalData, name: originalName, in: scratch)
+            let stagedName = "original-\(UUID().uuidString)."
+                + Self.uploadExtension(image.originalMediaType ?? "image/jpeg")
+            let originalURL = try writeScratch(originalData, name: stagedName, in: scratch)
             let stagedOriginal = try await link.uploadFile(
-                fileURL: originalURL, name: originalName, sessionId: owner
+                fileURL: originalURL, name: stagedName, sessionId: owner
             )
             originalUpload = ImageVariantUpload(
                 path: stagedOriginal.path,
@@ -287,6 +294,17 @@ final class ChatSendService {
             fileReceiptId: value.fileReceiptId,
             usedInlineFallback: false
         )
+    }
+
+    /// 暂存文件的扩展名（只影响电脑上那份临时文件，不影响显示名）。
+    static func uploadExtension(_ mediaType: String) -> String {
+        switch mediaType {
+        case "image/png": return "png"
+        case "image/webp": return "webp"
+        case "image/gif": return "gif"
+        case "image/heic", "image/heif": return "heic"
+        default: return "jpg"
+        }
     }
 
     /// 把一份字节写进本次提交自己的暂存子目录（`Caches/outgoing-files/<uuid>/`）。

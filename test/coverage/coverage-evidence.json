@@ -183,6 +183,10 @@
     {
       "path": "test/acceptance/15-会话图片原图按需下载.md",
       "contains": "TC-MOB-144"
+    },
+    {
+      "path": "test/acceptance/18-手机发送图片保留原图.md",
+      "contains": "TC-MOB-147"
     }
   ],
   "SR-02.08": [
@@ -229,6 +233,10 @@
     {
       "path": "test/acceptance/17-相册未授权保存提示.md",
       "contains": "TC-MOB-146"
+    },
+    {
+      "path": "test/acceptance/18-手机发送图片保留原图.md",
+      "contains": "TC-MOB-147"
     }
   ],
   "SR-02.12": [
