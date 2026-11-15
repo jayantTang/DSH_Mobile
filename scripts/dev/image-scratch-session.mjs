@@ -114,10 +114,11 @@ async function registerOriginal(call, sessionId, file, bytes) {
   const attachmentRoot = join(HOME, '.dsh', 'attachments', 'v1')
   const objectPath = join(attachmentRoot, 'file-objects', sha256.slice(0, 2), sha256)
   mkdirSync(dirname(objectPath), { recursive: true, mode: 0o700 })
-  writeFileSync(objectPath, bytes, { mode: 0o600 })
+  // 内容寻址：同一个摘要已经存在就复用（对象库里的文件是只读的，重写会 EACCES）。
+  if (!existsSync(objectPath)) writeFileSync(objectPath, bytes, { mode: 0o600 })
   const aliasPath = join(attachmentRoot, 'files', sha256.slice(0, 2), sha256, name)
   mkdirSync(dirname(aliasPath), { recursive: true, mode: 0o700 })
-  writeFileSync(aliasPath, bytes, { mode: 0o600 })
+  if (!existsSync(aliasPath)) writeFileSync(aliasPath, bytes, { mode: 0o600 })
 
   const indexPath = join(HOME, '.dsh', 'mobile-link', 'image-originals.jsonl')
   mkdirSync(join(HOME, '.dsh', 'mobile-link'), { recursive: true, mode: 0o700 })

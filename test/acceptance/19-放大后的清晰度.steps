@@ -1,0 +1,5 @@
+# TC-MOB-148 的执行指令（播放器放大后的保真度，临时用例）
+1  do: 打开页面 transcript args=-DSHPreviewZoom=2.12  | want: id:chat.transcript
+2  do: 点击 id:attachment.image
+3  do: 等待 3 秒  | want: id:attachment.preview
+4  do: 什么都不做  | shot: 01-zoom3-check=content

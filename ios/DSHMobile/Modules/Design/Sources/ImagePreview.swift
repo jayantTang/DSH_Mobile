@@ -44,7 +44,12 @@ public struct ImagePreview: View {
     public var accessory: AnyView?
 
     @Environment(\.dismiss) private var dismiss
-    @State private var scale: CGFloat = 1
+    @Environment(\.displayScale) private var displayScale
+    /// 图片按 `.fit` 排到屏幕上的尺寸（点）。用来算「1 个图像像素 = 1 个屏幕像素」。
+    @State private var fitSize: CGSize = .zero
+    /// 初始缩放。生产恒为 1；DEBUG 下可用 `-DSHPreviewZoom <倍数>` 固定一个倍率，
+    /// 供"放大后是否仍然清晰"的用例在没有手势驱动的情况下复现。
+    @State private var scale: CGFloat
     @State private var committedScale: CGFloat = 1
     @State private var offset: CGSize = .zero
     @State private var committedOffset: CGSize = .zero
@@ -65,7 +70,24 @@ public struct ImagePreview: View {
         self.accessory = accessory
         self.original = original
         self.caption = caption
+        _scale = State(initialValue: Self.initialZoom)
+        _committedScale = State(initialValue: Self.initialZoom)
     }
+
+    private static let initialZoom: CGFloat = {
+        #if DEBUG
+        let arguments = ProcessInfo.processInfo.arguments
+        if let joined = arguments.first(where: { $0.hasPrefix("-DSHPreviewZoom=") }),
+           let value = Double(joined.dropFirst("-DSHPreviewZoom=".count)), value > 0 {
+            return CGFloat(value)
+        }
+        if let index = arguments.firstIndex(of: "-DSHPreviewZoom"),
+           index + 1 < arguments.count, let value = Double(arguments[index + 1]), value > 0 {
+            return CGFloat(value)
+        }
+        #endif
+        return 1
+    }()
 
     private static let maximumScale: CGFloat = 6
 
@@ -79,6 +101,9 @@ public struct ImagePreview: View {
                 .scaleEffect(scale)
                 .offset(offset)
                 .gesture(magnification.simultaneously(with: pan))
+                .onGeometryChange(for: CGSize.self, of: { $0.size }) { size in
+                    if size.width > 0 { fitSize = size }
+                }
                 .onTapGesture(count: 2) { toggleZoom() }
                 .onTapGesture { dismiss() }
                 .accessibilityIdentifier(identifierPrefix)
@@ -185,17 +210,32 @@ public struct ImagePreview: View {
             .onEnded { _ in committedOffset = offset }
     }
 
+    /// 双击：放大到 **1 个图像像素 = 1 个屏幕像素**（原图最清楚的倍率），再双击回到全屏。
+    ///
+    /// 为什么不是固定 2.5 倍：缩放是对位图做重采样，只有整数倍（理想是 1:1）才不丢细节。
+    /// 2560 宽的截图在 1206 宽的屏幕上，1:1 约等于 2.12 倍；固定 2.5 倍已经是 1.18 倍
+    /// 上采样，看起来就会"放大了还是糊"。小图（1:1 倍率不足 2）没有细节可挖，仍用 2.5 倍。
     private func toggleZoom() {
+        let native = nativeScale(displayScale)
+        let target = native >= 2 ? min(native, Self.maximumScale) : 2.5
         withAnimation(.easeOut(duration: 0.2)) {
             if scale > 1 {
                 scale = 1
                 committedScale = 1
                 resetPan()
             } else {
-                scale = 2.5
-                committedScale = 2.5
+                scale = target
+                committedScale = target
             }
         }
+    }
+
+    /// 让图片的 1 个像素铺满 1 个屏幕像素所需的缩放倍数。
+    private func nativeScale(_ screenScale: CGFloat) -> CGFloat {
+        guard fitSize.width > 0, fitSize.height > 0, screenScale > 0 else { return 0 }
+        let pixelWidth = CGFloat(image.cgImage?.width ?? Int(image.size.width * image.scale))
+        // `fitSize` 是点，乘屏幕倍率才是这块区域实际占的物理像素。
+        return pixelWidth / (fitSize.width * screenScale)
     }
 
     private func resetPan() {

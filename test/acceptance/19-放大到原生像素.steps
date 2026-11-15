@@ -1,0 +1,10 @@
+# TC-MOB-148 的执行指令（放大到 1:1 原生像素时的清晰度）
+#
+# 背景：截图类附件（2560×1440 / 1206×2622）在 1 倍全屏被缩小约 2.1 倍，看起来
+# 比电脑 1:1 软；放大到非整数倍又会重采样。这条用例把查看器固定在与「双击放大」
+# 相同的 1:1 倍率（2.12×，2560 宽 ÷ 1206 屏幕宽），留证检查文字边缘是否清晰。
+# 钩子：`-DSHPreviewZoom=2.12`（仅 DEBUG）。
+1  do: 打开页面 transcript args=-DSHPreviewZoom=2.12  | want: id:chat.transcript
+2  do: 点击 id:attachment.image
+3  do: 等待 3 秒  | want: id:attachment.preview
+4  do: 什么都不做  | shot: 01-native-zoom check=content
