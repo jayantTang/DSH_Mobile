@@ -87,6 +87,24 @@ final class ActivityModelTests: XCTestCase {
         XCTAssertEqual(model.settledCount(sessionId: "s1"), 1)
     }
 
+    /// SR-08.07 / AR-08.07.01：一轮 743 个会话的名单只能产生一次提交。
+    ///
+    /// 逐会话 `applyToStore` 会让每个会话都触发一次 `store`/`revision` 变更，
+    /// 743 个会话就是 743 次观察者失效；这条断言把提交次数钉在 1。
+    func test_apply_sessions_commits_once_for_a_large_list() {
+        let sessions = (0..<743).map { index in
+            SessionSummary(sessionId: "s\(index)", updatedAt: Double(index), running: index == 0)
+        }
+        let before = model.revision
+
+        model.applySessions(sessions)
+
+        XCTAssertEqual(model.revision, before + 1,
+                       "743 sessions must commit once, not once per session")
+        XCTAssertEqual(model.summary(sessionId: "s742")?.updatedAt, 742)
+        XCTAssertEqual(model.summary(sessionId: "s0")?.running, true)
+    }
+
     // MARK: - Fixtures
 
     /// 一行的宿主 `JobView`（只带本特性用到的字段）。

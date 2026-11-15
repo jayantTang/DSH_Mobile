@@ -189,9 +189,16 @@ public final class SessionListModel {
         guard let viewLog else { return }
         // Everything the host listed — grouped, loose or archived — gets a
         // baseline, because all of it is visible somewhere in this screen.
+        //
+        // 一次提交全部基线：逐条 `markViewed` 会在 400 条上限附近每条都排序并
+        // 整份写 UserDefaults；743 个会话的列表每次刷新重复约 343 次，正是
+        // 2026-11-15 HangTracer 里 20 份 525–1917 ms 卡顿的来源。
+        var baselines: [String: Double] = [:]
+        baselines.reserveCapacity(allSessions.count)
         for session in allSessions where viewLog.lastViewed(session.sessionId) == nil {
-            viewLog.markViewed(session.sessionId, at: session.updatedAt)
+            baselines[session.sessionId] = session.updatedAt
         }
+        viewLog.markViewed(baselines)
         viewLog.prune(keeping: Set(allSessions.map(\.sessionId)))
     }
 

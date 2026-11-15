@@ -241,14 +241,24 @@ public final class ActivityModel {
         #if DEBUG
         if fixture != nil { return }
         #endif
-        applyToStore(.sessions(sessions))
+        // 一轮名单只提交一次：逐会话调用 `applyToStore` 会让 743 个会话产生
+        // 743 次 `store`/`revision` 变更，每次都会触发观察者失效与 SwiftUI 图刷新
+        // （2026-11-15 的 HangTracer 样本：23 份卡顿落在这里，503–1760 ms）。
+        // 输入仍在状态机内逐条应用，观察者只看到一次提交。
+        var inputs: [ActivityStore.Input] = []
+        inputs.reserveCapacity(sessions.count + 2)
+        inputs.append(.sessions(sessions))
         for session in sessions where session.sessionId != chatSessionId {
-            applyToStore(.turnOpen(session.sessionId, session.running))
+            inputs.append(.turnOpen(session.sessionId, session.running))
         }
         if let chatSessionId {
-            applyToStore(.turnOpen(chatSessionId, chatTurnOpen))
+            inputs.append(.turnOpen(chatSessionId, chatTurnOpen))
         }
-        store.setCurrentSession(chatSessionId)
+        store.apply(inputs)
+        revision &+= 1
+        if store.currentSessionId != chatSessionId {
+            store.setCurrentSession(chatSessionId)
+        }
     }
 
     /// 聊天页绑定当前会话与轮次（`timeline.isTurnOpen`）。

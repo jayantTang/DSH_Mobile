@@ -118,6 +118,34 @@ final class SessionViewLogTests: XCTestCase {
         XCTAssertEqual(log.lastViewed("s1"), 1)
     }
 
+    // MARK: - 批量首见基线（SR-08.07）
+
+    /// 冷启动一次判定 743 个首见会话：只 trim 一次，留下最新的 400 条。
+    func test_batch_marks_keep_the_newest_window() {
+        let log = makeLog()
+        var entries: [String: Double] = [:]
+        for index in 0..<743 { entries["s\(index)"] = Double(index) }
+
+        log.markViewed(entries)
+
+        XCTAssertEqual(log.viewedAt.count, Self.cap, "the cap still bounds the plist")
+        XCTAssertNil(log.lastViewed("s342"), "the 343 oldest marks are dropped in one trim")
+        XCTAssertEqual(log.lastViewed("s343"), 343, "the surviving window starts here")
+        XCTAssertEqual(log.lastViewed("s742"), 742, "the newest mark survives")
+    }
+
+    /// 批量写入仍保持逐会话单调：旧时间戳不能把已读标记推回去。
+    func test_batch_marks_do_not_move_backwards() {
+        let log = makeLog()
+        log.markViewed("a", at: 100)
+
+        log.markViewed(["a": 50, "b": 60])
+
+        XCTAssertEqual(log.lastViewed("a"), 100, "an older batch stamp must not move the mark")
+        XCTAssertEqual(log.lastViewed("b"), 60)
+        XCTAssertEqual(log.viewedAt.count, 2)
+    }
+
     // MARK: - 作用域与清理
 
     func test_marks_are_kept_apart_per_computer() {

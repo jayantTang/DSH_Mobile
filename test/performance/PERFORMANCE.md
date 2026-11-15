@@ -97,3 +97,25 @@ iPhone 15（iPhone15,4），iOS 27.0.1，公共中转，Debug 构建；测试通
 - 常驻物理内存：约 77,171 kB，标准差 0.04%。
 
 200k 单行没有出现 hitch，说明当前布局与滚动路径没有可测的卡顿；这组仍只覆盖 Debug 构建、单机与一次短滑动，不能替代 30 次基线。
+
+## 主线程卡顿（SR-08.07）
+
+服务对象：`handbook/requirements/details/performance.md`。系统 Hang Detection 只用于开发签名或 TestFlight 包，不是产品功能，也不替代 `SR-08.05` 的关键路径 p95。
+
+### TC-PERF-01 冷启动与列表刷新无 ≥500ms 卡顿
+
+**前置**：iPhone 15 / iOS 27；开发签名或 TestFlight 构建；设置 > 开发者 > 性能 > 卡顿检测打开；会话数据至少 400 条（当前 743 条），已读水位 400 条；Wi-Fi、弱网、离线分别记录。
+
+**步骤**：
+
+1. 冷启动 5 次，每次停在会话列表 10 秒。
+2. 下拉刷新 10 次，间隔 3 秒。
+3. 另开一个已有流式会话，观察 60 秒（第一期只记录，流式路径的验收在第二期）。
+4. 取回窗口内的 HangTracer 报告：
+   `xcrun devicectl device info files --device <UDID> --domain-type systemCrashLogs --search "UIKit-runloop-DSHMobile"`
+   逐份 `copy from` 到 `/tmp/hang-ips`。
+5. 跑 `node test/performance/check-hangs.mjs --dir /tmp/hang-ips`。
+
+**通过**：报告 0 份 ≥500 ms；250–500 ms 样本记录在报告里并逐版下降；743 会话的提交次数由单测 `ActivityModelTests.test_apply_sessions_commits_once_for_a_large_list` 钉死为 1。第一期不得宣称 SR-08.07 全部达标，流式转写路径留第二期。
+
+**证据**：HangTracer 报告目录、脚本输出、单测输出、设备/构建/网络/热状态。

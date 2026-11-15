@@ -55,11 +55,25 @@ public final class SessionViewLog {
     /// Called when the transcript opens, not when a row scrolls past: "viewed"
     /// has to mean the user looked at it, or the marker clears itself.
     public func markViewed(_ sessionId: String, at stamp: Double = Date().timeIntervalSince1970 * 1000) {
-        let key = key(sessionId)
-        // Monotonic per session: a clock that steps backwards must not resurrect
-        // an unseen marker for something the user just read.
-        if let existing = viewedAt[key], existing >= stamp { return }
-        viewedAt[key] = stamp
+        markViewed([sessionId: stamp])
+    }
+
+    /// 一次提交多条首见基线，只 trim/persist 一次。
+    ///
+    /// 冷启动时 `seedFirstSightings` 会面对数百个没记过的会话；逐条调用
+    /// `markViewed` 会让每条都排序一次上限字典并整份写 UserDefaults，
+    /// 2026-11-15 的 20 份 HangTracer 报告（525–1917 ms）就落在这条路上。
+    public func markViewed(_ entries: [String: Double]) {
+        var changed = false
+        for (sessionId, stamp) in entries {
+            let key = key(sessionId)
+            // Monotonic per session: a clock that steps backwards must not
+            // resurrect an unseen marker for something the user just read.
+            if let existing = viewedAt[key], existing >= stamp { continue }
+            viewedAt[key] = stamp
+            changed = true
+        }
+        guard changed else { return }
         trim()
         persist()
     }
