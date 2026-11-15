@@ -113,6 +113,7 @@ install -m 0644 -o root -g root "$STAGED_BUILD" "$BUILD.new"
 mv "$BIN.new" "$BIN"
 mv "$BUILD.new" "$BUILD"
 start_epoch="$(date +%s)"
+restarts_before="$(systemctl show -p NRestarts --value "$SERVICE" 2>/dev/null || echo 0)"
 systemctl restart "$SERVICE" || rollback
 
 if ! wait_version "$VERSION" 45; then
@@ -134,6 +135,11 @@ fails=0
 checks=$((OBSERVE / 5))
 for ((i = 0; i < checks; i++)); do
   sleep 5
+  restarts_now="$(systemctl show -p NRestarts --value "$SERVICE" 2>/dev/null || echo 0)"
+  if [[ "$restarts_now" -gt "$restarts_before" ]]; then
+    log "service restarted itself during observation (NRestarts $restarts_before -> $restarts_now)"
+    rollback
+  fi
   if [[ "$(health_version)" == "$VERSION" ]] && is_active; then
     fails=0
   else
