@@ -2,7 +2,7 @@
 
 > 由 `node test/coverage/check-test-coverage.mjs` 生成。✅ 精确测试；🔵 静态策略；✍️ 人工待验收；🟠 只是套件级映射，不得当作已完成。
 
-汇总：共 58 条 · ✅ verified 52 · 🔵 static 5 · ✍️ manual 0 · 🟡 partial 0 · 🟠 suite-only 1 · ❌ gap 0
+汇总：共 59 条 · ✅ verified 53 · 🔵 static 5 · ✍️ manual 0 · 🟡 partial 0 · 🟠 suite-only 1 · ❌ gap 0
 
 | SR | 状态 | 精确测试证据 | 负责套件 | 缺口 |
 |---|---|---|---|---|
@@ -41,6 +41,7 @@
 | SR-04.01 | 🔵 static | `test/coverage/release-policy.test.mjs`：`user-facing docs offer TestFlight` | `requirements`、`scripts`、`policy-static` | 静态策略检查 |
 | SR-04.02 | ✅ verified | `scripts/release/ota-version.test.mjs`：`构建号是北京时间` | `requirements`、`scripts`、`release-plan` |  |
 | SR-04.03 | 🔵 static | `test/coverage/release-policy.test.mjs`：`TestFlight submission is the default` | `requirements`、`scripts`、`policy-static` | 静态策略检查 |
+| SR-04.04 | ✅ verified | `scripts/dev/plugin-hmr.test.mjs`：`status 变 on`<br>`plugins/mobile-link/test/hotplug.test.js`：`disabling the plugin takes every route with it`<br>`scripts/dev/check-plugin-hotplug.mjs`：`没有模块顶层定时器` | `requirements` |  |
 | SR-05.01 | ✅ verified | `ios/DSHMobile/Modules/Features/Feedback/Tests/DomainTests/FeedbackDraftLengthTests.swift`：`FeedbackDraftLengthTests` | `requirements`、`mail` |  |
 | SR-05.02 | ✅ verified | `ios/DSHMobile/Modules/Features/Feedback/Tests/DomainTests/FeedbackCenterTests.swift`：`FeedbackCenterTests` | `requirements`、`ios-modules`、`mail` |  |
 | SR-05.03 | ✅ verified | `ios/DSHMobile/Modules/Features/Feedback/Tests/DomainTests/FeedbackAttachmentLoaderTests.swift`：`FeedbackAttachmentLoaderTests` | `requirements`、`mail` |  |

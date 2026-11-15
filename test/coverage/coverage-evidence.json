@@ -409,6 +409,20 @@
       "kind": "static"
     }
   ],
+  "SR-04.04": [
+    {
+      "path": "scripts/dev/plugin-hmr.test.mjs",
+      "contains": "status 变 on"
+    },
+    {
+      "path": "plugins/mobile-link/test/hotplug.test.js",
+      "contains": "disabling the plugin takes every route with it"
+    },
+    {
+      "path": "scripts/dev/check-plugin-hotplug.mjs",
+      "contains": "没有模块顶层定时器"
+    }
+  ],
   "SR-06.03": [
     {
       "path": "ios/DSHMobile/DSHMobileUITests/SettingsCacheClearTests.swift",
