@@ -46,9 +46,9 @@ rm -rf "$tmp"
 - 用例名与断言要表达需求口径，不得复制实现细节。
 - TDD 适用范围：`relay-go/`、`mail/`、DSHKit 纯函数与连接器协议层走 RED-GREEN-REFACTOR；iOS 视图与仿真器交互不用 TDD，改用截图与测试报告；无测试底座的旧模块先补最小失败用例再修改。
 
-## 发布前性能门禁
+## 发布前检查
 
-发布前另跑 `npm run check:relay-tls`；需要真机推送时跑 `DSH_APNS_DEVICE=<deviceId> npm run check:apns` 验证公网中转不以明文提供 DLP；真机性能样本拷回后执行 `node test/performance/check-performance.mjs --file /tmp/performance-device.log`。p95 超标或样本不足不得发布；模拟器与 CI 没有真机样本，因此这一步只在发布前做，不进 pre-commit。
+发布前另跑 `npm run check:relay-tls`；需要真机推送时跑 `DSH_APNS_DEVICE=<deviceId> npm run check:apns` 验证公网中转不以明文提供 DLP。真机性能样本不是发布门禁（owner 2026-11-15），有用时手工跑 `node test/performance/check-performance.mjs --file /tmp/performance-device.log` 复核。
 
 ## 完成定义
 

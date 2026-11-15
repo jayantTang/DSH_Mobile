@@ -37,9 +37,11 @@ tag 与 Release 不得出现 OTA 地址；分发策略见 `handbook/requirements
 
 `scripts/release/deploy-testflight.sh` 会执行归档、导出、上传、等待处理、加入分组并提交审核；只需上传、不提交审核时使用 `--no-submit`。版本号按 `handbook/requirements/requirements.md` 的 SR-04.02 执行。同步口径见 `handbook/history/上架流程.md`。
 
-## 性能门禁
+## 性能样本（不是门禁）
 
-TestFlight 的导出、上传与提审会先执行 `node test/performance/check-performance.mjs --file ${DSH_PERF_LOG:-/tmp/performance-device.log}`；样本不足或 p95 超标直接拒绝。`--archive-only` 只编译，不受此门禁影响。样本由真机性能驱动生成，不能用模拟器文件替代。
+owner 2026-11-15 决定：发布级基线尚未建立，`test/performance/check-performance.mjs` 不再作为 TestFlight 的发布门禁，`deploy-testflight.sh` 不调用它。SR-08.05 本身要求「基线未建立前不得设置硬门禁」，此前把绝对阈值当硬门禁与需求冲突。
+
+需要复核时手工跑 `node test/performance/check-performance.mjs --file /tmp/performance-device.log`；样本仍只认真机，模拟器文件不能替代。基线建立并按基线阈值定门禁后，再决定是否接回发布流程。
 
 ## 签名
 

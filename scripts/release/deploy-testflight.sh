@@ -71,12 +71,9 @@ done
 
 [ "$BETA_ONLY" = 1 ] && { EXPORT_ONLY=1; UPLOAD_ONLY=1; }
 
-# 性能硬门禁：TestFlight 的导出/上传/提审都必须先有真机样本并通过 p95 阈值。
-# --archive-only 只编译，不在此列；样本默认 /tmp/performance-device.log，可用 DSH_PERF_LOG 覆盖。
-if [ "$ARCHIVE_ONLY" = 0 ]; then
-  node "$ROOT/test/performance/check-performance.mjs" --file "${DSH_PERF_LOG:-/tmp/performance-device.log}" \
-    || die "真机性能门禁未通过（样本 ${DSH_PERF_LOG:-/tmp/performance-device.log}）"
-fi
+# 性能样本**不是本脚本的发布门禁**（owner 2026-11-15）：发布级基线尚未建立，
+# SR-08.05 也要求基线建立前不得设硬门禁。需要复核时手工跑：
+#   node test/performance/check-performance.mjs --file /tmp/performance-device.log
 
 TEAM_ID="${DSH_TEAM_ID:-$(plutil -extract teamID raw -o - "$LOCAL_SIGNING" 2>/dev/null || true)}"
 [ -n "$TEAM_ID" ] || die "没有开发者团队 ID：设 DSH_TEAM_ID=<TeamID>，或写 ${LOCAL_SIGNING}（形如 {teamID = XXXXXXXXXX;}，不入库）"

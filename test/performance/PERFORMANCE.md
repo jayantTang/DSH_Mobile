@@ -52,7 +52,7 @@
 node test/performance/check-performance.mjs --file /tmp/performance-device.log
 ```
 
-这是发布前门禁，不进 pre-commit：它需要真机样本文件，模拟器与 CI 没有该文件。阈值取最近 30 次样本的 p95 +20%；当前样本通过。
+**当前不是发布门禁**（owner 2026-11-15）：发布级基线未建立，SR-08.05 要求基线建立前不设硬门禁，`deploy-testflight.sh` 不再调用本检查。上表只是手工复核用的参考阈值；真机样本缺少时不影响发布。
 
 ## 基线报告字段
 
