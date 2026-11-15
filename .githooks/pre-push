@@ -18,8 +18,12 @@ if [ -z "$base" ]; then
   echo "[pre-push] 找不到上游基线，跳过受影响测试"
   exit 0
 fi
-mapfile -t changed < <(git diff --name-only "$base"...HEAD)
-if [ "${#changed[@]}" -eq 0 ]; then
+# macOS 自带 bash 3.2 没有 mapfile；用可移植的 while 读入代替。
+changed=()
+while IFS= read -r line; do
+  [ -n "$line" ] && changed[${#changed[@]}]="$line"
+done < <(git diff --name-only "$base"...HEAD)
+if [ "${#changed[@]:-0}" -eq 0 ]; then
   echo "[pre-push] 没有改动文件"
   exit 0
 fi
