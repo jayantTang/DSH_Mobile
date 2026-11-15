@@ -237,6 +237,14 @@
     {
       "path": "test/acceptance/18-手机发送图片保留原图.md",
       "contains": "TC-MOB-147"
+    },
+    {
+      "path": "ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/AttachmentImageVariantsTests.swift",
+      "contains": "testSavingDownloadsOnDemandAndNeverFallsBackToPreview"
+    },
+    {
+      "path": "test/acceptance/19-未查看原图直接保存.md",
+      "contains": "TC-MOB-149"
     }
   ],
   "SR-02.12": [

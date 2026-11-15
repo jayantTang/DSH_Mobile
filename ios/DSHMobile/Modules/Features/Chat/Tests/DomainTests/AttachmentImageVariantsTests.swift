@@ -96,6 +96,37 @@ final class AttachmentImageVariantsTests: XCTestCase {
         XCTAssertEqual(stub.chunkOffsets, [], "查元数据仍然不读字节")
     }
 
+    /// 「保存原图」点击时按需下载（SR-02.11）：没下载过也要能拿到原图字节；
+    /// 不可用或失败必须返回 nil，**不能**回退成预览。
+    func testSavingDownloadsOnDemandAndNeverFallsBackToPreview() async throws {
+        let bytes = Self.deterministicBytes(count: 600 * 1024)
+        let meta = metadata(bytes: bytes.count, id: Self.sha256ID(bytes))
+        stub.lookupResults = [.success(.available(meta))]
+        stub.chunkBody = { offset, length in
+            let end = min(bytes.count, offset + length)
+            return ImageOriginalChunk(
+                data: bytes.subdata(in: offset..<end), offset: offset,
+                eof: end >= bytes.count, bytes: bytes.count
+            )
+        }
+
+        let saved = await variants.dataForSaving(
+            sessionId: "s-1", attachment: preview("sha256:preview"))
+        XCTAssertEqual(saved, bytes, "未点过「原图」时保存应自动下载原图")
+        XCTAssertEqual(variants.state(sessionId: "s-1", attachmentId: "sha256:preview"),
+                       .ready(meta), "下载完成状态应落成 ready")
+        XCTAssertEqual(stub.lookupCalls, 1)
+        XCTAssertEqual(stub.chunkOffsets.count, 2, "600 KiB 分两片取")
+
+        // 不可用：不查、不下载、返回 nil。
+        let unavailable = preview("sha256:missing")
+        stub.lookupResults = [.success(.unavailable(reason: "missing"))]
+        let none = await variants.dataForSaving(sessionId: "s-1", attachment: unavailable)
+        XCTAssertNil(none, "不可用不得返回预览或空数据")
+        XCTAssertEqual(stub.chunkIds.filter { $0 == "sha256:missing" }, [],
+                       "不可用时不得发起下载")
+    }
+
     // MARK: - 分片下载与校验
 
     func testChunkedDownloadAssemblesBytesInOrderAndVerifiesTheHash() async throws {

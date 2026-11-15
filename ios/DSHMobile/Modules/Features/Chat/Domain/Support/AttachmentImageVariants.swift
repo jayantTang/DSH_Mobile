@@ -249,6 +249,23 @@ public final class AttachmentImageVariants {
         setState(.ready(meta), key: key, token: token)
     }
 
+    /// 为「保存原图」取字节：已下载就给，未下载先按需下载，不可用/失败返回 nil。
+    ///
+    /// 需求 SR-02.11：保存原图点击时按需下载，用户不必先点过「原图」。复用同一条
+    /// 下载与校验路径（分片、进度、SHA-256），失败绝不返回预览字节。
+    public func dataForSaving(sessionId: String?, attachment: ContentBlock.ImageAttachment) async -> Data? {
+        let attachmentId = attachment.attachmentId
+        guard !attachmentId.isEmpty else { return nil }
+        if let data = originalData(sessionId: sessionId, attachmentId: attachmentId) {
+            return data
+        }
+        if case .unavailable = state(sessionId: sessionId, attachmentId: attachmentId) {
+            return nil
+        }
+        await downloadOriginal(sessionId: sessionId, attachment: attachment)
+        return originalData(sessionId: sessionId, attachmentId: attachmentId)
+    }
+
     /// 丢掉内存里的状态与元数据（磁盘那份由设置页统一清理）。
     public func clearMemory() {
         generation += 1

@@ -496,6 +496,11 @@ public final class AttachmentImages {
         await originalVariants.downloadOriginal(sessionId: sessionId, attachment: attachment)
     }
 
+    /// 为「保存原图」取字节：已下载直接给，未下载先下载（失败返回 nil，绝不回退预览）。
+    public func originalDataForSaving(_ attachment: ContentBlock.ImageAttachment) async -> Data? {
+        await originalVariants.dataForSaving(sessionId: sessionId, attachment: attachment)
+    }
+
     /// 只读**已校验**的原始字节（保存原图用；不要重新编码）。
     public func originalData(_ attachmentId: String) -> Data? {
         originalVariants.originalData(sessionId: sessionId, attachmentId: attachmentId)

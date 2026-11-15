@@ -230,7 +230,8 @@ private struct AttachmentPreviewScreen: View {
                     Task { await images.downloadOriginal(attachment) }
                 },
                 onCancel: {},
-                data: { images.originalData(attachment.attachmentId) }
+                data: { images.originalData(attachment.attachmentId) },
+                loadForSaving: { await images.originalDataForSaving(attachment) }
             ),
             caption: caption
         )

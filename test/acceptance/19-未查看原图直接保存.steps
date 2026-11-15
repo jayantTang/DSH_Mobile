@@ -1,0 +1,14 @@
+# TC-MOB-149 的执行指令（没点过「原图」也能直接保存原图）
+#
+# 基线：查看器打开后不点「原图」，直接打开保存菜单点「保存原图」；应先看到原图
+# 下载（工具栏进度/完成标记），随后保存成功；不允许保存预览冒充原图。
+# 夹具：带原图的会话（image-scratch-session --with-original 重建），相册已授权。
+
+1  do: 打开页面 transcript  | want: id:chat.transcript
+2  do: 点击 id:attachment.image
+3  do: 等待 3 秒  | want: id:attachment.preview
+4  do: 点击 id:attachment.preview.save, 等待 2 秒  | want: text:保存原图
+5  do: 点击 text:保存原图, 等待 id:attachment.preview.original.ready timeout=60  | want: id:attachment.preview.original.ready
+6  do: 等待 3 秒  | shot: 01-saved-without-viewing check=content
+7  do: 点击 id:attachment.preview.done, 等待 id:chat.transcript timeout=10  | want: id:chat.transcript
+8  do: 什么都不做  | shot: 02-back check=content

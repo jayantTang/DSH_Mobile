@@ -34,17 +34,23 @@ public struct ImagePreviewOriginal {
     public var onCancel: () -> Void
     /// 已就绪（或磁盘上已有）的原图字节；保存原图走这一份，绝不重新编码。
     public var data: () -> Data?
+    /// 「保存原图」在还没下载时按需取回：触发下载并等到字节可用，失败返回 nil。
+    ///
+    /// 需求 SR-02.11：保存原图点击时按需下载，用户不必先点过「原图」。
+    public var loadForSaving: () async -> Data?
 
     public init(phase: Phase,
                 bytes: Int? = nil,
                 onRequest: @escaping () -> Void,
                 onCancel: @escaping () -> Void = {},
-                data: @escaping () -> Data? = { nil }) {
+                data: @escaping () -> Data? = { nil },
+                loadForSaving: @escaping () async -> Data? = { nil }) {
         self.phase = phase
         self.bytes = bytes
         self.onRequest = onRequest
         self.onCancel = onCancel
         self.data = data
+        self.loadForSaving = loadForSaving
     }
 
     /// 「原图 12.3 MB」/「原图」。
