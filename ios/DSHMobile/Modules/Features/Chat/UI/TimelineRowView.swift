@@ -92,7 +92,7 @@ struct TimelineRowView: View {
 
         case .questionRecord(let headers, let questions, let answers):
             QuestionRecordRow(headers: headers, questions: questions, answers: answers,
-                              time: item.at, copyText: item.questionRecordCopyText)
+                              time: item.at)
 
         case .assistantText(let text):
             // 流式行（isStreaming）整块按纯文本渲染，结束后一次完整解析
@@ -348,9 +348,6 @@ private struct QuestionRecordRow: View {
     let questions: [String]
     let answers: [String]
     let time: Date?
-    /// 领域层拼好的可复制正文（含「已跳过」的本地化文案）。
-    let copyText: String?
-    @State private var copied = false
 
     var body: some View {
         HStack {
@@ -388,28 +385,11 @@ private struct QuestionRecordRow: View {
                     RoundedRectangle(cornerRadius: DSHTheme.Radius.large, style: .continuous)
                         .fill(DSHTheme.brandSubtle)
                 )
-                HStack(spacing: DSHTheme.Spacing.hairline) {
-                    if let time {
-                        Text(time, format: .dateTime.hour().minute())
-                            .font(.system(size: 11))
-                            .foregroundStyle(DSHTheme.labelDimmed)
-                            .accessibilityLabel(time.formatted(date: .omitted, time: .shortened))
-                    }
-                    Button {
-                        UIPasteboard.general.string = copyText
-                        copied = true
-                        Task { @MainActor in
-                            try? await Task.sleep(for: .seconds(1.5))
-                            copied = false
-                        }
-                    } label: {
-                        Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                            .font(.system(size: 11))
-                            .foregroundStyle(DSHTheme.labelTertiary)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(String(localized: "复制"))
-                    .accessibilityIdentifier("question.record.copy")
+                if let time {
+                    Text(time, format: .dateTime.hour().minute())
+                        .font(.system(size: 11))
+                        .foregroundStyle(DSHTheme.labelDimmed)
+                        .accessibilityLabel(time.formatted(date: .omitted, time: .shortened))
                 }
             }
         }
