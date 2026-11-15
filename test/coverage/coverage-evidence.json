@@ -193,6 +193,14 @@
     {
       "path": "ios/DSHMobile/DSHMobileTests/SessionAlertsTests.swift",
       "contains": "testTurnEndRequestCarriesSessionRouteAndIdentifier"
+    },
+    {
+      "path": "ios/DSHMobile/Modules/Features/Sessions/Tests/DomainTests/SessionListGroupingTests.swift",
+      "contains": "testFormalSessionExcludesLooseSubagentAndArchived"
+    },
+    {
+      "path": "plugins/mobile-link/test/session-scope.test.js",
+      "contains": "子会话不是正式会话"
     }
   ],
   "SR-02.09": [
@@ -273,6 +281,10 @@
     {
       "path": "ios/DSHMobile/Modules/Features/Sessions/Tests/DomainTests/SessionListDigestActivityTests.swift",
       "contains": "test_j_an_incremental_digest_keeps_the_child_counts"
+    },
+    {
+      "path": "ios/DSHMobile/Modules/Features/Sessions/Tests/DomainTests/SessionListGroupingTests.swift",
+      "contains": "testHeadlineWaitingCountExcludesLooseSessions"
     }
   ],
   "SR-03.01": [
