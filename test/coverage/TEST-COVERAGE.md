@@ -2,7 +2,7 @@
 
 > 由 `node test/coverage/check-test-coverage.mjs` 生成。✅ 精确测试；🔵 静态策略；✍️ 人工待验收；🟠 只是套件级映射，不得当作已完成。
 
-汇总：共 60 条 · ✅ verified 54 · 🔵 static 5 · ✍️ manual 0 · 🟡 partial 0 · 🟠 suite-only 1 · ❌ gap 0
+汇总：共 61 条 · ✅ verified 55 · 🔵 static 5 · ✍️ manual 0 · 🟡 partial 0 · 🟠 suite-only 1 · ❌ gap 0
 
 | SR | 状态 | 精确测试证据 | 负责套件 | 缺口 |
 |---|---|---|---|---|
@@ -32,6 +32,7 @@
 | SR-02.13 | ✅ verified | `ios/DSHMobile/Modules/Features/Sessions/Tests/DomainTests/SessionListCreateVisibilityTests.swift`：`test_created_session_is_visible_before_the_host_lists_it` | `requirements`、`ios-modules` |  |
 | SR-02.14 | ✅ verified | `ios/DSHMobile/Modules/Features/Sessions/Tests/DomainTests/SessionListCombinationTests.swift`：`test_archiving_the_session_that_is_open` | `requirements`、`ios-modules` |  |
 | SR-02.15 | ✅ verified | `ios/DSHMobile/Modules/Features/Sessions/Tests/DomainTests/SessionListDigestActivityTests.swift`：`test_j_an_incremental_digest_keeps_the_child_counts`<br>`ios/DSHMobile/Modules/Features/Sessions/Tests/DomainTests/SessionListGroupingTests.swift`：`testHeadlineWaitingCountExcludesLooseSessions` | `requirements`、`ios-modules` |  |
+| SR-02.16 | ✅ verified | `ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/TranscriptProcessFoldQuestionRecordTests.swift`：`test_collapsed_turn_keeps_the_answer_record_visible`<br>`ios/DSHMobile/DSHKit/Tests/DSHKitTests/QuestionRecordTests.swift`：`test_decode_record_pairs_questions_and_answers_in_order`<br>`plugins/mobile-link/test/question-record.test.js`：`概要 v2：作答记录独立下发` | `requirements` |  |
 | SR-03.01 | ✅ verified | `ios/DSHMobile/Modules/Features/Files/Tests/DomainTests/WorkspaceFilesModelTests.swift`：`test_the_root_listing_asks_for_dot` | `requirements`、`ios-dshkit`、`connector` |  |
 | SR-03.02 | ✅ verified | `ios/DSHMobile/Modules/Features/Files/Tests/DomainTests/GitModelTests.swift`：`GitModelTests` | `requirements`、`ios-dshkit`、`connector` |  |
 | SR-03.03 | ✅ verified | `ios/DSHMobile/Modules/Features/Files/Tests/DomainTests/WorkspaceFilesModelTests.swift`：`test_a_file_reads_page_by_page` | `requirements`、`ios-modules`、`ui-files` |  |

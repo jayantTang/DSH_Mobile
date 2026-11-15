@@ -1,8 +1,376 @@
 {
+  "SR-01.01": [
+    {
+      "path": "plugins/mobile-link/test/cli-enroll.test.js",
+      "contains": "open enrollment works without an invite code"
+    }
+  ],
+  "SR-01.02": [
+    {
+      "path": "plugins/mobile-link/test/cli-enroll.test.js",
+      "contains": "legacy invite codes are still accepted"
+    }
+  ],
+  "SR-01.03": [
+    {
+      "path": "plugins/mobile-link/test/state.test.js",
+      "contains": "mintPairCode posts to the prefixed relay"
+    }
+  ],
+  "SR-01.04": [
+    {
+      "path": "ios/DSHMobile/DSHKit/Tests/DSHKitTests/LinkCarrierSocketLifecycleTests.swift",
+      "contains": "socket 自己断了"
+    }
+  ],
+  "SR-01.05": [
+    {
+      "path": "plugins/mobile-link/test/plugin.test.js",
+      "contains": "GET /mobile-link/devices returns the full paired roster"
+    }
+  ],
+  "SR-01.06": [
+    {
+      "path": "ios/DSHMobile/Modules/Features/Connection/Tests/DomainTests/ConnectionProfileTests.swift",
+      "contains": "test_only_the_direct_transport_avoids_the_relay"
+    }
+  ],
+  "SR-01.07": [
+    {
+      "path": "test/acceptance/07-relay-reconnect.md",
+      "contains": "TC-MOB-93"
+    }
+  ],
+  "SR-01.08": [
+    {
+      "path": "ios/DSHMobile/Modules/Features/Connection/Tests/DomainTests/ConnectionDomainStoreTests.swift",
+      "contains": "test_saved_profiles_round_trip_through_a_defaults_domain"
+    }
+  ],
+  "SR-01.09": [
+    {
+      "path": "ios/DSHMobile/Modules/Features/Connection/Tests/DomainTests/ConnectionProfileTests.swift",
+      "contains": "test_the_state_flags_are_mutually_exclusive"
+    }
+  ],
+  "SR-01.10": [
+    {
+      "path": "relay-go/internal/wsapi/wsapi_test.go",
+      "contains": "TestTheDeviceLimitIs4021OnTheWire"
+    }
+  ],
+  "SR-01.11": [
+    {
+      "path": "test/acceptance/11-connector-install-guide.md",
+      "contains": "TC-MOB-203"
+    }
+  ],
+  "SR-02.01": [
+    {
+      "path": "ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/ChatModelTransportTests.swift",
+      "contains": "test_open_subscribes_to_the_session_the_summary_names"
+    }
+  ],
+  "SR-02.02": [
+    {
+      "path": "test/acceptance/14-background-resume.md",
+      "contains": "TC-MOB-206"
+    }
+  ],
+  "SR-02.03": [
+    {
+      "path": "ios/DSHMobile/Modules/Core/Tests/HostEventHubTests.swift",
+      "contains": "test_a_waiting_prompt_is_promoted_and_kept_by_session"
+    }
+  ],
+  "SR-02.04": [
+    {
+      "path": "ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/ChatModelTransportTests.swift",
+      "contains": "test_send_puts_the_prompt_on_the_wire"
+    },
+    {
+      "path": "ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/ChatModelTransportTests.swift",
+      "contains": "test_cancel_names_the_open_session"
+    }
+  ],
+  "SR-02.05": [
+    {
+      "path": "ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/ChatModelQueueTests.swift",
+      "contains": "test_a_queued_send_is_optimistic"
+    }
+  ],
+  "SR-02.06": [
+    {
+      "path": "ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/SearchStateTests.swift",
+      "contains": "SearchStateTests"
+    }
+  ],
+  "SR-02.07": [
+    {
+      "path": "ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/AttachmentLoadFailureTests.swift",
+      "contains": "AttachmentLoadFailureTests"
+    },
+    {
+      "path": "ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/ComposerImagePolicyTests.swift",
+      "contains": "testOverPixelBudgetIsScaledUntilBothLimitsFit"
+    },
+    {
+      "path": "ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/ChatModelImageSendTests.swift",
+      "contains": "testSendUploadsPreviewAndOriginalThenPromptsWithReceiptsInOrder"
+    },
+    {
+      "path": "ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/ChatModelImageSendTests.swift",
+      "contains": "testSendAsFileAppendsTheFileReceiptAfterThePreview"
+    },
+    {
+      "path": "test/acceptance/15-会话图片原图按需下载.md",
+      "contains": "TC-MOB-144"
+    },
+    {
+      "path": "test/acceptance/18-手机发送图片保留原图.md",
+      "contains": "TC-MOB-147"
+    }
+  ],
+  "SR-02.08": [
+    {
+      "path": "ios/DSHMobile/DSHMobileTests/SessionAlertsTests.swift",
+      "contains": "testTurnEndRequestCarriesSessionRouteAndIdentifier"
+    },
+    {
+      "path": "ios/DSHMobile/Modules/Features/Sessions/Tests/DomainTests/SessionListGroupingTests.swift",
+      "contains": "testFormalSessionExcludesLooseSubagentAndArchived"
+    },
+    {
+      "path": "plugins/mobile-link/test/session-scope.test.js",
+      "contains": "子会话不是正式会话"
+    }
+  ],
+  "SR-02.09": [
+    {
+      "path": "ios/DSHMobile/DSHMobileTests/SessionAlertsTests.swift",
+      "contains": "testSameEventUsesTheSameIdentifier"
+    }
+  ],
+  "SR-02.10": [
+    {
+      "path": "ios/DSHMobile/DSHMobileUITests/WorkspaceHTMLPreviewTests.swift",
+      "contains": "testRenderedPreviewIsPresent"
+    }
+  ],
+  "SR-02.11": [
+    {
+      "path": "ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/AttachmentLoadFailureTests.swift",
+      "contains": "AttachmentLoadFailureTests"
+    },
+    {
+      "path": "ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/AttachmentImageVariantsTests.swift",
+      "contains": "testAvailableLookupBecomesReadyWithoutDownloadingBytes"
+    },
+    {
+      "path": "ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/AttachmentImageVariantsTests.swift",
+      "contains": "testMissingCleanedAndUnsupportedAllBecomeUnavailableAndAreNotRetried"
+    },
+    {
+      "path": "ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/AttachmentImageVariantsTests.swift",
+      "contains": "testNothingIsRequestedUntilTheUserAsks"
+    },
+    {
+      "path": "plugins/mobile-link/test/image-variants.test.js",
+      "contains": "原图元数据：有 / 没有 / 对象被清理 三态分明"
+    },
+    {
+      "path": "test/acceptance/15-会话图片原图按需下载.md",
+      "contains": "TC-MOB-144"
+    },
+    {
+      "path": "test/acceptance/16-旧图片显示原图不可用.md",
+      "contains": "TC-MOB-145"
+    },
+    {
+      "path": "test/acceptance/17-相册未授权保存提示.md",
+      "contains": "TC-MOB-146"
+    },
+    {
+      "path": "test/acceptance/18-手机发送图片保留原图.md",
+      "contains": "TC-MOB-147"
+    },
+    {
+      "path": "ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/AttachmentImageVariantsTests.swift",
+      "contains": "testSavingDownloadsOnDemandAndNeverFallsBackToPreview"
+    },
+    {
+      "path": "test/acceptance/19-未查看原图直接保存.md",
+      "contains": "TC-MOB-149"
+    }
+  ],
+  "SR-02.12": [
+    {
+      "path": "ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/ChatModelProcessFoldTests.swift",
+      "contains": "test_a_completed_turn_folds_on_the_model_surface"
+    },
+    {
+      "path": "plugins/mobile-link/test/fold-summary.test.js",
+      "contains": "assistant 图文回答"
+    }
+  ],
+  "SR-02.13": [
+    {
+      "path": "ios/DSHMobile/Modules/Features/Sessions/Tests/DomainTests/SessionListCreateVisibilityTests.swift",
+      "contains": "test_created_session_is_visible_before_the_host_lists_it"
+    }
+  ],
+  "SR-02.14": [
+    {
+      "path": "ios/DSHMobile/Modules/Features/Sessions/Tests/DomainTests/SessionListCombinationTests.swift",
+      "contains": "test_archiving_the_session_that_is_open"
+    }
+  ],
+  "SR-02.15": [
+    {
+      "path": "ios/DSHMobile/Modules/Features/Sessions/Tests/DomainTests/SessionListDigestActivityTests.swift",
+      "contains": "test_j_an_incremental_digest_keeps_the_child_counts"
+    },
+    {
+      "path": "ios/DSHMobile/Modules/Features/Sessions/Tests/DomainTests/SessionListGroupingTests.swift",
+      "contains": "testHeadlineWaitingCountExcludesLooseSessions"
+    }
+  ],
+  "SR-02.16": [
+    {
+      "path": "ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/TranscriptProcessFoldQuestionRecordTests.swift",
+      "contains": "test_collapsed_turn_keeps_the_answer_record_visible"
+    },
+    {
+      "path": "ios/DSHMobile/DSHKit/Tests/DSHKitTests/QuestionRecordTests.swift",
+      "contains": "test_decode_record_pairs_questions_and_answers_in_order"
+    },
+    {
+      "path": "plugins/mobile-link/test/question-record.test.js",
+      "contains": "概要 v2：作答记录独立下发"
+    }
+  ],
+  "SR-03.01": [
+    {
+      "path": "ios/DSHMobile/Modules/Features/Files/Tests/DomainTests/WorkspaceFilesModelTests.swift",
+      "contains": "test_the_root_listing_asks_for_dot"
+    }
+  ],
+  "SR-03.02": [
+    {
+      "path": "ios/DSHMobile/Modules/Features/Files/Tests/DomainTests/GitModelTests.swift",
+      "contains": "GitModelTests"
+    }
+  ],
+  "SR-03.03": [
+    {
+      "path": "ios/DSHMobile/Modules/Features/Files/Tests/DomainTests/WorkspaceFilesModelTests.swift",
+      "contains": "test_a_file_reads_page_by_page"
+    }
+  ],
+  "SR-03.04": [
+    {
+      "path": "ios/DSHMobile/DSHKit/Tests/DSHKitTests/RelayFileTransferTests.swift",
+      "contains": "downloadLands"
+    }
+  ],
+  "SR-03.05": [
+    {
+      "path": "ios/DSHMobile/DSHKit/Tests/DSHKitTests/OutgoingFilesTests.swift",
+      "contains": "OutgoingFilesTests"
+    }
+  ],
   "SR-03.06": [
     {
       "path": "test/acceptance/08-text-wrap.md",
       "contains": "TC-MOB-201"
+    }
+  ],
+  "SR-04.01": [
+    {
+      "path": "test/coverage/release-policy.test.mjs",
+      "contains": "user-facing docs offer TestFlight",
+      "kind": "static"
+    }
+  ],
+  "SR-04.02": [
+    {
+      "path": "scripts/release/ota-version.test.mjs",
+      "contains": "构建号是北京时间"
+    }
+  ],
+  "SR-04.03": [
+    {
+      "path": "test/coverage/release-policy.test.mjs",
+      "contains": "TestFlight submission is the default",
+      "kind": "static"
+    }
+  ],
+  "SR-04.04": [
+    {
+      "path": "scripts/dev/plugin-hmr.test.mjs",
+      "contains": "status 变 on"
+    },
+    {
+      "path": "plugins/mobile-link/test/hotplug.test.js",
+      "contains": "disabling the plugin takes every route with it"
+    },
+    {
+      "path": "scripts/dev/check-plugin-hotplug.mjs",
+      "contains": "没有模块顶层定时器"
+    }
+  ],
+  "SR-05.01": [
+    {
+      "path": "ios/DSHMobile/Modules/Features/Feedback/Tests/DomainTests/FeedbackDraftLengthTests.swift",
+      "contains": "FeedbackDraftLengthTests"
+    }
+  ],
+  "SR-05.02": [
+    {
+      "path": "ios/DSHMobile/Modules/Features/Feedback/Tests/DomainTests/FeedbackCenterTests.swift",
+      "contains": "FeedbackCenterTests"
+    }
+  ],
+  "SR-05.03": [
+    {
+      "path": "ios/DSHMobile/Modules/Features/Feedback/Tests/DomainTests/FeedbackAttachmentLoaderTests.swift",
+      "contains": "FeedbackAttachmentLoaderTests"
+    }
+  ],
+  "SR-06.01": [
+    {
+      "path": "test/acceptance/13-settings-permission.md",
+      "contains": "TC-MOB-205"
+    }
+  ],
+  "SR-06.02": [
+    {
+      "path": "ios/DSHMobile/Modules/Features/Settings/Tests/DomainTests/SettingsCredentialTests.swift",
+      "contains": "test_credential_writes_require_a_connected_settings_host"
+    }
+  ],
+  "SR-06.03": [
+    {
+      "path": "ios/DSHMobile/DSHMobileUITests/SettingsCacheClearTests.swift",
+      "contains": "testClearCacheShowsTheClearedState"
+    }
+  ],
+  "SR-06.04": [
+    {
+      "path": "test/acceptance/06-about.md",
+      "contains": "TC-UI-103"
+    }
+  ],
+  "SR-06.05": [
+    {
+      "path": "scripts/dev/check-diagnostics.test.mjs",
+      "contains": "agent-secret"
+    }
+  ],
+  "SR-06.06": [
+    {
+      "path": "ios/DSHMobile/Modules/Core/Tests/UpdateCheckerTests.swift",
+      "contains": "test_a_newer_published_build_raises_the_banner"
     }
   ],
   "SR-07.01": [
@@ -87,358 +455,22 @@
       "contains": "push-test"
     }
   ],
-  "SR-01.01": [
+  "SR-08.08": [
     {
-      "path": "plugins/mobile-link/test/cli-enroll.test.js",
-      "contains": "open enrollment works without an invite code"
-    }
-  ],
-  "SR-01.03": [
-    {
-      "path": "plugins/mobile-link/test/state.test.js",
-      "contains": "mintPairCode posts to the prefixed relay"
-    }
-  ],
-  "SR-01.04": [
-    {
-      "path": "ios/DSHMobile/DSHKit/Tests/DSHKitTests/LinkCarrierSocketLifecycleTests.swift",
-      "contains": "socket 自己断了"
-    }
-  ],
-  "SR-01.05": [
-    {
-      "path": "plugins/mobile-link/test/plugin.test.js",
-      "contains": "GET /mobile-link/devices returns the full paired roster"
-    }
-  ],
-  "SR-01.06": [
-    {
-      "path": "ios/DSHMobile/Modules/Features/Connection/Tests/DomainTests/ConnectionProfileTests.swift",
-      "contains": "test_only_the_direct_transport_avoids_the_relay"
-    }
-  ],
-  "SR-01.08": [
-    {
-      "path": "ios/DSHMobile/Modules/Features/Connection/Tests/DomainTests/ConnectionDomainStoreTests.swift",
-      "contains": "test_saved_profiles_round_trip_through_a_defaults_domain"
-    }
-  ],
-  "SR-01.09": [
-    {
-      "path": "ios/DSHMobile/Modules/Features/Connection/Tests/DomainTests/ConnectionProfileTests.swift",
-      "contains": "test_the_state_flags_are_mutually_exclusive"
-    }
-  ],
-  "SR-01.10": [
-    {
-      "path": "relay-go/internal/wsapi/wsapi_test.go",
-      "contains": "TestTheDeviceLimitIs4021OnTheWire"
-    }
-  ],
-  "SR-02.01": [
-    {
-      "path": "ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/ChatModelTransportTests.swift",
-      "contains": "test_open_subscribes_to_the_session_the_summary_names"
-    }
-  ],
-  "SR-02.04": [
-    {
-      "path": "ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/ChatModelTransportTests.swift",
-      "contains": "test_send_puts_the_prompt_on_the_wire"
+      "path": "relay-go/internal/monitor/monitor_test.go",
+      "contains": "TestPlannedReconnectNeverAlerts"
     },
     {
-      "path": "ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/ChatModelTransportTests.swift",
-      "contains": "test_cancel_names_the_open_session"
-    }
-  ],
-  "SR-02.05": [
-    {
-      "path": "ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/ChatModelQueueTests.swift",
-      "contains": "test_a_queued_send_is_optimistic"
-    }
-  ],
-  "SR-02.06": [
-    {
-      "path": "ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/SearchStateTests.swift",
-      "contains": "SearchStateTests"
-    }
-  ],
-  "SR-02.07": [
-    {
-      "path": "ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/AttachmentLoadFailureTests.swift",
-      "contains": "AttachmentLoadFailureTests"
+      "path": "relay-go/internal/monitor/monitor_test.go",
+      "contains": "TestFlappingIsReportedOncePerDayPerAgent"
     },
     {
-      "path": "ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/ComposerImagePolicyTests.swift",
-      "contains": "testOverPixelBudgetIsScaledUntilBothLimitsFit"
+      "path": "relay-go/internal/monitor/monitor_test.go",
+      "contains": "TestTheMiddlewareDoesNotAlertOnHostOffline"
     },
     {
-      "path": "ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/ChatModelImageSendTests.swift",
-      "contains": "testSendUploadsPreviewAndOriginalThenPromptsWithReceiptsInOrder"
-    },
-    {
-      "path": "ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/ChatModelImageSendTests.swift",
-      "contains": "testSendAsFileAppendsTheFileReceiptAfterThePreview"
-    },
-    {
-      "path": "test/acceptance/15-会话图片原图按需下载.md",
-      "contains": "TC-MOB-144"
-    },
-    {
-      "path": "test/acceptance/18-手机发送图片保留原图.md",
-      "contains": "TC-MOB-147"
-    }
-  ],
-  "SR-02.08": [
-    {
-      "path": "ios/DSHMobile/DSHMobileTests/SessionAlertsTests.swift",
-      "contains": "testTurnEndRequestCarriesSessionRouteAndIdentifier"
-    },
-    {
-      "path": "ios/DSHMobile/Modules/Features/Sessions/Tests/DomainTests/SessionListGroupingTests.swift",
-      "contains": "testFormalSessionExcludesLooseSubagentAndArchived"
-    },
-    {
-      "path": "plugins/mobile-link/test/session-scope.test.js",
-      "contains": "子会话不是正式会话"
-    }
-  ],
-  "SR-02.09": [
-    {
-      "path": "ios/DSHMobile/DSHMobileTests/SessionAlertsTests.swift",
-      "contains": "testSameEventUsesTheSameIdentifier"
-    }
-  ],
-  "SR-02.11": [
-    {
-      "path": "ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/AttachmentLoadFailureTests.swift",
-      "contains": "AttachmentLoadFailureTests"
-    },
-    {
-      "path": "ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/AttachmentImageVariantsTests.swift",
-      "contains": "testAvailableLookupBecomesReadyWithoutDownloadingBytes"
-    },
-    {
-      "path": "ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/AttachmentImageVariantsTests.swift",
-      "contains": "testMissingCleanedAndUnsupportedAllBecomeUnavailableAndAreNotRetried"
-    },
-    {
-      "path": "ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/AttachmentImageVariantsTests.swift",
-      "contains": "testNothingIsRequestedUntilTheUserAsks"
-    },
-    {
-      "path": "plugins/mobile-link/test/image-variants.test.js",
-      "contains": "原图元数据：有 / 没有 / 对象被清理 三态分明"
-    },
-    {
-      "path": "test/acceptance/15-会话图片原图按需下载.md",
-      "contains": "TC-MOB-144"
-    },
-    {
-      "path": "test/acceptance/16-旧图片显示原图不可用.md",
-      "contains": "TC-MOB-145"
-    },
-    {
-      "path": "test/acceptance/17-相册未授权保存提示.md",
-      "contains": "TC-MOB-146"
-    },
-    {
-      "path": "test/acceptance/18-手机发送图片保留原图.md",
-      "contains": "TC-MOB-147"
-    },
-    {
-      "path": "ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/AttachmentImageVariantsTests.swift",
-      "contains": "testSavingDownloadsOnDemandAndNeverFallsBackToPreview"
-    },
-    {
-      "path": "test/acceptance/19-未查看原图直接保存.md",
-      "contains": "TC-MOB-149"
-    }
-  ],
-  "SR-02.12": [
-    {
-      "path": "ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/ChatModelProcessFoldTests.swift",
-      "contains": "test_a_completed_turn_folds_on_the_model_surface"
-    },
-    {
-      "path": "plugins/mobile-link/test/fold-summary.test.js",
-      "contains": "assistant 图文回答"
-    }
-  ],
-  "SR-02.13": [
-    {
-      "path": "ios/DSHMobile/Modules/Features/Sessions/Tests/DomainTests/SessionListCreateVisibilityTests.swift",
-      "contains": "test_created_session_is_visible_before_the_host_lists_it"
-    }
-  ],
-  "SR-02.14": [
-    {
-      "path": "ios/DSHMobile/Modules/Features/Sessions/Tests/DomainTests/SessionListCombinationTests.swift",
-      "contains": "test_archiving_the_session_that_is_open"
-    }
-  ],
-  "SR-02.15": [
-    {
-      "path": "ios/DSHMobile/Modules/Features/Sessions/Tests/DomainTests/SessionListDigestActivityTests.swift",
-      "contains": "test_j_an_incremental_digest_keeps_the_child_counts"
-    },
-    {
-      "path": "ios/DSHMobile/Modules/Features/Sessions/Tests/DomainTests/SessionListGroupingTests.swift",
-      "contains": "testHeadlineWaitingCountExcludesLooseSessions"
-    }
-  ],
-  "SR-03.01": [
-    {
-      "path": "ios/DSHMobile/Modules/Features/Files/Tests/DomainTests/WorkspaceFilesModelTests.swift",
-      "contains": "test_the_root_listing_asks_for_dot"
-    }
-  ],
-  "SR-03.02": [
-    {
-      "path": "ios/DSHMobile/Modules/Features/Files/Tests/DomainTests/GitModelTests.swift",
-      "contains": "GitModelTests"
-    }
-  ],
-  "SR-03.03": [
-    {
-      "path": "ios/DSHMobile/Modules/Features/Files/Tests/DomainTests/WorkspaceFilesModelTests.swift",
-      "contains": "test_a_file_reads_page_by_page"
-    }
-  ],
-  "SR-03.04": [
-    {
-      "path": "ios/DSHMobile/DSHKit/Tests/DSHKitTests/RelayFileTransferTests.swift",
-      "contains": "downloadLands"
-    }
-  ],
-  "SR-03.05": [
-    {
-      "path": "ios/DSHMobile/DSHKit/Tests/DSHKitTests/OutgoingFilesTests.swift",
-      "contains": "OutgoingFilesTests"
-    }
-  ],
-  "SR-04.02": [
-    {
-      "path": "scripts/release/ota-version.test.mjs",
-      "contains": "构建号是北京时间"
-    }
-  ],
-  "SR-05.01": [
-    {
-      "path": "ios/DSHMobile/Modules/Features/Feedback/Tests/DomainTests/FeedbackDraftLengthTests.swift",
-      "contains": "FeedbackDraftLengthTests"
-    }
-  ],
-  "SR-05.02": [
-    {
-      "path": "ios/DSHMobile/Modules/Features/Feedback/Tests/DomainTests/FeedbackCenterTests.swift",
-      "contains": "FeedbackCenterTests"
-    }
-  ],
-  "SR-05.03": [
-    {
-      "path": "ios/DSHMobile/Modules/Features/Feedback/Tests/DomainTests/FeedbackAttachmentLoaderTests.swift",
-      "contains": "FeedbackAttachmentLoaderTests"
-    }
-  ],
-  "SR-06.02": [
-    {
-      "path": "ios/DSHMobile/Modules/Features/Settings/Tests/DomainTests/SettingsCredentialTests.swift",
-      "contains": "test_credential_writes_require_a_connected_settings_host"
-    }
-  ],
-  "SR-06.05": [
-    {
-      "path": "scripts/dev/check-diagnostics.test.mjs",
-      "contains": "agent-secret"
-    }
-  ],
-  "SR-01.07": [
-    {
-      "path": "test/acceptance/07-relay-reconnect.md",
-      "contains": "TC-MOB-93"
-    }
-  ],
-  "SR-02.03": [
-    {
-      "path": "ios/DSHMobile/Modules/Core/Tests/HostEventHubTests.swift",
-      "contains": "test_a_waiting_prompt_is_promoted_and_kept_by_session"
-    }
-  ],
-  "SR-06.04": [
-    {
-      "path": "test/acceptance/06-about.md",
-      "contains": "TC-UI-103"
-    }
-  ],
-  "SR-06.06": [
-    {
-      "path": "ios/DSHMobile/Modules/Core/Tests/UpdateCheckerTests.swift",
-      "contains": "test_a_newer_published_build_raises_the_banner"
-    }
-  ],
-  "SR-01.02": [
-    {
-      "path": "plugins/mobile-link/test/cli-enroll.test.js",
-      "contains": "legacy invite codes are still accepted"
-    }
-  ],
-  "SR-01.11": [
-    {
-      "path": "test/acceptance/11-connector-install-guide.md",
-      "contains": "TC-MOB-203"
-    }
-  ],
-  "SR-06.01": [
-    {
-      "path": "test/acceptance/13-settings-permission.md",
-      "contains": "TC-MOB-205"
-    }
-  ],
-  "SR-04.01": [
-    {
-      "path": "test/coverage/release-policy.test.mjs",
-      "contains": "user-facing docs offer TestFlight",
-      "kind": "static"
-    }
-  ],
-  "SR-04.03": [
-    {
-      "path": "test/coverage/release-policy.test.mjs",
-      "contains": "TestFlight submission is the default",
-      "kind": "static"
-    }
-  ],
-  "SR-04.04": [
-    {
-      "path": "scripts/dev/plugin-hmr.test.mjs",
-      "contains": "status 变 on"
-    },
-    {
-      "path": "plugins/mobile-link/test/hotplug.test.js",
-      "contains": "disabling the plugin takes every route with it"
-    },
-    {
-      "path": "scripts/dev/check-plugin-hotplug.mjs",
-      "contains": "没有模块顶层定时器"
-    }
-  ],
-  "SR-06.03": [
-    {
-      "path": "ios/DSHMobile/DSHMobileUITests/SettingsCacheClearTests.swift",
-      "contains": "testClearCacheShowsTheClearedState"
-    }
-  ],
-  "SR-02.02": [
-    {
-      "path": "test/acceptance/14-background-resume.md",
-      "contains": "TC-MOB-206"
-    }
-  ],
-  "SR-02.10": [
-    {
-      "path": "ios/DSHMobile/DSHMobileUITests/WorkspaceHTMLPreviewTests.swift",
-      "contains": "testRenderedPreviewIsPresent"
+      "path": "plugins/mobile-link/test/link.test.js",
+      "contains": "看门狗在非连接态用 4003"
     }
   ],
   "SR-09.01": [
@@ -487,24 +519,6 @@
     {
       "path": "ios/DSHMobile/DSHMobileUITests/LocalizationSmokeTests.swift",
       "contains": "testEachShippedLocaleAppearsAtRuntime"
-    }
-  ],
-  "SR-08.08": [
-    {
-      "path": "relay-go/internal/monitor/monitor_test.go",
-      "contains": "TestPlannedReconnectNeverAlerts"
-    },
-    {
-      "path": "relay-go/internal/monitor/monitor_test.go",
-      "contains": "TestFlappingIsReportedOncePerDayPerAgent"
-    },
-    {
-      "path": "relay-go/internal/monitor/monitor_test.go",
-      "contains": "TestTheMiddlewareDoesNotAlertOnHostOffline"
-    },
-    {
-      "path": "plugins/mobile-link/test/link.test.js",
-      "contains": "看门狗在非连接态用 4003"
     }
   ]
 }
