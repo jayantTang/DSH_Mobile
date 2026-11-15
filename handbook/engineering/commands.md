@@ -7,7 +7,9 @@
 cd ios/DSHMobile/DSHKit && swift test        # 协议层单测。
                                              # LiveIntegrationTests 中有一条依赖本机真实会话；
                                              # 选中迁移被拒的那条（session-9d676f2d…）会失败，不是回归
-cd plugins/mobile-link && npm test           # 连接器单测
+cd plugins/mobile-link && npm test           # 连接器单包全量（仅发布门禁）
+                                             # 日常靶向/一次性脚本必须隔离身份：
+tmp="$(mktemp -d)"; DSH_HOME="$tmp" node --test plugins/mobile-link/test/link.test.js; rm -rf "$tmp"
 cd plugins/send-image && npm test            # 图片插件单测
 cd plugins/doubao-image && npm test          # 图片插件单测
 cd relay-go && make test                     # 中转（Go）；黑盒套件 make test-blackbox
@@ -29,6 +31,13 @@ cd ios/DSHMobile && xcodebuild -scheme DSHMobile \
 
 # 发布 App（OTA）
 ./scripts/release/deploy-ota.sh
+
+# 中转受控升级（owner 批准后；脚本自带冒烟、备份与失败自动回滚）
+./scripts/release/deploy-relay.sh --version go-X.Y.Z
+
+# 本机连接器刷新（先 prepare，改完 verify；失败自动恢复快照）
+node scripts/dev/refresh-connector.mjs prepare
+node scripts/dev/refresh-connector.mjs verify
 
 # App Store（凭据在 .env.local：ASC_KEY_ID / ASC_ISSUER_ID，脚本自行读取）
 node scripts/dev/asc.mjs builds              # 构建处理状态（只读）

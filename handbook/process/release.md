@@ -12,9 +12,24 @@
 
 tag 与 Release 不得出现 OTA 地址；分发策略见 `handbook/requirements/requirements.md` 的 SR-04.01。
 
+## 发布审批
+
+对外发布前先经 owner 明确同意，不得先发布后补报。范围包括 iOS TestFlight 与 App Store、连接器 npm 包、中转二进制、公共服务配置变更；提交给 owner 的内容至少写清版本、变更、影响范围与回滚方案，获批后把同意时间与原话写进发布记录。开发版 OTA 仍按下一节无需询问。
+
+连接器源码在本机 profile 里是 `link:` 链接，保存后会在宿主热更中立即生效；改连接器行为等同于改本机正在运行的服务，改完按 `handbook/process/operations.md` 的「本机连接器刷新」验证。
+
 ## 开发版 OTA
 
 开发改动验证通过后一律直接发布开发版 OTA（`./scripts/release/deploy-ota.sh`），无需事先询问。TestFlight 与 App Store 发布版只在用户主动要求时更新，用户确认满意后会主动提出（2026-09-21 要求）。
+
+## 中转部署与自动回滚
+
+中转是公共服务，刷新必须走 `./scripts/release/deploy-relay.sh`，不得手工 `scp` 二进制后裸 `systemctl restart`。
+
+- 脚本先在一次性端口与一次性库上冒烟新二进制；留档当前 `dsh-relay` 与 `build.json` 到 `bin/history/<version>/`；备份数据库；替换后等目标 `relayVersion` 健康，再观察 60 秒。
+- 观察期内连续 3 次健康检查失败，或服务自行重启（`NRestarts` 增长），必须自动回滚到上一份二进制与 `build.json` 并重启，不得只重试。
+- 替换前的任何失败都不得重启服务；自动回滚失败时按 `relay-go/deploy/README.md` §5 从留档手工恢复，并向 owner 报告，不得连续盲重启。
+- 部署后核对 `/healthz` 的 `relayVersion` 与 `build`、`systemctl is-active`、`NRestarts`、panic/5xx、连接器与设备自动重连；把留档路径与库备份写进发布记录。
 
 ## TestFlight
 

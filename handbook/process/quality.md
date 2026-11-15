@@ -23,6 +23,22 @@
 - 超时即视为失败，不得以延长等待或重复执行掩盖。
 - 例外：发布前门禁证据按 `scripts/verify/lanes.json` 的 required 格执行（`npm run check:lanes`），不属于用全量测试替代靶向测试；门禁检查不受 30 秒限制。
 
+## 连接器测试隔离
+
+连接器会把身份、配对码与链路流水写进 `DSH_HOME`（默认 `~/.dsh`）。用例与一次性脚本都必须先指到临时目录：
+
+```bash
+tmp="$(mktemp -d)"
+DSH_HOME="$tmp" node --test plugins/mobile-link/test/link.test.js
+rm -rf "$tmp"
+```
+
+- 不得用真实 `~/.dsh` 或真实 `agent.json` 跑连接器测试/探针；`MobileLinkAgent` 在身份解析时会把构造参数里的身份持久化到默认状态文件，临时脚本同样会覆盖真实身份。
+- 例外：本机连接器刷新工具 `scripts/dev/refresh-connector.mjs` 是运维工具，允许读真实链路流水，只写 `mobile-link/rollback/` 快照，不写身份文件。
+- 与身份相关的用例跑前跑后核对 `~/.dsh/mobile-link/agent.json` 的 sha256；有变化立即停止，按备份恢复后再继续，不得继续测试或重启宿主掩盖。
+- 真实链路验证只用 L1 隔离场景（`smoke` / `plugin-install-hot`）或一次性登记的身份；不得复用 owner 的现有身份。
+- 2026-11-15 事故：一次性调试脚本未设 `DSH_HOME`，测试身份被写进真实 `agent.json`，本机连接器离线 32 分钟。这是本条的强制理由。
+
 ## 测试有效性
 
 - 不得只断言 Mock 被调用，必须校验真实返回值、产物或状态迁移。

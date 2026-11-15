@@ -20,6 +20,15 @@
 - 未经审批发出视为违规；收件人不确定时先询问，不得猜测。
 - 发件存档（owner 2026-10-15 要求）：所有发给用户的信件（`reply` 回信、`notify` 单发或群发、`report --send` 给其他账号）发出后，必须同时在 owner 账号（`.env.local` 的 `DSH_ACCOUNT_ID`）的信件列表中保留一份存档，注明发送对象与发送人（owner 手发或系统代发）。`feedback.mjs` 已内置自动投递：发送成功后自动补一条「发件存档」通知，包含信件全文；仅发给 owner 自己的不存档。绕过包装脚本直接运行 `dsh-relay admin` 发信时，需手动补一份（`node scripts/dev/feedback.mjs notify --account <owner账号> --yes`）。存档收件人是 owner 本人，不需要再审批。
 
+## 本机连接器刷新
+
+本机 profile 的 `dsh-plugin-mobile-link` 指向仓库 `plugins/mobile-link`（`link:`），改 `lib/*.js` 后宿主热更会立刻用新代码重连。这不是普通源码编辑，而是对正在运行的本机连接器做一次刷新。
+
+- 改前运行 `node scripts/dev/refresh-connector.mjs prepare`：它检查链路当前健康，把 `lib/` 与 `package.json` 快照到 `~/.dsh/mobile-link/rollback/`，并记录 `agent.json` 的 sha256。
+- 改完运行 `node scripts/dev/refresh-connector.mjs verify`：默认等 2 分钟，期间出现新的 `link.open` 且稳定 5 秒即视为成功；超时未恢复会**自动把快照放回去**，回滚后再次验证成功退出码 1，回滚后仍不健康退出码 3。
+- 脚本发现 `agent.json` 的 sha256 变化会直接停止，不自动回滚身份；先人工确认身份，再决定是否重新登记。
+- 没有脚本结果或人工核对结果不得刷新；回滚后不要靠反复重启宿主掩盖原因。身份文件异常时从备份或已知身份恢复并验证，真实 `agentSecret` 不得进入报告或对话。
+
 ## 调试设备清理
 
 调试配对的设备不得残留（2026-09-21 要求）。
