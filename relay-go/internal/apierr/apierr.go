@@ -66,9 +66,30 @@ func WriteWithRequestID(w http.ResponseWriter, status int, code, message string,
 func WriteFor(w http.ResponseWriter, r *http.Request, status int, code, message string,
 	details map[string]any) string {
 	if status >= 500 {
+		// 电脑离线时手机请求文件必然失败，这是用户态的正常结果，不是中转事故：
+		// 告警只留真正需要人处理的服务端异常（SR-08.08）。
+		if code == "host/offline" {
+			suppressAlert(w)
+		}
 		return WriteWithRequestID(w, status, code, message, details, reqctx.ID(r.Context()))
 	}
 	return Write(w, status, code, message, details)
+}
+
+// suppressAlert 沿 ResponseWriter 的 Unwrap 链通知监控中间件：本次 5xx 属于
+// 协议内预期失败，不计入事故。中间件不在这条链上时静默返回。
+func suppressAlert(w http.ResponseWriter) {
+	for depth := 0; depth < 8; depth++ {
+		if suppressor, ok := w.(interface{ SuppressAlert() }); ok {
+			suppressor.SuppressAlert()
+			return
+		}
+		unwrapper, ok := w.(interface{ Unwrap() http.ResponseWriter })
+		if !ok {
+			return
+		}
+		w = unwrapper.Unwrap()
+	}
 }
 
 // WriteStoreError 把仓储层错误兜底成 5xx JSON 信封，返回实际写出的 code。

@@ -488,5 +488,23 @@
       "path": "ios/DSHMobile/DSHMobileUITests/LocalizationSmokeTests.swift",
       "contains": "testEachShippedLocaleAppearsAtRuntime"
     }
+  ],
+  "SR-08.08": [
+    {
+      "path": "relay-go/internal/monitor/monitor_test.go",
+      "contains": "TestPlannedReconnectNeverAlerts"
+    },
+    {
+      "path": "relay-go/internal/monitor/monitor_test.go",
+      "contains": "TestFlappingIsReportedOncePerDayPerAgent"
+    },
+    {
+      "path": "relay-go/internal/monitor/monitor_test.go",
+      "contains": "TestTheMiddlewareDoesNotAlertOnHostOffline"
+    },
+    {
+      "path": "plugins/mobile-link/test/link.test.js",
+      "contains": "看门狗在非连接态用 4003"
+    }
   ]
 }

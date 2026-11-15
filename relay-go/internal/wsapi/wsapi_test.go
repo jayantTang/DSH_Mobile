@@ -655,7 +655,7 @@ func TestTheDeviceLimitIsRefusedOnTheWire(t *testing.T) {
 }
 
 // TestAnAgentDisconnectAlertCarriesTheClosersCodeAndAddress 钉住端到端的那一条：
-// 连接器主动关闭（1000 + 原因）与 X-Forwarded-For 里的真实地址都要进告警。
+// 连接器异常关闭（4003 看门狗超时 + 原因）与 X-Forwarded-For 里的真实地址都要进告警。
 // 没有这两项，"连接反复断开"只能看出抖，分不清是连接器自己的重连循环还是中转判死。
 func TestAnAgentDisconnectAlertCarriesTheClosersCodeAndAddress(t *testing.T) {
 	dir := t.TempDir()
@@ -675,7 +675,7 @@ func TestAnAgentDisconnectAlertCarriesTheClosersCodeAndAddress(t *testing.T) {
 	if err != nil {
 		t.Fatalf("拨号失败：%v", err)
 	}
-	if err := conn.Close(websocket.StatusNormalClosure, "reconnecting"); err != nil {
+	if err := conn.Close(websocket.StatusCode(4003), "watchdog timeout"); err != nil {
 		t.Fatalf("关闭失败：%v", err)
 	}
 
@@ -684,14 +684,44 @@ func TestAnAgentDisconnectAlertCarriesTheClosersCodeAndAddress(t *testing.T) {
 		t.Fatalf("告警 = %+v", records)
 	}
 	details := records[0].Details
-	if fmt.Sprint(details["lastCloseCode"]) != "1000" {
+	if fmt.Sprint(details["lastCloseCode"]) != "4003" {
 		t.Fatalf("lastCloseCode = %v", details["lastCloseCode"])
 	}
-	if details["lastCloseReason"] != "reconnecting" {
+	if details["lastCloseReason"] != "watchdog timeout" {
 		t.Fatalf("lastCloseReason = %v", details["lastCloseReason"])
 	}
 	if details["clientIp"] != "203.0.113.7" {
 		t.Fatalf("clientIp = %v", details["clientIp"])
+	}
+}
+
+// TestAPlannedAgentDisconnectDoesNotAlert：连接器以 1000 主动停下/重连时，
+// 中转不能把它算成抖动（SR-08.08）；宿主重启、热更都走这条路径。
+func TestAPlannedAgentDisconnectDoesNotAlert(t *testing.T) {
+	dir := t.TempDir()
+	incidents := monitor.New(monitor.Options{
+		AlertDir: dir, FlapWindow: time.Second, FlapThreshold: 1,
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	fixture := newRelayWithMonitor(t, incidents)
+
+	header := http.Header{}
+	header.Set("Authorization", "Bearer "+fixture.tenant.secret)
+	ctx, cancel := context.WithTimeout(context.Background(), readTimeout)
+	defer cancel()
+	conn, _, err := websocket.Dial(ctx, fixture.wsURL(fixture.agentPath()),
+		&websocket.DialOptions{HTTPHeader: header})
+	if err != nil {
+		t.Fatalf("拨号失败：%v", err)
+	}
+	if err := conn.Close(websocket.StatusNormalClosure, "reconnecting"); err != nil {
+		t.Fatalf("关闭失败：%v", err)
+	}
+	// 拆除与落盘都在 handler 里异步完成：留出足够窗口再断言"没有告警"。
+	time.Sleep(500 * time.Millisecond)
+	payload, err := os.ReadFile(filepath.Join(dir, monitor.QueueName))
+	if err == nil && strings.TrimSpace(string(payload)) != "" {
+		t.Fatalf("正常关闭 1000 不该产生告警：%s", payload)
 	}
 }
 

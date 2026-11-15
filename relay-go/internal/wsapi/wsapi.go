@@ -447,8 +447,8 @@ func (h *Handlers) noteSurrogate(link *hub.AgentLink, wire dlp.Wire,
 
 // noteReadCause 把"读循环为什么结束"记进链路。
 //
-// 关闭帧是连接器那边唯一能直接说明"我自己要重连"的证据（1000 + 原因），读失败的
-// 其余情况一律记 1006：中转自己的关闭（心跳判死、顶替、撤销）在此之前就已经记过
+// 关闭帧是连接器那边唯一能直接说明"我自己要重连"的证据（1000 计划内，4003/4004
+// 自愈失败），读失败的其余情况一律记 1006：中转自己的关闭（心跳判死、顶替、撤销）在此之前就已经记过
 // 原因，第一个写入的说了算，不会被这里覆盖。
 func noteReadCause(link *hub.Link, err error) {
 	if status := websocket.CloseStatus(err); status != -1 {

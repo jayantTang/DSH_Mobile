@@ -43,6 +43,8 @@ Environment=DLP_ALERT_MAX_PER_HOUR=6
 Environment=DLP_ALERT_MAX_PER_DAY=40
 Environment=DLP_ALERT_FLAP_WINDOW_S=300
 Environment=DLP_ALERT_FLAP_THRESHOLD=5
+# 同一主机同一类抖动 24 小时最多一封；1000（计划内重连）不计入。
+Environment=DLP_ALERT_FLAP_RENOTIFY_HOURS=24
 # "上游落单代理项按天抽样"的上限也做成了变量；默认 20。
 Environment=DLP_ALERT_SURROGATE_SAMPLES=20
 

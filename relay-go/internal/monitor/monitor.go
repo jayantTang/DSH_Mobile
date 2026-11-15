@@ -76,7 +76,7 @@ type Options struct {
 	//
 	// 抖动是持续状态，不是一个个新事件：按窗口重报会把一次事故刷成几十封，
 	// 而且每封都标"新类别"（2026-11-13 实测：14 天 82 条抖动告警里 72 条来自
-	// 同一台主机）。默认一小时，与 exceptions 的 24 小时分开。
+	// 同一台主机；2026-11-15 复核后把重报间隔改为 24 小时）。
 	FlapRenotify           time.Duration
 	SurrogateSamplesPerDay int
 }
@@ -115,8 +115,9 @@ type stateFile struct {
 
 // AgentDisconnect 是一次连接器断开的现场。
 //
-// 告警要回答的不是"断了吗"，而是"谁关的"：关闭码 1000 是连接器自己拆掉再重连，
-// 1001 是中转（心跳判定、顶替、撤销）主动关，1006 是没走关闭握手的异常断开。
+// 告警要回答的不是"断了吗"，而是"谁关的"：关闭码 1000 是连接器计划内停止或重连，
+// 4003/4004 是连接器的看门狗/心跳自愈失败，1001 是中转（心跳判定、顶替、撤销）
+// 主动关，1006 是没走关闭握手的异常断开。
 // 缺了这一位，"连接反复断开"只能说明抖，定位不到责任方。
 // ClientIP 是前置后面的真实客户端地址（socket 对端在部署里永远是前置的回环地址）。
 type AgentDisconnect struct {
@@ -228,7 +229,7 @@ func New(options Options) *Monitor {
 		options.FlapThreshold = 5
 	}
 	if options.FlapRenotify == 0 {
-		options.FlapRenotify = time.Hour
+		options.FlapRenotify = 24 * time.Hour
 	}
 	if options.SurrogateSamplesPerDay == 0 {
 		options.SurrogateSamplesPerDay = 20
@@ -302,7 +303,7 @@ func FromEnv(getenv func(string) string, logger *slog.Logger) *Monitor {
 		FlapThreshold: maxInt(1,
 			int(math.Trunc(number("DLP_ALERT_FLAP_THRESHOLD", 5)))),
 		FlapRenotify: time.Duration(
-			math.Max(0, number("DLP_ALERT_FLAP_RENOTIFY_HOURS", 1)) * float64(time.Hour)),
+			math.Max(0, number("DLP_ALERT_FLAP_RENOTIFY_HOURS", 24)) * float64(time.Hour)),
 		SurrogateSamplesPerDay: maxInt(0,
 			int(math.Trunc(number("DLP_ALERT_SURROGATE_SAMPLES", 20)))),
 	})
@@ -446,7 +447,7 @@ func (m *Monitor) NoteHTTPStatus(method, path, requestID string, status int) {
 // NoteAgentDisconnect 记录一条 agent 链路断了。窗口内断够次数才算"抖"。
 //
 // 类别键只按主机（`flap:<agentId>`），不带窗口序号：抖动是同一台主机的持续状态，
-// 不是每个窗口一个新事件。同一台主机两次告警至少隔 flapRenotify（默认一小时），
+// 不是每个窗口一个新事件。同一台主机两次告警至少隔 flapRenotify（默认 24 小时），
 // 期间的断开只累计次数。这样一次持续数小时的事故是一封告警（累计 N 次），
 // 而不是几十封都写着"新类别、累计 1 次"。
 //
@@ -462,6 +463,15 @@ func (m *Monitor) NoteAgentDisconnect(disconnect AgentDisconnect) {
 
 	agentID := disconnect.AgentID
 	now := m.nowSeconds()
+	key := "flap:" + agentID
+	// 计划内停止与重连（1000）不是故障：连接器用 4003/4004 报真正的自愈失败，
+	// 中转不再把每次正常重连都算成"反复断开"（SR-08.08）。
+	if isPlannedClose(disconnect.CloseCode) {
+		m.endFlapEpisodeLocked(agentID, now, disconnect.Lifetime >= m.flapWindow)
+		return
+	}
+	// 一条连接正常存续满一个抖动窗口，说明上一轮事故已经过去：清零重来。
+	m.endFlapEpisodeLocked(agentID, now, disconnect.Lifetime >= m.flapWindow)
 	window := append(m.flaps[agentID], flapEvent{at: now, code: disconnect.CloseCode})
 	cutoff := now - m.flapWindow.Seconds()
 	for len(window) > 0 && window[0].at < cutoff {
@@ -474,7 +484,6 @@ func (m *Monitor) NoteAgentDisconnect(disconnect AgentDisconnect) {
 		return
 	}
 
-	key := "flap:" + agentID
 	occurrences := m.flapPending[agentID]
 	m.flapPending[agentID] = 0
 	display := disconnect.Name
@@ -513,6 +522,34 @@ func (m *Monitor) NoteAgentDisconnect(disconnect AgentDisconnect) {
 				disconnect.CloseReason, disconnect.ClientIP)),
 		details: details,
 	}, now)
+}
+
+// isPlannedClose 报告关闭码是否表示连接器的计划内停止或重连。
+//
+// 1000 是唯一正常关闭：连接器面板停用、宿主重启/热更、用户主动重连都走它。
+// 看门狗超时（4003）与心跳超时（4004）是自愈失败，属于异常，不能一起放过。
+func isPlannedClose(code int) bool { return code == 1000 }
+
+// endFlapEpisodeLocked 在连接已正常存续满窗口时清掉上一轮抖动的计数与去重状态：
+// 下一次异常是新一轮事故，应立即告警，而不是等 24 小时的重报窗口。
+//
+// 保留 seen 条目本身（不删类别），这样正文仍标"再次出现"而不是"新类别"。
+func (m *Monitor) endFlapEpisodeLocked(agentID string, now float64, recovered bool) {
+	if !recovered {
+		return
+	}
+	delete(m.flaps, agentID)
+	delete(m.flapPending, agentID)
+	key := "flap:" + agentID
+	entry, exists := m.seen[key]
+	if !exists {
+		return
+	}
+	entry.Count = 0
+	entry.FirstTS = now
+	entry.AlertedTS = 0
+	m.seen[key] = entry
+	m.stateDirty = true
 }
 
 // countCloseCodes 把窗口内的关闭码折成"码 → 次数"（告警详情用）。
@@ -575,6 +612,12 @@ func closeCodeLabel(code int) string {
 		return "中转关闭 1001"
 	case 1006:
 		return "异常断开 1006"
+	case 4002:
+		return "连接器协议错误 4002"
+	case 4003:
+		return "看门狗超时 4003"
+	case 4004:
+		return "心跳超时 4004"
 	default:
 		return fmt.Sprintf("关闭码 %d", code)
 	}
@@ -996,6 +1039,10 @@ type statusRecorder struct {
 	// silent 为 true 时不把状态码算成事故（panic 已经单独记过）。
 	silent bool
 }
+
+// SuppressAlert 让本次响应不计成事故；apierr 对协议内预期的 5xx（如电脑离线）
+// 在写响应前调用。panic 路径复用同一个标记，避免同一请求记两遍。
+func (r *statusRecorder) SuppressAlert() { r.silent = true }
 
 func (r *statusRecorder) WriteHeader(status int) {
 	if r.wroteHeader {

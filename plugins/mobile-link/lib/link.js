@@ -36,6 +36,12 @@ import { connect as wsConnect } from './ws.js'
 
 const PROTOCOL_VERSION = 1
 
+// WebSocket 关闭码：中转据此区分"计划内重连"和"需要处理的异常"（SR-08.08）。
+// 4002 已用于中转协议错误；这里补上两类自愈失败的码，不要再把 1000 复用给它们。
+const CLOSE_NORMAL = 1000
+const CLOSE_WATCHDOG = 4003
+const CLOSE_HEARTBEAT = 4004
+
 
 function sleep(ms, signal) {
   return new Promise((resolve) => {
@@ -737,7 +743,7 @@ export class MobileLinkAgent extends EventEmitter {
         this.lastError = `relay 超过 ${Math.round(idle / 1000)}s 没有动静（看门狗拆连接）`
         this.journal.record('watchdog.drop', { idleMs: Math.round(idle), state: this.state })
         this.logger.warn?.(`mobile-link: ${this.lastError}`)
-        this.#teardownSocket(this.lastError)
+        this.#teardownSocket(this.lastError, CLOSE_HEARTBEAT, 'heartbeat timeout')
         this._lastProgressAt = this.now()
         return
       }
@@ -745,7 +751,7 @@ export class MobileLinkAgent extends EventEmitter {
         this.lastError = `链路 ${Math.round(idle / 1000)}s 没有进展（看门狗重建连接）`
         this.journal.record('watchdog.drop', { idleMs: Math.round(idle), state: this.state })
         this.logger.warn?.(`mobile-link: ${this.lastError}`)
-        this.#teardownSocket(this.lastError)
+        this.#teardownSocket(this.lastError, CLOSE_WATCHDOG, 'watchdog timeout')
         this._lastProgressAt = this.now()
       }
     }, every)
@@ -763,7 +769,7 @@ export class MobileLinkAgent extends EventEmitter {
       if (this.now() - this._lastPong > this.pongTimeoutMs) {
         this.lastError = `relay stopped answering pings (>${this.pongTimeoutMs}ms)`
         this.logger.warn?.(`mobile-link: ${this.lastError}`)
-        this.#teardownSocket(this.lastError)
+        this.#teardownSocket(this.lastError, CLOSE_HEARTBEAT, 'heartbeat timeout')
         return
       }
       this.#rawSend({ t: 'ping', ts: this.now() })
@@ -776,14 +782,14 @@ export class MobileLinkAgent extends EventEmitter {
     this._heartbeat = undefined
   }
 
-  #teardownSocket(reason) {
+  #teardownSocket(reason, closeCode = CLOSE_NORMAL, closeReason = 'reconnecting') {
     this.#stopHeartbeat()
     const socket = this.socket
     const from = this.state
     this.socket = undefined
     if (socket) {
       try {
-        socket.close(1000, 'reconnecting')
+        socket.close(closeCode, closeReason)
       } catch {
         /* already gone */
       }
@@ -800,6 +806,7 @@ export class MobileLinkAgent extends EventEmitter {
     // connectedForMs 用来区分"刚连上就掉"和"挂了很久才掉"。
     this.journal.record('link.close', {
       reason,
+      closeCode,
       from,
       connectedForMs: this.connectedAt === undefined ? undefined : this.now() - this.connectedAt,
       // 有系统错误才带这个字段（正常关闭时不该凭空多一个 null）。

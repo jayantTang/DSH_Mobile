@@ -17,15 +17,17 @@ import (
 
 	"github.com/coder/websocket"
 
+	"github.com/jayantTang/DSH_Mobile/relay-go/internal/apierr"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/dlp"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/monitor"
 )
 
 // ── 夹具 ───────────────────────────────────────────────────────────────────
 
-// disconnectOf 是"一次不带细节的断开"：多数用例只关心窗口计数。
+// disconnectOf 是"一次不带细节的异常断开"：多数用例只关心窗口计数。
+// 1006 = 读失败，正常重连用的 1000 不计入抖动（SR-08.08）。
 func disconnectOf(agentID, name string) monitor.AgentDisconnect {
-	return monitor.AgentDisconnect{AgentID: agentID, Name: name, CloseCode: 1000}
+	return monitor.AgentDisconnect{AgentID: agentID, Name: name, CloseCode: 1006}
 }
 
 // testClock 是可推进的时钟（Python 用例的 `_clock`）。
@@ -199,7 +201,7 @@ func TestTheHourlyCapSuppressesAndReportsWhatItDropped(t *testing.T) {
 	}
 }
 
-func TestFlappingIsReportedOncePerHourPerAgent(t *testing.T) {
+func TestFlappingIsReportedOncePerDayPerAgent(t *testing.T) {
 	clock := newClock()
 	dir := t.TempDir()
 	m := newMonitor(t, dir, clock, monitor.Options{
@@ -225,34 +227,133 @@ func TestFlappingIsReportedOncePerHourPerAgent(t *testing.T) {
 		t.Fatalf("累计次数 = %d，应为 5", records[0].Count)
 	}
 
-	// 一小时内同一台主机继续抖：不再打扰，计数照常累计。
+	// 一天内同一台主机继续抖：不再打扰，计数照常累计。
 	clock.advance(600)
 	for index := 0; index < 6; index++ {
 		m.NoteAgentDisconnect(disconnectOf("agt_1", "Windows-PC"))
 		clock.advance(10)
 	}
+	clock.advance(3600)
+	for index := 0; index < 5; index++ {
+		m.NoteAgentDisconnect(disconnectOf("agt_1", "Windows-PC"))
+		clock.advance(10)
+	}
 	if len(readRecords(t, dir)) != 1 {
-		t.Fatal("一小时内同一台主机只该报一次")
+		t.Fatal("24 小时内同一台主机只该报一次")
 	}
 
-	// 过了一小时再抖：报第二次，标"再次出现"，累计到真实总数。
-	clock.advance(3600)
+	// 满 24 小时再抖：报第二次，标"再次出现"，累计到真实总数。
+	clock.advance(24 * 3600)
 	for index := 0; index < 5; index++ {
 		m.NoteAgentDisconnect(disconnectOf("agt_1", "Windows-PC"))
 		clock.advance(10)
 	}
 	records = readRecords(t, dir)
 	if len(records) != 2 {
-		t.Fatalf("一小时后的新抖动应当再报一次：%d 条", len(records))
+		t.Fatalf("24 小时后的新抖动应当再报一次：%d 条", len(records))
 	}
 	if records[1].NewCategory {
 		t.Fatal("同一台主机的后续抖动不该标成新类别")
 	}
-	if records[1].Count != 16 {
-		t.Fatalf("累计次数 = %d，应为 5+6+5=16", records[1].Count)
+	// 5 + 6 + 5 + 5 = 21 次真实断开。
+	if records[1].Count != 21 {
+		t.Fatalf("累计次数 = %d，应为 5+6+5+5=21", records[1].Count)
 	}
 	if records[1].Key != "flap:agt_1" {
 		t.Fatalf("类别键 = %q，应为按主机的 flap:agt_1", records[1].Key)
+	}
+}
+
+// TestPlannedReconnectNeverAlerts：计划内停止、重连、宿主热更都用 1000；
+// 连续 100 次也不该变成"连接器反复断开"（SR-08.08）。
+func TestPlannedReconnectNeverAlerts(t *testing.T) {
+	clock := newClock()
+	dir := t.TempDir()
+	m := newMonitor(t, dir, clock, monitor.Options{FlapThreshold: 5})
+	for index := 0; index < 100; index++ {
+		m.NoteAgentDisconnect(monitor.AgentDisconnect{
+			AgentID: "agt_1", Name: "Mac", CloseCode: 1000,
+			CloseReason: "reconnecting", Lifetime: 15 * time.Second,
+		})
+		clock.advance(1)
+	}
+	if records := readRecords(t, dir); len(records) != 0 {
+		t.Fatalf("计划内重连不该告警：%+v", records)
+	}
+}
+
+// TestWatchdogAndHeartbeatTimeoutsAreAbnormal：连接器把两类自愈失败用 4003/4004
+// 报出来，中转必须照常计入抖动，不能因为过滤 1000 把真正的故障一起漏掉。
+func TestWatchdogAndHeartbeatTimeoutsAreAbnormal(t *testing.T) {
+	clock := newClock()
+	dir := t.TempDir()
+	m := newMonitor(t, dir, clock, monitor.Options{FlapThreshold: 5})
+	for index := 0; index < 5; index++ {
+		m.NoteAgentDisconnect(monitor.AgentDisconnect{
+			AgentID: "agt_1", Name: "Mac", CloseCode: 4003,
+			CloseReason: "watchdog timeout",
+		})
+		clock.advance(10)
+	}
+	records := readRecords(t, dir)
+	if len(records) != 1 {
+		t.Fatalf("看门狗超时 5 次应当告警：%d 条", len(records))
+	}
+	if summary := records[0].Summary; !strings.Contains(summary, "看门狗超时 4003 5 次") {
+		t.Fatalf("summary 缺少 4003：%s", summary)
+	}
+
+	clock.advance(24 * 3600)
+	for index := 0; index < 5; index++ {
+		m.NoteAgentDisconnect(monitor.AgentDisconnect{
+			AgentID: "agt_1", Name: "Mac", CloseCode: 4004,
+			CloseReason: "heartbeat timeout",
+		})
+		clock.advance(10)
+	}
+	records = readRecords(t, dir)
+	if len(records) != 2 || records[1].Count != 10 {
+		t.Fatalf("心跳超时也要计入并累计：%+v", records)
+	}
+}
+
+// TestAHealthyConnectionEndsTheFlapEpisode：一条连接正常存续满抖动窗口，
+// 说明上一轮事故已经过去；下一次异常重新计数并立即告警。
+func TestAHealthyConnectionEndsTheFlapEpisode(t *testing.T) {
+	clock := newClock()
+	dir := t.TempDir()
+	m := newMonitor(t, dir, clock, monitor.Options{
+		FlapWindow: 300 * time.Second, FlapThreshold: 5,
+	})
+	for index := 0; index < 5; index++ {
+		m.NoteAgentDisconnect(disconnectOf("agt_1", "Windows-PC"))
+		clock.advance(10)
+	}
+	if records := readRecords(t, dir); len(records) != 1 {
+		t.Fatalf("首轮应当告警：%d 条", len(records))
+	}
+
+	// 一小时后，断开的是一条已经正常跑了 10 分钟的连接：视为恢复，计数清零。
+	clock.advance(3600)
+	healthy := disconnectOf("agt_1", "Windows-PC")
+	healthy.Lifetime = 10 * time.Minute
+	m.NoteAgentDisconnect(healthy)
+	if records := readRecords(t, dir); len(records) != 1 {
+		t.Fatalf("恢复判定本身不该告警：%d 条", len(records))
+	}
+	for index := 0; index < 4; index++ {
+		m.NoteAgentDisconnect(disconnectOf("agt_1", "Windows-PC"))
+		clock.advance(10)
+	}
+	records := readRecords(t, dir)
+	if len(records) != 2 {
+		t.Fatalf("恢复后的新一轮抖动应当立即告警：%d 条", len(records))
+	}
+	if records[1].Count != 5 {
+		t.Fatalf("新一轮的累计应重新从 5 开始：%d", records[1].Count)
+	}
+	if records[1].NewCategory {
+		t.Fatal("同一主机同一类别恢复后再犯，不该标成新类别")
 	}
 }
 
@@ -294,8 +395,8 @@ func TestFlapAlertSaysWhoClosedTheLink(t *testing.T) {
 	})
 	for index := 0; index < 4; index++ {
 		m.NoteAgentDisconnect(monitor.AgentDisconnect{
-			AgentID: "agt_1", Name: "Windows-PC", CloseCode: 1000,
-			CloseReason: "reconnecting", ClientIP: "203.0.113.7",
+			AgentID: "agt_1", Name: "Windows-PC", CloseCode: 1006,
+			CloseReason: "read failed", ClientIP: "203.0.113.7",
 			ConnectorVersion: "0.7.0", HostVersion: "0.2.1-rc.2",
 			Lifetime: 3 * time.Second, LastInboundAge: 4 * time.Second,
 		})
@@ -317,7 +418,7 @@ func TestFlapAlertSaysWhoClosedTheLink(t *testing.T) {
 	if !ok {
 		t.Fatalf("closeCodes = %#v", details["closeCodes"])
 	}
-	if fmt.Sprint(codes["1000"]) != "4" || fmt.Sprint(codes["1001"]) != "1" {
+	if fmt.Sprint(codes["1006"]) != "4" || fmt.Sprint(codes["1001"]) != "1" {
 		t.Fatalf("closeCodes = %v", codes)
 	}
 	if fmt.Sprint(details["lastCloseCode"]) != "1001" {
@@ -339,7 +440,7 @@ func TestFlapAlertSaysWhoClosedTheLink(t *testing.T) {
 		t.Fatalf("版本没有进告警：%v", details)
 	}
 	summary := records[0].Summary
-	for _, want := range []string{"对端关闭 1000 4 次", "中转关闭 1001 1 次", "heartbeat timeout", "203.0.113.7"} {
+	for _, want := range []string{"异常断开 1006 4 次", "中转关闭 1001 1 次", "heartbeat timeout", "203.0.113.7"} {
 		if !strings.Contains(summary, want) {
 			t.Fatalf("summary 缺少 %q：%s", want, summary)
 		}
@@ -637,6 +738,41 @@ func TestTheMiddlewareRecordsA5xxButIgnoresNormalHTTPErrors(t *testing.T) {
 	}
 }
 
+// TestTheMiddlewareDoesNotAlertOnHostOffline：电脑离线时手机点下载得到 503，
+// 这是用户态正常失败，不是中转事故（SR-08.08）；真正的 500 仍然要告警。
+func TestTheMiddlewareDoesNotAlertOnHostOffline(t *testing.T) {
+	dir := t.TempDir()
+	clock := newClock()
+	m := newMonitor(t, dir, clock, monitor.Options{})
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /files/down", func(w http.ResponseWriter, r *http.Request) {
+		apierr.WriteFor(w, r, http.StatusServiceUnavailable, "host/offline",
+			"the PC connector is not connected", nil)
+	})
+	mux.HandleFunc("GET /files/broken", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	handler := monitor.Middleware(m, testLogger())(mux)
+
+	request := httptest.NewRequest(http.MethodGet, "/files/down", nil)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("状态码 = %d", recorder.Code)
+	}
+	if records := readRecords(t, dir); len(records) != 0 {
+		t.Fatalf("电脑离线的 503 不该告警：%+v", records)
+	}
+
+	request = httptest.NewRequest(http.MethodGet, "/files/broken", nil)
+	recorder = httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	records := readRecords(t, dir)
+	if len(records) != 1 || fmt.Sprint(records[0].Details["status"]) != "500" {
+		t.Fatalf("真正的 5xx 仍要告警：%+v", records)
+	}
+}
+
 // TestTheMiddlewareRecordsTheRouteTemplate 钉住 B4：告警归类的 path 是 mux 的
 // 路由模板，不是真实请求路径——参数值不进告警通道，同类端点的 5xx 才能聚合。
 func TestTheMiddlewareRecordsTheRouteTemplate(t *testing.T) {
@@ -821,13 +957,14 @@ func TestTakeQueueDiscardsAnEmptyQueue(t *testing.T) {
 func TestFromEnvReadsTheOperatorSwitches(t *testing.T) {
 	dir := t.TempDir()
 	values := map[string]string{
-		"DLP_ALERT_DIR":               dir,
-		"DLP_ALERT_RENOTIFY_HOURS":    "1.5",
-		"DLP_ALERT_MAX_PER_HOUR":      "2",
-		"DLP_ALERT_MAX_PER_DAY":       "9",
-		"DLP_ALERT_FLAP_WINDOW_S":     "60",
-		"DLP_ALERT_FLAP_THRESHOLD":    "3",
-		"DLP_ALERT_SURROGATE_SAMPLES": "0",
+		"DLP_ALERT_DIR":                 dir,
+		"DLP_ALERT_RENOTIFY_HOURS":      "1.5",
+		"DLP_ALERT_MAX_PER_HOUR":        "2",
+		"DLP_ALERT_MAX_PER_DAY":         "9",
+		"DLP_ALERT_FLAP_WINDOW_S":       "60",
+		"DLP_ALERT_FLAP_THRESHOLD":      "3",
+		"DLP_ALERT_FLAP_RENOTIFY_HOURS": "12",
+		"DLP_ALERT_SURROGATE_SAMPLES":   "0",
 	}
 	m := monitor.FromEnv(func(name string) string { return values[name] }, testLogger())
 	if !m.Enabled() {
@@ -843,6 +980,9 @@ func TestFromEnvReadsTheOperatorSwitches(t *testing.T) {
 	}
 	if window, ok := described["flapWindowSeconds"].(float64); !ok || window != 60 {
 		t.Fatalf("flapWindowSeconds = %v", described["flapWindowSeconds"])
+	}
+	if hours, ok := described["flapRenotifyHours"].(float64); !ok || hours != 12 {
+		t.Fatalf("flapRenotifyHours = %v", described["flapRenotifyHours"])
 	}
 
 	if monitor.FromEnv(func(string) string { return "" }, testLogger()).Enabled() {

@@ -903,6 +903,72 @@ test('看门狗：单次心跳停摆时也会把卡住的会话拆掉重连', as
   assert.ok(warnings.some((message) => message.includes('看门狗')),
     `看门狗应该报出它动手了（实际日志：${warnings.join(' | ') || '空'}）`)
   assert.ok(sockets[0].closed, '卡住的那条 socket 应该被拆掉')
+  assert.equal(sockets[0].closeCode, 4004, '连接态下心跳静默由看门狗按心跳超时 4004 拆链')
+})
+
+test('心跳停摆用 4004 关闭，中转才能把它算成异常', async () => {
+  const sockets = []
+  const agent = new MobileLinkAgent({
+    dshClient: new FakeDsh(),
+    logger: { debug() {}, info() {}, warn() {}, error() {} },
+    relayUrl: 'ws://relay.test',
+    agentId: 'agt_1',
+    agentSecret: 'as_1',
+    heartbeatMs: 20, pongTimeoutMs: 1, watchdogMs: 180000,
+    connectImpl: async () => {
+      const socket = new ConnectedSocket()
+      sockets.push(socket)
+      return socket
+    },
+  })
+  agent.identity = { agentId: 'agt_1', agentSecret: 'as_1', relayUrl: 'ws://relay.test' }
+  agent.needsEnroll = false
+  await agent.start()
+  await new Promise((resolve) => setTimeout(resolve, 80))
+  await agent.stop()
+  assert.ok(sockets[0]?.closed, '心跳超时必须拆掉 socket')
+  assert.equal(sockets[0].closeCode, 4004, '心跳超时必须用 4004')
+})
+
+test('看门狗在非连接态用 4003 关闭，和中转协议错误 4002 区分开', async () => {
+  const socket = new FakeSocket()
+  const holder = {}
+  const agent = new MobileLinkAgent({
+    dshClient: new FakeDsh(),
+    logger: { debug() {}, info() {}, warn() {}, error() {} },
+    relayUrl: 'ws://relay.test',
+    agentId: 'agt_1',
+    agentSecret: 'as_1',
+    watchdogMs: 40, heartbeatMs: 60000, pongTimeoutMs: 2,
+    connectImpl: async () => {
+      // 模拟"握到了一条 socket、但会话没进连接态"：看门狗这时负责拆链。
+      holder.agent.socket = socket
+      throw new Error('relay unreachable')
+    },
+  })
+  holder.agent = agent
+  agent.identity = { agentId: 'agt_1', agentSecret: 'as_1', relayUrl: 'ws://relay.test' }
+  agent.needsEnroll = false
+  await agent.start()
+  await until(() => socket.closeCode === 4003, '看门狗应当以 4003 拆链', 4000)
+  await agent.stop()
+  assert.equal(socket.closeCode, 4003)
+})
+
+test('计划内停止用正常关闭 1000，不能触发中转抖动告警', async () => {
+  const socket = new FakeSocket()
+  const agent = new MobileLinkAgent({
+    dshClient: new FakeDsh(),
+    logger: { debug() {}, info() {}, warn() {}, error() {} },
+    relayUrl: 'ws://relay.test',
+    agentId: 'agt_1',
+    agentSecret: 'as_1',
+  })
+  agent.socket = socket
+  agent.state = 'connected'
+  agent._lastPong = Date.now()
+  await agent.stop()
+  assert.equal(socket.closeCode, 1000, '正常停止必须是 1000')
 })
 
 test('重复实例：新 Link 启动会先停掉上一个（热更不会留下两条连接）', async () => {
