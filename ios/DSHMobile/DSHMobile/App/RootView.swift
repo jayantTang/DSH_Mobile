@@ -146,6 +146,9 @@ struct RootView: View {
                 // 这条钩子是唯一能自动验到 P-3 改的那段代码的入口。
                 // 相册选图无法用 XCUITest 驱动（跨进程系统选择器），这条钩子把同一份
                 // 「原图 Data + 解码位图」直接放进草稿；发送仍由用例点发送按钮触发。
+                // `#if DEBUG` 与 `stageImageForAutomation` 的可用性一致：Release 里
+                // 那个方法根本不存在，不包起来 archive 会编译失败。
+                #if DEBUG
                 if let path = Self.automationStageImage() {
                     for _ in 0..<40 where chatModel.session == nil {
                         try? await Task.sleep(for: .milliseconds(250))
@@ -153,6 +156,7 @@ struct RootView: View {
                     Composer.stageImageForAutomation(path, into: chatModel)
                     return
                 }
+                #endif
                 if let path = Self.automationStageFile() {
                     for _ in 0..<40 where chatModel.session == nil {
                         try? await Task.sleep(for: .milliseconds(250))
