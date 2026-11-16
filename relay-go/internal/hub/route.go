@@ -239,8 +239,11 @@ func (h *Hub) RouteFromAgent(link *AgentLink, wire dlp.Wire) {
 }
 
 // classOf 把帧类型映射成背压类别。
+//
+// 只有 item（会话事件流）可丢：丢了可以重拉。res 是一元响应的唯一载体，
+// 丢了调用方只能等超时，归必达。
 func classOf(kind []byte) Class {
-	if dlp.IsStreamingKind(kind) {
+	if dlp.IsDroppableStreamKind(kind) {
 		return ClassStream
 	}
 	return ClassControl

@@ -464,6 +464,15 @@ func IsStreamingKind(kind []byte) bool {
 	return sameBytes(kind, "res") || sameBytes(kind, "item")
 }
 
+// IsDroppableStreamKind 判断流式帧在背压时能不能丢：只有 item 能丢。
+//
+// res 是一元调用的唯一响应，没有"重试或跳过"的语义——丢了调用方只能等超时
+// （App 侧是 60 秒）。2026-11-16 之前 res 与 item 同归 ClassStream，队列满时被
+// 静默丢弃，原因恰恰是当时把它们当成了同一种东西。背压分流必须按这条区分。
+func IsDroppableStreamKind(kind []byte) bool {
+	return sameBytes(kind, "item")
+}
+
 // ── 顶层扫描 ────────────────────────────────────────────────────────────────
 
 // JSON 值的粗分类：只需要区分"是不是字符串"，其余按原样跳过。

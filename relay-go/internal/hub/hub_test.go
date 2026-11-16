@@ -349,7 +349,7 @@ func TestStreamFramesAreDroppedUnderBackpressure(t *testing.T) {
 	// 第一帧被写循环拿住，第二帧占满队列，第三帧开始只能丢。
 	for index := 0; index < 4; index++ {
 		fixture.hub.RouteFromAgent(agentLink, wireOf(t, dlp.Frame{
-			"t": "res", "id": fmt.Sprintf("r%d", index), "deviceId": device.DeviceID,
+			"t": "item", "id": fmt.Sprintf("i%d", index), "deviceId": device.DeviceID,
 		}))
 	}
 	waitFor(t, "流式帧被丢弃并计数", func() bool {
@@ -715,11 +715,11 @@ func TestQueueByteLimitStopsSmallFrameBuildup(t *testing.T) {
 	payload := strings.Repeat("x", 360)
 	for index := 0; index < 6; index++ {
 		fixture.hub.RouteFromAgent(agentLink, wireOf(t, dlp.Frame{
-			"t": "res", "id": fmt.Sprintf("r%d", index), "deviceId": device.DeviceID,
+			"t": "item", "id": fmt.Sprintf("i%d", index), "deviceId": device.DeviceID,
 			"value": map[string]any{"text": payload},
 		}))
 	}
-	waitFor(t, "超过字节上限的流式帧被丢弃", func() bool {
+	waitFor(t, "超过字节上限的事件流帧被丢弃", func() bool {
 		return fixture.deviceDropped(device.DeviceID) >= 2
 	})
 	if closeStatus(deviceSink) != 0 {
@@ -728,6 +728,41 @@ func TestQueueByteLimitStopsSmallFrameBuildup(t *testing.T) {
 	if queued := fixture.hub.Device(device.DeviceID).QueuedBytes(); queued > 1024 {
 		t.Fatalf("队列字节 = %d，超过限额 1024", queued)
 	}
+}
+
+// TestUnaryResponseClosesInsteadOfDropping 钉住 2026-11-16 的修复：res 是一元调用
+// 的唯一响应，队列满时不能静默丢，只能以 4008 断开这条连接，让客户端重连重试。
+func TestUnaryResponseClosesInsteadOfDropping(t *testing.T) {
+	limits := DefaultLimits()
+	limits.QueueDepth = 1
+	fixture := newFixture(t, Options{Limits: limits})
+	owner := fixture.newTenant("M25-mac")
+	device := fixture.pairDevice(owner, "M25-iPhone")
+	agentLink, agentSink := fixture.attachAgent(owner)
+	_, deviceSink := fixture.mustAttachDevice(device)
+	waitFrame(t, agentSink, "deviceAttach", isKind("deviceAttach"))
+	waitFrame(t, deviceSink, "hostStatus", isKind("hostStatus"))
+
+	release := deviceSink.setBlocking()
+	defer release()
+	// 写循环被第一条阻塞写卡住；一排满深度为 1 的队列，后面的 item 只能丢。
+	for index := 0; index < 3; index++ {
+		fixture.hub.RouteFromAgent(agentLink, wireOf(t, dlp.Frame{
+			"t": "item", "id": fmt.Sprintf("i%d", index), "deviceId": device.DeviceID,
+		}))
+	}
+	waitFor(t, "队列已满", func() bool {
+		return fixture.hub.Device(device.DeviceID).Pending() > 0
+	})
+	// 一元响应进不来：必须断链，不能丢。
+	fixture.hub.RouteFromAgent(agentLink, wireOf(t, dlp.Frame{
+		"t": "res", "id": "r0", "deviceId": device.DeviceID,
+	}))
+	// 关闭帧排在阻塞写后面：先放行写循环，再看关闭码。
+	release()
+	waitFor(t, "一元响应放不进队列时以 4008 断开", func() bool {
+		return closeStatus(deviceSink) == dlp.CloseBackpressure
+	})
 }
 
 // TestQueueByteLimitAlwaysAdmitsOversizedFrame：比限额还大的单帧必须放行，

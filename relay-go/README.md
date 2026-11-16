@@ -78,7 +78,7 @@ SIGINT / SIGTERM 后停止接收请求、5 秒内收尾并关闭数据库；日�
 | `--db` | `DLP_DB` | `.local/state.db` |
 | `--pair-ttl-seconds` | — | `600` |
 | `--device-ttl-days` | — | `365` |
-| `--queue-depth` | — | `512` |
+| `--queue-depth` | — | `16384` |
 | `--queue-bytes` | — | `4 MiB` |
 | `--bridge-bytes` | `DLP_BRIDGE_BYTES` | `16 MiB` |
 | `--max-devices-per-agent` | `DLP_MAX_DEVICES_PER_AGENT` | `0`（不限） |
@@ -153,7 +153,7 @@ pprof 在 M2.5 加入（DESIGN §8 要求）。
 | 端点 | `GET /link/agent?agentId=<id>`、`GET /link/device?agentId=<id>`（base path 的两种形式都挂） |
 | 鉴权 | 电脑：`Authorization: Bearer <agentSecret>`；设备：Bearer **或** `Sec-WebSocket-Protocol: dsh.device.<deviceToken>`（头优先，服务端回显被接受的子协议） |
 | 寻址 | 设备 → 电脑的每一帧盖上 `deviceId`；电脑 → 设备的帧按 `deviceId` 路由，到达手机前摘掉该键 |
-| 队列 | 每连接一个有界队列（设备 512 帧、电脑 4096 帧），并叠加 `--queue-bytes` 的字节上限（默认 4 MiB）；`res`/`item` 是流式帧，队列满（帧数或字节）时丢弃并计数；其余按控制帧处理，塞不进去就断开慢连接（4008）。比字节上限还大的单帧永远放行，避免大图被自己的体积挡住 |
+| 队列 | 每连接一个有界队列（设备 16384 帧、电脑 4096 帧），并叠加 `--queue-bytes` 的字节上限（默认 4 MiB，帧数只是兜底）；只有事件流帧（`item`）在队列满（帧数或字节）时丢弃并计数；`res` 等必达帧塞不进去就断开慢连接（4008）。比字节上限还大的单帧永远放行，避免大图被自己的体积挡住 |
 | 心跳 | 服务端每 30 秒 ping，60 秒内没有 pong（或任何入站帧）即关闭：3 个连接器 20 秒心跳周期的余量，与连接器 `pongTimeoutMs=60s` 同口径 |
 | 限速 | `--device-rate-kbps` 换成每设备令牌桶，在写循环里把字节摊开（不丢帧），累计等待秒数进 `/stats` |
 | 日额度 | `--device-daily-mb` 按设备、按本地日累计；账本按 deviceId 记在 hub 上，重连不清零；超限先发 `error quota/device-daily`（带 `details.limitBytes`），再以 4011 关闭 |

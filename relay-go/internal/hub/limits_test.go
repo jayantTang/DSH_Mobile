@@ -3,6 +3,7 @@ package hub
 import (
 	"testing"
 
+	"github.com/jayantTang/DSH_Mobile/relay-go/internal/config"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/dlp"
 )
 
@@ -31,7 +32,8 @@ func TestLimitsDescribeUsesNullForUnlimited(t *testing.T) {
 		described.DeviceBytesPerSecond != nil {
 		t.Fatalf("默认不限的项应为 null：%+v", described)
 	}
-	if described.MaxFrameBytes != dlp.MaxFrameBytes || described.QueueDepth != 512 ||
+	if described.MaxFrameBytes != dlp.MaxFrameBytes ||
+		described.QueueDepth != config.DefaultQueueDepth ||
 		described.AgentQueueDepth != 4096 {
 		t.Fatalf("默认限额 = %+v", described)
 	}

@@ -49,7 +49,8 @@ type Class int
 const (
 	// ClassControl 是不可丢的帧：丢一帧就等于坏一次结果，宁可断开慢连接。
 	ClassControl Class = iota
-	// ClassStream 是流式帧（res / item）：丢了调用方还能重试或跳过。
+	// ClassStream 是可丢的事件流帧（item）：丢了客户端可以重拉。res 不在此列——
+	// 它是一元调用的唯一响应，丢一帧就是一次调用只能等超时。
 	ClassStream
 )
 
@@ -320,13 +321,16 @@ func (l *Link) Label() string { return l.label }
 
 // Enqueue 把一条待写消息放进**流式大队列**。
 //
-// 队列满时按帧类型分流：流式帧丢弃并计数（DESIGN §5.1），其余帧（业务控制帧、
-// 文件分片）返回 Overloaded，由调用方断开这条连接——这些帧静默丢失比断线更难排查。
+// 队列满时按帧类型分流：只有事件流帧（item）丢弃并计数（DESIGN §5.1），其余帧
+// （res、业务控制帧、文件分片）返回 Overloaded，由调用方断开这条连接——这些帧
+// 静默丢失比断线更难排查。
 //
 // 中转自己发出的控制帧不要走这里，走 EnqueueControl：它们有独立的小优先队列。
 //
-// 字节限额只约束**小帧的堆积**：比限额还大的单帧永远放行，否则一张 32 MiB 的图片
+// 字节限额约束所有帧的堆积：比限额还大的单帧永远放行，否则一张 32 MiB 的图片
 // 会被自己的体积挡在门外；真正需要防的是"几百个小帧把队列填满"和"多张大图排队"。
+// 必达帧放不进预算时返回 Overloaded，由调用方断开这条连接——静默丢必达帧比断线
+// 更难排查。
 //
 // owned 是这条消息的缓冲所有者：入队成功即转移给写循环，失败时仍归调用方。
 func (l *Link) Enqueue(payload []byte, class Class, owned *dlp.Buffer) EnqueueResult {
@@ -351,21 +355,25 @@ func (l *Link) enqueue(payload []byte, class Class, owned *dlp.Buffer,
 		return Overloaded
 	}
 	size := int64(len(payload))
-	if class == ClassStream && size <= l.byteLimit {
+	if size <= l.byteLimit {
 		// 字节上限是硬界：先 CAS 预留再入队。读-判-加分两步会让并发入队瞬时越过
 		// byteLimit（两个 goroutine 同时读到没超，各自 Add 之后总量超标）。
 		for {
 			used := l.queuedBytes.Load()
 			if used > 0 && used+size > l.byteLimit {
-				l.dropped.Add(1)
-				l.noteStreamDrop()
-				return FrameDropped
+				if class == ClassStream {
+					l.dropped.Add(1)
+					l.noteStreamDrop()
+					return FrameDropped
+				}
+				return Overloaded
 			}
 			if l.queuedBytes.CompareAndSwap(used, used+size) {
 				break
 			}
 		}
 	} else {
+		// 单帧大于预算：放行，但照实记账（写循环写出后归还）。
 		l.queuedBytes.Add(size)
 	}
 	item := &outbound{payload: payload, owned: owned, credit: credit, creditBytes: creditBytes,
@@ -430,10 +438,28 @@ func (l *Link) EnqueueControl(payload []byte, frameType string, droppable bool) 
 	}
 }
 
-// enqueueOrderedControl 把保序控制帧放进流式大队列（不计 byteLimit，但计字节）。
+// enqueueOrderedControl 把保序控制帧放进流式大队列；它们与数据帧共用同一份字节预算。
 func (l *Link) enqueueOrderedControl(payload []byte, frameType string, droppable bool) EnqueueResult {
 	size := int64(len(payload))
-	l.queuedBytes.Add(size)
+	if size <= l.byteLimit {
+		// 保序控制帧与数据帧共用同一份字节预算：队列内存上界只能有一处。
+		// 放不进预算时，可丢的按丢弃记账，必达的交给调用方断链。
+		for {
+			used := l.queuedBytes.Load()
+			if used > 0 && used+size > l.byteLimit {
+				if droppable {
+					l.noteControlDrop(frameType)
+					return FrameDropped
+				}
+				return Overloaded
+			}
+			if l.queuedBytes.CompareAndSwap(used, used+size) {
+				break
+			}
+		}
+	} else {
+		l.queuedBytes.Add(size)
+	}
 	item := &outbound{payload: payload, counted: true}
 	if droppable {
 		select {

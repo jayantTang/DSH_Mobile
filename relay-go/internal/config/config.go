@@ -23,9 +23,16 @@ const (
 	DefaultPort           = 8787
 	DefaultPairTTLSeconds = 600 // store.DEFAULT_PAIR_TTL_MS // 1000
 	DefaultDeviceTTLDays  = 365 // store.DEFAULT_DEVICE_TTL_MS // 86_400_000
-	DefaultQueueDepth     = 512
+	// DefaultQueueDepth 是每设备发送队列的帧数上限，只是字节预算的兜底：
+	// 16384 帧 ≈ 4 MiB 预算 ÷ 256 B（流式 item 的平均大小）。
+	//
+	// 2026-11-16 前是 512，按 1 KiB 帧估的。实测流式 item 平均 277 B，
+	// 512 帧在 141 KB 就先触发丢帧，字节预算的 3.4% 都没用上。帧数不是内存
+	// 边界，DefaultQueueBytes 才是；这里只保证小帧不会因为条数先把预算饿死。
+	DefaultQueueDepth = 16384
 	// DefaultQueueBytes 是每连接发送队列的字节上限（M2.5）。4 MiB 盖住正常流量
 	// （几百个 1 KiB 的帧），又能在慢客户端堆积大帧时提前触发背压而不是吃满内存。
+	// 它对所有帧生效（单帧大于预算时放行），所以队列内存有确定上界。
 	DefaultQueueBytes = 4 << 20
 	// DefaultBridgeBytes 是每条连接器链路上文件上行桥的在途字节上限（M4a）。
 	//

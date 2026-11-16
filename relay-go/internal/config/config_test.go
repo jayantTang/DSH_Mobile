@@ -28,7 +28,7 @@ func TestDefaultsMatchPythonParser(t *testing.T) {
 		{"db", cfg.DBPath, filepath.Join(".local", "state.db")},
 		{"pair-ttl-seconds", cfg.PairTTLSeconds, 600},
 		{"device-ttl-days", cfg.DeviceTTLDays, 365},
-		{"queue-depth", cfg.QueueDepth, 512},
+		{"queue-depth", cfg.QueueDepth, DefaultQueueDepth},
 		{"max-devices-per-agent", cfg.MaxDevicesPerAgent, 0},
 		{"max-paired-devices", cfg.MaxPairedDevices, 8},
 		{"device-rate-kbps", cfg.DeviceRateKbps, 0.0},

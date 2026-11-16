@@ -11,7 +11,7 @@ import (
 // TestSlowDeviceBackpressureMatrix 是慢客户端/背压的集成矩阵，覆盖 DESIGN §5.1
 // 的四条口径在同一时刻的相互关系：
 //
-//  1. 流式帧（res/item）在队列满时丢弃并计数，连接继续用；
+//  1. 事件流帧（item）在队列满时丢弃并计数，连接继续用；一元响应（res）不在此列；
 //  2. 可丢控制帧（accountState）在优先队列满时丢弃并计数，连接继续用；
 //  3. 必达控制帧（deviceAttach 这类）等满 ControlWait 仍进不去，才按 4008 断开；
 //  4. 同一台电脑下的另一台设备完全不受影响（不丢帧、不断线、继续收帧）。
@@ -49,10 +49,10 @@ func TestSlowDeviceBackpressureMatrix(t *testing.T) {
 	release := slowSink.setBlocking()
 	defer release()
 
-	// 1) 流式帧：写循环拿住一条、队列里再排一条，第三条起开始丢。
+	// 1) 事件流帧：写循环拿住一条、队列里再排一条，第三条起开始丢。
 	for index := 0; index < 5; index++ {
 		fixture.hub.RouteFromAgent(agentLink, wireOf(t, dlp.Frame{
-			"t": "res", "id": fmt.Sprintf("slow-%d", index), "deviceId": slow.DeviceID,
+			"t": "item", "id": fmt.Sprintf("slow-%d", index), "deviceId": slow.DeviceID,
 		}))
 	}
 	waitFor(t, "慢设备流式帧被丢弃并计数", func() bool {

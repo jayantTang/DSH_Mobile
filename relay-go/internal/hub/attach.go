@@ -249,9 +249,12 @@ func (h *Hub) AttachAgent(ctx context.Context, agent store.Agent, sink Sink,
 		panic("hub: AttachAgent requires a ticket from AdmitAgent")
 	}
 	now := time.Now()
+	// 连接器链路的队列字节上限是 QueueBytes + BridgeBytes：上行分片带着自己的
+	// 桥额度（BridgeBytes）进来，如果只给 QueueBytes，一批在途分片就会把随后
+	// 设备请求的入队顶到 Overloaded，连带断开整条连接器链路。
 	link := &AgentLink{
 		Link: newLink(sink, "agent "+agent.AgentID, h.limits.AgentQueueDepth,
-			h.limits.QueueBytes, h.log, h.linkOptions),
+			h.limits.QueueBytes+h.limits.BridgeBytes, h.log, h.linkOptions),
 		AgentID:    agent.AgentID,
 		AccountID:  agent.AccountID,
 		Name:       agent.Name,

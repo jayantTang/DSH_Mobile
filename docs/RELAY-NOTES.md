@@ -159,12 +159,18 @@ level heartbeat at the same cadence.
 ## 12. Backpressure accounting
 
 §5's “512 unacked frames” has no application-level ack on a raw WebSocket, so it
-is implemented as a bound on queued frames. Each device owns **two** bounded
-queues of 512 — relay → device and device → agent — and overflowing either one
-closes that device with WebSocket code `4008` and tells the agent to clean up
-its streams. The agent link uses a larger bound (4096) because losing it would
-drop every device simultaneously; the natural backpressure from a slow agent
-still surfaces as a device overflow, one device at a time.
+is implemented as a bound on queued frames plus a byte budget. A device's
+send queue is capped at 4 MiB (default `--queue-bytes`); its 16384-frame depth is
+only a backstop so that small frames cannot starve the byte budget. The agent
+link keeps its own 4096-frame bound because losing it would drop every device
+simultaneously.
+
+When the budget is exhausted only seq-carrying event frames (`item`) are
+droppable: they are counted and reported, and the device re-pulls what it needs.
+Everything else — unary responses (`res`), control frames and file chunks — is
+must-deliver: if it does not fit, the device is closed with `4008` and the agent
+is told to clean up its streams, so a slow device never loses a half result
+silently.
 
 ## 13. Naming: `agentSecret` is the DLP agent bearer token
 

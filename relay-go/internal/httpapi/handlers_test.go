@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/apierr"
+	"github.com/jayantTang/DSH_Mobile/relay-go/internal/config"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/feedback"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/files"
 	"github.com/jayantTang/DSH_Mobile/relay-go/internal/hub"
@@ -853,7 +854,8 @@ func TestStatsLoopbackOnly(t *testing.T) {
 	if limits["maxFrameBytes"] != float64(MaxFrameBytes) {
 		t.Fatalf("maxFrameBytes = %v", limits["maxFrameBytes"])
 	}
-	if limits["queueDepth"] != float64(512) || limits["agentQueueDepth"] != float64(4096) {
+	if limits["queueDepth"] != float64(config.DefaultQueueDepth) ||
+		limits["agentQueueDepth"] != float64(4096) {
 		t.Fatalf("队列默认值 = %v", limits)
 	}
 	for _, key := range []string{"maxDevicesPerAgent", "deviceBytesPerSecond",

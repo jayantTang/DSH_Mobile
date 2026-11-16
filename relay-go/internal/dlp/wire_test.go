@@ -290,6 +290,21 @@ func TestStreamingKindMatchesIsStreaming(t *testing.T) {
 	}
 }
 
+// TestDroppableStreamKindIsItemOnly 钉住背压可丢口径：item 可丢，res 不可丢。
+// res 是一元调用的唯一响应，丢了调用方只能等超时（2026-11-16 的修复）。
+func TestDroppableStreamKindIsItemOnly(t *testing.T) {
+	for _, kind := range []string{"item"} {
+		if !IsDroppableStreamKind([]byte(kind)) {
+			t.Fatalf("%q 应可丢", kind)
+		}
+	}
+	for _, kind := range []string{"res", "req", "end", "event", "hostStatus", ""} {
+		if IsDroppableStreamKind([]byte(kind)) {
+			t.Fatalf("%q 不应可丢", kind)
+		}
+	}
+}
+
 func sameJSON(t *testing.T, left, right Frame) bool {
 	t.Helper()
 	leftJSON, err := json.Marshal(map[string]any(left))
