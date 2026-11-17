@@ -38,20 +38,22 @@ const FEEDBACK_EMAIL = process.env.ASC_FEEDBACK_EMAIL || 'forwoshitjy@live.com'
 /// 两位试用者都静默过，而我们在 GitHub 上说不上话（他们没有公开联系方式）。
 const WHATS_TO_TEST = {
   'zh-Hans': `这一版相比上一版：
-1. 回答 agent 的提问后，问题与所选选项作为一条独立的作答记录留在会话里，不随过程折叠收起；重进会话或重启 App 后仍在。
-2. 修复会话中图片概率性加载失败的问题。
+1. 打开会话时不再先闪出「运行中」的过程区再折叠，也不会从开头跳到结尾。
+2. App 名称改为 DSHM。
+3. 连接器较旧时，发送图片与查看原图改为按版本降级，不再弹出「DSH returned HTTP 404」。
 
-需连接器升级到 0.8.1 及以上。`,
+需连接器升级到 0.8.2 及以上。`,
   'en-US': `Compared with the previous build:
-1. After you answer an agent's question, the question and your choices stay in the conversation as their own record, outside the folded process — still there after reopening the session or relaunching the app.
-2. Fixed intermittent image loading failures in conversations.
+1. Opening a session no longer flashes a "running" process area before folding, and no longer jumps from the start to the end.
+2. The app is now named DSHM.
+3. With an older connector, sending images and viewing originals degrade by version instead of showing "DSH returned HTTP 404".
 
-Requires connector 0.8.1 or later.`,
+Requires connector 0.8.2 or later.`,
 }
 /// `WHATS_TO_TEST` 写的是哪一版。每次发版必须同时改这个常量与上面的文案：
 /// 更新说明改了才是给测试者看的，不改就是上一版的旧话（2026-11-15 就是这样漏了三版）。
 /// 走 prepare/submit 时构建号对不上直接拒绝，避免旧文案被推到新构建上。
-const WHATS_TO_TEST_BUILD = '20261115.2057'
+const WHATS_TO_TEST_BUILD = '20261118.0135'
 /// 审核联系电话。Apple 要求填，且只在审核需要时使用；可以从环境变量覆盖。
 const CONTACT_PHONE_NOTE = 'ASC_CONTACT_PHONE 可覆盖（默认是个占位号，第一次提交后建议改成真号）'
 
