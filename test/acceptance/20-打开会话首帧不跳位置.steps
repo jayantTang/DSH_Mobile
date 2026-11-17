@@ -1,0 +1,16 @@
+# TC-MOB-207 打开会话首帧直接落在最新位置
+#
+# 缺陷：二次进入一条已看过的长会话时，第一帧先画在恢复窗口的开头（offset=0），
+# 120ms 后才被异步钉底送到尾部——"先闪开头再跳到结尾"。
+# 判据：探针里不许出现 `open.nonbottom`（宿主在第一次布局出内容那一拍量的距底距离）。
+# 截图只是补充：这一跳太快，引擎等画面静止后才拍，抓不到。
+#
+# 会话：钉住的是一条已完成长会话（超过一屏），只读；不往里面输入任何内容。
+# 夹具失效时按 md 的「备注」换一条超过一屏的已完成会话。
+# 它被删掉时这条用例会直接失败（找不到行），不会假通过——届时换一条长会话即可。
+
+1  do: 打开页面 sessions args="-DSHViewportProbe"  | want: id:session.list
+2  do: 等待 id:session.row.session-73a5650d-d23b-43aa-8bbf-340c9e3a66fd timeout=30, 滚动到 id:session.row.session-73a5650d-d23b-43aa-8bbf-340c9e3a66fd, 点击 id:session.row.session-73a5650d-d23b-43aa-8bbf-340c9e3a66fd, 等待 3 秒  | want: id:chat.transcript  | shot: 01-first-enter
+3  do: 点击 text:返回, 等待 id:session.list timeout=20  | want: id:session.list
+4  do: 等待 id:session.row.session-73a5650d-d23b-43aa-8bbf-340c9e3a66fd timeout=20, 滚动到 id:session.row.session-73a5650d-d23b-43aa-8bbf-340c9e3a66fd, 点击 id:session.row.session-73a5650d-d23b-43aa-8bbf-340c9e3a66fd, 等待 3 秒  | want: id:chat.transcript  | shot: 02-second-enter
+5  do: 什么都不做  | want: id:chat.transcript

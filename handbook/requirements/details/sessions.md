@@ -41,3 +41,11 @@
 - 取数：折叠摘要与历史快照保留问题文字与答案；问题文字确实缺失时只显示答案。
 - 复制：复制内容每题为一段，含问题与答案；跳过的题写为跳过。
 - 作答记录不计入过程活动的工具次数与分组标题。
+
+## SR-02.17 打开会话的初始位置
+
+- 打开分两路：首次进入没有缓存，先看到加载态；二次进入命中 `ChatModel` 的转写缓存，行在入栈前就已就绪。
+- 位置跳变：列表宿主的 diffable 数据源是异步落地的。`apply(.setRows)` 当场钉底时 `numberOfItems` 还是 0，`bottomTarget()` 只能算出内容顶端（offset 0）；快照落地后的第一帧因此停在开头，约 120ms 后才被异步钉底送到尾部。修复口径：宿主在每次 `layoutSubviews`（系统提交这一帧之前）满足跟尾意图，首帧即贴底。
+- 展开后折叠：缓存里可能留着上一次离开时的"运行中"边界（`tail=open`），而列表已经说这一会话不在跑。旧逻辑让缓存里的 open 胜过列表事实，首帧按运行中铺开过程区；follow 快照带回关闭边界与概要后才折叠。修复口径：列表说没在跑时，缓存里的 open 判为过期，首帧按 unknown 给尾轮占位行，等快照确认后再折。
+- 证据：`test/acceptance/20-打开会话首帧不跳位置.md` 与 `ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/ChatModelTailHoldTests.swift` 的 `test_a_finished_summary_does_not_trust_a_stale_open_cache`；探针行 `open.nonbottom` 出现即判该轮失败。截图在拍之前会等画面静止，结构采样也常错过这一帧，因此位置判据以宿主探针为准。
+- 已知边界：探针只在带 `-DSHViewportProbe` 的 DEBUG 构建里存在；Release 不做这项自检。折叠路径的视觉复现需要一条"在别处结束、本机缓存仍停在运行中"的会话；当前以模型单测钉住首帧形态。

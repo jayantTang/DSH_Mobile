@@ -520,5 +520,15 @@
       "path": "ios/DSHMobile/DSHMobileUITests/LocalizationSmokeTests.swift",
       "contains": "testEachShippedLocaleAppearsAtRuntime"
     }
+  ],
+  "SR-02.17": [
+    {
+      "path": "test/acceptance/20-打开会话首帧不跳位置.md",
+      "contains": "TC-MOB-207"
+    },
+    {
+      "path": "ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/ChatModelTailHoldTests.swift",
+      "contains": "test_a_finished_summary_does_not_trust_a_stale_open_cache"
+    }
   ]
 }

@@ -2,7 +2,7 @@
 
 > 由 `node test/coverage/check-test-coverage.mjs` 生成。✅ 精确测试；🔵 静态策略；✍️ 人工待验收；🟠 只是套件级映射，不得当作已完成。
 
-汇总：共 61 条 · ✅ verified 55 · 🔵 static 5 · ✍️ manual 0 · 🟡 partial 0 · 🟠 suite-only 1 · ❌ gap 0
+汇总：共 65 条 · ✅ verified 56 · 🔵 static 5 · ✍️ manual 0 · 🟡 partial 0 · 🟠 suite-only 4 · ❌ gap 0
 
 | SR | 状态 | 精确测试证据 | 负责套件 | 缺口 |
 |---|---|---|---|---|
@@ -33,6 +33,7 @@
 | SR-02.14 | ✅ verified | `ios/DSHMobile/Modules/Features/Sessions/Tests/DomainTests/SessionListCombinationTests.swift`：`test_archiving_the_session_that_is_open` | `requirements`、`ios-modules` |  |
 | SR-02.15 | ✅ verified | `ios/DSHMobile/Modules/Features/Sessions/Tests/DomainTests/SessionListDigestActivityTests.swift`：`test_j_an_incremental_digest_keeps_the_child_counts`<br>`ios/DSHMobile/Modules/Features/Sessions/Tests/DomainTests/SessionListGroupingTests.swift`：`testHeadlineWaitingCountExcludesLooseSessions` | `requirements`、`ios-modules` |  |
 | SR-02.16 | ✅ verified | `ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/TranscriptProcessFoldQuestionRecordTests.swift`：`test_collapsed_turn_keeps_the_answer_record_visible`<br>`ios/DSHMobile/DSHKit/Tests/DSHKitTests/QuestionRecordTests.swift`：`test_decode_record_pairs_questions_and_answers_in_order`<br>`plugins/mobile-link/test/question-record.test.js`：`概要 v2：作答记录独立下发` | `requirements` |  |
+| SR-02.17 | ✅ verified | `test/acceptance/20-打开会话首帧不跳位置.md`：`TC-MOB-207`<br>`ios/DSHMobile/Modules/Features/Chat/Tests/DomainTests/ChatModelTailHoldTests.swift`：`test_a_finished_summary_does_not_trust_a_stale_open_cache` | `requirements`、`ui-chat` |  |
 | SR-03.01 | ✅ verified | `ios/DSHMobile/Modules/Features/Files/Tests/DomainTests/WorkspaceFilesModelTests.swift`：`test_the_root_listing_asks_for_dot` | `requirements`、`ios-dshkit`、`connector` |  |
 | SR-03.02 | ✅ verified | `ios/DSHMobile/Modules/Features/Files/Tests/DomainTests/GitModelTests.swift`：`GitModelTests` | `requirements`、`ios-dshkit`、`connector` |  |
 | SR-03.03 | ✅ verified | `ios/DSHMobile/Modules/Features/Files/Tests/DomainTests/WorkspaceFilesModelTests.swift`：`test_a_file_reads_page_by_page` | `requirements`、`ios-modules`、`ui-files` |  |
@@ -67,3 +68,6 @@
 | SR-09.04 | ✅ verified | `ios/DSHMobile/DSHMobileTests/LocaleFormattingTests.swift`：`testGitShortDateIsNotTheOldFixedPattern`<br>`ios/DSHMobile/Modules/Features/Settings/Tests/DomainTests/SettingsValueTextTests.swift`：`test_number_text_and_pretty_print` | `requirements` |  |
 | SR-09.05 | 🔵 static | `scripts/dev/check-localization.mjs`：`missing-key` | `requirements`、`i18n-gate` | 静态策略检查 |
 | SR-09.06 | ✅ verified | `ios/DSHMobile/DSHMobileUITests/LocalizationSmokeTests.swift`：`testEachShippedLocaleAppearsAtRuntime` | `requirements`、`policy-i18n`、`ui-locale-smoke` |  |
+| SR-10.01 | 🟠 suite-only | — | `requirements` | 只有套件级映射，未逐测试 |
+| SR-10.02 | 🟠 suite-only | — | `requirements` | 只有套件级映射，未逐测试 |
+| SR-10.03 | 🟠 suite-only | — | `requirements` | 只有套件级映射，未逐测试 |

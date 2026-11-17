@@ -619,7 +619,14 @@ public final class ChatModel {
         var seed = cached?.timeline ?? ChatTimeline()
         seed.clearStreaming()
         seed.record(usage: summary.projections?.values?.tokenUsage)
-        seed.seedTail(boundarySeed)
+        // 缓存里的 open 与列表事实冲突时，`seedTail(.unknown)` 会被合并表拒掉（unknown
+        // 不是一条证据，不覆盖已知事实）。这一处必须无条件清掉旧 open，否则首帧仍会
+        // 按"运行中"铺开过程区，等快照到了再折。
+        if !summary.running, seed.tail.boundary.isOpen {
+            seed.resetTailBoundary(.unknown)
+        } else {
+            seed.seedTail(boundarySeed)
+        }
         // 换会话就丢掉上一个会话的标题覆盖，避免把 A 的标题带到 B。
         titleOverride = nil
         visible = VisibleSession(summary: summary, timeline: seed)

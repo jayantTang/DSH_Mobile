@@ -414,6 +414,56 @@ final class TranscriptListHost: UIView, UICollectionViewDelegate {
 
     required init?(coder: NSCoder) { fatalError("not used") }
 
+    /// 首帧纪律：跟尾意图还挂着时，**每一次布局**（包括第一次把行量出来的那一拍）
+    /// 都在帧提交之前把偏移钉到底。
+    ///
+    /// 为什么不能只靠 `satisfyBottomIntent` 的异步钉底：`apply(snapshot)` 是异步落的，
+    /// 调用那一刻数据源还是空的，`bottomTarget()` 只能算出 0（=内容顶端）。等快照落地、
+    /// 系统画出第一帧时，视口就在开头；120ms 后异步钉底才把它送到尾部——用户看到的是
+    /// 「打开先露开头，再跳到结尾」。在 layoutSubviews 里钉，落点在系统提交这一帧之前，
+    /// 首帧就已经在尾部。
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        if wantsBottom, !isPinning,
+           collectionView.numberOfSections > 0,
+           collectionView.numberOfItems(inSection: 0) > 0,
+           !collectionView.isDragging, !collectionView.isDecelerating {
+            isPinning = true
+            let target = bottomTarget()
+            if abs(collectionView.contentOffset.y - target) > 0.5 {
+                collectionView.setContentOffset(CGPoint(x: 0, y: target), animated: false)
+            }
+            lastPinnedTarget = target
+            isPinning = false
+        }
+        reportOpenPositionIfNeeded()
+    }
+
+    /// 打开会话的**首帧位置**自检（`-DSHViewportProbe` 的探针行 `open.nonbottom`）。
+    ///
+    /// 为什么要在宿主里量：这类缺陷只存在于打开后的第一帧（先露内容顶端，120ms 后
+    /// 才被钉到尾部），外部截图追不上，100ms 一次的像素采样也常错过。宿主知道
+    /// "第一次把行布局出来"是哪一拍，在这里量距底距离最准。
+    /// 修好后这一行永远不该出现；出现即说明首帧不在最新位置。
+    private var openPositionChecked = false
+    private func reportOpenPositionIfNeeded() {
+        guard !openPositionChecked, wantsBottom,
+              collectionView.bounds.height > 50,
+              collectionView.numberOfSections > 0,
+              collectionView.numberOfItems(inSection: 0) > 0,
+              !rows.isEmpty
+        else { return }
+        openPositionChecked = true
+        let distance = bottomDistance()
+        guard distance > 1 else { return }
+        diagnostic("open.nonbottom", [
+            "distance": String(format: "%.0f", distance),
+            "offset": String(format: "%.0f", collectionView.contentOffset.y),
+            "content": String(format: "%.0f", collectionView.contentSize.height),
+            "rows": String(rows.count),
+        ])
+    }
+
     private func setUp() {
         var configuration = UICollectionLayoutListConfiguration(appearance: .plain)
         configuration.showsSeparators = false

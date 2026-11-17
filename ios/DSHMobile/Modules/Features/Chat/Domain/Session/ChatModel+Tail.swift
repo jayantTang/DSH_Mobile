@@ -58,6 +58,11 @@ extension ChatModel {
         if summary.running, known?.isOpen != true {
             return openSeed(cached: cached, persisted: persisted)
         }
+        // 列表级事实比本地旧值新：宿主说这一会话已经不在跑，缓存/落盘里那个 open
+        // 就是上一屏的旧事实。不能拿它铺开运行中的过程区——二次进入会先画出
+        // "运行中的步骤"，follow 快照到达后才折起来，观感就是"先展开、后折叠"。
+        // 返回 unknown：投影先给占位行，等快照带回关闭边界与概要再折。
+        if !summary.running, known?.isOpen == true { return .unknown }
         if let known { return known }
         return .unknown
     }

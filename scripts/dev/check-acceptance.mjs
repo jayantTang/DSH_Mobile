@@ -39,7 +39,7 @@ for (const name of files) {
   if (prose && prose !== commands) errors.push(`${name}: 步骤 ${prose} 条，指令 ${commands} 条`)
 }
 // 条数与 README 表一致；加用例时两处一起改。
-if (files.length !== 17) errors.push(`验收子集应为 17 条，实际 ${files.length}`)
+if (files.length !== 18) errors.push(`验收子集应为 18 条，实际 ${files.length}`)
 if (errors.length) {
   for (const error of errors) console.error(`✗ ${error}`)
   process.exit(1)

@@ -352,6 +352,58 @@ final class ChatModelTailHoldTests: XCTestCase {
                       "裁完之后占位行仍在：\(model.rowsFor(screen: "s-1").map(\.id))")
     }
 
+    // MARK: - 缓存里的"运行中"过期
+
+    /// 列表级事实说已结束，同进程缓存里的 open 属于上一屏，不能拿来铺开运行中的过程行。
+    ///
+    /// 否则二次进入会先按缓存画出"运行中的过程区"（running 行 + 展开的步骤），
+    /// follow 快照到达后才折起来——用户看到的就是"先展开、后折叠"的跳变。
+    func test_a_finished_summary_does_not_trust_a_stale_open_cache() throws {
+        var timeline = ChatTimeline()
+        timeline.seedTail(.open(turn: 3, startedAt: Date(timeIntervalSince1970: 100)))
+        let entry = TranscriptCache.Entry(timeline: timeline, hasOlder: false,
+                                          oldestSeq: 1, throughSeq: 9, records: [])
+        let seed = model.tailSeed(for: try ChatSeam.summary(id: "s-1", asOfSeq: 9, running: false),
+                                  cached: entry)
+        XCTAssertEqual(seed, .unknown,
+                       "列表说没在跑：缓存的 open 已过期，先给占位行，等快照带回关闭边界")
+    }
+
+    /// 反向：列表还说在跑时，缓存里的 open 仍是最强证据。
+    func test_a_running_summary_keeps_the_cached_open_boundary() throws {
+        let started = Date(timeIntervalSince1970: 100)
+        var timeline = ChatTimeline()
+        timeline.seedTail(.open(turn: 3, startedAt: started))
+        let entry = TranscriptCache.Entry(timeline: timeline, hasOlder: false,
+                                          oldestSeq: 1, throughSeq: 9, records: [])
+        let seed = model.tailSeed(for: try ChatSeam.summary(id: "s-1", asOfSeq: 9, running: true),
+                                  cached: entry)
+        XCTAssertEqual(seed, .open(turn: 3, startedAt: started))
+    }
+
+    /// 全链路：第一次在跑时离开（缓存写 open），第二次列表说已结束再进来，
+    /// 首帧（快照尚未到达）不许再出现运行行。
+    func test_reopening_after_finish_does_not_show_a_running_line_from_cache() async throws {
+        await model.open(try ChatSeam.summary(id: "s-1", asOfSeq: 4, running: true))
+        await carrier.waitForLiveStream("session/follow")
+        carrier.liveStreams["session/follow"]?.yield(ChatSeam.snapshot(cursor: 4, records: [
+            ChatSeam.turnStart(seq: 1, turn: 1),
+            ChatSeam.userMessage(seq: 2, text: "q"),
+            toolCall(seq: 3, callId: "call-1"),
+        ]))
+        let running = await eventually {
+            self.model.timeline.isTurnOpen && !self.model.timeline.items.isEmpty
+        }
+        XCTAssertTrue(running, "前置：第一次打开时这一轮在跑")
+        await model.close()
+
+        await model.open(try ChatSeam.summary(id: "s-1", asOfSeq: 4, running: false))
+        let rows = model.rowsFor(screen: "s-1")
+        XCTAssertFalse(rows.contains { if case .runningLine = $0.kind { return true }; return false },
+                       "列表说已结束：首帧不许再按缓存里的运行中画运行行")
+        XCTAssertFalse(model.timeline.isTurnOpen, "缓存里的 open 必须被列表事实清掉")
+    }
+
     // MARK: - 管道重建携带边界种子（M6）
 
     func test_pipeline_rebuild_keeps_tail_open_across_refold() async throws {

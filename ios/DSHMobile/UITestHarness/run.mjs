@@ -126,6 +126,22 @@ function probeVerdicts({ simId, detailDir, verdicts, log, inkFloor = DEFAULT_BLA
       : '换会话过程中没有把别的会话的行交给渲染器',
   })
 
+  // 「打开会话的第一帧不在最新位置」（`open.nonbottom`，宿主自己量的一行）。
+  // 与 stale-render 同一类：只活在打开后的第一帧，截图与像素采样都追不上，只能由
+  // App 在第一次把行布局出来的那一拍报出来。修好后这一行永远不该出现。
+  const nonBottom = logText.split('\n')
+    .filter((line) => /(?:^| )open\.nonbottom(?: |$)/.test(line))
+    .map((line) => line.trim())
+  const field = (name) => (new RegExp(`(?:^| )${name}=([^ ]*)`).exec(nonBottom[0] ?? '') ?? [])[1] ?? ''
+  verdicts.push({
+    seq: -6, id: 'probe.open-position', kind: 'probe',
+    status: nonBottom.length ? 'fail' : 'pass',
+    detail: nonBottom.length
+      ? `打开会话有 ${nonBottom.length} 次首帧不在最新位置（第一次：距底 ${field('distance')}pt、`
+        + `offset=${field('offset')}、content=${field('content')}、rows=${field('rows')}）`
+      : '打开会话的首帧都落在最新位置',
+  })
+
   const samples = []
   const content = []
   // 读**取回来的副本**：容器里那份已经删掉了，留着会让下一轮把旧日志当成自己的。
