@@ -15,6 +15,7 @@ cd plugins/doubao-image && npm test          # 图片插件单测
 cd relay-go && make test                     # 中转（Go）；黑盒套件 make test-blackbox
 cd mail && ../.venv/bin/python -m pytest -q   # 信件服务
 ./scripts/dev/verify-simulator.sh            # 仿真器启动 App 并截图
+./scripts/dev/check-ci.sh                    # 推送后确认 CI 通过（失败时列出未通过作业）
 
 # 两级验证渠道（判定规则在 scripts/verify/lanes.json）
 npm run lane:doctor                          # 两级自检：L1 同机隔离 / L2 Linux 容器
