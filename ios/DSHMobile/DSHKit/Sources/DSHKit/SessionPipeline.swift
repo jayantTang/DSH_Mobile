@@ -531,7 +531,9 @@ actor SessionPipeline {
     /// - 更早方向：页码从大到小——紧挨已加载窗口的那一页先发；
     /// - 更新方向：页码从小到大；
     /// - 说不清方向或 `.jump`（读者点名要的区间）：保持区间顺序（左到右）。
-    private func pageOrder(
+    /// 顺序在此决定；真正发出的先后由 `fetchMissing` 的并发调度决定（`fetchConcurrency`
+    /// 页同时在飞时，到达顺序不是稳定契约）。所以这条规则由这里直接测，不在网络层断言。
+    func pageOrder(
         for missing: [RangeIndex.Span], priority: FetchPriority, direction: ReadingDirection
     ) -> [ClosedRange<Int>] {
         // 2026-10-18 实测：一次 150 seq 的窗口里有 8–39 个很小的缺口时，旧实现对每个

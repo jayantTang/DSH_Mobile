@@ -100,11 +100,22 @@ final class PipelinePrefetchTests: XCTestCase {
 
     // MARK: - 方向：往回翻先发离窗口最近的那页
 
-    /// 往回读三页：先发离已加载窗口最近（页码最大）的那页，再向外扩。
+    /// 往回读三页：规划顺序按页码递减，紧挨窗口的那页先排。
     ///
-    /// 先读一段建立窗口（那一次的预取是背景噪音），再往回读目标区间——只断言这一次的
-    /// 前三页顺序。
-    func testOlderDirectionSendsTheNearestPageFirst() async throws {
+    /// 只断言**规划顺序**。真正发出的先后由 `fetchMissing` 的并发调度决定
+    /// （`fetchConcurrency = 4`，三页同时在飞），网络层的到达顺序不是稳定契约：
+    /// 2026-11-17 CI 上就以 `[251, 151, 201]` 抖过一次，把顺序钉在网络层只会换来间歇性红灯。
+    func testOlderDirectionOrdersPagesNearestFirst() async throws {
+        let stub = FetchStub()
+        let pipeline = makePipeline(stub)
+        let pages = await pipeline.pageOrder(for: [RangeIndex.Span(151, 300)],
+                                             priority: .userVisible, direction: .older)
+        XCTAssertEqual(pages.map(\.lowerBound), [251, 201, 151],
+                       "往回翻时先排紧挨窗口那一页，再按页码递减向外")
+    }
+
+    /// 同一段往回读，三页各取一次——网络层只钉可稳定观察的事实（页集合与去重）。
+    func testOlderReadFetchesEachMissingPageOnce() async throws {
         let stub = FetchStub()
         for start in [151, 201, 251, 301, 401] { await stub.set(start...(start + 49), hasMore: true) }
         let pipeline = makePipeline(stub)
@@ -113,8 +124,7 @@ final class PipelinePrefetchTests: XCTestCase {
         _ = await waitForPrefetch(stub)
         _ = try await pipeline.records(in: 151...300, priority: .userVisible)
         let mine = await stub.observed().requests.filter { (151...300).contains($0.lowerBound) }
-        XCTAssertEqual(mine.prefix(3).map(\.lowerBound), [251, 201, 151],
-                       "往回翻时先发紧挨窗口那一页，再按页码递减向外")
+        XCTAssertEqual(mine.map(\.lowerBound).sorted(), [151, 201, 251], "三页各取一次")
     }
 
     /// 预取按方向从读者位置往外备，且总量被 `prefetchDepth` 封住。
