@@ -4,7 +4,7 @@
 
 > 面向：使用者 · 状态：stable · 最近核对：2026-11-02
 
-DSH Mobile 是**你电脑上 DeepSeek Harness 的客户端**。这一页说清楚它碰什么、不碰什么。
+DSHM 是**你电脑上 DeepSeek Harness 的客户端**。这一页说清楚它碰什么、不碰什么。
 
 ## 一句话
 

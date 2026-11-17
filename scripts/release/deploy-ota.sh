@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================================
-# DSH Mobile —— 无线（OTA）发布
+# DSHM —— 无线（OTA）发布
 #
 # 归档 → 导出 .ipa → 生成 manifest 与安装页 → 上传到已备案的站点。
 # 之后在手机上打开安装链接点一下即可，不需要数据线，也不需要 Mac 与手机
@@ -37,7 +37,7 @@ LOCAL_SIGNING="$PROJECT_DIR/Signing.local.plist"
 TEAM_ID="${DSH_TEAM_ID:-$(plutil -extract teamID raw -o - "$LOCAL_SIGNING" 2>/dev/null || true)}"
 [ -n "$TEAM_ID" ] || die "没有开发者团队 ID：设 DSH_TEAM_ID=<TeamID>，或写 ${LOCAL_SIGNING}（形如 {teamID = XXXXXXXXXX;}，不入库）"
 # 安装页与 manifest 上显示的名字，与 App 的 CFBundleDisplayName 保持一致。
-APP_NAME="DSH Mobile"
+APP_NAME="DSHM"
 HOST="${DSH_OTA_HOST:-relay.example.com}"
 REMOTE_DIR="${DSH_OTA_DIR:-/opt/dsh-relay/public/ios}"
 PUBLIC_BASE="https://${HOST}/ios"

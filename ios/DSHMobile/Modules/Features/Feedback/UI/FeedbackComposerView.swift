@@ -241,7 +241,7 @@ public struct FeedbackComposerView: View {
                     .foregroundStyle(DSHTheme.labelTertiary)
                     .fixedSize(horizontal: true, vertical: false)
                     .frame(minWidth: 52, alignment: .leading)
-                Text(reply?.recipient ?? String(localized: "DSH Mobile 团队"))
+                Text(reply?.recipient ?? String(localized: "DSHM 团队"))
                     .font(DSHTheme.Typography.body)
                     .foregroundStyle(DSHTheme.labelPrimary)
                     .lineLimit(1)

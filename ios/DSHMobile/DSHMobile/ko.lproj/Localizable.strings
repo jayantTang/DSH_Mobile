@@ -1,4 +1,4 @@
-/* DSH Mobile — machine-translated from English to Korean. Review before release. */
+/* DSHM — machine-translated from English to Korean. Review before release. */
 
 "连接 DSH" = "DSH에 연결";
 "连接你电脑上的 DSH，随时随地查看进度、回应提问、继续会话。" = "컴퓨터의 DSH에 연결하세요 — 진행 상황을 확인하고, 질문에 답하며 어디서나 계속 채팅할 수 있습니다.";
@@ -627,7 +627,7 @@
 "还没有发过反馈" = "아직 전송된 내용 없음";
 "没有新消息" = "메시지 없음";
 "这条记录在服务器上已不存在，可能已被删除。" = "이 기록은 더 이상 서버에 없습니다. 삭제되었을 수 있습니다.";
-"DSH Mobile 团队" = "DSH Mobile 팀";
+"DSHM 团队" = "DSHM 팀";
 "服务通知" = "서비스 공지";
 "通知" = "공지";
 "这条通知已经不在了。" = "이 공지는 더 이상 존재하지 않습니다.";

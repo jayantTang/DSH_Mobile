@@ -150,7 +150,7 @@ public enum FeedbackSubject {
     /// 信件的"脚手架"行：称呼（短且以冒号收尾）、署名、纯日期。
     private static func isScaffolding(_ line: String) -> Bool {
         if line.count <= 6 { return true }
-        if line.hasPrefix(String(localized: "DSH Mobile 团队")) { return true }
+        if line.hasPrefix(String(localized: "DSHM 团队")) { return true }
         return line.allSatisfy { $0.isNumber || $0 == "-" || $0 == "/" || $0 == "." }
     }
 }
@@ -266,7 +266,7 @@ public struct FeedbackThreadView: View {
         if isTeamSide {
             recipient = thread?.source?.displayLine ?? String(localized: "来信用户")
         } else {
-            recipient = String(localized: "DSH Mobile 团队")
+            recipient = String(localized: "DSHM 团队")
         }
         return FeedbackReplyContext(
             threadId: threadId,

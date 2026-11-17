@@ -92,7 +92,7 @@ public struct ConnectionView: View {
                     .frame(width: 20, height: 20)
                     .foregroundStyle(DSHTheme.brand)
                     .accessibilityHidden(true)
-                Text("DSH Mobile")
+                Text("DSHM")
                     .font(DSHTheme.Typography.bodyStrong)
                     .foregroundStyle(DSHTheme.labelPrimary)
             }

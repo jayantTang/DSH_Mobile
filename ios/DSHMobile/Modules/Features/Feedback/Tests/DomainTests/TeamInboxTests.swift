@@ -165,7 +165,7 @@ final class TeamInboxTests: FeedbackCenterTestCase {
         XCTAssertEqual(c.threads[0].mySide, .user)
         XCTAssertEqual(c.threads[0].incomingLetter?.author, .owner)
         XCTAssertFalse(c.threads[0].canReply)
-        XCTAssertEqual(c.threads[0].counterpartyLine, "DSH Mobile 团队")
+        XCTAssertEqual(c.threads[0].counterpartyLine, "DSHM 团队")
     }
 
     // MARK: - FR-5 回信

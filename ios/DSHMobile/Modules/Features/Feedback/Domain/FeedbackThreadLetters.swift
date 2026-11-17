@@ -21,7 +21,7 @@ public extension FeedbackThread {
     /// 团队对用户来信的回信入口：只有我这一侧是团队时才有。
     var canReply: Bool { resolvedSide == .owner }
 
-    /// 我方的署名：团队侧固定「DSH Mobile 团队」；用户侧只写「我」。
+    /// 我方的署名：团队侧固定「DSHM 团队」；用户侧只写「我」。
     ///
     /// 用户的机型不作为**自称**：那是在把人当设备（owner 2026-11-02）。机型只用于团队侧
     /// 区分"哪个用户的哪台设备"，体现在 ``counterpartyLine`` 里。
@@ -48,14 +48,14 @@ public extension FeedbackThread {
     var counterpartyLine: String {
         resolvedSide == .owner
             ? (source?.displayLine ?? String(localized: "匿名来信"))
-            : String(localized: "DSH Mobile 团队")
+            : String(localized: "DSHM 团队")
     }
 }
 
 /// 收发双方的固定署名（唯一口径）：列表行、卡片抬头、历史段与通知共用。
 public enum FeedbackIdentity {
     /// 团队侧的署名。
-    public static var team: String { String(localized: "DSH Mobile 团队") }
+    public static var team: String { String(localized: "DSHM 团队") }
     /// 通知的发件人。
     public static var service: String { String(localized: "服务通知") }
 

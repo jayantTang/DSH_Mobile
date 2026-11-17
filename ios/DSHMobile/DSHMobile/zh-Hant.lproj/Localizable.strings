@@ -1,4 +1,4 @@
-/* DSH Mobile — machine-translated from English to Traditional Chinese. Review before release. */
+/* DSHM — machine-translated from English to Traditional Chinese. Review before release. */
 
 "连接 DSH" = "連線到 DSH";
 "连接你电脑上的 DSH，随时随地查看进度、回应提问、继续会话。" = "在電腦上連線到 DSH — 追蹤進度、回答它的問題，隨時隨地繼續聊天。";
@@ -627,7 +627,7 @@
 "还没有发过反馈" = "尚未傳送任何內容";
 "没有新消息" = "沒有訊息";
 "这条记录在服务器上已不存在，可能已被删除。" = "這筆記錄已不在伺服器上；可能已被刪除。";
-"DSH Mobile 团队" = "DSH Mobile 團隊";
+"DSHM 团队" = "DSHM 團隊";
 "服务通知" = "服務公告";
 "通知" = "公告";
 "这条通知已经不在了。" = "這則公告已不存在。";

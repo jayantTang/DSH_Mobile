@@ -25,7 +25,7 @@ const RAW = 'https://raw.githubusercontent.com/jayantTang/DSH_Mobile/main'
 
 const DESCRIPTION = `把电脑上的 DeepSeek Harness，装进口袋。
 
-DSH Mobile 是你电脑上 DSH 的手机端：同一个 host、同一批会话、同一条消息流。通勤路上看一眼任务跑到哪了，躺床上把卡住的那一步答掉，电脑上的活不会因为你离开键盘而停下。
+DSHM 是你电脑上 DSH 的手机端：同一个 host、同一批会话、同一条消息流。通勤路上看一眼任务跑到哪了，躺床上把卡住的那一步答掉，电脑上的活不会因为你离开键盘而停下。
 
 —— 它解决什么 ——
 
@@ -61,6 +61,12 @@ DSH Mobile 是你电脑上 DSH 的手机端：同一个 host、同一批会话�
 连接器、中转、App 客户端全部开源（MIT）：https://github.com/jayantTang/DSH_Mobile
 隐私说明：https://raw.githubusercontent.com/jayantTang/DSH_Mobile/main/docs/PRIVACY.md`
 
+// 商店名在全商店唯一，显示名（桌面上的名字）不唯一。
+// `DSHM` 已被其他账号占用（2026-11-17 PATCH 返回 409），故商店名带后缀；
+// 后缀只描述「连你自己的 host」，不写「手机端/官方」，避免被判定冒充官方客户端（5.2.1）。
+// App 内的显示名仍是 `DSHM`（见 project.yml 的 CFBundleDisplayName）。
+const NAME = 'DSHM - 远程 DSH'
+const SUBTITLE = '随时随地连接桌面 DSH'
 const KEYWORDS = 'DSH,DeepSeek,AI,agent,远程,客户端,编程,终端'
 const PROMO_TEXT = '把电脑上的 DeepSeek Harness 装进手机：任务在电脑上跑，进度在手机上跟。'
 const SUPPORT_URL = `${REPO}/issues`
@@ -307,9 +313,9 @@ async function fill() {
       type: 'appInfoLocalizations',
       id: localization.id,
       attributes: {
-        // 名称必须与 App Store Connect 里登记的一致（改名字要走新建版本的流程）
-        name: localization.attributes.name,
-        subtitle: '手机上的 DeepSeek Harness',
+        // 改名走这里的常量：ASC 只接受与显示名一致的名字，且校验全商店唯一。
+        name: NAME,
+        subtitle: SUBTITLE,
         privacyPolicyUrl: PRIVACY_URL,
       },
     },

@@ -49,7 +49,7 @@ targets:
         CODE_SIGN_ENTITLEMENTS: DSHMobile.entitlements
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
-        INFOPLIST_KEY_CFBundleDisplayName: "DSH Mobile"
+        INFOPLIST_KEY_CFBundleDisplayName: "DSHM"
         INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
         LD_RUNPATH_SEARCH_PATHS:
           - $(inherited)

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# 把 DSH Mobile 提交到生态目录 —— 三个目标，各生成一个可直接推送的分支。
+# 把 DSHM 提交到生态目录 —— 三个目标，各生成一个可直接推送的分支。
 #
 #   scripts/release/ecosystem-pr.sh --list                 看目标和状态
 #   scripts/release/ecosystem-pr.sh radar                  生成分支（不推送）
@@ -40,7 +40,7 @@ read -r -d '' AWESOME_ROW <<EOF || true
 EOF
 
 read -r -d '' PLUGINS_ROW <<EOF || true
-- [jayantTang/DSH_Mobile]($REPO_URL) — DSH Mobile：把电脑上的 DSH 装进 iPhone。原生 SwiftUI 客户端 + 电脑侧连接器（npm \`dsh-plugin-mobile-link\`）+ 可自建的公网中转；手机在 4G/5G 上直连自己电脑的 DSH，不需要公网 IP 或 Tailscale。
+- [jayantTang/DSH_Mobile]($REPO_URL) — DSHM：把电脑上的 DSH 装进 iPhone。原生 SwiftUI 客户端 + 电脑侧连接器（npm \`dsh-plugin-mobile-link\`）+ 可自建的公网中转；手机在 4G/5G 上直连自己电脑的 DSH，不需要公网 IP 或 Tailscale。
 EOF
 
 PR_BODY=$(cat <<EOF
@@ -94,7 +94,7 @@ title_of() {
   case "$1" in
     radar)   echo "docs: 登记 dsh-mobile-link" ;;
     awesome) echo "Add DSH_Mobile to UI / Clients" ;;
-    plugins) echo "Add DSH Mobile (iOS client + relay) to the list" ;;
+    plugins) echo "Add DSHM (iOS client + relay) to the list" ;;
   esac
 }
 

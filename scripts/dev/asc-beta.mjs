@@ -25,7 +25,7 @@ const BUNDLE_ID = 'com.jayanttang.dsh'
 /// 外部测试组的名字。内部组由人在网页上建（那一步要求账号成员身份，Key 做不了）。
 const GROUP_NAME = 'Public beta'
 /// 审核员看到的测试说明与反馈邮箱。反馈邮箱必须是真人能收信的地址。
-const BETA_DESCRIPTION = `DSH Mobile 是你电脑上 DeepSeek Harness 的手机客户端：手机与电脑连同一个 host，看到同一批会话、同一条消息流，电脑上跑着的任务锁屏再打开进度还在走。
+const BETA_DESCRIPTION = `DSHM 是你电脑上 DeepSeek Harness 的手机客户端：手机与电脑连同一个 host，看到同一批会话、同一条消息流，电脑上跑着的任务锁屏再打开进度还在走。
 
 本构建需要一个中转邀请码才能连接（在 GitHub 仓库的 issue 里领取）。App 本身不包含任何内购，也不会向第三方上传你的会话内容；中转只做鉴权与转发，不解析会话内容。
 

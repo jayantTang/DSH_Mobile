@@ -181,12 +181,12 @@ export function renderPage({ graph, versions, current, diff, linkPrefix = './', 
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>架构快照 ${esc(current)} · DSH Mobile</title>
+<title>架构快照 ${esc(current)} · DSHM</title>
 <style>${STYLE}</style>
 </head>
 <body>
 <header>
-  <h1>DSH Mobile 架构快照</h1>
+  <h1>DSHM 架构快照</h1>
   <div class="meta">
     ${badge(current, 'ok')}
     <span>commit <code>${esc(meta.commit)}</code>${meta.dirty ? ` ${badge(`工作区有 ${meta.dirty} 处未提交改动`, 'warn')}` : ''}</span>

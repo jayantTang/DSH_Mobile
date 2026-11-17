@@ -1,4 +1,4 @@
-/* DSH Mobile — generated from the Chinese source strings. */
+/* DSHM — generated from the Chinese source strings. */
 
 "连接 DSH" = "连接 DSH";
 "连接你电脑上的 DSH，随时随地查看进度、回应提问、继续会话。" = "连接你电脑上的 DSH，随时随地查看进度、回应提问、继续会话。";
@@ -675,7 +675,7 @@
 "还没有发过反馈" = "还没有发过反馈";
 "没有新消息" = "没有新消息";
 "这条记录在服务器上已不存在，可能已被删除。" = "这条记录在服务器上已不存在，可能已被删除。";
-"DSH Mobile 团队" = "DSH Mobile 团队";
+"DSHM 团队" = "DSHM 团队";
 "服务通知" = "服务通知";
 "通知" = "通知";
 "这条通知已经不在了。" = "这条通知已经不在了。";

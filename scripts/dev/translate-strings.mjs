@@ -42,7 +42,7 @@ async function callLLM(language, items) {
   const live = items.filter((item) => item.value.trim())
   if (live.length === 0) return items.map(() => '')
   const prompt = {
-    instruction: `Translate these UI strings from English to ${language}. Keep placeholders exactly, keep product names DSH/DSH Mobile/TestFlight, keep punctuation natural. Return only a JSON object with the same numeric keys and translated string values; no markdown.`,
+    instruction: `Translate these UI strings from English to ${language}. Keep placeholders exactly, keep product names DSH/DSHM/TestFlight, keep punctuation natural. Return only a JSON object with the same numeric keys and translated string values; no markdown.`,
     strings: Object.fromEntries(live.map((item, i) => [String(i), item.value])),
   }
   let last
@@ -88,7 +88,7 @@ function writeLocale(language, rows, translated) {
   const path = join(dirname(file), '..', `${language}.lproj`, 'Localizable.strings')
   mkdirSync(dirname(path), { recursive: true })
   const lines = [
-    `/* DSH Mobile — machine-translated from English to ${names[language] ?? language}. Review before release. */`,
+    `/* DSHM — machine-translated from English to ${names[language] ?? language}. Review before release. */`,
     '',
     ...rows.map((row, i) => `"${escape(row.key)}" = "${escape(translated[i])}";`),
     '',

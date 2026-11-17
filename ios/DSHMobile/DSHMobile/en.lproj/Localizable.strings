@@ -1,4 +1,4 @@
-/* DSH Mobile — generated from the Chinese source strings. */
+/* DSHM — generated from the Chinese source strings. */
 
 "连接 DSH" = "Connect to DSH";
 "连接你电脑上的 DSH，随时随地查看进度、回应提问、继续会话。" = "Connect to DSH on your computer — follow progress, answer its questions, and keep chatting from anywhere.";
@@ -676,7 +676,7 @@ It is registered as a workspace first, so a new group appears in the desktop sid
 "还没有发过反馈" = "Nothing sent yet";
 "没有新消息" = "No messages";
 "这条记录在服务器上已不存在，可能已被删除。" = "This record is no longer on the server; it may have been deleted.";
-"DSH Mobile 团队" = "The DSH Mobile team";
+"DSHM 团队" = "The DSHM team";
 "服务通知" = "Service notice";
 "通知" = "Notice";
 "这条通知已经不在了。" = "This notice is gone.";

@@ -1,4 +1,4 @@
-/* DSH Mobile — machine-translated from English to Brazilian Portuguese. Review before release. */
+/* DSHM — machine-translated from English to Brazilian Portuguese. Review before release. */
 
 "连接 DSH" = "Conectar ao DSH";
 "连接你电脑上的 DSH，随时随地查看进度、回应提问、继续会话。" = "Conecte-se ao DSH no seu computador — acompanhe o progresso, responda às perguntas e continue conversando de qualquer lugar.";
@@ -627,7 +627,7 @@
 "还没有发过反馈" = "Nada enviado ainda";
 "没有新消息" = "Nenhuma mensagem";
 "这条记录在服务器上已不存在，可能已被删除。" = "Este registro não está mais no servidor; ele pode ter sido excluído.";
-"DSH Mobile 团队" = "A equipe do DSH Mobile";
+"DSHM 团队" = "A equipe do DSHM";
 "服务通知" = "Aviso do serviço";
 "通知" = "Aviso";
 "这条通知已经不在了。" = "Este aviso não está mais disponível.";

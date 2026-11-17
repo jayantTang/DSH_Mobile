@@ -24,7 +24,7 @@
 
 ## sidecars
 
-`sidecars/` 是本机个人工具，不属于产品（2026-09-24 要求：个人工具不得影响 DSH Mobile 用户）。例如 `sidecars/llm-key-router`（个人模型接入的多 key 轮换代理与公司网关）。它不得放入 `plugins/`：`install-plugin.sh` 会把 `plugins/*` 全部注册进 profile，缺少 bundle patch 的目录会导致每次启动失败；产品侧（`ios/`、`plugins/`、`relay-go/`、`docs/`、`package.json`）也不得引用它。配置与 key 只放在本机 `~/.dsh/` 下。
+`sidecars/` 是本机个人工具，不属于产品（2026-09-24 要求：个人工具不得影响 DSHM 用户）。例如 `sidecars/llm-key-router`（个人模型接入的多 key 轮换代理与公司网关）。它不得放入 `plugins/`：`install-plugin.sh` 会把 `plugins/*` 全部注册进 profile，缺少 bundle patch 的目录会导致每次启动失败；产品侧（`ios/`、`plugins/`、`relay-go/`、`docs/`、`package.json`）也不得引用它。配置与 key 只放在本机 `~/.dsh/` 下。
 
 ## 提交与发布记录
 

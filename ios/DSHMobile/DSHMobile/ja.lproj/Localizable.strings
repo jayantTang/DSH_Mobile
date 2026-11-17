@@ -1,4 +1,4 @@
-/* DSH Mobile — machine-translated from English to Japanese. Review before release. */
+/* DSHM — machine-translated from English to Japanese. Review before release. */
 
 "连接 DSH" = "DSH に接続";
 "连接你电脑上的 DSH，随时随地查看进度、回应提问、继续会话。" = "コンピュータ上の DSH に接続 — 進捗を確認し、質問に答え、どこからでもチャットを続けられます。";
@@ -627,7 +627,7 @@
 "还没有发过反馈" = "まだ何も送信されていません";
 "没有新消息" = "メッセージがありません";
 "这条记录在服务器上已不存在，可能已被删除。" = "このレコードはもうサーバーにありません。削除された可能性があります。";
-"DSH Mobile 团队" = "DSH Mobile チーム";
+"DSHM 团队" = "DSHM チーム";
 "服务通知" = "サービスからのお知らせ";
 "通知" = "お知らせ";
 "这条通知已经不在了。" = "このお知らせはもうありません。";
