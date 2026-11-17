@@ -286,6 +286,7 @@ public final class AttachmentImageVariants {
             return try await lookupLoader(attachmentId)
         }
         guard let host = store?.chatHost else { throw DSHTransportError.notConnected }
+        try requireImageVariants()
         return try await host.imageOriginal(attachmentId: attachmentId)
     }
 
@@ -294,9 +295,17 @@ public final class AttachmentImageVariants {
             return try await chunkLoader(attachmentId, offset, length)
         }
         guard let host = store?.chatHost else { throw DSHTransportError.notConnected }
+        try requireImageVariants()
         return try await host.imageOriginalChunk(
             attachmentId: attachmentId, offset: offset, length: length
         )
+    }
+
+    /// 握手没声明 `image-variants` 就不发这次调用：旧连接器会把保留方法转给宿主拿到
+    /// 非 JSON 的 404，用户看到的是可重试的网络文案而不是「原图不可用」（IR-10）。
+    private func requireImageVariants() throws {
+        guard let store, !store.supports(LinkHandshake.Capability.imageVariants) else { return }
+        throw ImageVariantsUnsupported()
     }
 
     /// 状态只经这里写；代数变了的旧任务写得再晚也落不下来。

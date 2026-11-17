@@ -184,6 +184,10 @@ sudo -u dsh-relay sqlite3 /var/lib/dsh-relay/state.db \
 # 3. 装新二进制与 build.json（§3 第 1–2 步），然后重启
 sudo systemctl restart dsh-relay-go
 curl -s --noproxy '*' http://127.0.0.1:8787/healthz | python3 -m json.tool
+
+# 4. 旧端冒烟（IR-10 / SR-10.02）：用「上一版本」的连接器与 App 各连一次，跑
+#    连接、收发一条消息、传一个文件、提交一封信。旧端不应收到 4008 断链，也不应
+#    出现静默丢帧；不通过就按「回滚」处理，不要用重启掩盖。
 ```
 
 回滚 = 把 `history/<版本>/` 里的二进制与 `build.json` 复制回去，`systemctl restart`，

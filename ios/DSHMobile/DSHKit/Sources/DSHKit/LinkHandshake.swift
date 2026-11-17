@@ -77,6 +77,12 @@ public struct LinkHandshake: Decodable, Sendable {
         /// 手机**只按这条能力**决定是否渲染任务面板、列表行右侧计数与卡片新行：
         /// 缺了它整块不出现，界面与升级前逐屏一致（`activity-ui.md` §0）。
         public static let jobsRoster = "jobs-roster"
+        /// 连接器能回答 `_link/imageCommit` 与 `_link/imageOriginal*`（图片变体：预览 + 可选原图）。
+        ///
+        /// **必须看这条能力再调用**：旧连接器不认识保留方法时不会回 `link/unsupported`，
+        /// 而是把它转发给宿主并得到非 JSON 的 404，手机看到的是原始报文「DSH returned
+        /// HTTP 404」，既不降级也修不了（IR-10 / SR-10.01）。缺它就走内联预览。
+        public static let imageVariants = "image-variants"
     }
 }
 

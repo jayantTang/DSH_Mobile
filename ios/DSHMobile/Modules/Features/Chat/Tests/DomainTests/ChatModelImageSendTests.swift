@@ -32,7 +32,10 @@ final class ChatModelImageSendTests: XCTestCase {
         hub = HostEventHub()
         link = FakeLinkService(
             profiles: [TestFixtures.relayProfile()],
-            state: .connected(hostHome: "/Users/tester")
+            state: .connected(hostHome: "/Users/tester"),
+            // 变体路径的前提是握手声明了 `image-variants`（连接器 0.8.2 起）；
+            // 缺声明的形态由 `testConnectorWithoutImageVariantsCapability...` 覆盖。
+            capabilities: [LinkHandshake.Capability.imageVariants]
         )
         profile = TestFixtures.relayProfile()
         link.activeProfile = profile
@@ -305,8 +308,7 @@ final class ChatModelImageSendTests: XCTestCase {
         XCTAssertFalse(try XCTUnwrap(model.lastError).isEmpty)
     }
 
-    func testUploadedScratchCopiesAreRemovedEvenWhenCommitFails() async throws {
-        try await openSession()
+    func testUploadedScratchCopiesAreRemovedEvenWhenCommitFails() async throws {        try await openSession()
         stubUploads()
         carrier.unaryResponses["_link/imageCommit"] = .failure(
             DSHRPCFailure(code: "image/upload-failed", message: "nope")
@@ -324,4 +326,40 @@ final class ChatModelImageSendTests: XCTestCase {
         }
     }
 
+    // MARK: - 旧连接器（IR-10 / SR-10.01）
+
+    /// 握手没声明 `image-variants` 的连接器：不上传、不调保留方法，整批走内联预览。
+    ///
+    /// 这是 20261117 那位用户的现场形态：旧连接器把 `_link/imageCommit` 转给宿主，
+    /// 宿主回非 JSON 的 404，App 弹出原始报文且发送失败。降级判定必须在调用之前。
+    func testConnectorWithoutImageVariantsCapabilitySendsInlineWithoutUploading() async throws {
+        try await openSession()
+        link.capabilities = []
+        stubUploads()
+        carrier.unaryResponses["session/prompt"] = .success(.object([:]))
+
+        let image = draftImage("photo-1.jpg", previewText: "inline-preview",
+                               original: Data("orig".utf8))
+        model.draft = "旧连接器"
+        model.addDraftImages([image])
+
+        await model.send()
+
+        XCTAssertEqual(model.lastError, nil, "缺能力是正常降级，不是失败")
+        XCTAssertTrue(link.uploadFileCalls.isEmpty, "没声明能力就不该上传暂存文件")
+        XCTAssertTrue(carrier.calls(to: "_link/imageCommit").isEmpty, "也不该调用保留方法")
+
+        let request = try XCTUnwrap(carrier.calls(to: "session/prompt").first?.args?["request"])
+        let content = try XCTUnwrap(request["content"]?.arrayValue)
+        XCTAssertEqual(content.count, 2)
+        XCTAssertEqual(content[0]["type"]?.stringValue, "text")
+        XCTAssertEqual(content[1]["type"]?.stringValue, "image", "回退到内联预览")
+        XCTAssertEqual(content[1]["data"]?.stringValue, previewBytes("inline-preview"))
+        XCTAssertEqual(model.draft, "", "发送成功，草稿清空")
+        XCTAssertEqual(model.draftImages.count, 0)
+    }
+
+    private func previewBytes(_ text: String) -> String {
+        previewData(text).base64EncodedString()
+    }
 }

@@ -661,12 +661,45 @@ test('_link/hello reports what this connector can do, without asking the Host', 
   assert.ok(reply.value.capabilities.includes('file-transfer'))
   // 扫描式搜索的进度：界面据此从第一页起显示「已扫 k/N 片」。
   assert.ok(reply.value.capabilities.includes('search-progress'))
+  // 图片变体（预览 + 可选原图）：手机只按这条决定发图走变体还是内联预览。
+  assert.ok(reply.value.capabilities.includes('image-variants'))
   assert.equal(reply.value.protocolVersion, 1)
   assert.deepEqual(
     dsh.calls.filter((call) => call.method === '_link/hello'),
     [],
     'hello was forwarded to the Host',
   )
+})
+
+test('an unknown reserved method is answered link/unsupported instead of reaching the Host', async () => {
+  // 保留方法（`_link/*`）只由连接器自己回答。旧连接器把不认识的保留方法转发给宿主，
+  // 宿主回非 JSON 的 404，手机看到的是「DSH returned HTTP 404」，既没法降级也没法解释
+  // （2026-11-17 的现场）。这里的兜底让"这个版本没有这个方法"成为一条可判定的答案。
+  const { agent, dsh, socket } = makeAgent()
+  await agent.handleRelayFrame(attach('dev_1'))
+  await agent.handleRelayFrame({
+    t: 'req', id: 'u1', method: '_link/notARealMethod', args: {}, deviceId: 'dev_1',
+  })
+
+  const reply = socket.frames('res').find((frame) => frame.id === 'u1')
+  assert.equal(reply?.ok, false, '未知保留方法必须失败')
+  assert.equal(reply.error.code, 'link/unsupported')
+  assert.deepEqual(
+    dsh.calls.filter((call) => call.method === '_link/notARealMethod'),
+    [],
+    '保留方法不得转发给宿主',
+  )
+})
+
+test('a normal method is still forwarded to the Host', async () => {
+  // 兜底只对 `_link/` 前缀生效：普通宿主方法照旧转发，别把业务调用误判成保留方法。
+  const { agent, dsh, socket } = makeAgent({ responses: { 'session/list': { ok: true, value: { items: [] } } } })
+  await agent.handleRelayFrame(attach('dev_1'))
+  await agent.handleRelayFrame({ t: 'req', id: 'u2', method: 'session/list', args: {}, deviceId: 'dev_1' })
+
+  const reply = socket.frames('res').find((frame) => frame.id === 'u2')
+  assert.ok(reply?.ok, `expected success, got ${JSON.stringify(reply)}`)
+  assert.equal(dsh.calls.filter((call) => call.method === 'session/list').length, 1)
 })
 
 test('_link/hello reports the host DSH version too, and says so honestly when unknown', async () => {

@@ -120,6 +120,11 @@ export const SERVER_CAPABILITIES = [
   // 是 opaque token，推不出时间）。手机**只按这条能力**决定要不要走新方法：没有它的
   // 旧连接器仍走 `workspaceFiles/list`，文件页与升级前逐屏一致（只是没有时间），不报错。
   'dir-mtimes',
+  // image-variants: 连接器答 `_link/imageCommit` 与 `_link/imageOriginal*`（预览 + 可选原图）。
+  // 手机**只按这条能力**决定发图走变体还是内联预览：没有它的旧连接器会把保留方法原样
+  // 转发给宿主，宿主回非 JSON 404，手机看到的是「DSH returned HTTP 404」——分不清是缺
+  // 能力还是断网。这条能力就是那条分界（IR-10 / SR-10.01），0.8.2 起声明。
+  'image-variants',
   'device-subprotocol-auth', 'persistent-pair-code', 'account-state', 'account-state-push',
 ]
 

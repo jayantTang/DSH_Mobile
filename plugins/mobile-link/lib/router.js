@@ -115,6 +115,13 @@ import { DIR_LISTING_METHOD, dirListing } from './dir-listing.js'
 /** 慢请求阈值默认值（毫秒）；0 = 关闭逐条慢请求记录。 */
 export const DEFAULT_SLOW_REQUEST_MS = 2000
 
+/**
+ * 保留方法的协议前缀：`_link/*` 由连接器自己回答，永不转发宿主。
+ *
+ * 见 `handleRequest` 最后那段兜底：不认识的保留方法回 `link/unsupported`，不转发。
+ */
+export const RESERVED_PREFIX = '_link/'
+
 /** App 把自己那份阶段记录推上来的方法（契约 connector-diagnostics-method.md）。 */
 export const DIAGNOSTICS_METHOD = '_link/diagnostics'
 /** 手机把运行日志推上来的方法；落盘在 `logs.js`，与 journal 分开。 */
@@ -860,6 +867,18 @@ export class DeviceRouter {
         result = { ok: false, error: errorObject(error?.code ?? 'link/failed', messageOf(error), error?.details ?? {}) }
       }
       this.send(deviceId, resultFrame(frame.id, result, deviceId))
+      return
+    }
+
+    // 保留方法（`_link/` 前缀）只由连接器自己回答。走到这里说明**这个版本不认识它**：
+    // 转发给宿主只会拿到一个非 JSON 的 404，手机侧看到的是「DSH returned HTTP 404」，
+    // 分不清是缺能力还是网络故障，也就没法降级。回 `link/unsupported`，让手机按能力
+    // 降级（IR-10 / SR-10.01）；这不是特例，而是保留方法前缀的唯一兜底。
+    if (frame.method.startsWith(RESERVED_PREFIX)) {
+      this.send(deviceId, resultFrame(frame.id, {
+        ok: false,
+        error: errorObject('link/unsupported', `unknown reserved method: ${frame.method}`),
+      }, deviceId))
       return
     }
 

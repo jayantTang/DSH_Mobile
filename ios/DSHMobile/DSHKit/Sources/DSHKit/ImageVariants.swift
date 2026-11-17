@@ -174,6 +174,11 @@ public struct ImageVariantUpload: Encodable, Sendable, Equatable {
 /// 发送路径**必须**据此回退到内联预览；查看原图路径据此显示「原图不可用」。
 /// 它不是网络失败，重试多少次结果都一样。
 public struct ImageVariantsUnsupported: Error, Sendable, Equatable, LocalizedError {
+    /// 能力探测在**调用之前**就判定不支持时，由调用方直接抛出这个错误
+    /// （`AttachmentImageVariants` 的降级判定，IR-10）：与连接器回 `link/unsupported`
+    /// 是同一种结局，用户看到同一句「原图不可用」。
+    public init() {}
+
     public var errorDescription: String? {
         String(localized: "电脑上的连接器版本过旧，请更新后重发")
     }

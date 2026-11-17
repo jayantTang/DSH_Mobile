@@ -22,6 +22,7 @@
     "history-coverage",
     "jobs-roster",
     "dir-mtimes",
+    "image-variants",
     "device-subprotocol-auth",
     "persistent-pair-code",
     "account-state",
