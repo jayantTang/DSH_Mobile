@@ -557,6 +557,7 @@
       "id": "ui-locale-smoke",
       "title": "七种语言运行时切换",
       "layer": "ui",
+      "cwd": "ios/DSHMobile",
       "command": [
         "xcodebuild",
         "test",
