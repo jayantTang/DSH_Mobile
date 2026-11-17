@@ -101,9 +101,11 @@ Web 客户端**没有注册表，用构建号 `yyyyMMdd.HHmm`（北京时间）�
    App 可以先升。
 6. **新增保留方法（`_link/*`）必须带能力位**（`image-variants` 为第一个）：旧连接器不认识
    保留方法时不会回 `link/unsupported`，而是转发给宿主拿到非 JSON 的 404——所以降级判定
-   必须在**调用之前**看握手能力，不能等失败再回退。连接器 0.8.2 起对未知 `_link/*` 回
-   `link/unsupported`，这条兜底只覆盖 0.8.2 及以后；旧连接器仍只能靠 App 侧能力探测。
-   要求条目见 `handbook/requirements/requirements.md` 的 IR-10。
+   必须在**调用之前**完成，不能等失败再回退。判据有两条：能力位；或能力位出现之前的
+   版本基线（图片变体：方法自 0.8.1 起，能力位自 0.8.2 起，0.8.1 仍走变体）。判定只写在
+   `ImageVariantSupport` 一处，版本读不出按不支持处理。连接器 0.8.2 起对未知 `_link/*`
+   回 `link/unsupported`，这条兜底只覆盖 0.8.2 及以后。要求条目见
+   `handbook/requirements/requirements.md` 的 IR-10。
 
 ### 当前的真实缺口
 

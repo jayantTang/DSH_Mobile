@@ -301,11 +301,15 @@ public final class AttachmentImageVariants {
         )
     }
 
-    /// 握手没声明 `image-variants` 就不发这次调用：旧连接器会把保留方法转给宿主拿到
+    /// 连接器不支持图片变体时就不发这次调用：旧连接器会把保留方法转给宿主拿到
     /// 非 JSON 的 404，用户看到的是可重试的网络文案而不是「原图不可用」（IR-10）。
+    /// 判定只看 ``ImageVariantSupport`` 一处（能力位，或 0.8.1 及以上的版本）。
     private func requireImageVariants() throws {
-        guard let store, !store.supports(LinkHandshake.Capability.imageVariants) else { return }
-        throw ImageVariantsUnsupported()
+        guard let store else { return }
+        guard ImageVariantSupport.supported(
+            capabilities: store.capabilities,
+            connectorVersion: store.connectorVersion
+        ) else { throw ImageVariantsUnsupported() }
     }
 
     /// 状态只经这里写；代数变了的旧任务写得再晚也落不下来。

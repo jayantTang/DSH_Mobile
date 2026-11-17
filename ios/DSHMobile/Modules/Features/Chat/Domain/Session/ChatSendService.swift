@@ -194,10 +194,13 @@ final class ChatSendService {
         defer { isUploadingFile = nil }
 
         var commits: [ComposerImageCommit] = []
-        // 能力探测先行（IR-10 / SR-10.01）：握手没声明 `image-variants` 就整批走内联预览，
-        // 连暂存文件都不上传。旧连接器不认识 `_link/imageCommit` 时会把它转发给宿主并拿到
-        // 非 JSON 的 404，等到失败再回退等于白传两份字节、再闪一条原始报文。
-        var variantsUnsupported = !link.supports(LinkHandshake.Capability.imageVariants)
+        // 能力判定先行（IR-10 / SR-10.01）：能力位或版本基线任一满足才算支持；都不满足
+        // 就整批走内联预览，连暂存文件都不上传。旧连接器不认识 `_link/imageCommit` 时会把它
+        // 转发给宿主并拿到非 JSON 的 404，等到失败再回退等于白传两份字节、再闪一条原始报文。
+        var variantsUnsupported = !ImageVariantSupport.supported(
+            capabilities: link.capabilities,
+            connectorVersion: link.connectorVersion
+        )
         for image in images {
             if variantsUnsupported {
                 commits.append(.inline(image.id))

@@ -335,6 +335,7 @@ final class ChatModelImageSendTests: XCTestCase {
     func testConnectorWithoutImageVariantsCapabilitySendsInlineWithoutUploading() async throws {
         try await openSession()
         link.capabilities = []
+        link.connectorVersion = "0.6.6"
         stubUploads()
         carrier.unaryResponses["session/prompt"] = .success(.object([:]))
 
@@ -357,6 +358,32 @@ final class ChatModelImageSendTests: XCTestCase {
         XCTAssertEqual(content[1]["data"]?.stringValue, previewBytes("inline-preview"))
         XCTAssertEqual(model.draft, "", "发送成功，草稿清空")
         XCTAssertEqual(model.draftImages.count, 0)
+    }
+
+    /// 0.8.1 没有能力位，但已经有这两个方法：新版本的能力不能因缺一条后来才加的
+    /// 能力位而消失，必须继续走变体（IR-10 / SR-10.01 的两个判据）。
+    func testConnector081WithoutTheCapabilityBitStillUsesTheVariantPath() async throws {
+        try await openSession()
+        link.capabilities = []
+        link.connectorVersion = "0.8.1"
+        stubUploads()
+        carrier.unaryResponses["session/prompt"] = .success(.object([:]))
+        carrier.unaryResponses["_link/imageCommit"] = .success(commitPayload(previewReceipt: "rcpt-081"))
+
+        let image = draftImage("photo-081.jpg", previewText: "081-preview", original: Data("081".utf8))
+        model.addDraftImages([image])
+
+        await model.send()
+
+        XCTAssertEqual(model.lastError, nil)
+        XCTAssertEqual(link.uploadFileCalls.count, 2, "0.8.1 仍要上传预览与原图")
+        XCTAssertEqual(carrier.calls(to: "_link/imageCommit").count, 1, "0.8.1 仍走变体提交")
+
+        let request = try XCTUnwrap(carrier.calls(to: "session/prompt").first?.args?["request"])
+        let content = try XCTUnwrap(request["content"]?.arrayValue)
+        XCTAssertEqual(content.count, 1)
+        XCTAssertEqual(content[0]["type"]?.stringValue, "file")
+        XCTAssertEqual(content[0]["receiptId"]?.stringValue, "rcpt-081")
     }
 
     private func previewBytes(_ text: String) -> String {
