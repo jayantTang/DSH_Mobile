@@ -53,7 +53,7 @@ Requires connector 0.8.2 or later.`,
 /// `WHATS_TO_TEST` 写的是哪一版。每次发版必须同时改这个常量与上面的文案：
 /// 更新说明改了才是给测试者看的，不改就是上一版的旧话（2026-11-15 就是这样漏了三版）。
 /// 走 prepare/submit 时构建号对不上直接拒绝，避免旧文案被推到新构建上。
-const WHATS_TO_TEST_BUILD = '20261118.0135'
+const WHATS_TO_TEST_BUILD = '20261118.135'
 /// 审核联系电话。Apple 要求填，且只在审核需要时使用；可以从环境变量覆盖。
 const CONTACT_PHONE_NOTE = 'ASC_CONTACT_PHONE 可覆盖（默认是个占位号，第一次提交后建议改成真号）'
 
