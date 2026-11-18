@@ -3,12 +3,16 @@
  * App Store 上架的收尾：截图上传、年龄分级、价格、提交审核。
  *
  *   node scripts/dev/asc-submit.mjs status            # 还缺什么（只读）
- *   node scripts/dev/asc-submit.mjs screenshots <dir> # 上传截图（dir 里是 6.9" 的 PNG）
+ *   node scripts/dev/asc-submit.mjs screenshots <dir> # 上传截图（默认 6.9" iPhone；ASC_DISPLAY_TYPE 可换）
  *   node scripts/dev/asc-submit.mjs basics            # 年龄分级 + 免费价格
- *   node scripts/dev/asc-submit.mjs submit            # 提交审核
- *   node scripts/dev/asc-submit.mjs withdraw          # 撤回审核（为了换构建重提）
+ *   node scripts/dev/asc-submit.mjs submit            # 提交审核（被拒的旧提交会先取消）
+ *   node scripts/dev/asc-submit.mjs cancel            # 取消进行中的 reviewSubmission
+ *   node scripts/dev/asc-submit.mjs withdraw          # 撤回 classic 提交（为了换构建重提）
  *
  * 顺序：basics → screenshots → submit。每一步都会先打印现状，所以可以重复跑。
+ *
+ * iPad 13" 截图用 `ASC_DISPLAY_TYPE=APP_IPAD_PRO_3GEN_129` 跑同一条 screenshots，
+ * 图必须是 2064×2752 或 2048×2732（竖/横都接受）。
  *
  * 截图上传是两步：先 PUT 到预留的 uploadOperations 地址，再 PATCH 提交校验和。
  * 图由 `test/cases/current/15-上架截图` 拍、`deploy-testflight.sh` 同一套流程导出，
@@ -109,19 +113,26 @@ async function screenshotSets(localeId) {
 }
 
 async function status() {
-  const { version, info, locale } = await context()
+  const { app, version, info, locale } = await context()
   const rating = await ageRating(info.id)
   const answered = Object.entries(rating.attributes).filter(([, value]) => value !== null)
   const sets = await screenshotSets(locale.id)
-  const app = (await get(`/v1/apps/${(await context()).app.id}/appPriceSchedules`).catch(() => null))
   console.log(`版本 ${version.attributes.versionString} · ${version.attributes.appStoreState}`)
   console.log(`年龄分级：已回答 ${answered.length} 项${answered.length ? '（' + answered.map(([k]) => k).slice(0, 4).join(',') + '…）' : ' —— **未填**'}`)
   console.log(`截图：${sets.length ? sets.map((s) => `${s.attributes.screenshotDisplayType}(${s.attributes.screenshotDisplayType})`).join(', ') : '**没有截图集**'}`)
   const review = await get(`/v1/appStoreVersions/${version.id}/appStoreReviewDetail`).catch(() => null)
   console.log(`审核备注：${review?.data?.attributes?.notes ? '已填' : '**空**'}`)
-  const submission = await get(`/v1/appStoreVersions/${version.id}/appStoreVersionSubmission`).catch(() => null)
-  console.log(`提交记录：${submission?.data ? JSON.stringify(submission.data.attributes) : '（还没提交）'}`)
-  return { app: (await context()).app, version, info, locale, rating, sets }
+  // 提交状态在 reviewSubmissions 上；旧的 appStoreVersionSubmission 只对 classic 提交有效，
+  // 拿它判断会永远显示"还没提交"。
+  const { data: submissions } = await get(`/v1/apps/${app.id}/reviewSubmissions?limit=20`)
+    .catch(() => ({ data: [] }))
+  const active = submissions.filter((candidate) =>
+    ['READY_FOR_REVIEW', 'WAITING_FOR_REVIEW', 'IN_REVIEW', 'UNRESOLVED_ISSUES', 'CANCELING']
+      .includes(candidate.attributes.state))
+  console.log(`提交记录：${active.length
+    ? active.map((candidate) => `${candidate.id} ${candidate.attributes.state}`).join(', ')
+    : '（还没提交）'}`)
+  return { app, version, info, locale, rating, sets }
 }
 
 /// 年龄分级：这个 App 没有任何受限内容，所以把 API 认识的每个字段都答成"无"。
@@ -181,7 +192,7 @@ async function screenshots(dir) {
 
   let set = sets.find((item) => item.attributes.screenshotDisplayType === DISPLAY_TYPE)
   if (!set) {
-    console.log(`创建截图集 ${DISPLAY_TYPE}（6.9" iPhone）`)
+    console.log(`创建截图集 ${DISPLAY_TYPE}`)
     const created = await call('POST', '/v1/appScreenshotSets', {
       data: {
         type: 'appScreenshotSets',
@@ -231,6 +242,40 @@ async function screenshots(dir) {
   console.log('截图上传完成。App Store Connect 处理几分钟后会出现在版本页。')
 }
 
+/// 取消一条 reviewSubmission。Apple 只接受 `canceled: true`；取消是异步的，
+/// PATCH 返回 200 时状态还是 CANCELING，版本仍属于它。必须等它变成 COMPLETE，
+/// 否则紧接着把版本加进新通道会回 409 ITEM_PART_OF_ANOTHER_SUBMISSION。
+async function cancelSubmission(submission) {
+  console.log(`取消提交 ${submission.id}（${submission.attributes.state}）……`)
+  await call('PATCH', `/v1/reviewSubmissions/${submission.id}`, {
+    data: { type: 'reviewSubmissions', id: submission.id, attributes: { canceled: true } },
+  })
+  for (let attempt = 0; attempt < 24; attempt += 1) {
+    const { data } = await get(`/v1/reviewSubmissions/${submission.id}`)
+    const state = data.attributes.state
+    if (state !== 'CANCELING') {
+      console.log(`  已结束：${state}`)
+      return
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5000))
+  }
+  throw new Error(`取消提交 ${submission.id} 超过 2 分钟仍是 CANCELING`)
+}
+
+/// 显式取消进行中的提交。`submit` 只自动取消被拒的 UNRESOLVED_ISSUES；
+/// 等待审核/审核中的提交要用这个命令才会动。
+async function cancel() {
+  const { app } = await context()
+  const { data: submissions } = await get(`/v1/apps/${app.id}/reviewSubmissions?limit=50`)
+  const active = submissions.filter((candidate) =>
+    ['UNRESOLVED_ISSUES', 'WAITING_FOR_REVIEW', 'IN_REVIEW', 'CANCELING'].includes(candidate.attributes.state))
+  if (!active.length) {
+    console.log('没有可取消的提交')
+    return
+  }
+  for (const submission of active) await cancelSubmission(submission)
+}
+
 async function submit() {
   const { app, version, sets } = await status()
   if (!sets.length) throw new Error('还没有截图，先跑 screenshots')
@@ -255,21 +300,51 @@ async function submit() {
   // 两个坑（都撞过）：
   //   * 先创建提交通道、再单独 POST items —— 服务端会静默不收（items 保持为空），
   //     提交时报 "must have an approved appStoreVersions ... or an appStoreVersions
-  //     must be included in this review submission"。正确做法是**创建时就把 items 带上**。
+  //     must be included in this review submission"。正确做法是在同一个通道里单独
+  //     POST item，再 PATCH submitted=true。
   //   * `appStoreVersionForReview` 这个关系**没有** allowed operations，不能 PATCH。
   // 顺序很讲究（每一步都试错过）：
-  //   1. POST /v1/reviewSubmissions            建通道（**不能**内联 items：服务端回
+  //   1. 复用或创建 reviewSubmissions 通道（**不能**内联 items：服务端回
   //      "inline include id ... is not allowed for this request"）
   //   2. POST /v1/reviewSubmissionItems        单独把版本加进去
   //      （版本元数据不全时这一步回 409 STATE_ERROR.ENTITY_STATE_INVALID，
   //       那才是"还缺东西"的真正信号——截图/年龄分级没填完就是这里卡住）
   //   3. PATCH submitted=true                  提交
-  // 另外：空通道删不掉（reviewSubmissions 不允许 DELETE），留一个空的没关系。
-  const created = await call('POST', '/v1/reviewSubmissions', {
-    data: { type: 'reviewSubmissions', relationships: { app: { data: { type: 'apps', id: app.id } } } },
-  })
-  const submission = created.data
-  console.log(`提交通道 ${submission.id}（${submission.attributes.state}）`)
+  //
+  // 空通道删不掉（reviewSubmissions 不允许 DELETE），而每个 App 最多 5 个并发提交；
+  // 之前每次失败都留下一个空通道，第四次之后就撞 CONCURRENT_REVIEW_SUBMISSION_LIMIT_EXCEEDED。
+  // 所以先找 `READY_FOR_REVIEW` 且 items 为空的通道复用，没有再新建。
+  //
+  // 被拒版本还挂在 `UNRESOLVED_ISSUES` 通道里时，Apple 不允许把同一个版本再加到
+  // 新通道（ITEM_PART_OF_ANOTHER_SUBMISSION），也不允许删已提交的 item。正确做法是
+  // 先把这条通道 `canceled: true` 取消掉（异步，状态 CANCELING → COMPLETE），
+  // 版本回到可编辑后再建新通道提交。之前试过直接 PATCH submitted=true，Apple 会
+  // 一直回 "Version is not ready to be submitted yet"，等 10 分钟也不会好。
+  let { data: submissions } = await get(`/v1/apps/${app.id}/reviewSubmissions?limit=50`)
+  const unresolved = submissions.find((candidate) => candidate.attributes.state === 'UNRESOLVED_ISSUES')
+  if (unresolved) {
+    await cancelSubmission(unresolved)
+    ;({ data: submissions } = await get(`/v1/apps/${app.id}/reviewSubmissions?limit=50`))
+  }
+
+  let submission = null
+  for (const candidate of submissions) {
+    if (candidate.attributes.state !== 'READY_FOR_REVIEW') continue
+    const { data: items } = await get(`/v1/reviewSubmissions/${candidate.id}/items`)
+    if (items.length === 0) {
+      submission = candidate
+      break
+    }
+  }
+  if (submission) {
+    console.log(`复用空通道 ${submission.id}（${submission.attributes.state}）`)
+  } else {
+    const created = await call('POST', '/v1/reviewSubmissions', {
+      data: { type: 'reviewSubmissions', relationships: { app: { data: { type: 'apps', id: app.id } } } },
+    })
+    submission = created.data
+    console.log(`提交通道 ${submission.id}（${submission.attributes.state}）`)
+  }
 
   const item = await call('POST', '/v1/reviewSubmissionItems', {
     data: {
@@ -282,9 +357,26 @@ async function submit() {
   })
   console.log(`已加入版本 ${version.attributes.versionString}（item ${item.data.id}）`)
 
-  await call('PATCH', `/v1/reviewSubmissions/${submission.id}`, {
-    data: { type: 'reviewSubmissions', id: submission.id, attributes: { submitted: true } },
-  })
+  // 构建刚挂上时 Apple 还在校验版本，PATCH 会回 "not ready to be submitted yet"。
+  // 这不是失败，等它校验完再提；最多等 10 分钟，超时把原始错误抛出去。
+  const deadline = Date.now() + 10 * 60 * 1000
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      await call('PATCH', `/v1/reviewSubmissions/${submission.id}`, {
+        data: { type: 'reviewSubmissions', id: submission.id, attributes: { submitted: true } },
+      })
+      break
+    } catch (error) {
+      // 真正的原因在 meta.associatedErrors 里，顶层 message 只说 "not in valid state"。
+      const bodyText = JSON.stringify(error.body ?? {})
+      const waiting = error.status === 409
+        && (String(error.message).includes('not ready to be submitted')
+          || bodyText.includes('not ready to be submitted'))
+      if (!waiting || Date.now() > deadline) throw error
+      console.log(`  Apple 还在校验版本（第 ${attempt} 次），20 秒后重试……`)
+      await new Promise((resolve) => setTimeout(resolve, 20000))
+    }
+  }
   console.log('已提交审核。通常 1–3 天出结果，Apple 会发邮件到审核联系人邮箱。')
 }
 
@@ -319,5 +411,6 @@ const [command, argument] = process.argv.slice(2)
 if (command === 'screenshots') await screenshots(argument)
 else if (command === 'basics') await basics()
 else if (command === 'submit') await submit()
+else if (command === 'cancel') await cancel()
 else if (command === 'withdraw') await withdraw()
 else await status()

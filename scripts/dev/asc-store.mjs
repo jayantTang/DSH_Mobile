@@ -23,9 +23,11 @@ const BUNDLE_ID = 'com.jayanttang.dsh'
 const REPO = 'https://github.com/jayantTang/DSH_Mobile'
 const RAW = 'https://raw.githubusercontent.com/jayantTang/DSH_Mobile/main'
 
-const DESCRIPTION = `把电脑上的 DeepSeek Harness，装进口袋。
+const DESCRIPTION = `把电脑上的 DSH，装进口袋。
 
-DSHM 是你电脑上 DSH 的手机端：同一个 host、同一批会话、同一条消息流。通勤路上看一眼任务跑到哪了，躺床上把卡住的那一步答掉，电脑上的活不会因为你离开键盘而停下。
+DSHM 是你电脑上 DSH 的远程客户端：同一个 host、同一批会话、同一条消息流。通勤路上看一眼任务跑到哪了，躺床上把卡住的那一步答掉，电脑上的活不会因为你离开键盘而停下。
+
+DSHM 是独立第三方客户端，与 DSH 的开发方无隶属关系，未获其背书；App 内不含对方的商标、图标或官方标识。
 
 —— 它解决什么 ——
 
@@ -52,7 +54,7 @@ DSHM 是你电脑上 DSH 的手机端：同一个 host、同一批会话、同�
 
 · 一台跑着 DSH 的电脑（macOS / Linux / Windows）
 · 电脑上安装本项目的连接器插件（开源，见仓库）
-· 一个中转：可以自建，也可以用别人提供的中转配合邀请码
+· 一个中转：可以自建，也可以使用已有的中转（开放登记，无需邀请码）
 
 —— 关于数据 ——
 
@@ -67,15 +69,14 @@ DSHM 是你电脑上 DSH 的手机端：同一个 host、同一批会话、同�
 // App 内的显示名仍是 `DSHM`（见 project.yml 的 CFBundleDisplayName）。
 const NAME = 'DSHM - 远程 DSH'
 const SUBTITLE = '随时随地连接桌面 DSH'
-const KEYWORDS = 'DSH,DeepSeek,AI,agent,远程,客户端,编程,终端'
-const PROMO_TEXT = '把电脑上的 DeepSeek Harness 装进手机：任务在电脑上跑，进度在手机上跟。'
+const KEYWORDS = 'DSH,远程,客户端,AI,agent,编程,终端,会话,配对'
+const PROMO_TEXT = '把电脑上的 DSH 装进手机：任务在电脑上跑，进度在手机上跟。'
 const SUPPORT_URL = `${REPO}/issues`
 const PRIVACY_URL = `${RAW}/docs/PRIVACY.md`
 const MARKETING_URL = REPO
 const CATEGORY = 'DEVELOPER_TOOLS'
-// 审核备注。**演示环境另给**：邀请码是一次性凭据，中转地址也属于本机真值，
-// 两者都只存在于 .env.local（不入库）——这个文件里出现过的后果是：公开仓库里
-// 躺着一个能用的邀请码，谁先看到谁就能用掉，审核员反而兑换不了。
+// 审核备注。**演示环境另给**：中转地址属于本机真值，只存在于 .env.local（不入库）。
+// 现在是开放登记，不再有邀请码；备注里只写中转地址与登记步骤。
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 
 /** 最小 .env.local 读取：只填没设过的变量，不覆盖调用方显式传入的值。 */
@@ -93,20 +94,29 @@ function loadLocalEnv() {
 
 loadLocalEnv()
 
-const REVIEW_INVITE = (process.env.ASC_REVIEW_INVITE ?? '').trim()
 const REVIEW_RELAY = (process.env.DSH_RELAY_URL ?? '').trim()
 
-const REVIEW_NOTES_HEAD = `本 App 是「远程客户端」：手机连到用户自己电脑上的 DeepSeek Harness（DSH）。App 不连我们的服务器，
+const REVIEW_NOTES_HEAD = `本 App 是「远程客户端」：手机连到用户自己电脑上的 DSH（开源桌面工具）。App 不连我们的服务器，
 只连用户自己配置的中转地址（WSS）。因此必须有一台电脑配合才能走完功能，我们准备了演示环境。`
 
+// 4.1(a) 的说明只陈述事实：DSH 是第三方开源软件，本 App 是独立客户端。
+// 不在备注里引用对方的商标，也不暗示授权或背书。
+const REVIEW_NOTES_RELATION = `【与第三方的关系】DSH 是第三方开源桌面软件（MIT）。本 App 是独立客户端，与 DSH 的开发方
+无隶属关系，未获其背书；App 内不含该开发方的商标、图标或官方标识，界面中的 DSH 仅用于说明连接对象。App 不包含、也不再分发 DSH 桌面程序本身。`
+
+// 2.1(b) 的答案同时写进备注：审核员问过一次的问题，下次不该再靠猜。
+const REVIEW_NOTES_BUSINESS = `【商业模式】App 完全免费：无内购、无订阅、无账号、无广告、无付费解锁功能，也不销售任何数字内容
+或服务，所有功能对所有用户开放。中转只做鉴权与转发，可自建；开放登记，不需要邀请码，审核用的中转由我们免费提供。
+用户电脑上的 DSH 若配置了第三方模型服务，那是用户自己的账号与付费关系，App 不销售、不代购、也不解锁这类服务。`
+
 const REVIEW_NOTES_STEPS = `【审核步骤，约 3 分钟】
-1. 在一台 macOS / Linux 电脑上装好 DSH（npm i -g @deepseek-ai/dsh），然后依次执行：
+1. 在一台 macOS / Linux 电脑上装好 DSH（npm i -g @deepseek-ai/dsh），然后执行：
      dsh plugin --profile web add dsh-plugin-mobile-link
-     dsh-mobile-link enroll --invite <邀请码> --relay <中转地址>
      dsh web
-2. 电脑上打开 DSH 界面（dsh web 那一行会打印地址），点左下角的「移动端连接」，里面就是配对二维码。
-3. 手机上打开 App → 「扫码配对」对准该二维码。若相机不可用，连接页底部有「扫不了码？手动输入配对码」，
-   点开后可手输二维码下方那串配对码 → 点「配对并连接」。
+2. 在电脑上打开 dsh web 打印的地址，点左下角的「移动端连接」。在「中转地址」填 <中转地址>，
+   点「登记」。这是开放登记，不需要邀请码，也不需要注册账号。
+3. 登记成功后，同一面板会显示配对二维码。手机上打开 App →「扫码配对」对准该二维码；
+   若相机不可用，连接页底部有「扫不了码？手动输入配对码」，点开后输入二维码下方的配对码。
 4. 连接成功后即可看到该电脑上的会话列表：可打开转写、发消息、回答 agent 的提问。`
 
 const REVIEW_NOTES_TAIL = `【若不方便配电脑】
@@ -117,16 +127,15 @@ App 启动后是连接页：可以看到扫码入口、已保存的连接（如�
 【网络】
 中转是标准 WSS。若审核网络无法访问该域名，请告知，我们可以临时切到其他地区的中转。`
 
-/** 演示环境那一段，只在真的配了邀请码时才有内容。 */
+/** 演示环境那一段，只在真的配了中转地址时才有内容。 */
 function demoBlock() {
-  const missing = [!REVIEW_INVITE && 'ASC_REVIEW_INVITE', !REVIEW_RELAY && 'DSH_RELAY_URL'].filter(Boolean)
+  const missing = [!REVIEW_RELAY && 'DSH_RELAY_URL'].filter(Boolean)
   if (missing.length) return { text: '', missing }
   return {
-    text: `【演示环境（审核专用邀请码，60 天有效；通过后我们会撤销）】
-邀请码：${REVIEW_INVITE}
+    text: `【演示环境（开放登记，无需邀请码）】
 中转地址：${REVIEW_RELAY}
 
-${REVIEW_NOTES_STEPS.replace('<邀请码>', REVIEW_INVITE).replace('<中转地址>', REVIEW_RELAY)}`,
+${REVIEW_NOTES_STEPS.replace('<中转地址>', REVIEW_RELAY)}`,
     missing: [],
   }
 }
@@ -134,8 +143,20 @@ ${REVIEW_NOTES_STEPS.replace('<邀请码>', REVIEW_INVITE).replace('<中转地�
 function reviewNotes() {
   const demo = demoBlock()
   const extra = process.env.ASC_REVIEW_NOTES_EXTRA
-  const body = [REVIEW_NOTES_HEAD, demo.text, REVIEW_NOTES_TAIL].filter(Boolean).join('\n\n')
+  const body = [REVIEW_NOTES_HEAD, REVIEW_NOTES_RELATION, demo.text, REVIEW_NOTES_BUSINESS, REVIEW_NOTES_TAIL]
+    .filter(Boolean).join('\n\n')
   return extra ? `${body}\n\n${extra}` : body
+}
+
+// 只读预览：写入前先看一遍审核备注，避免把半份演示环境推上去。
+if (process.argv[2] === 'notes') {
+  const demo = demoBlock()
+  if (demo.missing.length) {
+    console.error(`缺 ${demo.missing.join(' / ')}，无法生成审核备注`)
+    process.exit(1)
+  }
+  console.log(reviewNotes())
+  process.exit(0)
 }
 
 function credentials() {
@@ -230,7 +251,7 @@ async function status() {
     ['版权', v.copyright, ''],
     ['说明', vl.description ? `${vl.description.length} 字` : null, ''],
     ['关键词', vl.keywords, ''],
-    ['宣传文本', vl.promoText || '（可选，网页上填）', ''],
+    ['宣传文本', vl.promotionalText || '（可选）', ''],
     ['支持网址', vl.supportUrl, ''],
     ['营销网址', vl.marketingUrl, ''],
     ['审核备注', reviewDetail?.data?.attributes?.notes
@@ -261,45 +282,55 @@ async function fill() {
     data: { type: 'appStoreVersions', id: version.id, attributes: { copyright: '2026 jayantTang' } },
   })
 
-  console.log('写入版本本地化（说明/关键词/网址/审核备注）……')
+  console.log('写入版本本地化（说明/关键词/宣传文本/网址）……')
   await call('PATCH', `/v1/appStoreVersionLocalizations/${versionLocalization.id}`, {
     data: {
       type: 'appStoreVersionLocalizations',
       id: versionLocalization.id,
-      // 只有这些是版本本地化上的属性。promoText / reviewNotes 挂在别的资源上
-      // （写在这里会 409 unknown attribute，第一次就是这么撞的）。
+      // 说明、关键词、宣传文本、两个网址都是版本本地化上的属性；
+      // reviewNotes 不在这个资源上（写在这里会 409 unknown attribute）。
       attributes: {
         description: DESCRIPTION,
         keywords: KEYWORDS,
+        promotionalText: PROMO_TEXT,
         supportUrl: SUPPORT_URL,
         marketingUrl: MARKETING_URL,
       },
     },
   })
 
-  // 演示环境没配就不写：一份没有可用邀请码的备注会让审核员卡在连接页，
+  // 演示环境没配就不写：一份没有中转地址的备注会让审核员卡在登记这一步，
   // 而那是「通过」与「被拒」之间最贵的差别。宁可这里失败，也不写半份。
   const demo = demoBlock()
   if (demo.missing.length) {
     throw new Error(
       `审核备注缺少演示环境：请在 .env.local 里设 ${demo.missing.join(' / ')}` +
-      '（邀请码用 dsh-relay admin invite-mint 铸一个，一次性的，别写进仓库）'
+      '（开放登记只需要中转地址，不用再铸邀请码）'
     )
   }
 
   console.log('写入审核备注（appStoreReviewDetails）……')
   const notes = reviewNotes()
+  // 演示账号：App 无账号体系，开放登记也不需要邀请码。旧备注里这一栏还写着
+  // 「见下方演示邀请码」，邀请码取消后就成了旧信息，一并刷新。
+  const demoAccount = {
+    demoAccountRequired: false,
+    demoAccountName: 'N/A（无账号体系；开放登记，无需邀请码）',
+    demoAccountPassword: 'N/A',
+  }
   const existingDetail = await get(`/v1/appStoreVersions/${version.id}/appStoreReviewDetail`)
     .catch((error) => (error.status === 404 ? null : Promise.reject(error)))
   if (existingDetail?.data) {
     await call('PATCH', `/v1/appStoreReviewDetails/${existingDetail.data.id}`, {
-      data: { type: 'appStoreReviewDetails', id: existingDetail.data.id, attributes: { notes } },
+      data: { type: 'appStoreReviewDetails', id: existingDetail.data.id,
+              attributes: { notes, ...demoAccount } },
     })
   } else {
     await call('POST', '/v1/appStoreReviewDetails', {
       data: {
         type: 'appStoreReviewDetails',
-        attributes: { notes, contactFirstName: 'Jingyang', contactLastName: 'Tang',
+        attributes: { notes, ...demoAccount,
+                      contactFirstName: 'Jingyang', contactLastName: 'Tang',
                       contactEmail: process.env.ASC_FEEDBACK_EMAIL || 'forwoshitjy@live.com',
                       contactPhone: process.env.ASC_CONTACT_PHONE || '+86 13800000000' },
         relationships: { appStoreVersion: { data: { type: 'appStoreVersions', id: version.id } } },

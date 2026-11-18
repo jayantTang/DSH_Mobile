@@ -2,9 +2,10 @@
 
 [中文](README.md) · **English**
 
-A phone client for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) running on
-your own computer: watch what your agent is doing, answer its questions, and keep a session going
-while you are away from the desk.
+An independent, unofficial phone client for [DSH](https://github.com/deepseek-ai/deepseek-harness)
+running on your own computer: watch what your agent is doing, answer its questions, and keep a
+session going while you are away from the desk. DSHM is not affiliated with or endorsed by the DSH
+developers.
 
 The phone talks to your computer through a small relay. Nothing about your code or conversations is
 stored on the relay — it forwards frames and keeps daily byte counters.

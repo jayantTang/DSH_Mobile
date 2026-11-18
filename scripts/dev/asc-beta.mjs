@@ -25,9 +25,9 @@ const BUNDLE_ID = 'com.jayanttang.dsh'
 /// 外部测试组的名字。内部组由人在网页上建（那一步要求账号成员身份，Key 做不了）。
 const GROUP_NAME = 'Public beta'
 /// 审核员看到的测试说明与反馈邮箱。反馈邮箱必须是真人能收信的地址。
-const BETA_DESCRIPTION = `DSHM 是你电脑上 DeepSeek Harness 的手机客户端：手机与电脑连同一个 host，看到同一批会话、同一条消息流，电脑上跑着的任务锁屏再打开进度还在走。
+const BETA_DESCRIPTION = `DSHM 是你电脑上 DSH 的远程客户端（独立第三方，与 DSH 的开发方无隶属关系）：手机与电脑连同一个 host，看到同一批会话、同一条消息流，电脑上跑着的任务锁屏再打开进度还在走。
 
-本构建需要一个中转邀请码才能连接（在 GitHub 仓库的 issue 里领取）。App 本身不包含任何内购，也不会向第三方上传你的会话内容；中转只做鉴权与转发，不解析会话内容。
+本构建使用开放登记，不需要邀请码：在连接页填写中转地址后登记即可。App 本身不包含任何内购，也不会向第三方上传你的会话内容；中转只做鉴权与转发，不解析会话内容。
 
 测试重点：会话列表与转写渲染、发消息与打断正在跑的任务、回答 agent 的提问、查看与放大图片、上传文件到会话工作区。`
 const FEEDBACK_EMAIL = process.env.ASC_FEEDBACK_EMAIL || 'forwoshitjy@live.com'
@@ -256,8 +256,7 @@ async function prepare() {
     contactPhone: process.env.ASC_CONTACT_PHONE || '+86 13800000000',
     contactEmail: FEEDBACK_EMAIL,
     demoAccountRequired: false,
-    notes: '连接需要一个中转邀请码，我们在 GitHub issue 里公开提供；'
-      + '也可以用仓库里的 relay-go/deploy/README.md 自建中转。'
+    notes: '连接使用开放登记，不需要邀请码；也可以在仓库里按 relay-go/deploy/README.md 自建中转。'
       + 'App 无内购、无需登录第三方服务。',
   }
   if (detail) {
