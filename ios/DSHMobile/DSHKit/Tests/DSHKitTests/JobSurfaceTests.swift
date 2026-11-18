@@ -10,6 +10,11 @@ import XCTest
 /// outcome、以及请求体在线上到底长什么样——`job/*` 走 `{request: …}` 信封，
 /// `subagents/interruptByParent` 是**扁平**参数且 `mode` 固定 `continuable`，
 /// 混用会换回一个看起来像"操作失败"的 `gateway/arguments-invalid`。
+///
+/// `@MainActor`：2026-11-18 的 CI（Xcode 26.6）在 `testKillNotFound…` 处稳定挂起，
+/// 采样栈显示 cooperative 线程阻塞在 `_dispatch_group_wait_slow`；XCTest 的异步
+/// 测试桥接在主线程跑时不走这条等待路径。本类全是纯内存帧断言，不依赖主线程语义。
+@MainActor
 final class JobSurfaceTests: XCTestCase {
 
     // MARK: - Carrier double
