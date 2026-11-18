@@ -210,11 +210,27 @@ jobs:
           DSH_HOME: ${{ runner.temp }}/dsh-home
         run: |
           mkdir -p "$DSH_HOME"
+          # 正常 2–4 分钟结束。2026-11-05 起有过"跑完进程不退出"，当时把两套框架拆开；
+          # 2026-11-18 又在 JobSurfaceTests 处卡住（三次重跑同一点、本机 678 项全过），
+          # 步骤超时被杀时拿不到栈，所以这里在 6 分钟时先抓栈再终止，给下一次定位留证据。
           swift test --disable-swift-testing \
             --skip LiveIntegrationTests \
             --skip LiveDuplicateAuditTests \
             --skip LiveWorkspaceFileVersionTests \
-            --skip LiveTurnTests
+            --skip LiveTurnTests &
+          pid=$!
+          for _ in $(seq 1 72); do
+            kill -0 "$pid" 2>/dev/null || break
+            sleep 5
+          done
+          if kill -0 "$pid" 2>/dev/null; then
+            echo "::warning::XCTest 6 分钟未退出，抓栈后终止"
+            sample "$pid" 3 -file "$RUNNER_TEMP/xctest-sample.txt" || true
+            sed -n '1,240p' "$RUNNER_TEMP/xctest-sample.txt" || true
+            kill -9 "$pid" 2>/dev/null || true
+            exit 1
+          fi
+          wait "$pid"
       - name: swift test（swift-testing）
         timeout-minutes: 8
         working-directory: ios/DSHMobile/DSHKit
